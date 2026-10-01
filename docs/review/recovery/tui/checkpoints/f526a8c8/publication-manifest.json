@@ -1,0 +1,433 @@
+{
+  "schemaVersion": 1,
+  "status": "UNMERGEABLE_EVIDENCE_ONLY",
+  "repository": "mgd34msu/goodvibes-jev",
+  "runtimeIntegrationAuthorized": false,
+  "mergeAuthorized": false,
+  "evidenceBranch": "dot/evidence-tui-source-recovery",
+  "evidenceParent": "05ae5c5adc481f379396eb28bedb15e913deb1e2",
+  "evidenceParentTree": "a2674cc750e8134c519265b6f4b23b87e40b6f59",
+  "runtimePathsUnchanged": true,
+  "earlierCheckpointArtifactsUnchanged": true,
+  "source": {
+    "commit": "f526a8c824ec523186bfdbae997366778f6c115d",
+    "tree": "6d77d255a69a3a4ef1b9e291ae24761eaac21e9c",
+    "baseCommit": "25d3865bbc17ceab7388e3d1ac12f8dc34b7069b",
+    "baseTree": "1b06d3c236b6549861a8aa893499edddda87067d",
+    "changedPaths": 42,
+    "scope": "products/tui only",
+    "sourceManifestPath": "source-manifest.json",
+    "sourceManifestSha256": "e6b8b87c1e3745fff09e177887e9da87699395bddd1c499b384cc74ae6de5396"
+  },
+  "reconstruction": {
+    "priorEvidenceCommit": "05ae5c5adc481f379396eb28bedb15e913deb1e2",
+    "priorPacketDirectory": "docs/review/recovery/tui/checkpoints/25d3865b",
+    "method": "Reconstruct 25d3865b through the prior public evidence chain; decompress and apply source.patch.gz in that disposable index; verify complete final tree",
+    "patch": {
+      "bytes": 117490,
+      "sha256": "171802950d83b02c0bfc7d4f729bdf609ad9c06e623ad05d3ea3a6b1a62537da",
+      "gzipBytes": 27947,
+      "gzipSha256": "dd8f2b9e136eb6052b202a637d6e1915bb0550a4234882ba524e90a8176258c0"
+    },
+    "verifiedTree": "6d77d255a69a3a4ef1b9e291ae24761eaac21e9c",
+    "exactTemporaryIndexReconstruction": "passed",
+    "unpublishedLocalCommitsRequired": false
+  },
+  "postimages": [
+    {
+      "path": "products/tui/bin/goodvibes",
+      "status": "M",
+      "sha256": "0b65081111888f6a1b593200b2c60e13f6956f4c0ad350d3cad60f3c32a7377e",
+      "gitBlob": "45fd231f32be7e156372651aa57ff9ef7f01ac86",
+      "bytes": 1238
+    },
+    {
+      "path": "products/tui/migration-proof.md",
+      "status": "M",
+      "sha256": "dc64c3b4fe5c3e898dd9758d4c90efeac883013ce3b37794755fbe612ac8f71a",
+      "gitBlob": "47c84f9a7ff6a223ecc252581d1b161aff7dfccb",
+      "bytes": 7523
+    },
+    {
+      "path": "products/tui/scripts/run-toolchain.ts",
+      "status": "A",
+      "sha256": "2e3d1d57947aab98457d78025e727e16d545bae8e09bce277d13744787a5779e",
+      "gitBlob": "5a9b532b6d25ab6de078e4d3e2b420ca27f37e47",
+      "bytes": 1760
+    },
+    {
+      "path": "products/tui/src/cli/bundle-command.ts",
+      "status": "M",
+      "sha256": "2a87e174c8634ba8e0836c5415fb983b0526156f43ab88ac273298608e163008",
+      "gitBlob": "2ad3caf6a6c2c6711aabb6ac67d35e0bbb748799",
+      "bytes": 10267
+    },
+    {
+      "path": "products/tui/src/cli/launch-auto-update.ts",
+      "status": "M",
+      "sha256": "519a102e1fba2a375adeb91d48da52d13dc12d040f67c09ad4baf5e2da5ffbd8",
+      "gitBlob": "d5e3c275ab37be6c076f0dfd18abc979af749f69",
+      "bytes": 14962
+    },
+    {
+      "path": "products/tui/src/input/commands/conversation-runtime.ts",
+      "status": "M",
+      "sha256": "49c58a404f54dcb60a76461749302c95ff874f3c8caae1fe3811850fbd82bdbd",
+      "gitBlob": "92918ebcce1b32cbd9e80d87afbafd8210575cb9",
+      "bytes": 9001
+    },
+    {
+      "path": "products/tui/src/input/commands/health-runtime.ts",
+      "status": "M",
+      "sha256": "2d138b31bbd5b35f15b0437d96f1f36d9856301a29fb85dcd788809e41473ba8",
+      "gitBlob": "5fe929b146061ab4d415184c1f62206c68fe8864",
+      "bytes": 26028
+    },
+    {
+      "path": "products/tui/src/input/commands/hooks-runtime.ts",
+      "status": "M",
+      "sha256": "b5c1e12551e57fde3b35e94fa75e50e68d54d858713b968d76e12f44f10648b1",
+      "gitBlob": "d9ad4fa978fed7dd12279339d26c22ee015718c0",
+      "bytes": 6186
+    },
+    {
+      "path": "products/tui/src/input/commands/managed-runtime.ts",
+      "status": "M",
+      "sha256": "f66cf97e3a92b7904dad5ceee8cc9f71f7c6742baaf41c654849e12b9f6fa31a",
+      "gitBlob": "595d0a240ae72336d0133f4b1adbe1b3dec8de5c",
+      "bytes": 9688
+    },
+    {
+      "path": "products/tui/src/input/commands/marketplace-runtime.ts",
+      "status": "M",
+      "sha256": "090aabd5cd0e72283a0a8c956e05d2ad17b6faf2c19a770d02a411318ff52f87",
+      "gitBlob": "45dd58b440254a2105907738ea22846c071eeb69",
+      "bytes": 15873
+    },
+    {
+      "path": "products/tui/src/input/commands/operator-runtime.ts",
+      "status": "M",
+      "sha256": "d4526191361207ec8de253d429f566dd9276d5424593c7b30d0f4e0c12101deb",
+      "gitBlob": "039dc727950c411492dbaa502d571a2341cc8ce3",
+      "bytes": 16293
+    },
+    {
+      "path": "products/tui/src/input/commands/plugin-runtime.ts",
+      "status": "M",
+      "sha256": "c77c9e9ca23f1032c9d0b0700200f8ab198e03dada1f56c93e21c6269b6e28cc",
+      "gitBlob": "41027b7cb6211188b9d4e566cf76373dac6e0f63",
+      "bytes": 18066
+    },
+    {
+      "path": "products/tui/src/input/commands/session-workflow.ts",
+      "status": "M",
+      "sha256": "deac1cb321016f09e1d62abf1b5cf7564a47318515849aa5e0a39e84d2c47a09",
+      "gitBlob": "fab45b6650a02b03b9455b534bba6cac846a9d5d",
+      "bytes": 20096
+    },
+    {
+      "path": "products/tui/src/input/commands/skills-runtime.ts",
+      "status": "M",
+      "sha256": "7a6b9525925034da5d6ccd522cc2cbdbb5dcf6b27308be6992c7b5e603152aa0",
+      "gitBlob": "4d1977af053557d060baac69ac55316c76d760ee",
+      "bytes": 9244
+    },
+    {
+      "path": "products/tui/src/input/commands/update-runtime.ts",
+      "status": "M",
+      "sha256": "9f93a40fd008f6423095ed669ba17fa9c5f92a5c0be880bd48e1faa5126d99ab",
+      "gitBlob": "98a62ab180d4db650825fa0c8d6078db011d5e95",
+      "bytes": 26351
+    },
+    {
+      "path": "products/tui/src/input/settings-modal-behavior.ts",
+      "status": "M",
+      "sha256": "1bcb2bd0f93841b5058c54e92d414321e71d78f8e184b07c442a467bc3101646",
+      "gitBlob": "ef6c1032542908ad393ec68879f44771065fb6f1",
+      "bytes": 1628
+    },
+    {
+      "path": "products/tui/src/main.ts",
+      "status": "M",
+      "sha256": "9c381c40aa211df6020d69ae24e47a3b20329b45d5557685bf15e6abf85de434",
+      "gitBlob": "07786bc3b3163ca2b44922c23fb9907d1f40cf39",
+      "bytes": 51890
+    },
+    {
+      "path": "products/tui/src/renderer/settings-modal-context.ts",
+      "status": "M",
+      "sha256": "153ae2e4fea559f74c01b6e7f63f3683598058353b73cc7ec16f8b8ccc0e6f24",
+      "gitBlob": "8feb35fb2b9ef66db95e1b702587d372ca79650b",
+      "bytes": 18210
+    },
+    {
+      "path": "products/tui/src/runtime/relay-reachability-bridge.ts",
+      "status": "M",
+      "sha256": "ae0920ef5bb5050034800800ec38e4aa67264bb8d38db60bbad2b94d3868a615",
+      "gitBlob": "557b7fe055cc3af1a6548927216c09e57d71c770",
+      "bytes": 3046
+    },
+    {
+      "path": "products/tui/src/runtime/update-check.ts",
+      "status": "M",
+      "sha256": "c6629552753dcc6554bfee1b02dc80de569f3f470d91c71f22063179f9d86223",
+      "gitBlob": "86d416c5b09e839fba774c755abfd016c80e7425",
+      "bytes": 1762
+    },
+    {
+      "path": "products/tui/src/runtime/workspace-update-policy.ts",
+      "status": "A",
+      "sha256": "d577112f10b8483f6632f5511c38439097a49bf62c673c713ecaaa597d816b52",
+      "gitBlob": "1bb02469faf5210cc48964fc397f7e379dcb6a68",
+      "bytes": 552
+    },
+    {
+      "path": "products/tui/src/test/cli/launch-auto-update.test.ts",
+      "status": "M",
+      "sha256": "eebcd0749c5953917f6d2592012fa2d2e10edf05741f973ad012713cc38c95d8",
+      "gitBlob": "704572f111f228c8654c3c5c647c4495fe283d54",
+      "bytes": 14938
+    },
+    {
+      "path": "products/tui/src/test/input/async-catalog-contract-commands.test.ts",
+      "status": "A",
+      "sha256": "196e1c3f31bdab94144af1947c934a57660f94581d216cfc1f839b2205150efe",
+      "gitBlob": "5c8dd449eee7591a09f18a785550a2b8421b52df",
+      "bytes": 14095
+    },
+    {
+      "path": "products/tui/src/test/input/managed-runtime-async.test.ts",
+      "status": "A",
+      "sha256": "2147857d1fbcb380f50ce91582749de5aff794a1304bb5a25bf22fc261f4aed5",
+      "gitBlob": "baf35fee6bbf53a0969b57fad57769056b1c5384",
+      "bytes": 3824
+    },
+    {
+      "path": "products/tui/src/test/input/permissions-provenance.test.ts",
+      "status": "M",
+      "sha256": "5cc3677f1f35b918d33f01ee7393713394bcee767950edf6dea22899d1086c5a",
+      "gitBlob": "5e1b86c99a110fd764144cd3f1ab7a2a27cbd10c",
+      "bytes": 3636
+    },
+    {
+      "path": "products/tui/src/test/input/update-runtime.test.ts",
+      "status": "M",
+      "sha256": "4a23eea3506773e61e7e8e2367a83a972148bab738aaad2f77843ce8c7019890",
+      "gitBlob": "31a335c56b940d7c0326680f3bda73c498d96203",
+      "bytes": 25935
+    },
+    {
+      "path": "products/tui/src/test/input/workstream-contract-command.test.ts",
+      "status": "M",
+      "sha256": "a02005c8517572f93e8a5503ac4776e0ed825837765356d37bdb20c2ee1d5764",
+      "gitBlob": "6cf417bf12257ec068987e7fb1de7618e822c3c2",
+      "bytes": 4202
+    },
+    {
+      "path": "products/tui/src/test/renderer/liveness-config-modal.test.ts",
+      "status": "M",
+      "sha256": "e8e09019afa6b53bf790cb30ce69f697b2c2cb8d66284ac90550cb04816292c3",
+      "gitBlob": "d8822e22a85c6ba7d49f37a07212ea871c13dd84",
+      "bytes": 9098
+    },
+    {
+      "path": "products/tui/src/test/runtime/update-check.test.ts",
+      "status": "M",
+      "sha256": "817bb714c7fbf49fd39751d9ff271e4e28c5106e88f814bec7dd194368f47eca",
+      "gitBlob": "8a78fc37638f8d6743c337be6fd452e4077a9b5f",
+      "bytes": 4031
+    },
+    {
+      "path": "products/tui/src/test/runtime/workspace-launcher.test.ts",
+      "status": "A",
+      "sha256": "7ce8ff02d41aab5e0dd81d8e3544402a8ec48c5adaa7c890c7edc4f6db0c7eb7",
+      "gitBlob": "fe02d3ff39e59ae07de29a2d4e1265bb601798da",
+      "bytes": 2857
+    },
+    {
+      "path": "products/tui/src/test/runtime/workspace-update-policy.test.ts",
+      "status": "A",
+      "sha256": "7bed9a6a3ff10d0e70c301bce5ae004fe7e1bba1f3f88a8a901ab78ae447242f",
+      "gitBlob": "af1f75883f39ca4fac8c88beb4fc4429af349de5",
+      "bytes": 1843
+    },
+    {
+      "path": "products/tui/src/test/shell/recovery-silent-restore.test.ts",
+      "status": "M",
+      "sha256": "ba9aed5ec1e7f6a009d4bc35201e5a87a4c07fb4cb75dba1a4269da7f0c0483f",
+      "gitBlob": "a575f877c6639e7e2e5a8bc7c1381b6b66af6576",
+      "bytes": 6962
+    },
+    {
+      "path": "products/tui/src/test/shell/session-contract-views.test.ts",
+      "status": "M",
+      "sha256": "83f7b5c8b64391410e84503aecf1b39e99aa40fc56d9099cd2abe1d4308bed45",
+      "gitBlob": "162f7f2a4d74f2d47c75b0a6aceb20b743836bad",
+      "bytes": 4794
+    },
+    {
+      "path": "products/tui/src/test/views/modals/marketplace-modal.test.ts",
+      "status": "M",
+      "sha256": "d8cd34d48c7d78a102ab55bb31c292e475dea59dd0237d52c7eb4c5f894ce20a",
+      "gitBlob": "dde8b67773fe2d438017c46944cc5a9eb6b29a36",
+      "bytes": 11056
+    },
+    {
+      "path": "products/tui/src/test/views/modals/memory-modal.test.ts",
+      "status": "M",
+      "sha256": "c5ad81bc394327ca6eab7a880567e8801d09eeb505eb4761f0a2c9c012b0c390",
+      "gitBlob": "ddf6360e336323a53189d5ce708cabd683cdc1e5",
+      "bytes": 25963
+    },
+    {
+      "path": "products/tui/src/views/modals/marketplace-modal.ts",
+      "status": "M",
+      "sha256": "4510b3c35c2a903f3d7371a408e85199f0bc13ccfaf04c977fbe8fe1bd7fe192",
+      "gitBlob": "69cb3cdc721d2d8794d0e00a723b5be4e60714f6",
+      "bytes": 10900
+    },
+    {
+      "path": "products/tui/src/views/modals/memory-modal.ts",
+      "status": "M",
+      "sha256": "f3d67435e8d985a3a00b60a8863cd1981417ae1ae4967ac13c5e2b6b2e2c70d6",
+      "gitBlob": "9f7a02715ae133341a6b1dbbcce3dd5e338365b7",
+      "bytes": 18313
+    },
+    {
+      "path": "products/tui/src/views/modals/sandbox-modal.ts",
+      "status": "M",
+      "sha256": "17bd9099891ce0e5fa26f83bb017ac1fd9e5fea272c6d8b92c16f6cbbc33d7f8",
+      "gitBlob": "bc72757daada045914f5c453d06e3d6534691034",
+      "bytes": 6109
+    },
+    {
+      "path": "products/tui/src/views/modals/security-modal.ts",
+      "status": "M",
+      "sha256": "2a26a56c04819de775590a01ba28d2fc96307aca25c698dc189a8a1a48b0cbae",
+      "gitBlob": "a577699254d3321f4e7e29d784ab10a4865ad5a2",
+      "bytes": 13615
+    },
+    {
+      "path": "products/tui/toolchain.config.json",
+      "status": "M",
+      "sha256": "8ae94dd66d30efbfb31c2f51722c6b683b202f3e0d3161eef5c0ec298c99405c",
+      "gitBlob": "c5a103779fd2f21719ffbfb1d0d8c06c370350a8",
+      "bytes": 3882
+    },
+    {
+      "path": "products/tui/tsconfig.json",
+      "status": "M",
+      "sha256": "976da929d2b386bebd14e6b57bb6ed4ffe3b7553e42a9d98576f6d55e4191835",
+      "gitBlob": "3202bd2ac0a95abf81d933c5314548864cc9afda",
+      "bytes": 582
+    },
+    {
+      "path": "products/tui/tsconfig.test.json",
+      "status": "M",
+      "sha256": "bff2e21fb310eac58ea5f682119cb0d4e7f04169cee1dec9b9f7b84d8ef2a538",
+      "gitBlob": "399e2240c714c420504dd6f7feb71b91ccedf131",
+      "bytes": 283
+    }
+  ],
+  "proof": {
+    "changedComponentTests": {
+      "status": "passed",
+      "tests": 160,
+      "assertions": 617,
+      "files": 15,
+      "appliesOnlyTo": "f526a8c824ec523186bfdbae997366778f6c115d"
+    },
+    "normalCommitHook": {
+      "status": "passed",
+      "scope": "Credential-scope only",
+      "engineSdkFilesChecked": 2633
+    },
+    "sourceTypes": {
+      "status": "failed",
+      "reportedDiagnosticLines": 109,
+      "detail": "failed,109 diagnostic lines; new adapters clear"
+    },
+    "testTypes": {
+      "status": "failed",
+      "initialReportedDiagnosticLines": 391,
+      "correctedReportedDiagnosticLines": 260,
+      "detail": "failed,260 diagnostic lines; new focused fixtures clear"
+    },
+    "actualMainBuildBinaryPtyFirstTurn": {
+      "status": "not_accepted"
+    },
+    "logsArchive": {
+      "path": "proof-logs.tar.gz",
+      "gzipBytes": 20769,
+      "gzipSha256": "624dc550ffbe859745575ba398dca7c00f9b93e87578a49da0c1056fdee241ce",
+      "members": {
+        "async-distribution-checkpoint-tests.log": {
+          "bytes": 21376,
+          "sha256": "43e2f49936bd00fdafbcfd53cb4854fb27b40a3f6094e77d30bd545cfaabc64a"
+        },
+        "async-distribution-checkpoint-commit.log": {
+          "bytes": 874,
+          "sha256": "0ae60cb0d2400fa5d745dc665fd3526f500119992512b79f4de84d4a35ddbe29"
+        },
+        "async-distribution-source-types.log": {
+          "bytes": 19546,
+          "sha256": "0b59665db917f27ae0b2030a06c2d634ca6abb35dc8e7368752d2755b7646993"
+        },
+        "async-distribution-test-types.log": {
+          "bytes": 68800,
+          "sha256": "9ec90b6bf67c0c4ca23d8f2fd9ef1c8021f77083271c07ebd564d59a8007f803"
+        },
+        "async-distribution-test-types-corrected.log": {
+          "bytes": 47748,
+          "sha256": "806b0a70bbefa9e9c0007bb1a2e9acb30849899cc1fbc738c9cba1e7ba052dbf"
+        }
+      },
+      "deterministicMetadata": true
+    },
+    "notes": [
+      "Initial test-program391-line failure retained; corrected ambient config and four fixture errors produced260-line failure",
+      "No golden frames changed",
+      "Private workspace update/launcher65 tests/159 assertions included in changed batch",
+      "Memory backend review-order33 tests/205 assertions included in changed batch"
+    ]
+  },
+  "credentialPreflight": {
+    "patchAndAllPostimagesAndProofLogsPatternScan": "passed",
+    "patterns": [
+      "private_key",
+      "github_token",
+      "aws_access_key",
+      "slack_token",
+      "openai_key",
+      "credential_url"
+    ],
+    "findings": 0,
+    "repositoryCredentialScopeCheck": {
+      "status": "passed",
+      "engineSdkFilesChecked": 2633,
+      "logSha256": "bc8db2d3104738cdb5c65f4647e9044b1be5f650ccc66215785ac6c0a477f98c",
+      "verifiedInputsIdenticalToPublicMain": [
+        "packages/engine/sdk/src",
+        "packages/engine/scripts",
+        "packages/engine/etc",
+        "packages/engine/package.json",
+        "packages/engine/errors/src",
+        "packages/judgment/src",
+        "packages/judgment/package.json"
+      ],
+      "scope": "Fresh exact SDK credential inputs only; not full TUI product coverage"
+    },
+    "privateFilesAndInstalledDependenciesExcluded": true
+  },
+  "versioning": "160/617 changed-component proof belongs only to f526a8c8. Earlier d08 and 25d3865b packets retain their separate results. Counts are not cumulative acceptance.",
+  "outstandingGates": [
+    "PR52 repaired notification prerequisite and PR57 current-main review/integration",
+    "actual main launch/build/PTTY first turn",
+    "remaining asynchronous/legacy callers and fixture cleanup",
+    "all other explicit JEV/HOIST obligations",
+    "Source and test type acceptance",
+    "Source review and full repository/product CI",
+    "Authorized runtime integration and release acceptance"
+  ],
+  "prohibitedUse": "Do not merge this evidence branch as implementation or apply its patch to main."
+}

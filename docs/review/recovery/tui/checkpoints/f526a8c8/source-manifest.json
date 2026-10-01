@@ -1,0 +1,266 @@
+{
+  "base": "25d3865bbc17ceab7388e3d1ac12f8dc34b7069b",
+  "commit": "f526a8c824ec523186bfdbae997366778f6c115d",
+  "tree": "6d77d255a69a3a4ef1b9e291ae24761eaac21e9c",
+  "clean": true,
+  "scope": "ordinary TUI product only; no shared engine/PR56 source",
+  "files": [
+    {
+      "path": "products/tui/bin/goodvibes",
+      "status": "M",
+      "sha256": "0b65081111888f6a1b593200b2c60e13f6956f4c0ad350d3cad60f3c32a7377e"
+    },
+    {
+      "path": "products/tui/migration-proof.md",
+      "status": "M",
+      "sha256": "dc64c3b4fe5c3e898dd9758d4c90efeac883013ce3b37794755fbe612ac8f71a"
+    },
+    {
+      "path": "products/tui/scripts/run-toolchain.ts",
+      "status": "A",
+      "sha256": "2e3d1d57947aab98457d78025e727e16d545bae8e09bce277d13744787a5779e"
+    },
+    {
+      "path": "products/tui/src/cli/bundle-command.ts",
+      "status": "M",
+      "sha256": "2a87e174c8634ba8e0836c5415fb983b0526156f43ab88ac273298608e163008"
+    },
+    {
+      "path": "products/tui/src/cli/launch-auto-update.ts",
+      "status": "M",
+      "sha256": "519a102e1fba2a375adeb91d48da52d13dc12d040f67c09ad4baf5e2da5ffbd8"
+    },
+    {
+      "path": "products/tui/src/input/commands/conversation-runtime.ts",
+      "status": "M",
+      "sha256": "49c58a404f54dcb60a76461749302c95ff874f3c8caae1fe3811850fbd82bdbd"
+    },
+    {
+      "path": "products/tui/src/input/commands/health-runtime.ts",
+      "status": "M",
+      "sha256": "2d138b31bbd5b35f15b0437d96f1f36d9856301a29fb85dcd788809e41473ba8"
+    },
+    {
+      "path": "products/tui/src/input/commands/hooks-runtime.ts",
+      "status": "M",
+      "sha256": "b5c1e12551e57fde3b35e94fa75e50e68d54d858713b968d76e12f44f10648b1"
+    },
+    {
+      "path": "products/tui/src/input/commands/managed-runtime.ts",
+      "status": "M",
+      "sha256": "f66cf97e3a92b7904dad5ceee8cc9f71f7c6742baaf41c654849e12b9f6fa31a"
+    },
+    {
+      "path": "products/tui/src/input/commands/marketplace-runtime.ts",
+      "status": "M",
+      "sha256": "090aabd5cd0e72283a0a8c956e05d2ad17b6faf2c19a770d02a411318ff52f87"
+    },
+    {
+      "path": "products/tui/src/input/commands/operator-runtime.ts",
+      "status": "M",
+      "sha256": "d4526191361207ec8de253d429f566dd9276d5424593c7b30d0f4e0c12101deb"
+    },
+    {
+      "path": "products/tui/src/input/commands/plugin-runtime.ts",
+      "status": "M",
+      "sha256": "c77c9e9ca23f1032c9d0b0700200f8ab198e03dada1f56c93e21c6269b6e28cc"
+    },
+    {
+      "path": "products/tui/src/input/commands/session-workflow.ts",
+      "status": "M",
+      "sha256": "deac1cb321016f09e1d62abf1b5cf7564a47318515849aa5e0a39e84d2c47a09"
+    },
+    {
+      "path": "products/tui/src/input/commands/skills-runtime.ts",
+      "status": "M",
+      "sha256": "7a6b9525925034da5d6ccd522cc2cbdbb5dcf6b27308be6992c7b5e603152aa0"
+    },
+    {
+      "path": "products/tui/src/input/commands/update-runtime.ts",
+      "status": "M",
+      "sha256": "9f93a40fd008f6423095ed669ba17fa9c5f92a5c0be880bd48e1faa5126d99ab"
+    },
+    {
+      "path": "products/tui/src/input/settings-modal-behavior.ts",
+      "status": "M",
+      "sha256": "1bcb2bd0f93841b5058c54e92d414321e71d78f8e184b07c442a467bc3101646"
+    },
+    {
+      "path": "products/tui/src/main.ts",
+      "status": "M",
+      "sha256": "9c381c40aa211df6020d69ae24e47a3b20329b45d5557685bf15e6abf85de434"
+    },
+    {
+      "path": "products/tui/src/renderer/settings-modal-context.ts",
+      "status": "M",
+      "sha256": "153ae2e4fea559f74c01b6e7f63f3683598058353b73cc7ec16f8b8ccc0e6f24"
+    },
+    {
+      "path": "products/tui/src/runtime/relay-reachability-bridge.ts",
+      "status": "M",
+      "sha256": "ae0920ef5bb5050034800800ec38e4aa67264bb8d38db60bbad2b94d3868a615"
+    },
+    {
+      "path": "products/tui/src/runtime/update-check.ts",
+      "status": "M",
+      "sha256": "c6629552753dcc6554bfee1b02dc80de569f3f470d91c71f22063179f9d86223"
+    },
+    {
+      "path": "products/tui/src/runtime/workspace-update-policy.ts",
+      "status": "A",
+      "sha256": "d577112f10b8483f6632f5511c38439097a49bf62c673c713ecaaa597d816b52"
+    },
+    {
+      "path": "products/tui/src/test/cli/launch-auto-update.test.ts",
+      "status": "M",
+      "sha256": "eebcd0749c5953917f6d2592012fa2d2e10edf05741f973ad012713cc38c95d8"
+    },
+    {
+      "path": "products/tui/src/test/input/async-catalog-contract-commands.test.ts",
+      "status": "A",
+      "sha256": "196e1c3f31bdab94144af1947c934a57660f94581d216cfc1f839b2205150efe"
+    },
+    {
+      "path": "products/tui/src/test/input/managed-runtime-async.test.ts",
+      "status": "A",
+      "sha256": "2147857d1fbcb380f50ce91582749de5aff794a1304bb5a25bf22fc261f4aed5"
+    },
+    {
+      "path": "products/tui/src/test/input/permissions-provenance.test.ts",
+      "status": "M",
+      "sha256": "5cc3677f1f35b918d33f01ee7393713394bcee767950edf6dea22899d1086c5a"
+    },
+    {
+      "path": "products/tui/src/test/input/update-runtime.test.ts",
+      "status": "M",
+      "sha256": "4a23eea3506773e61e7e8e2367a83a972148bab738aaad2f77843ce8c7019890"
+    },
+    {
+      "path": "products/tui/src/test/input/workstream-contract-command.test.ts",
+      "status": "M",
+      "sha256": "a02005c8517572f93e8a5503ac4776e0ed825837765356d37bdb20c2ee1d5764"
+    },
+    {
+      "path": "products/tui/src/test/renderer/liveness-config-modal.test.ts",
+      "status": "M",
+      "sha256": "e8e09019afa6b53bf790cb30ce69f697b2c2cb8d66284ac90550cb04816292c3"
+    },
+    {
+      "path": "products/tui/src/test/runtime/update-check.test.ts",
+      "status": "M",
+      "sha256": "817bb714c7fbf49fd39751d9ff271e4e28c5106e88f814bec7dd194368f47eca"
+    },
+    {
+      "path": "products/tui/src/test/runtime/workspace-launcher.test.ts",
+      "status": "A",
+      "sha256": "7ce8ff02d41aab5e0dd81d8e3544402a8ec48c5adaa7c890c7edc4f6db0c7eb7"
+    },
+    {
+      "path": "products/tui/src/test/runtime/workspace-update-policy.test.ts",
+      "status": "A",
+      "sha256": "7bed9a6a3ff10d0e70c301bce5ae004fe7e1bba1f3f88a8a901ab78ae447242f"
+    },
+    {
+      "path": "products/tui/src/test/shell/recovery-silent-restore.test.ts",
+      "status": "M",
+      "sha256": "ba9aed5ec1e7f6a009d4bc35201e5a87a4c07fb4cb75dba1a4269da7f0c0483f"
+    },
+    {
+      "path": "products/tui/src/test/shell/session-contract-views.test.ts",
+      "status": "M",
+      "sha256": "83f7b5c8b64391410e84503aecf1b39e99aa40fc56d9099cd2abe1d4308bed45"
+    },
+    {
+      "path": "products/tui/src/test/views/modals/marketplace-modal.test.ts",
+      "status": "M",
+      "sha256": "d8cd34d48c7d78a102ab55bb31c292e475dea59dd0237d52c7eb4c5f894ce20a"
+    },
+    {
+      "path": "products/tui/src/test/views/modals/memory-modal.test.ts",
+      "status": "M",
+      "sha256": "c5ad81bc394327ca6eab7a880567e8801d09eeb505eb4761f0a2c9c012b0c390"
+    },
+    {
+      "path": "products/tui/src/views/modals/marketplace-modal.ts",
+      "status": "M",
+      "sha256": "4510b3c35c2a903f3d7371a408e85199f0bc13ccfaf04c977fbe8fe1bd7fe192"
+    },
+    {
+      "path": "products/tui/src/views/modals/memory-modal.ts",
+      "status": "M",
+      "sha256": "f3d67435e8d985a3a00b60a8863cd1981417ae1ae4967ac13c5e2b6b2e2c70d6"
+    },
+    {
+      "path": "products/tui/src/views/modals/sandbox-modal.ts",
+      "status": "M",
+      "sha256": "17bd9099891ce0e5fa26f83bb017ac1fd9e5fea272c6d8b92c16f6cbbc33d7f8"
+    },
+    {
+      "path": "products/tui/src/views/modals/security-modal.ts",
+      "status": "M",
+      "sha256": "2a26a56c04819de775590a01ba28d2fc96307aca25c698dc189a8a1a48b0cbae"
+    },
+    {
+      "path": "products/tui/toolchain.config.json",
+      "status": "M",
+      "sha256": "8ae94dd66d30efbfb31c2f51722c6b683b202f3e0d3161eef5c0ec298c99405c"
+    },
+    {
+      "path": "products/tui/tsconfig.json",
+      "status": "M",
+      "sha256": "976da929d2b386bebd14e6b57bb6ed4ffe3b7553e42a9d98576f6d55e4191835"
+    },
+    {
+      "path": "products/tui/tsconfig.test.json",
+      "status": "M",
+      "sha256": "bff2e21fb310eac58ea5f682119cb0d4e7f04169cee1dec9b9f7b84d8ef2a538"
+    }
+  ],
+  "patch": {
+    "bytes": 117490,
+    "sha256": "171802950d83b02c0bfc7d4f729bdf609ad9c06e623ad05d3ea3a6b1a62537da",
+    "gzipBytes": 27947,
+    "gzipSha256": "dd8f2b9e136eb6052b202a637d6e1915bb0550a4234882ba524e90a8176258c0"
+  },
+  "proof": {
+    "changedComponents": "160 tests/617 assertions/15 files passed",
+    "normalHook": "passed",
+    "sourceTypes": "failed,109 diagnostic lines; new adapters clear",
+    "correctedTestTypes": "failed,260 diagnostic lines; new focused fixtures clear",
+    "treeReplay": "independent temporary-index exact match"
+  },
+  "logs": {
+    "async-distribution-checkpoint-tests.log": {
+      "bytes": 21376,
+      "sha256": "43e2f49936bd00fdafbcfd53cb4854fb27b40a3f6094e77d30bd545cfaabc64a"
+    },
+    "async-distribution-checkpoint-commit.log": {
+      "bytes": 874,
+      "sha256": "0ae60cb0d2400fa5d745dc665fd3526f500119992512b79f4de84d4a35ddbe29"
+    },
+    "async-distribution-source-types.log": {
+      "bytes": 19546,
+      "sha256": "0b59665db917f27ae0b2030a06c2d634ca6abb35dc8e7368752d2755b7646993"
+    },
+    "async-distribution-test-types.log": {
+      "bytes": 68800,
+      "sha256": "9ec90b6bf67c0c4ca23d8f2fd9ef1c8021f77083271c07ebd564d59a8007f803"
+    },
+    "async-distribution-test-types-corrected.log": {
+      "bytes": 47748,
+      "sha256": "806b0a70bbefa9e9c0007bb1a2e9acb30849899cc1fbc738c9cba1e7ba052dbf"
+    }
+  },
+  "remaining": [
+    "PR52 repaired notification prerequisite and PR57 current-main review/integration",
+    "actual main launch/build/PTTY first turn",
+    "remaining asynchronous/legacy callers and fixture cleanup",
+    "all other explicit JEV/HOIST obligations"
+  ],
+  "notes": [
+    "Initial test-program391-line failure retained; corrected ambient config and four fixture errors produced260-line failure",
+    "No golden frames changed",
+    "Private workspace update/launcher65 tests/159 assertions included in changed batch",
+    "Memory backend review-order33 tests/205 assertions included in changed batch"
+  ]
+}
