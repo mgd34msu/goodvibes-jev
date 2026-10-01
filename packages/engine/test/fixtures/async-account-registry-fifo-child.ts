@@ -10,7 +10,7 @@ if (!mode || !storePath) throw new Error('Fixture mode and path required');
 const input = {
   serviceDomain: 'example.test', serviceUrl: 'https://example.test/signup',
   aliasAddress: 'fixture+account@example.test', purpose: 'POSIX nonblocking registry fixture',
-  credentialSecretKey: 'signup/fixture',
+  credentialSecretKey: 'test-ref',
 };
 const controller = new AbortController();
 let reads = 0;
