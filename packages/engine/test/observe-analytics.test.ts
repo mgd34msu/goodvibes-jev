@@ -104,7 +104,10 @@ async function seededLog(): Promise<SqliteDecisionLog> {
   await team.route(port, 'refund please', { site: 'router' });
   await team.route(port, 'crash', { site: 'router' });
   state.fail = true;
-  await expect(urgency.run(port, 'lost', { site: 'intake' })).rejects.toThrow('endpoint down');
+  await expect(urgency.run(port, 'lost', { site: 'intake' })).rejects.toMatchObject({ kind: 'unavailable', message: 'the judgment provider could not answer' });
+  const [failed] = log.query({ site: 'intake', status: 'failed' });
+  expect(failed).toMatchObject({ context: { battery: urgency.name, site: 'intake' }, error: { kind: 'unavailable', message: 'the judgment provider could not answer' } });
+  expect(JSON.stringify(failed)).not.toContain('endpoint down');
   state.fail = false;
   clock = DAY2 + 3_600_000;
   await urgency.checkFixtures(port);

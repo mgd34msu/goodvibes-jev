@@ -156,10 +156,15 @@ describe('the settings the port is built from', () => {
     const stateRoot = mkdtempSync(join(tmpdir(), 'judgment-state-'));
     const scope = createDisposalScope('test');
     try {
+      // Configuration inspection still names the missing setting. The recorded
+      // call retains its typed failure and site, never arbitrary upstream text.
+      await expect(judgmentConfigFromSettings(source({}, {}))).rejects.toThrow('TYPESAFE_API_KEY is not set');
       const { decisionLog } = composeJudgment({ ...source({}, {}), stateRoot, disposal: scope.registry });
-      await expect(readFailure(SPENT, 'test.no-key')).rejects.toThrow('TYPESAFE_API_KEY is not set');
+      await expect(readFailure(SPENT, 'test.no-key')).rejects.toMatchObject({ kind: 'invalid-request', message: 'the judgment request was invalid' });
       const [entry] = decisionLog.query({ site: 'test.no-key' });
-      expect(entry?.status).toBe('failed');
+      expect(entry).toMatchObject({ status: 'failed', context: { battery: 'engine.failure-reading', site: 'test.no-key' },
+        error: { kind: 'invalid-request', message: 'the judgment request was invalid' } });
+      expect(JSON.stringify(entry)).not.toContain('TYPESAFE_API_KEY is not set');
     } finally {
       scope.dispose();
       rmSync(stateRoot, { recursive: true, force: true });
