@@ -47,12 +47,13 @@ descendant sleeper. The remote async child outlives its test ceiling if merely
 waited out. Neither needs a separate loaded-host speed threshold. Existing descendant, pipe, retirement, read-only and
 failure-receipt regressions are preserved.
 
+The follow-on `daemon-wire-proof.md` records the now-adapted real WebSocket,
+SSE replay and hosted streaming session tests for the configured graph. Its
+fixture input boundary is explicit; it does not establish production default
+intake or binary readiness.
+
 ## Remaining acceptance from this upstream range
 
-- Real WebSocket wrong/missing-token rejection, exact SSE Last-Event-ID replay,
-  and a hosted streaming turn followed by detach/reattach with the scripted
-  assistant text in saved history. Existing boot/inbox tests do not establish
-  this new wire test's complete behavior.
 - Real executable dispatch of version, invalid commands, per-command help and
   first-word-only refusal, proving these invocations exit without serving.
   The daemon executable is still a migration gap.
