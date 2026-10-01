@@ -1,0 +1,38 @@
+{
+  "ordinary-postimages.patch": {
+    "bytes": 3379,
+    "sha256": "1d3f0e5f374e25d173661f70e75112ff46e7b15fd6d3dfbc32d129e7d7cae9eb"
+  },
+  "workspace-lock.patch": {
+    "bytes": 2048,
+    "sha256": "3a4278a8d129c4941dd9e7c4dd66c9b6dbaab27201c197ed62c7336a90312649"
+  },
+  "exact-tree-proof.log": {
+    "bytes": 226,
+    "sha256": "a0d87e3c05ac6bf7aba64739505e29ea94e86924217067646cddbec2a44672de"
+  },
+  "reconstruct.py": {
+    "bytes": 3414,
+    "sha256": "46b1ded01bbbf22168e0f46a0ed9c107f5c620a8de757d935fafdf9058ad8130"
+  },
+  "reconstruction-proof.log": {
+    "bytes": 219,
+    "sha256": "a1ce38ba0386ae169dd1c5cbd71905d61dd696633f00c463cefe8f58e0cc3612"
+  },
+  "migration-proof.md": {
+    "bytes": 2560,
+    "sha256": "e3572035c1c38e4324140833c7ffbea20c5f5e6a20181f907dbd86efb2bb51a0"
+  },
+  "store-index.ts": {
+    "bytes": 359,
+    "sha256": "58fd802f545b340e42aab237ce02824eaf882118cdfa8b36900ec3a71bd5eeb3"
+  },
+  "README.md": {
+    "bytes": 1746,
+    "sha256": "207a9bccd888aed51ed8fcce762deab040dd2260c021326dde82c98e6317ad57"
+  },
+  "manifest.json": {
+    "bytes": 2312,
+    "sha256": "758c5ea8eefaf30720f48cd082f055f481b623ec9fe8d738d3504fe1d68c8fcd"
+  }
+}

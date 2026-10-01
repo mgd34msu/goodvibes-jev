@@ -1,0 +1,61 @@
+{
+  "format": 1,
+  "kind": "source-only exact reconstruction; not runnable acceptance",
+  "publicBase": "9363f44d186e152f5c829aa106d5645ce3ed02a0",
+  "sourceCommit": "d08b6758d0a5dfd633759f9168d71167a743f055",
+  "sourceTree": "4fc2e2773d198093849dc96154e9a3014d1bcac4",
+  "upstream": {
+    "repo": "https://github.com/mgd34msu/goodvibes-tui",
+    "commit": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa"
+  },
+  "overlay": {
+    "repo": "https://github.com/mgd34msu/goodvibes-jev",
+    "commit": "a17c7cc6c3de2e057c4910865c020d6bfae377a2",
+    "archivePath": "docs/review/tui-planning/planning-caller-runtime-repro.tar.gz",
+    "sha256": "b6f241478035a4fcf6deb31300d2a0636f837092439c2eea2235d1b1b014cd84",
+    "appliedMembers": "overlay/products/tui/* only; engine-composition.patch is not applied"
+  },
+  "omittedUpstream": [
+    "bun.lock",
+    "tsconfig.tsbuildinfo"
+  ],
+  "untrackedIgnoredUpstream": [
+    ".goodvibes/.npmignore",
+    ".goodvibes/GOODVIBES.md",
+    ".goodvibes/agents/reviewer.md",
+    ".goodvibes/skills/add-provider/SKILL.md",
+    "docs/verification/local-verification.md"
+  ],
+  "retargeting": {
+    "extensions": [
+      ".ts",
+      ".tsx",
+      ".js",
+      ".mjs",
+      ".cjs",
+      ".json"
+    ],
+    "prefixes": {
+      "@pellux/goodvibes-sdk": "@goodvibes-jev/engine/sdk",
+      "@pellux/goodvibes-terminal-shell": "@goodvibes-jev/engine/terminal-shell",
+      "@pellux/goodvibes-daemon-sdk": "@goodvibes-jev/engine/daemon-sdk"
+    },
+    "boundary": "preceded by single/double quote and followed by slash or single/double quote",
+    "changedFiles": 676
+  },
+  "productFiles": 1574,
+  "orderedProductModePathSha256Digest": "311842df862ba125723f9ac00d1fea52170b0c79a915c0eefdb535d06debcbfc",
+  "proof": {
+    "renderer": "79 passing tests / 550 assertions",
+    "startup": "failed module loading; obsolete service imports remain",
+    "types": "not run for this checkpoint",
+    "binaryPtyFirstTurn": "not established",
+    "commitHook": "normal credential scope hook passed"
+  },
+  "limits": [
+    "JEV/HOIST source obligations remain open",
+    "Archived planning caller depends on held PR57 store contract absent from public main base",
+    "No PR56-dependent behavior or shared source is integrated",
+    "All later working-tree edits excluded from this exact checkpoint"
+  ]
+}

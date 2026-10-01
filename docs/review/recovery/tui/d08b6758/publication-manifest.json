@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "status": "UNMERGEABLE_EVIDENCE_ONLY",
+  "repository": "mgd34msu/goodvibes-jev",
+  "evidenceBranch": "dot/evidence-tui-source-recovery",
+  "evidenceParent": "9363f44d186e152f5c829aa106d5645ce3ed02a0",
+  "evidenceParentTree": "4e0f24d474b588958ab7ac61037f7910071dc907",
+  "runtimePathsUnchanged": true,
+  "runtimeIntegrationAuthorized": false,
+  "mergeAuthorized": false,
+  "sourceCommit": "d08b6758d0a5dfd633759f9168d71167a743f055",
+  "sourceTree": "4fc2e2773d198093849dc96154e9a3014d1bcac4",
+  "sourceManifestPath": "source/manifest.json",
+  "sourceManifestSha256": "758c5ea8eefaf30720f48cd082f055f481b623ec9fe8d738d3504fe1d68c8fcd",
+  "publicInputVerification": {
+    "mainCommit": "9363f44d186e152f5c829aa106d5645ce3ed02a0",
+    "mainTree": "4e0f24d474b588958ab7ac61037f7910071dc907",
+    "upstreamCommit": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+    "upstreamTree": "c056a93af29bc9026290c0400cb74264d4f21cf5",
+    "archiveCommit": "a17c7cc6c3de2e057c4910865c020d6bfae377a2",
+    "archiveCommitTree": "cbac0d95539ac55abf7e383e06d92a8ed702b3e3",
+    "archiveGitBlob": "a990c96a1f630cd59d6a56c5db36f2eab2e368dd",
+    "archiveSha256": "b6f241478035a4fcf6deb31300d2a0636f837092439c2eea2235d1b1b014cd84",
+    "verifiedPublicGitTreesThroughGitHub": true,
+    "archiveMethod": "Read tracked archive blob from the locally matching public commit tree and verified its SHA-256; only product overlay members are consumed by the reconstruction recipe"
+  },
+  "reconstruction": {
+    "productFiles": 1574,
+    "candidateChangedPaths": 1575,
+    "reconstructedTree": "4fc2e2773d198093849dc96154e9a3014d1bcac4",
+    "exactTreeMatch": true,
+    "sharedRuntimePathsUnchanged": true,
+    "sdkCredentialScannerInputsIdenticalToPublicBase": true,
+    "transferredArtifactsSecretPatternScan": "passed",
+    "patterns": [
+      "private_key",
+      "github_token",
+      "aws_access_key",
+      "slack_token",
+      "openai_key",
+      "credential_url"
+    ],
+    "ignoredUpstreamFilesExcluded": [
+      ".goodvibes/.npmignore",
+      ".goodvibes/GOODVIBES.md",
+      ".goodvibes/agents/reviewer.md",
+      ".goodvibes/skills/add-provider/SKILL.md",
+      "docs/verification/local-verification.md"
+    ]
+  },
+  "packet": {
+    "sourceFiles": 9,
+    "sourceBytes": 16263,
+    "hashIndexIncluded": true,
+    "scratchIndexExcluded": true,
+    "sourceHashIndex": "source/packet-hashes.json"
+  },
+  "proof": {
+    "renderer": {
+      "status": "passed",
+      "tests": 79,
+      "assertions": 550,
+      "scope": "Guarded surface-kit, shell-surface and runtime-theme behavior only; combined startup run did not pass"
+    },
+    "startup": {
+      "status": "failed",
+      "reason": "Module loading stops at retired createFixWorkstreamRunner service import"
+    },
+    "types": {
+      "status": "not_run_for_this_checkpoint"
+    },
+    "binaryPtyFirstTurn": {
+      "status": "not_established"
+    },
+    "normalCommitHook": {
+      "status": "passed",
+      "scope": "Credential-scope only",
+      "engineSdkFilesChecked": 2633
+    },
+    "logReceipts": {
+      "first-render-startup-diagnostic.log": "0f8d2e4ab4f10465aae6c09e4f02a0703bf18acd153df837d54ce3aab3af17b5",
+      "startup-store-public-factory.log": "5c7ecf0141030ff10329a01717f368db375b6ba3902e809387ff8683b4ae2400",
+      "source-recovery-commit.log": "a89080184ddca8a2c20ff4491b1f8479432659c29a96a7870be4390bafead731"
+    }
+  },
+  "credentialPreflight": {
+    "transferredArtifactsSecretPatternScan": "passed",
+    "findings": 0,
+    "repositoryCredentialScopeCheck": {
+      "status": "passed",
+      "sdkFilesChecked": 2633,
+      "logSha256": "bc8db2d3104738cdb5c65f4647e9044b1be5f650ccc66215785ac6c0a477f98c",
+      "method": "Fresh isolated exact SDK scanner inputs; candidate SDK/scripts/config inputs verified byte-identical to public main",
+      "scope": "SDK credential classification only; not full TUI product coverage"
+    },
+    "privateFilesAndInstalledDependenciesExcluded": true
+  },
+  "outstandingGates": [
+    "JEV/HOIST source obligations",
+    "Runtime composition and actual startup acceptance",
+    "Full source/test type checks",
+    "Compiled binary, PTY and first-turn proof",
+    "Independent review and full repository/product CI",
+    "Reconciliation and caller acceptance for the separately held PR57 store contract absent from this public main base",
+    "Authorized runtime integration and release acceptance"
+  ],
+  "limits": [
+    "Five ignored upstream files were present in the initial materialized directory but absent from this Git checkpoint; they remain explicitly excluded in source/manifest.json",
+    "The pinned upstream standalone lock and generated TypeScript cache are omitted separately",
+    "Archived engine-composition.patch is not consumed",
+    "All subsequent working-tree edits and later proof are excluded",
+    "No working-product or full migration acceptance is claimed"
+  ]
+}

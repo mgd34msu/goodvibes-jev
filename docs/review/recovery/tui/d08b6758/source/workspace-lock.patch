@@ -1,0 +1,47 @@
+diff --git a/bun.lock b/bun.lock
+index 95a354e..a025eb7 100644
+--- a/bun.lock
++++ b/bun.lock
+@@ -108,6 +108,24 @@
+         "@goodvibes-jev/judgment": "workspace:*",
+       },
+     },
++    "products/tui": {
++      "name": "@goodvibes-jev/tui",
++      "version": "2.1.0",
++      "bin": {
++        "goodvibes": "bin/goodvibes",
++      },
++      "dependencies": {
++        "@goodvibes-jev/daemon": "workspace:*",
++        "@goodvibes-jev/engine": "workspace:*",
++        "fuse.js": "^7.1.0",
++        "onnxruntime-web": "^1.27.0",
++      },
++      "devDependencies": {
++        "@goodvibes-jev/judgment": "workspace:*",
++        "@types/bun": "1.3.14",
++        "typescript": "6.0.3",
++      },
++    },
+     "products/webui": {
+       "name": "@goodvibes-jev/webui",
+       "version": "2.0.0",
+@@ -413,6 +431,8 @@
+ 
+     "@goodvibes-jev/judgment": ["@goodvibes-jev/judgment@workspace:packages/judgment"],
+ 
++    "@goodvibes-jev/tui": ["@goodvibes-jev/tui@workspace:products/tui"],
++
+     "@goodvibes-jev/webui": ["@goodvibes-jev/webui@workspace:products/webui"],
+ 
+     "@happy-dom/global-registrator": ["@happy-dom/global-registrator@20.10.6", "", { "dependencies": { "@types/node": ">=20.0.0", "happy-dom": "^20.10.6" } }, "sha512-Nu/IjRkkNxmeG2ywWsyJSO4d1BrWTqVzxCPL+gXj0b97klhmjd6wLzt6Bx/laNpkZ3WLW7zNCqmtMIbIlahqug=="],
+@@ -1247,6 +1267,8 @@
+ 
+     "functions-have-names": ["functions-have-names@1.2.3", "", {}, "sha512-xckBUXyTIqT97tq2x2AMb+g163b5JFysYk0x4qxNFwbfQkmNZoiRHb6sPzI9/QV33WeuvVYBUIiD4NzNIyqaRQ=="],
+ 
++    "fuse.js": ["fuse.js@7.5.0", "", {}, "sha512-sQtrEfA+ez/3G0cCZecF70oqpCRttCexYUG4mUrtWL49ULUzUyxokt5kyqwtKzj1270RaKih+hcP3qLcumccow=="],
++
+     "fuzzy-search": ["fuzzy-search@3.2.1", "", {}, "sha512-vAcPiyomt1ioKAsAL2uxSABHJ4Ju/e4UeDM+g1OlR0vV4YhLGMNsdLNvZTpEDY4JCSt0E4hASCNM5t2ETtsbyg=="],
+ 
+     "gaxios": ["gaxios@7.3.1", "", { "dependencies": { "extend": "^3.0.2", "https-proxy-agent": "^7.0.1", "node-fetch": "^3.3.2" } }, "sha512-kB3rzJV7d9juLZh8/56QTXCwQfxyhdOMdyYk1HdQKFtF8TJTDTZQJtixWIwXdE9Jji91mC41DUNpjleo4L4eAQ=="],
