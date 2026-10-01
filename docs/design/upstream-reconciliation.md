@@ -56,7 +56,9 @@ Daemon setup sources are unchanged across the new target. Existing reviewed
 setup fixes can carry forward, while composition and SDK integration continue.
 The applied daemon migration record now uses `254699bf`. Its reviewed ledger
 accounts for seven added, seven deleted and 27 modified paths, while preserving
-86 valid existing mappings. Real wire/streaming behavior and channel tool
+86 valid existing mappings and adding three mappings to already-landed wire,
+version and adapted contract-lifecycle tests (89 total). The latter preserves
+shutdown intent, not a legacy WRFC implementation. Real wire/streaming behavior and channel tool
 authority have separate landed evidence. Six executable/release/packaging
 acceptance items remain deferred; this accounting advance is not full migration.
 

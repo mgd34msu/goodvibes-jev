@@ -393,9 +393,9 @@ These rows account for newly tracked target files. Deferred acceptance remains o
 | `daemon/scripts/release-prepare.ts` | PORT | Version-stamp/changelog generation must be reconciled with the monorepo release model at product packaging; no standalone release side effects added now. |
 | `daemon/src/test/daemon/cli-dispatch.test.ts` | PORT | The actual daemon executable is still absent. Preserve the new acceptance: version, unknown command exit2, command help and first-word-only command refusal without foreground serving. |
 | `daemon/src/test/daemon/daemon-wire.test.ts` | PORT | Adapted to products/daemon/src/test/daemon/daemon-wire.test.ts against the real configured graph: wrong/missing-token WebSocket refusal, exact Last-Event-ID replay, and hosted streaming turn/detach/reattach with saved reply text. Inbox, metadata and Jev inputs are explicit offline fixtures; production default intake and binary proof remain separate. |
-| `daemon/src/test/runtime/wrfc-fix-engine-disposal.test.ts` | PORT | Adapt lifecycle intent to real Jev contract owner: held reading cancelled, delayed store flushed, post-close agent admission refused. No WRFC surface restored. |
+| `daemon/src/test/runtime/wrfc-fix-engine-disposal.test.ts` | PORT | Mapped to `products/daemon/src/test/runtime/daemon-fixture-boot.test.ts`: adapt lifecycle intent to the real Jev contract owner, including held reading cancellation, delayed store flush and post-close admission refusal. This does not restore or claim implementation equivalence with the WRFC engine. |
 | `daemon/src/test/scripts/release-prepare.test.ts` | PORT | Test actual stamping behavior with the future chosen product release implementation, not the unused upstream script. |
-| `daemon/src/test/version.test.ts` | PORT | Existing product cli/version-identity tests already import copied real version source beside own/foreign manifests and check rendered package version. |
+| `daemon/src/test/version.test.ts` | PORT | Mapped to `products/daemon/src/test/cli/version-identity.test.ts`: imports copied real version source beside own/foreign manifests and checks rendered package version. |
 
 ## Retired upstream paths
 

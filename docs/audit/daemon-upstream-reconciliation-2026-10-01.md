@@ -5,7 +5,10 @@ through `254699bf5d834cdca41436211ada1ae32bf89258` (four commits, 41 changed
 files). The companion JSON records both full tree IDs, every changed file's
 old/new Git blob and its individual ruling. The applied source-accounting pin
 now advances to the reviewed target with seven added, seven retired and 27
-updated inventory rows. All 86 existing mappings remain valid. This is a partial
+updated inventory rows. All 86 existing mappings remain valid; three added
+mappings cover the landed wire, version and adapted contract-lifecycle tests
+(89 total). The contract test preserves lifecycle intent rather than restoring
+the removed WRFC engine. This is a partial
 migration: the six explicit executable/release deferrals do not count as completed ports.
 
 The four upstream commits update dependencies to SDK 2.1.0, own the WRFC fix

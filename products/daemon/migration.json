@@ -611,6 +611,27 @@
       "targets": [
         "products/daemon/src/test/daemon/provision-wake-model.test.ts"
       ]
+    },
+    {
+      "source": "src/test/daemon/daemon-wire.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/daemon/daemon-wire.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/runtime/wrfc-fix-engine-disposal.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/runtime/daemon-fixture-boot.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/version.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/cli/version-identity.test.ts"
+      ]
     }
   ],
   "remaining": "The async runtime graph boots only with an explicit inbox factory. Built-in intake providers and triage, daemon executable/entrypoint and command parity, scripts, original contract-test scaffolding, packaging and other unmapped source modules remain pending. Engine hoists are tracked in docs/inventory/daemon.md. This partial workspace does not satisfy migration:complete. Source accounting now includes all 41 changes through 254699bf; this is a partial migration, not executable/release parity. Six release/entrypoint/packaging acceptance items remain deferred in docs/audit/daemon-upstream-reconciliation-2026-10-01.json."

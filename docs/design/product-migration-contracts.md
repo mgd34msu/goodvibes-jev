@@ -34,7 +34,10 @@ The original WebUI inventory described `9856cba`. An earlier metadata change
 named `5050483`, which has the same paths but different content in six files.
 Both remain documented history. The applied WebUI inventory and partial workspace
 now use the redesigned `dadf577` tree. Daemon accounting now uses `254699bf` after
-review of every changed Git blob; its 86 existing mappings remain valid. Neither
+review of every changed Git blob. Its 86 existing mappings remain valid, and
+three added mappings identify the already-landed wire, version and adapted
+contract-lifecycle tests (89 total). The lifecycle mapping preserves shutdown
+intent without restoring the removed WRFC engine. Neither
 advance marks remaining module mappings or behavioral proof complete. The daemon
 ledger retains six explicit executable/release/packaging deferrals.
 
