@@ -1,3 +1,4 @@
+import { resolveSystemPrompt } from './orchestrator-system-prompt.js';
 import type { ConversationManager } from './conversation.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { ModelDefinition, ProviderRegistry } from '../providers/registry.js';
@@ -118,7 +119,8 @@ type AutoCompactionDeps = {
   planManager: Pick<ExecutionPlanManager, 'getActive'> | null;
   sessionId: string;
   /** Returns the standing system instruction chain to re-inject at compaction. */
-  getSystemPrompt?: (() => string) | undefined;
+  getSystemPrompt?: ((signal?: AbortSignal) => string | Promise<string>) | undefined;
+  signal?: AbortSignal | undefined;
   /** Returns the active skill's frontmatter to re-inject at compaction, if any. */
   getActiveSkillFrontmatter?: (() => string | null | undefined) | undefined;
   /**
@@ -128,7 +130,7 @@ type AutoCompactionDeps = {
   getCompactionStrategy?: (() => CompactionStrategyChoice) | undefined;
 };
 
-function buildAutoCompactionContext(
+async function buildAutoCompactionContext(
   deps: AutoCompactionDeps,
   params: {
     messages: CompactionContext['messages'];
@@ -136,8 +138,12 @@ function buildAutoCompactionContext(
     extractionModelId: string;
     extractionProvider?: string;
   },
-): CompactionContext {
-  const instructionChain = deps.getSystemPrompt?.().trim() || undefined;
+): Promise<CompactionContext> {
+  deps.signal?.throwIfAborted();
+  const instructionChain = deps.getSystemPrompt
+    ? (await resolveSystemPrompt(deps.getSystemPrompt, deps.signal)).trim() || undefined
+    : undefined;
+  deps.signal?.throwIfAborted();
   const activeSkillFrontmatter = deps.getActiveSkillFrontmatter?.()?.trim() || undefined;
   return {
     messages: params.messages,
@@ -176,7 +182,8 @@ export type PreflightDeps = {
   setIsCompacting: (value: boolean) => void;
   modelContextWarning?: ModelContextWarning | null | undefined;
   clearModelContextWarning?: (() => void) | undefined;
-  getSystemPrompt?: (() => string) | undefined;
+  getSystemPrompt?: ((signal?: AbortSignal) => string | Promise<string>) | undefined;
+  signal?: AbortSignal | undefined;
   getActiveSkillFrontmatter?: (() => string | null | undefined) | undefined;
   getCompactionStrategy?: (() => CompactionStrategyChoice) | undefined;
   /** The session's CompactionManager; each compaction's lifecycle runs through it. */
@@ -188,6 +195,7 @@ export async function checkContextWindowPreflight(
   turnId: string,
   model: ModelDefinition,
 ): Promise<'ok' | 'compacted' | 'error'> {
+  deps.signal?.throwIfAborted();
   const contextWindow = deps.providerRegistry.getContextWindowForModel(model);
   const tier = normalizeCatalogTier(model.tier);
 
@@ -261,7 +269,7 @@ export async function checkContextWindowPreflight(
     }
 
     try {
-      const preflightCtx = buildAutoCompactionContext(deps, {
+      const preflightCtx = await buildAutoCompactionContext(deps, {
         messages,
         contextWindow,
         extractionModelId: model.registryKey,
@@ -278,8 +286,12 @@ export async function checkContextWindowPreflight(
           threshold: preflightDecision.thresholdTokens,
         },
         deps.conversation,
-        () => deps.conversation.compact(deps.providerRegistry, model.registryKey, 'auto', model.provider, preflightCtx),
+        () => {
+          deps.signal?.throwIfAborted();
+          return deps.conversation.compact(deps.providerRegistry, model.registryKey, 'auto', model.provider, preflightCtx);
+        },
       );
+      deps.signal?.throwIfAborted();
       if (preflightReceipt) emitReceipt(deps, turnId, preflightReceipt);
       deps.conversation.addSystemMessage('Context compacted. Retrying request...');
       if (deps.hookDispatcher) {
@@ -304,6 +316,7 @@ export async function checkContextWindowPreflight(
         }).catch((err: unknown) => { logger.warn('Post:compact:preflight hook error', { error: summarizeError(err) }); });
       }
     } catch (compactErr) {
+      deps.signal?.throwIfAborted();
       const msg = compactErr instanceof Error ? compactErr.message : String(compactErr);
       logger.error('Orchestrator: pre-flight compact failed', { error: msg });
       emitCompactionFailureReceipt(deps, turnId, compactErr, 'auto', 'structured');
@@ -330,6 +343,7 @@ export async function checkContextWindowPreflight(
           },
         }).catch((err: unknown) => { logger.warn('Fail:compact:preflight hook error', { error: summarizeError(err) }); });
       }
+      return 'error';
     } finally {
       deps.setIsCompacting(false);
     }
@@ -419,7 +433,8 @@ export type PostTurnContextDeps = {
   setLastWarningBracket: (value: number) => void;
   modelContextWarning?: ModelContextWarning | null | undefined;
   clearModelContextWarning?: (() => void) | undefined;
-  getSystemPrompt?: (() => string) | undefined;
+  getSystemPrompt?: ((signal?: AbortSignal) => string | Promise<string>) | undefined;
+  signal?: AbortSignal | undefined;
   getActiveSkillFrontmatter?: (() => string | null | undefined) | undefined;
   /** The session's CompactionManager; each compaction's lifecycle runs through it. */
   compactionManager?: CompactionLifecycleOwner | null | undefined;
@@ -430,6 +445,7 @@ export async function handlePostTurnContextMaintenance(
   turnId: string,
   totalTokens: number,
 ): Promise<void> {
+  deps.signal?.throwIfAborted();
   const currentModel = deps.providerRegistry.getCurrentModel();
   const maxTokens = deps.providerRegistry.getContextWindowForModel(currentModel);
   if (maxTokens <= 0) return;
@@ -506,6 +522,7 @@ export async function handlePostTurnContextMaintenance(
     }
 
     try {
+      deps.signal?.throwIfAborted();
       const currentMsgs = deps.conversation.getMessagesForLLM();
       const useSmallWindow = maxTokens < SMALL_WINDOW_THRESHOLD;
       const lifecycleRun = {
@@ -526,6 +543,7 @@ export async function handlePostTurnContextMaintenance(
             lifecycleRun,
             deps.conversation,
             async (): Promise<CompactionReceipt> => {
+              deps.signal?.throwIfAborted();
               const compactedMsgs = compactSmallWindow(currentMsgs, 10);
               deps.conversation.replaceMessagesForLLM(compactedMsgs);
               return {
@@ -546,6 +564,7 @@ export async function handlePostTurnContextMaintenance(
           deps.requestRender();
         } catch (err: unknown) {
           deps.setIsCompacting(false);
+          deps.signal?.throwIfAborted();
           const msg = summarizeError(err);
           logger.error('Orchestrator: small-window auto-compact failed', { error: msg });
           emitCompactionFailureReceipt(deps, turnId, err, 'auto', 'small-window');
@@ -553,24 +572,28 @@ export async function handlePostTurnContextMaintenance(
           deps.requestRender();
         }
       } else if (!skipAutoCompact) {
-        const compactionCtx = buildAutoCompactionContext(deps, {
+        const compactionCtx = await buildAutoCompactionContext(deps, {
           messages: currentMsgs,
           contextWindow: maxTokens,
           extractionModelId: currentModel.registryKey,
           extractionProvider: currentModel.provider,
         });
-        void routeConversationCompaction(
+        await routeConversationCompaction(
           deps.compactionManager,
           lifecycleRun,
           deps.conversation,
-          () => deps.conversation.compact(
-            deps.providerRegistry,
-            currentModel.registryKey,
-            'auto',
-            currentModel.provider,
-            compactionCtx,
-          ),
+          () => {
+            deps.signal?.throwIfAborted();
+            return deps.conversation.compact(
+              deps.providerRegistry,
+              currentModel.registryKey,
+              'auto',
+              currentModel.provider,
+              compactionCtx,
+            );
+          },
         ).then((receipt) => {
+          deps.signal?.throwIfAborted();
           deps.setIsCompacting(false);
           deps.setLastWarningBracket(0);
           if (receipt) emitReceipt(deps, turnId, receipt);
@@ -609,6 +632,7 @@ export async function handlePostTurnContextMaintenance(
             }).catch((err: unknown) => { logger.warn('Post:compact:auto hook error', { error: summarizeError(err) }); });
           }
         }).catch((err: unknown) => {
+          deps.signal?.throwIfAborted();
           deps.setIsCompacting(false);
           const msg = summarizeError(err);
           logger.error('Orchestrator: auto-compact failed', { error: msg });
@@ -641,6 +665,7 @@ export async function handlePostTurnContextMaintenance(
       }
     } catch (compactErr: unknown) {
       deps.setIsCompacting(false);
+      deps.signal?.throwIfAborted();
       logger.error('Auto-compact failed', { error: String(compactErr) });
       emitCompactionFailureReceipt(deps, turnId, compactErr, 'auto', 'structured');
       deps.conversation.addSystemMessage(`[Compact] Auto-compaction failed: ${String(compactErr)}`);

@@ -1,17 +1,14 @@
 /**
  * recall-snapshot.ts, the sync-recall seam for the memory spine.
  *
- * THE PROBLEM. Per-turn memory recall wants to inject the recall-eligible records
- * into the system prompt. But the prompt builder is SYNCHRONOUS
- * (`Orchestrator.getSystemPrompt()` returns a string, not a promise), while a wire
- * client's memory reads are ASYNCHRONOUS (a fetch to the adopted daemon). A sync
- * function cannot await a wire read, so it cannot pull fresh memory over the wire
- * inline.
+ * Per-turn memory recall injects recall-eligible records into the system prompt.
+ * Wire reads are asynchronous, while consumers of this snapshot may still need
+ * synchronous access. Orchestrator prompt callbacks may now await a refresh
+ * before reading the snapshot; synchronous consumers retain the freshness note.
  *
  * THE DESIGN (cached snapshot, freshness-stamped, honest staleness note). Rather
- * than make the whole prompt path async (a large, cross-consumer refactor) or open
- * the store file from a wire client (which would break the single-writer invariant),
- * the spine maintains a CACHED recall snapshot:
+ * than open the store file from a wire client (which would break the single-writer
+ * invariant), the spine maintains a CACHED recall snapshot:
  *
  *   1. an ASYNC pre-turn hook calls `MemorySpineClient.refreshRecallSnapshot()`,
  *      this awaits the wire (or local) honest recall search and stamps the result
