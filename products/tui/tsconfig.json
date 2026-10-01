@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "esModuleInterop": true,
+    "noEmit": true,
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    },
+    "customConditions": [
+      "bun"
+    ]
+  },
+  "include": [
+    "src",
+    "examples/**/*.ts",
+    "scripts/**/*.ts",
+    "../../packages/engine/sdk/src/platform/types/*.d.ts"
+  ],
+  "exclude": [
+    "src/test",
+    "src/**/*.test.ts"
+  ]
+}

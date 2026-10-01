@@ -1,0 +1,440 @@
+import { activeTokens } from '../renderer/theme.ts';
+import { getConfigSnapshot } from '@goodvibes-jev/engine/sdk/platform/config';
+import {
+  describeServingEffort,
+  publishActiveEffortOptions,
+  resolveRequestedEffortForServingModel,
+  toEffortModel,
+} from '../providers/reasoning-effort-surface.ts';
+import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import type { AdaptivePlanner } from '@goodvibes-jev/engine/sdk/platform/core';
+import type { ConversationManager } from '../core/conversation';
+import type { KnowledgeApi } from '@goodvibes-jev/engine/sdk/platform/knowledge';
+import type { MemorySpineClient } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
+import type { HookApi } from '@goodvibes-jev/engine/sdk/platform/hooks';
+import type { McpApi } from '@goodvibes-jev/engine/sdk/platform/mcp';
+import type { ProviderApi } from '@goodvibes-jev/engine/sdk/platform/providers';
+import type { OpsApi } from '@/runtime/index.ts';
+import type { FeatureFlagManager } from '@/runtime/index.ts';
+import type { MutableRuntimeState } from '@/runtime/index.ts';
+import type { ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
+import type { CommandContext } from '../input/command-registry.ts';
+import type { KeybindingsManager } from '../input/keybindings.ts';
+import type { PermissionRequestHandler } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import type { ForensicsRegistry } from '@/runtime/index.ts';
+import type { PolicyRuntimeState } from '@/runtime/index.ts';
+import type { CodeIndexStore, FileUndoManager } from '@goodvibes-jev/engine/sdk/platform/state';
+import type { WorkspaceCheckpointManager } from '@goodvibes-jev/engine/sdk/platform/workspace';
+import type { GatewayMethodCatalog } from '@goodvibes-jev/engine/sdk/platform/control-plane';
+import type { WorkspaceTrustManager } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
+import type { WorkspaceRegistrationManager } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
+import type { McpRegistry } from '@goodvibes-jev/engine/sdk/platform/mcp';
+import type { MemoryRegistry } from '@goodvibes-jev/engine/sdk/platform/state';
+import type { IntegrationHelperService } from '@/runtime/index.ts';
+import type { KnowledgeService } from '@goodvibes-jev/engine/sdk/platform/knowledge';
+import type { PluginManager } from '@goodvibes-jev/engine/sdk/platform/plugins';
+import type { HookWorkbench } from '@goodvibes-jev/engine/sdk/platform/hooks';
+import type { WorktreeRegistry } from '@/runtime/index.ts';
+import type { SandboxSessionRegistry } from '@/runtime/index.ts';
+import type { UiReadModels } from './ui-read-models.ts';
+import type { ShellPathService, SessionSurface } from '@/runtime/index.ts';
+import type {
+  ShellAgentManagerService,
+  ShellAutomationManagerRuntimeService,
+  ShellModeManagerService,
+  ShellPlanManagerService,
+  ShellSessionOrchestrationService,
+  RemoteCommandService,
+  PlanRuntimeService,
+} from '@/runtime/index.ts';
+import type { BootstrapCommandShellServices } from '@/runtime/index.ts';
+import type { OperatorClient } from '@/runtime/index.ts';
+import type { PeerClient } from '@/runtime/index.ts';
+import type { DirectTransport } from '@/runtime/index.ts';
+import type { VoiceProviderRegistry, VoiceService } from '@goodvibes-jev/engine/sdk/platform/voice';
+import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
+
+export type BootstrapCommandSessionSection = CommandContext['session'];
+export type BootstrapCommandProviderSection = CommandContext['provider'];
+export type BootstrapCommandWorkspaceSection = CommandContext['workspace'];
+export type BootstrapCommandPlatformSection = CommandContext['platform'];
+export type BootstrapCommandOpsSection = CommandContext['ops'];
+export type BootstrapCommandExtensionSection = CommandContext['extensions'];
+export type BootstrapCommandClientSection = NonNullable<CommandContext['clients']>;
+
+export interface BootstrapCommandActionOptions {
+  readonly providerRegistry: ProviderRegistry;
+  readonly configManager: ConfigManager;
+  readonly conversation: ConversationManager;
+  readonly runtime: MutableRuntimeState;
+  readonly requestRender: () => void;
+  readonly loadSystemPrompt: () => string;
+  readonly activatePlan: (planId: string, task: string) => void;
+  readonly requestPermission: PermissionRequestHandler;
+  readonly completeModelSelectionSideEffect?: () => void;
+  readonly localUserAuthManager?: import('@goodvibes-jev/engine/sdk/platform/security').UserAuthManager;
+}
+
+export interface BootstrapCommandSectionOptions {
+  readonly configManager: ConfigManager;
+  readonly pairingTokens?: import('@goodvibes-jev/engine/sdk/platform/pairing').PairingTokenManager;
+  readonly featureFlagManager?: FeatureFlagManager;
+  readonly providerRegistry: ProviderRegistry;
+  readonly conversation: ConversationManager;
+  readonly runtime: MutableRuntimeState;
+  readonly keybindingsManager?: KeybindingsManager;
+  readonly requestRender: () => void;
+  readonly requestPermission: PermissionRequestHandler;
+  readonly toolRegistry: ToolRegistry;
+  readonly mcpRegistry: McpRegistry;
+  readonly voiceProviderRegistry?: VoiceProviderRegistry;
+  readonly voiceService?: VoiceService;
+  /** Direct-command consumers (`/search`, `/image`) of already-constructed RuntimeServices. */
+  readonly webSearchService?: import('@goodvibes-jev/engine/sdk/platform/web-search').WebSearchService;
+  readonly mediaProviders?: import('@goodvibes-jev/engine/sdk/platform/media').MediaProviderRegistry;
+  readonly artifactStore?: import('@goodvibes-jev/engine/sdk/platform/artifacts').ArtifactStore;
+  readonly forensicsRegistry: ForensicsRegistry;
+  readonly policyRuntimeState: PolicyRuntimeState;
+  readonly readModels: UiReadModels;
+  readonly shellPaths: ShellPathService;
+  /** The runtime's declare-once session-storage handle (runtime/services.ts). */
+  readonly surface: SessionSurface;
+  readonly fileUndoManager: FileUndoManager;
+  readonly workspaceCheckpointManager?: WorkspaceCheckpointManager;
+  readonly gatewayMethods?: GatewayMethodCatalog;
+  readonly workspaceTrustManager?: WorkspaceTrustManager;
+  readonly workspaceRegistrationManager?: WorkspaceRegistrationManager;
+  readonly memoryRegistry?: MemoryRegistry;
+  readonly integrationHelpers?: IntegrationHelperService;
+  readonly knowledgeService?: KnowledgeService;
+  readonly projectPlanningService?: import('@goodvibes-jev/engine/sdk/platform/knowledge').ProjectPlanningService;
+  readonly projectPlanningProjectId?: string;
+  readonly workPlanStore?: import('@goodvibes-jev/engine/sdk/platform/workflow').WorkPlanStore;
+  readonly pluginManager?: PluginManager;
+  readonly hookWorkbench?: HookWorkbench;
+  readonly providerOptimizer?: import('@goodvibes-jev/engine/sdk/platform/providers').ProviderOptimizer;
+  readonly sessionManager?: import('@goodvibes-jev/engine/sdk/platform/sessions').SessionManager;
+  readonly profileManager?: import('@goodvibes-jev/engine/sdk/platform/profiles').ProfileManager;
+  readonly bookmarkManager?: import('@goodvibes-jev/engine/sdk/platform/bookmarks').BookmarkManager;
+  readonly favoritesStore?: import('@goodvibes-jev/engine/sdk/platform/providers').FavoritesStore;
+  readonly benchmarkStore?: import('@goodvibes-jev/engine/sdk/platform/providers').BenchmarkStore;
+  readonly subscriptionManager?: import('@goodvibes-jev/engine/sdk/platform/config').SubscriptionManager;
+  readonly secretsManager?: import('../config/secrets.ts').SecretsManager;
+  readonly serviceRegistry?: import('@goodvibes-jev/engine/sdk/platform/config').ServiceRegistry;
+  readonly localUserAuthManager?: import('@goodvibes-jev/engine/sdk/platform/security').UserAuthManager;
+  readonly tokenAuditor?: import('@goodvibes-jev/engine/sdk/platform/security').ApiTokenAuditor;
+  readonly replayEngine?: import('@goodvibes-jev/engine/sdk/platform/core').DeterministicReplayEngine;
+  readonly webhookNotifier?: import('@goodvibes-jev/engine/sdk/platform/integrations').WebhookNotifier;
+  readonly sessionMemoryStore?: import('@goodvibes-jev/engine/sdk/platform/core').SessionMemoryStore;
+  readonly sessionLineageTracker?: import('@goodvibes-jev/engine/sdk/platform/core').SessionLineageTracker;
+  readonly wrfcController?: import('@goodvibes-jev/engine/sdk/platform/agents').WrfcController;
+  readonly changeTracker?: import('@goodvibes-jev/engine/sdk/platform/sessions').SessionChangeTracker;
+  readonly hydrateSessionUsage?: () => void;
+  readonly workstreamEngine?: import('@goodvibes-jev/engine/sdk/platform/orchestration').WorkstreamCommandService;
+  readonly codeIndexStore?: CodeIndexStore;
+  readonly codeIndexReindexScheduler?: import('@goodvibes-jev/engine/sdk/platform/state').CodeIndexReindexScheduler;
+  readonly isPassiveCodeInjectionFlagEnabled?: () => boolean;
+  readonly getMainSessionTurnInjections?: () => readonly import('../renderer/turn-injection.ts').TurnInjectionEntry[];
+  readonly agentManager?: ShellAgentManagerService;
+  readonly modeManager?: ShellModeManagerService;
+  readonly automationManager?: ShellAutomationManagerRuntimeService;
+  readonly planManager?: ShellPlanManagerService;
+  readonly adaptivePlanner?: AdaptivePlanner;
+  readonly sessionOrchestration?: ShellSessionOrchestrationService;
+  readonly remoteRuntime?: RemoteCommandService;
+  readonly planRuntime?: PlanRuntimeService;
+  readonly operatorClient?: OperatorClient;
+  readonly userPermissionRuleStore?: import('@goodvibes-jev/engine/sdk/platform/permissions').UserPermissionRuleStore;
+  readonly peerClient?: PeerClient;
+  readonly providerApi?: ProviderApi;
+  readonly knowledgeApi?: KnowledgeApi;
+  readonly memorySpine?: MemorySpineClient;
+  readonly hookApi?: HookApi;
+  readonly mcpApi?: McpApi;
+  readonly opsApi?: OpsApi;
+  readonly directTransport?: DirectTransport;
+  readonly worktreeRegistry: WorktreeRegistry;
+  readonly sandboxSessionRegistry: SandboxSessionRegistry;
+}
+
+function unwiredShellAction(name: string): never {
+  throw new Error(`commandContext.${name} was called before the shell bridge was attached in main.ts`);
+}
+
+export function createBootstrapCommandActions(
+  options: BootstrapCommandActionOptions,
+): Pick<
+  CommandContext,
+  | 'renderRequest'
+  | 'submitInput'
+  | 'executeCommand'
+  | 'cancelGeneration'
+  | 'clearScreen'
+  | 'activatePlan'
+  | 'requestPermission'
+  | 'completeModelSelection'
+  | 'jumpToBookmark'
+  | 'scrollToLine'
+  | 'print'
+  | 'exit'
+  | 'reloadSystemPrompt'
+  | 'openForensicsView'
+  | 'openIncidentView'
+  | 'openPolicyView'
+  | 'openHooksView'
+  | 'openCommunicationView'
+  | 'openOrchestrationView'
+  | 'openCockpitView'
+  | 'openMcpWorkspace'
+  | 'openSecurityView'
+  | 'openKnowledgeView'
+  | 'openMemoryView'
+  | 'openRemoteView'
+  | 'openSubscriptionView'
+  | 'openLocalAuthMaskedEntry'
+> {
+  const {
+    providerRegistry,
+    configManager,
+    conversation,
+    runtime,
+    requestRender,
+    loadSystemPrompt,
+    activatePlan,
+    requestPermission,
+    completeModelSelectionSideEffect,
+  } = options;
+
+  // The views these open are kit modals, which exist once the shell attaches
+  // (shell/ui-openers.ts replaces every one of these with the real opener).
+  const viewNotAttached = (what: string) => (): void => {
+    conversation.log(`${what} opens once the terminal UI is attached.`, { fg: activeTokens().textMuted });
+    requestRender();
+  };
+
+  return {
+    renderRequest: requestRender,
+    submitInput: () => unwiredShellAction('submitInput'),
+    executeCommand: async () => unwiredShellAction('executeCommand'),
+    cancelGeneration: () => unwiredShellAction('cancelGeneration'),
+    clearScreen: () => unwiredShellAction('clearScreen'),
+    activatePlan,
+    requestPermission: (request) => requestPermission(request),
+    completeModelSelection: ({ model, effort, contextCap, target, effortChosenByUser }) => {
+      if (!model) return;
+      const def = model;
+      const key = def.registryKey ?? `${def.provider}:${def.id}`;
+      const resolvedTarget = target ?? 'main';
+      try {
+        if (resolvedTarget === 'helper') {
+          // Write to helper config keys and enable the helper
+          configManager.set('helper.globalProvider', def.provider);
+          configManager.set('helper.globalModel', key);
+          configManager.set('helper.enabled', true);
+          conversation.log(`Helper model set to: ${def.displayName} (${def.provider})`, { fg: activeTokens().secondary });
+        } else if (resolvedTarget === 'tool') {
+          // Write to tool LLM config keys and enable the tool LLM
+          configManager.set('tools.llmProvider', def.provider);
+          configManager.set('tools.llmModel', key);
+          configManager.setDynamic('tools.llmEnabled' as never, true);
+          conversation.log(`Tool LLM set to: ${def.displayName} (${def.provider})`, { fg: activeTokens().secondary });
+        } else if (resolvedTarget === 'tts') {
+          configManager.set('tts.llmProvider', def.provider);
+          configManager.set('tts.llmModel', key);
+          conversation.log(`TTS LLM set to: ${def.displayName} (${def.provider})`, { fg: activeTokens().secondary });
+        } else {
+          // Default: main provider/model
+          if (contextCap != null && contextCap > 0) {
+            providerRegistry.setModelContextCap(key, contextCap);
+          }
+          providerRegistry.setCurrentModel(key);
+          runtime.model = key;
+          runtime.provider = def.provider;
+          // Two levels, kept apart on purpose. Config `provider.reasoningEffort`
+          // holds what the USER asked for; `runtime.reasoningEffort` holds what
+          // the model now serving will actually receive, which is the requested
+          // level snapped DOWN to this model's own levels.
+          //
+          // Only the picker's effort STEP is a user choice, and only it writes
+          // the preference. Every other route into this callback (model-only
+          // commit, context-cap commit) carries a level merely carried over
+          // from the previous model; storing that is what used to ratchet the
+          // preference down for good, one hop through a model that caps at
+          // 'medium' and 'xhigh' was gone from config, so hopping back could
+          // not restore it.
+          //
+          // A stored 'xhigh' that becomes 'high' on the wire would make a
+          // single-value display a lie, so the display carries BOTH values with
+          // their provenance instead (describeServingEffort) rather than the
+          // preference being corrupted to match.
+          const effortModel = toEffortModel(def);
+          // Publish this model's real levels first, so both the preference
+          // write below and a later `config set provider.reasoningEffort` are
+          // validated against them.
+          publishActiveEffortOptions(effortModel);
+          if (effortChosenByUser && effort) configManager.set('provider.reasoningEffort', effort);
+          const serving = resolveRequestedEffortForServingModel(configManager, effortModel);
+          runtime.reasoningEffort = serving.effective ?? '';
+          configManager.set('provider.model', key);
+          const ctxNote = contextCap != null && contextCap > 0
+            ? `, context cap: ${contextCap.toLocaleString()}`
+            : '';
+          conversation.log(`Switched to model: ${def.displayName} (${def.provider}), effort: ${describeServingEffort(serving, effortModel)}${ctxNote}`, { fg: activeTokens().secondary });
+          // The SDK's own sentence, printed verbatim so the explanation cannot
+          // drift from the resolution that produced it.
+          if (serving.note) conversation.log(serving.note, { fg: activeTokens().warning });
+        }
+      } catch (e) {
+        conversation.log(`Error switching model: ${summarizeError(e)}`, { fg: activeTokens().error });
+      }
+      completeModelSelectionSideEffect?.();
+      requestRender();
+    },
+    jumpToBookmark: () => unwiredShellAction('jumpToBookmark'),
+    scrollToLine: () => unwiredShellAction('scrollToLine'),
+    print: (text: string) => {
+      conversation.log(text, { fg: activeTokens().text });
+      requestRender();
+    },
+    exit: () => unwiredShellAction('exit'),
+    reloadSystemPrompt: loadSystemPrompt,
+    openForensicsView: viewNotAttached('Agents'),
+    openIncidentView: viewNotAttached('Agents'),
+    openPolicyView: viewNotAttached('Policy'),
+    openHooksView: viewNotAttached('Hooks'),
+    openCommunicationView: viewNotAttached('Agents'),
+    openOrchestrationView: viewNotAttached('Agents'),
+    openCockpitView: viewNotAttached('Agents'),
+    openMcpWorkspace: () => unwiredShellAction('openMcpWorkspace'),
+    openSecurityView: viewNotAttached('Security'),
+    openKnowledgeView: viewNotAttached('Knowledge'),
+    openMemoryView: viewNotAttached('Memory'),
+    openRemoteView: viewNotAttached('Remote'),
+    openSubscriptionView: viewNotAttached('Subscriptions'),
+    openLocalAuthMaskedEntry: viewNotAttached('The password prompt'),
+  };
+}
+
+export function createBootstrapCommandSessionSection(
+  options: Pick<
+    BootstrapCommandSectionOptions,
+    'conversation' | 'runtime' | 'sessionManager' | 'sessionMemoryStore' | 'sessionLineageTracker' | 'wrfcController' | 'changeTracker' | 'hydrateSessionUsage' | 'workstreamEngine' | 'codeIndexStore' | 'codeIndexReindexScheduler' | 'isPassiveCodeInjectionFlagEnabled' | 'getMainSessionTurnInjections'
+  >,
+): BootstrapCommandSessionSection {
+  return {
+    conversationManager: options.conversation,
+    runtime: options.runtime,
+    sessionManager: options.sessionManager,
+    sessionMemoryStore: options.sessionMemoryStore,
+    sessionLineageTracker: options.sessionLineageTracker,
+    wrfcController: options.wrfcController,
+    changeTracker: options.changeTracker,
+    hydrateSessionUsage: options.hydrateSessionUsage,
+    workstreamEngine: options.workstreamEngine,
+    codeIndexStore: options.codeIndexStore,
+    codeIndexReindexScheduler: options.codeIndexReindexScheduler,
+    isPassiveCodeInjectionFlagEnabled: options.isPassiveCodeInjectionFlagEnabled,
+    getMainSessionTurnInjections: options.getMainSessionTurnInjections,
+  };
+}
+
+export function createBootstrapCommandProviderSection(
+  options: Pick<
+    BootstrapCommandSectionOptions,
+    'providerRegistry' | 'providerOptimizer' | 'favoritesStore' | 'benchmarkStore'
+  >,
+): BootstrapCommandProviderSection {
+  return {
+    providerRegistry: options.providerRegistry,
+    providerOptimizer: options.providerOptimizer,
+    favoritesStore: options.favoritesStore,
+    benchmarkStore: options.benchmarkStore,
+  };
+}
+
+export function createBootstrapCommandWorkspaceSection(
+  options: Pick<
+    BootstrapCommandSectionOptions,
+    'surface' | 'keybindingsManager' | 'fileUndoManager' | 'workspaceCheckpointManager' | 'gatewayMethods' | 'workspaceTrustManager' | 'workspaceRegistrationManager' | 'profileManager' | 'bookmarkManager'
+    | 'projectPlanningService' | 'projectPlanningProjectId' | 'workPlanStore'
+  >,
+  shellServices: BootstrapCommandShellServices,
+): BootstrapCommandWorkspaceSection {
+  return {
+    surface: options.surface,
+    keybindingsManager: options.keybindingsManager,
+    fileUndoManager: options.fileUndoManager,
+    workspaceCheckpointManager: options.workspaceCheckpointManager,
+    gatewayMethods: options.gatewayMethods,
+    workspaceTrustManager: options.workspaceTrustManager,
+    workspaceRegistrationManager: options.workspaceRegistrationManager,
+    profileManager: options.profileManager,
+    bookmarkManager: options.bookmarkManager,
+    projectPlanningService: options.projectPlanningService,
+    projectPlanningProjectId: options.projectPlanningProjectId,
+    workPlanStore: options.workPlanStore,
+    ...shellServices.workspace,
+  };
+}
+
+export function createBootstrapCommandPlatformSection(
+  options: Pick<
+    BootstrapCommandSectionOptions,
+    'configManager' | 'pairingTokens' | 'featureFlagManager' | 'voiceProviderRegistry' | 'voiceService' | 'webSearchService' | 'mediaProviders' | 'artifactStore'
+  >,
+  shellServices: BootstrapCommandShellServices,
+): BootstrapCommandPlatformSection {
+  return {
+    config: getConfigSnapshot(options.configManager),
+    configManager: options.configManager,
+    ...(options.pairingTokens ? { pairingTokens: options.pairingTokens } : {}),
+    featureFlagManager: options.featureFlagManager,
+    voiceProviderRegistry: options.voiceProviderRegistry,
+    voiceService: options.voiceService,
+    webSearchService: options.webSearchService,
+    mediaProviders: options.mediaProviders,
+    artifactStore: options.artifactStore,
+    ...shellServices.platform,
+  };
+}
+
+export function createBootstrapCommandOpsSection(
+  shellServices: BootstrapCommandShellServices,
+): BootstrapCommandOpsSection {
+  return shellServices.ops;
+}
+
+export function createBootstrapCommandExtensionsSection(
+  options: Pick<
+    BootstrapCommandSectionOptions,
+    'toolRegistry' | 'mcpRegistry'
+  >,
+  shellServices: BootstrapCommandShellServices,
+): BootstrapCommandExtensionSection {
+  return {
+    toolRegistry: options.toolRegistry,
+    mcpRegistry: options.mcpRegistry,
+    ...shellServices.extensions,
+  };
+}
+
+export function createBootstrapCommandClientsSection(
+  options: Pick<
+    BootstrapCommandSectionOptions,
+    'operatorClient' | 'userPermissionRuleStore' | 'peerClient' | 'providerApi' | 'knowledgeApi' | 'memorySpine' | 'hookApi' | 'mcpApi' | 'opsApi' | 'directTransport'
+  >,
+): BootstrapCommandClientSection {
+  return {
+    operator: options.operatorClient,
+    userPermissionRuleStore: options.userPermissionRuleStore,
+    peer: options.peerClient,
+    providerApi: options.providerApi,
+    knowledgeApi: options.knowledgeApi,
+    memorySpine: options.memorySpine,
+    hookApi: options.hookApi,
+    mcpApi: options.mcpApi,
+    opsApi: options.opsApi,
+    transport: options.directTransport,
+  };
+}

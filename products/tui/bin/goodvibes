@@ -1,0 +1,66 @@
+#!/usr/bin/env bun
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import {
+  ensureVendoredBinary,
+  isExecutable,
+  isSourceCheckout,
+  resolveArtifactName,
+  resolvePlatformPackageBinary,
+  run,
+  supportedTargetsText,
+} from './launcher-support.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const packageRoot = join(__dirname, '..');
+
+if (process.platform === 'win32') {
+  console.error('goodvibes: native Windows is not supported.');
+  console.error('Use WSL so the Linux release binary path applies.');
+  process.exit(1);
+}
+
+const artifactName = resolveArtifactName(process.platform, process.arch);
+const localPlatformBuild = artifactName ? join(packageRoot, 'dist', artifactName) : null;
+const localBuild = join(packageRoot, 'dist', 'goodvibes');
+const vendoredBinary = artifactName ? join(packageRoot, 'vendor', artifactName) : null;
+
+if (localPlatformBuild && isExecutable(localPlatformBuild)) {
+  run(localPlatformBuild, process.argv.slice(2));
+}
+
+if (isExecutable(localBuild)) {
+  run(localBuild, process.argv.slice(2));
+}
+
+if (vendoredBinary && isExecutable(vendoredBinary)) {
+  run(vendoredBinary, process.argv.slice(2));
+}
+
+const platformPackageBinary = resolvePlatformPackageBinary(process.platform, process.arch, packageRoot);
+if (platformPackageBinary) {
+  run(platformPackageBinary, process.argv.slice(2));
+}
+
+if (artifactName) {
+  try {
+    const installedBinary = await ensureVendoredBinary({ packageRoot, artifactName });
+    run(installedBinary, process.argv.slice(2));
+  } catch (error) {
+    console.error(`goodvibes: failed to install release binary: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+const bunProbe = spawnSync('bun', ['--version'], { stdio: 'ignore' });
+if (bunProbe.status === 0 && isSourceCheckout(packageRoot)) {
+  run('bun', [join(packageRoot, 'src', 'main.ts'), ...process.argv.slice(2)]);
+}
+
+console.error('goodvibes: no runnable binary is available.');
+console.error(`platform: ${process.platform}-${process.arch}`);
+console.error(`supported prebuilt targets: ${supportedTargetsText()}`);
+console.error('Either:');
+console.error('  1. check network access to the GitHub release assets, or');
+console.error('  2. build locally with `bun run build` in a source checkout.');
+process.exit(1);

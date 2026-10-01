@@ -1,0 +1,57 @@
+{
+  "_comment": "Written by `bun run perf:baseline` on 2026-09-30, linux-x64. budget_ms = measured_ms (worst of 3 runs) x 2, rounded up to 0.01 ms.",
+  "headroom": 2,
+  "runs": 3,
+  "metrics": {
+    "codeblock.regex_ms": {
+      "measured_ms": 1.243,
+      "budget_ms": 2.49,
+      "stat": "p95"
+    },
+    "codeblock.treesitter_ms": {
+      "measured_ms": 0.993,
+      "budget_ms": 1.99,
+      "stat": "p95"
+    },
+    "frame.composite_p95_ms": {
+      "measured_ms": 0.706,
+      "budget_ms": 1.42,
+      "stat": "p95"
+    },
+    "frame.composite_p99_ms": {
+      "measured_ms": 3.744,
+      "budget_ms": 7.49,
+      "stat": "p99"
+    },
+    "markdown.render_ms": {
+      "measured_ms": 1.358,
+      "budget_ms": 2.72,
+      "stat": "p95"
+    },
+    "overlay.open_ms": {
+      "measured_ms": 2.022,
+      "budget_ms": 4.05,
+      "stat": "p95"
+    },
+    "startup.renderer_load_ms": {
+      "measured_ms": 19.4,
+      "budget_ms": 38.8,
+      "stat": "value"
+    },
+    "transcript.append_one_ms": {
+      "measured_ms": 4.084,
+      "budget_ms": 8.17,
+      "stat": "p50"
+    },
+    "transcript.build_1k_ms": {
+      "measured_ms": 101.942,
+      "budget_ms": 203.89,
+      "stat": "p50"
+    },
+    "transcript.resize_1k_ms": {
+      "measured_ms": 49.822,
+      "budget_ms": 99.65,
+      "stat": "p50"
+    }
+  }
+}
