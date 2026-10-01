@@ -1,5 +1,5 @@
 /**
- * Host implementation of the daemon-sdk `DistributedRuntimeRouteService`. 
+ * Host implementation of the daemon-sdk `DistributedRuntimeRouteService`.
  * This adapter connects the shared backend dispatcher to the route contract:
  *
  *  - `invokePeer` executes against the host's own remote backends through the

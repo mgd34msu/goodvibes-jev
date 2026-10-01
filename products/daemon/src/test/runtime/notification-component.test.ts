@@ -119,4 +119,3 @@ describe('memory pressure leaves the daemon over the configured notice destinati
     expect(sent).toHaveLength(0);
   });
 });
-
