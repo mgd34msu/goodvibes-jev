@@ -527,6 +527,41 @@
       "targets": [
         "products/daemon/src/test/daemon/config-command.test.ts"
       ]
+    },
+    {
+      "source": "src/daemon/service-commands.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/service-commands.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/legacy-daemon-migration.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/legacy-daemon-migration.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/legacy-daemon-reconcile.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/legacy-daemon-reconcile.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/service-commands.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/daemon/service-commands.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/service-lifecycle-commands.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/daemon/service-lifecycle-commands.test.ts"
+      ]
     }
   ],
   "remaining": "The async runtime graph boots only with an explicit inbox factory. Built-in intake providers and triage, daemon executable/entrypoint and command parity, scripts, original contract-test scaffolding, packaging and other unmapped source modules remain pending. Engine hoists are tracked in docs/inventory/daemon.md. This partial workspace does not satisfy migration:complete."

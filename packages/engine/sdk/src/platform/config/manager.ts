@@ -45,6 +45,8 @@ export type DeepReadonly<T> = {
 
 /** Constructor overrides for CLI args and programmatic instantiation. */
 interface ConfigCliOverrides {
+  /** Read without creating files, persisting migrations or receipts; mutators refuse. */
+  readOnly?: boolean | undefined;
   model?: string | undefined;
   autoApprove?: boolean | undefined;
   systemPromptFile?: string | undefined;
@@ -110,6 +112,7 @@ export type ConfigUnsubscribe = () => void;
  * API keys are never persisted, loaded from env vars only.
  */
 export class ConfigManager {
+  private readonly readOnly: boolean;
   private config: GoodVibesConfig;
   private readonly configDir: string;
   private readonly configPath: string;
@@ -137,6 +140,7 @@ export class ConfigManager {
   private readonly unknownSettingForms = new UnknownSettingFormsQueue();
 
   constructor(overrides: ConfigOverrides) {
+    this.readOnly = overrides.readOnly ?? false;
     const roots = overrides as ConfigRoots;
     const configDir = requireAbsoluteOwnedPath(roots.configDir, 'configDir');
     const homeDirectory = requireAbsoluteOwnedPath(roots.homeDir, 'homeDir') ?? null;
@@ -159,7 +163,7 @@ export class ConfigManager {
     const ownedSharedConfigPath = sharedConfigPath ?? (
       this.homeDirectory ? resolveSurfaceSharedFile(this.homeDirectory, surfaceRoot!) : null
     );
-    if (ownedSharedConfigPath) {
+    if (ownedSharedConfigPath && !this.readOnly) {
       ensureSharedConfig(ownedSharedConfigPath);
     }
 
@@ -180,7 +184,7 @@ export class ConfigManager {
       this.homeDirectory ? daemonConfigPath(this.homeDirectory) : null
     );
     // Set BEFORE load(): that load is where the daemon-tier migration asks.
-    this.daemonTierOwner = overrides.ownsDaemonTier === true;
+    this.daemonTierOwner = !this.readOnly && overrides.ownsDaemonTier === true;
 
     this.load();
 
@@ -208,19 +212,12 @@ export class ConfigManager {
     return this.homeDirectory;
   }
 
-  /**
-   * Returns the absolute path to the global (surface-level) settings.json file.
-   * Consumers should use this instead of casting through `as unknown` to access
-   * the private `configPath` field.
-   */
+  /** Absolute global surface settings path. */
   getConfigPath(): string {
     return this.configPath;
   }
 
-  /**
-   * Returns the absolute path to the project-level settings.json file, or
-   * `undefined` if no `workingDir` was provided at construction time.
-   */
+  /** Project settings path, when a working directory was supplied. */
   getProjectConfigPath(): string | undefined {
     return this.projectConfigPath ?? undefined;
   }
@@ -272,6 +269,7 @@ export class ConfigManager {
 
   /** Set a config value by dot-path key and auto-save to disk. */
   set<K extends ConfigKey>(key: K, value: ConfigValue<K>, options: ConfigSetOptions = {}): void {
+    this.requireWritable();
     const schema = CONFIG_SCHEMA.find(s => s.key === key);
     value = coerceSchemaValue(key, schema, value) as ConfigValue<K>;
     if (schema?.validate && !schema.validate(value)) {
@@ -322,6 +320,7 @@ export class ConfigManager {
    * project and survives restarts. Falls back to set() with no project path.
    */
   setProjectValue<K extends ConfigKey>(key: K, value: ConfigValue<K>, options: ConfigSetOptions = {}): void {
+    this.requireWritable();
     if (!this.projectConfigPath) {
       (this.set as (k: ConfigKey, v: unknown, o: ConfigSetOptions) => void)(key, value, options);
       return;
@@ -504,6 +503,7 @@ export class ConfigManager {
    * frozen onto disk; resolved config is unchanged on reload.
    */
   save(): void {
+    this.requireWritable();
     const { config: minimal } = stripFrozenDefaults(
       structuredClone(this.config) as unknown as Record<string, unknown>,
     );
@@ -524,6 +524,7 @@ export class ConfigManager {
 
   /** Persist current config to the project-level surface settings file. */
   saveProject(): void {
+    this.requireWritable();
     if (!this.projectConfigPath) {
       throw new Error('ConfigManager.saveProject requires an explicit workingDir.');
     }
@@ -682,19 +683,16 @@ export class ConfigManager {
     });
   }
 
-  /**
-   * Run the load-time settings migrations over a parsed file.
-   *
-   * The passes and their ORDER live together in manager-migration-passes.ts,
-   * the sequence is a property of the passes, not of this caller. All this
-   * supplies is the receipt sink, which is the one part that needs the manager:
-   * a receipt is announce-once, keyed to this config's own announcement file.
-   */
+  /** Apply the canonical migration order, persisting only for a writable reader. */
   private applyLoadMigrations(parsed: Record<string, unknown>, sourcePath: string): Record<string, unknown> {
-    return runLoadMigrationPasses(parsed, sourcePath, (id, text) => this.migrationReceipt(id, text));
+    return runLoadMigrationPasses(parsed, sourcePath, (id, text) => this.migrationReceipt(id, text), { ownsFile: !this.readOnly });
+  }
+  private requireWritable(): void {
+    if (this.readOnly) throw new ConfigError('ConfigManager is read-only.');
   }
   /** File a receipt against this config's own announce-once store. */
   private migrationReceipt(id: string, text: string): void {
+    if (this.readOnly) return;
     new FeatureAnnouncementStore(featureAnnouncementsPath(this)).record(id, text);
   }
 
@@ -704,6 +702,7 @@ export class ConfigManager {
    * dot-path key (e.g. notifications.webhookUrls). Shallow-merged.
    */
   mergeCategory<C extends keyof GoodVibesConfig>(category: C, patch: Partial<GoodVibesConfig[C]>): void {
+    this.requireWritable();
     persistCategoryPatch(
       String(category),
       patch as Record<string, unknown>,
@@ -718,6 +717,7 @@ export class ConfigManager {
    * to its default) requires this explicit removal.
    */
   removeCategoryKey<C extends keyof GoodVibesConfig>(category: C, key: string): void {
+    this.requireWritable();
     const current = this.config[category]! as Record<string, unknown>;
     if (!(key in current)) return;
     delete current[key];
@@ -736,11 +736,9 @@ export class ConfigManager {
     };
   }
 
-  /**
-   * Reset a specific key to its default, or reset all config.
-   * Saves to disk after reset.
-   */
+  /** Reset one key (or all config) to defaults and persist the removal. */
   reset(key?: ConfigKey): void {
+    this.requireWritable();
     if (key === undefined) {
       this.config = cloneDefaultConfig();
       // A full reset means no explicit keys remain, clear the file to defaults.
