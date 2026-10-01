@@ -40486,6 +40486,28 @@
       "text": "export declare function windowForPurchase(input: { readonly aboveBudget: boolean; readonly merchantIsMajor: boolean; }): 'approval' | 'veto';"
     }
   ],
+  "./platform/payments/browser": [
+    {
+      "name": "CVV_PROMPT_TRADEOFF_WARNING",
+      "kind": "const",
+      "text": "CVV_PROMPT_TRADEOFF_WARNING: string"
+    },
+    {
+      "name": "describeCardEntryRefusal",
+      "kind": "function",
+      "text": "export declare function describeCardEntryRefusal(surface: string): string;"
+    },
+    {
+      "name": "mayEnterCardDetails",
+      "kind": "function",
+      "text": "export declare function mayEnterCardDetails(surface: string): boolean;"
+    },
+    {
+      "name": "mayOfferCardEntryFlow",
+      "kind": "function",
+      "text": "export declare function mayOfferCardEntryFlow(surface: string): boolean;"
+    }
+  ],
   "./platform/permissions": [
     {
       "name": "BackgroundAgentAttribution",
