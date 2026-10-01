@@ -33,6 +33,8 @@ type AssistantMessage = {
   usage?: TokenUsage | undefined;
   model?: string | undefined;
   provider?: string | undefined;
+  /** A completed acknowledgement request; billed independently, without the main turn's tool definitions. */
+  followUp?: true | undefined;
 };
 
 export type ConversationMessageSnapshot =
@@ -107,11 +109,15 @@ function isRedeliveredAssistantMessage(
   previous: Message | undefined,
   candidate: AssistantMessage,
 ): boolean {
+  // Follow-ups are appended once per completed provider request, not replayed
+  // TURN_COMPLETED events. Distinct billed requests may have identical replies.
+  if (candidate.followUp) return false;
   if (previous === undefined || previous.role !== 'assistant') return false;
   return (
     previous.content === candidate.content &&
     previous.model === candidate.model &&
     previous.provider === candidate.provider &&
+    previous.followUp === candidate.followUp &&
     previous.reasoningContent === candidate.reasoningContent &&
     previous.reasoningSummary === candidate.reasoningSummary &&
     sameTokenUsage(previous.usage, candidate.usage) &&
@@ -219,6 +225,7 @@ export class ConversationManager {
       usage?: TokenUsage | undefined;
       model?: string | undefined;
       provider?: string | undefined;
+      followUp?: true | undefined;
     },
   ): void {
     const candidate: AssistantMessage = {
@@ -230,6 +237,7 @@ export class ConversationManager {
       usage: opts?.usage,
       model: opts?.model,
       provider: opts?.provider,
+      ...(opts?.followUp ? { followUp: true as const } : {}),
     };
     if (isRedeliveredAssistantMessage(this.messages[this.messages.length - 1], candidate)) {
       // Dropped on purpose, see isRedeliveredAssistantMessage. Recorded rather
