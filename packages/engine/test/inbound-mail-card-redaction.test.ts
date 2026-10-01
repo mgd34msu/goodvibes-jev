@@ -17,13 +17,15 @@
  *
  * `4111111111111111` is the published Visa test value. It is not a real card.
  */
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import * as crypto from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   InboundMailStore,
   type InboundMailRecordInput,
+  type InboundMailStoreOptions,
 } from '../sdk/src/platform/email/inbound/record-store.ts';
 import { MAX_BODY_EXCERPT_CHARS } from '../sdk/src/platform/email/inbound/types.ts';
 import { useSecurityReadings } from './helpers/security-readings.ts';
@@ -32,18 +34,31 @@ useSecurityReadings();
 
 const CARD = '4111111111111111';
 const CARD_FRAGMENTS = [CARD, '4111 1111 1111 1111', '411111', '4111'];
+const NOW = Date.parse('2026-01-02T03:04:05.000Z');
 
 let dir: string;
 let storePath: string;
+let restoreUuid: () => void;
 
 beforeEach(() => {
+  // The whole-file leak assertion also sees generated record IDs. Keep those
+  // deterministic so a random UUID containing a card prefix is not a leak.
+  let sequence = 0;
+  const uuid = spyOn(crypto, 'randomUUID').mockImplementation(() =>
+    `aaaaaaaa-aaaa-4aaa-8aaa-${(++sequence).toString(16).padStart(12, 'a')}` as const);
+  restoreUuid = () => uuid.mockRestore();
   dir = mkdtempSync(join(tmpdir(), 'gv-inbound-card-'));
   storePath = join(dir, 'inbound-mail-records.json');
 });
 
 afterEach(() => {
+  restoreUuid();
   rmSync(dir, { recursive: true, force: true });
 });
+
+function createStore(options: InboundMailStoreOptions = {}): InboundMailStore {
+  return new InboundMailStore(storePath, { ...options, now: () => NOW });
+}
 
 /**
  * The IMAP arm specifically, this fixture sets uidValidity and uid.
@@ -68,7 +83,7 @@ function recordInput(overrides: Partial<ImapRecordInput> = {}): ImapRecordInput 
     outcome: 'matched-expectation',
     noticeStatus: 'delivered',
     body: 'hello world',
-    receivedAt: new Date().toISOString(),
+    receivedAt: new Date(NOW).toISOString(),
     ...overrides,
   };
 }
@@ -88,8 +103,20 @@ function expectNoCardOnDisk(): void {
 }
 
 describe('a card number in an email never reaches disk', () => {
+  test.each(CARD_FRAGMENTS)('the raw-disk assertion detects a retained card fragment %s', async (fragment) => {
+    const store = createStore();
+    const record = await store.record(recordInput({ body: `We charged ${CARD} today.` }));
+    expect(record.id).toBe('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1');
+    expectNoCardOnDisk();
+    const original = rawFile();
+    const leaked = original.replace('[redacted:pan]', fragment);
+    expect(leaked).not.toBe(original);
+    writeFileSync(storePath, leaked);
+    expect(expectNoCardOnDisk).toThrow('the persisted store contains the card fragment');
+  });
+
   test('the persisted body excerpt is redacted', async () => {
-    const store = new InboundMailStore(storePath);
+    const store = createStore();
     await store.record(recordInput({ body: `Thanks! We charged ${CARD} for order 10029384.` }));
 
     expectNoCardOnDisk();
@@ -102,7 +129,7 @@ describe('a card number in an email never reaches disk', () => {
     ['hyphenated', 'We charged 4111-1111-1111-1111 today.'],
     ['with an expiry right after it', `card ${CARD} 07/29`],
   ])('a card written %s is redacted', async (_label, body) => {
-    const store = new InboundMailStore(storePath);
+    const store = createStore();
     await store.record(recordInput({ body }));
     expectNoCardOnDisk();
   });
@@ -110,16 +137,16 @@ describe('a card number in an email never reaches disk', () => {
   test('a card number in the SUBJECT is redacted too', async () => {
     // The subject is persisted alongside the excerpt and is rendered to the
     // owner in the notice, so it is the same exposure by a different field.
-    const store = new InboundMailStore(storePath);
+    const store = createStore();
     await store.record(recordInput({ subject: `Receipt for card ${CARD}` }));
     expectNoCardOnDisk();
   });
 
   test('the redaction survives a reload: it was never stored, not merely hidden on read', async () => {
-    const store = new InboundMailStore(storePath);
+    const store = createStore();
     await store.record(recordInput({ body: `charged ${CARD}` }));
 
-    const reloaded = new InboundMailStore(storePath);
+    const reloaded = createStore();
     const records = await reloaded.list();
     expect(records).toHaveLength(1);
     expect(records[0]!.bodyExcerpt).not.toContain(CARD);
@@ -130,7 +157,7 @@ describe('a card number in an email never reaches disk', () => {
     // Slicing before redacting would keep up to eighteen digits of the card and
     // drop only the tail, which is not a redaction, it is a shorter leak.
     const cap = 200;
-    const store = new InboundMailStore(storePath, { policy: { maxBodyExcerptChars: cap } });
+    const store = createStore({ policy: { maxBodyExcerptChars: cap } });
     // Positioned so that ten digits of the card fall INSIDE the cap and six
     // fall outside. A slice-then-redact implementation keeps those ten.
     const filler = 'x'.repeat(cap - 15);
@@ -170,7 +197,7 @@ describe('a card number in an email never reaches disk', () => {
     expect(pad).toBeGreaterThan(0);
     const body = `${head}${'.'.repeat(pad)}${SECOND} tail`;
 
-    const store = new InboundMailStore(storePath, { policy: { maxBodyExcerptChars: cap } });
+    const store = createStore({ policy: { maxBodyExcerptChars: cap } });
     await store.record(recordInput({ body }));
 
     expectNoCardOnDisk();
@@ -193,7 +220,7 @@ describe('a card number in an email never reaches disk', () => {
 
 describe('mail is redacted, NOT refused', () => {
   test('the message is still recorded, with every structured field intact', async () => {
-    const store = new InboundMailStore(storePath);
+    const store = createStore();
     const written = await store.record(recordInput({
       body: `Order confirmed. Card ${CARD} charged.`,
       subject: 'Your order is confirmed',
@@ -219,7 +246,7 @@ describe('mail is redacted, NOT refused', () => {
     // The expectation mechanism reads the LIVE message body, not this excerpt,
     // so redacting the excerpt cannot change a verdict. What it could break is
     // the record of that verdict, and it does not.
-    const store = new InboundMailStore(storePath);
+    const store = createStore();
     await store.record(recordInput({ outcome: 'matched-expectation', body: `code inside, card ${CARD}` }));
     const records = await store.list();
     expect(records[0]!.outcome).toBe('matched-expectation');
@@ -234,7 +261,7 @@ describe('mail is redacted, NOT refused', () => {
       'Item 8823641 x2, total 129.99, delivery by 08/26.',
       'Questions? Call 555 123 4567 or 555 987 6543.',
     ].join('\n');
-    const store = new InboundMailStore(storePath);
+    const store = createStore();
     await store.record(recordInput({ body }));
 
     const records = await store.list();
@@ -244,7 +271,7 @@ describe('mail is redacted, NOT refused', () => {
 
   test('a verification code is not mistaken for a security code and destroyed', async () => {
     const body = 'Your verification code is 481902. It expires in 10 minutes.';
-    const store = new InboundMailStore(storePath);
+    const store = createStore();
     await store.record(recordInput({ body }));
     expect((await store.list())[0]!.bodyExcerpt).toBe(body);
   });
@@ -254,7 +281,7 @@ describe('mail is redacted, NOT refused', () => {
     // That is the intended trade for the stored copy; the live body the
     // expectation matcher reads is a different string and is untouched.
     const body = 'Your card verification code is 1234.';
-    const store = new InboundMailStore(storePath);
+    const store = createStore();
     await store.record(recordInput({ body }));
     const excerpt = (await store.list())[0]!.bodyExcerpt;
     expect(excerpt).toContain('[redacted:security-code]');
@@ -264,7 +291,7 @@ describe('mail is redacted, NOT refused', () => {
 
 describe('the excerpt stays within its bounds after redaction', () => {
   test('redaction never pushes the excerpt past the policy cap', async () => {
-    const store = new InboundMailStore(storePath, { policy: { maxBodyExcerptChars: 120 } });
+    const store = createStore({ policy: { maxBodyExcerptChars: 120 } });
     // Many short runs in card context: each redaction marker is longer than the
     // digits it replaces, so this is the case that would overflow a naive
     // redact-after-slice.
@@ -275,9 +302,9 @@ describe('the excerpt stays within its bounds after redaction', () => {
   });
 
   test('a redacted subject stays within the length the validator accepts', async () => {
-    const store = new InboundMailStore(storePath);
+    const store = createStore();
     await store.record(recordInput({ subject: `card ${'123 '.repeat(300)}` }));
-    const reloaded = new InboundMailStore(storePath);
+    const reloaded = createStore();
     const records = await reloaded.list();
     // A subject that grew past 998 chars would fail validateInboundMailRecord
     // on load and take the whole record with it.
@@ -286,7 +313,7 @@ describe('the excerpt stays within its bounds after redaction', () => {
   });
 
   test('the hard excerpt cap still binds', async () => {
-    const store = new InboundMailStore(storePath);
+    const store = createStore();
     await store.record(recordInput({ body: 'y'.repeat(MAX_BODY_EXCERPT_CHARS + 5_000) }));
     const records = await store.list();
     expect(records[0]!.bodyExcerpt.length).toBe(MAX_BODY_EXCERPT_CHARS);
