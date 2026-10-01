@@ -176,41 +176,71 @@ function findInStaticFallback(modelId: string): ModelPricing | null {
   return same === null ? null : STATIC_FALLBACK_PRICING[same] ?? null;
 }
 
+interface PricingQuote {
+  readonly metadata: PricingResult;
+  readonly resolved?: Extract<ResolvedModelPricing, { status: 'priced' }>;
+}
+
+/** Resolve once so an amount and its provenance always describe the same quote. */
+function resolvePricingQuote(modelId: string): PricingQuote {
+  if (modelId.endsWith(':free')) {
+    return { metadata: { pricing: { input: 0, output: 0 }, priced: true, source: 'catalog' } };
+  }
+  const resolved = modelPricingResolver?.(modelId);
+  if (resolved?.status === 'priced') {
+    return {
+      metadata: {
+        pricing: { input: resolved.rates.inputPerMTok, output: resolved.rates.outputPerMTok },
+        priced: true,
+        source: resolved.source,
+        ...(resolved.asOf ? { asOf: resolved.asOf } : {}),
+      },
+      resolved,
+    };
+  }
+  const models = pricingSource?.() ?? [];
+  const catalogHit = findInCatalog(modelId, models);
+  if (catalogHit) return { metadata: { pricing: catalogHit, priced: true, source: 'catalog' } };
+  const fallbackHit = findInStaticFallback(modelId);
+  if (fallbackHit) return { metadata: { pricing: fallbackHit, priced: true, source: 'fallback' } };
+  return { metadata: { pricing: { input: 0, output: 0 }, priced: false } };
+}
+
 /**
  * resolvePricing, resolve USD-per-1M-token pricing for a model ID, and
  * whether that pricing is real (vs. an unpriced placeholder). See the module
  * header for the full resolution order.
  */
 export function resolvePricing(modelId: string): PricingResult {
-  if (modelId.endsWith(':free')) return { pricing: { input: 0, output: 0 }, priced: true, source: 'catalog' };
+  return resolvePricingQuote(modelId).metadata;
+}
 
-  // The ONE resolver first: manual price -> registration -> provider-served
-  // -> catalog. A 'priced' answer carries its source (and snapshot date when
-  // known) so render surfaces can say "your price" vs "catalog price, as of
-  // <date>". Unknown/subscription answers fall through to the legacy chain
-  // so nothing regresses while the catalog is still loading.
-  if (modelPricingResolver) {
-    const resolved = modelPricingResolver(modelId);
-    if (resolved.status === 'priced') {
-      return {
-        pricing: { input: resolved.rates.inputPerMTok, output: resolved.rates.outputPerMTok },
-        priced: true,
-        source: resolved.source,
-        ...(resolved.asOf ? { asOf: resolved.asOf } : {}),
-      };
-    }
-  }
+/** The amount and provenance of one session-usage pricing lookup. */
+export interface SessionCostResult {
+  readonly cost: number;
+  readonly priced: boolean;
+  readonly source?: PricingSourceKind;
+  readonly asOf?: string;
+}
 
-  const models = pricingSource?.() ?? [];
-  const catalogHit = findInCatalog(modelId, models);
-  if (catalogHit) return { pricing: catalogHit, priced: true, source: 'catalog' };
-
-  const fallbackHit = findInStaticFallback(modelId);
-  if (fallbackHit) return { pricing: fallbackHit, priced: true, source: 'fallback' };
-
-  // Genuinely unknown, no source recognizes this model. Report honestly
-  // rather than collapsing into the same zero a free model would return.
-  return { pricing: { input: 0, output: 0 }, priced: false };
+/** Price usage and record its source from one quote, including explicit cache rates. */
+export function resolveSessionCost(
+  inputTokens: number,
+  outputTokens: number,
+  cacheRead: number,
+  cacheWrite: number,
+  modelId: string,
+): SessionCostResult {
+  const { metadata, resolved } = resolvePricingQuote(modelId);
+  const cost = resolved
+    ? computeUsageCostUsd(resolved, { inputTokens, outputTokens, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite }) ?? 0
+    : ((inputTokens + cacheRead + cacheWrite) * metadata.pricing.input + outputTokens * metadata.pricing.output) / 1_000_000;
+  return {
+    cost,
+    priced: metadata.priced,
+    ...(metadata.source ? { source: metadata.source } : {}),
+    ...(metadata.asOf ? { asOf: metadata.asOf } : {}),
+  };
 }
 
 /**
@@ -271,25 +301,7 @@ export function calcSessionCost(
   cacheWrite: number,
   modelId: string,
 ): number {
-  // Through the ONE resolver when wired: computeUsageCostUsd applies the
-  // source's explicit cache rates (or the published per-provider ratio)
-  // instead of billing cache traffic at the full input rate.
-  if (modelPricingResolver) {
-    const resolved = modelPricingResolver(modelId);
-    if (resolved.status === 'priced') {
-      return computeUsageCostUsd(resolved, {
-        inputTokens,
-        outputTokens,
-        cacheReadTokens: cacheRead,
-        cacheWriteTokens: cacheWrite,
-      }) ?? 0;
-    }
-  }
-  const pricing = getPricing(modelId);
-  // Without a resolver there are no explicit cache rates to apply, so cache
-  // reads/writes count toward the billable input side.
-  const billableInput = inputTokens + cacheRead + cacheWrite;
-  return (billableInput * pricing.input + outputTokens * pricing.output) / 1_000_000;
+  return resolveSessionCost(inputTokens, outputTokens, cacheRead, cacheWrite, modelId).cost;
 }
 
 /**
