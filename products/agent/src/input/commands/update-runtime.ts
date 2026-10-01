@@ -1,3 +1,4 @@
+import { IS_WORKSPACE_DISTRIBUTION, WORKSPACE_UPDATE_GUIDANCE } from '../../runtime/workspace-update-policy.ts';
 /**
  * `/update`, a real self-update path for binary installs. The
  * download-verify-swap mechanics are the SDK's canonical update policy module
@@ -376,6 +377,7 @@ export function registerUpdateCommand(registry: CommandRegistry): void {
     description: 'Check for a newer GoodVibes Agent release and, for binary installs, download/verify/apply it or roll back to the kept previous version',
     usage: '[check|apply|rollback]',
     async handler(args, ctx) {
+      if (IS_WORKSPACE_DISTRIBUTION) { ctx.print(WORKSPACE_UPDATE_GUIDANCE); return; }
       const sub = args[0] ?? 'check';
 
       if (sub === 'check') {

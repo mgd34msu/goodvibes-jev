@@ -67,3 +67,16 @@ The combined ordinary suite passes 311 tests and 2,830 assertions across 26 file
 This includes real offline fleet CLI calls, the actual service graph, and the
 contract view behavior. A prior run's external-I/O guard failure is preserved;
 that run was not a pass. Current source/type rechecking is queued separately.
+
+## Private workspace update boundary
+
+The private workspace has no separate published Agent update channel. Launch,
+periodic polling and `/update` entrypoints now return checkout/rebuild guidance
+before host/configuration inspection. The source launcher already runs the
+checked-out package. The shared download/swap mechanics remain available for
+their synthetic tests; no upstream artifact is adopted by the live workspace.
+
+The metadata CLI/private-update set passes 12 tests and 51 assertions. An expanded
+mechanical run passed 33 tests and failed one existing channel-delivery case at
+the inherited synchronous card-reading caller; that failure is retained and is
+not attributed to the update guard. Full interactive acceptance remains open.

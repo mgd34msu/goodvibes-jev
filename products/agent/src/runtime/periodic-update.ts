@@ -1,3 +1,4 @@
+import { IS_WORKSPACE_DISTRIBUTION } from './workspace-update-policy.ts';
 /**
  * Periodic self-update for a long-running agent.
  *
@@ -263,6 +264,7 @@ export interface StartPeriodicSelfUpdateParams {
  * log rather than a guess.
  */
 export function startPeriodicSelfUpdate(params: StartPeriodicSelfUpdateParams): () => void {
+  if (IS_WORKSPACE_DISTRIBUTION) return () => {};
   const settings = readUpdateSettings(params.configManager);
   const autoWasStated = readExplicitUpdateKeys(params.configManager).has('auto');
   const currentVersion = params.currentVersion ?? VERSION;

@@ -1,3 +1,4 @@
+import { IS_WORKSPACE_DISTRIBUTION, WORKSPACE_REBUILD_COMMAND } from './workspace-update-policy.ts';
 /**
  * Pure logic for `/update` and the launch-time self-update: version
  * comparison, the latest-release-tag redirect lookup, and honest install-kind
@@ -38,6 +39,7 @@ import type { InstallKind } from '@goodvibes-jev/engine/sdk/platform/runtime/ope
  * installer.
  */
 export function fallbackUpdateCommand(kind: Exclude<InstallKind, 'binary'>): string {
+  if (IS_WORKSPACE_DISTRIBUTION) return WORKSPACE_REBUILD_COMMAND;
   void kind;
   return 'bun add -g @pellux/goodvibes-agent';
 }
