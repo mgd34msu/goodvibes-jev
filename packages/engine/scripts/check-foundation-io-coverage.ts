@@ -14,7 +14,7 @@
  *     InputMap/OutputMap entries from their catalog descriptors.
  *   - count DECREASED -> fail: coverage improved; lower the baseline to lock it
  *     in (a stale, too-high baseline must not silently outlive the debt it
- *     recorded, same discipline as the line-cap grandfather ratchet).
+ *     recorded).
  *   - unchanged -> pass.
  *
  * This is a companion to check-foundation-io-types.ts (which proves the entries
