@@ -59,9 +59,12 @@ Every product supplies real `build`, `test` and `typecheck` scripts, an actual
 source entrypoint, test sources and TypeScript configurations. Script references
 must exist; empty-success commands and empty entrypoints fail. Every owned
 TypeScript source/test/tooling file outside fixture data must belong to a
-TypeScript project. The whole-tree type gate compiles every product tsconfig
-directly and also runs its declared `typecheck` and `typecheck:*` scripts, so
-existing coverage checks remain active.
+TypeScript project. The whole-tree type gate checks that coverage and compiles
+each actual product TypeScript project once, including separate test and tooling
+projects. It fails on compiler errors, including diagnostics printed with an
+incorrect zero exit status. Product `typecheck` scripts remain available as local
+convenience commands; the whole-tree gate does not repeat their aggregate and
+child compiler invocations.
 
 ## Module accounting
 

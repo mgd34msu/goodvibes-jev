@@ -258,10 +258,13 @@ export type ProductCheckCommand =
   | { readonly kind: 'script'; readonly label: string; readonly cwd: string; readonly script: string }
   | { readonly kind: 'tsconfig'; readonly label: string; readonly cwd: string; readonly file: string };
 export function productCheckCommands(root: string, products: readonly ProductWorkspace[], mode: 'build' | 'test' | 'typecheck'): readonly ProductCheckCommand[] {
-  return products.flatMap((product) => {
+  return products.flatMap((product): ProductCheckCommand[] => {
     const cwd = resolve(root, product.source.path);
-    const projects: ProductCheckCommand[] = mode === 'typecheck' ? product.tsconfigs.map((file) => ({ kind: 'tsconfig', label: `${product.source.name}:${relative(cwd, file)}`, cwd, file })) : [];
-    const scripts = mode === 'typecheck' ? Object.keys(product.scripts).filter((name) => /^typecheck(?::|$)/.test(name)).sort() : [mode];
-    return [...projects, ...scripts.map((script): ProductCheckCommand => ({ kind: 'script', label: `${product.source.name}:${script}`, cwd, script }))];
+    // Inspection already verifies that every authored source/test/tooling file
+    // belongs to a real compiler project. Run each of those projects once.
+    // Product typecheck scripts are convenient local aggregates of the same
+    // programs; invoking the aggregate and its children here repeats the work.
+    if (mode === 'typecheck') return product.tsconfigs.map((file): ProductCheckCommand => ({ kind: 'tsconfig', label: `${product.source.name}:${relative(cwd, file)}`, cwd, file }));
+    return [{ kind: 'script', label: `${product.source.name}:${mode}`, cwd, script: mode }];
   });
 }
