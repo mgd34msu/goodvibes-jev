@@ -16,6 +16,8 @@ Voice chunk iterators remain admitted through EOF, error, consumer return or thr
 
 The response returned to a native HTTP server is an actual Response, with metadata accessors on that instance. Real Bun loopback delivery checks status, headers, body and the resulting drain; disconnect checks hold source cancellation until it truly settles. A pending read does not operate on the controller after cancellation. An enable preference already saved by an admitted operator call survives shutdown interrupting activation and is honored by a fresh manager. Ordinary load failure still rolls back enable, while missing-plugin and already-closed refusals do not write preferences.
 
+The original inbound Request signal also owns an unclaimed response. If disconnect precedes the handler's result, the adapter cancels that otherwise discarded body and awaits the actual source cancellation before returning. An unclaimed response is likewise cancelled if its request aborts after acquisition; an active reader retains its existing cancellation path. The abort subscription is removed when stream ownership settles. Native Bun early-disconnect and native Node late-response fixtures distinguish this abandoned response from an intentionally retained, unconsumed stream whose request is still live.
+
 The product registers provisional ownership immediately after construction, then places plugin drain before the runtime dependencies once the complete graph is assembled. Existing handler shutdown still precedes the graph. This does not implement the remaining executable boot controller, plugin dependency composition, or the other boot tasks.
 
 ## Evidence

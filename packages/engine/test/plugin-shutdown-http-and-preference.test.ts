@@ -96,6 +96,92 @@ test('actual HTTP disconnect keeps shutdown pending until the source cancellatio
   }
 });
 
+test('a response arriving after actual HTTP disconnect is cancelled before its owner drains', async () => {
+  const channels = new ChannelPluginRegistry();
+  const calls = new PluginInFlightTracker();
+  const registrations = new PluginInFlightTracker();
+  const cleanup: Array<() => void> = [];
+  const entered = gate(); const serverAborted = gate(); const releaseHandler = gate();
+  const cancelEntered = gate(); const finishCancel = gate(); const returned = gate();
+  let response: Response | null = null;
+  let pulls = 0; let cancels = 0; let didReturn = false;
+  createPluginAPI({ pluginName: 'late-fixture', inFlight: calls, registrations, cleanup, channelRegistry: channels } as unknown as PluginAPIContext)
+    .registerChannelPlugin({ id: 'late-fixture', surface: 'webhook', displayName: 'Fixture', capabilities: [], webhookPath: '/fixture',
+      async handleInbound(request) {
+        request.signal.addEventListener('abort', serverAborted.resolve, { once: true });
+        entered.resolve();
+        await releaseHandler.promise;
+        return new Response(new ReadableStream<Uint8Array>({
+          pull(controller) { pulls++; controller.enqueue(new TextEncoder().encode('late fixture')); controller.close(); },
+          cancel() { cancels++; cancelEntered.resolve(); return finishCancel.promise; },
+        }, { highWaterMark: 0 }), { status: 202 });
+      },
+    });
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+    response = await channels.handleInbound('/fixture', request);
+    didReturn = true; returned.resolve();
+    return response ?? new Response('missing', { status: 404 });
+  } });
+  const abort = new AbortController();
+  const client = fetch(new URL('/fixture', server.url), { signal: abort.signal }).catch((error: unknown) => error);
+  try {
+    await entered.promise;
+    abort.abort();
+    await serverAborted.promise;
+    let closed = false;
+    const closing = calls.close().then(() => { closed = true; });
+    releaseHandler.resolve();
+    expect(await Promise.race([cancelEntered.promise.then(() => true), returned.promise.then(() => false)])).toBe(true);
+    expect(cancels).toBe(1);
+    expect(pulls).toBe(0);
+    expect(didReturn).toBe(false);
+    expect(closed).toBe(false);
+    finishCancel.resolve();
+    await returned.promise; await closing; await registrations.close();
+    expect(calls.inFlight('late-fixture')).toBe(0);
+    expect(pulls).toBe(0);
+  } finally {
+    abort.abort(); releaseHandler.resolve(); finishCancel.resolve();
+    await client;
+    await server.stop(true);
+    const captured = response as Response | null;
+    if (captured?.body && !captured.bodyUsed) await captured.body.cancel().catch(() => undefined);
+    await calls.close(); await registrations.close();
+    for (const dispose of cleanup) dispose();
+  }
+});
+
+test('request abort retires an unclaimed response returned to an in-process channel caller', async () => {
+  const channels = new ChannelPluginRegistry();
+  const calls = new PluginInFlightTracker();
+  const cleanup: Array<() => void> = [];
+  const entered = gate(); const release = gate();
+  let cancellations = 0;
+  createPluginAPI({ pluginName: 'unclaimed-fixture', inFlight: calls, cleanup, channelRegistry: channels } as unknown as PluginAPIContext)
+    .registerChannelPlugin({ id: 'unclaimed-fixture', surface: 'webhook', displayName: 'Fixture', capabilities: [], webhookPath: '/fixture',
+      async handleInbound() { return new Response(new ReadableStream<Uint8Array>({ cancel() { cancellations++; entered.resolve(); return release.promise; } }, { highWaterMark: 0 })); },
+    });
+  const abort = new AbortController();
+  const response = await channels.handleInbound('/fixture', new Request('http://127.0.0.1/fixture', { signal: abort.signal }));
+  let closed = false;
+  const closing = calls.close().then(() => { closed = true; });
+  try {
+    expect(calls.inFlight('unclaimed-fixture')).toBe(1);
+    expect(response?.bodyUsed).toBe(false);
+    abort.abort(); await entered.promise;
+    expect(cancellations).toBe(1);
+    expect(closed).toBe(false);
+    expect(response?.bodyUsed).toBe(true);
+    release.resolve(); await closing;
+    expect(calls.inFlight('unclaimed-fixture')).toBe(0);
+  } finally {
+    release.resolve();
+    if (response?.body && !response.bodyUsed) await response.body.cancel();
+    await closing;
+    for (const dispose of cleanup) dispose();
+  }
+});
+
 test('an admitted enable preference survives shutdown during initialization and activates on restart', async () => {
   const root = mkdtempSync(join(tmpdir(), 'jev-plugin-enable-close-'));
   const project = join(root, 'project');

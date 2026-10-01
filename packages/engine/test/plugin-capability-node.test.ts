@@ -28,6 +28,14 @@ const request=new Request('http://127.0.0.1/fixture');
 const channel=handleInbound=>({id:'fixture',surface:'webhook',displayName:'Fixture',capabilities:[],handleInbound});
 let proofs=0;
 {
+ const fx=owner();const handler=gate(),cancelling=gate(),cancelled=gate();const abort=new AbortController();let pulls=0;
+ const input=new Request('http://127.0.0.1/fixture',{signal:abort.signal});
+ const response=fx.owned.channel(channel(async()=>{await handler.promise;return new Response(new ReadableStream({pull(){pulls++},cancel(){cancelling.release();return cancelled.promise}},{highWaterMark:0}))})).handleInbound(input);
+ abort.abort();let closed=false;const closing=fx.close().then(()=>{closed=true});handler.release();
+ try {assert.equal(await Promise.race([cancelling.promise.then(()=>true),response.then(()=>false)]),true);assert.equal(closed,false);assert.equal(pulls,0)}
+ finally {cancelled.release();const result=await response;if(!result.bodyUsed)await result.body.cancel();await closing}proofs++;
+}
+{
  const fx=owner();let pulls=0;
  const result=await fx.owned.channel(channel(async()=>new Response(new ReadableStream({pull(controller){
    if(pulls++===0)controller.enqueue(new Uint8Array());
@@ -62,6 +70,6 @@ console.log(JSON.stringify({proofs}));
     const result = spawnSync(node, [join(root, 'probe.mjs')], { encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024 });
     expect(result.error).toBeUndefined();
     expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: '' });
-    expect(JSON.parse(result.stdout)).toEqual({ proofs: 4 });
+    expect(JSON.parse(result.stdout)).toEqual({ proofs: 5 });
   } finally { rmSync(root, { recursive: true, force: true }); }
 }, 15_000);

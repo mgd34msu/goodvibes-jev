@@ -60,7 +60,7 @@ function mapResult(value: unknown, transform?: Transform): unknown {
 function facade<T extends object>(source: T, modes: Modes<T>, track: Track, options: {
   readonly results?: Readonly<Record<string, Transform>>;
   readonly replacements?: Readonly<Record<string, unknown>>;
-  readonly streams?: Readonly<Record<string, (call: () => unknown) => unknown>>;
+  readonly streams?: Readonly<Record<string, (call: () => unknown, args: readonly unknown[]) => unknown>>;
   readonly values?: Readonly<Record<string, (value: unknown) => unknown>>;
 } = {}): T {
   const methods = new Map<PropertyKey, { original: unknown; wrapped: (...args: unknown[]) => unknown }>();
@@ -77,7 +77,7 @@ function facade<T extends object>(source: T, modes: Modes<T>, track: Track, opti
       try {
         const call = () => Reflect.apply(value, source, args) as unknown;
         const stream = declared(options.streams, key);
-        return stream ? stream(call) : track(() => mapResult(call(), declared(options.results, key)));
+        return stream ? stream(call, args) : track(() => mapResult(call(), declared(options.results, key)));
       } catch (error) {
         if (mode === 'async') return rejected(error);
         throw error;
@@ -169,7 +169,7 @@ function ownChunks<T>(chunks: AsyncIterable<T>, firstRelease: () => void, track:
   };
 }
 
-function ownResponse(value: unknown, release: () => void): Response {
+function ownResponse(value: unknown, release: () => void, requestSignal?: AbortSignal): Response | Promise<Response> {
   const original = value as Response;
   const body = original.body;
   if (!body) { release(); return original; }
@@ -178,13 +178,33 @@ function ownResponse(value: unknown, release: () => void): Response {
   let released = false;
   let cancelled = false;
   let pending = 0;
+  let removeAbortListener = () => {};
+  let cancellation: Promise<void> | undefined;
   const releaseIfIdle = () => {
     if (!finished || pending !== 0 || released) return;
     released = true;
+    removeAbortListener();
     reader?.releaseLock();
     release();
   };
   const finish = () => { finished = true; releaseIfIdle(); };
+  const cancelBody = (reason: unknown): Promise<void> => {
+    if (cancellation) return cancellation;
+    cancelled = true;
+    pending++;
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    cancellation = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+    const settled = (failed: boolean, error?: unknown) => {
+      pending--; finish();
+      if (failed) reject(error); else resolve();
+    };
+    try {
+      const result = reader ? reader.cancel(reason) : body.cancel(reason);
+      void Promise.resolve(result).then(() => settled(false), (error: unknown) => settled(true, error));
+    } catch (error) { settled(true, error); }
+    return cancellation;
+  };
   const owned = new ReadableStream({
     type: 'bytes',
     async pull(controller) {
@@ -206,12 +226,7 @@ function ownResponse(value: unknown, release: () => void): Response {
       } catch (error) { if (!cancelled) controller.error(error); finish(); }
       finally { pending--; releaseIfIdle(); }
     },
-    async cancel(reason: unknown) {
-      cancelled = true;
-      pending++;
-      try { if (reader) await reader.cancel(reason); else await body.cancel(reason); }
-      finally { pending--; finish(); }
-    },
+    cancel: cancelBody,
   }, { highWaterMark: 0 });
   const response = new Response(owned, { status: original.status, statusText: original.statusText, headers: original.headers });
   const preserveMetadata = (response: Response): Response => {
@@ -226,7 +241,29 @@ function ownResponse(value: unknown, release: () => void): Response {
     });
     return response;
   };
-  return preserveMetadata(response);
+  const result = preserveMetadata(response);
+  if (requestSignal) {
+    const onAbort = () => {
+      // An active reader owns its cancellation path. Bun cancels its locked
+      // HTTP reader on disconnect; this path retires a body nobody claimed.
+      if (finished || cancelled || owned.locked) return;
+      const reason: unknown = requestSignal.reason ?? new DOMException('Request aborted', 'AbortError');
+      const pendingCancel = owned.cancel(reason);
+      // The owner still waits for actual cancellation; an event callback has
+      // no promise consumer. The already-aborted acquisition below awaits it.
+      void pendingCancel.catch(() => {});
+      return pendingCancel;
+    };
+    requestSignal.addEventListener('abort', onAbort, { once: true });
+    removeAbortListener = () => requestSignal.removeEventListener('abort', onAbort);
+    if (requestSignal.aborted) {
+      const pendingCancel = onAbort();
+      // Bun discards a response returned after disconnect without reading or
+      // cancelling its body. Retire it here before the admitted call settles.
+      return Promise.resolve(pendingCancel).then(() => result);
+    }
+  }
+  return result;
 }
 
 /** Creates wrappers for one loaded plugin instance, all using the same owner. */
@@ -250,7 +287,8 @@ export function createOwnedPluginCapabilities(track: Track) {
     } }),
     channel: (source: ChannelPlugin): ChannelPlugin => facade(source, channelMethods, track, {
       results: { listAgentTools: (value) => (value as readonly Tool[]).map(ownTool) },
-      streams: { handleInbound: (call) => holdResult(track, call, ownResponse) },
+      streams: { handleInbound: (call, args) => holdResult(track, call, (value, release) =>
+        ownResponse(value, release, (args[0] as Request | undefined)?.signal)) },
     }),
     delivery: (source: ChannelDeliveryStrategy): ChannelDeliveryStrategy => facade(source, deliveryMethods, track),
     memory: (source: MemoryEmbeddingProvider): MemoryEmbeddingProvider => facade(source, memoryMethods, track),
