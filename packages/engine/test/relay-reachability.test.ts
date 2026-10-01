@@ -14,7 +14,7 @@ import {
   isRelayReachabilityEnabled,
   type RelayIdentityStore,
 } from '../sdk/src/platform/relay/reachability.js';
-import { createRelayClient } from '../transport-realtime/src/relay-transport.js';
+import { createRelayClient, type RelayClient } from '../transport-realtime/src/relay-transport.js';
 import type { SerializedRelayIdentity } from '../transport-core/src/relay/index.js';
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
@@ -137,7 +137,7 @@ describe('relay reachability enabled', () => {
   });
 });
 
-async function fetchThrough(client: { fetch: typeof fetch }, path: string): Promise<unknown> {
+async function fetchThrough(client: Pick<RelayClient, 'fetch'>, path: string): Promise<unknown> {
   const res = await client.fetch(`https://relay.invalid${path}`);
   return res.json();
 }

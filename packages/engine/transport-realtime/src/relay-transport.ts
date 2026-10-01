@@ -17,7 +17,7 @@
 // buffer surfaces as a visible `relay-overflow` SSE event (never a silent gap).
 
 import { GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
-import { createUuidV4 } from '@goodvibes-jev/engine/transport-core';
+import { createUuidV4, type FetchLike } from '@goodvibes-jev/engine/transport-core';
 import {
   RelaySecureChannel,
   decodeControlFrame,
@@ -56,7 +56,7 @@ export interface RelayClientOptions {
 /** A live relay client: a relay-backed `fetch` plus explicit lifecycle. */
 export interface RelayClient {
   /** A `fetch` implementation to hand to the SDK as `fetchImpl`. */
-  readonly fetch: typeof fetch;
+  readonly fetch: FetchLike;
   /** Establish the pipe + E2E handshake. Idempotent; the fetch auto-connects too. */
   connect(): Promise<void>;
   /** Tear down the relay connection. */
@@ -296,7 +296,7 @@ export function createRelayClient(options: RelayClientOptions): RelayClient {
     return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
   }
 
-  const relayFetch: typeof fetch = async (input, init) => {
+  const relayFetch: FetchLike = async (input, init) => {
     await connect();
     if (!channel || !socket) throw new GoodVibesSdkError('Relay channel is not ready.', { category: 'network', source: 'transport', recoverable: true });
     const request = new Request(input as RequestInfo, init);

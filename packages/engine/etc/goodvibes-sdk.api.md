@@ -401,7 +401,7 @@ export interface BrowserGoodVibesSdkOptions extends Omit<GoodVibesSdkOptions, 'b
     // (undocumented)
     readonly baseUrl?: string | undefined;
     // (undocumented)
-    readonly fetch?: typeof fetch | undefined;
+    readonly fetch?: FetchLike | undefined;
     // (undocumented)
     readonly WebSocketImpl?: typeof WebSocket | undefined;
 }
@@ -1312,13 +1312,13 @@ export function createDirectClientTransport<TOperator, TPeer>(operator: TOperato
 export function createEventEnvelope<TType extends string, TPayload>(type: TType, payload: TPayload, context: EventEnvelopeContext): EventEnvelope<TType, TPayload>;
 
 // @public (undocumented)
-export function createEventSourceConnector<TEvent extends RuntimeEventRecord = RuntimeEventRecord>(baseUrl: string, token: AuthTokenSource, fetchImpl: typeof fetch, options?: RuntimeEventConnectorOptions): DomainEventConnector<RuntimeEventDomain, TEvent>;
+export function createEventSourceConnector<TEvent extends RuntimeEventRecord = RuntimeEventRecord>(baseUrl: string, token: AuthTokenSource, fetchImpl: FetchLike, options?: RuntimeEventConnectorOptions): DomainEventConnector<RuntimeEventDomain, TEvent>;
 
 // @public
 export function createExpoGoodVibesSdk(options: ExpoGoodVibesSdkOptions): ReactNativeGoodVibesSdk;
 
 // @public (undocumented)
-export function createFetch(fetchImpl?: typeof fetch, fallbackFetch?: typeof fetch): typeof fetch;
+export function createFetch(fetchImpl?: FetchLike, fallbackFetch?: FetchLike): FetchLike;
 
 // @public
 export function createGoodVibesAuthClient(operator: OperatorSdk, tokenStore: GoodVibesTokenStore | null, getAuthToken?: AuthTokenResolver, observer?: SDKObserver | undefined, autoRefreshOptions?: AutoRefreshOptions,
@@ -1799,6 +1799,9 @@ export interface FailureTransience {
     readonly failureClass: FailureClass;
 }
 
+// @public
+export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
 // @public (undocumented)
 export type FieldKind = 'string' | 'number' | 'boolean' | 'string[]' | 'enum' | 'enum[]' | 'object' | 'object[]' | 'string|null';
 
@@ -2248,7 +2251,7 @@ export interface GoodVibesSdkOptions {
     readonly authToken?: string | null | undefined;
     readonly autoRefresh?: AutoRefreshOptions | undefined;
     readonly baseUrl: string;
-    readonly fetch?: typeof fetch | undefined;
+    readonly fetch?: FetchLike | undefined;
     readonly getAuthToken?: AuthTokenResolver | undefined;
     readonly getHeaders?: HeaderResolver | undefined;
     readonly headers?: HeadersInit | undefined;
@@ -2357,7 +2360,7 @@ export interface HttpJsonTransport {
     // (undocumented)
     buildUrl(path: string): string;
     // (undocumented)
-    readonly fetchImpl: typeof fetch;
+    readonly fetchImpl: FetchLike;
     // (undocumented)
     getAuthToken(): Promise<string | null>;
     // (undocumented)
@@ -2376,9 +2379,9 @@ export interface HttpJsonTransportOptions {
     // (undocumented)
     readonly baseUrl: string;
     // (undocumented)
-    readonly fetch?: typeof fetch | undefined;
+    readonly fetch?: FetchLike | undefined;
     // (undocumented)
-    readonly fetchImpl?: typeof fetch | undefined;
+    readonly fetchImpl?: FetchLike | undefined;
     // (undocumented)
     readonly getAuthToken?: AuthTokenResolver | undefined;
     // (undocumented)
@@ -2935,7 +2938,7 @@ export type OmitNamed<T, TKey extends PropertyKey> = T extends unknown ? Omit<Na
 export function openContractRouteStream(transport: HttpTransport, route: ContractRouteDefinition, input: Record<string, unknown> | undefined, options: ContractStreamOptions): Promise<() => void>;
 
 // @public (undocumented)
-export function openRawServerSentEventStream(fetchImpl: typeof fetch, url: string, handlers: ServerSentEventHandlers, options?: RawServerSentEventOptions): Promise<ServerSentEventStreamHandle>;
+export function openRawServerSentEventStream(fetchImpl: FetchLike, url: string, handlers: ServerSentEventHandlers, options?: RawServerSentEventOptions): Promise<ServerSentEventStreamHandle>;
 
 // @public (undocumented)
 export function openServerSentEventStream(transport: HttpTransport, pathOrUrl: string, handlers: ServerSentEventHandlers, options?: ServerSentEventOptions): Promise<ServerSentEventStreamHandle>;
@@ -28630,7 +28633,7 @@ export function registeredEventTypes(): readonly string[];
 export interface RelayClient {
     close(): void;
     connect(): Promise<void>;
-    readonly fetch: typeof fetch;
+    readonly fetch: FetchLike;
     readonly ready: boolean;
 }
 
@@ -28673,7 +28676,7 @@ export interface RemoteRuntimeEventsOptions {
 }
 
 // @public
-export function requestJsonRaw<T>(fetchImpl: typeof fetch, url: string, init?: RequestInit): Promise<T>;
+export function requestJsonRaw<T>(fetchImpl: FetchLike, url: string, init?: RequestInit): Promise<T>;
 
 // @public (undocumented)
 export function requireContractRoute<TRoute extends ContractRouteLike>(routes: readonly TRoute[], routeId: string, kind: string): TRoute;

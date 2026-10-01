@@ -6,7 +6,7 @@ import {
   type StreamReconnectPolicy,
 } from './reconnect.js';
 import { createHttpStatusError, HttpStatusError } from '@goodvibes-jev/engine/errors';
-import { isAbortError } from '@goodvibes-jev/engine/transport-core';
+import { isAbortError, type FetchLike } from '@goodvibes-jev/engine/transport-core';
 import type { TransportJsonError } from './http-core.js';
 
 export interface ServerSentEventHandlers {
@@ -109,7 +109,7 @@ function reportStreamError(error: unknown, handlers: ServerSentEventHandlers): v
 }
 
 export async function openRawServerSentEventStream(
-  fetchImpl: typeof fetch,
+  fetchImpl: FetchLike,
   url: string,
   handlers: ServerSentEventHandlers,
   options: ServerSentEventOptions = {},

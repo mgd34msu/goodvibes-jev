@@ -17,6 +17,7 @@ import {
   injectTraceparentAsync,
   invokeTransportObserver,
   transportErrorFromUnknown,
+  type FetchLike,
   type TransportContext,
   type TransportMiddleware,
   type TransportObserver,
@@ -47,8 +48,8 @@ export interface HttpJsonTransportOptions {
   readonly baseUrl: string;
   readonly authToken?: string | null | undefined;
   readonly getAuthToken?: AuthTokenResolver | undefined;
-  readonly fetch?: typeof fetch | undefined;
-  readonly fetchImpl?: typeof fetch | undefined;
+  readonly fetch?: FetchLike | undefined;
+  readonly fetchImpl?: FetchLike | undefined;
   readonly headers?: HeadersInit | undefined;
   readonly getHeaders?: HeaderResolver | undefined;
   readonly retry?: HttpRetryPolicy | undefined;
@@ -106,7 +107,7 @@ export interface TransportJsonError {
 export interface HttpJsonTransport {
   readonly baseUrl: string;
   readonly authToken?: string | null | undefined;
-  readonly fetchImpl: typeof fetch;
+  readonly fetchImpl: FetchLike;
   readonly paths: TransportPaths;
   buildUrl(path: string): string;
   getAuthToken(): Promise<string | null>;
@@ -273,7 +274,7 @@ export function createJsonRequestInit(
 
 export const createJsonInit = createJsonRequestInit;
 
-export function createFetch(fetchImpl?: typeof fetch, fallbackFetch?: typeof fetch): typeof fetch {
+export function createFetch(fetchImpl?: FetchLike, fallbackFetch?: FetchLike): FetchLike {
   const resolved = fetchImpl ?? fallbackFetch ?? globalThis.fetch;
   if (typeof resolved !== 'function') {
     throw new ConfigurationError('Fetch implementation is required. Pass a fetch option (e.g. options.fetch) or ensure globalThis.fetch is available in your runtime.');
@@ -318,7 +319,7 @@ export async function readJsonBody(response: Response): Promise<unknown> {
  * `createHttpTransport(...).requestJson()` for normal application code.
  */
 export async function requestJsonRaw<T>(
-  fetchImpl: typeof fetch,
+  fetchImpl: FetchLike,
   url: string,
   init: RequestInit = {},
 ): Promise<T> {

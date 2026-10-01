@@ -1,3 +1,4 @@
+import type { FetchLike } from '@goodvibes-jev/engine/transport-core';
 import { ConfigurationError } from '@goodvibes-jev/engine/errors';
 import {
   createGoodVibesSdk,
@@ -20,7 +21,7 @@ import {
 export interface BrowserGoodVibesSdkOptions
   extends Omit<GoodVibesSdkOptions, 'baseUrl' | 'fetch' | 'WebSocketImpl'> {
   readonly baseUrl?: string | undefined;
-  readonly fetch?: typeof fetch | undefined;
+  readonly fetch?: FetchLike | undefined;
   readonly WebSocketImpl?: typeof WebSocket | undefined;
 }
 

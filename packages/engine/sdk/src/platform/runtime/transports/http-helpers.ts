@@ -1,3 +1,4 @@
+import type { FetchLike } from '@goodvibes-jev/engine/transport-core';
 import type {
   ControlPlaneRecentEvent,
   SharedApprovalRecord,
@@ -63,7 +64,7 @@ function readBoolean(value: unknown): boolean {
 }
 
 export async function readControlPlaneSnapshot(
-  fetchImpl: typeof fetch,
+  fetchImpl: FetchLike,
   paths: TransportPaths,
   token: string | null | undefined,
 ): Promise<UiControlPlaneSnapshot> {
@@ -191,7 +192,7 @@ export function appendTelemetryQuery(url: URL, query: TelemetryFilter): void {
 }
 
 export async function connectTelemetryStream(
-  fetchImpl: typeof fetch,
+  fetchImpl: FetchLike,
   url: string,
   token: string | null | undefined,
   handlers: HttpTransportTelemetryStreamHandlers,
