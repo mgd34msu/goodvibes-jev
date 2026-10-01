@@ -680,6 +680,17 @@ Schema blocks below are emitted directly from the synced contract JSON and may c
                   }
                 ]
               }
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "approved",
+                "denied",
+                "amended",
+                "cancelled",
+                "expired",
+                "remembered"
+              ]
             }
           },
           "required": [

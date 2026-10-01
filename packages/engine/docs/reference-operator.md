@@ -534,6 +534,12 @@ Approve a pending approval. Optionally pass selectedHunks (edit-tool approvals o
     "approvalId": {
       "type": "string"
     },
+    "disposition": {
+      "type": "string",
+      "enum": [
+        "approved"
+      ]
+    },
     "note": {
       "type": "string"
     },
@@ -927,6 +933,17 @@ Approve a pending approval. Optionally pass selectedHunks (edit-tool approvals o
                   }
                 ]
               }
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "approved",
+                "denied",
+                "amended",
+                "cancelled",
+                "expired",
+                "remembered"
+              ]
             }
           },
           "required": [
@@ -1441,6 +1458,17 @@ Cancel a pending approval.
                   }
                 ]
               }
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "approved",
+                "denied",
+                "amended",
+                "cancelled",
+                "expired",
+                "remembered"
+              ]
             }
           },
           "required": [
@@ -1949,6 +1977,17 @@ Claim a pending approval for operator handling.
                   }
                 ]
               }
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "approved",
+                "denied",
+                "amended",
+                "cancelled",
+                "expired",
+                "remembered"
+              ]
             }
           },
           "required": [
@@ -2115,6 +2154,13 @@ Deny a pending approval. rememberTier generalizes the denial (a generalizing tie
   "properties": {
     "approvalId": {
       "type": "string"
+    },
+    "disposition": {
+      "type": "string",
+      "enum": [
+        "denied",
+        "amended"
+      ]
     },
     "note": {
       "type": "string"
@@ -2476,6 +2522,17 @@ Deny a pending approval. rememberTier generalizes the denial (a generalizing tie
                   }
                 ]
               }
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "approved",
+                "denied",
+                "amended",
+                "cancelled",
+                "expired",
+                "remembered"
+              ]
             }
           },
           "required": [
@@ -3109,6 +3166,17 @@ Return pending and historical approval records.
                     }
                   ]
                 }
+              },
+              "disposition": {
+                "type": "string",
+                "enum": [
+                  "approved",
+                  "denied",
+                  "amended",
+                  "cancelled",
+                  "expired",
+                  "remembered"
+                ]
               }
             },
             "required": [
@@ -3857,6 +3925,17 @@ Raise a permission ask INTO the shared broker from a surface that is not in the 
                   }
                 ]
               }
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "approved",
+                "denied",
+                "amended",
+                "cancelled",
+                "expired",
+                "remembered"
+              ]
             }
           },
           "required": [
@@ -117957,6 +118036,17 @@ Every approval record transition, pushed the moment the broker records it: an as
                   }
                 ]
               }
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "approved",
+                "denied",
+                "amended",
+                "cancelled",
+                "expired",
+                "remembered"
+              ]
             }
           },
           "required": [
