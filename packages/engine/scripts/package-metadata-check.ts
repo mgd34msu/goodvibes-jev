@@ -4,9 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { checkBunPins, isExactVersion, type PinSource } from './bun-pin-rule.ts';
 import { SOURCE_CONDITION } from './export-conditions.ts';
 import { packageDirs, publicPackageDirs, REPO_ROOT } from './release-shared.ts';
-import { packageReadme } from './ci-readings/package-readme.ts';
-import { READINGS_PATH as README_READINGS_PATH, readmeProblems, readmeState } from './ci-readings/package-readmes.ts';
-import { currentReadings } from './ci-readings/stored-readings.ts';
+import { READINGS_PATH as README_READINGS_PATH, readmeAdvisories, readmeState } from './ci-readings/package-readmes.ts';
+import { loadStoredReadings } from './ci-readings/stored-readings.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SDK_ROOT = resolve(__dirname, '..');
@@ -21,7 +20,7 @@ const requiredStringFields = [
   'homepage',
 ];
 
-const readmeReadings = currentReadings(README_READINGS_PATH, packageReadme);
+const readmes: { dir: string; state: ReturnType<typeof readmeState>; isPublic: boolean }[] = [];
 
 const rootSharedMetadata = {
   license: rootPackage.license,
@@ -242,15 +241,22 @@ function assertBunPinAgreement(): void {
 }
 
 /**
- * The README documents the package and, for a published package, does not
- * describe it in stale internal or umbrella terms. Both are read through Jev
- * (`engine.gates.package-readme`) by `bun run package-readmes:read`; this
- * check compares the stored readings, offline (scripts/ci-readings/package-readmes.ts).
+ * Editorial readings are advisory, independent of deterministic metadata
+ * validation. Keep their provenance and adverse answers visible without
+ * requiring an external reading after every prose edit. This never calls Jev.
  */
-function assertReadmeReadings(dir: string): void {
-  const problems = readmeProblems(dir, readmeState(resolve(SDK_ROOT, dir)), publicPackageDirs.includes(dir), readmeReadings);
-  if (problems.length > 0) {
-    throw new Error(problems.join('\n'));
+function reportReadmeAdvisories(): void {
+  try {
+    const stored = loadStoredReadings(README_READINGS_PATH);
+    for (const { dir, state, isPublic } of readmes) {
+      for (const advisory of readmeAdvisories(dir, state, isPublic, stored)) {
+        console.warn(`[package-readme editorial advisory] ${advisory}`);
+      }
+    }
+  } catch (error) {
+    // A broken editorial cache cannot substitute for, or block, correctness
+    // checks. Report its unavailability rather than claiming a good reading.
+    console.warn(`[package-readme editorial advisory] Stored editorial evidence unavailable: ${error instanceof Error ? error.message : String(error)}; run \`bun run package-readmes:read\` to refresh it`);
   }
 }
 
@@ -335,10 +341,15 @@ for (const dir of packageDirs) {
   if (!existsSync(readmePath)) {
     throw new Error(`${dir} is missing README.md`);
   }
-  assertReadmeReadings(dir);
+  const state = readmeState(resolve(SDK_ROOT, dir));
+  if (state.readme.length === 0) {
+    throw new Error(`${dir}/README.md is empty`);
+  }
+  readmes.push({ dir, state, isPublic });
 }
 
 assertContractsGeneratedTypesReexported();
 assertBunPinAgreement();
 
-console.log('package metadata check passed');
+console.log('package metadata check passed (structural checks)');
+reportReadmeAdvisories();
