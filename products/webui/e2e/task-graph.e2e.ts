@@ -21,8 +21,9 @@ test('the old Workstream link lands on Work, and opening the workstream fetches 
   const panel = page.locator('.task-graph-panel');
   await expect(panel).toBeVisible();
 
-  // The graph read names the selected workstream, and every node it returned is a row.
-  expect(daemon.requests.some((r) => r.method === 'GET' && r.path === `/api/fleet/workstreams/${FLEET_GRAPH_WORKSTREAM_ID}/graph`)).toBe(true);
+  // The graph read names this exact contract group. Its colon is encoded as a
+  // path segment by the real HTTP facade; the mock decodes it for the keyed lookup.
+  await expect.poll(() => daemon.requests.some((r) => r.method === 'GET' && r.path === `/api/fleet/workstreams/${encodeURIComponent(FLEET_GRAPH_WORKSTREAM_ID)}/graph`)).toBe(true);
   await expect(panel.locator('[data-testid="task-graph-node"]')).toHaveCount(5);
 
   await expectNoHorizontalScroll(page);

@@ -15,6 +15,7 @@
  *     real one.
  */
 import { describe, expect, test } from 'bun:test';
+import { randomUUID } from 'node:crypto';
 import { encodeRelayPairingString } from './relay-pairing';
 import {
   describeScannedPairing,
@@ -22,7 +23,7 @@ import {
   parseScannedPairing,
 } from './pairing-qr';
 
-const TOKEN = 'op_tok_5f3a9c21b7';
+const TOKEN = `op_tok_${randomUUID()}`;
 const COMPANION_JSON = JSON.stringify({
   url: 'http://127.0.0.1:3421',
   token: TOKEN,

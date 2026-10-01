@@ -13,6 +13,7 @@
  * parsed payload, and the camera is never left running.
  */
 import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test';
+import { randomUUID } from 'node:crypto';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
@@ -21,7 +22,7 @@ import type { PairingScannerBindings } from '../../lib/pairing-qr-camera';
 import type { QrDetector } from '../../lib/pairing-qr-detector';
 import { PairingQrScanner } from './PairingQrScanner';
 
-const TOKEN = 'op_tok_5f3a9c21b7';
+const TOKEN = `op_tok_${randomUUID()}`;
 const COMPANION_JSON = JSON.stringify({
   url: 'http://127.0.0.1:3421',
   token: TOKEN,

@@ -15,6 +15,7 @@
  */
 
 import type { Page, Route } from '@playwright/test';
+import { createECDH } from 'node:crypto';
 import { recordRequests, type RecordedRequest } from './requests';
 import {
   wakeClassifierFixture,
@@ -1249,9 +1250,9 @@ export async function installMockDaemon(page: Page, options: MockDaemonOptions =
   // Web Push (push.*, SDK 1.1.0), a fresh per-test in-memory subscription store
   // so subscribe -> list -> verify -> delete round-trips honestly. The redacted
   // view only (never the capability URL or key material), exactly like the real
-  // daemon. `pushVapidKey` is a syntactically-valid base64url stand-in, enough
-  // for urlBase64ToUint8Array to decode without a real keypair.
-  const pushVapidKey = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBO_2H6ipYIF3PBhTvbP7z4c';
+  // daemon. Generate an ephemeral fixture P-256 key and expose only its public
+  // bytes. It is never registered with a push service or retained outside this test.
+  const pushVapidKey = createECDH('prime256v1').generateKeys().toString('base64url');
   let pushSubscriptions: { id: string; principalId: string; deviceId?: string; endpointOrigin: string; endpointHash: string; createdAt: number }[] =
     pushSeed.map((s) => ({ ...s, principalId: 'operator' }));
   let pushIdCounter = 0;
