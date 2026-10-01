@@ -30797,7 +30797,7 @@
         "id",
         "payload"
       ],
-      "text": "export interface DeadLetterEntry { readonly id: string; readonly channel: string; readonly event: string; readonly payload: string; readonly createdAt: number; readonly deadAt: number; readonly attempts: number; readonly finalError: string; readonly failureClass: DeliveryFailureClass; }"
+      "text": "export interface DeadLetterEntry<TPayload = string> { readonly id: string; readonly channel: string; readonly event: string; readonly payload: TPayload; readonly createdAt: number; readonly deadAt: number; readonly attempts: number; readonly finalError: string; readonly failureClass: DeliveryFailureClass; readonly status?: number | undefined; readonly basis?: TransienceBasis | undefined; } ;; via TransienceBasis = export type TransienceBasis = 'explicit' | 'retry-after' | 'status' | 'errno' | 'error-type' | 'reading' | 'no-wording';"
     },
     {
       "name": "DeliveryError",
@@ -30847,7 +30847,7 @@
         "replay",
         "sloEnforced"
       ],
-      "text": "export declare class DeliveryQueue { private readonly _config; private readonly _dlq; private readonly _pending; private readonly _timers; private readonly _listeners; private _totalAttempts; private _delivered; private _retrying; private _deadLettered; private _closed; private _closing; private readonly _active; constructor(config?: DeliveryQueueOptions); enqueue(channel: string, event: string, payload: string, deliver: () => Promise<void>): Promise<DeliveryOutcome>; replay(deliver: (entry: DeadLetterEntry) => Promise<void>): Promise<Array<{ id: string; outcome: DeliveryOutcome; }>>; private _replay; onDeadLetter(listener: (entry: DeadLetterEntry) => void): () => void; getDlq(): readonly DeadLetterEntry[]; clearDlq(): number; get sloEnforced(): boolean; getMetrics(): DeliveryMetrics; dispose(): void; close(): Promise<void>; private _assertOpen; private _startAttempt; private _own; private _attempt; private _moveToDlq; private _retainDeadLetter; private _computeDelay; } ;; via Array = interface Array<T> { length: number; toString(): string; toLocaleString(): string; pop(): T | undefined; push(...items: T[]): number; concat(...items: ConcatArray<T>[]): T[]; concat(...items: (T | ConcatArray<T>)[]): T[]; join(separator?: string): string; reverse(): T[]; shift(): T | undefined; slice(start?: number, end?: number): T[]; sort(compareFn?: (a: T, b: T) => number): this; splice(start: number, deleteCount?: number): T[]; splice(start: number, deleteCount: number, ...items: T[]): T[]; unshift(...items: T[]): number; indexOf(searchElement: T, fromIndex?: number): number; lastIndexOf(searchElement: T, fromIndex?: number): number; every<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): this is S[]; every(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; some(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; forEach(callbackfn: (value: T, index: number, array: T[]) => void, thisArg?: any): void; map<U>(callbackfn: (value: T, index: number, array: T[]) => U, thisArg?: any): U[]; filter<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): S[]; filter(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): T[]; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduce<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduceRight<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; [n: number]: T; } ;; DeliveryQueueOptions = export interface DeliveryQueueOptions extends Partial<DeliveryQueueConfig> { readonly featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined; readonly configManager?: Pick<ConfigManager, 'get'> | null | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare class DeliveryQueue<TPayload = string> { private readonly _config; private readonly _structuralDiagnostics; private readonly _dlq; private readonly _pending; private readonly _timers; private readonly _listeners; private _totalAttempts; private _delivered; private _retrying; private _deadLettered; private _closed; private _closing; private readonly _active; constructor(config?: DeliveryQueueOptions); enqueue(channel: string, event: string, payload: TPayload, deliver: () => Promise<void>): Promise<DeliveryOutcome>; replay(deliver: (entry: DeadLetterEntry<TPayload>) => Promise<void>): Promise<Array<{ id: string; outcome: DeliveryOutcome; }>>; private _replay; onDeadLetter(listener: (entry: DeadLetterEntry<TPayload>) => void): () => void; getDlq(): readonly DeadLetterEntry<TPayload>[]; clearDlq(): number; get sloEnforced(): boolean; getMetrics(): DeliveryMetrics; dispose(): void; close(): Promise<void>; private _describeError; private _assertOpen; private _startAttempt; private _own; private _attempt; private _moveToDlq; private _retainDeadLetter; private _computeDelay; } ;; via Array = interface Array<T> { length: number; toString(): string; toLocaleString(): string; pop(): T | undefined; push(...items: T[]): number; concat(...items: ConcatArray<T>[]): T[]; concat(...items: (T | ConcatArray<T>)[]): T[]; join(separator?: string): string; reverse(): T[]; shift(): T | undefined; slice(start?: number, end?: number): T[]; sort(compareFn?: (a: T, b: T) => number): this; splice(start: number, deleteCount?: number): T[]; splice(start: number, deleteCount: number, ...items: T[]): T[]; unshift(...items: T[]): number; indexOf(searchElement: T, fromIndex?: number): number; lastIndexOf(searchElement: T, fromIndex?: number): number; every<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): this is S[]; every(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; some(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; forEach(callbackfn: (value: T, index: number, array: T[]) => void, thisArg?: any): void; map<U>(callbackfn: (value: T, index: number, array: T[]) => U, thisArg?: any): U[]; filter<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): S[]; filter(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): T[]; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduce<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduceRight<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; [n: number]: T; } ;; DeliveryQueueOptions = export interface DeliveryQueueOptions extends Partial<DeliveryQueueConfig> { readonly diagnosticMode?: 'detailed' | 'structural' | undefined; readonly featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined; readonly configManager?: Pick<ConfigManager, 'get'> | null | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "DeliveryQueueConfig",
@@ -31135,9 +31135,10 @@
         "fromConfig",
         "getQueueStatus",
         "notify",
+        "notifyNotification",
         "replayDeadLetters"
       ],
-      "text": "export declare class Notifier { private slack?; private discord?; private unsubscribers; private readonly _queue; private _closed; private _closing; private readonly _active; constructor(options?: { slack?: SlackIntegration | undefined; discord?: DiscordIntegration | undefined; delivery?: Partial<DeliveryQueueConfig> | undefined; featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined; }); static fromConfig(serviceRegistry: Pick<ServiceRegistry, 'resolveSecret'>, options?: { featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null; }): Promise<Notifier>; notify(event: string, data: Record<string, unknown>): Promise<void>; private sendNotification; getQueueStatus(): IntegrationQueueStatus[]; replayDeadLetters(): Promise<Array<{ id: string; outcome: import('./delivery.js').DeliveryOutcome; }>>; dispose(): void; close(): Promise<void>; attachToRuntimeBus(bus: RuntimeEventBus): void; detach(): void; private formatText; } ;; via Array = interface Array<T> { length: number; toString(): string; toLocaleString(): string; pop(): T | undefined; push(...items: T[]): number; concat(...items: ConcatArray<T>[]): T[]; concat(...items: (T | ConcatArray<T>)[]): T[]; join(separator?: string): string; reverse(): T[]; shift(): T | undefined; slice(start?: number, end?: number): T[]; sort(compareFn?: (a: T, b: T) => number): this; splice(start: number, deleteCount?: number): T[]; splice(start: number, deleteCount: number, ...items: T[]): T[]; unshift(...items: T[]): number; indexOf(searchElement: T, fromIndex?: number): number; lastIndexOf(searchElement: T, fromIndex?: number): number; every<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): this is S[]; every(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; some(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; forEach(callbackfn: (value: T, index: number, array: T[]) => void, thisArg?: any): void; map<U>(callbackfn: (value: T, index: number, array: T[]) => U, thisArg?: any): U[]; filter<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): S[]; filter(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): T[]; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduce<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduceRight<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; [n: number]: T; } ;; Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export declare class Notifier { private slack?; private discord?; private unsubscribers; private readonly _queue; private readonly metadataOnly; private _closed; private _closing; private readonly _active; constructor(options?: { slack?: SlackIntegration | undefined; discord?: DiscordIntegration | undefined; delivery?: Partial<DeliveryQueueConfig> | undefined; featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined; metadataOnly?: NotificationPrivacyReader | undefined; }); static fromConfig(serviceRegistry: Pick<ServiceRegistry, 'resolveSecret'>, options?: { featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null; metadataOnly?: NotificationPrivacyReader; }): Promise<Notifier>; notify(event: string, data: Record<string, unknown>): Promise<void>; notifyNotification(delivery: NotificationDelivery): Promise<void>; private ownNotification; private deliverNotification; getQueueStatus(): IntegrationQueueStatus[]; replayDeadLetters(): Promise<Array<{ id: string; outcome: import('./delivery.js').DeliveryOutcome; }>>; private postEnvelope; private queuedEnvelope; dispose(): void; close(): Promise<void>; attachToRuntimeBus(bus: RuntimeEventBus): void; detach(): void; private formatText; } ;; via Array = interface Array<T> { length: number; toString(): string; toLocaleString(): string; pop(): T | undefined; push(...items: T[]): number; concat(...items: ConcatArray<T>[]): T[]; concat(...items: (T | ConcatArray<T>)[]): T[]; join(separator?: string): string; reverse(): T[]; shift(): T | undefined; slice(start?: number, end?: number): T[]; sort(compareFn?: (a: T, b: T) => number): this; splice(start: number, deleteCount?: number): T[]; splice(start: number, deleteCount: number, ...items: T[]): T[]; unshift(...items: T[]): number; indexOf(searchElement: T, fromIndex?: number): number; lastIndexOf(searchElement: T, fromIndex?: number): number; every<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): this is S[]; every(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; some(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; forEach(callbackfn: (value: T, index: number, array: T[]) => void, thisArg?: any): void; map<U>(callbackfn: (value: T, index: number, array: T[]) => U, thisArg?: any): U[]; filter<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): S[]; filter(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): T[]; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduce<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduceRight<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; [n: number]: T; } ;; NotificationDelivery = export type NotificationDelivery = { readonly kind: 'turn'; readonly facts: TurnNotificationFacts; } | { readonly kind: 'approval'; readonly facts: ApprovalNotificationFacts; } | { readonly kind: 'budget'; readonly facts: BudgetNotificationFacts; }; ;; NotificationPrivacyReader = export type NotificationPrivacyReader = () => unknown; ;; Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "NtfyIntegration",
@@ -31352,10 +31353,11 @@
         "isConfigured",
         "removeUrl",
         "send",
+        "sendNotification",
         "setUrls",
         "test"
       ],
-      "text": "export declare class WebhookNotifier { private urls; private unsubscribers; private readonly timeoutMs; private readonly maxConcurrent; private readonly maxBodyBytes; private readonly signingSecret?; private readonly force; constructor(urls?: string[], options?: WebhookNotifierOptions); static fromConfig(urls: string[]): WebhookNotifier; addUrl(url: string): void; removeUrl(url: string): boolean; setUrls(urls: string[]): void; getUrls(): string[]; isConfigured(): boolean; send(text: string): Promise<WebhookNotifierSendResult>; test(): Promise<WebhookNotifierDeliveryResult[]>; attachToRuntimeBus(bus: RuntimeEventBus): void; detach(): void; private postOne; private sendRuntimeNotification; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare class WebhookNotifier { private urls; private unsubscribers; private readonly timeoutMs; private readonly metadataOnly; private readonly maxConcurrent; private readonly maxBodyBytes; private readonly signingSecret?; private readonly force; constructor(urls?: string[], options?: WebhookNotifierOptions); static fromConfig(urls: string[], options?: WebhookNotifierOptions): WebhookNotifier; addUrl(url: string): void; removeUrl(url: string): boolean; setUrls(urls: string[]): void; getUrls(): string[]; isConfigured(): boolean; send(text: string): Promise<WebhookNotifierSendResult>; sendNotification(delivery: NotificationDelivery): Promise<WebhookNotifierSendResult>; private sendEnvelope; test(): Promise<WebhookNotifierDeliveryResult[]>; attachToRuntimeBus(bus: RuntimeEventBus): void; detach(): void; private postOne; private sendRuntimeNotification; } ;; via NotificationDelivery = export type NotificationDelivery = { readonly kind: 'turn'; readonly facts: TurnNotificationFacts; } | { readonly kind: 'approval'; readonly facts: ApprovalNotificationFacts; } | { readonly kind: 'budget'; readonly facts: BudgetNotificationFacts; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "WebhookNotifierDeliveryResult",
@@ -31364,12 +31366,12 @@
         "ok",
         "url"
       ],
-      "text": "export interface WebhookNotifierDeliveryResult { readonly url: string; readonly ok: boolean; readonly error?: string | undefined; }"
+      "text": "export interface WebhookNotifierDeliveryResult { readonly url: string; readonly ok: boolean; readonly error?: string | undefined; readonly status?: number | undefined; }"
     },
     {
       "name": "WebhookNotifierOptions",
       "kind": "interface",
-      "text": "export interface WebhookNotifierOptions { timeoutMs?: number | undefined; maxConcurrent?: number | undefined; maxBodyBytes?: number | undefined; signingSecret?: string | Uint8Array | undefined; force?: boolean | undefined; } ;; via Uint8Array = interface Uint8Array<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> { readonly BYTES_PER_ELEMENT: number; readonly buffer: TArrayBuffer; readonly byteLength: number; readonly byteOffset: number; copyWithin(target: number, start: number, end?: number): this; every(predicate: (value: number, index: number, array: this) => unknown, thisArg?: any): boolean; fill(value: number, start?: number, end?: number): this; filter(predicate: (value: number, index: number, array: this) => any, thisArg?: any): Uint8Array<ArrayBuffer>; find(predicate: (value: number, index: number, obj: this) => boolean, thisArg?: any): number | undefined; findIndex(predicate: (value: number, index: number, obj: this) => boolean, thisArg?: any): number; forEach(callbackfn: (value: number, index: number, array: this) => void, thisArg?: any): void; indexOf(searchElement: number, fromIndex?: number): number; join(separator?: string): string; lastIndexOf(searchElement: number, fromIndex?: number): number; readonly length: number; map(callbackfn: (value: number, index: number, array: this) => number, thisArg?: any): Uint8Array<ArrayBuffer>; reduce(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number): number; reduce(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number, initialValue: number): number; reduce<U>(callbackfn: (previousValue: U, currentValue: number, currentIndex: number, array: this) => U, initialValue: U): U; reduceRight(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number): number; reduceRight(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number, initialValue: number): number; reduceRight<U>(callbackfn: (previousValue: U, currentValue: number, currentIndex: number, array: this) => U, initialValue: U): U; reverse(): this; set(array: ArrayLike<number>, offset?: number): void; slice(start?: number, end?: number): Uint8Array<ArrayBuffer>; some(predicate: (value: number, index: number, array: this) => unknown, thisArg?: any): boolean; sort(compareFn?: (a: number, b: number) => number): this; subarray(begin?: number, end?: number): Uint8Array<TArrayBuffer>; toLocaleString(): string; toString(): string; valueOf(): this; [index: number]: number; }"
+      "text": "export interface WebhookNotifierOptions { metadataOnly?: NotificationPrivacyReader | undefined; timeoutMs?: number | undefined; maxConcurrent?: number | undefined; maxBodyBytes?: number | undefined; signingSecret?: string | Uint8Array | undefined; force?: boolean | undefined; } ;; via NotificationPrivacyReader = export type NotificationPrivacyReader = () => unknown; ;; Uint8Array = interface Uint8Array<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> { readonly BYTES_PER_ELEMENT: number; readonly buffer: TArrayBuffer; readonly byteLength: number; readonly byteOffset: number; copyWithin(target: number, start: number, end?: number): this; every(predicate: (value: number, index: number, array: this) => unknown, thisArg?: any): boolean; fill(value: number, start?: number, end?: number): this; filter(predicate: (value: number, index: number, array: this) => any, thisArg?: any): Uint8Array<ArrayBuffer>; find(predicate: (value: number, index: number, obj: this) => boolean, thisArg?: any): number | undefined; findIndex(predicate: (value: number, index: number, obj: this) => boolean, thisArg?: any): number; forEach(callbackfn: (value: number, index: number, array: this) => void, thisArg?: any): void; indexOf(searchElement: number, fromIndex?: number): number; join(separator?: string): string; lastIndexOf(searchElement: number, fromIndex?: number): number; readonly length: number; map(callbackfn: (value: number, index: number, array: this) => number, thisArg?: any): Uint8Array<ArrayBuffer>; reduce(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number): number; reduce(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number, initialValue: number): number; reduce<U>(callbackfn: (previousValue: U, currentValue: number, currentIndex: number, array: this) => U, initialValue: U): U; reduceRight(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number): number; reduceRight(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number, initialValue: number): number; reduceRight<U>(callbackfn: (previousValue: U, currentValue: number, currentIndex: number, array: this) => U, initialValue: U): U; reverse(): this; set(array: ArrayLike<number>, offset?: number): void; slice(start?: number, end?: number): Uint8Array<ArrayBuffer>; some(predicate: (value: number, index: number, array: this) => unknown, thisArg?: any): boolean; sort(compareFn?: (a: number, b: number) => number): this; subarray(begin?: number, end?: number): Uint8Array<TArrayBuffer>; toLocaleString(): string; toString(): string; valueOf(): this; [index: number]: number; }"
     },
     {
       "name": "WebhookNotifierSendResult",
@@ -31410,7 +31412,7 @@
     {
       "name": "snapshotQueueStatus",
       "kind": "function",
-      "text": "export declare function snapshotQueueStatus(channel: string, queue: DeliveryQueue, sloEnforced: boolean): IntegrationQueueStatus;"
+      "text": "export declare function snapshotQueueStatus(channel: string, queue: DeliveryQueue, sloEnforced: boolean): IntegrationQueueStatus; ;; export declare function snapshotQueueStatus<TPayload>(channel: string, queue: DeliveryQueue<TPayload>, sloEnforced: boolean, describePayload: (payload: TPayload) => string): IntegrationQueueStatus;"
     }
   ],
   "./platform/intelligence": [
@@ -45715,7 +45717,7 @@
     {
       "name": "operations",
       "kind": "other",
-      "text": "export { TREE_GLYPHS_CONFIG_KEY, readTreeGlyphSet, type TreeGlyphSetName } from './tree-glyph-setting.js'; export * from './remote/index.js'; export type { RemoteSessionBundle } from './remote/types.js'; export * from './tasks/index.js'; export * from './tools/index.js'; export { AcpTaskAdapter } from './tasks/adapters/index.js'; export { OpsControlPlane, OpsIllegalActionError, OpsTargetNotFoundError } from './ops/control-plane.js'; export { ToolContractVerifier } from './tools/contract-verifier.js'; export type { ContractVerifierOptions } from './tools/contract-verifier.js'; export { McpLifecycleManager, McpPermissionManager, McpSchemaFreshnessTracker, buildMcpAttackPathReview, createMcpLifecycleManager, DEFAULT_RECONNECT_CONFIG, } from './mcp/index.js'; export type { McpAttackPathFinding, McpAttackPathFindingKind, McpAttackPathReview, McpCapabilityClass, McpCoherenceAssessment, McpCoherenceVerdict, McpDecisionRecord, McpEventHandler, McpLifecycleManagerOptions, McpPermission, McpReconnectConfig, McpRiskLevel, McpSchemaRecord, McpSecuritySnapshot, McpServerEntry, McpServerPermissions, McpServerRole, McpServerState, McpToolPermission, McpTrustLevel, McpTrustMode, McpTrustProfile, QuarantineReason, QuarantineRecord, SchemaFreshness, } from './mcp/index.js'; export { ALL_CAPABILITIES, ALL_CAPABILITIES as PLUGIN_CAPABILITIES, HIGH_RISK_CAPABILITIES, PluginLifecycleManager, PluginQuarantineEngine, PluginTrustStore, SAFE_CAPABILITIES, filterCapabilitiesByTrust, hasCapability, isHighRiskCapability, isOperational as isPluginOperational, isReloadable as isPluginReloadable, isTerminal as isPluginTerminal, resolveCapabilityManifest, validateManifestV2, validatePluginSignature, } from './plugins/index.js'; export type { PluginCapability, PluginCapabilityManifest, PluginManifestV2, PluginTrustTier, } from './plugins/index.js'; export { LOW_QUALITY_THRESHOLD, computeQualityScore, createCompactionManager, describeScore, escalateStrategy, isTerminal as isTerminalCompactionState, reachableFrom as reachableFromCompactionState, } from './compaction/index.js'; export type { CompactionQualityScore, CompactionStrategy, StrategyInput, StrategyOutput, } from './compaction/index.js'; export { compactionFailurePlaybook, exportRecoveryPlaybook, permissionDeadlockPlaybook, pluginDegradationPlaybook, reconnectFailurePlaybook, sessionUnrecoverablePlaybook, stuckTurnPlaybook, } from './ops/playbooks/index.js'; export { createSessionUnrecoverablePlaybook, } from './ops/playbooks/session-unrecoverable.js'; export { createStuckTurnPlaybook, } from './ops/playbooks/stuck-turn.js'; export { evaluateOrchestrationSpawn, } from './orchestration/spawn-policy.js'; export type { DistributedRuntimeSnapshotStore, } from './remote/index.js'; export { TRANSPORT_PROTOCOL_SUPPORT_MATRIX as TRANSPORT_COMPATIBILITY_MATRIX, } from './remote/index.js'; export { applyTransition, canTransition, isOperational, isReloadable, isTerminal, reachableFrom, } from './lifecycle-facade.js'; export type { RuntimeTransitionResult } from './lifecycle-facade.js'; export * from './crash-capture.js'; export * from './session-maintenance.js'; export * from './session-persistence.js'; export * from './session-surface.js'; export * from './session-return-context.js'; export * from './retention/index.js'; export type { RetentionClass, RetentionClassConfig, RetentionConfig, CheckpointRecord, PruneOptions, PruneResult, PerClassPruneResult, Pruner, RetentionStats, } from './retention/index.js'; export { FocusTracker } from './focus-tracker.js'; export { FORCE_NOTIFY_DURATION_MS, readBooleanConfig, readNotifyOnlyWhenUnfocused, shouldFireAlert, } from './alert-gating.js'; export type { ConfigGet } from './alert-gating.js'; export { NOTIFICATIONS_METADATA_ONLY_KEY, readNotificationsMetadataOnly, } from './notification-privacy.js'; export { JOURNAL_ORPHAN_MAX_AGE_MS, JOURNAL_ORPHAN_MAX_FILES, JOURNAL_SCHEMA_VERSION, journalPathFor, openTranscriptJournal, reapOrphanedJournals, replayJournal, } from './transcript-journal.js'; export type { JournalEventType, JournalHeader, JournalReapOptions, JournalReapResult, JournalRecord, ReplayResult, TranscriptJournal, } from './transcript-journal.js'; export { replayJournalForSession, replayJournalIntoConversation, } from './transcript-journal-replay.js'; export type { JournalReplayConversation, ReplayIntoConversationOptions, ReplayIntoConversationResult, } from './transcript-journal-replay.js'; export { applyRecoverySnapshot, confirmRecoveryRestore, } from './recovery-snapshot-apply.js'; export type { ApplyRecoverySnapshotOptions, ApplyRecoverySnapshotResult, RecoveryApplyRefusal, RecoveryRestoreConfirmation, RestorableConversation, } from './recovery-snapshot-apply.js'; export { checkSessionLiveness, isPidAlive, LIVENESS_MARKER_MAX_FILES, LIVENESS_STALE_AFTER_MS, livenessMarkerDirFor, livenessMarkerPathFor, reapStaleLivenessMarkers, removeLivenessMarker, writeLivenessMarker, } from './session-liveness-marker.js'; export type { LivenessMarker, LivenessReapOptions, LivenessReapResult, SessionLivenessCheck, } from './session-liveness-marker.js'; export { DURABILITY_HOUSEKEEPING_INTERVAL_MS, runDurabilityHousekeeping, startDurabilityHousekeeping, } from './durability-housekeeping.js'; export type { DurabilityHousekeepingInput, DurabilityHousekeepingOutcome, } from './durability-housekeeping.js'; export { createDurabilityServices } from './durability-services.js'; export type { DurabilityServices, DurabilityServicesInput } from './durability-services.js'; export { resolveDaemonCompanionToken, workspaceOperatorTokenCandidates } from './operator-token-cleanup.js'; export { bindWriteLastSessionPointerToSurface } from './session-pointer-surface.js'; export { BINARY_INSTALL_COMMAND, detectInstallKind, fallbackUpdateCommand, } from './install-kind.js'; export type { InstallKind } from './install-kind.js'; export { buildReachabilityNotices, reachabilityNoticeLines } from './reachability-notice.js'; export type { ReachabilityNotice, ReachabilityNoticeInput, ReachabilityNoticeKind, } from './reachability-notice.js'; export { announceReachability, boundedLatestRelease, INSTALLED_COMMANDS, LATEST_LOOKUP_TIMEOUT_MS, probeVersionLine, resolveSelfDirectory, runReachabilityCheck, } from './reachability-check.js'; export type { ReachabilityCheckInput, ReachabilityCheckResult } from './reachability-check.js'; export { createAgentGraph, createAgentExecutionGraph } from './agent-graph-composition.js'; export type { AgentGraph, AgentGraphOptions, AgentExecutionGraph, AgentExecutionGraphOptions } from './agent-graph-composition.js'; export { composeContractRunner, resumeContracts } from './contract-composition.js'; export type { ContractRunnerCompositionOptions, ComposedContractRunner } from './contract-composition.js'; export { makeRuntimeFleetProbe } from './orchestration/fleet-count.js'; export { composeJudgment } from './judgment-services.js'; export type { JudgmentServices, JudgmentServicesInput, JudgmentSettingsSource } from './judgment-services.js'; export { createChannelComposition } from './channel-composition.js'; export type { ChannelComposition } from './channel-composition.js'; export { createRemoteExecutionServices } from './remote-execution-composition.js'; export type { RemoteExecutionServices } from './remote-execution-composition.js'; export { wireIdlePowerAndLiveTurn } from './idle-power-services.js'; export type { IdlePowerServices, IdlePowerServicesDeps } from './idle-power-services.js'; export { SETUP_INTENT_CONTRACT_PROMPT, SETUP_SOLUTION_SHAPES, mentionsUserTypedCommand, renderSetupPlan, setupPlanStrings, setupStepsOfKind, } from './setup-contract.js'; export type { SetupOption, SetupPlan, SetupSolutionShape, SetupStep, SetupStepKind, } from './setup-contract.js'; export { WAKE_RECOVERY_COMMAND, wireVoiceSetup } from './voice-setup-services.js'; export type { VoiceSetupServices, VoiceSetupServicesDeps } from './voice-setup-services.js'; export { createSessionStorageServices } from './session-storage-services.js'; export type { SessionStorageServices } from './session-storage-services.js'; export { CODE_INDEX_ENABLED_CONFIG_KEY, CODE_INDEX_MAX_FILE_BYTES, CODE_INDEX_MAX_FILES, CODE_INDEX_MAX_TOTAL_BYTES, codeIndexDbPath, createCodeIndexServices, createStoreRerooter, isCodeIndexAutoStartEnabled, isCodeInjectionSettingEnabled, } from './code-index-services.js'; export type { CodeIndexServices, CodeIndexServicesDeps } from './code-index-services.js'; export { applyProviderOptimizerConfigMode, bindProviderOptimizerFeatureFlag, } from './provider-optimizer-wiring.js'; export { foldLegacyProjectMemory, runBootMemoryFold } from './memory-fold.js'; export type { BootFoldLogger } from './memory-fold.js'; export { CONTROL_PLANE_FEATURE_FLAG, DELIVERY_ENGINE_FEATURE_FLAG, enableFeatureFlags, getMissingSurfaceFeatureFlags, getServerSurfaceFeatureFlags, getSurfaceFeatureFlag, isFeatureFlagEnabled, ROUTE_BINDING_FEATURE_FLAG, SERVICE_MANAGEMENT_FEATURE_FLAG, surfaceFeatureGateSettingsKeys, } from './surface-feature-flags.js'; export { WorkspaceRegistrationManager } from './workspace-registration.js'; export type { WorkspaceRegistrationEvaluation, WorkspaceRegistrationManagerOptions, WorkspaceRegistrationShellPaths, } from './workspace-registration.js'; export { detectPriorWorkspaceState, readPersistedWorkspaceTrust, trustGatedAsk, WorkspaceTrustManager, } from './workspace-trust.js'; export type { PersistedWorkspaceTrustView, WorkspaceTrustLevel, WorkspaceTrustManagerOptions, WorkspaceTrustPaths, } from './workspace-trust.js'; export { createWorkspaceTrustDecisionAsk, trustGatedApprovalRaiser, WorkspaceTrustDecisionUnsettledError, WORKSPACE_TRUST_ASK_TIMEOUT_MS, } from './workspace-trust-approval.js'; export type { ApprovalRaise, ApprovalRaiseExtras, TrustGateManager, WorkspaceTrustDecisionAskDeps, } from './workspace-trust-approval.js'; //# sourceMappingURL=operations.d.ts.map"
+      "text": "export { TREE_GLYPHS_CONFIG_KEY, readTreeGlyphSet, type TreeGlyphSetName } from './tree-glyph-setting.js'; export * from './remote/index.js'; export type { RemoteSessionBundle } from './remote/types.js'; export * from './tasks/index.js'; export * from './tools/index.js'; export { AcpTaskAdapter } from './tasks/adapters/index.js'; export { OpsControlPlane, OpsIllegalActionError, OpsTargetNotFoundError } from './ops/control-plane.js'; export { ToolContractVerifier } from './tools/contract-verifier.js'; export type { ContractVerifierOptions } from './tools/contract-verifier.js'; export { McpLifecycleManager, McpPermissionManager, McpSchemaFreshnessTracker, buildMcpAttackPathReview, createMcpLifecycleManager, DEFAULT_RECONNECT_CONFIG, } from './mcp/index.js'; export type { McpAttackPathFinding, McpAttackPathFindingKind, McpAttackPathReview, McpCapabilityClass, McpCoherenceAssessment, McpCoherenceVerdict, McpDecisionRecord, McpEventHandler, McpLifecycleManagerOptions, McpPermission, McpReconnectConfig, McpRiskLevel, McpSchemaRecord, McpSecuritySnapshot, McpServerEntry, McpServerPermissions, McpServerRole, McpServerState, McpToolPermission, McpTrustLevel, McpTrustMode, McpTrustProfile, QuarantineReason, QuarantineRecord, SchemaFreshness, } from './mcp/index.js'; export { ALL_CAPABILITIES, ALL_CAPABILITIES as PLUGIN_CAPABILITIES, HIGH_RISK_CAPABILITIES, PluginLifecycleManager, PluginQuarantineEngine, PluginTrustStore, SAFE_CAPABILITIES, filterCapabilitiesByTrust, hasCapability, isHighRiskCapability, isOperational as isPluginOperational, isReloadable as isPluginReloadable, isTerminal as isPluginTerminal, resolveCapabilityManifest, validateManifestV2, validatePluginSignature, } from './plugins/index.js'; export type { PluginCapability, PluginCapabilityManifest, PluginManifestV2, PluginTrustTier, } from './plugins/index.js'; export { LOW_QUALITY_THRESHOLD, computeQualityScore, createCompactionManager, describeScore, escalateStrategy, isTerminal as isTerminalCompactionState, reachableFrom as reachableFromCompactionState, } from './compaction/index.js'; export type { CompactionQualityScore, CompactionStrategy, StrategyInput, StrategyOutput, } from './compaction/index.js'; export { compactionFailurePlaybook, exportRecoveryPlaybook, permissionDeadlockPlaybook, pluginDegradationPlaybook, reconnectFailurePlaybook, sessionUnrecoverablePlaybook, stuckTurnPlaybook, } from './ops/playbooks/index.js'; export { createSessionUnrecoverablePlaybook, } from './ops/playbooks/session-unrecoverable.js'; export { createStuckTurnPlaybook, } from './ops/playbooks/stuck-turn.js'; export { evaluateOrchestrationSpawn, } from './orchestration/spawn-policy.js'; export type { DistributedRuntimeSnapshotStore, } from './remote/index.js'; export { TRANSPORT_PROTOCOL_SUPPORT_MATRIX as TRANSPORT_COMPATIBILITY_MATRIX, } from './remote/index.js'; export { applyTransition, canTransition, isOperational, isReloadable, isTerminal, reachableFrom, } from './lifecycle-facade.js'; export type { RuntimeTransitionResult } from './lifecycle-facade.js'; export * from './crash-capture.js'; export * from './session-maintenance.js'; export * from './session-persistence.js'; export * from './session-surface.js'; export * from './session-return-context.js'; export * from './retention/index.js'; export type { RetentionClass, RetentionClassConfig, RetentionConfig, CheckpointRecord, PruneOptions, PruneResult, PerClassPruneResult, Pruner, RetentionStats, } from './retention/index.js'; export { FocusTracker } from './focus-tracker.js'; export { FORCE_NOTIFY_DURATION_MS, readBooleanConfig, readNotifyOnlyWhenUnfocused, shouldFireAlert, } from './alert-gating.js'; export type { ConfigGet } from './alert-gating.js'; export { NOTIFICATIONS_METADATA_ONLY_KEY, readNotificationsMetadataOnly, } from './notification-privacy.js'; export { JOURNAL_ORPHAN_MAX_AGE_MS, JOURNAL_ORPHAN_MAX_FILES, JOURNAL_SCHEMA_VERSION, journalPathFor, openTranscriptJournal, reapOrphanedJournals, replayJournal, } from './transcript-journal.js'; export type { JournalEventType, JournalHeader, JournalReapOptions, JournalReapResult, JournalRecord, ReplayResult, TranscriptJournal, } from './transcript-journal.js'; export { replayJournalForSession, replayJournalIntoConversation, } from './transcript-journal-replay.js'; export type { JournalReplayConversation, ReplayIntoConversationOptions, ReplayIntoConversationResult, } from './transcript-journal-replay.js'; export { applyRecoverySnapshot, confirmRecoveryRestore, } from './recovery-snapshot-apply.js'; export type { ApplyRecoverySnapshotOptions, ApplyRecoverySnapshotResult, RecoveryApplyRefusal, RecoveryRestoreConfirmation, RestorableConversation, } from './recovery-snapshot-apply.js'; export { checkSessionLiveness, isPidAlive, LIVENESS_MARKER_MAX_FILES, LIVENESS_STALE_AFTER_MS, livenessMarkerDirFor, livenessMarkerPathFor, reapStaleLivenessMarkers, removeLivenessMarker, writeLivenessMarker, } from './session-liveness-marker.js'; export type { LivenessMarker, LivenessReapOptions, LivenessReapResult, SessionLivenessCheck, } from './session-liveness-marker.js'; export { DURABILITY_HOUSEKEEPING_INTERVAL_MS, runDurabilityHousekeeping, startDurabilityHousekeeping, } from './durability-housekeeping.js'; export type { DurabilityHousekeepingInput, DurabilityHousekeepingOutcome, } from './durability-housekeeping.js'; export { createDurabilityServices } from './durability-services.js'; export type { DurabilityServices, DurabilityServicesInput } from './durability-services.js'; export { resolveDaemonCompanionToken, workspaceOperatorTokenCandidates } from './operator-token-cleanup.js'; export { bindWriteLastSessionPointerToSurface } from './session-pointer-surface.js'; export { BINARY_INSTALL_COMMAND, detectInstallKind, fallbackUpdateCommand, } from './install-kind.js'; export type { InstallKind } from './install-kind.js'; export { buildReachabilityNotices, reachabilityNoticeLines } from './reachability-notice.js'; export type { ReachabilityNotice, ReachabilityNoticeInput, ReachabilityNoticeKind, } from './reachability-notice.js'; export { announceReachability, boundedLatestRelease, INSTALLED_COMMANDS, LATEST_LOOKUP_TIMEOUT_MS, probeVersionLine, resolveSelfDirectory, runReachabilityCheck, } from './reachability-check.js'; export type { ReachabilityCheckInput, ReachabilityCheckResult } from './reachability-check.js'; export { createAgentGraph, createAgentExecutionGraph } from './agent-graph-composition.js'; export type { AgentGraph, AgentGraphOptions, AgentExecutionGraph, AgentExecutionGraphOptions } from './agent-graph-composition.js'; export { composeContractRunner, resumeContracts } from './contract-composition.js'; export type { ContractRunnerCompositionOptions, ComposedContractRunner } from './contract-composition.js'; export { makeRuntimeFleetProbe } from './orchestration/fleet-count.js'; export { composeJudgment } from './judgment-services.js'; export type { JudgmentServices, JudgmentServicesInput, JudgmentSettingsSource } from './judgment-services.js'; export { createChannelComposition } from './channel-composition.js'; export type { ChannelComposition } from './channel-composition.js'; export { createRemoteExecutionServices } from './remote-execution-composition.js'; export type { RemoteExecutionServices } from './remote-execution-composition.js'; export { wireIdlePowerAndLiveTurn } from './idle-power-services.js'; export type { IdlePowerServices, IdlePowerServicesDeps } from './idle-power-services.js'; export { SETUP_INTENT_CONTRACT_PROMPT, SETUP_SOLUTION_SHAPES, mentionsUserTypedCommand, renderSetupPlan, setupPlanStrings, setupStepsOfKind, } from './setup-contract.js'; export type { SetupOption, SetupPlan, SetupSolutionShape, SetupStep, SetupStepKind, } from './setup-contract.js'; export { WAKE_RECOVERY_COMMAND, wireVoiceSetup } from './voice-setup-services.js'; export type { VoiceSetupServices, VoiceSetupServicesDeps } from './voice-setup-services.js'; export { createSessionStorageServices } from './session-storage-services.js'; export type { SessionStorageServices } from './session-storage-services.js'; export { CODE_INDEX_ENABLED_CONFIG_KEY, CODE_INDEX_MAX_FILE_BYTES, CODE_INDEX_MAX_FILES, CODE_INDEX_MAX_TOTAL_BYTES, codeIndexDbPath, createCodeIndexServices, createStoreRerooter, isCodeIndexAutoStartEnabled, isCodeInjectionSettingEnabled, } from './code-index-services.js'; export type { CodeIndexServices, CodeIndexServicesDeps } from './code-index-services.js'; export { applyProviderOptimizerConfigMode, bindProviderOptimizerFeatureFlag, } from './provider-optimizer-wiring.js'; export { foldLegacyProjectMemory, runBootMemoryFold } from './memory-fold.js'; export type { BootFoldLogger } from './memory-fold.js'; export { CONTROL_PLANE_FEATURE_FLAG, DELIVERY_ENGINE_FEATURE_FLAG, enableFeatureFlags, getMissingSurfaceFeatureFlags, getServerSurfaceFeatureFlags, getSurfaceFeatureFlag, isFeatureFlagEnabled, ROUTE_BINDING_FEATURE_FLAG, SERVICE_MANAGEMENT_FEATURE_FLAG, surfaceFeatureGateSettingsKeys, } from './surface-feature-flags.js'; export { WorkspaceRegistrationManager } from './workspace-registration.js'; export type { WorkspaceRegistrationEvaluation, WorkspaceRegistrationManagerOptions, WorkspaceRegistrationShellPaths, } from './workspace-registration.js'; export { detectPriorWorkspaceState, readPersistedWorkspaceTrust, trustGatedAsk, WorkspaceTrustManager, } from './workspace-trust.js'; export type { PersistedWorkspaceTrustView, WorkspaceTrustLevel, WorkspaceTrustManagerOptions, WorkspaceTrustPaths, } from './workspace-trust.js'; export { createWorkspaceTrustDecisionAsk, trustGatedApprovalRaiser, WorkspaceTrustDecisionUnsettledError, WORKSPACE_TRUST_ASK_TIMEOUT_MS, } from './workspace-trust-approval.js'; export type { ApprovalRaise, ApprovalRaiseExtras, TrustGateManager, WorkspaceTrustDecisionAskDeps, } from './workspace-trust-approval.js'; export * from './turn-notification.js'; export type { NotificationPrivacyReader } from './notification-envelope.js'; //# sourceMappingURL=operations.d.ts.map"
     },
     {
       "name": "security",
@@ -52321,6 +52323,15 @@
       "text": "export interface ApplyRecoverySnapshotResult { readonly applied: boolean; readonly refusal?: RecoveryApplyRefusal | undefined; readonly retired: boolean; readonly messageCount: number; readonly journalReplay: ReplayIntoConversationResult; }"
     },
     {
+      "name": "ApprovalNotificationFacts",
+      "kind": "interface",
+      "required": [
+        "category",
+        "tool"
+      ],
+      "text": "export interface ApprovalNotificationFacts { readonly tool: string; readonly category: string; readonly target?: string | null | undefined; readonly turnName?: string | null | undefined; }"
+    },
+    {
       "name": "ApprovalRaise",
       "kind": "type",
       "text": "export type ApprovalRaise = (input: { readonly request: PermissionPromptRequest; } & ApprovalRaiseExtras) => Promise<PermissionPromptDecision>; ;; via PermissionPromptDecision = export interface PermissionPromptDecision { approved: boolean; remember?: boolean | undefined; rememberTier?: RememberTier | undefined; reason?: string | undefined; modifiedArgs?: Record<string, unknown> | undefined; } ;; PermissionPromptRequest = export interface PermissionPromptRequest { callId: string; tool: string; args: Record<string, unknown>; category: PermissionCategory; analysis: PermissionRequestAnalysis; workingDirectory?: string | undefined; attribution?: PermissionAttribution | undefined; rememberOptions?: readonly RememberTierOption[] | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
@@ -52398,6 +52409,16 @@
         "warn"
       ],
       "text": "export interface BootFoldLogger { info(message: string, meta?: unknown): void; warn(message: string, meta?: unknown): void; }"
+    },
+    {
+      "name": "BudgetNotificationFacts",
+      "kind": "interface",
+      "required": [
+        "budgetUsd",
+        "sessionCostUsd",
+        "sessionId"
+      ],
+      "text": "export interface BudgetNotificationFacts { readonly sessionCostUsd: number; readonly budgetUsd: number; readonly sessionId: string; readonly turnName?: string | null | undefined; }"
     },
     {
       "name": "CODE_INDEX_ENABLED_CONFIG_KEY",
@@ -53554,6 +53575,11 @@
       "text": "NOTIFICATIONS_METADATA_ONLY_KEY = \"behavior.notificationsMetadataOnly\""
     },
     {
+      "name": "NOTIFICATION_TEXT_LIMITS",
+      "kind": "const",
+      "text": "NOTIFICATION_TEXT_LIMITS: { readonly desktopTitle: 60; readonly desktopBody: 220; readonly terminal: 140; readonly webhook: 400; readonly name: 60; }"
+    },
+    {
       "name": "NegotiatedProtocol",
       "kind": "interface",
       "required": [
@@ -53564,6 +53590,33 @@
         "version"
       ],
       "text": "export interface NegotiatedProtocol { readonly version: ProtocolVersion; readonly downgraded: boolean; readonly downgradeReason?: DowngradeReason | undefined; readonly offeredVersion: ProtocolVersion; readonly peerVersion: ProtocolVersion; readonly negotiatedAt: number; }"
+    },
+    {
+      "name": "NotificationDelivery",
+      "kind": "type",
+      "text": "export type NotificationDelivery = { readonly kind: 'turn'; readonly facts: TurnNotificationFacts; } | { readonly kind: 'approval'; readonly facts: ApprovalNotificationFacts; } | { readonly kind: 'budget'; readonly facts: BudgetNotificationFacts; };"
+    },
+    {
+      "name": "NotificationPrivacyReader",
+      "kind": "type",
+      "text": "export type NotificationPrivacyReader = () => unknown;"
+    },
+    {
+      "name": "NotificationText",
+      "kind": "interface",
+      "required": [
+        "body",
+        "title"
+      ],
+      "text": "export interface NotificationText { readonly title: string; readonly body: string; }"
+    },
+    {
+      "name": "NotificationTextOptions",
+      "kind": "interface",
+      "required": [
+        "metadataOnly"
+      ],
+      "text": "export interface NotificationTextOptions { readonly metadataOnly: boolean; }"
     },
     {
       "name": "OpsControlPlane",
@@ -55022,6 +55075,39 @@
       "text": "export type TrustGateManager = Pick<WorkspaceTrustManager, 'isCategoryAllowed' | 'isDecided' | 'setLevel'> & { load(): Promise<void>; }; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
+      "name": "TurnActivityTally",
+      "kind": "class",
+      "publicMembers": [
+        "noteAgentStarted",
+        "noteReviewScore",
+        "noteToolFailed",
+        "noteToolReceived",
+        "noteToolSucceeded",
+        "reset",
+        "snapshot"
+      ],
+      "text": "export declare class TurnActivityTally { private toolCalls; private readonly pendingPaths; private readonly changedFiles; private agents; private score; reset(): void; noteToolReceived(callId: string, tool: string, args: Readonly<Record<string, unknown>> | null | undefined): void; noteToolSucceeded(callId: string): void; noteToolFailed(callId: string): void; noteAgentStarted(): void; noteReviewScore(score: number): void; snapshot(): { toolCalls: number; filesChanged: number; agentsStarted: number; reviewScore: number | null; }; } ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "TurnNameSource",
+      "kind": "interface",
+      "text": "export interface TurnNameSource { readonly title?: string | null | undefined; readonly titleSource?: 'user' | 'system' | null | undefined; readonly turnText?: string | null | undefined; }"
+    },
+    {
+      "name": "TurnNotificationFacts",
+      "kind": "interface",
+      "required": [
+        "elapsedMs",
+        "outcome"
+      ],
+      "text": "export interface TurnNotificationFacts { readonly outcome: TurnOutcome; readonly elapsedMs: number; readonly name?: string | null | undefined; readonly reason?: string | null | undefined; readonly toolCalls?: number | undefined; readonly filesChanged?: number | undefined; readonly agentsStarted?: number | undefined; readonly reviewScore?: number | null | undefined; readonly sessionId?: string | undefined; readonly subject?: string | undefined; }"
+    },
+    {
+      "name": "TurnOutcome",
+      "kind": "type",
+      "text": "export type TurnOutcome = 'completed' | 'failed' | 'cancelled';"
+    },
+    {
       "name": "UnifiedTaskManager",
       "kind": "class",
       "publicMembers": [
@@ -55252,6 +55338,16 @@
       "text": "export declare function buildAcpConnectionEntry(session: RemoteSession, label: string): AcpConnection; ;; via AcpConnection = export interface AcpConnection { agentId: string; label: string; transportState: AcpTransportState; connectedAt?: number | undefined; completing: boolean; messageCount: number; errorCount: number; lastError?: string | undefined; taskId?: string | undefined; }"
     },
     {
+      "name": "buildApprovalNotification",
+      "kind": "function",
+      "text": "export declare function buildApprovalNotification(facts: ApprovalNotificationFacts, options: NotificationTextOptions): NotificationText;"
+    },
+    {
+      "name": "buildBudgetNotification",
+      "kind": "function",
+      "text": "export declare function buildBudgetNotification(facts: BudgetNotificationFacts, options: NotificationTextOptions): NotificationText;"
+    },
+    {
       "name": "buildCrashRecord",
       "kind": "function",
       "text": "export declare function buildCrashRecord(kind: CrashKind, thrown: unknown, context: CrashContext): CrashRecord;"
@@ -55285,6 +55381,16 @@
       "name": "buildRemoteShellCommand",
       "kind": "function",
       "text": "export declare function buildRemoteShellCommand(command: string, args?: string[]): string;"
+    },
+    {
+      "name": "buildTurnNotification",
+      "kind": "function",
+      "text": "export declare function buildTurnNotification(facts: TurnNotificationFacts, options: NotificationTextOptions, limits?: { readonly title?: number; readonly body?: number; }): NotificationText;"
+    },
+    {
+      "name": "buildTurnNotificationLine",
+      "kind": "function",
+      "text": "export declare function buildTurnNotificationLine(facts: TurnNotificationFacts, options: NotificationTextOptions, maxLength?: number): string;"
     },
     {
       "name": "canTransition",
@@ -55517,6 +55623,16 @@
       "text": "export declare function describeScore(score: CompactionQualityScore): string;"
     },
     {
+      "name": "describeToolTarget",
+      "kind": "function",
+      "text": "export declare function describeToolTarget(args: Readonly<Record<string, unknown>> | null | undefined, analysisTarget?: string | null): string | null; ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "describeTurnOutcome",
+      "kind": "function",
+      "text": "export declare function describeTurnOutcome(facts: TurnNotificationFacts, options: NotificationTextOptions): string;"
+    },
+    {
       "name": "detectInstallKind",
       "kind": "function",
       "text": "export declare function detectInstallKind(execPath: string): InstallKind;"
@@ -55582,6 +55698,11 @@
       "text": "export declare function foldLegacyProjectMemory(memoryStore: MemoryStore, memoryEmbeddingRegistry: MemoryEmbeddingProviderRegistry, workingDirectory: string): Promise<MemoryFoldReport>; ;; via MemoryFoldReport = export interface MemoryFoldReport { readonly canonicalPath: string; readonly totalImported: number; readonly totalSkipped: number; readonly totalLinks: number; readonly sources: readonly MemoryFoldSourceReport[]; readonly missingSources: readonly string[]; readonly failedSources: readonly string[]; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
+      "name": "formatElapsed",
+      "kind": "function",
+      "text": "export declare function formatElapsed(ms: number): string;"
+    },
+    {
       "name": "formatReturnContextForDisplay",
       "kind": "function",
       "text": "export declare function formatReturnContextForDisplay(summary: SessionReturnContextSummary | undefined): string[];"
@@ -55590,6 +55711,11 @@
       "name": "formatSessionMaintenanceLines",
       "kind": "function",
       "text": "export declare function formatSessionMaintenanceLines(status: SessionMaintenanceStatus, detail?: 'minimal' | 'guided'): string[];"
+    },
+    {
+      "name": "formatWebhookText",
+      "kind": "function",
+      "text": "export declare function formatWebhookText(text: NotificationText, maxLength?: number): string;"
     },
     {
       "name": "generateIdempotencyKey",
@@ -55735,6 +55861,11 @@
       "name": "isTerminalStatus",
       "kind": "function",
       "text": "export declare function isTerminalStatus(status: TaskLifecycleState): boolean; ;; via TaskLifecycleState = export type TaskLifecycleState = 'queued' | 'running' | 'blocked' | 'completed' | 'failed' | 'cancelled';"
+    },
+    {
+      "name": "joinNotificationLine",
+      "kind": "function",
+      "text": "export declare function joinNotificationLine(text: NotificationText, maxLength: number): string;"
     },
     {
       "name": "journalPathFor",
@@ -55957,6 +56088,11 @@
       "text": "export declare function resolveTimeout(payload?: DispatchPayload): number;"
     },
     {
+      "name": "resolveTurnName",
+      "kind": "function",
+      "text": "export declare function resolveTurnName(source: TurnNameSource, maxLength?: number): string | null;"
+    },
+    {
       "name": "resumeContracts",
       "kind": "function",
       "text": "export declare function resumeContracts(runner: Pick<ContractRunner, 'resumeAll'>, projectRoot: string): Promise<ResumeReport | null>; ;; via ContractRunner = export interface ContractRunner { start(input: StartContractInput): StartedContract; startFromPlan(input: StartFromPlanInput): StartedContract; startForOwner(ownerRecord: AgentRecord): StartedContract; get(contractId: string): ContractView | null; list(filter?: { readonly sessionId?: string | undefined; readonly includeTerminal?: boolean | undefined; }): ContractView[]; cancel(contractId: string, reason: string): boolean; reply(contractId: string, escalationId: string, text: string): Promise<OwnerReplyOutcome>; resumeAll(): Promise<ResumeReport>; importContract(snapshotJson: string, force?: boolean): boolean; serializeContract(contractId: string): string | null; hooks(): ContractSessionHooks; fleetControls(): ContractFleetControls; on(listener: (event: ContractEvent) => void): () => void; dispose(): void; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ResumeReport = export interface ResumeReport { readonly resumed: readonly { readonly contractId: string; readonly step: ResumeStep; }[]; readonly queued: readonly string[]; readonly reaped: readonly { readonly contractId: string; readonly reason: string; }[]; readonly skipped: readonly string[]; }"
@@ -56035,6 +56171,11 @@
       "name": "tokenizeCommand",
       "kind": "function",
       "text": "export declare function tokenizeCommand(command: string): string[];"
+    },
+    {
+      "name": "trimAtWordBoundary",
+      "kind": "function",
+      "text": "export declare function trimAtWordBoundary(text: string, maxLength: number): string;"
     },
     {
       "name": "trustGatedApprovalRaiser",
