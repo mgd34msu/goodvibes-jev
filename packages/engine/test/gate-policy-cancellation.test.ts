@@ -85,7 +85,11 @@ describe('composed Agent policy execution options', () => {
     let calls = 0;
     const registry = registryWith([tool('read', async () => { calls++; return { success: true }; })]);
     const controller = new AbortController(); controller.abort(new Error('already cancelled'));
-    await expect(registry.execute('cancel', 'read', { files: [{ path: 'not-read.md' }] }, { signal: controller.signal })).rejects.toThrow('already cancelled');
+    // The registry now observes cancellation before argument repair begins;
+    // it exposes the typed judgment cancellation, never the caller's reason.
+    await expect(registry.execute('cancel', 'read', { files: [{ path: 'not-read.md' }] }, { signal: controller.signal })).rejects.toMatchObject({
+      message: 'the judgment call was cancelled', cause: { name: 'JudgmentError', kind: 'aborted' },
+    });
     expect(calls).toBe(0);
     expect(fake.requests).toHaveLength(0);
   });

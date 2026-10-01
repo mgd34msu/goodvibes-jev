@@ -19,7 +19,8 @@ import { summarizeError } from '../utils/error-display.js';
 import { reasoningEffortSpecFromLevels } from '../providers/reasoning-effort.js';
 import { GatewayVerbError } from '../control-plane/routes/gateway-verb-error.js';
 import { SDKErrorCodes } from '@goodvibes-jev/engine/errors';
-import { PluginQuiescingError, type PluginInFlightTracker } from './in-flight.js';
+import { createOwnedPluginCapabilities } from './owned-capabilities.js';
+import { PluginClosedError, PluginQuiescingError, type PluginInFlightTracker } from './in-flight.js';
 
 /**
  * PluginProviderConfig, minimal config for registering a custom LLM provider
@@ -181,6 +182,8 @@ export interface PluginAPIContext {
    * counted while it runs and refused while the plugin quiesces for a reload.
    */
   inFlight?: PluginInFlightTracker | undefined;
+  /** Per-instance registration lifetime, closed before unloading this instance. */
+  registrations?: PluginInFlightTracker | undefined;
 }
 
 /**
@@ -190,219 +193,266 @@ export interface PluginAPIContext {
 export function createPluginAPI(ctx: PluginAPIContext): PluginAPI {
   const tracker = ctx.inFlight;
   /** Run one call into plugin code through the in-flight tracker, when there is one. */
-  const track = <T>(call: () => T): T => (tracker ? tracker.track(ctx.pluginName, call) : call());
+  const track = <T>(call: () => T): T => {
+    if (ctx.registrations?.isClosed(ctx.pluginName)) throw new PluginClosedError(ctx.pluginName);
+    const invoke = () => tracker ? tracker.track(ctx.pluginName, call) : call();
+    return ctx.registrations ? ctx.registrations.track(ctx.pluginName, invoke) : invoke();
+  };
+  const assertRegistrationOpen = (): void => {
+    if (tracker?.isClosed(ctx.pluginName) || ctx.registrations?.isClosed(ctx.pluginName)) {
+      throw new PluginClosedError(ctx.pluginName);
+    }
+  };
+  const register = <T>(action: () => T): T => {
+    assertRegistrationOpen();
+    return ctx.registrations ? ctx.registrations.track(ctx.pluginName, action) : action();
+  };
+  const owned = createOwnedPluginCapabilities(track);
   return {
     registerCommand(name, description, handler) {
-      // Namespace commands to avoid collisions: "plugin-<pluginName>-<name>"
-      const cmdName = `plugin-${ctx.pluginName}-${name}`;
-      const cmd: HostSlashCommand = {
-        name: cmdName,
-        description: `[${ctx.pluginName}] ${description}`,
-        handler: async (args: string[]) => {
-          try {
-            await track(() => handler(args));
-          } catch (err) {
-            if (err instanceof PluginQuiescingError) {
-              logger.warn(`[plugin:${ctx.pluginName}] Command '${name}' refused: ${err.message}`);
-              return;
+      return register(() => {
+        // Namespace commands to avoid collisions: "plugin-<pluginName>-<name>"
+        const cmdName = `plugin-${ctx.pluginName}-${name}`;
+        const cmd: HostSlashCommand = {
+          name: cmdName,
+          description: `[${ctx.pluginName}] ${description}`,
+          handler: async (args: string[]) => {
+            try {
+              await track(() => handler(args));
+            } catch (err) {
+              if (err instanceof PluginQuiescingError) {
+                logger.warn(`[plugin:${ctx.pluginName}] Command '${name}' refused: ${err.message}`);
+                return;
+              }
+              logger.error(`[plugin:${ctx.pluginName}] Command '${name}' threw: ${summarizeError(err)}`);
             }
-            logger.error(`[plugin:${ctx.pluginName}] Command '${name}' threw: ${summarizeError(err)}`);
-          }
-        },
-      };
-      ctx.commandRegistry.register(cmd);
-      ctx.cleanup.push(() => ctx.commandRegistry.unregister(cmdName));
+          },
+        };
+        ctx.commandRegistry.register(cmd);
+        ctx.cleanup.push(() => ctx.commandRegistry.unregister(cmdName));
+      });
     },
 
-    async registerProvider(name, config) {
-      // Dynamically import to avoid circular dependency at module load time.
-      try {
-        const { OpenAICompatProvider } = await import('../providers/openai-compat.js');
+    registerProvider(name, config) {
+      try { return register(async () => {
+        // Dynamically import to avoid circular dependency at module load time.
         try {
-          const provider = new OpenAICompatProvider({
-            name,
-            baseURL: config.baseURL,
-            apiKey: config.apiKey ?? '',
-            defaultModel: config.models[0] ?? '',
-            models: config.models,
-            ...(config.embeddingModel ? { embeddingModel: config.embeddingModel } : {}),
-            ...(config.reasoningFormat ? { reasoningFormat: config.reasoningFormat } : {}),
-            ...(config.authEnvVars ? { authEnvVars: config.authEnvVars } : {}),
-            ...(config.serviceNames ? { serviceNames: config.serviceNames } : {}),
-            ...(config.subscriptionProviderId ? { subscriptionProviderId: config.subscriptionProviderId } : {}),
-          });
-          const unregister = ctx.providerRegistry.registerRuntimeProvider({
-            provider,
-            models: config.models.map((modelId) => ({
-              id: modelId,
-              provider: name,
-              registryKey: `${name}:${modelId}`,
-              displayName: config.displayName ?? modelId,
-              description: `Plugin provider ${name}`,
-              contextWindow: config.contextWindow ?? 8192,
-              selectable: true,
-              capabilities: {
-                toolCalling: config.capabilities?.toolCalling ?? true,
-                codeEditing: config.capabilities?.codeEditing ?? true,
-                reasoning: config.capabilities?.reasoning ?? false,
-                multimodal: config.capabilities?.multimodal ?? false,
-              },
-              ...(config.reasoningEffort
-                ? { reasoningEffort: reasoningEffortSpecFromLevels(config.reasoningEffort) }
-                : {}),
-              ...(config.tier ? { tier: config.tier } : {}),
-              ...(config.tokenLimits ? { tokenLimits: config.tokenLimits } : {}),
-            })),
-            suppressCatalogModelRegistryKeys: config.suppressCatalogModelRegistryKeys,
-          });
-          ctx.cleanup.push(unregister);
-          logger.info(`[plugin:${ctx.pluginName}] Registered provider '${name}' with ${config.models.length} model(s)`);
+          const { OpenAICompatProvider } = await import('../providers/openai-compat.js');
+          assertRegistrationOpen();
+          try {
+            const provider = new OpenAICompatProvider({
+              name,
+              baseURL: config.baseURL,
+              apiKey: config.apiKey ?? '',
+              defaultModel: config.models[0] ?? '',
+              models: config.models,
+              ...(config.embeddingModel ? { embeddingModel: config.embeddingModel } : {}),
+              ...(config.reasoningFormat ? { reasoningFormat: config.reasoningFormat } : {}),
+              ...(config.authEnvVars ? { authEnvVars: config.authEnvVars } : {}),
+              ...(config.serviceNames ? { serviceNames: config.serviceNames } : {}),
+              ...(config.subscriptionProviderId ? { subscriptionProviderId: config.subscriptionProviderId } : {}),
+            });
+            const registered = owned.provider(provider);
+            const unregister = ctx.providerRegistry.registerRuntimeProvider({
+              provider: registered,
+              models: config.models.map((modelId) => ({
+                id: modelId,
+                provider: name,
+                registryKey: `${name}:${modelId}`,
+                displayName: config.displayName ?? modelId,
+                description: `Plugin provider ${name}`,
+                contextWindow: config.contextWindow ?? 8192,
+                selectable: true,
+                capabilities: {
+                  toolCalling: config.capabilities?.toolCalling ?? true,
+                  codeEditing: config.capabilities?.codeEditing ?? true,
+                  reasoning: config.capabilities?.reasoning ?? false,
+                  multimodal: config.capabilities?.multimodal ?? false,
+                },
+                ...(config.reasoningEffort
+                  ? { reasoningEffort: reasoningEffortSpecFromLevels(config.reasoningEffort) }
+                  : {}),
+                ...(config.tier ? { tier: config.tier } : {}),
+                ...(config.tokenLimits ? { tokenLimits: config.tokenLimits } : {}),
+              })),
+              suppressCatalogModelRegistryKeys: config.suppressCatalogModelRegistryKeys,
+            });
+            ctx.cleanup.push(() => { if (ctx.providerRegistry.has(name) && ctx.providerRegistry.getRegistered(name) === registered) unregister(); });
+            logger.info(`[plugin:${ctx.pluginName}] Registered provider '${name}' with ${config.models.length} model(s)`);
+          } catch (err) {
+            logger.error(`[plugin:${ctx.pluginName}] registerProvider '${name}' failed: ${summarizeError(err)}`);
+            throw err;
+          }
         } catch (err) {
-          logger.error(`[plugin:${ctx.pluginName}] registerProvider '${name}' failed: ${summarizeError(err)}`);
+          logger.error(`[plugin:${ctx.pluginName}] Could not import OpenAICompatProvider: ${summarizeError(err)}`);
           throw err;
         }
-      } catch (err) {
-        logger.error(`[plugin:${ctx.pluginName}] Could not import OpenAICompatProvider: ${summarizeError(err)}`);
-        throw err;
+      }); } catch (error) {
+        const refused = Promise.reject(error);
+        void refused.catch(() => {});
+        return refused;
       }
     },
 
     registerProviderInstance(registration) {
-      const unregister = ctx.providerRegistry.registerRuntimeProvider({
-        provider: registration.provider,
-        models: (registration.models ?? []).map((model) => ({
-          id: model.id,
-          provider: registration.provider.name,
-          registryKey: `${registration.provider.name}:${model.id}`,
-          displayName: model.displayName ?? model.id,
-          description: model.description ?? `Plugin provider ${registration.provider.name}`,
-          contextWindow: model.contextWindow ?? 8192,
-          selectable: model.selectable ?? true,
-          capabilities: {
-            toolCalling: model.capabilities?.toolCalling ?? true,
-            codeEditing: model.capabilities?.codeEditing ?? true,
-            reasoning: model.capabilities?.reasoning ?? false,
-            multimodal: model.capabilities?.multimodal ?? false,
-          },
-          ...(model.reasoningEffort
-            ? { reasoningEffort: reasoningEffortSpecFromLevels(model.reasoningEffort) }
-            : {}),
-          ...(model.tier ? { tier: model.tier } : {}),
-          ...(model.tokenLimits ? { tokenLimits: model.tokenLimits } : {}),
-        })),
-        suppressCatalogModelRegistryKeys: registration.suppressCatalogModelRegistryKeys,
-        replace: registration.replace,
-      } satisfies RuntimeProviderRegistration);
-      ctx.cleanup.push(unregister);
-      logger.info(`[plugin:${ctx.pluginName}] Registered provider instance '${registration.provider.name}'`);
+      return register(() => {
+        const registered = owned.provider(registration.provider);
+        const unregister = ctx.providerRegistry.registerRuntimeProvider({
+          provider: registered,
+          models: (registration.models ?? []).map((model) => ({
+            id: model.id,
+            provider: registration.provider.name,
+            registryKey: `${registration.provider.name}:${model.id}`,
+            displayName: model.displayName ?? model.id,
+            description: model.description ?? `Plugin provider ${registration.provider.name}`,
+            contextWindow: model.contextWindow ?? 8192,
+            selectable: model.selectable ?? true,
+            capabilities: {
+              toolCalling: model.capabilities?.toolCalling ?? true,
+              codeEditing: model.capabilities?.codeEditing ?? true,
+              reasoning: model.capabilities?.reasoning ?? false,
+              multimodal: model.capabilities?.multimodal ?? false,
+            },
+            ...(model.reasoningEffort
+              ? { reasoningEffort: reasoningEffortSpecFromLevels(model.reasoningEffort) }
+              : {}),
+            ...(model.tier ? { tier: model.tier } : {}),
+            ...(model.tokenLimits ? { tokenLimits: model.tokenLimits } : {}),
+          })),
+          suppressCatalogModelRegistryKeys: registration.suppressCatalogModelRegistryKeys,
+          replace: registration.replace,
+        } satisfies RuntimeProviderRegistration);
+        ctx.cleanup.push(() => { if (ctx.providerRegistry.has(registered.name) && ctx.providerRegistry.getRegistered(registered.name) === registered) unregister(); });
+        logger.info(`[plugin:${ctx.pluginName}] Registered provider instance '${registration.provider.name}'`);
+      });
     },
 
     registerTool(name, schema, handler) {
-      const toolName = `plugin_${ctx.pluginName}_${name}`;
-      if (ctx.toolRegistry.has(toolName)) {
-        logger.warn(`[plugin:${ctx.pluginName}] Tool '${toolName}' already registered, skipping`);
-        return;
-      }
-      const definition: ToolDefinition = {
-        name: toolName,
-        description: (schema.description as string) ?? `Plugin tool: ${name}`,
-        parameters: schema,
-      };
-      const tool: Tool = {
-        definition,
-        execute: async (args: Record<string, unknown>) => {
-          try {
-            return await track(() => handler(args));
-          } catch (err) {
-            if (err instanceof PluginQuiescingError) return { success: false, error: err.message };
-            return { success: false, error: summarizeError(err) };
-          }
-        },
-      };
-      ctx.toolRegistry.register(tool);
-      // Removed on deactivate so a reloaded instance registers its own handler.
-      ctx.cleanup.push(() => {
-        ctx.toolRegistry.unregister(toolName, tool);
+      return register(() => {
+        const toolName = `plugin_${ctx.pluginName}_${name}`;
+        if (ctx.toolRegistry.has(toolName)) {
+          logger.warn(`[plugin:${ctx.pluginName}] Tool '${toolName}' already registered, skipping`);
+          return;
+        }
+        const definition: ToolDefinition = {
+          name: toolName,
+          description: (schema.description as string) ?? `Plugin tool: ${name}`,
+          parameters: schema,
+        };
+        const tool: Tool = {
+          definition,
+          execute: async (args: Record<string, unknown>) => {
+            try {
+              return await track(() => handler(args));
+            } catch (err) {
+              if (err instanceof PluginQuiescingError) return { success: false, error: err.message };
+              return { success: false, error: summarizeError(err) };
+            }
+          },
+        };
+        ctx.toolRegistry.register(tool);
+        // Removed on deactivate so a reloaded instance registers its own handler.
+        ctx.cleanup.push(() => {
+          ctx.toolRegistry.unregister(toolName, tool);
+        });
       });
     },
 
     registerGatewayMethod(descriptor, handler) {
-      const methodId = descriptor.id.startsWith(`plugin.${ctx.pluginName}.`)
-        ? descriptor.id
-        : `plugin.${ctx.pluginName}.${descriptor.id}`;
-      const unregister = ctx.gatewayMethods.register({
-        ...descriptor,
-        id: methodId,
-        source: 'plugin',
-        pluginId: ctx.pluginName,
-      }, (input) => {
-        try {
-          return track(() => handler(input));
-        } catch (err) {
-          if (err instanceof PluginQuiescingError) {
-            throw new GatewayVerbError(err.message, SDKErrorCodes.SERVICE_UNAVAILABLE, 503);
+      return register(() => {
+        const methodId = descriptor.id.startsWith(`plugin.${ctx.pluginName}.`)
+          ? descriptor.id
+          : `plugin.${ctx.pluginName}.${descriptor.id}`;
+        const unregister = ctx.gatewayMethods.register({
+          ...descriptor,
+          id: methodId,
+          source: 'plugin',
+          pluginId: ctx.pluginName,
+        }, (input) => {
+          try {
+            return track(() => handler(input));
+          } catch (err) {
+            if (err instanceof PluginQuiescingError) {
+              throw new GatewayVerbError(err.message, SDKErrorCodes.SERVICE_UNAVAILABLE, 503);
+            }
+            throw err;
           }
-          throw err;
-        }
+        });
+        ctx.cleanup.push(unregister);
+        logger.info(`[plugin:${ctx.pluginName}] Registered gateway method '${methodId}'`);
       });
-      ctx.cleanup.push(unregister);
-      logger.info(`[plugin:${ctx.pluginName}] Registered gateway method '${methodId}'`);
     },
 
     registerChannelPlugin(plugin) {
-      const registry = ctx.channelRegistry;
-      registry.register(plugin);
-      ctx.cleanup.push(() => {
-        if (registry.get(plugin.id) === plugin) registry.unregister(plugin.id);
+      return register(() => {
+        const registry = ctx.channelRegistry;
+        const registered = owned.channel(plugin);
+        registry.register(registered);
+        ctx.cleanup.push(() => {
+          registry.unregister(plugin.id, registered);
+        });
+        logger.info(`[plugin:${ctx.pluginName}] Registered channel plugin '${plugin.id}'`);
       });
-      logger.info(`[plugin:${ctx.pluginName}] Registered channel plugin '${plugin.id}'`);
     },
 
     registerDeliveryStrategy(strategy, options = {}) {
-      const router = ctx.channelDeliveryRouter;
-      router.registerStrategy(strategy, options);
-      ctx.cleanup.push(() => {
-        router.unregisterStrategy(strategy.id);
+      return register(() => {
+        const router = ctx.channelDeliveryRouter;
+        const registered = owned.delivery(strategy);
+        router.registerStrategy(registered, options);
+        ctx.cleanup.push(() => {
+          if (router.listStrategies().includes(registered)) router.unregisterStrategy(strategy.id);
+        });
+        logger.info(`[plugin:${ctx.pluginName}] Registered delivery strategy '${strategy.id}'`);
       });
-      logger.info(`[plugin:${ctx.pluginName}] Registered delivery strategy '${strategy.id}'`);
     },
 
     registerMemoryEmbeddingProvider(provider, options = {}) {
-      const unregister = ctx.memoryEmbeddingRegistry.register(provider, options);
-      ctx.cleanup.push(unregister);
-      logger.info(`[plugin:${ctx.pluginName}] Registered memory embedding provider '${provider.id}'`);
+      return register(() => {
+        const unregister = ctx.memoryEmbeddingRegistry.register(owned.memory(provider), options);
+        ctx.cleanup.push(unregister);
+        logger.info(`[plugin:${ctx.pluginName}] Registered memory embedding provider '${provider.id}'`);
+      });
     },
 
     registerVoiceProvider(provider, options = {}) {
-      const unregister = ctx.voiceProviderRegistry.register(provider, options);
-      ctx.cleanup.push(unregister);
-      logger.info(`[plugin:${ctx.pluginName}] Registered voice provider '${provider.id}'`);
+      return register(() => {
+        const unregister = ctx.voiceProviderRegistry.register(owned.voice(provider), options);
+        ctx.cleanup.push(unregister);
+        logger.info(`[plugin:${ctx.pluginName}] Registered voice provider '${provider.id}'`);
+      });
     },
 
     registerMediaProvider(provider, options = {}) {
-      const unregister = ctx.mediaProviderRegistry.register(provider, options);
-      ctx.cleanup.push(unregister);
-      logger.info(`[plugin:${ctx.pluginName}] Registered media provider '${provider.id}'`);
+      return register(() => {
+        const unregister = ctx.mediaProviderRegistry.register(owned.media(provider), options);
+        ctx.cleanup.push(unregister);
+        logger.info(`[plugin:${ctx.pluginName}] Registered media provider '${provider.id}'`);
+      });
     },
 
     registerWebSearchProvider(provider, options = {}) {
-      const unregister = ctx.webSearchProviderRegistry.register(provider, options);
-      ctx.cleanup.push(unregister);
-      logger.info(`[plugin:${ctx.pluginName}] Registered web search provider '${provider.id}'`);
+      return register(() => {
+        const unregister = ctx.webSearchProviderRegistry.register(owned.search(provider), options);
+        ctx.cleanup.push(unregister);
+        logger.info(`[plugin:${ctx.pluginName}] Registered web search provider '${provider.id}'`);
+      });
     },
 
     onEvent(eventName, handler) {
-      const unsub = ctx.runtimeBus.on(
-        eventName,
-        (envelope) => {
-          // An event reaching a quiescing plugin is not delivered: the instance
-          // it would run on is about to be unloaded.
-          if (tracker?.isQuiescing(ctx.pluginName)) return;
-          track(() => handler(envelope.payload as RuntimeEventPayload<typeof eventName>));
-        },
-      );
-      ctx.cleanup.push(unsub);
-      return unsub;
+      return register(() => {
+        const unsub = ctx.runtimeBus.on(
+          eventName,
+          (envelope) => {
+            // An event reaching a quiescing plugin is not delivered: the instance
+            // it would run on is about to be unloaded.
+            if (tracker?.isQuiescing(ctx.pluginName) || ctx.registrations?.isClosed(ctx.pluginName)) return;
+            track(() => handler(envelope.payload as RuntimeEventPayload<typeof eventName>));
+          },
+        );
+        ctx.cleanup.push(unsub);
+        return unsub;
+      });
     },
 
     getConfig(key) {
