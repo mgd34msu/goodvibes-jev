@@ -145,8 +145,15 @@ export class BrowserJudgmentService {
     catch { throw new BrowserJudgmentError('JUDGMENT_INVALID_RESPONSE'); }
     validateBrowserJudgmentProjection(request, projected, state);
     const outcomes = Object.values(projected.readings).map((reading) => reading.outcome);
+    if (projected.status === 'held' && projected.compoundOutcome !== undefined) outcomes.push(projected.compoundOutcome);
     const outcome = outcomes.includes('escalate') ? 'escalate' : outcomes.includes('confirm') ? 'confirm' : 'act';
-    const response = { protocolVersion: 1, requestId: request.requestId, battery: request.battery, batteryVersion: 1, ...projected, outcome, evidence };
+    // The minimum compound outcome is an adapter instruction, not a second wire
+    // outcome. Structural facts stay visible and never masquerade as readings.
+    const wireProjection = projected.status === 'held'
+      ? { status: projected.status, reason: projected.reason, readings: projected.readings,
+          ...(projected.structuralBasis === undefined ? {} : { structuralBasis: projected.structuralBasis }) }
+      : projected;
+    const response = { protocolVersion: 1, requestId: request.requestId, battery: request.battery, batteryVersion: 1, ...wireProjection, outcome, evidence };
     if (new TextEncoder().encode(JSON.stringify(response)).byteLength > LIMIT.bodyBytes) throw new BrowserJudgmentError('JUDGMENT_INVALID_RESPONSE');
     return response;
   }

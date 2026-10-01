@@ -25,14 +25,30 @@ function validateReading(reading: Reading): void {
 /** Reject malformed values and refuse executable values backed by unsettled readings. */
 export function validateBrowserJudgmentProjection(request: BrowserJudgmentRequest, result: BrowserJudgmentProjection<unknown>, state?: unknown): void {
   try {
-    judgmentRecord(result, result.status === 'settled' ? ['status', 'value', 'readings'] : ['status', 'reason', 'readings']);
+    const hasBasis = Object.hasOwn(result, 'structuralBasis');
+    const hasCompound = Object.hasOwn(result, 'compoundOutcome');
+    judgmentRecord(result, [...(result.status === 'settled' ? ['status', 'value', 'readings'] : ['status', 'reason', 'readings']),
+      ...(hasBasis ? ['structuralBasis'] : []), ...(hasCompound ? ['compoundOutcome'] : [])]);
+    if (hasCompound && (result.status !== 'held' || !['confirm', 'escalate'].includes(result.compoundOutcome!))) return invalid();
+    let non404Basis = false;
+    if (hasBasis) {
+      if (request.battery !== 'webui.errors.daemon-refusal') return invalid();
+      const basis = judgmentRecord(result.structuralBasis, ['method_unknown']);
+      if (basis.method_unknown !== 'http-status-not-404' || !state || typeof state !== 'object' || Array.isArray(state)) return invalid();
+      const prototype: unknown = Object.getPrototypeOf(state);
+      const status: unknown = Object.getOwnPropertyDescriptor(state, 'status')?.value;
+      if ((prototype !== Object.prototype && prototype !== null) || typeof status !== 'number' || !Number.isInteger(status)
+        || status < 100 || status > 599 || status === 404) return invalid();
+      non404Basis = true;
+    }
     if (!result.readings || typeof result.readings !== 'object' || Array.isArray(result.readings)) return invalid();
     const readings = Object.values(result.readings);
     if (!readings.length || readings.length > 128) return invalid();
     readings.forEach(validateReading);
     const errorNames = ['session_not_found', 'session_closed', 'session_active', 'session_not_local', 'method_unknown'];
     if (request.battery === 'webui.errors.daemon-refusal') {
-      judgmentRecord(result.readings, errorNames);
+      // No invented fifth reading: omission needs this exact server-owned HTTP fact.
+      judgmentRecord(result.readings, non404Basis && !Object.hasOwn(result.readings, 'method_unknown') ? errorNames.slice(0, -1) : errorNames);
       if (readings.some((reading) => reading.kind !== 'yes-no')) return invalid();
     } else if (request.battery === 'webui.status.badge-tone') {
       const name = request.input.vocabulary === 'badge' ? 'badge' : 'library_dot';
@@ -45,18 +61,22 @@ export function validateBrowserJudgmentProjection(request: BrowserJudgmentReques
       judgmentRecord(result.readings, request.input.candidates.map((_, index) => `candidate_${index}`));
       if (readings.some((reading) => reading.kind !== 'yes-no')) return invalid();
     }
-    if (result.status === 'held') { if (result.reason !== 'uncertain') return invalid(); return; }
+    if (result.status === 'held') {
+      if (result.reason !== 'uncertain' || (!hasCompound && readings.every((reading) => reading.outcome === 'act'))) return invalid();
+      return;
+    }
     if (result.status !== 'settled' || readings.some((r) => r.outcome !== 'act' || (r.kind === 'yes-no' && r.verdict === 'uncertain'))) return invalid();
     if (request.battery === 'webui.errors.daemon-refusal') {
       const value = judgmentRecord(result.value, errorNames);
       if (errorNames.some((key) => {
         const reading = result.readings[key];
-        return typeof value[key] !== 'boolean' || reading?.kind !== 'yes-no'
-          || (key !== 'method_unknown' && value[key] !== (reading.verdict === 'yes'));
+        if (typeof value[key] !== 'boolean') return true;
+        if (key === 'method_unknown' && non404Basis) return value[key] !== false;
+        return reading?.kind !== 'yes-no' || value[key] !== (reading.verdict === 'yes');
       })) return invalid();
       const method = result.readings.method_unknown;
-      // This is an HTTP fact, not a confidence heuristic. The reader may suppress
-      // a yes outside 404, but cannot manufacture a yes from a no/uncertain reading.
+      // A structural false is explicitly attributed above. A semantic yes still
+      // requires both an actual yes reading and the resolved server's HTTP 404.
       if (value.method_unknown && (method?.kind !== 'yes-no' || method.verdict !== 'yes'
         || !state || typeof state !== 'object' || !('status' in state) || state.status !== 404)) return invalid();
     } else if (request.battery === 'webui.status.badge-tone') {

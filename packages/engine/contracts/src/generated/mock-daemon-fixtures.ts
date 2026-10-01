@@ -9457,7 +9457,10 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           },
           "latencyMs": 0
         }
-      ]
+      ],
+      "structuralBasis": {
+        "method_unknown": "http-status-not-404"
+      }
     }
   },
   "homeassistant.homeGraph.askHomeGraph": {

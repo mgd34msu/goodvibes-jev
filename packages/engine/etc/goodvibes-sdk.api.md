@@ -16886,6 +16886,9 @@ export interface OperatorMethodOutputMap {
             };
             latencyMs: number;
         })[];
+        structuralBasis?: {
+            method_unknown: "http-status-not-404";
+        };
     } | {
         protocolVersion: number;
         requestId: string;
@@ -16909,7 +16912,7 @@ export interface OperatorMethodOutputMap {
                 outcome: "act" | "confirm" | "escalate";
             };
         });
-        outcome: "act" | "confirm" | "escalate";
+        outcome: "confirm" | "escalate";
         evidence: readonly ({
             decisionId: string;
             model: string;
@@ -16920,6 +16923,9 @@ export interface OperatorMethodOutputMap {
             };
             latencyMs: number;
         })[];
+        structuralBasis?: {
+            method_unknown: "http-status-not-404";
+        };
     } | {
         protocolVersion: number;
         requestId: string;
@@ -16983,7 +16989,7 @@ export interface OperatorMethodOutputMap {
                 outcome: "act" | "confirm" | "escalate";
             };
         });
-        outcome: "act" | "confirm" | "escalate";
+        outcome: "confirm" | "escalate";
         evidence: readonly ({
             decisionId: string;
             model: string;
@@ -17058,7 +17064,7 @@ export interface OperatorMethodOutputMap {
                 outcome: "act" | "confirm" | "escalate";
             };
         });
-        outcome: "act" | "confirm" | "escalate";
+        outcome: "confirm" | "escalate";
         evidence: readonly ({
             decisionId: string;
             model: string;

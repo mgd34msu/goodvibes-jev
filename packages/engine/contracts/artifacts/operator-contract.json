@@ -49962,6 +49962,21 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "structuralBasis": {
+                      "type": "object",
+                      "properties": {
+                        "method_unknown": {
+                          "type": "string",
+                          "enum": [
+                            "http-status-not-404"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "method_unknown"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -50105,7 +50120,6 @@
                     "outcome": {
                       "type": "string",
                       "enum": [
-                        "act",
                         "confirm",
                         "escalate"
                       ]
@@ -50153,6 +50167,21 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "structuralBasis": {
+                      "type": "object",
+                      "properties": {
+                        "method_unknown": {
+                          "type": "string",
+                          "enum": [
+                            "http-status-not-404"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "method_unknown"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -50540,7 +50569,6 @@
                     "outcome": {
                       "type": "string",
                       "enum": [
-                        "act",
                         "confirm",
                         "escalate"
                       ]
@@ -50967,7 +50995,6 @@
                     "outcome": {
                       "type": "string",
                       "enum": [
-                        "act",
                         "confirm",
                         "escalate"
                       ]

@@ -11682,7 +11682,10 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           },
           "latencyMs": 0
         }
-      ]
+      ],
+      "structuralBasis": {
+        "method_unknown": "http-status-not-404"
+      }
     }
   },
   "homeassistant.homeGraph.askHomeGraph": {
