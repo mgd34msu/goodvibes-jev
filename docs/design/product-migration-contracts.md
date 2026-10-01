@@ -17,10 +17,10 @@ modified.
 
 | Product | Source revision | Tracked files |
 |---|---|---:|
-| daemon | `443e5ee4d6cda0d36d57e2886398d0836074a4a9` | 281 |
+| daemon | `254699bf5d834cdca41436211ada1ae32bf89258` | 281 |
 | tui | `0d69500f598a90f0f4aecae213b0e003764899dd` | 1618 |
 | agent | `9e225a349667632bb550e9c270d922b985848eaa` | 1602 |
-| webui | `9856cba64bb7df5677859c846a80eeb5c2da67c0` | 608 |
+| webui | `dadf57700668fe4500b17b0b0b4520715ab25ef4` | 666 |
 
 The October 1 platform refresh is recorded separately in
 [`../inventory/upstream-targets.json`](../inventory/upstream-targets.json), with
@@ -32,8 +32,11 @@ reconciled to that source. A target pin alone does not apply its behavior.
 
 The original WebUI inventory described `9856cba`. An earlier metadata change
 named `5050483`, which has the same paths but different content in six files.
-That discrepancy is corrected here; both remain documented history, and the
-authorized forward target is now the redesigned `dadf577` tree.
+Both remain documented history. The applied WebUI inventory and partial workspace
+now use the redesigned `dadf577` tree. Daemon accounting now uses `254699bf` after
+review of every changed Git blob; its 86 existing mappings remain valid. Neither
+advance marks remaining module mappings or behavioral proof complete. The daemon
+ledger retains six explicit executable/release/packaging deferrals.
 
 ## Workspace boundary
 
