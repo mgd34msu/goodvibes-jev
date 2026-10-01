@@ -7,18 +7,33 @@ per-file inventory rulings control: legacy migration modules carry forward,
 and WRFC/permission views are adapted to the contract runner and gate rather
 than discarded merely because an earlier scope paragraph called them DROP.
 
-## Pinned source trees
+## Applied source accounting and forward targets
 
-`docs/inventory/product-sources.json` records each complete tracked-file list
-from these read-only upstream trees. The product gate compares every inventory
-row against these snapshots, in both directions. No upstream repo is modified.
+`docs/inventory/product-sources.json` records the complete tracked-file list used
+by the current inventory and migration mappings. These are accounting baselines,
+not a claim that the products are complete. The product gate compares every
+inventory row against these snapshots, in both directions. No upstream repo is
+modified.
 
 | Product | Source revision | Tracked files |
 |---|---|---:|
 | daemon | `443e5ee4d6cda0d36d57e2886398d0836074a4a9` | 281 |
 | tui | `0d69500f598a90f0f4aecae213b0e003764899dd` | 1618 |
 | agent | `9e225a349667632bb550e9c270d922b985848eaa` | 1602 |
-| webui | `505048329bae0076acff1f65b760e7a2dbd4609f` | 608 |
+| webui | `9856cba64bb7df5677859c846a80eeb5c2da67c0` | 608 |
+
+The October 1 platform refresh is recorded separately in
+[`../inventory/upstream-targets.json`](../inventory/upstream-targets.json), with
+the exact content snapshots in `docs/inventory/upstream/`. The implementation
+sequence and unapplied differences are in
+[`upstream-reconciliation.md`](upstream-reconciliation.md). Advance a product's
+accounting baseline when its inventory and migration mappings have been
+reconciled to that source. A target pin alone does not apply its behavior.
+
+The original WebUI inventory described `9856cba`. An earlier metadata change
+named `5050483`, which has the same paths but different content in six files.
+That discrepancy is corrected here; both remain documented history, and the
+authorized forward target is now the redesigned `dadf577` tree.
 
 ## Workspace boundary
 

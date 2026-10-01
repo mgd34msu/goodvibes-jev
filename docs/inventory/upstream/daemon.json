@@ -1,0 +1,1693 @@
+{
+  "schemaVersion": 1,
+  "commit": "254699bf5d834cdca41436211ada1ae32bf89258",
+  "tree": "f11b13cea45cd108e50e66c6a5ae3c72c07dc048",
+  "entries": [
+    {
+      "path": ".github/actions/setup/action.yml",
+      "mode": "100644",
+      "type": "blob",
+      "object": "fb40d5e62c70e23a788ce1d447c52c6d32643390"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "mode": "100644",
+      "type": "blob",
+      "object": "38e9fd36a2b0b3bea6c071d15650501d082ab6b9"
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "mode": "100644",
+      "type": "blob",
+      "object": "ed82cf34c7de1616a57c7bff722ee1441bb0c6ab"
+    },
+    {
+      "path": ".gitignore",
+      "mode": "100644",
+      "type": "blob",
+      "object": "01ac0121e5001de54778910eabf6b94c3a8dc888"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "mode": "100644",
+      "type": "blob",
+      "object": "757d4412ee0f29439ee48de0a619166729957fef"
+    },
+    {
+      "path": "LICENSE",
+      "mode": "100644",
+      "type": "blob",
+      "object": "93ef402abe25d977ebfaa59a0f1eb224ea141d5b"
+    },
+    {
+      "path": "README.md",
+      "mode": "100644",
+      "type": "blob",
+      "object": "704e71e90db0055f177ebdb9c60d01ee19f32d3f"
+    },
+    {
+      "path": "bin/goodvibes-daemon",
+      "mode": "100755",
+      "type": "blob",
+      "object": "147f1a00c0b5b4a4fc875ebbdd34303656fa778e"
+    },
+    {
+      "path": "bin/launcher-support.js",
+      "mode": "100644",
+      "type": "blob",
+      "object": "64644dd7db082ee8a91a9ef8fccb164245910cf0"
+    },
+    {
+      "path": "bun.lock",
+      "mode": "100644",
+      "type": "blob",
+      "object": "216191a69e0ffabc7f99b82faf2be5090893d6b9"
+    },
+    {
+      "path": "bunfig.toml",
+      "mode": "100644",
+      "type": "blob",
+      "object": "352f6c4948a97b189d91e87b6ed5bcb0a827261d"
+    },
+    {
+      "path": "docs/commands-reference.md",
+      "mode": "100644",
+      "type": "blob",
+      "object": "4451e8f97be9a0d2f43fe7abd08c459d2120854e"
+    },
+    {
+      "path": "docs/configuration.md",
+      "mode": "100644",
+      "type": "blob",
+      "object": "be49681b5bf0f04cf1e96fca2aedc8117c19bd02"
+    },
+    {
+      "path": "docs/getting-started.md",
+      "mode": "100644",
+      "type": "blob",
+      "object": "d26574d14bf3705a81a4d1202e5bb9a75c321e29"
+    },
+    {
+      "path": "docs/hosted-sessions.md",
+      "mode": "100644",
+      "type": "blob",
+      "object": "55b0b6179e13fa19f91471c2d1a5164b97f5f537"
+    },
+    {
+      "path": "docs/service-and-deployment.md",
+      "mode": "100644",
+      "type": "blob",
+      "object": "c4a7024da1914e2223414e7853a744c9efaf0e6e"
+    },
+    {
+      "path": "docs/testing-and-validation.md",
+      "mode": "100644",
+      "type": "blob",
+      "object": "d3fdbe895e7739be83d24c9144b8b9e14cc1f005"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "mode": "100644",
+      "type": "blob",
+      "object": "4a29aa2023f5aa7ce2e4d4c92aabd2beb545a6f9"
+    },
+    {
+      "path": "docs/updates-and-rollback.md",
+      "mode": "100644",
+      "type": "blob",
+      "object": "edc23b69419346d5317e4124e2b18c7fc7583634"
+    },
+    {
+      "path": "package.json",
+      "mode": "100644",
+      "type": "blob",
+      "object": "f5c709e49e73c77d5ee563470921283e3063b2bf"
+    },
+    {
+      "path": "scripts/boot-smoke.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "accd636f4ee1b1d83d187bfea87db7eef3b50a06"
+    },
+    {
+      "path": "scripts/bun-compile-compat.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "c0c53bd89a47d6fb9ea7587b93e16a00b68b4487"
+    },
+    {
+      "path": "scripts/check-architecture.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "80e03f6134e6158002eb9694752b707139f37bd2"
+    },
+    {
+      "path": "scripts/check-bun.sh",
+      "mode": "100644",
+      "type": "blob",
+      "object": "970ebfe783aff5fd737a31984389194cd931d95a"
+    },
+    {
+      "path": "scripts/check-workflows.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "3532910bf34ffd1c1cb0c0073b0245409ff05e78"
+    },
+    {
+      "path": "scripts/ci-publish.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "e6541c76c883e36c03b38c6c653a414754badb2a"
+    },
+    {
+      "path": "scripts/hosted-session-proof.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "7e32e247090130563e08930cde2b45caee7d0b20"
+    },
+    {
+      "path": "scripts/postinstall.d.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "ade1fe845e3fa520f802658ad6aa2a4bc1cadaa7"
+    },
+    {
+      "path": "scripts/postinstall.js",
+      "mode": "100644",
+      "type": "blob",
+      "object": "f961a88e01222a7ecc27cebd00dabf2e57f032df"
+    },
+    {
+      "path": "scripts/prebuild.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "8471aaded815426d5691db0646613eb82d3a53c1"
+    },
+    {
+      "path": "scripts/project-surfaces.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "8f43df3b08b1bbb749e597fdc32193c1805318e3"
+    },
+    {
+      "path": "scripts/publish-check.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "8f24a9b3625bdbd5e5f53e56be52258792ebf914"
+    },
+    {
+      "path": "scripts/publish-github-mirror.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "36d901eed90ffe0ecfc020081dc648dbddb85a00"
+    },
+    {
+      "path": "scripts/release-prepare.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "8cffccd3e55c1031c453c8b55b79cb944c15376a"
+    },
+    {
+      "path": "scripts/release.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "b5a0392d69379675587e6d1077d0b4c8be1c0205"
+    },
+    {
+      "path": "scripts/run-tests.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "64c31334692d923fd077f0580554c57f3fb5283c"
+    },
+    {
+      "path": "scripts/sdk-dev.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "96fed586518e6c38186f7a296446581fe009a93a"
+    },
+    {
+      "path": "scripts/stale-tmp-sweep.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "262eba334056c1723b586510422c5bc2d6d1de62"
+    },
+    {
+      "path": "scripts/test-pattern-rule.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "45e4db348a28c6fe314102b38c985af2033ffacc"
+    },
+    {
+      "path": "scripts/test-temp-manifest.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "6cd494209ea8d18a726b67f247dd4e189865e160"
+    },
+    {
+      "path": "scripts/verify-release-tag-version.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "37c38bafa9dd30a25ef1ba820588156a2c1125fb"
+    },
+    {
+      "path": "scripts/workspace-lock.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "ffdaf347953b3abf854351526558d9b871237b73"
+    },
+    {
+      "path": "src/cli/command-catalog.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "d631bdd068336a21cefdc8b7c29e7e3dc428769d"
+    },
+    {
+      "path": "src/cli/completion.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "6a298ba6ddec8fd7397b1912f7b79607414c20e2"
+    },
+    {
+      "path": "src/cli/help.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "b99f696aa00f8f8e815be007e375f1abdc570ed2"
+    },
+    {
+      "path": "src/cli/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "185f0e0f9e869183f4948481cffa37d6c425ab0e"
+    },
+    {
+      "path": "src/cli/parser.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "a83e9b4732ae8e3692bbe8daa1752cbd398fef14"
+    },
+    {
+      "path": "src/cli/surface-catalog.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "192681df7af7a5cd2c0a45990fc919552a424045"
+    },
+    {
+      "path": "src/cli/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "5def24659f9cb791b9bbcee36a7091a5ceff20ee"
+    },
+    {
+      "path": "src/cluster/daemon-ws-call.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "190e25d5cc3b98e51010cb89dc0860b53f978a7b"
+    },
+    {
+      "path": "src/cluster/raw-reply-route.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "cc258725701febee9f5919706afa79c64bda8dac"
+    },
+    {
+      "path": "src/config/checkpoint-settings.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "dcd46685139df4e9c3f39e74915a1d4704e21cc0"
+    },
+    {
+      "path": "src/config/config-key-guard.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "d3cc15174159c9aa8383513cb6e1142f630f57c1"
+    },
+    {
+      "path": "src/config/run-daemon-config-migration.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "1f3c7fc6b79ea2ae14ea2d18ac5041dc71a13d7f"
+    },
+    {
+      "path": "src/config/secret-config.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "514fe010ed31ae2ad1f43333d7392c81c25d8371"
+    },
+    {
+      "path": "src/config/secrets.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "3f22cf1aa387933dfec89c36f7e9a6b6626d59fa"
+    },
+    {
+      "path": "src/config/surface.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "bfa5580adce2ca456f39ded3ae828dc4717d6df4"
+    },
+    {
+      "path": "src/core/pairing-banner.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "94aa0e2f88307cf07932b43858b9dc2efa3f3a21"
+    },
+    {
+      "path": "src/daemon/cli.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "5e8e7aff5a82fbdc604d3a0d637078a35497e058"
+    },
+    {
+      "path": "src/daemon/config-command.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "3ecf0903c3bc8b6fd0d04c1c063684b52799f640"
+    },
+    {
+      "path": "src/daemon/handlers/context.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "605148a032c016fe7e116e88130bcab07836a9e6"
+    },
+    {
+      "path": "src/daemon/handlers/contracts.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "5360fb1a74046655ed5e90ea1a4a4bf361ee96f8"
+    },
+    {
+      "path": "src/daemon/handlers/credentials.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "2687b4890c6d3387ac7e5d200927d5e8bfdde722"
+    },
+    {
+      "path": "src/daemon/handlers/drafts/draft-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "e1966e3b3e28921699ca346a84851ce8eea46df2"
+    },
+    {
+      "path": "src/daemon/handlers/drafts/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "3f1ac20dabeb9860e61ca8deb0a889aa90726059"
+    },
+    {
+      "path": "src/daemon/handlers/drafts/register.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "47d50ff7e7d06d66495fb5c1f15c526ce9aacb81"
+    },
+    {
+      "path": "src/daemon/handlers/errors.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "bc0447f71e64e4e7afdb66f32f87552459400dcf"
+    },
+    {
+      "path": "src/daemon/handlers/inbox/aggregator.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "1f1f2a80f9a3e234d29073241a429fbdfd9a88d6"
+    },
+    {
+      "path": "src/daemon/handlers/inbox/cursor-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "5193f15fbddf29e0c209c461d15d525e36cc4f95"
+    },
+    {
+      "path": "src/daemon/handlers/inbox/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "57ce1e27fa2efae74f89fbb7159a3fabb4eadef7"
+    },
+    {
+      "path": "src/daemon/handlers/inbox/mapping.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "117965d4debe0783215f52f9dcc36278aeba6428"
+    },
+    {
+      "path": "src/daemon/handlers/inbox/poller.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "78c94d269c3c809dd5984f89d2096fb42ed64dc2"
+    },
+    {
+      "path": "src/daemon/handlers/inbox/provider-adapter.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "ffe4fadf8e84f5dfa9ee3692a0a41c9067284b8f"
+    },
+    {
+      "path": "src/daemon/handlers/inbox/providers/discord.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "d14cfa423c37ca8eb5fc182e47c73907fc058a3c"
+    },
+    {
+      "path": "src/daemon/handlers/inbox/providers/email.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "aca594ad6989ad02ec26cbfdc58fccbfc78ba940"
+    },
+    {
+      "path": "src/daemon/handlers/inbox/providers/imap-client.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "34f25679ae7c051f3942e156859c70ec84247c1d"
+    },
+    {
+      "path": "src/daemon/handlers/inbox/providers/route-util.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "d6fea271260aec594cdaab0b6162c7ab6ed36342"
+    },
+    {
+      "path": "src/daemon/handlers/inbox/providers/slack.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "644a8dfe7f4f9f5f90af671498bc8a58292547f8"
+    },
+    {
+      "path": "src/daemon/handlers/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "103184ff955c891059a19f4c82d7e77b644be19b"
+    },
+    {
+      "path": "src/daemon/handlers/payments/address-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "143c8fe649e7b0b871a0f7a8967fd033c5234f53"
+    },
+    {
+      "path": "src/daemon/handlers/payments/approval-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "47f23e8dacef796034cbd3e5ee207c7961ed9b53"
+    },
+    {
+      "path": "src/daemon/handlers/payments/budget-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "e10530829ae052dc3ae34ce55a249230eded913a"
+    },
+    {
+      "path": "src/daemon/handlers/payments/card-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "a34099ac5c672b75849e5ce8b048e127307a0c54"
+    },
+    {
+      "path": "src/daemon/handlers/payments/checkout-handlers.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "7c27b8c8022ea92ba946d461a65526df2bc3c07f"
+    },
+    {
+      "path": "src/daemon/handlers/payments/checkout-journal-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "c9fddb02c78f3dc72248cc8775553d9342510bd4"
+    },
+    {
+      "path": "src/daemon/handlers/payments/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "2f289152658518e07a005694f8b500d3c99f2955"
+    },
+    {
+      "path": "src/daemon/handlers/payments/merchant-judge.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "db645cbc4487b046bca5a7c29f7e89ff088bd5d4"
+    },
+    {
+      "path": "src/daemon/handlers/payments/notifier.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "e9291eaf64e63b1c5cb7249e42ded718bcc36e5b"
+    },
+    {
+      "path": "src/daemon/handlers/payments/purchase-ledger.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "cc4d72b7630f6ad14d72bff96d4aefa267f1946e"
+    },
+    {
+      "path": "src/daemon/handlers/payments/register.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "5ba7d5317ebf875d647b088f0357facbd64f4f30"
+    },
+    {
+      "path": "src/daemon/handlers/register.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "6341bfe2dcd9fcbd978e51c93d2f0a1fd8651531"
+    },
+    {
+      "path": "src/daemon/handlers/remote/backends/cloud-terminal.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "520f9429972cc85f203c2180444e8141865fb952"
+    },
+    {
+      "path": "src/daemon/handlers/remote/backends/docker.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "e1c1f073a35bf5907e2efa799a73f68b123ac25d"
+    },
+    {
+      "path": "src/daemon/handlers/remote/backends/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "1418061f09c2d3294363e2a3750eb2b282cf15ea"
+    },
+    {
+      "path": "src/daemon/handlers/remote/backends/local-process.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "adfc5e3e23aea98b9d447d83224dae67660b75d2"
+    },
+    {
+      "path": "src/daemon/handlers/remote/backends/process-runner.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "bd15f0cfd7e00f9d581f6cd2cd5a3b21968146ec"
+    },
+    {
+      "path": "src/daemon/handlers/remote/backends/ssh.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "bc8fa7c84d754878df11b1ba2b159d9faaedc7b3"
+    },
+    {
+      "path": "src/daemon/handlers/remote/backends/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "8b7434bf4faa2c2b7c0124140e73149a2463e67c"
+    },
+    {
+      "path": "src/daemon/handlers/remote/dispatcher.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "75ce18c68969694f0172cae184a094ec2da54b13"
+    },
+    {
+      "path": "src/daemon/handlers/remote/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "5038a232f268e98535da66b8a22127b0260f096f"
+    },
+    {
+      "path": "src/daemon/handlers/remote/peer-registry.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "3e222bbe355f87d3fcd3ff580f7fdeb1c8c7d7bf"
+    },
+    {
+      "path": "src/daemon/handlers/remote/service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "ccce4752bea426a00192bfe7f7cef1c5776dfffc"
+    },
+    {
+      "path": "src/daemon/handlers/routing/inbox-bridge.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "87008aed9aed51331bd4fdb6e77f33cbce6a963d"
+    },
+    {
+      "path": "src/daemon/handlers/routing/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "640c616cbf3ce06ceff75f46a1678aedebe1ae58"
+    },
+    {
+      "path": "src/daemon/handlers/routing/route-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "83d53b9c391c3c88623cf72e48e70107f4404989"
+    },
+    {
+      "path": "src/daemon/handlers/routing/routing-resolver.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "9d167a614566aa7d3260b06d80630ec492498507"
+    },
+    {
+      "path": "src/daemon/handlers/sqlite-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "7f3829a9d2f4978918674cd507cb99c9009b15cb"
+    },
+    {
+      "path": "src/daemon/handlers/triage/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "e0d8a1e93fc01c47294186587a49de3bce5360fd"
+    },
+    {
+      "path": "src/daemon/handlers/triage/integration.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "eb0c756fc6d4fca1c2c616a105bfa983eeb53a14"
+    },
+    {
+      "path": "src/daemon/handlers/triage/pipeline.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "db6b7a30d121eb98ddc5afacb77962892f6c7af5"
+    },
+    {
+      "path": "src/daemon/handlers/triage/scorer.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "b0f10851b910c88fccc9129d1974345bc65bfa55"
+    },
+    {
+      "path": "src/daemon/handlers/triage/tagger/discord.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "5e9d4716a623a154b2aa7830de498536f647e247"
+    },
+    {
+      "path": "src/daemon/handlers/triage/tagger/imap.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "6ccae26f73028bfb46cf84586d3216f43d3244ed"
+    },
+    {
+      "path": "src/daemon/handlers/triage/tagger/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "8de67ffc5b86d7e16f8361e9b6167378ac3490ea"
+    },
+    {
+      "path": "src/daemon/handlers/triage/tagger/shared.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "55964d7ee543c905ebf1a90ed41a22f9d6b98299"
+    },
+    {
+      "path": "src/daemon/handlers/triage/tagger/slack.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "3d832c3de0520e18160064fc953aa45bf88255e4"
+    },
+    {
+      "path": "src/daemon/handlers/triage/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "f305fc9ffaf438bf95f97d12e84d6fd55758269c"
+    },
+    {
+      "path": "src/daemon/lifecycle.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "403a6d0375c34ee98fe658c0abee2d35aea31db5"
+    },
+    {
+      "path": "src/daemon/local-daemon-state.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "de1aad3a678b25a8ea3f84f91cef7ee382b4fe37"
+    },
+    {
+      "path": "src/daemon/pair-command.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "396b3d60a8ce55add1959eeedd1a42f55162015e"
+    },
+    {
+      "path": "src/daemon/provision-wake-model.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "2ee25598d71e2779795e59725a9b1f1833488800"
+    },
+    {
+      "path": "src/daemon/send/channels.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "715a52a2eefd8b1c028612221284b0816cefdef1"
+    },
+    {
+      "path": "src/daemon/send/command.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "67c8d461924970ba6f38c88d5cc51f7b37b9f6a8"
+    },
+    {
+      "path": "src/daemon/send/composition.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "8b8da701b7adb05c9e7ab8902350a56db8323eb9"
+    },
+    {
+      "path": "src/daemon/send/failure-text.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "37dd10f8c8bc95fca6c71ea430c6c1747600e891"
+    },
+    {
+      "path": "src/daemon/send/inert-text.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "0a89732f91cd31502923a423c9172d2fcaadca8c"
+    },
+    {
+      "path": "src/daemon/send/stdin.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "6e4fad892892d271146e5f92d8ae9d4d782ed9f2"
+    },
+    {
+      "path": "src/daemon/service-commands.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "b93dabdf7bfcb6c5c4ac79ed2a114ffcc428436f"
+    },
+    {
+      "path": "src/daemon/sessions-command.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "845e54bc53881dfcd218619e670840dfe19122bb"
+    },
+    {
+      "path": "src/daemon/status-command.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "1a7e75b25dd8655e853c116ea447bd7a58ccb5be"
+    },
+    {
+      "path": "src/daemon/webui-command.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "8d7ceca1c0b386e4e9674ff1e488816177689a92"
+    },
+    {
+      "path": "src/runtime/boot-tasks.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "a4294bfae7191874423751deec7c7e368fabd866"
+    },
+    {
+      "path": "src/runtime/browser-checkout-seam-holder.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "61ac763731267a164aa29ef99ba4434da5214831"
+    },
+    {
+      "path": "src/runtime/cluster-composition.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "92f2784894c61cb3063365c34653707a3b709df6"
+    },
+    {
+      "path": "src/runtime/cluster-group-composition.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "b48e511d45473fb2f42cef2e8b1c1dcf257b0906"
+    },
+    {
+      "path": "src/runtime/conversation-rewind-port.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "9d184bdc7ff047fe095905f9db28dafcface89ca"
+    },
+    {
+      "path": "src/runtime/credential-composition.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "57c8fdfc3dda1689d9aade5b3c03b6e2b16fe5cc"
+    },
+    {
+      "path": "src/runtime/daemon-handler-composition.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "9deea66bb926ecc5fcaecc7d895ba6dc7bb4a320"
+    },
+    {
+      "path": "src/runtime/device-posture-composition.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "2c7b668780de7b8928e09d74d1336d17b763b1e7"
+    },
+    {
+      "path": "src/runtime/disposal-wiring.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "66979041fcb09a386ab3568fff6d9255daeec1b0"
+    },
+    {
+      "path": "src/runtime/fleet-needs-input-push.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "4a6716bb3ab42db4f0ad64ae1e64d78506870091"
+    },
+    {
+      "path": "src/runtime/fleet-services.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "6373f3b1d7c349322975133d2a014b5eddb4f25b"
+    },
+    {
+      "path": "src/runtime/hosted-session-composition.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "777cb72d40880189331a444d1383a5bcdb102ac6"
+    },
+    {
+      "path": "src/runtime/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "a9382bb26c7e80997cda2e64af766921ef5eee29"
+    },
+    {
+      "path": "src/runtime/knowledge-services.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "a57bc1c5b5f733dd88e9005235fb01c990afbf3f"
+    },
+    {
+      "path": "src/runtime/legacy-daemon-migration.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "3d71ddef67b0fac4f1835e2d9821fba648f7d28d"
+    },
+    {
+      "path": "src/runtime/legacy-daemon-reconcile.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "e2f1f984a5d5a412c03adc9a41a73258263934f1"
+    },
+    {
+      "path": "src/runtime/mail-composition.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "6de30a2205161b1adb4bbb57f95c231f445d90e6"
+    },
+    {
+      "path": "src/runtime/notification-dispatch.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "f5ed095e2251fc4920cb3193a8df68fc3b27bc92"
+    },
+    {
+      "path": "src/runtime/payments-composition.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "1334c6ec07614fc6f5ecad07409478e3a6d8cc37"
+    },
+    {
+      "path": "src/runtime/plugin-composition.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "dba941695dde97226667b55cd7cd27ab373cf470"
+    },
+    {
+      "path": "src/runtime/runtime-services-types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "318c9421444e3c319a7ffec1771edbe4ebd2b7f2"
+    },
+    {
+      "path": "src/runtime/services.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "4b3c1ae282b64ba57f0042a0d6d8e7cbd287d90a"
+    },
+    {
+      "path": "src/runtime/trigger-services.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "0308fea34000177d6ed64dd66dadfc0490b2845a"
+    },
+    {
+      "path": "src/runtime/trust/checkpoint-eligibility.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "1a6076c5c96d3b39a431957af510a8b11c1de889"
+    },
+    {
+      "path": "src/runtime/trust/trust-gated-approvals.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "146596bfcae8be5f75cb83a76a3fae58956406e7"
+    },
+    {
+      "path": "src/runtime/update-check.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "14e0735dd6df7499e1079e2c3b450b385e2234bd"
+    },
+    {
+      "path": "src/runtime/workspace-checkpointing.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "6382dc5fb3adba77adc76c6930e9eff1fc126e13"
+    },
+    {
+      "path": "src/test/cli/command-catalog.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "2fe8a1fff6f57576492d270becff89d4ee90aae6"
+    },
+    {
+      "path": "src/test/cli/completion.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "17ad4a016657cab79b43e23ca650d4f3004d2a0d"
+    },
+    {
+      "path": "src/test/cli/help.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "b0c19f11844a6791e03a8e32bd586a898ca1059a"
+    },
+    {
+      "path": "src/test/cli/parser.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "933a5e397bcb61682b3da219414d8500385277c5"
+    },
+    {
+      "path": "src/test/cluster/commands.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "a6bfd11bd075aa79f7058953a8e0abb22a81ea93"
+    },
+    {
+      "path": "src/test/cluster/daemon-ws-call.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "f5b57982a053038c0ae17cd3fe4545e8b80b963b"
+    },
+    {
+      "path": "src/test/cluster/raw-reply-route.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "f674d0afaf17dad3d8585ab11152ad32f151efcc"
+    },
+    {
+      "path": "src/test/cluster/replication-policy-drift.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "a04a4b4ff03eaef718a0c225a0f49763186a9ebd"
+    },
+    {
+      "path": "src/test/config/config-key-guard.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "43a9a77d665070d3df502c5a3facb4d39795d1b9"
+    },
+    {
+      "path": "src/test/config/daemon-credential-scope.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "0c54f7b6cd1c5c742fdab96c2c6ad3998043958d"
+    },
+    {
+      "path": "src/test/daemon/cli-dispatch.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "91d58e75fe413e46439b0dc1c3f779bda027b695"
+    },
+    {
+      "path": "src/test/daemon/config-command.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "4bba856e95bfb2149be2f1a8f766a646dc245c89"
+    },
+    {
+      "path": "src/test/daemon/control-routes.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "f5cf57d9a0344dab504197f073e0b6542f0501c9"
+    },
+    {
+      "path": "src/test/daemon/daemon-route-seams.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "d10df8ab1bcacdb1294e0d0ffa24d6795d4c0de4"
+    },
+    {
+      "path": "src/test/daemon/daemon-wire.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "0589790ff8eb38e3d61800422fabd522a7b8fd4b"
+    },
+    {
+      "path": "src/test/daemon/drafts/draft-store.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "2dbc2c6b48d516e374307945155b6005e95b09ba"
+    },
+    {
+      "path": "src/test/daemon/drafts/register.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "683e2582e72e3b896aabf3c12290a769e4d1abf7"
+    },
+    {
+      "path": "src/test/daemon/error-response.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "6d33e9f8f476ca997dceed40e09fd8b86f8c5ec1"
+    },
+    {
+      "path": "src/test/daemon/fatal-boot-report.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "aa1d96a5117deafee31e4849c5bbd43a3e0d04c1"
+    },
+    {
+      "path": "src/test/daemon/fixtures/daemon-fatal-boot-entry.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "aea2b399f6aec7fc3a3a8831bfc2d1934c8b8090"
+    },
+    {
+      "path": "src/test/daemon/fixtures/daemon-fatal-boot-legacy-entry.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "ab6ce91f2fc646eb563686071393b69438a487e6"
+    },
+    {
+      "path": "src/test/daemon/gateway-acp-verbs.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "c4fd3b398a043f81bdb9fb3b8fc0f6ff0fff70f2"
+    },
+    {
+      "path": "src/test/daemon/gateway-catalog-handler-or-route.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "d36b26f66afc53c463f80bf9010f51d8fec77273"
+    },
+    {
+      "path": "src/test/daemon/gateway-checkin-round-trip.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "475f1ce5d9ecabcbcb4c15df6f092f2ffdcbd7fa"
+    },
+    {
+      "path": "src/test/daemon/gateway-ci-principals-channel-profiles-round-trip.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "b338985e65c685b6f531c5ceff3906c3b48a27a3"
+    },
+    {
+      "path": "src/test/daemon/gateway-device-capability-verbs.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "283c14d78cfde28ee2fc72b9c6953a4f06952744"
+    },
+    {
+      "path": "src/test/daemon/gateway-fleet-needs-input-push.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "64fd387d845fe6ff57a4053db4a87833f21461c4"
+    },
+    {
+      "path": "src/test/daemon/gateway-hosted-session-failures.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "480ed68cc6af242b59c4a5e8647a7bf23d0ab727"
+    },
+    {
+      "path": "src/test/daemon/gateway-inbox-list-reachable.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "550bfb454bac6aa947f3506364a9d2f4f7d4eb99"
+    },
+    {
+      "path": "src/test/daemon/gateway-initiative-verbs.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "d7bbb6cf9ebe011caff0c6bbe686d1cddcecdbb8"
+    },
+    {
+      "path": "src/test/daemon/gateway-occasions-verbs.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "5301b6599da04f85746e35369281da47388b730e"
+    },
+    {
+      "path": "src/test/daemon/gateway-payments-verbs.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "862f7ee68bbc9064e10a0bf0c65e6acec65a3070"
+    },
+    {
+      "path": "src/test/daemon/gateway-rewind-conversation-scope.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "493ccb2d2a99d86b0af3c1e90ad4d4a2c3a388d1"
+    },
+    {
+      "path": "src/test/daemon/gateway-verb-family-parity.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "0a247c2801ff4bb3629790a7704079dcd0ec52d5"
+    },
+    {
+      "path": "src/test/daemon/gateway-ws-only-invokable.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "c701a7e6958243a93ac1c56c914ddc3ce75d89a0"
+    },
+    {
+      "path": "src/test/daemon/handlers/register.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "0393b55717ebaebb9a6ed4066149a05a33c9d626"
+    },
+    {
+      "path": "src/test/daemon/http-policy.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "0e58d8e97fa8cd1f833e839ee848fc50e824938e"
+    },
+    {
+      "path": "src/test/daemon/inbox/aggregator.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "7799de0b494f166cc200118900df4afa51b01095"
+    },
+    {
+      "path": "src/test/daemon/inbox/cursor-store.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "3f5ec1f7bb5ea024ce18299d162115b08df22286"
+    },
+    {
+      "path": "src/test/daemon/inbox/mapping.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "cddb13456910653f1e9a43fffcce04df51a3d0fc"
+    },
+    {
+      "path": "src/test/daemon/inbox/poller.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "0c2a31e633923ef0d3703c0c82d057f784988897"
+    },
+    {
+      "path": "src/test/daemon/inbox/register.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "b54560218c81efe37cc282dbf06283d829da1aff"
+    },
+    {
+      "path": "src/test/daemon/lifecycle.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "baf9716fa41c2eff5fd99723437e7f802eb29e10"
+    },
+    {
+      "path": "src/test/daemon/local-daemon-state.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "41a3c9001b13d49eff968b6578e02d22992208fb"
+    },
+    {
+      "path": "src/test/daemon/pair-command.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "56ea43eb18a86b132e534fb69da872e4f29d18ae"
+    },
+    {
+      "path": "src/test/daemon/payments/approval-store.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "050ebe96d26d319762f2401ef51ddb142403ac26"
+    },
+    {
+      "path": "src/test/daemon/payments/budget-store.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "3ef00b3e376f4f08c3908c75225ae09fbd92650a"
+    },
+    {
+      "path": "src/test/daemon/payments/card-store.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "008524851983259a5fdb43c762ac5b42fbf89a89"
+    },
+    {
+      "path": "src/test/daemon/payments/checkout-journal-store.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "3a8bb62cc8c593df18fe0f58079db054f5763e57"
+    },
+    {
+      "path": "src/test/daemon/payments/purchase-ledger.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "d2c8195fc86abc64620d15945009a5df9b4310bd"
+    },
+    {
+      "path": "src/test/daemon/payments/register.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "918d2bf2fcfc8573687cc24a3dbdad2e28e31d0c"
+    },
+    {
+      "path": "src/test/daemon/provider-registration.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "38cf1636144d4d6315f2b3db1f33bcffffcaaea0"
+    },
+    {
+      "path": "src/test/daemon/provision-wake-model.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "a42e1c836a3fa85a736760d4fe3936d8396e44ba"
+    },
+    {
+      "path": "src/test/daemon/remote/backends.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "0f82cf71aba65f9bc7e60e1c6cfd21f5f3d54269"
+    },
+    {
+      "path": "src/test/daemon/remote/dispatcher.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "586499dd5e6ef90a29d56e9e630a7413f7f84d2d"
+    },
+    {
+      "path": "src/test/daemon/remote/index.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "6904036449c06bbbdf00f19e8bd203cbc3f7b94f"
+    },
+    {
+      "path": "src/test/daemon/remote/peer-registry.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "90f81784dc0334a66ec2c8052f41f671e3bb202b"
+    },
+    {
+      "path": "src/test/daemon/remote/route-gating.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "31c6eb98b748ee8fcba66799457bf523c47a17ae"
+    },
+    {
+      "path": "src/test/daemon/remote/service.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "a8a4fbee593bb1519ca3f8781634a2a27ece567d"
+    },
+    {
+      "path": "src/test/daemon/routing/helpers.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "69030f7f0cf7915f7a758cece6335b36c78905a1"
+    },
+    {
+      "path": "src/test/daemon/routing/register.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "ad863c9b84991c652b18ae306b0d2facc6692fb1"
+    },
+    {
+      "path": "src/test/daemon/routing/route-store.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "44ad0ea64dfacd3069de86e16e2daeef7ea14494"
+    },
+    {
+      "path": "src/test/daemon/routing/routing-resolver.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "f32ecc1d992f777ddb3208dec8f4dd970dc9476d"
+    },
+    {
+      "path": "src/test/daemon/safe-serve.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "4185e50646225615bf6ddd142acc0d8e9c4b8d51"
+    },
+    {
+      "path": "src/test/daemon/send-command.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "8065aa394fcac96361bfc3bda8cb79214b9c8065"
+    },
+    {
+      "path": "src/test/daemon/send-wire.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "abaa43dc436ade45900d03fc7425a64fe58a031f"
+    },
+    {
+      "path": "src/test/daemon/server.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "67e47828b137c5d5fe2eb7c9a635f938bf373175"
+    },
+    {
+      "path": "src/test/daemon/service-commands.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "7d0689ba1a4e8ee11b9a330684995127be17a0c9"
+    },
+    {
+      "path": "src/test/daemon/service-lifecycle-commands.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "f2d1db2a7ed42a1335f04bd5474e38e7c262069c"
+    },
+    {
+      "path": "src/test/daemon/service-manager.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "5c85003cde26cc618fda3d58e7a5cf1b78594594"
+    },
+    {
+      "path": "src/test/daemon/sessions-command.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "339dee30ada9682b4667895cec08add9d9edbf02"
+    },
+    {
+      "path": "src/test/daemon/sqlite-store-recovery.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "12ab40fc2e1d741c97f3a593c2361f279cc87730"
+    },
+    {
+      "path": "src/test/daemon/standalone-routes.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "a0e9d9b72aa253bee5a0eea3a325c6d26cd3c02e"
+    },
+    {
+      "path": "src/test/daemon/status-command.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "7818b368d1db36a1935ce3eff4d15e557201bb49"
+    },
+    {
+      "path": "src/test/daemon/surface-dispatched-reply.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "04819faa7778a15f1df57f082394c10847a06cab"
+    },
+    {
+      "path": "src/test/daemon/telemetry-routes.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "9a3a2665be876a498eefa8440007456aaf9bfcaa"
+    },
+    {
+      "path": "src/test/daemon/triage/helpers.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "1c50c0243c28cb18d0f77b8b886fde99fb42ecda"
+    },
+    {
+      "path": "src/test/daemon/triage/imap-client.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "319a8331eb38e4196f0c44beb09de5a1909e6ff3"
+    },
+    {
+      "path": "src/test/daemon/triage/integration.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "989325ba756b445001d23e4145f2c8cba81d367b"
+    },
+    {
+      "path": "src/test/daemon/triage/pipeline.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "1dbe2dd0db816c82196ab1841da89fb72eb18361"
+    },
+    {
+      "path": "src/test/daemon/triage/scorer.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "dc9298eb17b84b7e959cd58e3775ddd89f9d2985"
+    },
+    {
+      "path": "src/test/daemon/triage/tagger.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "16b2aee6792b9b5f39c9fb408b0646b94c26bbf8"
+    },
+    {
+      "path": "src/test/daemon/webui-command.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "df0dcfb4658e4a64f9ba21de9efbf8948a073c6f"
+    },
+    {
+      "path": "src/test/deps/dependency-check.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "0b8f258629393a4f0c92d0c57b0b354588ed6aa7"
+    },
+    {
+      "path": "src/test/helpers/authenticated-websocket.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "9360c052232cb805cb80a8ed6e97a286b92d4a0b"
+    },
+    {
+      "path": "src/test/helpers/config-manager-stub.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "4e0b6f27ff50e2e0335937d03968424514dff6ab"
+    },
+    {
+      "path": "src/test/helpers/disposables.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "08133ee59bcd88b5b38f274282db56003f2d2b43"
+    },
+    {
+      "path": "src/test/helpers/disposables.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "4e3c698d44ba3da680eecbbb5c4a22a544032999"
+    },
+    {
+      "path": "src/test/helpers/liveness.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "fc2a5a8d91abd3e1243b5521c01dd351e659f888"
+    },
+    {
+      "path": "src/test/helpers/project-temp.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "37f90fcf13b1d008652b13c0a7446817ad9ec69d"
+    },
+    {
+      "path": "src/test/helpers/project-temp.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "3a97ad306c3238b07a924ed1b31f89a826df6649"
+    },
+    {
+      "path": "src/test/helpers/provider-cache.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "ff00a8ba5de18a6162b93ea38c077e223533423f"
+    },
+    {
+      "path": "src/test/helpers/runtime-services.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "5de1982e21877ea0955ab12c82429d767d65b62e"
+    },
+    {
+      "path": "src/test/helpers/session-surface.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "705eaf293be72db0fd4b89d7a3ca37d23d35d4eb"
+    },
+    {
+      "path": "src/test/helpers/settings-control-plane.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "dd8e4286bc769008e9a7c3e434df8faaa4a81230"
+    },
+    {
+      "path": "src/test/helpers/temp-cleanup.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "ac2cbc95e7fd0e04adec34582b08cce3a528331a"
+    },
+    {
+      "path": "src/test/helpers/temp-registry.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "40b74acfdb9f80403147b2e17f3419b4d43c5491"
+    },
+    {
+      "path": "src/test/helpers/test-managers.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "fda24c6bb40dc0cb4bd54d533e97a0dfee10da29"
+    },
+    {
+      "path": "src/test/preload/temp-cleanup.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "61c252e8d0638b49f023086a0a21e7d2cbb50af0"
+    },
+    {
+      "path": "src/test/runtime/cluster-holdings-wiring.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "d8b432245130d115670d715e8c63b13bfc0fd555"
+    },
+    {
+      "path": "src/test/runtime/cluster-inbox-gating.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "88a6b5b56011cbde10556d4eb03195b353b5c505"
+    },
+    {
+      "path": "src/test/runtime/control-plane-store-location.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "b3e502544ad18c064a3fc0dfb12d8dc3a82780be"
+    },
+    {
+      "path": "src/test/runtime/control-plane-store-writes.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "be41234ad4cdf9b1ab991cf4f5e401022e33a7b7"
+    },
+    {
+      "path": "src/test/runtime/device-posture-key-governance.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "58f237bcd8a3b3972afaea86a8f5ddea179b1c72"
+    },
+    {
+      "path": "src/test/runtime/hosted-exec-posture.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "b9425e803bdb015b340f7ba40e105e6689b44934"
+    },
+    {
+      "path": "src/test/runtime/hosted-sessions.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "989d7f9e2111455f261f0749ed4c4caad98b50d0"
+    },
+    {
+      "path": "src/test/runtime/localhost-fetch-approval-wiring.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "59d66e729069f61957850d226fa43668e1d16268"
+    },
+    {
+      "path": "src/test/runtime/memory-fold.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "d0d2319ef20d5d4b997e6d875393cd2d44d10d50"
+    },
+    {
+      "path": "src/test/runtime/memory-governance-composition.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "08ef6d16a89482362bad692fba26fe4fc740ec19"
+    },
+    {
+      "path": "src/test/runtime/notification-dispatch.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "20badcabd6c3e57c1c121ac21ad0c302e7b15261"
+    },
+    {
+      "path": "src/test/runtime/personal-capture-wiring.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "80230faf1cb2af0024371c15cda6105774d3345a"
+    },
+    {
+      "path": "src/test/runtime/plugin-composition.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "2647b9be04cfa4205f04ce6a4d761146a0ce9df3"
+    },
+    {
+      "path": "src/test/runtime/trust-gated-approvals.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "b4175d856406ec9ecc6cd934208413c15e29ac91"
+    },
+    {
+      "path": "src/test/runtime/wrfc-fix-engine-disposal.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "0f91d2b15ba221a9d85685f8c77d3a421cdf3312"
+    },
+    {
+      "path": "src/test/scripts/release-prepare.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "b124f4698686551fec5f254754f7fa791146d70c"
+    },
+    {
+      "path": "src/test/setup.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "627c602dbc4a51a6c0996f8cf5d8226e21b1c62d"
+    },
+    {
+      "path": "src/test/version.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "c2d7858bea44f437fdf8222e9885fce21e7764bd"
+    },
+    {
+      "path": "src/testing/daemon-fixture.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "d4c50fc676fc355658bdcc64cec83e59155e8ce7"
+    },
+    {
+      "path": "src/testing/hosted-session-failures.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "69095eaa6e784681b2fc9a0434841fb27a9fc8de"
+    },
+    {
+      "path": "src/version.ts",
+      "mode": "100644",
+      "type": "blob",
+      "object": "4ac0a5e346313a7ad25b36987b3288c251e3e127"
+    },
+    {
+      "path": "toolchain.config.json",
+      "mode": "100644",
+      "type": "blob",
+      "object": "d39c1a0d263a738019d45c96b8d7188a298ecae9"
+    },
+    {
+      "path": "tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "object": "2dfbf4869c41cb7c872f334014e50fbd7bdc7ae1"
+    },
+    {
+      "path": "tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "object": "b8072a46a3e32ee6d604e8a72730b0a75873921b"
+    }
+  ]
+}
