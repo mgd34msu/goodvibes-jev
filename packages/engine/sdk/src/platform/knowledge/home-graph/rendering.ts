@@ -1,3 +1,4 @@
+import { GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import type {
   KnowledgeEdgeRecord,
   KnowledgeIssueRecord,
@@ -11,7 +12,7 @@ import { countFacet, normalizeStringArray, readString } from '../map-filters.js'
 import { edgeIsActive, factSourceIds, isGeneratedPageSource, uniqueStrings } from './helpers.js';
 import type { HomeGraphMapHaFilterInput, HomeGraphMapInput, HomeGraphMapResult } from './types.js';
 import { isLowValueFeatureOrSpecText } from '../semantic/fact-quality.js';
-import { isUsefulHomeGraphPageFact, isUsefulHomeGraphPageSource } from './page-quality.js';
+import { isUsefulHomeGraphPageFact, createHomeGraphPageSourceReader, type HomeGraphPageSourceReader } from './page-quality.js';
 
 export interface HomeGraphRenderState {
   readonly spaceId: string;
@@ -22,10 +23,13 @@ export interface HomeGraphRenderState {
   readonly issues: readonly KnowledgeIssueRecord[];
 }
 
-export function renderRoomPage(state: HomeGraphRenderState, areaId?: string): string {
+export async function renderRoomPage(state: HomeGraphRenderState, areaId?: string, sourceReader = createHomeGraphPageSourceReader()): Promise<string> {
   const area = areaId
     ? findNodeByHaId(state.nodes, 'ha_area', areaId) ?? findNodeByHaId(state.nodes, 'ha_room', areaId)
     : undefined;
+  if (areaId && !area) throw new GoodVibesSdkError('Requested Home Graph room was not found.', {
+    category: 'not_found', source: 'runtime', operation: 'homegraph.generateRoomPage',
+  });
   const title = area?.title ?? state.title;
   const areaNodeId = area?.id;
   const entities = state.nodes.filter((node) => (
@@ -47,7 +51,7 @@ export function renderRoomPage(state: HomeGraphRenderState, areaId?: string): st
     ...scenes.map((node) => node.id),
     ...scripts.map((node) => node.id),
   ]);
-  const sources = relatedSources(state.sources, state.edges, state.nodes, relatedNodeIds);
+  const sources = await relatedSources(state.sources, state.edges, state.nodes, relatedNodeIds, sourceReader);
   const semanticFacts = semanticFactsLinkedToSources(sources, state.nodes, state.edges, relatedNodeIds);
   const issues = issuesForScope(state.issues, state.edges, relatedNodeIds, sources);
   return [
@@ -660,16 +664,16 @@ function renderMetadataField(label: string, value: unknown): string {
   return typeof value === 'string' && value.trim().length > 0 ? `- ${label}: ${value.trim()}` : '';
 }
 
-function relatedSources(
+async function relatedSources(
   sources: readonly KnowledgeSourceRecord[],
   edges: readonly KnowledgeEdgeRecord[],
   nodes: readonly KnowledgeNodeRecord[],
   nodeIds: ReadonlySet<string>,
-): KnowledgeSourceRecord[] {
-  const visibleSources = sources.filter((source) => !isGeneratedPageSource(source) && isUsefulHomeGraphPageSource(source));
-  if (nodeIds.size === 0) return visibleSources;
-  const sourceIds = sourceIdsLinkedToNodes(edges, nodes, nodeIds);
-  return visibleSources.filter((source) => sourceIds.has(source.id));
+  reader: HomeGraphPageSourceReader,
+): Promise<KnowledgeSourceRecord[]> {
+  const sourceIds = nodeIds.size > 0 ? sourceIdsLinkedToNodes(edges, nodes, nodeIds) : null;
+  const scoped = sources.filter((source) => !isGeneratedPageSource(source) && (!sourceIds || sourceIds.has(source.id)));
+  return (await reader.rank(scoped)).map((item) => item.source);
 }
 
 function filterNodesForArea(

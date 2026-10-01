@@ -1,3 +1,5 @@
+import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
+import { assertAnswerVerificationActive } from './answer-verification/budget.js';
 import type { KnowledgeStore } from '../store.js';
 import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../types.js';
 import {
@@ -38,19 +40,25 @@ export async function persistAnswerGap(
   query: string,
   reason: string,
   context: {
+    readonly signal?: AbortSignal | undefined;
+    readonly assertCurrent?: (() => void) | undefined;
     readonly subject?: string | undefined;
     readonly sources?: readonly KnowledgeSourceRecord[] | undefined;
     readonly linkedObjects?: readonly KnowledgeNodeRecord[] | undefined;
   } = {},
 ): Promise<KnowledgeNodeRecord> {
+  assertAnswerVerificationActive(context.signal);
+  context.assertCurrent?.();
   const linkedObjects = context.linkedObjects ?? [];
   const sources = context.sources ?? [];
   const subject = context.subject ?? linkedObjects[0]?.title;
   const fingerprint = answerGapFingerprint(spaceId, query, subject, linkedObjects[0]?.id);
-  const id = `sem-answer-gap-${fingerprint}`;
+  const id = answerGapRecordIds(spaceId, query, subject, linkedObjects[0]?.id).nodeId;
   const existing = store.getNode(id);
   return store.batch(async () => {
-    const node = await store.upsertNode({
+    assertAnswerVerificationActive(context.signal);
+    context.assertCurrent?.();
+    const node = await upsertObservedKnowledgeNode(store, {
       id,
       kind: 'knowledge_gap',
       slug: `answer-gap-${fingerprint}`,
@@ -74,8 +82,9 @@ export async function persistAnswerGap(
         visibility: 'refinement',
         displayRole: 'knowledge-gap',
       }),
-    });
+    }, 'research-task', { query, reason, sources, linkedObjects }, () => { context.assertCurrent?.(); return { query, reason, sources, linkedObjects }; });
     for (const source of sources) {
+      assertAnswerVerificationActive(context.signal);
       await store.upsertEdge({
         fromKind: 'source',
         fromId: source.id,
@@ -86,6 +95,7 @@ export async function persistAnswerGap(
       });
     }
     for (const object of linkedObjects) {
+      assertAnswerVerificationActive(context.signal);
       await store.upsertEdge({
         fromKind: 'node',
         fromId: object.id,
@@ -95,6 +105,7 @@ export async function persistAnswerGap(
         metadata: semanticMetadata(spaceId, { gapKind: 'answer' }),
       });
     }
+    assertAnswerVerificationActive(context.signal);
     if (!isRepairedAnswerGap(node)) {
       await store.upsertIssue({
         id: `sem-answer-gap-issue-${fingerprint}`,
@@ -186,6 +197,12 @@ async function resolveAnswerGapIssues(store: KnowledgeStore, spaceId: string, no
       }),
     });
   }
+}
+
+/** The exact records a caller must snapshot before an awaited answer-quality read. */
+export function answerGapRecordIds(spaceId: string, query: string, subject?: string, subjectId?: string) {
+  const fingerprint = answerGapFingerprint(spaceId, query, subject, subjectId);
+  return { nodeId: `sem-answer-gap-${fingerprint}`, issueId: `sem-answer-gap-issue-${fingerprint}` };
 }
 
 function answerGapFingerprint(spaceId: string, query: string, subject?: string, subjectId?: string): string {

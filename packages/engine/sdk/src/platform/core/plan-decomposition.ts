@@ -479,7 +479,7 @@ export async function decomposeGoal(
   runner: DecompositionRunner | null,
   deps: DecomposeGoalDeps = {},
 ): Promise<DecomposeGoalResult> {
-  const gate = planner.shouldDecompose(inputs);
+  const gate = await planner.shouldDecompose(inputs);
 
   const heuristicResult = (outcome: DecompositionOutcome): DecomposeGoalResult => {
     const base = singleItemProposal(request.goal);

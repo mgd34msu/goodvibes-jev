@@ -1,8 +1,7 @@
 /**
  * agent-graph-composition.ts, the graph that runs agents.
  *
- * Six collaborators that are only meaningful as a set, so they are built as
- * one: a message bus, the archetype loader, the orchestrator that executes a
+ * The default graph builds six collaborators as one: a message bus, the archetype loader, the orchestrator that executes a
  * run, the manager that owns the records, the context-accounting holder, and
  * the contract runner. Every one of them holds a reference to at least one
  * other, and two of the links are circular: the orchestrator writes
@@ -25,26 +24,39 @@ import { composeContractRunner, nativeAgentFleetCapacity, resumeContracts } from
 import type { RuntimeEventBus } from './events/index.js';
 import type { RuntimeStore } from './store/index.js';
 
-export interface AgentGraph {
+export interface AgentExecutionGraph {
   readonly agentMessageBus: AgentMessageBus;
   readonly archetypeLoader: ArchetypeLoader;
   readonly agentOrchestrator: AgentOrchestrator;
   readonly agentManager: AgentManager;
   readonly contextAccountingHolder: ContextAccountingHolder;
+}
+
+export interface AgentExecutionGraphOptions {
+  readonly runtimeBus: RuntimeEventBus;
+  readonly workingDirectory: string;
+  readonly configManager: ConfigManager;
+  readonly providerRegistry: ProviderRegistry;
+}
+
+export interface AgentGraph extends AgentExecutionGraph {
   readonly contractRunner: ContractRunner;
   /** Releases the contract runner and its store. */
   dispose(): void;
 }
 
-/** Build the agent-execution graph, fully wired in both directions, and resume the contracts left on disk. */
-export function createAgentGraph(options: {
-  readonly runtimeBus: RuntimeEventBus;
-  readonly workingDirectory: string;
-  readonly configManager: ConfigManager;
-  readonly providerRegistry: ProviderRegistry;
+export interface AgentGraphOptions extends AgentExecutionGraphOptions {
   /** Live provider health for the route planner. */
   readonly runtimeStore?: Pick<RuntimeStore, 'getState'> | undefined;
-}): AgentGraph {
+}
+
+/**
+ * Construct the shared execution collaborators and their snapshot bridge.
+ * This does not install or resume a contract runner. A host using this lower
+ * level factory must compose and own exactly one runner before admitting work;
+ * use createAgentGraph when its native-only fleet and resume policy apply.
+ */
+export function createAgentExecutionGraph(options: AgentExecutionGraphOptions): AgentExecutionGraph {
   const agentMessageBus = new AgentMessageBus();
   agentMessageBus.setRuntimeBus(options.runtimeBus);
   const archetypeLoader = new ArchetypeLoader(join(options.workingDirectory, '.goodvibes', 'agents'));
@@ -68,6 +80,13 @@ export function createAgentGraph(options: {
     release: (agentId) => agentManager.releaseConversationSource(agentId),
   });
   agentManager.setRuntimeBus(options.runtimeBus);
+  return { agentMessageBus, archetypeLoader, agentOrchestrator, agentManager, contextAccountingHolder };
+}
+
+/** Build the complete default graph and resume its contracts once per project root. */
+export function createAgentGraph(options: AgentGraphOptions): AgentGraph {
+  const graph = createAgentExecutionGraph(options);
+  const { agentMessageBus, agentManager } = graph;
   const composed = composeContractRunner({
     runtimeBus: options.runtimeBus,
     agentManager,
@@ -80,11 +99,7 @@ export function createAgentGraph(options: {
   });
   void resumeContracts(composed.runner, options.workingDirectory);
   return {
-    agentMessageBus,
-    archetypeLoader,
-    agentOrchestrator,
-    agentManager,
-    contextAccountingHolder,
+    ...graph,
     contractRunner: composed.runner,
     dispose: () => composed.dispose(),
   };

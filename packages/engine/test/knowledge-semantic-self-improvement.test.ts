@@ -1,4 +1,7 @@
+import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
+import { seedKnowledgeResearchTask, useSemanticActivationFixtures } from './_helpers/knowledge-semantic-activation-fixtures.js';
 import { describe, expect, test } from 'bun:test';
+import { KnowledgeSourceQualityHeldError } from '../sdk/src/platform/knowledge/source-quality.js';
 import {
   createProviderBackedKnowledgeSemanticLlm,
   createWebKnowledgeGapRepairer,
@@ -18,13 +21,26 @@ import {
   waitFor,
 } from './_helpers/knowledge-semantic-fixtures.js';
 import { settleEvents, withTestTimeout } from './_helpers/test-timeout.js';
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+import { semanticRepairProfileValues, semanticRepairUsefulValues } from './_helpers/repair-profile-fixture-readings.js';
+
+const answerReadings = useKnowledgeAnswerReadings({ repairProfile: semanticRepairProfileValues, repairUseful: semanticRepairUsefulValues, objectAlignment: [
+  { query: 'What HDR and display features does the TV have?', objects: [{ title: 'LG webOS Smart TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 }] },
+  { query: 'What features does the LG 86NANO90UNA have?', objects: [{ title: 'LG webOS Smart TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 }] },
+] });
+useSemanticActivationFixtures(answerReadings);
 
 describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   test('strict answers keep official sources linked by graph edges even without source discovery metadata', async () => {
+    // Fix this fixture's relevance order explicitly; claimed authority is not a ranking rule.
+    answerReadings.set({ sources: [
+      ['LG 86NANO90UNA official specifications', 0.99],
+      ['LG 86NANO90UNA secondary specifications', 0.95],
+    ] });
     const { store } = createStores();
     const spaceId = homeAssistantKnowledgeSpaceId('house');
     const semantic = new KnowledgeSemanticService(store);
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-edge-source-tv',
       title: 'LG webOS Smart TV',
@@ -73,6 +89,9 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
         searchText: 'LG official specifications list NanoCell display technology, 4K UHD resolution, HDR10, Dolby Vision, HLG, and 100/120 Hz refresh rate.',
       },
     });
+    await store.upsertExtraction({ sourceId: secondary.id, extractorId: 'synthetic-reference', format: 'text',
+      excerpt: 'LG 86NANO90UNA specifications include 4K UHD resolution and 100/120 Hz refresh rate.',
+      metadata: { knowledgeSpaceId: spaceId } });
     const fact = await store.upsertNode({
       kind: 'fact',
       slug: 'lg-secondary-display-fact',
@@ -138,7 +157,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   test('foreground answers wait for overlapping repair work before returning stale gaps', async () => {
     const { store } = createStores();
     const spaceId = homeAssistantKnowledgeSpaceId('house');
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-overlap-tv',
       title: 'LG webOS Smart TV',
@@ -238,9 +257,12 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
 
   test('semantic enrichment inherits source subject links from graph edges', async () => {
     const { store } = createStores();
+    // Stable synthetic IDs keep derived hash strings deterministic under the
+    // conservative PAN boundary; no production scanner exemption is added.
     const spaceId = homeAssistantKnowledgeSpaceId('house');
     const semantic = new KnowledgeSemanticService(store);
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
+      id: 'synthetic-edge-enrichment-device',
       kind: 'ha_device',
       slug: 'lg-edge-enrichment-tv',
       title: 'LG webOS Smart TV',
@@ -249,6 +271,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
     const official = await store.upsertSource({
+      id: 'synthetic-edge-enrichment-source',
       connectorId: 'semantic-gap-repair',
       sourceType: 'url',
       title: 'LG 86NANO90UNA official specifications',
@@ -264,6 +287,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       },
     });
     await store.upsertExtraction({
+      id: 'synthetic-edge-enrichment-extraction',
       sourceId: official.id,
       extractorId: 'web',
       format: 'html',
@@ -312,7 +336,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       },
       metadata: { knowledgeSpaceId: spaceId },
     });
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-edge-subject',
       title: 'LG webOS Smart TV',
@@ -320,7 +344,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
-    const gap = await store.upsertNode({
+    const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'edge-only-gap',
       title: 'What features does the LG 86NANO90UNA have?',
@@ -374,7 +398,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       metadata: { knowledgeSpaceId: spaceId },
     });
     for (const slug of ['pause-gap-1', 'pause-gap-2', 'pause-gap-3']) {
-      await store.upsertNode({
+      await seedKnowledgeResearchTask(store, {
         kind: 'knowledge_gap',
         slug,
         title: `What does ${slug} need?`,
@@ -588,6 +612,8 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   });
 
   test('semantic gap repair is idempotent once a repair source is linked', async () => {
+    // Initial manual evidence is genuinely partial, regardless of the generator's own gap list.
+    answerReadings.set({ enough: 0.01, complete: 0.01 });
     const { store } = createStores();
     const calls: unknown[] = [];
     const semantic = new KnowledgeSemanticService(store, {
@@ -614,6 +640,12 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
           },
           metadata: { knowledgeSpaceId: 'homeassistant:test' },
         });
+        // Once the fixture repair text exists, measured evidence is sufficient.
+        // The old generator still gives its partial manual answer; the literal
+        // candidate is independently complete and must be preferred.
+        answerReadings.set({ enough: 0.99, complete: 0.97,
+          completeByCandidate: [['manual only confirms Magic Remote', 0.01]], preferred: 'rendered',
+        });
         return {
           searched: true,
           query: 'lg 86nano90una full specifications',
@@ -631,7 +663,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       status: 'indexed',
       metadata: knowledgeSpaceMetadata('homeassistant:test'),
     });
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-tv',
       title: 'LG webOS Smart TV',
@@ -695,7 +727,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       status: 'indexed',
       metadata: knowledgeSpaceMetadata('homeassistant:test'),
     });
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-tv',
       title: 'LG webOS Smart TV',
@@ -703,7 +735,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       confidence: 90,
       metadata: knowledgeSpaceMetadata('homeassistant:test', { manufacturer: 'LG', model: '86NANO90UNA' }),
     });
-    const gap = await store.upsertNode({
+    const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'lg-tv-features-gap',
       title: 'What are the complete features and specifications for LG 86NANO90UNA?',
@@ -770,7 +802,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       },
       metadata: { knowledgeSpaceId: 'homeassistant:test' },
     });
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-tv-rich-repair',
       title: 'LG webOS Smart TV',
@@ -778,7 +810,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       confidence: 90,
       metadata: knowledgeSpaceMetadata('homeassistant:test', { manufacturer: 'LG', model: '86NANO90UNA' }),
     });
-    const gap = await store.upsertNode({
+    const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'lg-tv-rich-features-gap',
       title: 'What are the complete features and specifications for LG 86NANO90UNA?',
@@ -821,6 +853,8 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
     // gap using the indexed text while enrichment is still pending.
     const enrichment = semantic.enrichSource(repairSource.id, { knowledgeSpaceId: 'homeassistant:test' });
     let improvement: ReturnType<KnowledgeSemanticService['selfImprove']> | undefined;
+    const graphSnapshot = () => JSON.stringify({ nodes: store.listNodes(100), edges: store.listEdges() });
+    let settledGraph: string | undefined;
     try {
       await withTestTimeout(enrichmentEntered);
       improvement = semantic.selfImprove({ knowledgeSpaceId: 'homeassistant:test', gapIds: [gap.id], maxRunMs: 5_000 });
@@ -829,12 +863,17 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       expect(result.closedGaps).toBe(1);
       expect(result.promotedFactCount).toBeGreaterThanOrEqual(3);
       expect(store.listNodes(100).filter((node) => node.kind === 'fact' && node.metadata.extractor === 'repair-promotion')).toHaveLength(result.promotedFactCount ?? 0);
+      settledGraph = graphSnapshot();
     } finally {
       release();
       await Promise.allSettled([enrichment, improvement]);
     }
-    await enrichment;
+    // Promotion changed the evidence graph while the older generation was held.
+    // Releasing it must reject that stale snapshot without rewriting the settled graph.
+    await expect(enrichment).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
+    await expect(enrichment).rejects.toMatchObject({ reason: 'stale' });
     expect(enrichmentCompleted).toBe(true);
+    expect(graphSnapshot()).toBe(settledGraph);
   }, 60_000);
 
   test('self-improvement promotes already-indexed source facts by linking them to the repair subject', async () => {
@@ -857,7 +896,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
         },
       },
     });
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-tv-existing-facts',
       title: 'LG webOS Smart TV',
@@ -865,7 +904,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       confidence: 90,
       metadata: knowledgeSpaceMetadata('homeassistant:test', { manufacturer: 'LG', model: '86NANO90UNA' }),
     });
-    const otherDevice = await store.upsertNode({
+    const otherDevice = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'sony-tv-existing-facts',
       title: 'Sony BRAVIA TV',
@@ -873,7 +912,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       confidence: 90,
       metadata: knowledgeSpaceMetadata('homeassistant:test', { manufacturer: 'Sony', model: 'XBR-55X850B' }),
     });
-    const gap = await store.upsertNode({
+    const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'lg-tv-existing-source-gap',
       title: 'What are the complete features and specifications for LG 86NANO90UNA?',
@@ -892,6 +931,10 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       ['Input and output ports', 'Input and output ports: HDMI inputs, HDMI eARC, USB ports, Ethernet, optical audio output, RF antenna input, and RS-232C/external control.'],
       ['Audio capabilities', 'Audio capabilities: 2 x 10W speakers.'],
     ];
+    await store.upsertExtraction({ sourceId: repairSource.id, extractorId: 'synthetic', format: 'text',
+      excerpt: `LG 86NANO90UNA specifications: ${goodFactPairs.map(([, summary]) => summary).join(' ')} Comparison: Sony XBR-55X850B has a 55-inch 4K display.`,
+      metadata: knowledgeSpaceMetadata('homeassistant:test'),
+    });
     const goodFacts = await Promise.all(goodFactPairs.map(([title, summary], index) => store.upsertNode({
       kind: 'fact',
       slug: `existing-official-lg-fact-${index}`,
@@ -947,6 +990,8 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   });
 
   test('answer-triggered refinement is queued without blocking the answer', async () => {
+    // Explicit insufficiency reading replaces a generator-authored gap as the trigger.
+    answerReadings.set({ enough: 0.01, complete: 0.01 });
     const { store } = createStores();
     const calls: unknown[] = [];
     let release!: () => void;

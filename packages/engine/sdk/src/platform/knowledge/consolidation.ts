@@ -1,21 +1,18 @@
+import { createHash } from 'node:crypto';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { assertJudgmentInput } from '../gate/judgment-input.js';
+import { consolidationReading } from './batteries/consolidation.js';
 import type { MemoryClass, MemoryRegistry, MemoryScope } from '../state/index.js';
 import type { KnowledgeStore } from './store.js';
 import type {
   KnowledgeConsolidationCandidateRecord,
   KnowledgeConsolidationReportRecord,
-  KnowledgeNodeRecord,
-  KnowledgeSourceRecord,
-  KnowledgeUsageRecord,
 } from './types.js';
 import {
-  DEEP_CONSOLIDATION_AUTOPROMOTE_THRESHOLD,
-  LIGHT_CONSOLIDATION_THRESHOLD,
   coerceStringArray,
   isSourcePastRefreshWindow,
   mergeTags,
-  slugify,
   summarizeCompact,
-  topKeywords,
   usageWindowCutoff,
 } from './shared.js';
 
@@ -25,25 +22,54 @@ export interface KnowledgeConsolidationContext {
   readonly syncReviewedMemory: () => Promise<void>;
 }
 
-export async function decideKnowledgeConsolidationCandidate(
-  context: KnowledgeConsolidationContext,
-  id: string,
-  decision: 'accept' | 'reject' | 'supersede',
-  input: {
-    readonly decidedBy?: string | undefined;
-    readonly memoryClass?: string | undefined;
-    readonly scope?: string | undefined;
-    readonly detail?: string | undefined;
-  } = {},
-): Promise<KnowledgeConsolidationCandidateRecord> {
+interface CandidateDecisionInput {
+  readonly decidedBy?: string | undefined;
+  readonly memoryClass?: string | undefined;
+  readonly scope?: string | undefined;
+  readonly detail?: string | undefined;
+}
+
+const decisions = new WeakMap<KnowledgeStore, Map<string, Promise<KnowledgeConsolidationCandidateRecord>>>();
+
+/** Serialize refreshes and decisions for a subject, including operator/auto races. */
+function queueCandidate(context: KnowledgeConsolidationContext, key: string, operation: () => Promise<KnowledgeConsolidationCandidateRecord>): Promise<KnowledgeConsolidationCandidateRecord> {
+  const queue = decisions.get(context.store) ?? new Map<string, Promise<KnowledgeConsolidationCandidateRecord>>();
+  decisions.set(context.store, queue);
+  const previous = queue.get(key);
+  const next = Promise.resolve(previous).catch(() => undefined).then(operation);
+  queue.set(key, next);
+  return next.finally(() => { if (queue.get(key) === next) queue.delete(key); });
+}
+
+function candidateKey(candidate: Pick<KnowledgeConsolidationCandidateRecord, 'candidateType' | 'subjectKind' | 'subjectId'>): string {
+  return JSON.stringify([candidate.candidateType, candidate.subjectKind, candidate.subjectId]);
+}
+
+async function queueDecision(context: KnowledgeConsolidationContext, id: string, decision: 'accept' | 'reject' | 'supersede', input: CandidateDecisionInput, automatic = false): Promise<KnowledgeConsolidationCandidateRecord> {
   await context.store.init();
   const candidate = context.store.getConsolidationCandidate(id);
   if (!candidate) throw new Error(`Unknown knowledge consolidation candidate: ${id}`);
+  return queueCandidate(context, candidateKey(candidate), () => applyDecision(context, id, decision, input, automatic));
+}
+
+export function decideKnowledgeConsolidationCandidate(context: KnowledgeConsolidationContext, id: string, decision: 'accept' | 'reject' | 'supersede', input: CandidateDecisionInput = {}): Promise<KnowledgeConsolidationCandidateRecord> {
+  return queueDecision(context, id, decision, input);
+}
+
+async function applyDecision(context: KnowledgeConsolidationContext, id: string, decision: 'accept' | 'reject' | 'supersede', input: CandidateDecisionInput, automatic: boolean): Promise<KnowledgeConsolidationCandidateRecord> {
+  await context.store.init();
+  const candidate = context.store.getConsolidationCandidate(id);
+  if (!candidate) throw new Error(`Unknown knowledge consolidation candidate: ${id}`);
+  if (automatic && (candidate.status !== 'open' || candidate.metadata.judgmentOutcome !== 'act' || candidate.metadata.classOutcome !== 'act')) return candidate;
+  if (decision === 'accept' && candidate.status === 'accepted') return candidate;
+  if (decision === 'accept' && typeof candidate.metadata.subjectFingerprint === 'string' && candidate.metadata.subjectFingerprint !== subjectSnapshot(context, candidate.subjectId)) throw new Error('Knowledge candidate is stale; refresh it before accepting.');
   const decidedAt = Date.now();
   let acceptedMemoryId: string | undefined;
   if (decision === 'accept' && candidate.candidateType === 'memory-promotion') {
     const record = context.store.getItem(candidate.subjectId);
+    if (!record?.source && !record?.node) throw new Error('Knowledge candidate source is missing; no memory was written.');
     await context.memoryRegistry.getStore().init();
+    if (typeof candidate.metadata.subjectFingerprint === 'string' && candidate.metadata.subjectFingerprint !== subjectSnapshot(context, candidate.subjectId)) throw new Error('Knowledge candidate changed before its memory write.');
     const summary = summarizeCompact(candidate.title, 160) ?? candidate.title;
     const detail = input.detail
       ?? candidate.summary
@@ -56,7 +82,10 @@ export async function decideKnowledgeConsolidationCandidate(
       record?.node?.aliases,
       coerceStringArray(candidate.metadata.tags),
     );
-    const memory = await context.memoryRegistry.add({
+    // Provenance recovers a write that committed before candidate persistence
+    // failed, so replay does not add a second memory for the same decision.
+    const existingMemory = context.memoryRegistry.getStore().retrieve({ provenanceKinds: ['event'] }).find((entry) => entry.provenance.some((link) => link.kind === 'event' && link.ref === candidate.id));
+    const memory = existingMemory ?? await context.memoryRegistry.add({
       cls: (input.memoryClass ?? candidate.suggestedMemoryClass ?? 'fact') as MemoryClass,
       scope: (input.scope ?? candidate.suggestedScope ?? 'project') as MemoryScope,
       summary,
@@ -65,18 +94,17 @@ export async function decideKnowledgeConsolidationCandidate(
       provenance: [
         ...(record?.source?.sessionId ? [{ kind: 'session' as const, ref: record.source.sessionId }] : []),
         { kind: 'event', ref: candidate.id, label: 'knowledge consolidation candidate' },
+        { kind: 'event', ref: candidate.subjectId, label: `knowledge ${candidate.subjectKind}` },
       ],
       review: {
-        state: 'reviewed',
-        confidence: Math.max(60, Math.min(100, Math.round(candidate.score))),
-        reviewedAt: decidedAt,
-        reviewedBy: input.decidedBy,
+        state: automatic ? 'fresh' : 'reviewed',
+        confidence: Math.max(0, Math.min(100, Math.round(candidate.score))),
+        ...(!automatic ? { reviewedAt: decidedAt, reviewedBy: input.decidedBy } : {}),
       },
     });
     acceptedMemoryId = memory.id;
-    await context.syncReviewedMemory();
   }
-  return context.store.upsertConsolidationCandidate({
+  const decided = await context.store.upsertConsolidationCandidate({
     id: candidate.id,
     candidateType: candidate.candidateType,
     subjectKind: candidate.subjectKind,
@@ -92,9 +120,12 @@ export async function decideKnowledgeConsolidationCandidate(
     decidedBy: input.decidedBy,
     metadata: {
       ...candidate.metadata,
+      decisionAuthority: automatic ? 'automatic' : 'operator',
       ...(acceptedMemoryId ? { acceptedMemoryId } : {}),
     },
   });
+  if (acceptedMemoryId) await context.syncReviewedMemory();
+  return decided;
 }
 
 export async function refreshKnowledgeConsolidationCandidates(
@@ -105,30 +136,49 @@ export async function refreshKnowledgeConsolidationCandidates(
   await context.syncReviewedMemory();
   const usageStats = await buildUsageStats(context);
   const proposals: KnowledgeConsolidationCandidateRecord[] = [];
-  const seenSubjects = new Set<string>();
+  // A request budget, not a worth threshold. Usage records arrive newest first.
+  const readingLimit = Math.min(64, Math.max(1, Number.isFinite(limit) ? Math.floor(limit) : 24));
+  let readings = 0;
 
   for (const [key, stats] of usageStats.entries()) {
-    const [subjectKind, subjectId] = key.split(':', 2) as [KnowledgeConsolidationCandidateRecord['subjectKind'], string];
+    const separator = key.indexOf(':');
+    const subjectKind = key.slice(0, separator) as KnowledgeConsolidationCandidateRecord['subjectKind'];
+    const subjectId = key.slice(separator + 1);
     if (subjectKind === 'issue') continue;
     const item = context.store.getItem(subjectId);
     if (!item?.source && !item?.node) continue;
     const subjectTitle = item.source?.title ?? item.source?.canonicalUri ?? item.node?.title ?? subjectId;
-    const subjectSummary = summarizeCompact(item.source?.summary ?? item.node?.summary ?? item.source?.description);
+    const subjectSummary = item.source?.summary ?? item.node?.summary ?? item.source?.description;
     const relationCount = subjectKind === 'source'
       ? context.store.edgesFor('source', subjectId).length
       : context.store.edgesFor('node', subjectId).length;
-    const score = Math.round(
-      scoreUsageBoost(stats)
-      + Math.min(16, relationCount * 2)
-      + (item.node?.kind === 'memory' ? 10 : 0),
-    );
-    if (score < LIGHT_CONSOLIDATION_THRESHOLD) continue;
     const candidateType: KnowledgeConsolidationCandidateRecord['candidateType'] =
       item.node?.kind === 'memory' && item.node.status === 'stale'
         ? 'memory-review'
         : subjectKind === 'source' && isSourcePastRefreshWindow(item.source!)
           ? 'source-refresh'
           : 'memory-promotion';
+    const settled = context.store.getConsolidationCandidateBySubject(subjectKind, subjectId, candidateType);
+    if (settled && settled.status !== 'open') { proposals.push(settled); continue; }
+    if (readings >= readingLimit) break;
+    const snapshot = subjectSnapshot(context, subjectId);
+    const state = {
+      subject: { title: subjectTitle, summary: subjectSummary ?? '', kind: item.node?.kind ?? item.source?.sourceType ?? 'unknown', status: item.node?.status ?? item.source?.status ?? 'unknown', trust: 'untrusted-reference-material', reviewState: typeof item.node?.metadata.reviewState === 'string' ? item.node.metadata.reviewState : 'unreviewed' },
+      usage: { count: stats.count, usageKinds: [...stats.usageKinds], sessionCount: stats.sessionIds.size, lastUsedAt: new Date(stats.lastUsedAt).toISOString(), relationCount },
+    };
+    assertJudgmentInput(state);
+    readings += 1;
+    const run = await consolidationReading.run(judgmentPort('engine.knowledge.consolidation'), state, { site: 'engine.knowledge.consolidation' });
+    const { keep, memory_class: memoryClass } = run.readings;
+    if (subjectSnapshot(context, subjectId) !== snapshot) {
+      run.recordAction('held: subject changed during judgment');
+      continue;
+    }
+    if (keep.verdict !== 'yes') {
+      run.recordAction(`no candidate: ${keep.verdict} (${keep.outcome})`);
+      continue;
+    }
+    const score = Math.round(keep.probability * 100);
     const evidence = mergeTags(
       [
         `used ${stats.count} time(s) in the last 30 days`,
@@ -137,49 +187,44 @@ export async function refreshKnowledgeConsolidationCandidates(
       ],
       subjectKind === 'source' ? item.source?.tags : item.node?.aliases,
     ).slice(0, 8);
-    const candidate = await context.store.upsertConsolidationCandidate({
-      candidateType,
-      subjectKind,
-      subjectId,
-      title: subjectTitle,
-      summary: subjectSummary,
-      score,
-      evidence,
-      suggestedMemoryClass: inferMemoryClassForCandidate(context, subjectKind, subjectId),
-      suggestedScope: 'project',
-      metadata: {
-        usageCount: stats.count,
-        lastUsedAt: stats.lastUsedAt,
-        usageKinds: [...stats.usageKinds],
-        relationCount,
-      },
+    const candidate = await queueCandidate(context, candidateKey({ candidateType, subjectKind, subjectId }), async () => {
+      // A person may have decided while the model was reading. Preserve the
+      // complete terminal record, including their class, evidence and provenance.
+      const latest = context.store.getConsolidationCandidateBySubject(subjectKind, subjectId, candidateType);
+      if (latest && latest.status !== 'open') return latest;
+      if (subjectSnapshot(context, subjectId) !== snapshot) throw new Error('Knowledge subject changed before candidate staging.');
+      return context.store.upsertConsolidationCandidate({
+        candidateType,
+        subjectKind,
+        subjectId,
+        title: subjectTitle,
+        summary: subjectSummary,
+        score,
+        evidence,
+        suggestedMemoryClass: memoryClass.choice,
+        suggestedScope: 'project',
+        metadata: {
+          usageCount: stats.count,
+          lastUsedAt: stats.lastUsedAt,
+          usageKinds: [...stats.usageKinds],
+          relationCount,
+          judgmentDecisionId: run.result.decisionId,
+          judgmentOutcome: keep.outcome,
+          classOutcome: memoryClass.outcome,
+          subjectFingerprint: snapshot,
+        },
+      });
     });
+    run.recordAction(candidate.status === 'open' ? `queued for ${keep.outcome === 'act' && memoryClass.outcome === 'act' ? 'eligible promotion' : 'operator review'}` : `preserved operator decision: ${candidate.status}`);
     proposals.push(candidate);
-    seenSubjects.add(`${candidate.candidateType}:${candidate.subjectKind}:${candidate.subjectId}`);
   }
 
-  for (const existing of context.store.listConsolidationCandidates(1_000, { status: 'open' })) {
-    const key = `${existing.candidateType}:${existing.subjectKind}:${existing.subjectId}`;
-    if (seenSubjects.has(key)) continue;
-    await context.store.upsertConsolidationCandidate({
-      id: existing.id,
-      candidateType: existing.candidateType,
-      status: 'superseded',
-      subjectKind: existing.subjectKind,
-      subjectId: existing.subjectId,
-      title: existing.title,
-      summary: existing.summary,
-      score: existing.score,
-      evidence: existing.evidence,
-      suggestedMemoryClass: existing.suggestedMemoryClass,
-      suggestedScope: existing.suggestedScope,
-      metadata: existing.metadata,
-    });
-  }
+  // Missing, uncertain or changed subjects do not revoke a prior operator
+  // decision or silently supersede an open review candidate.
 
   return proposals
-    .sort((a, b) => b.score - a.score || b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))
-    .slice(0, Math.max(1, limit));
+    .sort((a, b) => Number(b.status === 'open') - Number(a.status === 'open') || b.score - a.score || b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))
+    .slice(0, readingLimit);
 }
 
 export async function runKnowledgeConsolidation(
@@ -194,13 +239,14 @@ export async function runKnowledgeConsolidation(
   let superseded = 0;
   if (input.autoPromote) {
     for (const candidate of candidates) {
-      if (candidate.candidateType !== 'memory-promotion') continue;
-      if (candidate.score < DEEP_CONSOLIDATION_AUTOPROMOTE_THRESHOLD) continue;
-      const decided = await decideKnowledgeConsolidationCandidate(context, candidate.id, 'accept', {
+      if (candidate.candidateType !== 'memory-promotion' || candidate.status !== 'open') continue;
+      if (candidate.metadata.judgmentOutcome !== 'act' || candidate.metadata.classOutcome !== 'act') continue;
+      if (candidate.metadata.subjectFingerprint !== subjectSnapshot(context, candidate.subjectId)) continue;
+      const decided = await queueDecision(context, candidate.id, 'accept', {
         decidedBy: 'knowledge.deep-consolidation',
         memoryClass: candidate.suggestedMemoryClass,
         scope: candidate.suggestedScope,
-      });
+      }, true);
       if (decided.status === 'accepted') accepted += 1;
     }
   }
@@ -215,7 +261,7 @@ export async function runKnowledgeConsolidation(
     title: kind === 'light-consolidation' ? 'Light Consolidation Report' : 'Deep Consolidation Report',
     summary: kind === 'light-consolidation'
       ? `Reviewed ${candidates.length} high-signal knowledge subjects and refreshed the consolidation queue.`
-      : `Reviewed ${candidates.length} high-signal knowledge subjects and auto-promoted the highest-confidence candidates into durable memory.`,
+      : `Reviewed ${candidates.length} high-signal knowledge subjects and auto-promoted only candidates whose worth and class readings reached act into durable memory.`,
     highlights: candidates.slice(0, 6).map((candidate) => `${candidate.title} (${candidate.candidateType}, score ${candidate.score})`),
     metrics: {
       candidateCount: candidates.length,
@@ -236,14 +282,12 @@ export async function syncReviewedKnowledgeMemory(context: { readonly syncReview
 
 async function buildUsageStats(context: KnowledgeConsolidationContext, limit = 10_000): Promise<Map<string, {
   count: number;
-  scoreTotal: number;
   lastUsedAt: number;
   usageKinds: Set<string>;
   sessionIds: Set<string>;
 }>> {
   const stats = new Map<string, {
     count: number;
-    scoreTotal: number;
     lastUsedAt: number;
     usageKinds: Set<string>;
     sessionIds: Set<string>;
@@ -254,13 +298,11 @@ async function buildUsageStats(context: KnowledgeConsolidationContext, limit = 1
     const key = `${record.targetKind}:${record.targetId}`;
     const current = stats.get(key) ?? {
       count: 0,
-      scoreTotal: 0,
       lastUsedAt: 0,
       usageKinds: new Set<string>(),
       sessionIds: new Set<string>(),
     };
     current.count += 1;
-    current.scoreTotal += Number(record.score ?? 0);
     current.lastUsedAt = Math.max(current.lastUsedAt, record.createdAt);
     current.usageKinds.add(record.usageKind);
     if (record.sessionId) current.sessionIds.add(record.sessionId);
@@ -269,59 +311,9 @@ async function buildUsageStats(context: KnowledgeConsolidationContext, limit = 1
   return stats;
 }
 
-function scoreUsageBoost(stats: {
-  count: number;
-  scoreTotal: number;
-  lastUsedAt: number;
-  usageKinds: Set<string>;
-  sessionIds: Set<string>;
-} | undefined): number {
-  if (!stats) return 0;
-  const frequency = Math.min(28, stats.count * 4);
-  const diversity = Math.min(14, stats.usageKinds.size * 3 + stats.sessionIds.size * 2);
-  const averageScore = stats.count > 0 ? stats.scoreTotal / stats.count : 0;
-  const scoreBoost = Math.min(12, Math.max(0, averageScore / 12));
-  const ageMs = Math.max(0, Date.now() - stats.lastUsedAt);
-  const recency = ageMs <= (24 * 60 * 60 * 1000) ? 10 : ageMs <= 7 * (24 * 60 * 60 * 1000) ? 6 : ageMs <= 14 * (24 * 60 * 60 * 1000) ? 3 : 0;
-  return frequency + diversity + scoreBoost + recency;
-}
-
-function inferMemoryClassForCandidate(
-  context: KnowledgeConsolidationContext,
-  subjectKind: KnowledgeConsolidationCandidateRecord['subjectKind'],
-  subjectId: string,
-): MemoryClass {
-  if (subjectKind === 'node') {
-    const node = context.store.getNode(subjectId);
-    switch (node?.kind) {
-      case 'project':
-      case 'capability':
-      case 'repo':
-      case 'service':
-      case 'environment':
-        return 'architecture';
-      case 'provider':
-        return 'fact';
-      case 'user':
-        return 'ownership';
-      case 'memory':
-        return 'fact';
-      default:
-        return 'fact';
-    }
-  }
-  const source = context.store.getSource(subjectId);
-  switch (source?.sourceType) {
-    case 'repo':
-      return 'architecture';
-    case 'bookmark':
-    case 'url':
-    case 'bookmark-list':
-    case 'history':
-      return 'fact';
-    case 'document':
-      return 'runbook';
-    default:
-      return 'fact';
-  }
+/** Exact content/provenance snapshot, not a semantic similarity guess. */
+function subjectSnapshot(context: KnowledgeConsolidationContext, subjectId: string): string | null {
+  const item = context.store.getItem(subjectId);
+  if (!item?.source && !item?.node) return null;
+  return createHash('sha256').update(JSON.stringify(item.source ?? item.node)).digest('hex');
 }

@@ -1,12 +1,14 @@
+import { KnowledgeAnswerExcerptHeldError } from './answer-excerpts/reader.js';
+import { projectAnswerFactClaim } from './answer-claim-projection.js';
 import type {
   KnowledgeNodeRecord,
 } from '../types.js';
 import type { KnowledgeStore } from '../store.js';
-import { normalizeKnowledgeSpaceId } from '../spaces.js';
+import { isActiveKnowledgeEdge } from '../projection-utils.js';
+import { normalizeKnowledgeSpaceId, getKnowledgeSpaceId, isHomeAssistantKnowledgeSpace } from '../spaces.js';
 import type {
   KnowledgeSemanticAnswerInput,
   KnowledgeSemanticAnswerResult,
-  KnowledgeSemanticLlmAnswer,
 } from './types.js';
 import {
   readRecord,
@@ -14,31 +16,32 @@ import {
   readStringArray,
   uniqueStrings,
 } from './utils.js';
-import {
-  hasConcreteFeatureSignal,
-  isLowValueFeatureOrSpecText,
-  isSemanticAnswerLinkedObject,
-} from './fact-quality.js';
 import { concreteAnswerGapSpaceId } from './answer-space.js';
-import { answerNeedsFeatureGap, cleanSynthesizedAnswer } from './answer-quality.js';
+import { answerNeedsEvidenceGap, answerConfidence } from './answer-quality.js';
+import { prepareAnswerEvidence } from './answer-verification/evidence.js';
+import { verifyKnowledgeAnswer, KnowledgeAnswerQualityHeldError, type AnswerCandidate } from './answer-verification/reader.js';
+import { withAnswerVerificationBudget } from './answer-verification/budget.js';
+import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
+import { createSemanticWriteGuard } from './primary-source-plan.js';
+import { KnowledgeSourceQualityHeldError } from '../source-quality.js';
+import { KnowledgeEvidenceRelevanceHeldError } from './evidence-ranking/reader.js';
+import { prepareAnswerLinkedObjects, type PreparedAnswerLinkedObjects } from './answer-object-alignment/prepare.js';
+import { KnowledgeAnswerObjectAlignmentHeldError } from './answer-object-alignment/reader.js';
 import { renderFallbackAnswer } from './answer-fallback.js';
-import { rankAnswerSources } from './answer-source-ranking.js';
+import { rankAnswerSources, KnowledgeSourceRankingHeldError } from './answer-source-ranking.js';
 import {
   type AnswerFactRecord,
   type EvidenceItem,
   type KnowledgeAnswerContext,
 } from './answer-common.js';
 import {
-  filterFactsForQuery,
-  hasFeatureIntentForQuery,
+  filterFactsForQuery, KnowledgeFactSelectionHeldError,
 } from './answer-fact-selection.js';
 import {
+  assertAnswerEvidenceCurrent,
+  settledAnswerFacts,
   collectAnswerEvidence,
-  filterAnswerLinkedObjects,
   includeOfficialLinkedEvidence,
-  includeOfficialLinkedSources,
-  inferObjectLinkedObjects,
-  shouldUseEvidenceLinkedObjects,
   toSearchResult,
   uniqueNodes,
   withAnswerSourceAliases,
@@ -46,89 +49,136 @@ import {
 import {
   isRepairedAnswerGap,
   persistAnswerGap,
-  persistAnswerGaps,
+  answerGapRecordIds,
   shouldPersistNoMatchGap,
 } from './answer-gaps.js';
-import { answerConfidence, synthesizeAnswer } from './answer-llm.js';
+import { synthesizeAnswer } from './answer-llm.js';
 
 export async function answerKnowledgeQuery(
   context: KnowledgeAnswerContext,
   input: KnowledgeSemanticAnswerInput,
 ): Promise<KnowledgeSemanticAnswerResult> {
+  assertJudgmentInput({ query: input.query });
+  if (typeof input.query !== 'string' || !input.query.trim()) throw new KnowledgeAnswerQualityHeldError('malformed');
+  try {
+    return await withAnswerVerificationBudget((signal, deadlineAt) => answerWithinBudget(context, input, signal, deadlineAt), input.timeoutMs, input.signal);
+  } catch (error) {
+    if (error instanceof KnowledgeAnswerQualityHeldError || error instanceof JudgmentInputError) throw error;
+    if (error instanceof KnowledgeSourceRankingHeldError || error instanceof KnowledgeFactSelectionHeldError) throw new KnowledgeAnswerQualityHeldError('uncertain');
+    if (error instanceof KnowledgeSourceQualityHeldError) throw new KnowledgeAnswerQualityHeldError(error.reason === 'aborted' ? 'aborted' : 'stale');
+    if (error instanceof KnowledgeAnswerObjectAlignmentHeldError) throw new KnowledgeAnswerQualityHeldError(
+      error.reason === 'unconfigured' ? 'unavailable' : error.reason);
+    if (error instanceof KnowledgeEvidenceRelevanceHeldError || error instanceof KnowledgeAnswerExcerptHeldError) throw new KnowledgeAnswerQualityHeldError(
+      error.reason === 'unsettled' ? 'uncertain' : error.reason === 'unconfigured' ? 'unavailable' : error.reason);
+    throw new KnowledgeAnswerQualityHeldError('unavailable');
+  }
+}
+
+async function answerWithinBudget(context: KnowledgeAnswerContext, input: KnowledgeSemanticAnswerInput,
+  signal: AbortSignal, deadlineAt: number,
+): Promise<KnowledgeSemanticAnswerResult> {
+  const check = () => {
+    if (signal.aborted) throw new KnowledgeAnswerQualityHeldError('aborted');
+    if (Date.now() >= deadlineAt) throw new KnowledgeAnswerQualityHeldError('budget');
+  };
   const spaceId = normalizeKnowledgeSpaceId(input.knowledgeSpaceId);
   const mode = input.mode ?? 'standard';
   const limit = Math.max(1, input.limit ?? 8);
   const objectProfiles = context.objectProfiles ?? [];
-  const evidenceResolution = await resolveAnswerEvidence(context, input, spaceId, mode, limit, objectProfiles);
+  // Protect the full structural candidate universe before the first evidence reading.
+  const objects = input.includeLinkedObjects === false ? undefined
+    : prepareAnswerLinkedObjects(context.store, spaceId, input, objectProfiles, signal);
+  let evidenceReadSet: readonly EvidenceItem[] = [];
+  const checkReadSet = () => { check(); objects?.assertCurrent(); assertAnswerEvidenceCurrent(evidenceReadSet); };
+  const evidenceResolution = await resolveAnswerEvidence(context, input, spaceId, mode, limit, objectProfiles, signal, checkReadSet, objects);
+  check();
   if (evidenceResolution.kind === 'no-match') return evidenceResolution.result;
 
   let evidence = evidenceResolution.evidence;
-  let rawFacts = collectRawAnswerFacts(input.query, evidence);
-  const linkedObjects = resolveAnswerLinkedObjects(context, input, spaceId, evidence, rawFacts, objectProfiles);
-  evidence = includeOfficialLinkedEvidence(context.store, spaceId, input.query, evidence, linkedObjects, limit);
-  rawFacts = collectRawAnswerFacts(input.query, evidence);
-  const llmAnswer = await synthesizeAnswer(context.llm ?? null, input.query, mode, evidence, input.timeoutMs);
-  const rankedSources = rankAnswerSources(evidence, rawFacts);
+  evidenceReadSet = evidence;
+  checkReadSet();
+  let rawFacts = await collectRawAnswerFacts(input.query, evidence, signal);
+  checkReadSet();
+  const linkedObjects = (await objects?.read(evidence, rawFacts))?.linkedObjects ?? [];
+  checkReadSet();
+  evidence = await includeOfficialLinkedEvidence(context.store, spaceId, input.query, evidence, linkedObjects, limit, signal);
+  evidenceReadSet = evidence;
+  checkReadSet();
+  rawFacts = await collectRawAnswerFacts(input.query, evidence, signal);
+  checkReadSet();
+  const rankedSources = await rankAnswerSources(evidence, rawFacts, input.query, signal);
+  checkReadSet();
+  const acceptedSourceIds = new Set(rankedSources.map((source) => source.id));
+  evidence = evidence.filter((item) => !item.source || acceptedSourceIds.has(item.source.id));
+  rawFacts = rawFacts.filter((fact) => {
+    const sources = uniqueStrings([...readStringArray(fact.metadata.sourceIds), readString(fact.metadata.sourceId), fact.sourceId]);
+    return sources.length === 0 || sources.some((id) => acceptedSourceIds.has(id));
+  });
+  const acceptedFactIds = new Set(rawFacts.map((fact) => fact.id));
+  evidence = evidence.filter((item) => item.node?.metadata.semanticKind !== 'fact' || acceptedFactIds.has(item.node.id));
+  if (evidence.length === 0) return {
+    ok: true, spaceId, query: input.query,
+    answer: { text: input.noMatchMessage ?? `No source-backed knowledge matched "${input.query}".`, mode, confidence: 0, quality: { status: 'no-evidence', decisionIds: [] }, sources: [], linkedObjects: [], facts: [], gaps: [], synthesized: false },
+    results: [],
+  };
   const facts = withAnswerFactContract(context.store, rawFacts, linkedObjects);
-  const sources = includeOfficialLinkedSources(context.store, spaceId, rankedSources, linkedObjects)
-    .slice(0, limit)
-    .map(withAnswerSourceAliases);
+  const sources = rankedSources.slice(0, limit).map(withAnswerSourceAliases);
   const gapSpaceId = concreteAnswerGapSpaceId(spaceId, evidence, sources, linkedObjects);
-  const featureIntent = hasFeatureIntentForQuery(input.query);
-  const llmGapCount = llmAnswer?.gaps?.length ?? 0;
-  const hasConcreteAnswerFacts = facts.length > 0 && sources.length > 0;
-  const needsFeatureEvidenceGap = featureIntent && answerNeedsFeatureGap({
-    query: input.query,
-    text: llmAnswer?.answer,
-    facts,
-    sources,
-    linkedObjects,
-  }) && llmGapCount === 0;
-  const shouldSuppressLlmGaps = featureIntent && hasConcreteAnswerFacts && !answerNeedsFeatureGap({
-    query: input.query,
-    text: llmAnswer?.answer,
-    facts,
-    sources,
-    linkedObjects,
-  });
-  const shouldPersistLlmGaps = llmGapCount > 0 && !shouldSuppressLlmGaps;
-  const gaps = shouldPersistLlmGaps
-    ? await persistAnswerGaps(context.store, gapSpaceId, input.query, llmAnswer?.gaps ?? [], {
-      sources,
-      linkedObjects,
-    })
-    : [];
-  const evidenceGap = needsFeatureEvidenceGap
-    ? await persistAnswerGap(context.store, gapSpaceId, input.query, 'Evidence matched the subject but did not include enough concrete source-backed feature or specification facts.', {
-        sources,
-        linkedObjects,
-      })
+  const claimSubjects = uniqueNodes([...linkedObjects, ...linkedObjectsFromFacts(context.store, rawFacts)])
+    .filter((node) => getKnowledgeSpaceId(node) === spaceId || (spaceId === 'homeassistant' && isHomeAssistantKnowledgeSpace(getKnowledgeSpaceId(node))));
+  checkReadSet();
+  const prepared = prepareAnswerEvidence({ store: context.store, spaceId, query: input.query, sources: rankedSources.slice(0, limit), facts: rawFacts, subjects: claimSubjects, signal });
+  const gapIds = answerGapRecordIds(gapSpaceId, input.query, linkedObjects[0]?.title, linkedObjects[0]?.id);
+  prepared.guard.node(gapIds.nodeId);
+  prepared.guard.watch(`answer-gap-issue:${gapIds.issueId}`, () => context.store.getIssue(gapIds.issueId));
+  for (const fact of facts) {
+    // Returned associations must resolve locally; an unknown/foreign/stale
+    // reference cannot disappear from the claim while remaining in metadata.
+    const subjectIds = uniqueStrings([...(fact.subjectIds ?? []), ...readStringArray(fact.metadata.subjectIds), ...readStringArray(fact.metadata.linkedObjectIds)]);
+    if (subjectIds.some((id) => !claimSubjects.some((subject) => subject.id === id))) throw new KnowledgeAnswerQualityHeldError('malformed');
+  }
+  const candidateClaims = facts.map((fact) => projectAnswerFactClaim(fact, claimSubjects));
+  assertJudgmentInput({ query: input.query, facts: candidateClaims });
+  const candidateFacts = candidateClaims.map((claim) => JSON.stringify(claim));
+  checkReadSet(); prepared.assertCurrent();
+  const generated = prepared.evidence.length ? await synthesizeAnswer(context.llm ?? null, input.query, mode, prepared.evidence,
+    { signal, timeoutMs: Math.max(1, deadlineAt - Date.now()) }) : null;
+  checkReadSet(); prepared.assertCurrent();
+  const rendered = renderFallbackAnswer(input.query, mode, prepared.evidence.map((row) => ({ title: row.title ?? row.reference, excerpt: row.text })), facts);
+  const candidates: AnswerCandidate[] = [
+    ...(generated ? [{ id: 'generated' as const, text: generated, facts: candidateFacts }] : []),
+    ...(rendered.synthesized ? [{ id: 'rendered' as const, text: rendered.text, facts: candidateFacts }] : []),
+  ];
+  const selection = await verifyKnowledgeAnswer({ query: input.query, evidence: prepared.evidence, candidates },
+    { signal, timeoutMs: Math.max(1, deadlineAt - Date.now()) });
+  checkReadSet(); prepared.assertCurrent();
+  const missingExtraction = selection.quality.status === 'no-evidence';
+  const evidenceGap = answerNeedsEvidenceGap(selection.quality) || missingExtraction
+    ? await persistAnswerGap(context.store, gapSpaceId, input.query, missingExtraction
+      ? 'Matching sources have no extracted evidence available for verification.'
+      : 'Verified evidence does not establish every requested detail consistently.', { sources, linkedObjects, signal, assertCurrent: () => { checkReadSet(); prepared.assertCurrent(); } })
     : null;
-  const answerText = chooseAnswerText({
-    input,
-    mode,
-    featureIntent,
-    evidence,
-    facts,
-    sources,
-    linkedObjects,
-    llmAnswer,
-  });
+  check();
+  const text = selection.candidate?.text ?? (selection.quality.status === 'no-evidence'
+    ? 'Matching sources have no extracted evidence available for a verified answer.'
+    : 'I could not verify an answer from the available evidence.');
+
   return {
     ok: true,
     spaceId,
     query: input.query,
     answer: {
-      text: answerText.text,
+      text,
       mode,
-      confidence: answerText.confidence,
+      confidence: input.includeConfidence === false ? 0 : answerConfidence(selection.quality),
+      quality: { ...selection.quality, evidenceReferences: prepared.references },
       sources: input.includeSources === false ? [] : sources,
       linkedObjects,
-      facts,
-      gaps: evidenceGap && !isRepairedAnswerGap(evidenceGap) ? uniqueNodes([...gaps, evidenceGap]) : gaps,
-      synthesized: answerText.synthesized,
+      facts: selection.candidate ? facts : [],
+      gaps: evidenceGap && !isRepairedAnswerGap(evidenceGap) ? [evidenceGap] : [],
+      synthesized: Boolean(selection.candidate),
     },
-    results: evidence.map(toSearchResult),
+    results: evidence.slice(0, limit).map(toSearchResult),
   };
 }
 
@@ -145,19 +195,34 @@ async function resolveAnswerEvidence(
   mode: string,
   limit: number,
   objectProfiles: ObjectProfiles,
+  signal: AbortSignal,
+  check: () => void,
+  objects?: PreparedAnswerLinkedObjects,
 ): Promise<AnswerEvidenceResolution> {
-  const evidence = collectAnswerEvidence(context.store, input, spaceId, limit, objectProfiles);
+  // Snapshot absence as well as selected records: a late indexing/operator change
+  // cannot turn an earlier no-match observation into a repair write.
+  const guard = createSemanticWriteGuard(context.store, signal);
+  const matches = (value: { readonly metadata: Readonly<Record<string, unknown>> }) => getKnowledgeSpaceId(value) === spaceId
+    || (spaceId === 'homeassistant' && isHomeAssistantKnowledgeSpace(getKnowledgeSpaceId(value)));
+  guard.watch('retrieval-sources', () => context.store.listSources(Number.MAX_SAFE_INTEGER).filter(matches));
+  guard.watch('retrieval-nodes', () => context.store.listNodes(Number.MAX_SAFE_INTEGER).filter(matches));
+  guard.watch('retrieval-extractions', () => context.store.listExtractions(Number.MAX_SAFE_INTEGER).filter(matches));
+  const evidence = await collectAnswerEvidence(context.store, input, spaceId, limit, objectProfiles, signal);
+  check(); guard.assertCurrent(); assertAnswerEvidenceCurrent(evidence);
+  if (signal.aborted) throw new KnowledgeAnswerQualityHeldError('aborted');
   if (evidence.length > 0) return { kind: 'matched', evidence };
 
-  const linkedObjects = input.includeLinkedObjects === false
-    ? []
-    : filterAnswerLinkedObjects(spaceId, input.query, [...(input.linkedObjects ?? [])], objectProfiles);
-  const linkedEvidence = includeOfficialLinkedEvidence(context.store, spaceId, input.query, evidence, linkedObjects, limit);
+  const linkedObjects = (await objects?.read([], []))?.linkedObjects ?? [];
+  check(); guard.assertCurrent(); assertAnswerEvidenceCurrent(evidence);
+  const linkedEvidence = await includeOfficialLinkedEvidence(context.store, spaceId, input.query, evidence, linkedObjects, limit, signal);
+  check(); guard.assertCurrent(); assertAnswerEvidenceCurrent(evidence);
+  assertAnswerEvidenceCurrent(linkedEvidence);
   if (linkedEvidence.length > 0) return { kind: 'matched', evidence: linkedEvidence };
 
+  if (signal.aborted) throw new KnowledgeAnswerQualityHeldError('aborted');
   const gap = shouldPersistNoMatchGap(spaceId, input.query, linkedObjects)
     ? await persistAnswerGap(context.store, concreteAnswerGapSpaceId(spaceId, [], [], linkedObjects), input.query, 'No indexed evidence matched the question.', {
-      linkedObjects,
+      linkedObjects, signal, assertCurrent: () => { check(); guard.assertCurrent(); assertAnswerEvidenceCurrent(linkedEvidence); },
     })
     : null;
   return {
@@ -170,6 +235,7 @@ async function resolveAnswerEvidence(
         text: input.noMatchMessage ?? `No knowledge matched "${input.query}".`,
         mode,
         confidence: 0,
+        quality: { status: 'no-evidence', decisionIds: [] },
         sources: [],
         linkedObjects,
         facts: [],
@@ -181,65 +247,8 @@ async function resolveAnswerEvidence(
   };
 }
 
-function collectRawAnswerFacts(query: string, evidence: readonly EvidenceItem[]): readonly KnowledgeNodeRecord[] {
-  return filterFactsForQuery(query, uniqueNodes(evidence.flatMap((item) => item.facts))).slice(0, 24);
-}
-
-function resolveAnswerLinkedObjects(
-  context: KnowledgeAnswerContext,
-  input: KnowledgeSemanticAnswerInput,
-  spaceId: string,
-  evidence: readonly EvidenceItem[],
-  rawFacts: readonly KnowledgeNodeRecord[],
-  objectProfiles: ObjectProfiles,
-): readonly KnowledgeNodeRecord[] {
-  if (input.includeLinkedObjects === false) return [];
-  const inferredObjectLinkedObjects = inferObjectLinkedObjects(context.store, spaceId, input.query, objectProfiles);
-  const evidenceLinkedObjects = shouldUseEvidenceLinkedObjects(spaceId, input, inferredObjectLinkedObjects)
-    ? evidence.flatMap((item) => item.node ? [item.node] : [])
-    : [];
-  const rawLinkedObjects = uniqueNodes([
-    ...(input.linkedObjects ?? []),
-    ...evidenceLinkedObjects,
-    ...inferredObjectLinkedObjects,
-    ...linkedObjectsFromFacts(context.store, rawFacts),
-  ])
-    .filter(isSemanticAnswerLinkedObject)
-    .slice(0, 24);
-  return filterAnswerLinkedObjects(spaceId, input.query, rawLinkedObjects, objectProfiles);
-}
-
-function chooseAnswerText(options: {
-  readonly input: KnowledgeSemanticAnswerInput;
-  readonly mode: string;
-  readonly featureIntent: boolean;
-  readonly evidence: readonly EvidenceItem[];
-  readonly facts: readonly AnswerFactRecord[];
-  readonly sources: readonly unknown[];
-  readonly linkedObjects: readonly KnowledgeNodeRecord[];
-  readonly llmAnswer: KnowledgeSemanticLlmAnswer | null;
-}): { readonly text: string; readonly synthesized: boolean; readonly confidence: number } {
-  const llmText = options.llmAnswer?.answer?.trim();
-  const cleanedLlmText = llmText ? cleanSynthesizedAnswer(llmText, options.featureIntent) : undefined;
-  const dropLowValueLlmAnswer = options.featureIntent && Boolean(cleanedLlmText) && isLowValueFeatureOrSpecText(cleanedLlmText ?? '');
-  const fallback = renderFallbackAnswer(options.input.query, options.mode, options.evidence, options.facts);
-  const hasZeroSourceBackedFeatureFacts = options.featureIntent
-    && options.linkedObjects.length > 0
-    && options.sources.length > 0
-    && options.facts.length === 0
-    && !fallback.synthesized;
-  const preferFallback = shouldPreferFallbackAnswer(options.featureIntent, cleanedLlmText, fallback.text);
-  const useFallback = hasZeroSourceBackedFeatureFacts || dropLowValueLlmAnswer || preferFallback || !cleanedLlmText;
-  const text = cleanSynthesizedAnswer((useFallback ? fallback.text : cleanedLlmText) || '', options.featureIntent, {
-    fallbackText: fallback.text,
-  });
-  const synthesized = useFallback ? fallback.synthesized : Boolean(cleanedLlmText);
-  const confidence = options.input.includeConfidence === false
-    ? 0
-    : hasZeroSourceBackedFeatureFacts || dropLowValueLlmAnswer || (useFallback && !fallback.synthesized)
-      ? 0
-      : answerConfidence(preferFallback ? null : options.llmAnswer, options.evidence);
-  return { text, synthesized, confidence };
+async function collectRawAnswerFacts(query: string, evidence: readonly EvidenceItem[], signal?: AbortSignal): Promise<readonly KnowledgeNodeRecord[]> {
+  return (settledAnswerFacts(query, evidence) ?? await filterFactsForQuery(query, uniqueNodes(evidence.flatMap((item) => item.facts)), signal)).slice(0, 24);
 }
 
 function withAnswerFactContract(
@@ -252,7 +261,7 @@ function withAnswerFactContract(
   const result: AnswerFactRecord[] = [];
   for (const fact of facts) {
     const source = fact.sourceId ? store.getSource(fact.sourceId) : null;
-    const discovery = readRecord(source?.metadata.sourceDiscovery);
+    const discovery = readRecord(source && getKnowledgeSpaceId(source) === getKnowledgeSpaceId(fact) ? source.metadata.sourceDiscovery : undefined);
     const metadataLinkedIds = uniqueStrings([
       ...readStringArray(fact.metadata.linkedObjectIds),
       ...readStringArray(fact.metadata.subjectIds),
@@ -264,7 +273,7 @@ function withAnswerFactContract(
     ]);
     const subjects = subjectIds
       .map((id) => linkedObjects.find((node) => node.id === id) ?? store.getNode(id))
-      .filter((node): node is KnowledgeNodeRecord => Boolean(node && node.status !== 'stale'));
+      .filter((node): node is KnowledgeNodeRecord => Boolean(node && node.status === 'active' && getKnowledgeSpaceId(node) === getKnowledgeSpaceId(fact)));
     if (subjects.length === 0) {
       result.push(fact as AnswerFactRecord);
       continue;
@@ -293,25 +302,15 @@ function linkedObjectsFromFacts(
   store: KnowledgeStore,
   facts: readonly KnowledgeNodeRecord[],
 ): KnowledgeNodeRecord[] {
-  if (facts.length === 0) return [];
-  const factIds = new Set(facts.map((fact) => fact.id));
-  const objectIds = new Set<string>();
-  for (const fact of facts) {
-    for (const id of [
-      ...readStringArray(fact.metadata.linkedObjectIds),
-      ...readStringArray(fact.metadata.subjectIds),
-    ]) {
-      objectIds.add(id);
-    }
-  }
-  for (const edge of store.listEdges()) {
-    if (edge.fromKind === 'node' && edge.toKind === 'node' && factIds.has(edge.fromId) && edge.relation === 'describes') {
-      objectIds.add(edge.toId);
-    }
-  }
-  return [...objectIds]
-    .map((id) => store.getNode(id))
-    .filter((node): node is KnowledgeNodeRecord => Boolean(node && node.status !== 'stale'));
+  return uniqueNodes(facts.flatMap((fact) => {
+    const spaceId = getKnowledgeSpaceId(fact);
+    const ids = uniqueStrings([...(fact.subjectIds ?? []), ...(fact.linkedObjectIds ?? []),
+      ...readStringArray(fact.metadata.linkedObjectIds), ...readStringArray(fact.metadata.subjectIds),
+      ...store.edgesFor('node', fact.id).filter((edge) => isActiveKnowledgeEdge(edge) && getKnowledgeSpaceId(edge) === spaceId
+        && edge.fromKind === 'node' && edge.fromId === fact.id && edge.toKind === 'node' && edge.relation === 'describes').map((edge) => edge.toId)]);
+    return ids.map((id) => store.getNode(id)).filter((node): node is KnowledgeNodeRecord => Boolean(node
+      && node.status === 'active' && getKnowledgeSpaceId(node) === spaceId));
+  }));
 }
 
 function factSubjectIdsFromGraph(
@@ -320,12 +319,19 @@ function factSubjectIdsFromGraph(
   linkedObjects: readonly KnowledgeNodeRecord[],
 ): string[] {
   if (linkedObjects.length === 0) return [];
-  const linkedIds = new Set(linkedObjects.map((node) => node.id));
+  const spaceId = getKnowledgeSpaceId(fact);
+  const linkedIds = new Set(linkedObjects.filter((node) => node.status === 'active' && getKnowledgeSpaceId(node) === spaceId).map((node) => node.id));
   const factSourceId = readString(fact.metadata.sourceId) ?? fact.sourceId;
   const sourcesSupportingFact = new Set<string>();
   const sourcesLinkedToSubject = new Map<string, Set<string>>();
   const directSubjectIds = new Set<string>();
   for (const edge of store.listEdges()) {
+    if (!isActiveKnowledgeEdge(edge) || getKnowledgeSpaceId(edge) !== spaceId) continue;
+    const sourceId = edge.fromKind === 'source' ? edge.fromId : edge.toKind === 'source' ? edge.toId : undefined;
+    if (sourceId) {
+      const source = store.getSource(sourceId);
+      if (!source || getKnowledgeSpaceId(source) !== spaceId) continue;
+    }
     if (edge.fromKind === 'node' && edge.fromId === fact.id && edge.toKind === 'node' && linkedIds.has(edge.toId) && edge.relation === 'describes') {
       directSubjectIds.add(edge.toId);
     }
@@ -343,7 +349,8 @@ function factSubjectIdsFromGraph(
       sourcesLinkedToSubject.set(edge.toId, current);
     }
   }
-  if (factSourceId) sourcesSupportingFact.add(factSourceId);
+  const factSource = factSourceId ? store.getSource(factSourceId) : undefined;
+  if (factSource && getKnowledgeSpaceId(factSource) === spaceId) sourcesSupportingFact.add(factSource.id);
   for (const sourceId of sourcesSupportingFact) {
     for (const subjectId of sourcesLinkedToSubject.get(sourceId) ?? []) directSubjectIds.add(subjectId);
   }
@@ -357,31 +364,4 @@ function answerTargetHints(nodes: readonly KnowledgeNodeRecord[]): readonly Reco
     title: node.title,
     ...(node.summary ? { summary: node.summary } : {}),
   }));
-}
-
-function shouldPreferFallbackAnswer(featureIntent: boolean, llmText: string | undefined, fallbackText: string): boolean {
-  if (!featureIntent || !fallbackText) return false;
-  if (!llmText) return true;
-  const lower = llmText.toLowerCase();
-  if (isLowValueFeatureOrSpecText(llmText)) return true;
-  if (/\b(source-backed facts identify|available source-backed details include|matching sources exist|not enough source-backed facts|not enough concrete source-backed)\b/.test(lower)) {
-    return hasConcreteFeatureSignal(fallbackText);
-  }
-  if (/\bevidence\b/.test(lower) && featureFamilyCount(fallbackText) >= 2) return true;
-  if (featureFamilyCount(llmText) < 2 && featureFamilyCount(fallbackText) >= 2) return true;
-  return false;
-}
-
-function featureFamilyCount(text: string): number {
-  const lower = text.toLowerCase();
-  return [
-    /\b(hdmi|earc|arc|ports?|usb|ethernet|optical|rf|antenna|rs-?232c?)\b/,
-    /\b(hdr|hdr10|dolby vision|hlg|filmmaker)\b/,
-    /\b(4k|8k|uhd|resolution|refresh|120\s*hz|100\s*hz|display|screen|panel)\b/,
-    /\b(webos|apps?|streaming|airplay|homekit|chromecast|smart tv)\b/,
-    /\b(wi-?fi|bluetooth|wireless lan)\b/,
-    /\b(audio|speakers?|dolby atmos|sound)\b/,
-    /\b(game|gaming|vrr|allm|freesync|g-sync)\b/,
-    /\b(tuner|atsc|qam|ntsc|broadcast)\b/,
-  ].filter((pattern) => pattern.test(lower)).length;
 }

@@ -280,7 +280,7 @@ export function isUsefulKnowledgePageFact(
   fact: KnowledgeNodeRecord,
   options: KnowledgePageFactQualityOptions = {},
 ): boolean {
-  if (fact.status === 'stale') return false;
+  if (fact.status !== 'active') return false;
   if (fact.metadata.semanticKind !== 'fact') return false;
   const kind = readString(fact.metadata.factKind) ?? 'note';
   if (!(options.allowedFactKinds ?? USEFUL_PAGE_FACT_KINDS).has(kind)) return false;

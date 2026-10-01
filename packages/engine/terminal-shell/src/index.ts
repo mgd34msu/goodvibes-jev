@@ -110,6 +110,15 @@ export {
   type DaemonVerbOutcome,
 } from './cluster-remote-daemon-target.js';
 
+export {
+  callDaemonWsVerb,
+  DAEMON_WS_TIMEOUT_MS,
+  type CallDaemonWsVerbOptions,
+  type DaemonWebSocket,
+  type DaemonWebSocketFactory,
+} from './daemon-ws-call.js';
+export { callDaemonRoute, rawReplyReader, type DaemonReplyEnvelope } from './raw-reply-route.js';
+
 export type {
   GoodVibesCliCommand,
   GoodVibesCliOutputFormat,

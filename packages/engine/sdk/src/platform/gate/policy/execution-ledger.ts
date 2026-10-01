@@ -27,6 +27,7 @@ import type { RuntimeEventBus } from '../../runtime/events/index.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { logger } from '../../utils/logger.js';
 import type { SideEffectKind } from '../batteries/side-effect.js';
+import { snapshotJudgmentInput, JudgmentInputError } from '../judgment-input.js';
 import { readSideEffectKind, shellCommandsIn } from '../reading.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { mapLimit } from '@goodvibes-jev/judgment';
@@ -323,14 +324,26 @@ export class AgentExecutionLedger {
   }
 
   private async recordReceived(event: Extract<ToolEvent, { type: 'TOOL_RECEIVED' }>, timestamp: number): Promise<void> {
-    const [route, roles] = await Promise.all([readRouteKind(event.tool, event.args), readArgRolesReported(event.tool, event.args)]);
-    const command = shellCommandsIn(event.args)[0];
+    // TOOL_RECEIVED precedes the permission result. Refused material must not
+    // reach the independent route/argument readers or their persisted previews.
+    let args: Record<string, unknown> = {};
+    let refusal: string | undefined;
+    try { args = snapshotJudgmentInput(event.args, event.tool) as Record<string, unknown>; }
+    catch (error) {
+      if (!(error instanceof JudgmentInputError)) throw error;
+      refusal = error.message;
+    }
+    const problem = refusal !== undefined;
+    const [route, roles] = refusal
+      ? [{ routeKind: 'other' as const, routeKindError: refusal }, { roles: null, error: refusal }]
+      : await Promise.all([readRouteKind(event.tool, args), readArgRolesReported(event.tool, args)]);
+    const command = shellCommandsIn(args)[0];
     if (this.disposed) return;
     const record: MutableAgentExecutionRecord = {
       id: event.callId,
       callId: event.callId,
       turnId: event.turnId,
-      tool: event.tool,
+      tool: problem ? '[protected tool call]' : event.tool,
       routeKind: route.routeKind,
       ...(route.routeKindError !== undefined ? { routeKindError: route.routeKindError } : {}),
       status: 'running',
@@ -338,10 +351,10 @@ export class AgentExecutionLedger {
       receivedAt: timestamp,
       updatedAt: timestamp,
       ...(roles.error !== undefined ? { argsReadingError: roles.error } : {}),
-      argsPreview: argsPreview(event.args, roles.roles),
-      argsKeys: Object.keys(event.args).filter((key) => roles.roles?.get(key)?.credential === false).sort(),
+      argsPreview: problem ? '[redacted: protected input]' : argsPreview(args, roles.roles),
+      argsKeys: Object.keys(args).filter((key) => roles.roles?.get(key)?.credential === false).sort(),
       commandPreview: command !== undefined && command.trim() ? truncateText(command, 180) : undefined,
-      targetPreview: targetPreview(event.args, roles.roles),
+      targetPreview: targetPreview(args, roles.roles),
     };
     this.records.set(record.id, record);
     this.order.push(record.id);

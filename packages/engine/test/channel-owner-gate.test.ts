@@ -13,7 +13,9 @@ import { join } from 'node:path';
 import { ChannelPolicyManager } from '../sdk/src/platform/channels/policy-manager.js';
 import { ApprovalBroker } from '../sdk/src/platform/control-plane/approval-broker.js';
 import { DaemonSurfaceActionHelper } from '../sdk/src/platform/daemon/surface-actions.js';
-import { parseApprovalReplyVerb } from '../sdk/src/platform/daemon/approval-reply.js';
+import { useApprovalReadings } from './helpers/approval-readings.ts';
+
+const readings = useApprovalReadings();
 import { handleSlackSurfacePayload } from '../sdk/src/platform/adapters/slack/index.js';
 import { logger } from '../sdk/src/platform/utils/logger.js';
 import type { PermissionPromptRequest } from '../sdk/src/platform/permissions/prompt.js';
@@ -171,6 +173,7 @@ describe('owner channel reply resolves a pending permission ask', () => {
   }
 
   test('replying approve resolves the pending ask through the shared broker', async () => {
+    readings.set({ reply: 'approve' });
     const policy = makePolicyManager();
     const broker = new ApprovalBroker({ storePath: ':memory:' });
     await policy.evaluateIngress({ surface: 'slack', userId: 'U-OWNER', conversationKind: 'direct', text: 'hi' });
@@ -199,6 +202,7 @@ describe('owner channel reply resolves a pending permission ask', () => {
   });
 
   test('replying deny with guidance steers the ask: denied with the note recorded', async () => {
+    readings.set({ reply: 'reject' });
     const policy = makePolicyManager();
     const broker = new ApprovalBroker({ storePath: ':memory:' });
     await policy.evaluateIngress({ surface: 'slack', userId: 'U-OWNER', conversationKind: 'direct', text: 'hi' });
@@ -225,14 +229,15 @@ describe('owner channel reply resolves a pending permission ask', () => {
     // delivered to the waiting tool call as `reason`, not only the audit note,
     // so the model adapts ("use the staging database instead") instead of
     // seeing a bare deny.
-    expect(decision.reason).toBe('use the staging database instead');
+    expect(decision.reason).toBe('deny: use the staging database instead');
     const record = broker.listApprovals(10)[0]!;
     expect(record.status).toBe('denied');
-    expect(record.decision?.reason).toBe('use the staging database instead');
-    expect(record.audit.some((entry) => entry.note === 'use the staging database instead')).toBe(true);
+    expect(record.decision?.reason).toBe('deny: use the staging database instead');
+    expect(record.audit.some((entry) => entry.note === 'deny: use the staging database instead')).toBe(true);
   });
 
-  test('an approve reply with trailing text delivers that steer to the running turn as the decision reason', async () => {
+  test('a conditional approval declines the original call and delivers the amendment as guidance', async () => {
+    readings.set({ reply: 'amend' });
     const policy = makePolicyManager();
     const broker = new ApprovalBroker({ storePath: ':memory:' });
     await policy.evaluateIngress({ surface: 'slack', userId: 'U-OWNER', conversationKind: 'direct', text: 'hi' });
@@ -254,10 +259,10 @@ describe('owner channel reply resolves a pending permission ask', () => {
     expect(ingress.reason).toBe('approval-reply-consumed');
 
     const decision = await decisionPromise;
-    expect(decision.approved).toBe(true);
-    expect(decision.reason).toBe('but only touch the migrations directory');
+    expect(decision.approved).toBe(false);
+    expect(decision.reason).toBe('approve, but only touch the migrations directory');
     const record = broker.listApprovals(10)[0]!;
-    expect(record.decision?.reason).toBe('but only touch the migrations directory');
+    expect(record.decision?.reason).toBe('approve, but only touch the migrations directory');
   });
 
   test('an unknown sender reply never touches the pending ask', async () => {
@@ -280,7 +285,7 @@ describe('owner channel reply resolves a pending permission ask', () => {
     expect(broker.listApprovals(10)[0]!.status).toBe('pending');
   });
 
-  test('non-verb owner text flows through as a normal message even with a pending ask', async () => {
+  test('an unrelated owner message flows through even with a pending ask', async () => {
     const policy = makePolicyManager();
     const broker = new ApprovalBroker({ storePath: ':memory:' });
     await policy.evaluateIngress({ surface: 'slack', userId: 'U-OWNER', conversationKind: 'direct', text: 'hi' });
@@ -297,22 +302,5 @@ describe('owner channel reply resolves a pending permission ask', () => {
     });
     expect(ingress.allowed).toBe(true);
     expect(broker.listApprovals(10)[0]!.status).toBe('pending');
-  });
-});
-
-describe('approval reply verb parsing', () => {
-  test('recognizes explicit verbs with optional steering notes and nothing else', () => {
-    expect(parseApprovalReplyVerb('approve')).toEqual({ approved: true });
-    expect(parseApprovalReplyVerb('yes')).toEqual({ approved: true });
-    expect(parseApprovalReplyVerb('Deny')).toEqual({ approved: false });
-    expect(parseApprovalReplyVerb('no, wait for me')).toEqual({ approved: false, note: 'wait for me' });
-    expect(parseApprovalReplyVerb('approve: but only the first file')).toEqual({
-      approved: true,
-      note: 'but only the first file',
-    });
-    expect(parseApprovalReplyVerb('please approve this')).toBeNull();
-    expect(parseApprovalReplyVerb('yesterday was fine')).toBeNull();
-    expect(parseApprovalReplyVerb('')).toBeNull();
-    expect(parseApprovalReplyVerb(undefined)).toBeNull();
   });
 });

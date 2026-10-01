@@ -1,3 +1,4 @@
+import { upsertObservedKnowledgeNode } from './store-node-observation.js';
 import type { MemoryRecord, MemoryRegistry } from '../state/index.js';
 import { DEFAULT_KNOWLEDGE_SPACE_ID, knowledgeSpaceMetadata } from './spaces.js';
 import type { KnowledgeStore } from './store.js';
@@ -10,13 +11,13 @@ export async function syncKnowledgeMemoryNodes(
   await registry.getStore().init();
   const memoryRecords = registry.getAll().filter((record) => record.reviewState !== 'contradicted');
   for (const record of memoryRecords) {
-    await upsertKnowledgeMemoryNode(store, record);
+    await upsertKnowledgeMemoryNode(store, record, () => registry.getAll().find((current) => current.id === record.id));
   }
 }
 
-async function upsertKnowledgeMemoryNode(store: KnowledgeStore, record: MemoryRecord): Promise<void> {
+async function upsertKnowledgeMemoryNode(store: KnowledgeStore, record: MemoryRecord, readCurrent: () => MemoryRecord | undefined): Promise<void> {
   await store.batch(async () => {
-    const node = await store.upsertNode({
+    const node = await upsertObservedKnowledgeNode(store, {
       id: `memory-${record.id}`,
       kind: 'memory',
       slug: slugify(record.id),
@@ -32,17 +33,17 @@ async function upsertKnowledgeMemoryNode(store: KnowledgeStore, record: MemoryRe
         cls: record.cls,
         reviewState: record.reviewState,
       },
-    });
+    }, 'memory-mirror', record, readCurrent);
 
     for (const tag of record.tags) {
-      const topicNode = await store.upsertNode({
+      const topicNode = await upsertObservedKnowledgeNode(store, {
         kind: 'topic',
         slug: slugify(tag),
         title: tag,
         summary: `Topic tag ${tag}.`,
         aliases: [tag],
         metadata: knowledgeSpaceMetadata(DEFAULT_KNOWLEDGE_SPACE_ID, { tag }),
-      });
+      }, 'catalog-structure', record, readCurrent);
       await store.upsertEdge({
         fromKind: 'node',
         fromId: node.id,

@@ -24,8 +24,6 @@ export const SOURCE_REFRESH_WINDOWS_MS: Record<string, number> = {
   manual: 45 * DAY_MS,
   other: 30 * DAY_MS,
 };
-export const LIGHT_CONSOLIDATION_THRESHOLD = 45;
-export const DEEP_CONSOLIDATION_AUTOPROMOTE_THRESHOLD = 72;
 export const KNOWLEDGE_INJECTION_TRUST_TIERS = ['reviewed', 'fresh', 'stale'] as const;
 export const KNOWLEDGE_INJECTION_USE_AS_VALUES = ['reference-material'] as const;
 export const KNOWLEDGE_INJECTION_RETENTION_VALUES = ['task-only'] as const;

@@ -5,6 +5,7 @@ import type {
   KnowledgeRefinementTaskTrigger,
 } from '../types.js';
 import type { KnowledgeStore } from '../store.js';
+import { isTerminalRefinementState } from '../store-lifecycle-authority.js';
 import { readString, readStringArray, semanticHash, semanticMetadata, uniqueStrings } from './utils.js';
 
 export interface RefinementTaskGapContext {
@@ -25,6 +26,7 @@ export async function upsertRefinementTaskForGap(
   const subject = context.linkedObjects[0]!;
   const id = `kref-${semanticHash(spaceId, context.gap.id)}`;
   const existing = store.getRefinementTask(id);
+  if (existing && isTerminalRefinementState(existing.state)) return existing;
   const attemptCount = existing?.attemptCount ?? 0;
   return store.upsertRefinementTask({
     id,
@@ -63,6 +65,8 @@ export async function updateRefinementTask(
   message: string,
   data: Record<string, unknown> = {},
 ): Promise<KnowledgeRefinementTaskRecord> {
+  const latest = store.getRefinementTask(task.id);
+  if (latest && isTerminalRefinementState(latest.state)) return latest;
   const nextRepairAttemptAt = readNumber(data.nextRepairAttemptAt) ?? task.nextRepairAttemptAt;
   const metadata = refinementTaskMetadata(task, data, nextRepairAttemptAt);
   return store.upsertRefinementTask({

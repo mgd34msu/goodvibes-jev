@@ -1,11 +1,15 @@
+import { randomUUID } from 'node:crypto';
+import { KnowledgeNodeActivationHeldError } from './activation/types.js';
+import { preparedNodeWrite, markPreparedNodeWritten } from './store-node-activation.js';
+import { retainKnowledgeNodeObservation } from './store-node-observation.js';
 import type { SQLiteStore } from '../state/sqlite-store.js';
 import { nowMs } from './store-schema.js';
-import { DEFAULT_NODE_AUTO_ACCEPT_CONFIDENCE } from './store-config.js';
 import type { KnowledgeStore } from './store.js';
+import { resolveKnowledgeNodeOperatorMutation, type KnowledgeNodeMutationContext } from './store-node-authority.js';
 import type {
+  KnowledgeEdgeRecord,
+  KnowledgeEdgeUpsertInput,
   KnowledgeNodeRecord,
-  KnowledgeNodeReviewProvenance,
-  KnowledgeNodeReviewState,
   KnowledgeNodeRevisionChangeKind,
   KnowledgeNodeRevisionRecord,
   KnowledgeNodeUpsertInput,
@@ -33,119 +37,24 @@ export function writeKnowledgeNodeRow(sqlite: SQLiteStore, record: KnowledgeNode
   ]);
 }
 
+/** Descriptive 0-100 producer score. Missing/nonfinite values never become evidence. */
 export function clampConfidence(value: number): number {
-  // A non-finite value (NaN/Infinity, slips past a `??` guard, which only catches
-  // null/undefined) resolves to the auto-accept default rather than poisoning the
-  // gate with `NaN >= threshold === false` and silently drafting the node forever.
-  if (!Number.isFinite(value)) return DEFAULT_NODE_AUTO_ACCEPT_CONFIDENCE;
-  // Confidence is a 0-100 score everywhere. A fractional value below 1 (e.g. 0.9) is
-  // almost certainly a 0-1 probability a producer/LLM emitted despite that contract,
-  // scale it up so 0.9 → 90 instead of Math.round truncating it to a draft-holding 1.
-  const scaled = value > 0 && value < 1 ? value * 100 : value;
-  return Math.max(0, Math.min(100, Math.round(scaled)));
+  return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function readNodeReviewer(metadata: Record<string, unknown>): string | undefined {
-  const review = metadata.review;
-  if (!isPlainRecord(review)) return undefined;
-  const reviewer = review.reviewer;
-  return typeof reviewer === 'string' && reviewer.trim().length > 0 ? reviewer.trim() : 'knowledge-review';
-}
-
-function readNodeProvenanceState(metadata: Record<string, unknown>): string | undefined {
-  const provenance = metadata.reviewProvenance;
-  if (!isPlainRecord(provenance)) return undefined;
-  return typeof provenance.state === 'string' ? provenance.state : undefined;
-}
-
-function stampNodeProvenance(
-  metadata: Record<string, unknown>,
-  provenance: KnowledgeNodeReviewProvenance,
-): Record<string, unknown> {
-  return { ...metadata, reviewProvenance: provenance };
-}
-
-/**
- * Decide a node's effective status and stamp honest review provenance so a node is
- * never silently active. (Invariants 2 & 4.)
- * - An explicit producer status (or a review that applied facts) is honored and
- *   labelled 'explicit'/'reviewed'.
- * - An already-active node stays active; if it predates the gate it is labelled
- *   'pre-gate' (folds/migrations never get downgraded).
- * - A new/draft node auto-accepts at/above the configured confidence threshold
- *   (labelled 'auto-accepted') or is held as 'draft' pending review otherwise.
- */
+/** Synchronous authority preflight. Model reads belong to the prepared activation pass. */
 export function resolveNodeActivation(args: {
   readonly input: KnowledgeNodeUpsertInput;
+  readonly candidate: KnowledgeNodeRecord;
   readonly existing: KnowledgeNodeRecord | undefined;
-  readonly confidence: number;
-  readonly metadata: Record<string, unknown>;
+  readonly mutation?: KnowledgeNodeMutationContext | undefined;
   readonly now: number;
-  readonly autoAcceptConfidence: number;
-}): { status: KnowledgeNodeRecord['status']; metadata: Record<string, unknown> } {
-  const { input, existing, confidence, metadata, now, autoAcceptConfidence } = args;
-  const reviewer = readNodeReviewer(metadata);
-  const reviewedByFacts = reviewer !== undefined;
-  if (input.status) {
-    const state: KnowledgeNodeReviewState = reviewedByFacts ? 'reviewed' : 'explicit';
-    return {
-      status: input.status,
-      metadata: stampNodeProvenance(metadata, {
-        state,
-        reason: reviewedByFacts
-          ? `reviewed: status set to '${input.status}' by ${reviewer}`
-          : `explicit: producer set status '${input.status}'`,
-        decidedAt: now,
-        ...(reviewer !== undefined ? { reviewer } : {}),
-      }),
-    };
-  }
-  if (reviewedByFacts && existing) {
-    return {
-      status: existing.status,
-      metadata: stampNodeProvenance(metadata, {
-        state: 'reviewed',
-        reason: `reviewed by ${reviewer}`,
-        decidedAt: now,
-        reviewer,
-      }),
-    };
-  }
-  if (existing && existing.status === 'active') {
-    if (readNodeProvenanceState(metadata)) return { status: 'active', metadata };
-    return {
-      status: 'active',
-      metadata: stampNodeProvenance(metadata, {
-        state: 'pre-gate',
-        reason: 'pre-gate: node was active before the review gate; left active',
-        decidedAt: now,
-      }),
-    };
-  }
-  if (confidence >= autoAcceptConfidence) {
-    return {
-      status: 'active',
-      metadata: stampNodeProvenance(metadata, {
-        state: 'auto-accepted',
-        reason: `auto-accepted: confidence ${confidence} >= auto-accept threshold ${autoAcceptConfidence}`,
-        decidedAt: now,
-        threshold: autoAcceptConfidence,
-      }),
-    };
-  }
-  return {
-    status: 'draft',
-    metadata: stampNodeProvenance(metadata, {
-      state: 'pending-review',
-      reason: `pending review: confidence ${confidence} < auto-accept threshold ${autoAcceptConfidence}`,
-      decidedAt: now,
-      threshold: autoAcceptConfidence,
-    }),
-  };
+}): { status: KnowledgeNodeRecord['status']; metadata: Record<string, unknown> } | undefined {
+  return resolveKnowledgeNodeOperatorMutation(args.candidate, args.existing, args.mutation, args.now);
 }
 
 /**
@@ -278,65 +187,120 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
 
+export interface KnowledgeNodeMergeView {
+  readonly sqlite: SQLiteStore;
+  readonly nodes: Map<string, KnowledgeNodeRecord>;
+  readonly edges: Map<string, KnowledgeEdgeRecord>;
+  readonly nodeRevisions: Map<string, KnowledgeNodeRevisionRecord[]>;
+  readonly nodeActivationScope: object;
+}
+
 /**
- * Merge one node into another: re-point every edge that referenced the loser onto
- * the winner (deduping and dropping self-loops), record a `merged_into` edge, and
- * mark the loser 'stale' with a `mergedInto` stamp. Keeps cross-references live on
- * the surviving node. (Invariant 7.)
+ * Merge one node into another, preserving ordinary node authority. Preparation
+ * and read-set validation precede every write. The SQL savepoint is synchronous;
+ * cache publication happens only after every SQL mutation has succeeded.
  */
 export async function mergeKnowledgeNodes(
   store: KnowledgeStore,
   loserId: string,
   winnerId: string,
+  view: KnowledgeNodeMergeView,
 ): Promise<{ merged: boolean; repointedEdges: number }> {
   if (loserId === winnerId) return { merged: false, repointedEdges: 0 };
   const loser = store.getNode(loserId);
   const winner = store.getNode(winnerId);
   if (!loser || !winner) return { merged: false, repointedEdges: 0 };
-  const mergedAt = nowMs();
-  let repointedEdges = 0;
-  await store.batch(async () => {
-    for (const edge of store.listEdges()) {
-      const fromMatch = edge.fromKind === 'node' && edge.fromId === loserId;
-      const toMatch = edge.toKind === 'node' && edge.toId === loserId;
-      if (!fromMatch && !toMatch) continue;
-      const newFromId = fromMatch ? winnerId : edge.fromId;
-      const newToId = toMatch ? winnerId : edge.toId;
-      await store.deleteEdge(edge.id);
-      if (newFromId === newToId && edge.fromKind === edge.toKind) continue;
-      await store.upsertEdge({
-        fromKind: edge.fromKind,
-        fromId: newFromId,
-        toKind: edge.toKind,
-        toId: newToId,
-        relation: edge.relation,
-        weight: edge.weight,
-        metadata: { ...edge.metadata, repointedFromNodeId: loserId, repointedAt: mergedAt },
-      });
-      repointedEdges += 1;
+  const edges = store.listEdges();
+  const edgeSnapshot = stableStringify(edges);
+  const previousMarker = edges.find((edge) => edge.fromKind === 'node' && edge.fromId === loserId
+    && edge.toKind === 'node' && edge.toId === winnerId && edge.relation === 'merged_into');
+  const alreadyMerged = loser.status === 'stale' && loser.metadata.mergedInto === winnerId;
+  if (alreadyMerged && previousMarker && !edges.some((edge) => edge !== previousMarker && referencesNode(edge, loserId))) {
+    return { merged: true, repointedEdges: 0 };
+  }
+  const mergedAt = alreadyMerged && typeof loser.metadata.mergedAt === 'number' ? loser.metadata.mergedAt : nowMs();
+  const prepared = await store.prepareNodeWrites([{
+    ...loser,
+    status: 'stale',
+    metadata: { ...loser.metadata, mergedInto: winnerId, mergedAt },
+  }]);
+  // Preparation awaits. A concurrent review, target replacement or graph edit
+  // must survive the rejected merge, never be overwritten by its earlier plan.
+  if (store.getNode(winnerId) !== winner || stableStringify(store.listEdges()) !== edgeSnapshot) {
+    throw new KnowledgeNodeActivationHeldError('stale');
+  }
+  const plan = planMergedEdges(edges, loserId, winnerId, mergedAt);
+  const { record, existing, now, observationEvidence } = preparedNodeWrite(store, prepared, 0, view.nodeActivationScope);
+  const revisions = new Map([[record.id, [...(view.nodeRevisions.get(record.id) ?? [])]]]);
+  view.sqlite.run('SAVEPOINT knowledge_node_merge');
+  try {
+    for (const edge of edges) if (!plan.edges.has(edge.id)) view.sqlite.run('DELETE FROM knowledge_edges WHERE id = ?', [edge.id]);
+    for (const edge of plan.edges.values()) if (view.edges.get(edge.id) !== edge) writeMergedEdgeRow(view.sqlite, edge);
+    if (record !== existing) {
+      writeKnowledgeNodeRow(view.sqlite, record);
+      recordKnowledgeNodeRevisions(view.sqlite, revisions, record, existing, now);
     }
-    await store.upsertEdge({
-      fromKind: 'node',
-      fromId: loserId,
-      toKind: 'node',
-      toId: winnerId,
-      relation: 'merged_into',
-      metadata: { mergedAt },
-    });
-    await store.upsertNode({
-      id: loser.id,
-      kind: loser.kind,
-      slug: loser.slug,
-      title: loser.title,
-      ...(loser.summary ? { summary: loser.summary } : {}),
-      aliases: [...loser.aliases],
-      status: 'stale',
-      confidence: loser.confidence,
-      ...(loser.sourceId ? { sourceId: loser.sourceId } : {}),
-      metadata: { ...loser.metadata, mergedInto: winnerId, mergedAt },
-    });
-  });
-  return { merged: true, repointedEdges };
+    view.sqlite.run('RELEASE SAVEPOINT knowledge_node_merge');
+  } catch (error) {
+    view.sqlite.run('ROLLBACK TO SAVEPOINT knowledge_node_merge');
+    view.sqlite.run('RELEASE SAVEPOINT knowledge_node_merge');
+    throw error;
+  }
+  for (const edge of edges) if (!plan.edges.has(edge.id)) view.edges.delete(edge.id);
+  for (const edge of plan.edges.values()) view.edges.set(edge.id, edge);
+  view.nodes.set(record.id, record);
+  view.nodeRevisions.set(record.id, revisions.get(record.id)!);
+  retainKnowledgeNodeObservation(existing, record, observationEvidence);
+  markPreparedNodeWritten(prepared, 0);
+  // save() retains its normal contract, including outer batch-save deferral.
+  // It is not a SQL transaction and is never used as rollback protection.
+  await view.sqlite.save();
+  return { merged: true, repointedEdges: plan.repointedEdges };
+}
+
+function referencesNode(edge: KnowledgeEdgeRecord, nodeId: string): boolean {
+  return (edge.fromKind === 'node' && edge.fromId === nodeId) || (edge.toKind === 'node' && edge.toId === nodeId);
+}
+
+function planMergedEdges(original: readonly KnowledgeEdgeRecord[], loserId: string, winnerId: string, mergedAt: number): {
+  edges: Map<string, KnowledgeEdgeRecord>; repointedEdges: number;
+} {
+  const edges = new Map(original.map((edge) => [edge.id, edge]));
+  let repointedEdges = 0;
+  const upsert = (input: KnowledgeEdgeUpsertInput): void => {
+    const existing = [...edges.values()].find((edge) => edge.fromKind === input.fromKind && edge.fromId === input.fromId
+      && edge.toKind === input.toKind && edge.toId === input.toId && edge.relation === input.relation);
+    const record: KnowledgeEdgeRecord = {
+      ...input, id: existing?.id ?? `edge-${randomUUID().slice(0, 8)}`,
+      weight: Number.isFinite(input.weight) ? Number(input.weight) : existing?.weight ?? 1,
+      metadata: { ...existing?.metadata, ...input.metadata },
+      createdAt: existing?.createdAt ?? mergedAt, updatedAt: mergedAt,
+    };
+    edges.set(record.id, record);
+  };
+  for (const edge of original) {
+    if (!referencesNode(edge, loserId)) continue;
+    // Retain the canonical marker when processing new edges on a merged loser.
+    if (edge.fromKind === 'node' && edge.fromId === loserId && edge.toKind === 'node'
+      && edge.toId === winnerId && edge.relation === 'merged_into') continue;
+    const fromId = edge.fromKind === 'node' && edge.fromId === loserId ? winnerId : edge.fromId;
+    const toId = edge.toKind === 'node' && edge.toId === loserId ? winnerId : edge.toId;
+    edges.delete(edge.id);
+    if (fromId === toId && edge.fromKind === edge.toKind) continue;
+    upsert({ ...edge, fromId, toId, metadata: { ...edge.metadata, repointedFromNodeId: loserId, repointedAt: mergedAt } });
+    repointedEdges += 1;
+  }
+  upsert({ fromKind: 'node', fromId: loserId, toKind: 'node', toId: winnerId, relation: 'merged_into', metadata: { mergedAt } });
+  return { edges, repointedEdges };
+}
+
+function writeMergedEdgeRow(sqlite: SQLiteStore, record: KnowledgeEdgeRecord): void {
+  sqlite.run(`
+    INSERT OR REPLACE INTO knowledge_edges (
+      id, from_kind, from_id, to_kind, to_id, relation, weight, metadata, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [record.id, record.fromKind, record.fromId, record.toKind, record.toId, record.relation, record.weight,
+    JSON.stringify(record.metadata), record.createdAt, record.updatedAt]);
 }
 
 export function upsertKnowledgeSemanticEnrichmentState(

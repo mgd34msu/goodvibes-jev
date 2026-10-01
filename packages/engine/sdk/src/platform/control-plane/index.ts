@@ -107,6 +107,8 @@ export type {
   RequestSharedApprovalInput,
 } from './approval-broker.js';
 export { ApprovalBroker } from './approval-broker.js';
+export { SHARED_APPROVAL_DISPOSITIONS } from './approval-disposition.js';
+export type { SharedApprovalDisposition, SharedApprovalDecision, ExplicitApprovalDisposition } from './approval-disposition.js';
 export {
   buildModifiedEditArgs,
   readApprovalEditHunks,
@@ -188,3 +190,6 @@ export type {
   PaymentBeginCheckoutInput,
   PaymentBeginResultView,
 } from './routes/payments.js';
+
+// Shared host handler binding, including explicit-user confirmation semantics.
+export * from './host-handlers.js';

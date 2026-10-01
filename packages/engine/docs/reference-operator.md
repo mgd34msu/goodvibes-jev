@@ -534,6 +534,12 @@ Approve a pending approval. Optionally pass selectedHunks (edit-tool approvals o
     "approvalId": {
       "type": "string"
     },
+    "disposition": {
+      "type": "string",
+      "enum": [
+        "approved"
+      ]
+    },
     "note": {
       "type": "string"
     },
@@ -927,6 +933,17 @@ Approve a pending approval. Optionally pass selectedHunks (edit-tool approvals o
                   }
                 ]
               }
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "approved",
+                "denied",
+                "amended",
+                "cancelled",
+                "expired",
+                "remembered"
+              ]
             }
           },
           "required": [
@@ -1441,6 +1458,17 @@ Cancel a pending approval.
                   }
                 ]
               }
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "approved",
+                "denied",
+                "amended",
+                "cancelled",
+                "expired",
+                "remembered"
+              ]
             }
           },
           "required": [
@@ -1949,6 +1977,17 @@ Claim a pending approval for operator handling.
                   }
                 ]
               }
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "approved",
+                "denied",
+                "amended",
+                "cancelled",
+                "expired",
+                "remembered"
+              ]
             }
           },
           "required": [
@@ -2115,6 +2154,13 @@ Deny a pending approval. rememberTier generalizes the denial (a generalizing tie
   "properties": {
     "approvalId": {
       "type": "string"
+    },
+    "disposition": {
+      "type": "string",
+      "enum": [
+        "denied",
+        "amended"
+      ]
     },
     "note": {
       "type": "string"
@@ -2476,6 +2522,17 @@ Deny a pending approval. rememberTier generalizes the denial (a generalizing tie
                   }
                 ]
               }
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "approved",
+                "denied",
+                "amended",
+                "cancelled",
+                "expired",
+                "remembered"
+              ]
             }
           },
           "required": [
@@ -3109,6 +3166,17 @@ Return pending and historical approval records.
                     }
                   ]
                 }
+              },
+              "disposition": {
+                "type": "string",
+                "enum": [
+                  "approved",
+                  "denied",
+                  "amended",
+                  "cancelled",
+                  "expired",
+                  "remembered"
+                ]
               }
             },
             "required": [
@@ -3857,6 +3925,17 @@ Raise a permission ask INTO the shared broker from a surface that is not in the 
                   }
                 ]
               }
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "approved",
+                "denied",
+                "amended",
+                "cancelled",
+                "expired",
+                "remembered"
+              ]
             }
           },
           "required": [
@@ -61076,6 +61155,164 @@ Read local browser history and bookmarks and index them as metadata-first struct
     "failed": {
       "type": "number"
     },
+    "captured": {
+      "type": "number"
+    },
+    "capturedSources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "connectorId": {
+            "type": "string"
+          },
+          "sourceType": {
+            "type": "string",
+            "enum": [
+              "url",
+              "bookmark",
+              "bookmark-list",
+              "history",
+              "document",
+              "repo",
+              "dataset",
+              "image",
+              "manual",
+              "other"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "sourceUri": {
+            "type": "string"
+          },
+          "canonicalUri": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "folderPath": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "artifactId": {
+            "type": "string"
+          },
+          "contentHash": {
+            "type": "string"
+          },
+          "lastCrawledAt": {
+            "type": "number"
+          },
+          "crawlError": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": {}
+                },
+                {
+                  "type": "array",
+                  "items": {}
+                }
+              ]
+            }
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "connectorId",
+          "sourceType",
+          "tags",
+          "status",
+          "metadata",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "outcomes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "canonicalUri": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "capture": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "partial",
+              "failed"
+            ]
+          },
+          "compilation": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "held",
+              "failed",
+              "not-attempted"
+            ]
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "canonicalUri",
+          "capture",
+          "compilation"
+        ],
+        "additionalProperties": false
+      }
+    },
     "sources": {
       "type": "array",
       "items": {
@@ -61234,6 +61471,9 @@ Read local browser history and bookmarks and index them as metadata-first struct
   "required": [
     "imported",
     "failed",
+    "captured",
+    "capturedSources",
+    "outcomes",
     "sources",
     "errors",
     "profiles"
@@ -117796,6 +118036,17 @@ Every approval record transition, pushed the moment the broker records it: an as
                   }
                 ]
               }
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "approved",
+                "denied",
+                "amended",
+                "cancelled",
+                "expired",
+                "remembered"
+              ]
             }
           },
           "required": [

@@ -1,3 +1,8 @@
+import { JudgmentError } from '@goodvibes-jev/judgment';
+import { JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
+import { JudgmentInputError } from '../gate/judgment-input.js';
+import type { ClassificationResult } from './intent-classifier.js';
+import { PlannerJudgmentError } from './adaptive-planner.js';
 import type { ConversationManager } from './conversation.js';
 import { resolveCompactionStrategy } from './conversation-compaction.js';
 import type { ToolRegistry } from '../tools/registry.js';
@@ -540,7 +545,7 @@ export class Orchestrator {
   ): Promise<void> {
     if (!text.trim() && !content?.length) return;
 
-    if (this.isThinking || this.isCompacting) {
+    if (this.turnInFlight || this.isThinking || this.isCompacting) {
       this.queuedMessageSeq += 1;
       const id = `qm-${this.queuedMessageSeq}`;
       this.messageQueue.push({ id, queuedAt: Date.now(), text, content, options });
@@ -569,7 +574,7 @@ export class Orchestrator {
    * message is lost.
    */
   private async drainMessageQueue(): Promise<void> {
-    while (this.messageQueue.length > 0 && !this.isThinking && !this.isCompacting) {
+    while (this.messageQueue.length > 0 && !this.turnInFlight && !this.isThinking && !this.isCompacting) {
       const next = this.messageQueue.shift()!;
       this.emitQueueChange('delivered', next.id);
       await withTurnSurface(next.options?.origin, () => this.runTurn(next.text, next.content, next.options));
@@ -584,12 +589,14 @@ export class Orchestrator {
   private setCompacting(value: boolean): void {
     const wasCompacting = this.isCompacting;
     this.isCompacting = value;
-    if (wasCompacting && !value && !this.isThinking && this.messageQueue.length > 0) {
+    if (wasCompacting && !value && !this.turnInFlight && !this.isThinking && this.messageQueue.length > 0) {
       void this.drainMessageQueue().catch((err) => logger.error('Orchestrator: queued message drain after compaction failed', {
         error: err instanceof Error ? err.message : String(err),
       }));
     }
   }
+
+  private turnInFlight = false;
 
   private startThinking(estimatedInputTokens?: number): void {
     this.isThinking = true;
@@ -645,15 +652,30 @@ export class Orchestrator {
     // --- Phase 1: Preflight, idempotency, event emission, plan injection ---
     const preflight = this.runTurnPreflight(text, content, options, providerRegistry);
     if (!preflight) return; // duplicate in-flight turn was rejected and reported
-    const { submissionKey, turnId, preTurnPlan } = preflight;
+    const { submissionKey, turnId } = preflight;
 
-    // --- Phase 2: Stream + tool dispatch ---
+    // Judgment preflight shares the same cancellation and cleanup as streaming.
     try {
-      await this.runTurnStream(text, content, turnId, preTurnPlan, configManager, providerRegistry);
+      const signal = this.abortController?.signal;
+      let turnClassification: ClassificationResult | undefined;
+      const preTurnPlan = await prepareConversationForTurn(
+        this.conversation, providerRegistry, text, content, this.sessionId, this.coreServices.planManager ?? null,
+        { ...(signal ? { signal } : {}), deferPlanPriming: true, onMessageAdded: () => { this.turnStartMessageCount = this.conversation.getMessageCount(); }, onClassification: (reading) => { turnClassification = reading; return maybeEmitAdaptivePlannerDecision(
+          text, this.flagManager?.isEnabled('adaptive-execution-planner') ?? false,
+          this.coreServices.adaptivePlanner ?? null, this.runtimeBus,
+          (id) => createEmitterContext(this.sessionId, id), turnId, reading, signal,
+        ); } },
+      );
+      signal?.throwIfAborted();
+      this.turnStartMessageCount = this.conversation.getMessageCount();
+      this.scrollToEnd(this.getViewportHeight());
+      this.streamingInputTokens = estimateFreshTurnInputTokens(this.lastInputTokens, estimateConversationTokens(this.conversation.getMessagesForLLM()), text, content);
+      await this.runTurnStream(text, content, turnId, preTurnPlan, configManager, providerRegistry, turnClassification);
 
       // --- Phase 3: Post-turn reconciliation ---
       await this.runTurnReconcile(turnId, configManager, providerRegistry);
     } catch (err: unknown) {
+      this._turnFailed = true;
       await this.handleTurnError(err, turnId, configManager, providerRegistry);
     } finally {
       this.finalizeTurn(turnStartTime, submissionKey, turnId, configManager);
@@ -667,13 +689,8 @@ export class Orchestrator {
     content: ContentPart[] | undefined,
     options: OrchestratorUserInputOptions | undefined,
     providerRegistry: ReturnType<typeof requireProviderRegistry>,
-  ): { submissionKey: string; turnId: string; preTurnPlan: ReturnType<typeof prepareConversationForTurn> } | null {
-    // Generates a stable, deterministic key for this turn using a SHA-256 hash
-    // of the message content (first 512 chars) + conversation length as context.
-    // If the same physical turn is replayed (reconnect/restart) before the
-    // prior execution completes, the second attempt hits 'in-flight' and is
-    // rejected with a preflight failure event. After completion the key expires
-    // via TTL.
+  ): { submissionKey: string; turnId: string } | null {
+    // Session, transcript position and prompt prefix identify one in-flight submission.
     const turnId = createHash('sha256')
       .update(`${this.sessionId}:${this.conversation.getMessageCount()}:${text.slice(0, 512)}`)
       .digest('hex')
@@ -720,34 +737,11 @@ export class Orchestrator {
       });
     }
 
-    // Adaptive Execution Planner: score and select the execution strategy before the turn proceeds.
-    maybeEmitAdaptivePlannerDecision(
-      text,
-      this.flagManager?.isEnabled('adaptive-execution-planner') ?? false,
-      this.coreServices.adaptivePlanner ?? null,
-      this.runtimeBus,
-      (id) => createEmitterContext(this.sessionId, id),
-      turnId,
-    );
-
-    // Pre-turn plan injection: if an active plan exists, inject its current state into
-    // the conversation so the LLM can refer to it and update item statuses.
-    const preTurnPlan = prepareConversationForTurn(
-      this.conversation,
-      providerRegistry,
-      text,
-      content,
-      this.sessionId,
-      this.coreServices.planManager ?? null,
-    );
-
-    this.turnStartMessageCount = this.conversation.getMessageCount();
-    this.scrollToEnd(this.getViewportHeight());
-
-    const initialEstimatedTokens = estimateConversationTokens(this.conversation.getMessagesForLLM());
-    this.startThinking(estimateFreshTurnInputTokens(this.lastInputTokens, initialEstimatedTokens, text, content));
-
-    return { submissionKey, turnId, preTurnPlan };
+    // Reserve the turn before any asynchronous judgment. Queueing and abort
+    // must work while the port is answering, just as while the provider runs.
+    this.turnInFlight = true;
+    this.startThinking();
+    return { submissionKey, turnId };
   }
 
   /** Phase 2: Execute the LLM streaming loop and tool dispatch. */
@@ -755,9 +749,10 @@ export class Orchestrator {
     text: string,
     content: ContentPart[] | undefined,
     turnId: string,
-    preTurnPlan: ReturnType<typeof prepareConversationForTurn>,
+    preTurnPlan: Awaited<ReturnType<typeof prepareConversationForTurn>>,
     configManager: ReturnType<typeof requireConfigManager>,
     providerRegistry: ReturnType<typeof requireProviderRegistry>,
+    turnClassification?: ClassificationResult,
   ): Promise<void> {
     await executeOrchestratorTurnLoop({
       conversation: this.conversation,
@@ -814,6 +809,7 @@ export class Orchestrator {
       recordTurnKnowledgeInjection: (record) => { this.recordTurnKnowledgeInjection(record); },
       nextTurnKnowledgeSequence: () => this.nextTurnKnowledgeSequence(), contractHooks: this.coreServices.contractHooks,
       contractIntake: this.contractIntake,
+      ...(turnClassification ? { turnClassification } : {}),
     });
   }
 
@@ -886,7 +882,8 @@ export class Orchestrator {
     }
 
     const error = err instanceof Error ? err : new Error(summarizeError(err));
-    const msg = await readFormattedError(error, {
+    const judgmentFailed = error instanceof JudgmentError || error instanceof JudgmentPortMissingError || error instanceof JudgmentInputError || error instanceof PlannerJudgmentError;
+    const msg = judgmentFailed ? `[Judgment] ${error.message}` : await readFormattedError(error, {
       site: 'core.orchestrator.turn-error',
       ...(error instanceof ProviderError
         ? { provider: providerRegistry.getCurrentModel().provider, source: 'provider' as const }
@@ -896,7 +893,7 @@ export class Orchestrator {
     this.requestRender();
     // Graceful degradation, suggest alternative when provider fails non-transiently
     const autoSwitch = configManager.get('behavior.suggestAlternativeOnProviderFail') as boolean;
-    if (autoSwitch && await isNonTransientProviderFailure(err, 'core.orchestrator.suggest-alternative')) {
+    if (!judgmentFailed && autoSwitch && await isNonTransientProviderFailure(err, 'core.orchestrator.suggest-alternative')) {
       const currentModel = providerRegistry.getCurrentModel();
       const alt = currentModel ? providerRegistry.findAlternativeModel(currentModel.registryKey) : null;
       if (alt) {
@@ -942,6 +939,7 @@ export class Orchestrator {
       this._turnFailed = false;
     }
     this.stopThinking();
+    this.turnInFlight = false;
     const durationMs = Date.now() - turnStartTime;
     const notifyEnabled = configManager.get('behavior.notifyOnComplete') as boolean | undefined;
     if (notifyEnabled !== false) {

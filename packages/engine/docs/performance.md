@@ -52,10 +52,11 @@ import { AdaptivePlanner } from '@goodvibes-jev/engine/sdk/platform/core';
 
 const planner = new AdaptivePlanner();
 
-const decision = planner.select({
-  riskScore: 0.3,         // 0 = safe, 1 = highly destructive
+const decision = await planner.select({
+  riskScore: 0.3,         // supply the normalized risk reading, not a hand-selected score
   latencyBudgetMs: Infinity,
   isMultiStep: true,
+  taskDescription: 'Implement and integrate the independent client and server changes.',
   remoteAvailable: false,
   backgroundEligible: false,
   taskDescription: 'Refactor auth module',
@@ -284,17 +285,14 @@ const estimate = estimateConversationTokens(messages); // number
 
 ### Performance budgets
 
-The SDK defines two categories of performance budgets, **bundle size budgets** and **runtime SLO gates**.
+Entry-file gzip diagnostics and runtime SLO gates measure different things.
 
-**Bundle size budgets** are defined per entry point via `bundle-budgets.json` at
-the repo root. Each entry has a gzip ceiling of `max(ceil(actual × 1.2), actual + 50 B)` (the `+50 B` floor dominates for tiny entries below ~250 B).
-The CI `bundle-budget-check` job runs the same command used locally:
+`bun run bundle:check` reports the gzip size of each built SDK entry file,
+excluding imported dependencies. Historical references are advisory; this
+report does not enforce a consumer bundle-size limit. Actual package and
+browser/RN compatibility checks remain separate required checks.
 
-```bash
-bun run bundle:check  # prints actual vs. budget for every entry point
-```
-
-To update after a legitimate size increase, see [Testing and Validation](./testing-and-validation.md#bundle-budget-enforcement).
+See [Testing and Validation](./testing-and-validation.md#entry-file-gzip-diagnostics).
 
 **Runtime SLO gates** use consecutive-violation counting. A budget fails only when the threshold is exceeded on `tolerance` consecutive samples, which prevents transient spikes from failing the gate.
 
@@ -484,13 +482,14 @@ GET /api/control-plane/events?domains=turn,agents,tools
 
 ### Parallel tool execution
 
-Configure `cohort` strategy via the adaptive planner to fan tasks out across agent cohorts. The planner automatically selects `cohort` for multi-step tasks with risk score ≤ 0.7:
+Configure `cohort` strategy via the adaptive planner to fan tasks out across agent cohorts. A registered Jev reading selects the strategy from the actual task, its recorded risk and current capabilities; uncertainty holds the selection rather than guessing:
 
 ```ts
-const decision = planner.select({
+const decision = await planner.select({
   riskScore: 0.2,
   latencyBudgetMs: 30_000,
   isMultiStep: true,
+  taskDescription: 'Implement and integrate the independent client and server changes.',
   remoteAvailable: false,
   backgroundEligible: false,
 });
@@ -502,10 +501,11 @@ const decision = planner.select({
 Defer latency-insensitive work to background execution to avoid blocking the conversation loop:
 
 ```ts
-const decision = planner.select({
+const decision = await planner.select({
   riskScore: 0.1,
   latencyBudgetMs: Infinity,
   isMultiStep: false,
+  taskDescription: 'Reindex the saved library using the background queue.',
   remoteAvailable: false,
   backgroundEligible: true,
 });

@@ -12,6 +12,8 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
+import { reviewKnowledgeNodeRecord } from '../sdk/src/platform/knowledge/service-node-admin.js';
+import { seedKnowledgeResearchTask } from './_helpers/knowledge-semantic-activation-fixtures.js';
 import { KnowledgeSemanticService } from '../sdk/src/platform/knowledge/semantic/service.js';
 import {
   enrichAndImproveHomeGraphSource,
@@ -114,7 +116,7 @@ describe('governor pause at background entrypoints', () => {
       metadata: { knowledgeSpaceId: spaceId },
     });
     for (const slug of ['pause-gap-1', 'pause-gap-2', 'pause-gap-3']) {
-      await store.upsertNode({
+      await seedKnowledgeResearchTask(store, {
         kind: 'knowledge_gap', slug, title: `What does ${slug} need?`, aliases: [],
         confidence: 75, sourceId: source.id,
         metadata: { knowledgeSpaceId: spaceId, semanticKind: 'gap', gapKind: 'answer', sourceIds: [source.id] },
@@ -182,6 +184,9 @@ describe('governor pause at background entrypoints', () => {
       kind: 'fact', slug: 'hdmi-inputs', title: 'Four HDMI inputs', aliases: [], confidence: 95,
       sourceId: source.id, metadata: { knowledgeSpaceId: spaceId, semanticKind: 'fact', factKind: 'specification' },
     });
+    // This scheduling fixture starts with a fact already accepted by the operator.
+    // A raw proposed fact cannot acquire serving authority from its confidence.
+    await reviewKnowledgeNodeRecord(store, { id: fact.id, decision: 'accept', reviewer: 'fixture operator' });
     await store.upsertEdge({
       fromKind: 'source', fromId: source.id, toKind: 'node', toId: fact.id,
       relation: 'supports_fact', metadata: { knowledgeSpaceId: spaceId },

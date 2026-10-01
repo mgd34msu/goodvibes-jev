@@ -1,3 +1,12 @@
+import { randomUUID } from 'node:crypto';
+import { snapshotNodeInput } from './activation/projection.js';
+import { KnowledgeNodeActivationHeldError } from './activation/types.js';
+import { KnowledgeNodeMutationHeldError } from './store-node-authority.js';
+import { KnowledgeEntityAliasHoldError } from './entity-aliases.js';
+import { knowledgeIngestGuard, stageKnowledgePendingSource } from './ingest-preparation.js';
+import { JudgmentInputError } from '../gate/judgment-input.js';
+import { KnowledgeExtractionJudgmentHoldError } from './extraction-policy.js';
+import { prepareKnowledgeExtraction, type PreparedKnowledgeExtraction } from './prepared-extraction.js';
 import { readFile } from 'node:fs/promises';
 import {
   emitKnowledgeIngestCompleted,
@@ -36,17 +45,35 @@ export async function ingestKnowledgeUrl(
     readonly sessionId?: string | undefined;
     readonly sourceType?: KnowledgeSourceType | undefined;
     readonly connectorId?: string | undefined;
+    readonly signal?: AbortSignal | undefined;
     readonly allowPrivateHosts?: boolean | undefined;
     readonly metadata?: Record<string, unknown> | undefined;
   },
 ): Promise<{ source: KnowledgeSourceRecord; artifactId?: string; extraction?: KnowledgeExtractionRecord; issues: readonly KnowledgeIssueRecord[] }> {
+  const { signal, ...values } = input;
+  input = { ...snapshotNodeInput(values), signal };
   await context.store.init();
-  const pending = await context.store.upsertSource({
-    connectorId: input.connectorId ?? (input.sourceType === 'bookmark' ? 'bookmark' : 'url'),
+  const canonicalUri = canonicalizeUri(input.url) ?? undefined;
+  const sourceId = reserveSourceId(context, canonicalUri);
+  const connectorId = input.connectorId ?? (input.sourceType === 'bookmark' ? 'bookmark' : 'url');
+  const assertCurrent = knowledgeIngestGuard(context, sourceId, canonicalUri, signal);
+  assertCurrent();
+  const preparation = await capturePreparation(async () => {
+    const artifact = await context.artifactStore.create({
+      uri: input.url,
+      allowPrivateHosts: input.allowPrivateHosts,
+      metadata: { sourceConnector: connectorId, requestedAt: Date.now() },
+    });
+    return prepareKnowledgeExtraction(context, sourceId, artifact.id);
+  });
+  assertCurrent();
+  const pending = stageKnowledgePendingSource(context, {
+    id: sourceId,
+    connectorId,
     sourceType: input.sourceType ?? 'url',
     title: input.title,
     sourceUri: input.url,
-    canonicalUri: canonicalizeUri(input.url) ?? undefined,
+    canonicalUri,
     tags: input.tags,
     folderPath: input.folderPath,
     status: 'pending',
@@ -60,17 +87,12 @@ export async function ingestKnowledgeUrl(
     uri: input.url,
   }), pending.sessionId);
   try {
-    const artifact = await context.artifactStore.create({
-      uri: input.url,
-      allowPrivateHosts: input.allowPrivateHosts,
-      metadata: {
-        sourceConnector: pending.connectorId,
-        requestedAt: Date.now(),
-      },
-    });
+    if (!preparation.ready) throw preparation.error;
     const result = await finalizeKnowledgeIngestedSource(context, {
       sourceId: pending.id,
-      artifactId: artifact.id,
+      artifactId: preparation.token.artifactId,
+      preparedExtraction: preparation.token,
+      signal,
       inputTitle: input.title,
       sourceType: input.sourceType ?? pending.sourceType,
       connectorId: pending.connectorId,
@@ -91,6 +113,7 @@ export async function ingestKnowledgeUrl(
     }), result.source.sessionId);
     return { ...result, issues };
   } catch (error) {
+    if (error instanceof KnowledgeEntityAliasHoldError || error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof KnowledgeNodeActivationHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof JudgmentInputError) throw error;
     const failed = await context.store.upsertSource({
       id: pending.id,
       connectorId: pending.connectorId,
@@ -127,10 +150,13 @@ export async function ingestKnowledgeArtifact(
     readonly sessionId?: string | undefined;
     readonly sourceType?: KnowledgeSourceType | undefined;
     readonly connectorId?: string | undefined;
+    readonly signal?: AbortSignal | undefined;
     readonly allowPrivateHosts?: boolean | undefined;
     readonly metadata?: Record<string, unknown> | undefined;
   },
 ): Promise<{ source: KnowledgeSourceRecord; artifactId?: string; extraction?: KnowledgeExtractionRecord; issues: readonly KnowledgeIssueRecord[] }> {
+  const { signal, ...values } = input;
+  input = { ...snapshotNodeInput(values), signal };
   await context.store.init();
   let artifactId = input.artifactId;
   let sourceUri = input.uri;
@@ -161,12 +187,19 @@ export async function ingestKnowledgeArtifact(
   if (!artifactId) throw new Error('Artifact ingest requires artifactId, path, or uri.');
   const record = context.artifactStore.getRecord(artifactId);
   if (!record) throw new Error(`Unknown artifact: ${artifactId}`);
-  const pending = await context.store.upsertSource({
+  const canonicalUri = canonicalizeUri(sourceUri ?? '') ?? undefined;
+  const sourceId = reserveSourceId(context, canonicalUri);
+  const assertCurrent = knowledgeIngestGuard(context, sourceId, canonicalUri, signal);
+  assertCurrent();
+  const preparation = await capturePreparation(() => prepareKnowledgeExtraction(context, sourceId, artifactId));
+  assertCurrent();
+  const pending = stageKnowledgePendingSource(context, {
+    id: sourceId,
     connectorId: input.connectorId ?? 'artifact',
     sourceType: input.sourceType ?? inferSourceTypeFromArtifact(record),
     title: input.title ?? record.filename,
     sourceUri,
-    canonicalUri: canonicalizeUri(sourceUri ?? '') ?? undefined,
+    canonicalUri,
     tags: input.tags,
     folderPath: input.folderPath,
     status: 'pending',
@@ -183,9 +216,12 @@ export async function ingestKnowledgeArtifact(
     uri: sourceUri,
   }), pending.sessionId);
   try {
+    if (!preparation.ready) throw preparation.error;
     const result = await finalizeKnowledgeIngestedSource(context, {
       sourceId: pending.id,
       artifactId,
+      preparedExtraction: preparation.token,
+      signal,
       inputTitle: input.title,
       sourceType: pending.sourceType,
       connectorId: pending.connectorId,
@@ -206,6 +242,7 @@ export async function ingestKnowledgeArtifact(
     }), result.source.sessionId);
     return { ...result, issues };
   } catch (error) {
+    if (error instanceof KnowledgeEntityAliasHoldError || error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof KnowledgeNodeActivationHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof JudgmentInputError) throw error;
     const failed = await context.store.upsertSource({
       id: pending.id,
       connectorId: pending.connectorId,
@@ -366,4 +403,23 @@ export function pickKnowledgeRefreshCandidates(
     ));
   }
   return sources.filter((source) => isHttpUri(source.sourceUri)).slice(0, max);
+}
+
+/** Reserve identity without publishing pending or overwriting an existing source. */
+function reserveSourceId(context: KnowledgeIngestContext, canonicalUri: string | undefined): string {
+  return (canonicalUri ? context.store.getSourceByCanonicalUri(canonicalUri)?.id : undefined)
+    ?? `source-${randomUUID().slice(0, 8)}`;
+}
+
+type ExtractionPreparation =
+  | { readonly ready: true; readonly token: PreparedKnowledgeExtraction }
+  | { readonly ready: false; readonly error: unknown };
+
+/** Operational parse/fetch errors keep their existing failed-record path; holds do not. */
+async function capturePreparation(read: () => Promise<PreparedKnowledgeExtraction>): Promise<ExtractionPreparation> {
+  try { return { ready: true, token: await read() }; }
+  catch (error) {
+    if (error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof JudgmentInputError) throw error;
+    return { ready: false, error };
+  }
 }

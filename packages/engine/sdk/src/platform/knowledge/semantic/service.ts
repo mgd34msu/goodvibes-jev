@@ -1,3 +1,5 @@
+import { assertAnswerVerificationActive } from './answer-verification/budget.js';
+import { answerHasCompleteVerification, answerNeedsEvidenceGap } from './answer-quality.js';
 import type { KnowledgeStore } from '../store.js';
 import type { KnowledgeSourceRecord } from '../types.js';
 import type { KnowledgeObjectProfilePolicy } from '../extensions.js';
@@ -214,6 +216,7 @@ export class KnowledgeSemanticService {
       llm: this.options.llm,
       objectProfiles: this.options.objectProfiles,
     }, input);
+    assertAnswerVerificationActive(input.signal);
     if (input.autoRepairGaps === false) return answer;
     if (this.options.gapRepairer && answer.answer.gaps.length > 0) {
       const repairSpaceId = answerRepairSpaceId(answer);
@@ -226,10 +229,11 @@ export class KnowledgeSemanticService {
       let foregroundRepair = emptySelfImproveResult();
       if (foregroundBudgetMs > 0) {
         foregroundRepair = await this.repairAnswerGaps({
-          answer,
+          answer, signal: input.signal,
           maxRunMs: foregroundBudgetMs,
           limit: Math.min(5, answer.answer.gaps.length),
         });
+        assertAnswerVerificationActive(input.signal);
         foregroundTaskIds.push(...foregroundRepair.taskIds);
         if (foregroundRepair.closedGaps > 0 || foregroundRepair.linkedRepairs > 0 || (foregroundRepair.promotedFactCount ?? 0) > 0) {
           answer = withRefinementTaskIds(
@@ -251,7 +255,7 @@ export class KnowledgeSemanticService {
           const waited = await this.waitForActiveAnswerGapRepairs(
             repairSpaceId,
             answerGapIdsForRefinement(answer, originalGapIds),
-            Math.min(15_000, foregroundBudgetMs),
+            Math.min(15_000, foregroundBudgetMs), input.signal,
           );
           if (waited) {
             answer = withRefinementTaskIds(
@@ -271,14 +275,16 @@ export class KnowledgeSemanticService {
           }
         }
       }
+      assertAnswerVerificationActive(input.signal);
       const refinementGapIds = answerGapIdsForRefinement(answer, originalGapIds);
       const refinement = await this.selfImprove({
         knowledgeSpaceId: repairSpaceId,
         gapIds: refinementGapIds,
         reason: 'answer',
         limit: Math.max(1, refinementGapIds.length),
-        deferRepair: true,
+        deferRepair: true, signal: input.signal,
       });
+      assertAnswerVerificationActive(input.signal);
       this.runAnswerRefinementInBackground(repairSpaceId, refinementGapIds);
       const taskIds = uniqueStrings([
         ...foregroundTaskIds,
@@ -301,9 +307,11 @@ export class KnowledgeSemanticService {
 
   async repairAnswerGaps(input: {
     readonly answer: KnowledgeSemanticAnswerResult;
+    readonly signal?: AbortSignal | undefined;
     readonly maxRunMs?: number | undefined;
     readonly limit?: number | undefined;
   }): Promise<KnowledgeSemanticSelfImproveResult> {
+    assertAnswerVerificationActive(input.signal);
     const gaps = input.answer.answer.gaps.filter((gap) => readString(readRecord(gap.metadata).gapKind) === 'answer');
     if (!this.options.gapRepairer || gaps.length === 0) return emptySelfImproveResult();
     return this.selfImprove({
@@ -311,7 +319,7 @@ export class KnowledgeSemanticService {
       gapIds: gaps.map((gap) => gap.id),
       reason: 'answer',
       limit: Math.max(1, input.limit ?? gaps.length),
-      maxRunMs: input.maxRunMs,
+      maxRunMs: input.maxRunMs, signal: input.signal,
       force: true,
     });
   }
@@ -494,11 +502,13 @@ export class KnowledgeSemanticService {
     spaceId: string,
     gapIds: readonly string[],
     maxWaitMs: number,
+    signal?: AbortSignal,
   ): Promise<boolean> {
     if (gapIds.length === 0 || maxWaitMs <= 0) return false;
     const keys = gapIds.map((gapId) => `${spaceId}:${gapId}`);
     const startedAt = Date.now();
     while (Date.now() - startedAt < maxWaitMs) {
+      assertAnswerVerificationActive(signal);
       const active = keys.some((key) => this.activeGapRepairs.has(key));
       if (!active) return true;
       await yieldToEventLoop();
@@ -562,14 +572,12 @@ function answerNeedsForegroundRepair(
     || answer.answer.linkedObjects.length > 0
     || answer.answer.gaps.some((gap) => readStringArray(readRecord(gap.metadata).linkedObjectIds).length > 0);
   if (!subjectScoped) return false;
-  return answer.answer.facts.length === 0 || answer.answer.sources.length === 0 || answer.answer.confidence < 50;
+  return answer.answer.quality?.status === 'no-evidence' || answerNeedsEvidenceGap(answer.answer.quality);
 }
 
 function answerHasUsableEvidence(answer: KnowledgeSemanticAnswerResult): boolean {
   return answer.answer.gaps.length === 0
-    && answer.answer.facts.length > 0
-    && answer.answer.sources.length > 0
-    && answer.answer.confidence >= 50;
+    && answerHasCompleteVerification(answer.answer.quality);
 }
 
 function withRefinementTaskIds(

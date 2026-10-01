@@ -1,3 +1,4 @@
+import type { ClassificationResult } from './intent-classifier.js';
 import type { ConversationManager } from './conversation.js';
 import type { ExecutionPlan } from './execution-plan.js';
 import { ConsecutiveErrorBreaker } from './circuit-breaker.js';
@@ -42,6 +43,7 @@ import type { AgentManager } from '../tools/agent/index.js';
 import type { ExecutionPlanManager } from './execution-plan.js';
 import {
   emitMalformedToolUseWarning,
+  primeConversationForTurn,
   handleFinalResponseOutcome,
   handleToolResponseOutcome,
   bindContractSession,
@@ -224,6 +226,7 @@ export interface OrchestratorTurnLoopContext {
    * and work routed to a contract starts one; either way the turn ends there.
    */
   readonly contractIntake: ContractIntake;
+  readonly turnClassification?: ClassificationResult;
 }
 
 export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopContext): Promise<void> {
@@ -234,11 +237,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
   const streamEnabled = context.configManager.get('display.stream') as boolean;
 
   let continueLoop = true;
-  // MEMORY-sourced knowledge-record ids injected anywhere in THIS turn
-  // (TurnInjectionRecord filtered to source 'memory'; code-index hits excluded).
-  // Accumulated across the loop's LLM calls and stamped onto TURN_COMPLETED as
-  // metadata.memory.recordIds, the provenance convention surfaces read. Stays
-  // empty (and the event carries no metadata field) when nothing memory-sourced landed.
+  // Track injected MEMORY record ids across all calls for TURN_COMPLETED provenance.
   const turnMemoryRecordIds = new Set<string>();
   // One compact-and-retry per runTurn() when the provider rejects a request
   // as exceeding the context window; a second rejection surfaces as an error.
@@ -272,6 +271,10 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
       context.requestRender();
       return;
     }
+  }
+
+  if (contractSession === undefined && context.turnClassification) {
+    primeConversationForTurn(context.conversation, context.turnClassification, context.planManager?.getActive(context.sessionId) ?? null);
   }
 
   while (continueLoop) {

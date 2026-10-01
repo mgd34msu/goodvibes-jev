@@ -93,9 +93,11 @@ export function applyLegacySettingsMigrationPass(
   parsed: Record<string, unknown>,
   sourcePath: string,
   receipt: MigrationReceiptSink,
+  ownership: MigrationOwnership = OWNS_FILE,
 ): Record<string, unknown> {
   const result = migrateLegacyFeatureToggles(parsed);
   if (!result.migrated) return parsed;
+  if (!ownership.ownsFile) return result.config;
   persistMigratedFile(sourcePath, result.config, 'Settings migration');
   const keyList = result.changedKeys.length > 0 ? result.changedKeys.join(', ') : 'no value changes';
   const receiptText = `Settings migrated: legacy featureFlags entries now live on their domain settings keys (${keyList}) in ${sourcePath}.`;
@@ -116,9 +118,11 @@ export function applyFleetMaxSizeMigrationPass(
   parsed: Record<string, unknown>,
   sourcePath: string,
   receipt: MigrationReceiptSink,
+  ownership: MigrationOwnership = OWNS_FILE,
 ): Record<string, unknown> {
   const result = migrateFleetMaxSizeRename(parsed);
   if (!result.migrated) return parsed;
+  if (!ownership.ownsFile) return result.config;
   persistMigratedFile(sourcePath, result.config, 'fleet.maxSize migration');
   const receiptText = `Setting renamed: orchestration.maxActiveAgents is now fleet.maxSize ("Maximum fleet size"); your value (${result.movedValue}) moved with it (${sourcePath}).`;
   logger.info(receiptText);
@@ -135,9 +139,11 @@ export function applyControlPlaneBaseUrlMigrationPass(
   parsed: Record<string, unknown>,
   sourcePath: string,
   receipt: MigrationReceiptSink,
+  ownership: MigrationOwnership = OWNS_FILE,
 ): Record<string, unknown> {
   const result = migrateControlPlaneBaseUrlRemoval(parsed);
   if (!result.migrated) return parsed;
+  if (!ownership.ownsFile) return result.config;
   persistMigratedFile(sourcePath, result.config, 'controlPlane.baseUrl removal');
   const quoted = result.removedValue ? ` (it was ${result.removedValue})` : '';
   const receiptText =
@@ -159,10 +165,12 @@ export function applyDefaultStripMigrationPass(
   parsed: Record<string, unknown>,
   sourcePath: string,
   receipt: MigrationReceiptSink,
+  ownership: MigrationOwnership = OWNS_FILE,
 ): Record<string, unknown> {
   if (!isFrozenDefaultDump(parsed)) return parsed;
   const { config: stripped, changed } = stripFrozenDefaults(parsed);
   if (!changed) return parsed;
+  if (!ownership.ownsFile) return stripped;
   try {
     writeJsonFileAtomic(sourcePath, stripped);
   } catch (err) {
@@ -184,9 +192,11 @@ export function applyDaemonEmbedInProcessMigrationPass(
   parsed: Record<string, unknown>,
   sourcePath: string,
   receipt: MigrationReceiptSink,
+  ownership: MigrationOwnership = OWNS_FILE,
 ): Record<string, unknown> {
   const result = migrateDaemonEmbedInProcessRemoval(parsed);
   if (!result.migrated) return parsed;
+  if (!ownership.ownsFile) return result.config;
   persistMigratedFile(sourcePath, result.config, 'daemon.embedInProcess removal');
   const quoted = result.removedValue === undefined ? '' : ` (it was ${String(result.removedValue)})`;
   const receiptText =
@@ -396,9 +406,11 @@ export function applyContractSettingsMigrationPass(
   parsed: Record<string, unknown>,
   sourcePath: string,
   receipt: MigrationReceiptSink,
+  ownership: MigrationOwnership = OWNS_FILE,
 ): Record<string, unknown> {
   const result = migrateWrfcSettings(parsed);
   if (!result.migrated) return parsed;
+  if (!ownership.ownsFile) return result.config;
   persistMigratedFile(sourcePath, result.config, 'contract settings migration');
   if (result.moves.length > 0) {
     const moved = result.moves
@@ -445,9 +457,11 @@ export function applySandboxQemuMigrationPass(
   parsed: Record<string, unknown>,
   sourcePath: string,
   receipt: MigrationReceiptSink,
+  ownership: MigrationOwnership = OWNS_FILE,
 ): Record<string, unknown> {
   const result = migrateSandboxQemuRemoval(parsed);
   if (!result.migrated) return parsed;
+  if (!ownership.ownsFile) return result.config;
   persistMigratedFile(sourcePath, result.config, 'QEMU sandbox settings removal');
   const changes: string[] = [];
   if (result.removedKeys.length > 0) changes.push(`${result.removedKeys.join(', ')} removed`);
@@ -504,26 +518,27 @@ export function runDaemonTierMigrationPasses(
  * OWNERSHIP: every pass in this sequence runs over a SURFACE settings file,
  * the global `~/.goodvibes/<surface>/settings.json` and the project
  * `<workingDir>/.goodvibes/<surface>/settings.json`. A surface file is written
- * and read by that surface's own process, so writer and owner are the same
- * runtime by construction and these passes take no ownership argument. The
- * daemon tier is the exception, and it is loaded separately, see
+ * and normally read by its owner. Read-only consumers explicitly set
+ * ownsFile:false: the same passes and precedence apply in memory, with no
+ * persistence or receipts. The daemon tier is loaded separately, see
  * ConfigManager.loadDaemonTier and {@link MigrationOwnership}.
  */
 export function runLoadMigrationPasses(
   parsed: Record<string, unknown>,
   sourcePath: string,
   receipt: MigrationReceiptSink,
+  ownership: MigrationOwnership = OWNS_FILE,
 ): Record<string, unknown> {
   let config = applyDangerDaemonMigrationPass(parsed, sourcePath);
-  config = applyLegacySettingsMigrationPass(config, sourcePath, receipt);
-  config = applyFleetMaxSizeMigrationPass(config, sourcePath, receipt);
-  config = applyControlPlaneBaseUrlMigrationPass(config, sourcePath, receipt);
-  config = applyDaemonEmbedInProcessMigrationPass(config, sourcePath, receipt);
+  config = applyLegacySettingsMigrationPass(config, sourcePath, receipt, ownership);
+  config = applyFleetMaxSizeMigrationPass(config, sourcePath, receipt, ownership);
+  config = applyControlPlaneBaseUrlMigrationPass(config, sourcePath, receipt, ownership);
+  config = applyDaemonEmbedInProcessMigrationPass(config, sourcePath, receipt, ownership);
   // After the danger.daemon alias pass above, so a file whose only statement of
   // `daemon.enabled: false` arrived via that alias is split too.
-  config = applyDaemonConnectedHostSplitMigrationPass(config, sourcePath, receipt);
-  config = applyPaymentsBudgetMigrationPass(config, sourcePath, receipt);
-  config = applyContractSettingsMigrationPass(config, sourcePath, receipt);
-  config = applySandboxQemuMigrationPass(config, sourcePath, receipt);
-  return applyDefaultStripMigrationPass(config, sourcePath, receipt);
+  config = applyDaemonConnectedHostSplitMigrationPass(config, sourcePath, receipt, ownership);
+  config = applyPaymentsBudgetMigrationPass(config, sourcePath, receipt, ownership);
+  config = applyContractSettingsMigrationPass(config, sourcePath, receipt, ownership);
+  config = applySandboxQemuMigrationPass(config, sourcePath, receipt, ownership);
+  return applyDefaultStripMigrationPass(config, sourcePath, receipt, ownership);
 }

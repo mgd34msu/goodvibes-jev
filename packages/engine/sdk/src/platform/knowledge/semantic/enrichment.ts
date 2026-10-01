@@ -1,17 +1,22 @@
+import { captureKnowledgeSourceReferences, knowledgeSourceJudgmentUris, projectKnowledgeSourceReferences } from '../source-structural-references.js';
+import { createSemanticNodeSlugPlanner } from './node-slug.js';
+import { prepareObservedKnowledgeNodeInput } from '../store-node-observation.js';
+import { enrichmentFactNodeInput, enrichmentGapNodeInput } from './enrichment-node-plans.js';
+import { prepareEnrichmentFactDrafts, resolveEnrichmentSpaceId } from './enrichment-fact-drafts.js';
+import { assertJudgmentInput } from '../../gate/judgment-input.js';
+import { sourceRankingContent } from './answer-source-ranking.js';
+import { freezeSupport } from './verification/projection.js';
+import { createGeneratedFactWritePlanner, generatedFactSupportMetadata } from './fact-support-write-plan.js';
+import { persistWikiPage, prepareWikiPageNodeInput, renderDeterministicWikiPage } from './wiki-page-persistence.js';
 import type { KnowledgeStore } from '../store.js';
-// Shared clamp: normalizes a 0-1 probability to 0-100 and a non-finite value to the
-// auto-accept default, so an LLM ignoring the prompt's 0-100 contract (below) does
-// not silently draft a high-confidence node. One definition, not a divergent copy.
+// Descriptive producer scores stay on the declared 0-100 scale. They never authorize activation.
 import { clampConfidence } from '../store-node-history.js';
-import { getKnowledgeSpaceId } from '../spaces.js';
 import { knowledgeSourceMatchesScope } from '../scope-records.js';
 import type {
-  KnowledgeEdgeRecord,
   KnowledgeExtractionRecord,
   KnowledgeNodeRecord,
   KnowledgeSourceRecord,
 } from '../types.js';
-import { isActiveKnowledgeEdge } from '../projection-utils.js';
 import type {
   KnowledgeSemanticEntityInput,
   KnowledgeSemanticExtraction,
@@ -27,7 +32,6 @@ import {
   readRecord,
   readString,
   readStringArray,
-  semanticFactId,
   semanticHash,
   semanticMetadata,
   semanticSlug,
@@ -39,8 +43,9 @@ import {
 } from './utils.js';
 import { canonicalRepairSubjectNodes } from './repair-subjects.js';
 import { hasConcreteFeatureSignal, isLowValueFeatureOrSpecText } from './fact-quality.js';
-import { deriveRepairProfileFacts } from './repair-profile.js';
-import { sourceAuthorityBoostForAnswer } from './answer-source-ranking.js';
+import { deriveRepairProfileFacts, repairProfileSourceText, repairProfileSubject } from './repair-profile.js';
+import { assertSemanticWriteAllowed, createSemanticPrimarySourcePlanner, createSemanticWriteGuard } from './primary-source-plan.js';
+import { prepareSemanticSupersession } from './supersession-plan.js';
 
 export interface KnowledgeSemanticEnrichmentContext {
   readonly store: KnowledgeStore;
@@ -50,6 +55,8 @@ export interface KnowledgeSemanticEnrichmentContext {
 export interface EnrichKnowledgeSourceOptions {
   readonly force?: boolean | undefined;
   readonly knowledgeSpaceId?: string | undefined;
+  readonly signal?: AbortSignal | undefined;
+  readonly shouldStop?: (() => boolean) | undefined;
 }
 
 export interface PersistedSemanticExtraction {
@@ -68,8 +75,19 @@ export async function enrichKnowledgeSource(
   source: KnowledgeSourceRecord,
   options: EnrichKnowledgeSourceOptions = {},
 ): Promise<PersistedSemanticExtraction> {
-  const extraction = context.store.getExtractionBySourceId(source.id);
-  const text = sourceSemanticText(source, extraction);
+  const spaceId = resolveEnrichmentSpaceId(source, options.knowledgeSpaceId);
+  const generationGuard = createSemanticWriteGuard(context.store, options.signal, options.shouldStop);
+  generationGuard.watch(`source:${source.id}`, () => context.store.getSource(source.id), source);
+  const extraction = generationGuard.extraction(source.id);
+  generationGuard.watch('source-subject-edges', () => context.store.listEdges().filter((edge) => edge.fromKind === 'source' && edge.fromId === source.id));
+  linkedObjectsForSource(context.store, source, new Set(), (id) => generationGuard.node(id));
+  generationGuard.assertCurrent();
+  if (!extraction) return emptyResult(source, true, 'semantic enrichment requires extracted source evidence');
+  const uris = knowledgeSourceJudgmentUris(source);
+  const text = sourceSemanticText({ ...source, ...uris }, extraction);
+  const structural = projectKnowledgeSourceReferences(source, extraction, captureKnowledgeSourceReferences(context.store, source, extraction));
+  const generationSource = { id: structural?.sourceId ?? source.id, title: source.title, sourceType: source.sourceType, tags: source.tags,
+    uri: uris.canonicalUri ?? uris.sourceUri ?? uris.url, provenance: sourceRankingContent(source).claimedProvenance };
   const textHash = sourceSemanticHash(source, extraction);
   const existingSemantic = readRecord(context.store.getSemanticEnrichmentState(source.id)?.metadata);
   const currentExtractor = readString(existingSemantic.extractor);
@@ -90,13 +108,21 @@ export async function enrichKnowledgeSource(
     return emptyResult(source, true, 'source has too little extracted text');
   }
 
-  const llmExtraction = await extractSemanticsWithLlm(context.llm ?? null, source, extraction, text);
-  const semantic = normalizeSemanticExtraction(llmExtraction)
-    ?? deterministicSemanticExtraction(source, extraction, text);
+  // Minimize and protect the complete generation input before any display cap.
+  assertJudgmentInput({ source: generationSource, text, extraction: { format: extraction.format, title: extraction.title, summary: extraction.summary, sections: extraction.sections } });
+  const llmExtraction = await extractSemanticsWithLlm(context.llm ?? null, generationSource, extraction, text, options.signal);
+  generationGuard.assertCurrent();
+  const extracted = normalizeSemanticExtraction(llmExtraction)
+    ?? await deterministicSemanticExtraction(context.store, source, extraction, text, options.signal);
+  generationGuard.assertCurrent();
+  const semantic = freezeSupport(structuredClone(extracted));
   const persisted = await persistSemanticExtraction(context.store, source, extraction, semantic, {
-    knowledgeSpaceId: options.knowledgeSpaceId,
+    knowledgeSpaceId: spaceId,
+    signal: options.signal,
+    shouldStop: options.shouldStop,
     textHash,
   });
+  assertSemanticWriteAllowed(options.signal, options.shouldStop);
   await markSourceSemanticState(context.store, source, textHash, {
     extractor: semantic.extractor,
     factCount: persisted.facts.length,
@@ -108,13 +134,15 @@ export async function enrichKnowledgeSource(
 
 async function extractSemanticsWithLlm(
   llm: KnowledgeSemanticLlm | null,
-  source: KnowledgeSourceRecord,
+  generationSource: Record<string, unknown>,
   extraction: KnowledgeExtractionRecord | null,
   text: string,
+  signal?: AbortSignal,
 ): Promise<unknown | null> {
   if (!llm) return null;
   return llm.completeJson({
     purpose: 'knowledge-semantic-enrichment',
+    signal,
     maxTokens: 2600,
     timeoutMs: 20_000,
     systemPrompt: [
@@ -124,14 +152,7 @@ async function extractSemanticsWithLlm(
       'Prefer precise facts over broad summaries. Preserve numbers, model names, ports, version names, constraints, and useful procedures. Every `confidence` field is an INTEGER on a 0-100 scale (0 = none, 100 = certain), never a 0-1 probability.',
     ].join(' '),
     prompt: JSON.stringify({
-      source: {
-        id: source.id,
-        title: source.title,
-        sourceType: source.sourceType,
-        tags: source.tags,
-        uri: source.canonicalUri ?? source.sourceUri,
-        metadata: source.metadata,
-      },
+      source: generationSource,
       extraction: {
         format: extraction?.format,
         title: extraction?.title,
@@ -183,28 +204,24 @@ function normalizeSemanticExtraction(value: unknown): KnowledgeSemanticExtractio
   };
 }
 
-function deterministicSemanticExtraction(
+async function deterministicSemanticExtraction(
+  store: KnowledgeStore,
   source: KnowledgeSourceRecord,
   extraction: KnowledgeExtractionRecord | null,
   text: string,
-): KnowledgeSemanticExtraction {
+  signal?: AbortSignal,
+): Promise<KnowledgeSemanticExtraction> {
   const factText = cleanDeterministicSourceText(deterministicFactSourceText(extraction) || text);
   const sentences = splitSentences(factText);
-  const profileFacts = shouldDeriveDeterministicProfileFacts(source, factText)
-    ? deriveRepairProfileFacts({
-      query: 'complete features specifications capabilities',
-      source,
-      text: factText,
-    }).map((fact) => ({
-      kind: fact.kind,
-      title: fact.title,
-      value: fact.value,
-      summary: fact.summary,
-      evidence: fact.evidence,
-      confidence: 72,
-      labels: fact.labels,
-    }))
-    : [];
+  const profileFacts = (await deriveRepairProfileFacts({
+    query: 'complete features specifications capabilities', source, extraction,
+    text: repairProfileSourceText(extraction) || text,
+    subjects: linkedObjectsForSource(store, source).map(repairProfileSubject),
+    structuralReferences: captureKnowledgeSourceReferences(store, source, extraction),
+  }, { signal })).map((fact) => ({
+    kind: fact.kind, title: fact.title, value: fact.value, summary: fact.summary,
+    evidence: fact.evidence, confidence: 72, labels: fact.labels,
+  }));
   const facts = [
     ...profileFacts,
     ...sentences
@@ -235,26 +252,6 @@ function deterministicSemanticExtraction(
     },
     extractor: 'deterministic',
   };
-}
-
-function shouldDeriveDeterministicProfileFacts(source: KnowledgeSourceRecord, text: string): boolean {
-  const discovery = readRecord(source.metadata.sourceDiscovery);
-  if (readStringArray(discovery.linkedObjectIds).length > 0) return true;
-  if (/\bmodel:[a-z0-9][a-z0-9._-]{2,}\b/i.test(readString(discovery.trustReason) ?? '')) return true;
-  const sourceIdentity = [
-    source.title,
-    source.summary,
-    source.sourceUri,
-    source.canonicalUri,
-    source.url,
-    source.tags.join(' '),
-  ].filter(Boolean).join(' ');
-  const hasModelIdentity = /\b[A-Z]{2,}[-_ ]?[0-9][A-Z0-9._-]{2,}\b/.test(sourceIdentity);
-  if (!hasModelIdentity) return false;
-  const sourceLooksLikeSpecProfile = /\b(specifications?|specs?|product|manual|datasheet|support|features?)\b/i.test(sourceIdentity);
-  const textLooksLikeSpecProfile = /\b(?:hdmi|hdr10|dolby vision|refresh rate|bluetooth|wi-?fi|speaker|usb|ethernet|optical|rf antenna|rs-?232|webos|airplay|homekit)\b/i.test(text)
-    && /\b(?:\d{2,3}(?:\.0)?\s*(?:inch|inches|in\.|")|4k|uhd|3840\s*(?:x|×)\s*2160|[A-Z]{2,}[-_ ]?[0-9][A-Z0-9._-]{2,})\b/i.test(text);
-  return sourceLooksLikeSpecProfile || textLooksLikeSpecProfile;
 }
 
 function deterministicFactSourceText(extraction: KnowledgeExtractionRecord | null): string {
@@ -320,17 +317,26 @@ async function persistSemanticExtraction(
   options: {
     readonly knowledgeSpaceId?: string | undefined;
     readonly textHash: string;
+    readonly signal?: AbortSignal | undefined;
+    readonly shouldStop?: (() => boolean) | undefined;
   },
 ): Promise<PersistedSemanticExtraction> {
   const spaceId = options.knowledgeSpaceId ?? sourceKnowledgeSpace(source);
+  // Preflight every complete generated field before any verification/primary-source request.
+  assertJudgmentInput(semantic);
+  const guard = createSemanticWriteGuard(store, options.signal, options.shouldStop);
+  guard.watch(`source:${source.id}`, () => store.getSource(source.id), source);
+  guard.watch(`extraction:${source.id}`, () => store.getExtractionBySourceId(source.id), extraction);
+  const planner = createSemanticPrimarySourcePlanner(store, guard, options.signal);
+  const support = createGeneratedFactWritePlanner(store, guard, { signal: options.signal });
   const entities: KnowledgeNodeRecord[] = [];
   const facts: KnowledgeNodeRecord[] = [];
   const gaps: KnowledgeNodeRecord[] = [];
 
-  for (const entity of semantic.entities.slice(0, 60)) {
-    const node = await store.upsertNode({
+  const nodeSlug = createSemanticNodeSlugPlanner(store);
+  const entityPlans = semantic.entities.slice(0, 60).map((entity) => ({
       id: `sem-entity-${semanticHash(spaceId, source.id, entity.title)}`,
-      kind: 'knowledge_entity',
+      kind: 'knowledge_entity' as const,
       slug: semanticSlug(`${spaceId}-${entity.title}`),
       title: entity.title,
       summary: entity.summary,
@@ -346,97 +352,79 @@ async function persistSemanticExtraction(
         extractor: semantic.extractor,
         textHash: options.textHash,
       }),
-    });
+  })).map(nodeSlug);
+  const entityIds = new Set(entityPlans.map((entity) => entity.id));
+  for (const id of entityIds) guard.node(id);
+  guard.watch('source-subject-edges', () => store.listEdges().filter((edge) => edge.fromKind === 'source' && edge.fromId === source.id));
+  // An entity-ID collision overlays semanticKind=entity, which excludes that old
+  // object from canonical subjects just as the former write-then-read order did.
+  const sourceLinkedObjects = linkedObjectsForSource(store, source, entityIds, (id) => guard.node(id));
+  const proposedEntities: KnowledgeNodeRecord[] = entityPlans.map((plan) => {
+    const existing = guard.node(plan.id);
+    return { ...plan, aliases: plan.aliases ?? existing?.aliases ?? [], status: existing?.status ?? 'draft',
+      metadata: { ...existing?.metadata, ...plan.metadata }, createdAt: existing?.createdAt ?? 0, updatedAt: existing?.updatedAt ?? 0 };
+  });
+  const factDrafts = prepareEnrichmentFactDrafts({ store, source, extraction, spaceId, guard, primary: planner, support,
+    allFacts: semantic.facts, persistedFacts: semantic.facts.slice(0, 160).filter(shouldPersistSemanticFact),
+    sourceSubjects: sourceLinkedObjects, proposedEntities,
+  });
+  const activeIds = new Set([
+    ...entityIds, ...factDrafts.map((fact) => fact.factId),
+    ...semantic.gaps.slice(0, 32).map((gap) => `sem-gap-${semanticHash(spaceId, source.id, gap.question)}`),
+    ...((semantic.wikiPage?.markdown ?? renderDeterministicWikiPage(source, semantic.facts)).trim()
+      ? [`sem-page-${semanticHash(spaceId, source.id)}`] : []),
+  ]);
+  for (const id of activeIds) guard.node(id);
+  guard.watch('active-fact-edges', () => store.listEdges().filter((edge) =>
+    (edge.toKind === 'node' && activeIds.has(edge.toId)) || (edge.fromKind === 'node' && activeIds.has(edge.fromId))));
+  const resolveSupersession = prepareSemanticSupersession(store, source.id, spaceId, activeIds, guard, planner, support);
+  await support.readAll();
+  const factPlans = [];
+  const virtualSupport = new Map<string, unknown>();
+  for (const draft of factDrafts) {
+    const supportMetadata = generatedFactSupportMetadata(support.plans(draft.supportKey),
+      virtualSupport.get(draft.factId) ?? draft.existingFact?.metadata.generatedFactSupport);
+    virtualSupport.set(draft.factId, supportMetadata);
+    const plan = { ...draft, supportMetadata, primarySourceId: await draft.resolve() };
+    factPlans.push({ ...plan, nodeInput: nodeSlug(enrichmentFactNodeInput(plan, spaceId, extraction, semantic, options.textHash)) });
+  }
+  const applySupersession = await resolveSupersession();
+  const gapPlans = semantic.gaps.slice(0, 32).map((gap) => ({ gap, nodeInput: prepareObservedKnowledgeNodeInput(store, nodeSlug(enrichmentGapNodeInput(gap, source,
+    extraction, semantic, spaceId, options.textHash, store.getNode(`sem-gap-${semanticHash(spaceId, source.id, gap.question)}`))), 'research-task', { source, extraction },
+      () => ({ source: store.getSource(source.id), extraction: store.getExtractionBySourceId(source.id) })),
+  }));
+  const wikiDraft = prepareWikiPageNodeInput(source, semantic, spaceId, options.textHash);
+  const wikiInput = wikiDraft ? nodeSlug(wikiDraft) : undefined;
+  const activation = await store.prepareNodeWrites([...entityPlans, ...factPlans.map((plan) => plan.nodeInput),
+    ...gapPlans.map((plan) => plan.nodeInput), ...(wikiInput ? [wikiInput] : [])], { signal: options.signal, requireAccepted: true });
+  let activationIndex = 0;
+  guard.assertCurrent();
+  store.assertPreparedNodeWrites(activation);
+
+  for (const input of entityPlans) {
+    assertSemanticWriteAllowed(options.signal, options.shouldStop);
+    const node = await store.upsertPreparedNode(activation, activationIndex++);
     entities.push(node);
     await linkSourceToNode(store, source.id, node.id, 'mentions_entity', spaceId, semantic.extractor);
   }
-
-  const sourceLinkedObjects = linkedObjectsForSource(store, source);
-  for (const fact of semantic.facts.slice(0, 160)) {
-    if (!shouldPersistSemanticFact(fact)) continue;
-    const factLinkedObjects = sourceLinkedObjectsForFact(sourceLinkedObjects, fact);
-    const sourceLinkedObjectIds = factLinkedObjects.map((node) => node.id);
-    const sourceTargetHints = factLinkedObjects.map((node) => ({ id: node.id, kind: node.kind, title: node.title }));
-    const targetHints = fact.targetHints?.length ? fact.targetHints : sourceTargetHints;
-    const factId = semanticFactId({
-      spaceId,
-      kind: fact.kind,
-      title: fact.title,
-      value: fact.value,
-      summary: fact.summary,
-      subjectIds: sourceLinkedObjectIds,
-      fallbackScope: source.id,
-    });
-    const existingFact = store.getNode(factId);
-    const sourceIds = uniqueStrings([
-      ...readStringArray(existingFact?.metadata.sourceIds),
-      readString(existingFact?.metadata.sourceId),
-      existingFact?.sourceId,
-      source.id,
-    ]);
-    const primarySourceId = preferredSemanticFactSourceId(store, sourceIds, source.id);
-    const node = await store.upsertNode({
-      id: factId,
-      kind: 'fact',
-      slug: semanticSlug(`${spaceId}-${fact.kind}-${fact.title}-${fact.value ?? ''}`),
-      title: fact.title,
-      summary: fact.summary ?? fact.value ?? fact.evidence,
-      aliases: fact.labels,
-      confidence: fact.confidence ?? 70,
-      sourceId: primarySourceId,
-      metadata: semanticMetadata(spaceId, {
-        semanticKind: 'fact',
-        factKind: fact.kind,
-        value: fact.value,
-        evidence: fact.evidence,
-        labels: fact.labels ?? [],
-        targetHints,
-        ...(sourceLinkedObjectIds.length > 0 ? {
-          subject: sourceLinkedObjects[0]?.title,
-          subjectIds: sourceLinkedObjectIds,
-          linkedObjectIds: sourceLinkedObjectIds,
-        } : {}),
-        sourceId: primarySourceId,
-        sourceIds,
-        extractionId: extraction?.id,
-        extractor: semantic.extractor,
-        textHash: options.textHash,
-      }),
-    });
+  for (const plan of factPlans) {
+    assertSemanticWriteAllowed(options.signal, options.shouldStop);
+    const { factLinkedObjects, supportMetadata } = plan;
+    const node = await store.upsertPreparedNode(activation, activationIndex++);
     facts.push(node);
-    await linkSourceToNode(store, source.id, node.id, 'supports_fact', spaceId, semantic.extractor);
-    await linkFactToSourceLinkedObjects(store, source.id, node, factLinkedObjects, spaceId, semantic.extractor);
-    await linkFactToEntities(store, node, entities, fact, spaceId, semantic.extractor);
+    await linkSourceToNode(store, source.id, node.id, 'supports_fact', spaceId, semantic.extractor, { generatedFactSupport: supportMetadata });
+    await linkFactToSourceLinkedObjects(store, source.id, node, factLinkedObjects, spaceId, semantic.extractor, supportMetadata);
+    await linkFactToEntities(store, node, entities.filter((entity) => plan.entitySubjectIds.has(entity.id)), spaceId, semantic.extractor, supportMetadata);
   }
 
   for (const relation of semantic.relations.slice(0, 80)) {
+    assertSemanticWriteAllowed(options.signal, options.shouldStop);
     await linkRelation(store, entities, facts, relation, spaceId, semantic.extractor);
   }
 
-  for (const gap of semantic.gaps.slice(0, 32)) {
-    const id = `sem-gap-${semanticHash(spaceId, source.id, gap.question)}`;
-    const existing = store.getNode(id);
-    const node = await store.upsertNode({
-      id,
-      kind: 'knowledge_gap',
-      slug: semanticSlug(`${spaceId}-gap-${gap.question}`),
-      title: gap.question,
-      summary: gap.reason,
-      confidence: gap.severity === 'error' ? 85 : gap.severity === 'warning' ? 70 : 50,
-      sourceId: source.id,
-      metadata: semanticMetadata(spaceId, {
-        semanticKind: 'gap',
-        subject: gap.subject,
-        severity: gap.severity ?? 'info',
-        sourceId: source.id,
-        extractionId: extraction?.id,
-        extractor: semantic.extractor,
-        textHash: options.textHash,
-        repairStatus: readString(existing?.metadata.repairStatus) ?? 'open',
-        visibility: 'refinement',
-        displayRole: 'knowledge-gap',
-      }),
-    });
+  for (const { gap, nodeInput } of gapPlans) {
+    assertSemanticWriteAllowed(options.signal, options.shouldStop);
+    const node = await store.upsertPreparedNode(activation, activationIndex++);
     gaps.push(node);
     await linkSourceToNode(store, source.id, node.id, 'has_gap', spaceId, semantic.extractor);
     await store.upsertIssue({
@@ -455,13 +443,9 @@ async function persistSemanticExtraction(
     });
   }
 
-  const wikiPage = await persistWikiPage(store, source, semantic, spaceId, options.textHash);
-  await markPreviousSemanticNodesStale(store, source.id, spaceId, new Set([
-    ...entities.map((node) => node.id),
-    ...facts.map((node) => node.id),
-    ...gaps.map((node) => node.id),
-    ...(wikiPage ? [wikiPage.id] : []),
-  ]));
+  assertSemanticWriteAllowed(options.signal, options.shouldStop);
+  const wikiPage = await persistWikiPage(store, source, semantic, spaceId, wikiInput, wikiInput ? () => store.upsertPreparedNode(activation, activationIndex++) : undefined);
+  await applySupersession();
   return { source, skipped: false, extractor: semantic.extractor, facts, entities, gaps, ...(wikiPage ? { wikiPage } : {}) };
 }
 
@@ -500,205 +484,6 @@ function semanticInputFactText(parts: readonly (string | undefined)[]): string {
   return uniqueParts.join(' ');
 }
 
-function sourceLinkedObjectsForFact(
-  linkedObjects: readonly KnowledgeNodeRecord[],
-  fact: KnowledgeSemanticFactInput,
-): readonly KnowledgeNodeRecord[] {
-  if (linkedObjects.length === 0) return [];
-  const hints = uniqueStrings(fact.targetHints ?? []);
-  if (hints.length === 0) return linkedObjects;
-  return linkedObjects.filter((object) => hints.some((hint) => entityMatchesHint(object, hint)));
-}
-
-async function markPreviousSemanticNodesStale(
-  store: KnowledgeStore,
-  sourceId: string,
-  spaceId: string,
-  activeIds: ReadonlySet<string>,
-): Promise<void> {
-  const supersededAt = Date.now();
-  const semanticNodes = store.listNodesInSpace(spaceId).filter((node) => (
-    semanticNodeReferencesSource(node, sourceId)
-    && typeof node.metadata.semanticKind === 'string'
-    && node.status !== 'stale'
-    && !activeIds.has(node.id)
-  ));
-  await store.batch(async () => {
-    for (const node of semanticNodes) {
-      if (await detachSupersededSourceFromSharedFact(store, sourceId, spaceId, node, supersededAt)) continue;
-      await store.upsertNode({
-        id: node.id,
-        kind: node.kind,
-        slug: node.slug,
-        title: node.title,
-        summary: node.summary,
-        aliases: node.aliases,
-        status: 'stale',
-        confidence: node.confidence,
-        ...(node.sourceId ? { sourceId: node.sourceId } : {}),
-        metadata: {
-          ...node.metadata,
-          supersededAt,
-          supersededInSpaceId: spaceId,
-        },
-      });
-    }
-  });
-}
-
-function semanticNodeReferencesSource(node: KnowledgeNodeRecord, sourceId: string): boolean {
-  if (node.sourceId === sourceId) return true;
-  if (readString(node.metadata.sourceId) === sourceId) return true;
-  return node.metadata.semanticKind === 'fact' && readStringArray(node.metadata.sourceIds).includes(sourceId);
-}
-
-async function detachSupersededSourceFromSharedFact(
-  store: KnowledgeStore,
-  sourceId: string,
-  spaceId: string,
-  node: KnowledgeNodeRecord,
-  supersededAt: number,
-): Promise<boolean> {
-  if (node.metadata.semanticKind !== 'fact') return false;
-  const supportingSourceIds = activeSemanticFactSupportSourceIds(store, node, sourceId, spaceId);
-  if (supportingSourceIds.length === 0) return false;
-  const primarySourceId = preferredSemanticFactSourceId(store, supportingSourceIds, supportingSourceIds[0]!);
-  await deactivateSemanticFactSupport(store, sourceId, node.id, spaceId, supersededAt);
-  await store.upsertNode({
-    id: node.id,
-    kind: node.kind,
-    slug: node.slug,
-    title: node.title,
-    summary: node.summary,
-    aliases: node.aliases,
-    status: node.status,
-    confidence: node.confidence,
-    sourceId: primarySourceId,
-    metadata: semanticMetadata(spaceId, {
-      ...node.metadata,
-      sourceId: primarySourceId,
-      sourceIds: supportingSourceIds,
-      detachedSourceIds: uniqueStrings([
-        ...readStringArray(node.metadata.detachedSourceIds),
-        sourceId,
-      ]),
-      sourceDetachedAt: supersededAt,
-    }),
-  });
-  return true;
-}
-
-function activeSemanticFactSupportSourceIds(
-  store: KnowledgeStore,
-  fact: KnowledgeNodeRecord,
-  supersededSourceId: string,
-  spaceId: string,
-): string[] {
-  return uniqueStrings([
-    ...readStringArray(fact.metadata.sourceIds),
-    readString(fact.metadata.sourceId),
-    fact.sourceId,
-    ...store.listEdges()
-      .filter((edge) => edgeSupportsFact(edge, fact.id, spaceId))
-      .map((edge) => edge.fromId),
-  ])
-    .filter((sourceId) => sourceId !== supersededSourceId)
-    .filter((sourceId) => {
-      const source = store.getSource(sourceId);
-      return Boolean(source && source.status === 'indexed' && getKnowledgeSpaceId(source) === spaceId);
-    });
-}
-
-async function deactivateSemanticFactSupport(
-  store: KnowledgeStore,
-  sourceId: string,
-  factId: string,
-  spaceId: string,
-  supersededAt: number,
-): Promise<void> {
-  const edges = store.listEdges().filter((edge) => (
-    edge.fromKind === 'source'
-    && edge.fromId === sourceId
-    && edge.toKind === 'node'
-    && edge.toId === factId
-    && edge.relation === 'supports_fact'
-    && isActiveKnowledgeEdge(edge)
-  ));
-  for (const edge of edges) {
-    await store.upsertEdge({
-      fromKind: edge.fromKind,
-      fromId: edge.fromId,
-      toKind: edge.toKind,
-      toId: edge.toId,
-      relation: edge.relation,
-      weight: 0,
-      metadata: semanticMetadata(spaceId, {
-        ...edge.metadata,
-        deleted: true,
-        supersededAt,
-      }),
-    });
-  }
-}
-
-function edgeSupportsFact(edge: KnowledgeEdgeRecord, factId: string, spaceId: string): boolean {
-  return isActiveKnowledgeEdge(edge)
-    && edge.fromKind === 'source'
-    && edge.toKind === 'node'
-    && edge.toId === factId
-    && edge.relation === 'supports_fact'
-    && getKnowledgeSpaceId(edge) === spaceId;
-}
-
-function preferredSemanticFactSourceId(
-  store: KnowledgeStore,
-  sourceIds: readonly string[],
-  fallbackSourceId: string,
-): string {
-  const candidates = uniqueStrings(sourceIds)
-    .map((sourceId) => store.getSource(sourceId))
-    .filter((source): source is KnowledgeSourceRecord => Boolean(source && source.status !== 'stale'));
-  if (candidates.length === 0) return fallbackSourceId;
-  return candidates
-    .sort((left, right) => semanticFactSourceQuality(right) - semanticFactSourceQuality(left) || left.id.localeCompare(right.id))[0]!.id;
-}
-
-function semanticFactSourceQuality(source: KnowledgeSourceRecord): number {
-  return sourceAuthorityBoostForAnswer(source)
-    + (source.status === 'indexed' ? 40 : source.status === 'pending' ? 5 : 0)
-    + (source.sourceType === 'manual' || source.sourceType === 'document' ? 12 : source.sourceType === 'url' ? 8 : 0);
-}
-
-async function persistWikiPage(
-  store: KnowledgeStore,
-  source: KnowledgeSourceRecord,
-  semantic: KnowledgeSemanticExtraction,
-  spaceId: string,
-  textHash: string,
-): Promise<KnowledgeNodeRecord | undefined> {
-  const markdown = semantic.wikiPage?.markdown ?? renderDeterministicWikiPage(source, semantic.facts);
-  if (!markdown.trim()) return undefined;
-  const page = await store.upsertNode({
-    id: `sem-page-${semanticHash(spaceId, source.id)}`,
-    kind: 'wiki_page',
-    slug: semanticSlug(`${spaceId}-${source.title ?? source.id}-page`),
-    title: semantic.wikiPage?.title ?? `${source.title ?? source.id} knowledge page`,
-    summary: semantic.summary ?? source.summary,
-    aliases: source.title ? [source.title] : [],
-    confidence: semantic.extractor === 'llm' ? 80 : 55,
-    sourceId: source.id,
-    metadata: semanticMetadata(spaceId, {
-      semanticKind: 'wiki_page',
-      markdown,
-      sourceId: source.id,
-      extractor: semantic.extractor,
-      textHash,
-    }),
-  });
-  await linkSourceToNode(store, source.id, page.id, 'compiled_into_page', spaceId, semantic.extractor);
-  return page;
-}
-
 async function markSourceSemanticState(
   store: KnowledgeStore,
   source: KnowledgeSourceRecord,
@@ -722,6 +507,7 @@ async function linkSourceToNode(
   relation: string,
   spaceId: string,
   extractor: string,
+  metadata: Record<string, unknown> = {},
 ): Promise<void> {
   await store.upsertEdge({
     fromKind: 'source',
@@ -730,7 +516,7 @@ async function linkSourceToNode(
     toId: nodeId,
     relation,
     weight: extractor === 'llm' ? 1 : 0.6,
-    metadata: semanticMetadata(spaceId, { extractor }),
+    metadata: semanticMetadata(spaceId, { ...metadata, extractor }),
   });
 }
 
@@ -738,22 +524,18 @@ async function linkFactToEntities(
   store: KnowledgeStore,
   fact: KnowledgeNodeRecord,
   entities: readonly KnowledgeNodeRecord[],
-  input: KnowledgeSemanticFactInput,
   spaceId: string,
   extractor: string,
+  supportMetadata: unknown,
 ): Promise<void> {
-  const hints = uniqueStrings(input.targetHints ?? []);
-  const candidates = hints.length === 0
-    ? entities.slice(0, 1)
-    : entities.filter((entity) => hints.some((hint) => entityMatchesHint(entity, hint)));
-  for (const entity of candidates.slice(0, 6)) {
+  for (const entity of entities) {
     await store.upsertEdge({
       fromKind: 'node',
       fromId: fact.id,
       toKind: 'node',
       toId: entity.id,
       relation: 'describes',
-      metadata: semanticMetadata(spaceId, { extractor }),
+      metadata: semanticMetadata(spaceId, { extractor, generatedFactSupport: supportMetadata }),
     });
   }
 }
@@ -765,6 +547,7 @@ async function linkFactToSourceLinkedObjects(
   linkedObjects: readonly KnowledgeNodeRecord[],
   spaceId: string,
   extractor: string,
+  supportMetadata: unknown,
 ): Promise<void> {
   for (const object of linkedObjects.slice(0, 8)) {
     await store.upsertEdge({
@@ -774,7 +557,7 @@ async function linkFactToSourceLinkedObjects(
       toId: object.id,
       relation: 'describes',
       weight: extractor === 'llm' ? 0.88 : 0.72,
-      metadata: semanticMetadata(spaceId, { extractor, sourceId }),
+      metadata: semanticMetadata(spaceId, { extractor, sourceId, generatedFactSupport: supportMetadata }),
     });
   }
 }
@@ -802,29 +585,6 @@ async function linkRelation(
       extractor,
     }),
   });
-}
-
-function renderDeterministicWikiPage(
-  source: KnowledgeSourceRecord,
-  facts: readonly KnowledgeSemanticFactInput[],
-): string {
-  const grouped = new Map<string, KnowledgeSemanticFactInput[]>();
-  for (const fact of facts) {
-    grouped.set(fact.kind, [...(grouped.get(fact.kind) ?? []), fact]);
-  }
-  const sections = [...grouped.entries()].flatMap(([kind, entries]) => [
-    `## ${titleCase(kind)}`,
-    '',
-    ...entries.slice(0, 24).map((fact) => `- ${fact.title}${fact.value ? `: ${fact.value}` : ''}${fact.summary ? ` - ${fact.summary}` : ''}`),
-    '',
-  ]);
-  return [
-    `# ${source.title ?? source.id}`,
-    '',
-    source.summary ?? '',
-    '',
-    ...sections,
-  ].filter((line) => line !== undefined).join('\n').trim();
 }
 
 function normalizeFact(value: unknown): KnowledgeSemanticFactInput | null {
@@ -910,7 +670,11 @@ function readArray(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-function linkedObjectsForSource(store: KnowledgeStore, source: KnowledgeSourceRecord): KnowledgeNodeRecord[] {
+function linkedObjectsForSource(
+  store: KnowledgeStore, source: KnowledgeSourceRecord,
+  entityOverlayIds: ReadonlySet<string> = new Set(),
+  readNode: (id: string) => KnowledgeNodeRecord | null = (id) => store.getNode(id),
+): KnowledgeNodeRecord[] {
   const discovery = readRecord(source.metadata.sourceDiscovery);
   const sourceSpaceId = sourceKnowledgeSpace(source);
   const ids = uniqueStrings([
@@ -926,7 +690,8 @@ function linkedObjectsForSource(store: KnowledgeStore, source: KnowledgeSourceRe
   ]);
   const nodes: KnowledgeNodeRecord[] = [];
   for (const id of ids) {
-    const node = store.getNode(id);
+    const node = readNode(id);
+    if (entityOverlayIds.has(id)) continue;
     if (node && node.status !== 'stale') nodes.push(node);
   }
   return canonicalRepairSubjectNodes({
@@ -969,35 +734,10 @@ function inferLabels(text: string): readonly string[] {
   ]);
 }
 
-function entityMatchesHint(entity: KnowledgeNodeRecord, hint: string): boolean {
-  const lower = hint.toLowerCase();
-  const candidates = uniqueStrings([
-    entity.title,
-    entity.summary,
-    ...entity.aliases,
-    readString(entity.metadata.manufacturer),
-    readString(entity.metadata.model),
-    readString(entity.metadata.modelId),
-    readString(entity.metadata.model_id),
-  ]).map((entry) => entry.toLowerCase());
-  const compactHint = lower.replace(/[\s_-]+/g, '');
-  return candidates.some((candidate) => {
-    const compactCandidate = candidate.replace(/[\s_-]+/g, '');
-    return candidate.includes(lower)
-      || lower.includes(candidate)
-      || (compactCandidate.length >= 4 && compactHint.includes(compactCandidate))
-      || (compactHint.length >= 4 && compactCandidate.includes(compactHint));
-  });
-}
-
 function findSemanticNode(nodes: readonly KnowledgeNodeRecord[], label: string): KnowledgeNodeRecord | undefined {
   const lower = label.toLowerCase();
   return nodes.find((node) => node.title.toLowerCase() === lower)
     ?? nodes.find((node) => node.title.toLowerCase().includes(lower) || lower.includes(node.title.toLowerCase()));
-}
-
-function titleCase(value: string): string {
-  return value.replace(/[_-]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function emptyResult(source: KnowledgeSourceRecord, skipped: boolean, reason: string): PersistedSemanticExtraction {

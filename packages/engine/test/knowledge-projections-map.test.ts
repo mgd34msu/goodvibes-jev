@@ -16,6 +16,9 @@ import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { semanticFactId } from '../sdk/src/platform/knowledge/semantic/utils.js';
 import { MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore } from '../sdk/src/platform/state/index.js';
 import { trackDisposables } from './_helpers/disposables.ts';
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+
+const answerReadings = useKnowledgeAnswerReadings();
 
 const tmpRoots: string[] = [];
 
@@ -666,7 +669,8 @@ describe('knowledge generated projections and maps', () => {
       sources: [],
       issues: [],
       missingFields: [],
-      semanticFacts: [fact, rawOnlyFact],
+      // Exercise legacy active snapshots too, so the raw-fragment defense cannot pass merely by excluding drafts.
+      semanticFacts: [{ ...fact, status: 'active' }, { ...rawOnlyFact, status: 'active' }],
     });
 
     expect(markdown).toContain('- Display features: Dolby Vision');
@@ -1324,6 +1328,7 @@ describe('knowledge generated projections and maps', () => {
     expect(defaultAnswer.results.map((result) => result.id)).not.toContain(leakedNode.id);
     expect(defaultAnswer.answer.sources.map((source) => source.id)).not.toContain(haSource.id);
     expect(defaultAnswer.answer.linkedObjects.map((node) => node.id)).not.toContain(leakedNode.id);
+    answerReadings.set({ initialEvidenceDefault: 0.01 }); // This authored query has no relevant permitted default-space evidence.
     const agentAnswer = await service.ask({
       query: 'What is GoodVibes Agent?',
       includeSources: true,

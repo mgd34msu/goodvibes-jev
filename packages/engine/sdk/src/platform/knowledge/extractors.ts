@@ -1,9 +1,10 @@
 import { extname } from 'node:path';
 import type { ArtifactDescriptor, ArtifactRecord } from '../artifacts/types.js';
 import { guessMimeType } from '../artifacts/types.js';
-import { describeHtmlReadabilityAvailability, extractReadableHtml } from './html-readability.js';
+import { describeHtmlReadabilityAvailability, extractReadableHtml, extractLightweightReadableHtml, type ReadableHtmlExtraction } from './html-readability.js';
 import { extractPdf } from './pdf-extractor.js';
-import { KNOWLEDGE_MAX_STRUCTURE_SEARCH_TEXT_CHARS } from './extraction-policy.js';
+import { JudgmentInputError } from '../gate/judgment-input.js';
+import { KNOWLEDGE_MAX_STRUCTURE_SEARCH_TEXT_CHARS, KnowledgeExtractionJudgmentHoldError } from './extraction-policy.js';
 import type { KnowledgeExtractionFormat } from './types.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -51,17 +52,6 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
-}
-
-function stripHtml(value: string): string {
-  return decodeHtmlEntities(
-    value
-      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim(),
-  );
 }
 
 function cleanText(value: string): string {
@@ -133,98 +123,55 @@ function decodeBuffer(buffer: Buffer): string {
   return cleanText(buffer.toString('utf-8'));
 }
 
-function extractLinksFromHtml(html: string): string[] {
-  const urls: string[] = [];
-  const regex = /\bhref=["']([^"'#]+)["']/gi;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(html)) !== null) {
-    const candidate = match[1]?.trim();
-    if (candidate) urls.push(candidate);
-  }
-  return uniqueStrings(urls, 50);
-}
-
 async function extractHtml(buffer: Buffer): Promise<KnowledgeExtractionResult> {
   const html = buffer.toString('utf-8');
+  let readable: ReadableHtmlExtraction | null;
   let readabilityWarning: string | undefined;
+  let lightweight = false;
   try {
-    const readable = await extractReadableHtml(html);
+    readable = await extractReadableHtml(html);
     if (!readable) {
-      // `null` means either "nothing readable in this document" or "the
-      // optional parser is not installed". Only the second is worth saying out
-      // loud, and saying it is the whole point of declaring jsdom optional:
-      // the fallback below still produces a result, and the operator learns
-      // why it is the lightweight one instead of the good one.
       const availability = await describeHtmlReadabilityAvailability();
-      if (!availability.available && availability.reason) {
-        readabilityWarning = `Used the lightweight HTML fallback: ${availability.reason}`;
-        logger.debug('Knowledge extraction: readable-HTML parser unavailable; using lightweight HTML extractor', {
-          reason: availability.reason,
-        });
+      if (!availability.available) {
+        lightweight = true;
+        readabilityWarning = `Used the lightweight HTML fallback: ${availability.reason ?? 'DOM parser unavailable'}`;
+        readable = await extractLightweightReadableHtml(html);
       }
     }
-    if (readable) {
-      const summary = summarizeText([readable.excerpt, readable.paragraphSamples[0], readable.textContent].filter(Boolean).join(' '));
-      return {
-        extractorId: 'html-readability',
-        format: 'html',
-        ...(readable.title ? { title: readable.title } : {}),
-        ...(summary ? { summary } : {}),
-        ...(excerptText(readable.textContent) ? { excerpt: excerptText(readable.textContent) } : {}),
-        sections: readable.headings.length > 0 ? readable.headings.slice(0, 16) : uniqueStrings(readable.textContent.split(/\n+/), 8),
-        links: readable.links,
-        estimatedTokens: estimateTokens(readable.title, summary, readable.textContent),
-        structure: {
-          headings: readable.headings,
-          readableLength: readable.length,
-          paragraphSampleCount: readable.paragraphSamples.length,
-          ...searchTextStructure(readable.textContent),
-        },
-        metadata: {
-          paragraphSamples: readable.paragraphSamples.slice(0, 4),
-          ...(readable.byline ? { byline: readable.byline } : {}),
-          ...(readable.siteName ? { siteName: readable.siteName } : {}),
-          extractionPath: 'readability',
-        },
-      };
-    }
   } catch (error) {
-    readabilityWarning = `Readability extraction failed; used lightweight HTML fallback: ${summarizeError(error)}`;
-    logger.debug('Knowledge extraction: readability extraction failed; using lightweight HTML extractor', {
-      error: summarizeError(error),
-    });
+    // A second parser can recover syntax failures. It cannot override a held reading.
+    if (error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof JudgmentInputError) throw error;
+    lightweight = true;
+    readabilityWarning = `DOM parsing failed; used lightweight HTML fallback: ${summarizeError(error)}`;
+    logger.debug('Knowledge extraction: DOM parsing failed; using lightweight HTML parser', { error: summarizeError(error) });
+    readable = await extractLightweightReadableHtml(html);
   }
-  const title = cleanText(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '')
-    || cleanText(html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] ?? '');
-  const headings = uniqueStrings(
-    Array.from(html.matchAll(/<h([1-3])[^>]*>([\s\S]*?)<\/h\1>/gi), (match) => stripHtml(match[2] ?? '')),
-    16,
-  );
-  const paragraphs = uniqueStrings(
-    Array.from(html.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi), (match) => stripHtml(match[1] ?? '')),
-    8,
-  );
-  const readable = stripHtml(html);
-  const summary = summarizeText([headings[0], paragraphs[0], readable].filter(Boolean).join(' '));
+  const extractorId = lightweight ? 'html' : 'html-readability';
+  const extractionPath = lightweight ? 'lightweight-html' : 'readability';
+  const warnings = readabilityWarning ? { warnings: [readabilityWarning] } : {};
+  if (!readable) {
+    return {
+      extractorId, format: 'html', summary: 'HTML extraction found no main content.',
+      sections: [], links: [], estimatedTokens: 1, structure: { readableLength: 0 },
+      metadata: { extractionPath, limitations: ['HTML extraction found no main content.'], ...warnings },
+    };
+  }
+  const summary = summarizeText([readable.excerpt, readable.paragraphSamples[0], readable.textContent].filter(Boolean).join(' '));
+  const excerpt = excerptText(readable.textContent);
   return {
-    extractorId: 'html',
-    format: 'html',
-    ...(title ? { title } : {}),
+    extractorId, format: 'html',
+    ...(readable.title ? { title: readable.title } : {}),
     ...(summary ? { summary } : {}),
-    ...(excerptText(readable) ? { excerpt: excerptText(readable) } : {}),
-    sections: headings.length > 0 ? headings : uniqueStrings(readable.split(/\n+/), 8),
-    links: extractLinksFromHtml(html),
-    estimatedTokens: estimateTokens(title, summary, readable),
-    structure: {
-      headings,
-      paragraphCount: paragraphs.length,
-      readableLength: readable.length,
-      ...searchTextStructure(readable),
-    },
+    ...(excerpt ? { excerpt } : {}),
+    sections: readable.headings.length > 0 ? readable.headings.slice(0, 16) : uniqueStrings(readable.textContent.split(/\n+/), 8),
+    links: readable.links,
+    estimatedTokens: estimateTokens(readable.title, summary, readable.textContent),
+    structure: { headings: readable.headings, readableLength: readable.length, paragraphSampleCount: readable.paragraphSamples.length, ...searchTextStructure(readable.textContent) },
     metadata: {
-      paragraphSamples: paragraphs.slice(0, 4),
-      extractionPath: 'lightweight-html',
-      ...(readabilityWarning ? { warnings: [readabilityWarning] } : {}),
+      paragraphSamples: readable.paragraphSamples.slice(0, 4),
+      ...(readable.byline ? { byline: readable.byline } : {}),
+      ...(readable.siteName ? { siteName: readable.siteName } : {}),
+      extractionPath, ...warnings,
     },
   };
 }

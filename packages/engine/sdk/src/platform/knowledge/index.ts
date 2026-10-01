@@ -9,13 +9,9 @@ export { createMemoryApi } from './knowledge-api.js';
 export { renderPacket } from './shared.js';
 export { extractKnowledgeArtifact } from './extractors.js';
 export {
-  KNOWLEDGE_BINARY_EXTENDED_RATIO_THRESHOLD,
-  KNOWLEDGE_BINARY_PUNCTUATION_RATIO_THRESHOLD,
-  KNOWLEDGE_BINARY_SAMPLE_CHARS,
-  KNOWLEDGE_BINARY_USEFUL_RATIO_THRESHOLD,
-  KNOWLEDGE_BINARY_WHITESPACE_RATIO_THRESHOLD,
   KNOWLEDGE_MAX_STRUCTURE_SEARCH_TEXT_CHARS,
-  KNOWLEDGE_MIN_BINARY_SAMPLE_CHARS,
+  KNOWLEDGE_EXTRACTION_SAMPLE_CHARS,
+  KnowledgeExtractionJudgmentHoldError,
   hasUsefulKnowledgeExtractionText,
   knowledgeExtractionNeedsRefresh,
   looksBinaryLikeText,
@@ -80,6 +76,11 @@ export { renderKnowledgeMap } from './map.js';
 export type { KnowledgeMapRenderOptions, KnowledgeMapRenderState } from './map.js';
 export {
   compareKnowledgePageSources,
+  createKnowledgePageSourceReader,
+  rankKnowledgePageSources,
+  readKnowledgeSourceAuthority,
+  KnowledgeSourceQualityHeldError,
+  isKnowledgeSourceQualityFailure,
   isUsefulKnowledgePageSource,
   isUsefulKnowledgePageSourceCandidate,
   knowledgePageSourceWeight,
@@ -97,12 +98,16 @@ export type {
 } from './extensions.js';
 export {
   KnowledgeSemanticService,
+  KnowledgeAnswerQualityHeldError,
   createWebKnowledgeGapRepairer,
   createProviderBackedKnowledgeSemanticLlm,
   runKnowledgeSemanticSelfImprovement,
 } from './semantic/index.js';
 export type {
   KnowledgeSemanticAnswer,
+  KnowledgeAnswerQuality,
+  AnswerQualityBoolean,
+  AnswerQualityHoldReason,
   KnowledgeSemanticAnswerInput,
   KnowledgeSemanticAnswerResult,
   KnowledgeSemanticEnrichmentResult,
@@ -238,6 +243,9 @@ export type {
 } from './knowledge-api.js';
 export { KnowledgeProjectionService } from './projections.js';
 export { KnowledgeStore } from './store.js';
+export type { KnowledgeGuardedNodeIssueWrites } from './store-node-issue-writes.js';
+export { createKnowledgeNodeOperatorMutation, KnowledgeNodeMutationHeldError } from './store-node-authority.js';
+export type { KnowledgeNodeMutationContext, KnowledgeNodeFieldCorrection } from './store-node-authority.js';
 export { KnowledgeService, buildCuratedKnowledgePromptSync } from './service.js';
 export type {
   KnowledgeBatchIngestResult,
@@ -290,7 +298,13 @@ export type {
   BrowserKnowledgeFamily,
   BrowserKnowledgeFilter,
   BrowserKnowledgeIngestOptions,
+  BrowserKnowledgeIngestOutcome,
+  BrowserKnowledgeIngestResult,
   BrowserKnowledgeKind,
   BrowserKnowledgeProfile,
   BrowserKnowledgeSourceKind,
 } from './browser-history/index.js';
+
+export type { KnowledgePreparedNodeWrites } from './store-node-activation.js';
+export type { KnowledgeNodeActivationOptions, NodeActivationReason } from './activation/types.js';
+export { KnowledgeNodeActivationHeldError } from './activation/types.js';

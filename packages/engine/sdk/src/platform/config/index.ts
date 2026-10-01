@@ -424,3 +424,6 @@ export type {
   CredentialStatusEntry,
   CredentialStatusOutcome,
 } from './credential-availability.js';
+
+export { createAtRestCipher, createDaemonCredentialStore } from './daemon-credential-store.js';
+export type { AtRestCipher, DaemonCredentialStore } from './daemon-credential-store.js';

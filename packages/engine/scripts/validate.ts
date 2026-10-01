@@ -18,6 +18,7 @@ function run(command: string, args: readonly string[], label?: string): void {
 run('bun', ['packages/engine/scripts/generate-api-docs.ts', '--check'], 'api-docs:check');
 run('bun', ['packages/engine/scripts/docs-completeness-check.ts'], 'docs:completeness');
 run('bun', ['run', 'error:check'], 'error:check');
+run('bun', ['run', 'products:check'], 'products:check');
 // Check credential classification in CI as well as the local pre-commit hook.
 // This source-only scan has no build dependency. It once ran only in the hook,
 // so a push that bypassed the hook reached CI with an unclassified credential

@@ -1,8 +1,19 @@
+import { createCompressedPdfBuffer } from './_helpers/homegraph-service-fixtures.js';
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+import { homeGraphRepairProfileValues } from './_helpers/repair-profile-fixture-readings.js';
+
+const qualityReadings = useKnowledgeAnswerReadings({ repairProfile: homeGraphRepairProfileValues });
+beforeEach(() => { qualityReadings.set({
+  activation: [['Display and picture specifications', 0.99],['Input and output ports', 0.99],['Smart TV platform and integrations', 0.99],['Network and wireless capabilities', 0.99],['Gaming and HDMI features', 0.99],['Audio capabilities', 0.99],['Tuner and broadcast support', 0.99],['LG webOS Smart TV', 0.99],['LG TV', 0.99],['Display and audio specifications', 0.99]],
+  quality: [['Amazon affiliate LG listing', 0.03], ['Pending LG candidate source', 0.03], ['LG 86NANO90UNA official specifications', 0.99]],
+  authorities: [['LG 86NANO90UNA official specifications', 'official-vendor']],
+}); });
+
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { deflateSync } from 'node:zlib';
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { ArtifactStore } from '../sdk/src/platform/artifacts/index.js';
 import {
   HomeGraphService,
@@ -12,6 +23,10 @@ import { extractKnowledgeArtifact } from '../sdk/src/platform/knowledge/extracto
 import { refreshDevicePagesForHomeGraphAsk } from '../sdk/src/platform/knowledge/home-graph/ask-page-refresh.js';
 import { HOME_GRAPH_PAGE_POLICY_VERSION } from '../sdk/src/platform/knowledge/home-graph/generated-pages.js';
 import type { HomeGraphAskResult } from '../sdk/src/platform/knowledge/home-graph/types.js';
+import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
+import { createSchema } from '../sdk/src/platform/knowledge/store-schema.js';
+import { writeKnowledgeNodeRow } from '../sdk/src/platform/knowledge/store-node-history.js';
+import type { KnowledgeNodeRecord } from '../sdk/src/platform/knowledge/types.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { trackDisposables } from './_helpers/disposables.ts';
 
@@ -77,7 +92,12 @@ describe('Home Graph repair and generated pages', () => {
       kind: 'document',
       mimeType: 'application/pdf',
       filename: 'LG-86NANO90UNA-manual.pdf',
-      stream: [createCompressedPdfBuffer('LG 86NANO90UNA TV features include Dolby Vision IQ, HDR10, HDMI eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control.')],
+      // A single 12pt line ran beyond the page edge and physically clipped at "Gam".
+      // Wrap the same complete sentence so extraction can retain every claim.
+      stream: [createCompressedPdfBuffer([
+        'LG 86NANO90UNA TV features include Dolby Vision IQ, HDR10,',
+        'HDMI eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control.',
+      ])],
       metadata,
     });
     const manual = await store.upsertSource({
@@ -238,7 +258,7 @@ describe('Home Graph repair and generated pages', () => {
     expect(passport.markdown).toContain('Display and picture specifications');
     expect(passport.markdown).toContain('Dolby Vision');
     expect(passport.markdown).toContain('Audio capabilities');
-    expect(passport.markdown).toContain('Dolby audio formats');
+    expect(passport.markdown).toContain('DTV Audio Supported Codec: MPEG and Dolby Digital.');
     expect(passport.markdown).not.toContain('SpeakerCompare');
     expect(passport.markdown).not.toContain('equal power mode');
     expect(passport.markdown).not.toContain('Do not place the TV');
@@ -251,7 +271,7 @@ describe('Home Graph repair and generated pages', () => {
   });
 
   test('generated device pages render canonical facts without raw duplicated evidence lines', async () => {
-    const { service, store } = createHomeGraphService();
+    let { service, store, artifactStore } = createHomeGraphService();
     await service.syncSnapshot({
       installationId: 'house-1',
       devices: [{ id: 'lg-tv', name: 'LG webOS Smart TV', manufacturer: 'LG', model: '86NANO90UNA' }],
@@ -280,6 +300,8 @@ describe('Home Graph repair and generated pages', () => {
       relation: 'source_for',
       metadata: { knowledgeSpaceId: spaceId },
     });
+    // Existing pre-gate rows deliberately include unsupported fragments; this test checks rendering defenses.
+    const legacyFacts: KnowledgeNodeRecord[] = [];
     for (const entry of [
       {
         slug: 'display-picture-specs',
@@ -340,7 +362,8 @@ describe('Home Graph repair and generated pages', () => {
         value: '2 x 10W speakers',
       },
     ] as const) {
-      const fact = await store.upsertNode({
+      const fact: KnowledgeNodeRecord = {
+        id: `legacy-${entry.slug}`, createdAt: 1, updatedAt: 1,
         kind: 'fact',
         slug: entry.slug,
         title: entry.title,
@@ -362,7 +385,8 @@ describe('Home Graph repair and generated pages', () => {
           extractor: 'repair-promotion',
           sourceAuthority: 'official-vendor',
         },
-      });
+      };
+      legacyFacts.push(fact);
       await store.upsertEdge({
         fromKind: 'source',
         fromId: source.id,
@@ -381,6 +405,12 @@ describe('Home Graph repair and generated pages', () => {
       });
     }
 
+    service.dispose();
+    const sqlite = new SQLiteStore(store.storagePath); await sqlite.init(createSchema);
+    for (const record of legacyFacts) writeKnowledgeNodeRow(sqlite, record);
+    await sqlite.save();
+    store = new KnowledgeStore({ dbPath: store.storagePath }); await store.init();
+    service = disposables.add(new HomeGraphService(store, artifactStore));
     const page = await service.refreshDevicePassport({ installationId: 'house-1', deviceId: 'lg-tv' });
 
     expect(page.markdown).toContain('Display and picture specifications: 4K UHD resolution, HDR10, Dolby Vision');
@@ -419,6 +449,8 @@ describe('Home Graph repair and generated pages', () => {
         sourceDiscovery: { trustReason: 'official-vendor-domain, model:86NANO90UNA', sourceRank: 1 },
       },
     });
+    await store.upsertExtraction({ sourceId: source.id, extractorId: 'synthetic-reference', format: 'text',
+      excerpt: 'LG 86NANO90UNA has 2 x 10W speakers.', metadata: { knowledgeSpaceId: spaceId } });
     const fact = await store.upsertNode({
       kind: 'fact',
       slug: 'lg-speaker-spec',
@@ -560,6 +592,9 @@ describe('Home Graph repair and generated pages', () => {
       sourceUri: 'https://www.amazon.com/example-lg-86nano90una',
       canonicalUri: 'https://www.amazon.com/example-lg-86nano90una',
     };
+    await store.upsertExtraction({ sourceId: secondarySource.id, extractorId: 'synthetic-reference', format: 'text',
+      excerpt: 'LG 86NANO90UNA has a 4K UHD NanoCell display, HDR10, Dolby Vision, 120 Hz refresh rate, and 2 x 10W speakers.',
+      metadata: { knowledgeSpaceId: spaceId } });
     const storedFact = await store.upsertNode({
       kind: 'fact',
       slug: 'lg-display-audio-specs',
@@ -773,45 +808,4 @@ function createHomeGraphService(): {
   const artifactStore = new ArtifactStore({ rootDir: join(root, 'artifacts') });
   const service = disposables.add(new HomeGraphService(store, artifactStore));
   return { root, store, artifactStore, service };
-}
-
-function createCompressedPdfBuffer(text: string): Buffer {
-  const content = `BT /F1 12 Tf 72 720 Td (${escapePdfText(text)}) Tj ET`;
-  const compressed = deflateSync(Buffer.from(content, 'utf-8'));
-  const chunks: Buffer[] = [];
-  const offsets: number[] = [];
-  let size = 0;
-  const add = (chunk: string | Buffer): void => {
-    const buffer = typeof chunk === 'string' ? Buffer.from(chunk, 'binary') : chunk;
-    chunks.push(buffer);
-    size += buffer.length;
-  };
-  const object = (id: number, body: string | Buffer): void => {
-    offsets[id] = size;
-    add(`${id} 0 obj\n`);
-    add(body);
-    add('\nendobj\n');
-  };
-
-  add('%PDF-1.4\n');
-  object(1, '<< /Type /Catalog /Pages 2 0 R >>');
-  object(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
-  object(3, '<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>');
-  object(4, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
-  object(5, Buffer.concat([
-    Buffer.from(`<< /Length ${compressed.length} /Filter /FlateDecode >>\nstream\n`, 'binary'),
-    compressed,
-    Buffer.from('\nendstream', 'binary'),
-  ]));
-  const xrefOffset = size;
-  add('xref\n0 6\n0000000000 65535 f \n');
-  for (let id = 1; id <= 5; id += 1) {
-    add(`${String(offsets[id] ?? 0).padStart(10, '0')} 00000 n \n`);
-  }
-  add(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`);
-  return Buffer.concat(chunks);
-}
-
-function escapePdfText(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
 }

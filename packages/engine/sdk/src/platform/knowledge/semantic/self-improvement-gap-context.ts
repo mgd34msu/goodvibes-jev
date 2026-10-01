@@ -140,12 +140,15 @@ export async function linkRepairSources(
   sourceIds: readonly string[],
   query: string,
   objectProfiles: readonly KnowledgeObjectProfilePolicy[],
+  shouldStop: () => boolean = () => false,
 ): Promise<number> {
   let linked = 0;
   const linkedObjectIds = repairSubjectIdsForGap(store, spaceId, gap, objectProfiles);
   for (const sourceId of sourceIds) {
+    if (shouldStop()) break;
     if (!store.getSource(sourceId)) continue;
     await store.batch(async () => {
+      if (shouldStop()) return;
       await store.upsertEdge({
         fromKind: 'source',
         fromId: sourceId,
@@ -159,6 +162,7 @@ export async function linkRepairSources(
         }),
       });
       for (const nodeId of linkedObjectIds) {
+        if (shouldStop()) return;
         await store.upsertEdge({
           fromKind: 'source',
           fromId: sourceId,

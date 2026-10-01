@@ -1,0 +1,30 @@
+{
+  "name": "@goodvibes-jev/daemon",
+  "version": "1.28.25",
+  "private": true,
+  "type": "module",
+  "description": "Partial daemon migration: CLI and configuration contracts; full runtime composition is pending.",
+  "license": "MIT",
+  "engines": {
+    "bun": "1.3.14",
+    "node": ">=22.0.0"
+  },
+  "exports": {
+    "./cli": {
+      "bun": "./src/cli/index.ts",
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
+    }
+  },
+  "scripts": {
+    "build": "bunx tsc -p tsconfig.build.json",
+    "typecheck": "bunx tsc --noEmit -p tsconfig.json",
+    "test": "bun ../../packages/engine/scripts/test.ts --cwd ../../products/daemon src/test"
+  },
+  "dependencies": {
+    "@goodvibes-jev/engine": "workspace:*"
+  },
+  "devDependencies": {
+    "@goodvibes-jev/judgment": "workspace:*"
+  }
+}

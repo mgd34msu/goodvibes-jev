@@ -1,3 +1,7 @@
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+
+useKnowledgeAnswerReadings();
+
 import { describe, expect, test } from 'bun:test';
 import { HomeGraphRoutes } from '../sdk/src/platform/daemon/http/home-graph-routes.js';
 import {

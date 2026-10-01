@@ -120,10 +120,29 @@ export interface BottomBarStyle {
 }
 
 // @public
+export function callDaemonRoute<T>(target: RemoteDaemonTarget, path: string, init?: {
+    method: 'GET' | 'POST';
+    body?: unknown;
+    envelope?: DaemonReplyEnvelope;
+}, fetchImpl?: DaemonFetch): Promise<DaemonVerbOutcome<T>>;
+
+// @public
 export function callDaemonVerb<T>(target: RemoteDaemonTarget, path: string, init?: {
     method: 'GET' | 'POST';
     body?: unknown;
 }, fetchImpl?: DaemonFetch): Promise<DaemonVerbOutcome<T>>;
+
+// @public
+export function callDaemonWsVerb<T>(target: RemoteDaemonTarget, methodId: string, options?: CallDaemonWsVerbOptions): Promise<DaemonVerbOutcome<T>>;
+
+// @public (undocumented)
+export interface CallDaemonWsVerbOptions {
+    // (undocumented)
+    readonly body?: unknown;
+    readonly socketFactory?: DaemonWebSocketFactory | undefined;
+    // (undocumented)
+    readonly timeoutMs?: number | undefined;
+}
 
 // @public
 export function catalogCommandSpec<TCommand extends string, TField extends string>(catalog: Pick<CliCatalog<TCommand, TField, unknown>, 'commands'>, command: TCommand): CommandSpec<TCommand, TField>;
@@ -272,7 +291,13 @@ export function createSplitPaneLayout(totalRows: number, ratio: number, options?
 export function createTerminalLifecycle(deps: TerminalLifecycleDeps): TerminalLifecycle;
 
 // @public
+export const DAEMON_WS_TIMEOUT_MS = 15000;
+
+// @public
 export type DaemonFetch = (input: string, init?: RequestInit) => Promise<Response>;
+
+// @public
+export type DaemonReplyEnvelope = 'wrapped' | 'raw';
 
 // @public
 export type DaemonVerbOutcome<T> = {
@@ -283,6 +308,29 @@ export type DaemonVerbOutcome<T> = {
     readonly error: string;
     readonly fix: string;
 };
+
+// @public
+export interface DaemonWebSocket {
+    // (undocumented)
+    close(): void;
+    // (undocumented)
+    onclose: ((event: unknown) => void) | null;
+    // (undocumented)
+    onerror: ((event: unknown) => void) | null;
+    // (undocumented)
+    onmessage: ((event: {
+        data: unknown;
+    }) => void) | null;
+    // (undocumented)
+    onopen: ((event: unknown) => void) | null;
+    // (undocumented)
+    send(data: string): void;
+}
+
+// @public (undocumented)
+export type DaemonWebSocketFactory = (url: string, init: {
+    readonly headers: Readonly<Record<string, string>>;
+}) => DaemonWebSocket;
 
 // @public
 export function describeAge(at: number, now: number): string;
@@ -852,6 +900,9 @@ export interface ProcessRegistryDeps {
         readonly scheduleManager: Pick<ScheduleManager, 'list' | 'remove' | 'disable' | 'enable'>;
     };
 }
+
+// @public
+export function rawReplyReader(target: RemoteDaemonTarget, fetchImpl?: DaemonFetch): DaemonFetch;
 
 // @public (undocumented)
 export interface Rect {

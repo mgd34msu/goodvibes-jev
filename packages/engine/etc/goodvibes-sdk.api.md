@@ -3291,6 +3291,7 @@ export interface OperatorMethodInputMap {
     // (undocumented)
     "approvals.approve": {
         approvalId: string;
+        disposition?: "approved";
         note?: string;
         remember?: boolean;
         selectedHunks?: readonly number[];
@@ -3315,6 +3316,7 @@ export interface OperatorMethodInputMap {
     // (undocumented)
     "approvals.deny": {
         approvalId: string;
+        disposition?: "amended" | "denied";
         note?: string;
         remember?: boolean;
         rememberTier?: "command-class" | "exact" | "path" | "session" | "tool";
@@ -7756,6 +7758,7 @@ export interface OperatorMethodOutputMap {
                         readonly [key: string]: JsonValue;
                     }) | boolean | null | number | readonly JsonValue[] | string;
                 });
+                disposition?: "amended" | "approved" | "cancelled" | "denied" | "expired" | "remembered";
             };
             fixSessionId?: string;
             fixSessionError?: string;
@@ -7845,6 +7848,7 @@ export interface OperatorMethodOutputMap {
                         readonly [key: string]: JsonValue;
                     }) | boolean | null | number | readonly JsonValue[] | string;
                 });
+                disposition?: "amended" | "approved" | "cancelled" | "denied" | "expired" | "remembered";
             };
             fixSessionId?: string;
             fixSessionError?: string;
@@ -7934,6 +7938,7 @@ export interface OperatorMethodOutputMap {
                         readonly [key: string]: JsonValue;
                     }) | boolean | null | number | readonly JsonValue[] | string;
                 });
+                disposition?: "amended" | "approved" | "cancelled" | "denied" | "expired" | "remembered";
             };
             fixSessionId?: string;
             fixSessionError?: string;
@@ -8023,6 +8028,7 @@ export interface OperatorMethodOutputMap {
                         readonly [key: string]: JsonValue;
                     }) | boolean | null | number | readonly JsonValue[] | string;
                 });
+                disposition?: "amended" | "approved" | "cancelled" | "denied" | "expired" | "remembered";
             };
             fixSessionId?: string;
             fixSessionError?: string;
@@ -8132,6 +8138,7 @@ export interface OperatorMethodOutputMap {
                         readonly [key: string]: JsonValue;
                     }) | boolean | null | number | readonly JsonValue[] | string;
                 });
+                disposition?: "amended" | "approved" | "cancelled" | "denied" | "expired" | "remembered";
             };
             fixSessionId?: string;
             fixSessionError?: string;
@@ -8217,6 +8224,7 @@ export interface OperatorMethodOutputMap {
                         readonly [key: string]: JsonValue;
                     }) | boolean | null | number | readonly JsonValue[] | string;
                 });
+                disposition?: "amended" | "approved" | "cancelled" | "denied" | "expired" | "remembered";
             };
             fixSessionId?: string;
             fixSessionError?: string;
@@ -17354,6 +17362,41 @@ export interface OperatorMethodOutputMap {
     "knowledge.ingest.browserHistory": {
         imported: number;
         failed: number;
+        captured: number;
+        capturedSources: readonly (({
+            id: string;
+            connectorId: string;
+            sourceType: "bookmark" | "bookmark-list" | "dataset" | "document" | "history" | "image" | "manual" | "other" | "repo" | "url";
+            title?: string;
+            sourceUri?: string;
+            canonicalUri?: string;
+            summary?: string;
+            description?: string;
+            tags: readonly string[];
+            folderPath?: string;
+            status: string;
+            artifactId?: string;
+            contentHash?: string;
+            lastCrawledAt?: number;
+            crawlError?: string;
+            sessionId?: string;
+            metadata: ({} & {
+                readonly [key: string]: ({} & {
+                    readonly [key: string]: JsonValue;
+                }) | boolean | null | number | readonly JsonValue[] | string;
+            });
+            createdAt: number;
+            updatedAt: number;
+        } & {
+            readonly [key: string]: unknown;
+        }))[];
+        outcomes: readonly ({
+            canonicalUri: string;
+            sourceId?: string;
+            capture: "completed" | "failed" | "partial";
+            compilation: "completed" | "failed" | "held" | "not-attempted";
+            error?: string;
+        })[];
         sources: readonly (({
             id: string;
             connectorId: string;
@@ -27970,6 +28013,8 @@ export interface PlannerDecision {
     // (undocumented)
     readonly candidates: readonly StrategyCandidate[];
     // (undocumented)
+    readonly decisionId?: string | undefined;
+    // (undocumented)
     readonly inputs: {
         readonly riskScore: number;
         readonly latencyBudgetMs: number;
@@ -27978,6 +28023,7 @@ export interface PlannerDecision {
         readonly backgroundEligible: boolean;
         readonly taskDescription?: string | undefined;
     };
+    readonly outcome?: 'act' | 'confirm' | 'escalate' | undefined;
     // (undocumented)
     readonly overrideActive: boolean;
     // (undocumented)

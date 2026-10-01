@@ -1,68 +1,50 @@
 import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../types.js';
-import { sourceAuthorityBoostForAnswer } from '../semantic/answer-source-ranking.js';
 import { isUsefulKnowledgePageFact } from '../semantic/fact-quality.js';
 import {
   compareKnowledgePageSources,
+  createKnowledgePageSourceReader,
+  rankKnowledgePageSources,
   isUsefulKnowledgePageSource,
   isUsefulKnowledgePageSourceCandidate,
   knowledgePageSourceWeight,
   type KnowledgePageSourceQualityPolicy,
 } from '../source-quality.js';
-import { isGeneratedPageSource, mergeSourceStatus, readRecord } from './helpers.js';
+import { isGeneratedPageSource, mergeSourceStatus } from './helpers.js';
 
 const HOME_GRAPH_PAGE_SOURCE_POLICY: KnowledgePageSourceQualityPolicy = {
   isGeneratedSource: isGeneratedPageSource,
-  authorityBoost: sourceAuthorityBoostForAnswer,
-  isLowValueSource: isLowValueHomeGraphPageSource,
+  purpose: 'A grounded device/home-graph reference, including useful product documentation rather than a generic shopping or comparison listing',
 };
 
 export function isUsefulHomeGraphPageFact(fact: KnowledgeNodeRecord): boolean {
   return isUsefulKnowledgePageFact(fact, { rejectRemoteAccessoryDetails: true });
 }
 
-export function isUsefulHomeGraphPageSource(source: KnowledgeSourceRecord): boolean {
+export function isUsefulHomeGraphPageSource(source: KnowledgeSourceRecord): Promise<boolean> {
   return isUsefulKnowledgePageSource(source, HOME_GRAPH_PAGE_SOURCE_POLICY);
 }
 
 export function isUsefulHomeGraphPageSourceCandidate(
   source: KnowledgeSourceRecord,
   existing?: KnowledgeSourceRecord,
-): boolean {
+): Promise<boolean> {
   const status = mergeSourceStatus(source.status, existing?.status);
   return isUsefulKnowledgePageSourceCandidate(source, existing, status, HOME_GRAPH_PAGE_SOURCE_POLICY);
 }
 
-export function compareHomeGraphPageSources(left: KnowledgeSourceRecord, right: KnowledgeSourceRecord): number {
+export function compareHomeGraphPageSources(left: KnowledgeSourceRecord, right: KnowledgeSourceRecord): Promise<number> {
   return compareKnowledgePageSources(left, right, HOME_GRAPH_PAGE_SOURCE_POLICY);
 }
 
-export function homeGraphPageSourceWeight(source: KnowledgeSourceRecord): number {
+export function homeGraphPageSourceWeight(source: KnowledgeSourceRecord): Promise<number> {
   return knowledgePageSourceWeight(source, HOME_GRAPH_PAGE_SOURCE_POLICY);
 }
 
-function isLowValueHomeGraphPageSource(source: KnowledgeSourceRecord, existing?: KnowledgeSourceRecord): boolean {
-  const discovery = readRecord(source.metadata.sourceDiscovery);
-  const existingDiscovery = readRecord(existing?.metadata.sourceDiscovery);
-  const text = [
-    source.title,
-    existing?.title,
-    source.summary,
-    existing?.summary,
-    source.description,
-    existing?.description,
-    source.url,
-    existing?.url,
-    source.sourceUri,
-    existing?.sourceUri,
-    source.canonicalUri,
-    existing?.canonicalUri,
-    typeof discovery.trustReason === 'string' ? discovery.trustReason : undefined,
-    typeof existingDiscovery.trustReason === 'string' ? existingDiscovery.trustReason : undefined,
-    typeof discovery.sourceDomain === 'string' ? discovery.sourceDomain : undefined,
-    typeof existingDiscovery.sourceDomain === 'string' ? existingDiscovery.sourceDomain : undefined,
-  ].filter(Boolean).join(' ').toLowerCase();
-  if (/\b(?:shopping|shop now|affiliate|associate program|buy now|add to cart|price comparison|marketplace|retailer|store listing|seller listing|sponsored listing)\b/.test(text)) return true;
-  if (/(^|\.)amazon\.[a-z.]+\b|(^|\.)ebay\.[a-z.]+\b|(^|\.)walmart\.[a-z.]+\b|(^|\.)bestbuy\.[a-z.]+\b|(^|\.)target\.[a-z.]+\b/.test(text)) return true;
-  if (/\b(?:speaker\s*compare|manuals?\.[a-z]{2,}|device\s*ratings?|top\s+\d+\s+devices?)\b/.test(text)) return true;
-  return false;
+export function createHomeGraphPageSourceReader(signal?: AbortSignal) {
+  return createKnowledgePageSourceReader({ ...HOME_GRAPH_PAGE_SOURCE_POLICY, ...(signal ? { signal } : {}) });
 }
+export function rankHomeGraphPageSources(sources: readonly KnowledgeSourceRecord[]): Promise<KnowledgeSourceRecord[]> {
+  return rankKnowledgePageSources(sources, HOME_GRAPH_PAGE_SOURCE_POLICY);
+}
+
+export type HomeGraphPageSourceReader = ReturnType<typeof createHomeGraphPageSourceReader>;

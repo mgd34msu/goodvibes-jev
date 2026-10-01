@@ -1,9 +1,8 @@
-import { join } from 'node:path';
 import { AgentManager } from '../tools/agent/index.js';
 import { resolveHostBinding } from './host-resolver.js';
 import { composeHostedSessionsForFacade } from './hosted-sessions-composition.js';
-import { WorkProposalStore } from '../agents/work-proposal-store.js';
-import { readConversationGateConfig, type ConversationGateConfigReader } from '../agents/conversation-gate.js';
+import { createFacadeWorkProposalStore } from './facade-work-proposal-store.js';
+import type { ConversationGateConfigReader } from '../agents/conversation-gate.js';
 import { continuationContractOptions, decideContinuationEscalation } from '../agents/conversation-continuation.js';
 import { gateSurfaceSpawn, type SurfaceIngressOrigin } from './surface-conversation-gate.js';
 import { logger } from '../utils/logger.js';
@@ -571,21 +570,10 @@ export function createDaemonFacadeCollaborators(
   // One alarm, every inbound path, see createChannelIngressAlarm.
   const ingressAlarm = createChannelIngressAlarm(runtime.routeBindings, surfaceDeliveryHelper);
   runtime.channelPlugins.setIngressAlarm(ingressAlarm);
-  // Pending work proposals for the conversation-first spawn gate. Persisted
-  // beside the other control-plane state so a proposal survives a daemon
-  // restart; the store validates and reaps on load, so a stale one is not
-  // answerable after it expires.
-  const workProposals = new WorkProposalStore({
-    storePath: join(runtime.configManager.getControlPlaneConfigDir(), 'work-proposals.json'),
-    maxPending: readConversationGateConfig(runtime.configManager).maxPendingProposals,
-  });
-  void workProposals.init().catch((error: unknown) => {
-    logger.warn('WorkProposalStore init failed; the conversation gate will re-propose', {
-      error: summarizeError(error),
-    });
-  });
+  const workProposals = createFacadeWorkProposalStore(runtime.configManager);
 
   const surfaceActionHelper = new DaemonSurfaceActionHelper({
+    paymentReplies: options.paymentReplies,
     ingressAlarm,
     serviceRegistry: runtime.serviceRegistry,
     secretsManager: runtime.runtimeServices.secretsManager,

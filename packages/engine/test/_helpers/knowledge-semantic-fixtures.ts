@@ -60,8 +60,11 @@ export class FakeKnowledgeLlm implements KnowledgeSemanticLlm {
     };
   }
 
-  async completeText(): Promise<string | null> {
-    return null;
+  async completeText(input: { readonly purpose: string; readonly prompt?: string; readonly signal?: AbortSignal | undefined }): Promise<string | null> {
+    // Synthetic provider fixture: preserve the existing authored answer, with
+    // no self-confidence or gap metadata crossing the plain generation port.
+    const result = await this.completeJson(input) as { answer?: string } | null;
+    return result?.answer ?? null;
   }
 }
 
@@ -82,8 +85,11 @@ export class GapRepairAnswerLlm implements KnowledgeSemanticLlm {
     };
   }
 
-  async completeText(): Promise<string | null> {
-    return null;
+  async completeText(input: { readonly purpose: string; readonly prompt?: string; readonly signal?: AbortSignal | undefined }): Promise<string | null> {
+    // Synthetic provider fixture: preserve the existing authored answer, with
+    // no self-confidence or gap metadata crossing the plain generation port.
+    const result = await this.completeJson(input) as { answer?: string } | null;
+    return result?.answer ?? null;
   }
 }
 
@@ -100,8 +106,11 @@ export class WeakFeatureAnswerLlm implements KnowledgeSemanticLlm {
     };
   }
 
-  async completeText(): Promise<string | null> {
-    return null;
+  async completeText(input: { readonly purpose: string; readonly prompt?: string; readonly signal?: AbortSignal | undefined }): Promise<string | null> {
+    // Synthetic provider fixture: preserve the existing authored answer, with
+    // no self-confidence or gap metadata crossing the plain generation port.
+    const result = await this.completeJson(input) as { answer?: string } | null;
+    return result?.answer ?? null;
   }
 }
 
@@ -148,8 +157,11 @@ export class ForegroundRepairLlm implements KnowledgeSemanticLlm {
     return null;
   }
 
-  async completeText(): Promise<string | null> {
-    return null;
+  async completeText(input: { readonly purpose: string; readonly prompt?: string; readonly signal?: AbortSignal | undefined }): Promise<string | null> {
+    // Synthetic provider fixture: preserve the existing authored answer, with
+    // no self-confidence or gap metadata crossing the plain generation port.
+    const result = await this.completeJson(input) as { answer?: string } | null;
+    return result?.answer ?? null;
   }
 }
 
@@ -199,8 +211,11 @@ export class OrderedHomeGraphAskLlm implements KnowledgeSemanticLlm {
     };
   }
 
-  async completeText(): Promise<string | null> {
-    return null;
+  async completeText(input: { readonly purpose: string; readonly prompt?: string; readonly signal?: AbortSignal | undefined }): Promise<string | null> {
+    // Synthetic provider fixture: preserve the existing authored answer, with
+    // no self-confidence or gap metadata crossing the plain generation port.
+    const result = await this.completeJson(input) as { answer?: string } | null;
+    return result?.answer ?? null;
   }
 }
 
@@ -228,8 +243,11 @@ export class BoilerplateAnswerLlm implements KnowledgeSemanticLlm {
     };
   }
 
-  async completeText(): Promise<string | null> {
-    return null;
+  async completeText(input: { readonly purpose: string; readonly prompt?: string; readonly signal?: AbortSignal | undefined }): Promise<string | null> {
+    // Synthetic provider fixture: preserve the existing authored answer, with
+    // no self-confidence or gap metadata crossing the plain generation port.
+    const result = await this.completeJson(input) as { answer?: string } | null;
+    return result?.answer ?? null;
   }
 }
 
@@ -255,8 +273,11 @@ export class SlowKnowledgeLlm implements KnowledgeSemanticLlm {
     };
   }
 
-  async completeText(): Promise<string | null> {
-    return null;
+  async completeText(input: { readonly purpose: string; readonly prompt?: string; readonly signal?: AbortSignal | undefined }): Promise<string | null> {
+    // Synthetic provider fixture: preserve the existing authored answer, with
+    // no self-confidence or gap metadata crossing the plain generation port.
+    const result = await this.completeJson(input) as { answer?: string } | null;
+    return result?.answer ?? null;
   }
 }
 

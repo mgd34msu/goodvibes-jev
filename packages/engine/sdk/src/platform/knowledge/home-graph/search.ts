@@ -1,3 +1,4 @@
+import { assertJudgmentInput } from '../../gate/judgment-input.js';
 import type { KnowledgeStore } from '../store.js';
 import type {
   KnowledgeEdgeRecord,
@@ -5,7 +6,7 @@ import type {
   KnowledgeNodeRecord,
   KnowledgeSourceRecord,
 } from '../types.js';
-import { knowledgeExtractionNeedsRefresh } from '../extraction-policy.js';
+import { assertKnowledgeExtractionInput, knowledgeExtractionNeedsRefresh } from '../extraction-policy.js';
 import { belongsToSpace, edgeIsActive, isGeneratedPageSource, readRecord } from './helpers.js';
 import { isUnusableHomeGraphExtractionText } from './extraction-quality.js';
 import { buildSourceLinkIndex } from './source-links.js';
@@ -155,7 +156,7 @@ export interface HomeGraphSearchState {
 export function readHomeGraphSearchState(store: KnowledgeStore, spaceId: string): HomeGraphSearchState {
   const sources = store.listSourcesInSpace(spaceId)
     .filter((source) => source.status !== 'stale' && !isGeneratedPageSource(source));
-  const nodes = store.listNodesInSpace(spaceId).filter((node) => node.status !== 'stale');
+  const nodes = store.listNodesInSpace(spaceId).filter((node) => node.status === 'active');
   const sourceIds = new Set(sources.map((source) => source.id));
   const nodeIds = new Set(nodes.map((node) => node.id));
   const edges = store.listEdges().filter((edge) => (
@@ -175,14 +176,15 @@ export function readHomeGraphSearchState(store: KnowledgeStore, spaceId: string)
   return { spaceId, sources, nodes, edges, extractionBySourceId };
 }
 
-export function scoreHomeGraphResults(
+export async function scoreHomeGraphResults(
   query: string,
   sources: readonly KnowledgeSourceRecord[],
   nodes: readonly KnowledgeNodeRecord[],
   edges: readonly KnowledgeEdgeRecord[],
   extractionBySourceId: (sourceId: string) => KnowledgeExtractionRecord | null | undefined,
   limit: number,
-): HomeGraphSearchResult[] {
+): Promise<HomeGraphSearchResult[]> {
+  assertExtractionInputs(sources, extractionBySourceId);
   const tokens = tokenizeQuery(query);
   if (tokens.length === 0) return [];
   const expandedTokens = expandTokens(tokens);
@@ -196,18 +198,18 @@ export function scoreHomeGraphResults(
   const objectScopedQuery = sourceAnchors.length > 0;
   const sourceEvidenceQuery = queryNeedsSourceEvidence(expandedTokens);
   const integrationQuery = queryMentionsIntegration(tokens);
-  const sourceResults: HomeGraphSearchResult[] = sources.map((source) => {
+  const sourceResults: HomeGraphSearchResult[] = await Promise.all(sources.map(async (source) => {
     const extraction = extractionBySourceId(source.id);
     if (isPendingDocumentationCandidate(source, extraction)) {
-      return sourceResult(source, extraction, 0);
+      return await sourceResult(source, extraction, 0);
     }
     if (sourceEvidenceQuery && !integrationQuery && isHomeAssistantIntegrationSource(source)) {
-      return sourceResult(source, extraction, 0);
+      return await sourceResult(source, extraction, 0);
     }
     const linkedNodeIds = sourceLinks.get(source.id) ?? new Set<string>();
     const linkedToAnchor = useAnchorScope && intersects(linkedNodeIds, anchorIds);
     const anchorIdentityScore = objectScopedQuery
-      ? sourceAnchorIdentityScore(anchorIdentityTokens, source, extraction)
+      ? await sourceAnchorIdentityScore(anchorIdentityTokens, source, extraction)
       : 0;
     const identityScore = scoreFields(tokens, [
       source.title,
@@ -221,7 +223,7 @@ export function scoreHomeGraphResults(
       extraction?.title,
       extraction?.summary,
       extraction?.excerpt,
-      readSearchText(extraction),
+      await readSearchText(extraction),
       ...limitedSections(extraction),
     ]);
     const baseScore = identityScore + contentScore;
@@ -233,8 +235,8 @@ export function scoreHomeGraphResults(
     const score = baseScore > 0 || linkBoost > 0 || inferredAnchorBoost > 0
       ? baseScore + linkBoost + inferredAnchorBoost + manualBoost + indexedBoost + extractionBoost
       : 0;
-    return sourceResult(source, extraction, score, selectRelevantExcerpt(expandedTokens, source, extraction));
-  });
+    return await sourceResult(source, extraction, score, await selectRelevantExcerpt(expandedTokens, source, extraction));
+  }));
   const nodeResults: HomeGraphSearchResult[] = nodes.map((node) => {
     const baseScore = scoreFields(tokens, nodeIdentityFields(node));
     const anchorBoost = anchorIds.has(node.id) ? 40 + nodeKindBoost(node.kind) : 0;
@@ -252,30 +254,31 @@ export function scoreHomeGraphResults(
     .filter((entry) => entry.score > 0)
     .sort(compareHomeGraphResults);
   const anchoredSourceResults = useAnchorScope
-    ? results.filter((result) => {
-        if (!result.source) return false;
-        return intersects(sourceLinks.get(result.source.id) ?? new Set<string>(), anchorIds)
-          || sourceAnchorIdentityScore(anchorIdentityTokens, result.source, extractionBySourceId(result.source.id)) > 0;
-      })
+    ? (await Promise.all(results.map(async (result) => {
+        if (!result.source) return undefined;
+        return (intersects(sourceLinks.get(result.source.id) ?? new Set<string>(), anchorIds)
+          || await sourceAnchorIdentityScore(anchorIdentityTokens, result.source, extractionBySourceId(result.source.id)) > 0) ? result : undefined;
+      }))).filter((result): result is HomeGraphSearchResult => result !== undefined)
     : [];
   if (anchoredSourceResults.length > 0) {
     results = anchoredSourceResults.sort(compareHomeGraphResults);
   }
   if (sourceEvidenceQuery) {
-    results = pruneWeakSourceEvidence(results, tokens, sourceLinks, anchorIds, anchorIdentityTokens, objectScopedQuery, extractionBySourceId);
+    results = await pruneWeakSourceEvidence(results, tokens, sourceLinks, anchorIds, anchorIdentityTokens, objectScopedQuery, extractionBySourceId);
   }
   const strongResults = pruneWeakTokenCoverage(results, tokens);
   return strongResults.slice(0, Math.max(1, limit));
 }
 
-export function selectHomeGraphExtractionRepairCandidates(
+export async function selectHomeGraphExtractionRepairCandidates(
   query: string,
   sources: readonly KnowledgeSourceRecord[],
   nodes: readonly KnowledgeNodeRecord[],
   edges: readonly KnowledgeEdgeRecord[],
   extractionBySourceId: (sourceId: string) => KnowledgeExtractionRecord | null | undefined,
   limit: number,
-): KnowledgeSourceRecord[] {
+): Promise<KnowledgeSourceRecord[]> {
+  assertExtractionInputs(sources, extractionBySourceId);
   const tokens = tokenizeQuery(query);
   if (tokens.length === 0) return [];
   const anchors = selectAnchorNodes(tokens, nodes);
@@ -283,13 +286,13 @@ export function selectHomeGraphExtractionRepairCandidates(
   const anchorIds = new Set(sourceAnchors.map((anchor) => anchor.id));
   const anchorIdentityTokens = collectAnchorIdentityTokens(sourceAnchors);
   const sourceLinks = buildSourceLinkIndex(edges, nodes);
-  return sources
-    .map((source) => {
-      if (!source.artifactId || !homeGraphExtractionNeedsRepair(extractionBySourceId(source.id))) return { source, score: 0 };
+  return (await Promise.all(sources
+    .map(async (source) => {
+      if (!source.artifactId || !(await homeGraphExtractionNeedsRepair(extractionBySourceId(source.id)))) return { source, score: 0 };
       const linkedNodeIds = sourceLinks.get(source.id) ?? new Set<string>();
       const linkedToAnchor = sourceAnchors.length > 0 && intersects(linkedNodeIds, anchorIds);
       const anchorIdentityScore = sourceAnchors.length > 0
-        ? sourceAnchorIdentityScore(anchorIdentityTokens, source, extractionBySourceId(source.id))
+        ? await sourceAnchorIdentityScore(anchorIdentityTokens, source, extractionBySourceId(source.id))
         : 0;
       const identityScore = scoreFields(tokens, [
         source.title,
@@ -306,25 +309,25 @@ export function selectHomeGraphExtractionRepairCandidates(
           ? identityScore + anchorIdentityScore + sourceKindBoost
           : 0;
       return { source, score };
-    })
+    })))
     .filter((entry) => entry.score > 0)
     .sort((left, right) => right.score - left.score || left.source.id.localeCompare(right.source.id))
     .slice(0, Math.max(1, limit))
     .map((entry) => entry.source);
 }
 
-function sourceResult(
+async function sourceResult(
   source: KnowledgeSourceRecord,
   extraction: KnowledgeExtractionRecord | null | undefined,
   score: number,
   excerpt?: string,
-): HomeGraphSearchResult {
+): Promise<HomeGraphSearchResult> {
   return {
     kind: 'source',
     id: source.id,
     score,
     title: source.title ?? source.sourceUri ?? source.id,
-    summary: usefulExtractionSummary(extraction) ?? source.summary,
+    summary: await usefulExtractionSummary(extraction) ?? source.summary,
     ...(excerpt ? { excerpt } : {}),
     source,
   };
@@ -335,7 +338,7 @@ function limitedSections(extraction: KnowledgeExtractionRecord | null | undefine
   return extraction.sections.slice(0, MAX_SECTION_COUNT).map((section) => clampText(section, MAX_FIELD_CHARS));
 }
 
-function readSearchText(extraction: KnowledgeExtractionRecord | null | undefined): string | undefined {
+async function readSearchText(extraction: KnowledgeExtractionRecord | null | undefined): Promise<string | undefined> {
   if (!extraction) return undefined;
   const structure = readRecord(extraction.structure);
   const metadata = readRecord(extraction.metadata);
@@ -345,7 +348,7 @@ function readSearchText(extraction: KnowledgeExtractionRecord | null | undefined
     structure.content,
     metadata.searchText,
   ], MAX_SEARCH_TEXT_CHARS);
-  return isUnusableHomeGraphExtractionText(text) ? undefined : text;
+  return await isUnusableHomeGraphExtractionText(text) ? undefined : text;
 }
 
 function readNodeMetadataText(node: KnowledgeNodeRecord): string | undefined {
@@ -385,11 +388,11 @@ function collectAnchorIdentityTokens(nodes: readonly KnowledgeNodeRecord[]): str
   return [...tokens];
 }
 
-function sourceAnchorIdentityScore(
+async function sourceAnchorIdentityScore(
   anchorTokens: readonly string[],
   source: KnowledgeSourceRecord,
   extraction: KnowledgeExtractionRecord | null | undefined,
-): number {
+): Promise<number> {
   if (anchorTokens.length === 0) return 0;
   return scoreFields(anchorTokens, [
     source.title,
@@ -401,7 +404,7 @@ function sourceAnchorIdentityScore(
     extraction?.title,
     extraction?.summary,
     extraction?.excerpt,
-    readSearchText(extraction),
+    await readSearchText(extraction),
   ]);
 }
 
@@ -504,17 +507,8 @@ function isPendingDocumentationCandidate(
     && source.metadata.homeGraphSourceKind === 'documentation-candidate';
 }
 
-export function homeGraphExtractionNeedsRepair(extraction: KnowledgeExtractionRecord | null | undefined): boolean {
-  if (knowledgeExtractionNeedsRefresh(extraction ?? null)) return true;
-  if (!extraction) return true;
-  const searchText = readSearchText(extraction);
-  if (searchText && searchText.trim().length > 0) return false;
-  if ((extraction.excerpt?.trim() && !isLowInformationExtractionText(extraction.excerpt))
-    || (extraction.summary?.trim() && !isLowInformationExtractionText(extraction.summary))
-    || extraction.sections.some((section) => section.trim() && !isLowInformationExtractionText(section))) {
-    return false;
-  }
-  return true;
+export async function homeGraphExtractionNeedsRepair(extraction: KnowledgeExtractionRecord | null | undefined): Promise<boolean> {
+  return knowledgeExtractionNeedsRefresh(extraction ?? null);
 }
 
 function queryNeedsSourceEvidence(tokens: readonly string[]): boolean {
@@ -545,7 +539,7 @@ function isHomeAssistantIntegrationSource(source: KnowledgeSourceRecord): boolea
     || sourceKind === 'documentation-candidate';
 }
 
-function pruneWeakSourceEvidence(
+async function pruneWeakSourceEvidence(
   results: readonly HomeGraphSearchResult[],
   tokens: readonly string[],
   sourceLinks: ReadonlyMap<string, ReadonlySet<string>>,
@@ -553,55 +547,56 @@ function pruneWeakSourceEvidence(
   anchorIdentityTokens: readonly string[],
   objectScopedQuery: boolean,
   extractionBySourceId: (sourceId: string) => KnowledgeExtractionRecord | null | undefined,
-): HomeGraphSearchResult[] {
+): Promise<HomeGraphSearchResult[]> {
   const sourceResults = results.filter((result) => result.source);
   if (sourceResults.length === 0) return [...results];
-  const strongSourceResults = sourceResults.filter((result) => {
+  const strongSourceResults = await Promise.all(sourceResults.map(async (result) => {
     const source = result.source;
-    if (!source) return false;
-    if (!hasUsefulSourceAnswerText(result)) return false;
+    if (!source) return undefined;
+    if (!(await hasUsefulSourceAnswerText(result))) return undefined;
     const linkedToAnchor = intersects(sourceLinks.get(source.id) ?? new Set<string>(), anchorIds);
-    const matchesAnchorIdentity = sourceAnchorIdentityScore(anchorIdentityTokens, source, extractionBySourceId(source.id)) > 0;
+    const matchesAnchorIdentity = await sourceAnchorIdentityScore(anchorIdentityTokens, source, extractionBySourceId(source.id)) > 0;
     const coverage = tokenCoverage(tokens, resultText(result));
-    return linkedToAnchor
+    return (linkedToAnchor
       || (matchesAnchorIdentity && coverage >= 1)
-      || (!objectScopedQuery && coverage >= Math.min(2, tokens.length));
-  });
-  return strongSourceResults;
+      || (!objectScopedQuery && coverage >= Math.min(2, tokens.length))) ? result : undefined;
+  }));
+  return strongSourceResults.filter((result): result is HomeGraphSearchResult => result !== undefined);
 }
 
-function hasUsefulSourceAnswerText(result: HomeGraphSearchResult): boolean {
+async function hasUsefulSourceAnswerText(result: HomeGraphSearchResult): Promise<boolean> {
   const detail = result.excerpt ?? result.summary ?? result.source?.description;
-  return typeof detail === 'string' && detail.trim().length > 0 && !isLowInformationExtractionText(detail);
+  return typeof detail === 'string' && detail.trim().length > 0 && !(await isLowInformationExtractionText(detail));
 }
 
-function selectRelevantExcerpt(
+async function selectRelevantExcerpt(
   tokens: readonly string[],
   source: KnowledgeSourceRecord,
   extraction: KnowledgeExtractionRecord | null | undefined,
-): string | undefined {
-  const chunks = candidateExcerptChunks(tokens, source, extraction);
+): Promise<string | undefined> {
+  const chunks = await candidateExcerptChunks(tokens, source, extraction);
   let best: { readonly score: number; readonly text: string } | undefined;
   for (const chunk of chunks) {
     const text = cleanWhitespace(chunk);
-    if (!text || isLowInformationExtractionText(text)) continue;
+    if (!text || await isLowInformationExtractionText(text)) continue;
     const score = scoreFields(tokens, [text]);
     if (!best || score > best.score || (score === best.score && text.length < best.text.length)) {
       best = { score, text };
     }
   }
   if (!best || best.score <= 0) {
-    return firstBoundedText(chunks.filter((chunk) => !isLowInformationExtractionText(chunk)), MAX_ANSWER_EXCERPT_CHARS);
+    const useful = await Promise.all(chunks.map(async (chunk) => await isLowInformationExtractionText(chunk) ? undefined : chunk));
+    return firstBoundedText(useful, MAX_ANSWER_EXCERPT_CHARS);
   }
   return clampAroundBestToken(best.text, tokens, MAX_ANSWER_EXCERPT_CHARS);
 }
 
-function candidateExcerptChunks(
+async function candidateExcerptChunks(
   tokens: readonly string[],
   source: KnowledgeSourceRecord,
   extraction: KnowledgeExtractionRecord | null | undefined,
-): string[] {
-  const searchText = readSearchText(extraction);
+): Promise<string[]> {
+  const searchText = await readSearchText(extraction);
   return [
     extraction?.excerpt,
     extraction?.summary,
@@ -613,12 +608,12 @@ function candidateExcerptChunks(
   ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
 }
 
-function usefulExtractionSummary(extraction: KnowledgeExtractionRecord | null | undefined): string | undefined {
+async function usefulExtractionSummary(extraction: KnowledgeExtractionRecord | null | undefined): Promise<string | undefined> {
   const summary = extraction?.summary?.trim();
-  return summary && !isLowInformationExtractionText(summary) ? summary : undefined;
+  return summary && !(await isLowInformationExtractionText(summary)) ? summary : undefined;
 }
 
-function isLowInformationExtractionText(value: string): boolean {
+async function isLowInformationExtractionText(value: string): Promise<boolean> {
   return isUnusableHomeGraphExtractionText(value);
 }
 
@@ -773,4 +768,14 @@ function resultKindPriority(result: HomeGraphSearchResult): number {
   if (result.source) return 2;
   if (result.node) return 1;
   return 0;
+}
+
+function assertExtractionInputs(
+  sources: readonly KnowledgeSourceRecord[],
+  extractionBySourceId: (sourceId: string) => KnowledgeExtractionRecord | null | undefined,
+): void {
+  for (const source of sources) {
+    assertJudgmentInput({ summary: source.summary, description: source.description });
+    assertKnowledgeExtractionInput(extractionBySourceId(source.id));
+  }
 }

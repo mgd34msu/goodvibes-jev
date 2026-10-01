@@ -1,4 +1,4 @@
-import type { DecisionContext, EntryType, JsonValue } from '../port/types.ts';
+import type { DecisionContext, EntryType, JsonValue, JudgmentLineage } from '../port/types.ts';
 import type { JudgmentErrorKind } from '../port/errors.ts';
 import type { FixtureCheck } from '../batteries/decision.ts';
 
@@ -29,6 +29,7 @@ export interface CallRecord {
   readonly questions: JsonValue;
   readonly latencyMs: number;
   readonly requestId: string | undefined;
+  readonly lineage?: JudgmentLineage;
 }
 
 /** Where a decision's ground truth came from. */

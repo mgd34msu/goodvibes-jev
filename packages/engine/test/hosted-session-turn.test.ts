@@ -18,6 +18,8 @@
  *    persistence shape.
  */
 
+import { JudgmentError } from '@goodvibes-jev/judgment';
+import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -251,4 +253,70 @@ test('two hosted sessions in one workspace keep separate transcripts', async () 
   expect(readFileSync(join(workspace, 'note.txt'), 'utf-8')).toContain('the file this session can read');
   a.dispose();
   b.dispose();
+});
+
+
+test('judgment preflight is inside the turn: no provider spend before it settles, and failure cleans up', async () => {
+  const session = createHostedSessionRuntime({ sessionId: 'preflight-failure', workspaceRoot: workspace, floor: { services, contractRunner: services.contractRunner, dispose: (): void => {} }, systemPrompt: 'hosted' });
+  const base = judgmentPort('test');
+  let readingStarted!: () => void;
+  const started = new Promise<void>((resolve) => { readingStarted = resolve; });
+  let rejectReading!: (error: Error) => void;
+  const delayed = new Promise<never>((_, reject) => { rejectReading = reject; });
+  const seen: string[] = [];
+  const errors: unknown[] = [];
+  runtimeBus.on('TURN_ERROR', (envelope) => { errors.push(envelope.payload); });
+  const previous = installJudgmentPort({ ...base, ask: async (request) => {
+    seen.push(request.context?.battery ?? 'unnamed');
+    if (request.context?.battery === 'engine.core.turn-shape') { readingStarted(); return delayed; }
+    return base.ask(request);
+  } });
+  try {
+    const turn = session.submit('keep this request after a failed reading');
+    await started;
+    expect(requests).toHaveLength(0);
+    expect(session.orchestrator.isThinking).toBe(true);
+    rejectReading(new JudgmentError('unavailable', 'synthetic judgment outage'));
+    await turn;
+    expect(requests).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+    expect(session.orchestrator.isThinking).toBe(false);
+    expect(session.conversation.getMessageSnapshot().some((message) => message.role === 'user' && message.content === 'keep this request after a failed reading')).toBe(true);
+    expect(seen).not.toContain('engine.failure-reading');
+    installJudgmentPort(previous);
+    answers.push(textAnswer('the next turn still works'));
+    await session.submit('try again');
+    expect(requests).toHaveLength(1);
+  } finally { installJudgmentPort(previous); session.dispose(); }
+});
+
+test('cancelling a slow judgment retains the user turn and queues a newer turn until cleanup', async () => {
+  const session = createHostedSessionRuntime({ sessionId: 'preflight-cancel', workspaceRoot: workspace, floor: { services, contractRunner: services.contractRunner, dispose: (): void => {} }, systemPrompt: 'hosted' });
+  const base = judgmentPort('test');
+  let readingStarted!: () => void;
+  const started = new Promise<void>((resolve) => { readingStarted = resolve; });
+  let release!: () => void;
+  const delayed = new Promise<void>((resolve) => { release = resolve; });
+  let once = true;
+  const previous = installJudgmentPort({ ...base, ask: async (request) => {
+    if (request.context?.battery === 'engine.core.turn-shape' && once) { once = false; readingStarted(); await delayed; }
+    return base.ask(request);
+  } });
+  try {
+    const first = session.submit('first request');
+    await started;
+    expect(session.cancel()).toBe(true);
+    await session.submit('newer request');
+    expect(session.orchestrator.listQueuedMessages()).toHaveLength(1);
+    expect(requests).toHaveLength(0);
+    answers.push(textAnswer('answered the newer request'));
+    release();
+    await first;
+    expect(requests).toHaveLength(1);
+    const transcript = session.conversation.getMessageSnapshot();
+    expect(transcript.filter((message) => message.role === 'user').map((message) => message.content)).toEqual(['first request', 'newer request']);
+    expect(transcript.some((message) => message.content === '[Response cancelled]')).toBe(true);
+    expect(session.orchestrator.listQueuedMessages()).toHaveLength(0);
+    expect(session.orchestrator.isThinking).toBe(false);
+  } finally { release(); installJudgmentPort(previous); session.dispose(); }
 });

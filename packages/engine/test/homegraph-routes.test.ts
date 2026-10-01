@@ -1,3 +1,11 @@
+import { beforeEach } from 'bun:test';
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+const qualityReadings = useKnowledgeAnswerReadings();
+beforeEach(() => qualityReadings.set({ homeGraph: [
+  ['Front Door Sensor', { batteryApplicable: 0.99, manualApplicable: 0.99 }],
+  ['Living Room TV', { batteryApplicable: 0.01, manualApplicable: 0.99 }],
+  ['ZHA Bridge', { batteryApplicable: 0.01, manualApplicable: 0.01 }],
+] }));
 import { describe, expect, test } from 'bun:test';
 import { HomeGraphRoutes } from '../sdk/src/platform/daemon/http/home-graph-routes.js';
 import {

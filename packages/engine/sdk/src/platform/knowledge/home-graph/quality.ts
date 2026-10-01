@@ -1,105 +1,13 @@
 import type { KnowledgeIssueRecord, KnowledgeIssueUpsertInput, KnowledgeNodeRecord } from '../types.js';
 import type { KnowledgeStore } from '../store.js';
-import { yieldEvery } from '../cooperative.js';
-import { buildIssue, readRecord, stableHash, uniqueStrings } from './helpers.js';
+import { isLegacyHomeGraphQualityIssue, KnowledgeIssueReplacementHeldError } from '../store-issue-replacement.js';
+import { buildIssue } from './helpers.js';
 import { readHomeGraphState, sourcesLinkedToNode } from './state.js';
+import { readHomeGraphQuality, HomeGraphQualityHeldError, HOME_GRAPH_QUALITY_LIMITS, type HomeGraphQualityQuestion, type HomeGraphQualityReading, type HomeGraphQualityInput } from './quality/reader.js';
+import { HOME_GRAPH_QUALITY_FINGERPRINT_VERSION, homeGraphQualitySubjectFingerprint, preserveLegacyQualityAuthority } from './quality/fingerprint.js';
+import { projectHomeGraphQualityInput, readHomeGraphDeclaredBoolean } from './quality/projection.js';
 
 const QUALITY_NAMESPACE_PREFIX = 'homegraph';
-const EXCLUDED_SOFTWARE_TERMS = [
-  'add-on',
-  'addon',
-  'automation',
-  'cloud',
-  'core',
-  'helper',
-  'home assistant',
-  'integration',
-  'operating system',
-  'scene',
-  'script',
-  'service',
-  'software',
-  'supervisor',
-  'template',
-  'virtual',
-];
-const EXCLUDED_INFRASTRUCTURE_TERMS = [
-  'adapter',
-  'bridge',
-  'coordinator',
-  'dongle',
-  'gateway',
-  'hub',
-];
-const EXCLUDED_MAINS_TERMS = [
-  'air conditioner',
-  'appliance',
-  'bulb',
-  'dishwasher',
-  'dryer',
-  'furnace',
-  'heat pump',
-  'hvac',
-  'light',
-  'microwave',
-  'outlet',
-  'plug',
-  'power strip',
-  'receiver',
-  'refrigerator',
-  'soundbar',
-  'speaker',
-  'switch',
-  'television',
-  'tv',
-  'washer',
-];
-const BATTERY_EVIDENCE_TERMS = [
-  'battery',
-  'battery powered',
-  'button cell',
-  'cr123',
-  'cr2032',
-  'keypad',
-  'leak sensor',
-  'lithium',
-  'motion sensor',
-  'remote',
-  'rechargeable',
-];
-const BATTERY_ENTITY_DOMAINS = new Set(['binary_sensor', 'lock', 'remote']);
-const BATTERY_DEVICE_CLASSES = new Set([
-  'battery',
-  'door',
-  'gas',
-  'moisture',
-  'motion',
-  'occupancy',
-  'opening',
-  'safety',
-  'smoke',
-  'tamper',
-  'vibration',
-  'window',
-]);
-const MANUAL_ENTITY_DOMAINS = new Set([
-  'alarm_control_panel',
-  'binary_sensor',
-  'camera',
-  'climate',
-  'cover',
-  'fan',
-  'humidifier',
-  'light',
-  'lock',
-  'media_player',
-  'remote',
-  'sensor',
-  'switch',
-  'vacuum',
-  'water_heater',
-]);
-
 export function homeGraphQualityNamespace(spaceId: string): string {
   return `${QUALITY_NAMESPACE_PREFIX}:${spaceId}:quality`;
 }
@@ -108,23 +16,63 @@ export async function refreshHomeGraphQualityIssues(
   store: KnowledgeStore,
   spaceId: string,
   installationId: string,
+  options: { readonly signal?: AbortSignal | undefined; readonly timeoutMs?: number | undefined } = {},
 ): Promise<readonly KnowledgeIssueRecord[]> {
-  const state = readHomeGraphState(store, spaceId);
+  return (await refreshHomeGraphQualityReport(store, spaceId, installationId, options)).issues;
+}
+
+export async function refreshHomeGraphQualityReport(
+  store: KnowledgeStore,
+  spaceId: string,
+  installationId: string,
+  options: { readonly signal?: AbortSignal | undefined; readonly timeoutMs?: number | undefined } = {},
+): Promise<{ readonly issues: readonly KnowledgeIssueRecord[]; readonly retainedLegacyIssues: number }> {
+  await store.init();
+  const state = structuredClone(readHomeGraphState(store, spaceId));
+  // Capture the full read-set, including hidden/terminal issues, BEFORE readings.
+  const allIssues = structuredClone(store.listIssuesInSpace(spaceId));
+  const version = JSON.stringify({ state, issues: allIssues });
+  const legacy = allIssues.filter((issue) => isLegacyHomeGraphQualityIssue(issue, spaceId));
+  const guard = () => {
+    if (options.signal?.aborted) throw new HomeGraphQualityHeldError('aborted');
+    if (JSON.stringify({ state: readHomeGraphState(store, spaceId), issues: store.listIssuesInSpace(spaceId) }) !== version) {
+      throw new HomeGraphQualityHeldError('stale');
+    }
+  };
+  guard();
+  const devices = state.nodes.filter((node) => node.kind === 'ha_device');
+  if (devices.length > HOME_GRAPH_QUALITY_LIMITS.devices) throw new HomeGraphQualityHeldError('budget');
+  const selected = devices.map((node, index) => {
+    const battery = readNonEmptyString(node.metadata.batteryType) ? false : readHomeGraphDeclaredBoolean(node.metadata.batteryPowered);
+    const manual = sourcesLinkedToNode(node.id, state).length > 0 ? false : readHomeGraphDeclaredBoolean(node.metadata.manualRequired);
+    const questions: HomeGraphQualityQuestion[] = [];
+    if (battery === undefined) questions.push('batteryApplicable');
+    if (manual === undefined) questions.push('manualApplicable');
+    const reference = `device-${index + 1}`;
+    const input: HomeGraphQualityInput = questions.length
+      ? projectHomeGraphQualityInput(reference, node, relatedEntities(node, state), [], questions)
+      : { reference, subject: { kind: 'ha_device', title: 'Declared device' }, entities: [], facts: [], questions: [] };
+    return { node, battery, manual, input };
+  });
+  const readings = await readHomeGraphQuality(selected.map(({ input }) => input), options);
+  guard();
   const issues: KnowledgeIssueUpsertInput[] = [];
-  for (const [index, node] of state.nodes.entries()) {
-    await yieldEvery(index, 32);
-    if (node.kind !== 'ha_device') continue;
-    if (sourcesLinkedToNode(node.id, state).length === 0 && shouldRequireManual(node, state)) {
-      issues.push(qualityIssue(spaceId, installationId, 'homegraph.device.missing_manual', `${node.title} has no linked manual or source.`, node));
-    }
-    if (shouldRequireBatteryType(node, state)) {
-      issues.push(qualityIssue(spaceId, installationId, 'homegraph.device.unknown_battery', `${node.title} has no known battery type.`, node));
-    }
+  for (const [index, { node, battery, manual, input }] of selected.entries()) {
+    const reading = readings[index]!;
+    if (manual ?? reading.answers.manualApplicable) issues.push(qualityIssue(spaceId, installationId,
+      'homegraph.device.missing_manual', `${node.title} has no linked manual or source.`, node, reading, input));
+    if (battery ?? reading.answers.batteryApplicable) issues.push(qualityIssue(spaceId, installationId,
+      'homegraph.device.unknown_battery', `${node.title} has no known battery type.`, node, reading, input));
   }
-  return store.replaceIssues(
-    issues.filter((issue) => !isSuppressedGeneratedIssue(store.getIssue(issue.id!), issue)),
-    homeGraphQualityNamespace(spaceId),
-  );
+  const previous = new Map(allIssues.map((issue) => [issue.id, issue]));
+  const retainedLegacyIssues = allIssues.filter((issue) => (issue.metadata.namespace === homeGraphQualityNamespace(spaceId)
+    || isLegacyHomeGraphQualityIssue(issue, spaceId)) && preserveLegacyQualityAuthority(issue)).length;
+  let written: readonly KnowledgeIssueRecord[];
+  try { written = await store.replaceIssuesGuarded(issues.filter((issue) => !preserveLegacyQualityAuthority(previous.get(issue.id!))
+      && !isSuppressedGeneratedIssue(previous.get(issue.id!) ?? null, issue)),
+    homeGraphQualityNamespace(spaceId), guard, legacy); }
+  catch (error) { if (error instanceof KnowledgeIssueReplacementHeldError) throw new HomeGraphQualityHeldError(error.reason); throw error; }
+  return { issues: written, retainedLegacyIssues };
 }
 
 function qualityIssue(
@@ -133,14 +81,22 @@ function qualityIssue(
   code: string,
   message: string,
   node: KnowledgeNodeRecord,
+  reading: HomeGraphQualityReading,
+  input: HomeGraphQualityInput,
 ): KnowledgeIssueUpsertInput {
   const issue = buildIssue(spaceId, installationId, code, message, { nodeId: node.id });
+  const question = code === 'homegraph.device.unknown_battery' ? 'batteryApplicable' : 'manualApplicable';
   return {
     ...issue,
     metadata: {
       ...(issue.metadata ?? {}),
+      namespace: homeGraphQualityNamespace(spaceId),
       generated: true,
-      subjectFingerprint: subjectFingerprint(node, code),
+      subjectFingerprint: homeGraphQualitySubjectFingerprint(node, code, input),
+      qualityFingerprintVersion: HOME_GRAPH_QUALITY_FINGERPRINT_VERSION,
+      qualityReading: input.questions.includes(question)
+        ? { origin: 'automatic-judgment', question, answer: reading.answers[question], ...reading.provenance[question] }
+        : { origin: 'declared-fields' },
     },
   };
 }
@@ -159,74 +115,6 @@ function isSuppressedGeneratedIssue(
   return existingFingerprint === inputFingerprint;
 }
 
-function shouldRequireBatteryType(
-  node: KnowledgeNodeRecord,
-  state: ReturnType<typeof readHomeGraphState>,
-): boolean {
-  if (readNonEmptyString(node.metadata.batteryType)) return false;
-  const powered = readBooleanLike(node.metadata.batteryPowered);
-  if (powered === false) return false;
-  if (powered === true) return true;
-  if (isSoftwareOrInfrastructure(node, state)) return false;
-  if (hasAny(qualityText(node, state), EXCLUDED_MAINS_TERMS)) return false;
-  if (hasAny(qualityText(node, state), BATTERY_EVIDENCE_TERMS)) return true;
-  return relatedEntities(node, state).some((entity) => {
-    const domain = entityDomain(entity);
-    const deviceClass = entityDeviceClass(entity);
-    return (domain ? BATTERY_ENTITY_DOMAINS.has(domain) : false)
-      || (deviceClass ? BATTERY_DEVICE_CLASSES.has(deviceClass) : false);
-  });
-}
-
-function shouldRequireManual(
-  node: KnowledgeNodeRecord,
-  state: ReturnType<typeof readHomeGraphState>,
-): boolean {
-  const required = readBooleanLike(node.metadata.manualRequired);
-  if (required === false) return false;
-  if (required === true) return true;
-  if (isSoftwareOrInfrastructure(node, state)) return false;
-  if (readNonEmptyString(node.metadata.manufacturer) || readNonEmptyString(node.metadata.model)) return true;
-  return relatedEntities(node, state).some((entity) => {
-    const domain = entityDomain(entity);
-    return domain ? MANUAL_ENTITY_DOMAINS.has(domain) : false;
-  });
-}
-
-function isSoftwareOrInfrastructure(
-  node: KnowledgeNodeRecord,
-  state: ReturnType<typeof readHomeGraphState>,
-): boolean {
-  const text = qualityText(node, state);
-  if (hasAny(text, EXCLUDED_SOFTWARE_TERMS)) return true;
-  if (hasAny(text, EXCLUDED_INFRASTRUCTURE_TERMS)) return true;
-  return relatedEntities(node, state).every((entity) => {
-    const domain = entityDomain(entity);
-    return domain === 'sun' || domain === 'weather';
-  }) && relatedEntities(node, state).length > 0;
-}
-
-function subjectFingerprint(node: KnowledgeNodeRecord, code: string): string {
-  const homeAssistant = readRecord(node.metadata.homeAssistant);
-  const attributes = readRecord(node.metadata.attributes);
-  return stableHash(JSON.stringify({
-    code,
-    kind: node.kind,
-    title: node.title,
-    manufacturer: node.metadata.manufacturer,
-    model: node.metadata.model,
-    batteryPowered: node.metadata.batteryPowered,
-    batteryType: node.metadata.batteryType,
-    manualRequired: node.metadata.manualRequired,
-    objectKind: homeAssistant.objectKind,
-    objectId: homeAssistant.objectId,
-    entityId: homeAssistant.entityId,
-    deviceId: homeAssistant.deviceId,
-    integrationId: homeAssistant.integrationId,
-    domain: homeAssistant.domain,
-    deviceClass: attributes.device_class,
-  }));
-}
 
 function relatedEntities(
   node: KnowledgeNodeRecord,
@@ -239,66 +127,6 @@ function relatedEntities(
       const entry = byId.get(edge.fromId);
       return entry?.kind === 'ha_entity' ? [entry] : [];
     });
-}
-
-function qualityText(node: KnowledgeNodeRecord, state: ReturnType<typeof readHomeGraphState>): string {
-  const values = uniqueStrings([
-    node.title,
-    node.summary,
-    ...node.aliases,
-    ...metadataStrings(node.metadata),
-    ...relatedEntities(node, state).flatMap((entity) => [
-      entity.title,
-      entity.summary,
-      ...entity.aliases,
-      ...metadataStrings(entity.metadata),
-    ]),
-  ]);
-  return values.join(' ').toLowerCase();
-}
-
-function metadataStrings(metadata: Record<string, unknown>): string[] {
-  const homeAssistant = readRecord(metadata.homeAssistant);
-  const attributes = readRecord(metadata.attributes);
-  return uniqueStrings([
-    readNonEmptyString(metadata.manufacturer),
-    readNonEmptyString(metadata.model),
-    readNonEmptyString(metadata.entryType),
-    readNonEmptyString(metadata.entry_type),
-    readNonEmptyString(homeAssistant.objectKind),
-    readNonEmptyString(homeAssistant.objectId),
-    readNonEmptyString(homeAssistant.entityId),
-    readNonEmptyString(homeAssistant.deviceId),
-    readNonEmptyString(homeAssistant.integrationId),
-    readNonEmptyString(homeAssistant.domain),
-    readNonEmptyString(attributes.device_class),
-    readNonEmptyString(attributes.friendly_name),
-  ]);
-}
-
-function entityDomain(node: KnowledgeNodeRecord): string | undefined {
-  const homeAssistant = readRecord(node.metadata.homeAssistant);
-  const entityId = readNonEmptyString(homeAssistant.entityId);
-  if (entityId?.includes('.')) return entityId.split('.', 1)[0];
-  return readNonEmptyString(homeAssistant.domain);
-}
-
-function entityDeviceClass(node: KnowledgeNodeRecord): string | undefined {
-  return readNonEmptyString(readRecord(node.metadata.attributes).device_class)?.toLowerCase();
-}
-
-function hasAny(text: string, terms: readonly string[]): boolean {
-  return terms.some((term) => text.includes(term));
-}
-
-function readBooleanLike(value: unknown): boolean | undefined {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (['true', 'yes', '1'].includes(normalized)) return true;
-    if (['false', 'no', '0', 'none', 'not_applicable', 'not applicable'].includes(normalized)) return false;
-  }
-  return undefined;
 }
 
 function readNonEmptyString(value: unknown): string | undefined {

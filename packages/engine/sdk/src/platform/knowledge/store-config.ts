@@ -34,27 +34,14 @@ export interface KnowledgeStoreConfig {
    * mis-wire into a loud failure.
    */
   readonly family?: KnowledgeStoreFamily | undefined;
-  /**
-   * Auto-accept confidence threshold for the node review gate. A synthesized node
-   * whose confidence is at or above this value is activated with honest
-   * 'auto-accepted' provenance; below it, the node is held as 'draft'
-   * (pending review) and is not served by search/ask until reviewed. Defaults to
-   * {@link DEFAULT_NODE_AUTO_ACCEPT_CONFIDENCE}.
-   */
+  /** Legacy owner restriction on declared 0-100 producer scores. If explicitly supplied, it can only hold a node after a settled serving judgment, never accept one. No implicit floor is applied. */
   readonly nodeAutoAcceptConfidence?: number | undefined;
   readonly configManager?: {
     getControlPlaneConfigDir?: (() => string) | undefined;
   };
 }
 
-/**
- * Default auto-accept threshold. Chosen just below the lowest confidence the
- * existing synthesis producers emit (deterministic facts at 45, deterministic
- * wiki pages at 55) so those flows keep activating, now with honest,
- * numeric provenance rather than silently, while genuinely low-confidence
- * synthesized content (below 40) is held as 'draft' for review. The mechanism is
- * the deliverable; consumers raise this threshold to hold more for review.
- */
+/** @deprecated Retained for source compatibility only; never used for activation. */
 export const DEFAULT_NODE_AUTO_ACCEPT_CONFIDENCE = 40;
 
 export function resolveKnowledgeDbPath(config: KnowledgeStoreConfig): string {

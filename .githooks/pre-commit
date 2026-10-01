@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pre-commit hook: checks credential classification and the public API surface.
 #
-# When a commit touches any TypeScript source under packages/engine/*/src/, this hook
+# When a commit touches engine source or a product implementation/config, this hook
 # checks credential classification, rebuilds the SDK, typechecks, and runs api:check.
 # If packages/engine/etc/goodvibes-sdk.api.md drifts from what the current source produces,
 # the commit is REJECTED with instructions.
@@ -17,8 +17,10 @@ set -euo pipefail
 # the `exports` map in packages/engine/package.json, so publishing a new subpath
 # changes the public surface without touching a single .ts file; this pattern
 # previously matched src/**.ts only, and such a commit went through untouched.
+# Product source, tests, scripts and migration/config files participate in the
+# same root build/typecheck gates. README-only changes do not trigger a build.
 STAGED_SRC=$(git diff --cached --name-only --diff-filter=ACMR \
-  | grep -E '^packages/engine/([^/]+/src/.*\.ts|package\.json)$' || true)
+  | grep -E '^(packages/engine/([^/]+/src/.*\.ts|package\.json)|products/[^/]+/((src|scripts)/.*\.[cm]?[jt]sx?|package\.json|tsconfig([^/]*)\.json|migration\.json))$' || true)
 if [ -z "$STAGED_SRC" ]; then
   exit 0
 fi
@@ -45,8 +47,8 @@ if ! bun run build >/dev/null 2>&1; then
   exit 1
 fi
 
-# `bun run build` compiles packages/engine/tsconfig.json: the eleven packages, and only
-# them. It does NOT typecheck test/ or scripts/; before tsconfig.tests.json
+# `bun run build` compiles engine and present product sources. It does NOT
+# typecheck the engine test/ or scripts/ trees; before tsconfig.tests.json
 # existed, nothing did. `bun run typecheck` covers the full solution and judges
 # each project by its OUTPUT as well as its exit code, because a `tsc --build`
 # has been observed printing diagnostics while exiting 0.

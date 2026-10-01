@@ -58,6 +58,11 @@
       "text": "CLUSTER_SUBCOMMANDS: readonly [\"status\", \"create\", \"join\", \"key\", \"nodes\", \"forget\", \"rotate\", \"leave\", \"rename\", \"groups\"]"
     },
     {
+      "name": "CallDaemonWsVerbOptions",
+      "kind": "interface",
+      "text": "export interface CallDaemonWsVerbOptions { readonly body?: unknown; readonly timeoutMs?: number | undefined; readonly socketFactory?: DaemonWebSocketFactory | undefined; }"
+    },
+    {
       "name": "CliCatalog",
       "kind": "interface",
       "required": [
@@ -147,14 +152,42 @@
       "text": "export interface ConformanceOptions { readonly onlyIds?: readonly string[]; readonly ignoreIds?: readonly string[]; }"
     },
     {
+      "name": "DAEMON_WS_TIMEOUT_MS",
+      "kind": "const",
+      "text": "DAEMON_WS_TIMEOUT_MS = 15000"
+    },
+    {
       "name": "DaemonFetch",
       "kind": "type",
       "text": "export type DaemonFetch = (input: string, init?: RequestInit) => Promise<Response>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; RequestInit = interface RequestInit { body?: BodyInit | null; cache?: RequestCache; credentials?: RequestCredentials; headers?: HeadersInit; integrity?: string; keepalive?: boolean; method?: string; mode?: RequestMode; priority?: RequestPriority; redirect?: RequestRedirect; referrer?: string; referrerPolicy?: ReferrerPolicy; signal?: AbortSignal | null; window?: null; } ;; Response = interface Response extends Body { readonly headers: Headers; readonly ok: boolean; readonly redirected: boolean; readonly status: number; readonly statusText: string; readonly type: ResponseType; readonly url: string; clone(): Response; }"
     },
     {
+      "name": "DaemonReplyEnvelope",
+      "kind": "type",
+      "text": "export type DaemonReplyEnvelope = 'wrapped' | 'raw';"
+    },
+    {
       "name": "DaemonVerbOutcome",
       "kind": "type",
       "text": "export type DaemonVerbOutcome<T> = { readonly ok: true; readonly data: T; } | { readonly ok: false; readonly error: string; readonly fix: string; };"
+    },
+    {
+      "name": "DaemonWebSocket",
+      "kind": "interface",
+      "required": [
+        "close",
+        "onclose",
+        "onerror",
+        "onmessage",
+        "onopen",
+        "send"
+      ],
+      "text": "export interface DaemonWebSocket { send(data: string): void; close(): void; onopen: ((event: unknown) => void) | null; onmessage: ((event: { data: unknown; }) => void) | null; onerror: ((event: unknown) => void) | null; onclose: ((event: unknown) => void) | null; }"
+    },
+    {
+      "name": "DaemonWebSocketFactory",
+      "kind": "type",
+      "text": "export type DaemonWebSocketFactory = (url: string, init: { readonly headers: Readonly<Record<string, string>>; }) => DaemonWebSocket; ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "EngineParseResult",
@@ -751,9 +784,19 @@
       "text": "export declare function attachWsOnlyGatewayVerbHandlers(gatewayMethods: GatewayMethodCatalog, deps: GatewayVerbGroupDeps): void;"
     },
     {
+      "name": "callDaemonRoute",
+      "kind": "function",
+      "text": "export declare function callDaemonRoute<T>(target: RemoteDaemonTarget, path: string, init?: { method: 'GET' | 'POST'; body?: unknown; envelope?: DaemonReplyEnvelope; }, fetchImpl?: DaemonFetch): Promise<DaemonVerbOutcome<T>>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "callDaemonVerb",
       "kind": "function",
       "text": "export declare function callDaemonVerb<T>(target: RemoteDaemonTarget, path: string, init?: { method: 'GET' | 'POST'; body?: unknown; }, fetchImpl?: DaemonFetch): Promise<DaemonVerbOutcome<T>>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "callDaemonWsVerb",
+      "kind": "function",
+      "text": "export declare function callDaemonWsVerb<T>(target: RemoteDaemonTarget, methodId: string, options?: CallDaemonWsVerbOptions): Promise<DaemonVerbOutcome<T>>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "catalogCommandSpec",
@@ -1044,6 +1087,11 @@
       "name": "probeTermCaps",
       "kind": "function",
       "text": "export declare function probeTermCaps(stdout: NodeJS.WriteStream): TermColorCaps;"
+    },
+    {
+      "name": "rawReplyReader",
+      "kind": "function",
+      "text": "export declare function rawReplyReader(target: RemoteDaemonTarget, fetchImpl?: DaemonFetch): DaemonFetch;"
     },
     {
       "name": "redactConfig",

@@ -1,4 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import { applyKnowledgeImport, type KnowledgeImportInput, type PrepareKnowledgeImportGraph } from './store-import.js';
+import { prepareKnowledgeEdgeRecord, writeKnowledgeEdgeRow, findKnowledgeEdge } from './store-edge-writes.js';
+import { snapshotNodeInput } from './activation/projection.js';
+import { KnowledgeNodeActivationHeldError, type KnowledgeNodeActivationOptions } from './activation/types.js';
+import { resolveKnowledgeNodeObservation, retainKnowledgeNodeObservation } from './store-node-observation.js';
+import { knowledgeNodeRestorationGuard, prepareNodeActivationPass, assertPreparedNodeWrites, preparedNodeWrite, markPreparedNodeWritten, type NodeMutationDraft, type KnowledgePreparedNodeWrites } from './store-node-activation.js';
+export type { KnowledgePreparedNodeWrites } from './store-node-activation.js';
+import { commitGuardedKnowledgeIssueReplacement } from './store-issue-replacement.js';
+import { prepareKnowledgeIssueRecord, writeKnowledgeIssueRow, commitKnowledgeNodeIssueWrites, type KnowledgeGuardedNodeIssueWrites } from './store-node-issue-writes.js';
 import { SQLiteStore } from '../state/sqlite-store.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -32,17 +41,17 @@ import type {
   KnowledgeUsageUpsertInput,
 } from './types.js';
 import {
-  createSchema, issueStatusForUpsert,
+  createSchema,
   nowMs,
   stableText,
   uniq,
 } from './store-schema.js';
 import {
-  DEFAULT_NODE_AUTO_ACCEPT_CONFIDENCE,
   resolveKnowledgeDbPath,
   type KnowledgeStoreConfig,
 } from './store-config.js';
-import { KNOWLEDGE_EXTRACTOR_VERSION } from './extraction-policy.js';
+import { prepareKnowledgeIssueUpsert, type KnowledgeIssueOperatorMutation } from './store-lifecycle-authority.js';
+import { prepareKnowledgeSourceRecord, writeKnowledgeSourceRow, prepareKnowledgeExtractionRecord, writeKnowledgeExtractionRow } from './store-evidence-writes.js';
 import {
   clampConfidence,
   listKnowledgeNodeRevisions,
@@ -53,10 +62,15 @@ import {
   writeKnowledgeNodeRow,
 } from './store-node-history.js';
 import {
+  mergeKnowledgeNodeMetadata, prepareKnowledgeNodeReplacement,
+  retainKnowledgeNodeRecord, type KnowledgeNodeMutationContext,
+} from './store-node-authority.js';
+import {
   deleteKnowledgeNodeRecord,
   deleteKnowledgeSourceRecord,
   type KnowledgeRecordDeleteView,
 } from './store-record-delete.js';
+import { inferRecordReferenceSpaceId, preferRelatedNonDefaultSpace } from './store-record-space.js';
 import { upsertKnowledgeRefinementTask } from './store-refinement.js';
 import {
   deleteKnowledgeSpaceRows,
@@ -107,10 +121,8 @@ import {
 } from './store-read.js';
 import { loadKnowledgeStoreSnapshot } from './store-load.js';
 import {
-  DEFAULT_KNOWLEDGE_SPACE_ID,
   ensureKnowledgeSpaceMetadata,
   getExplicitKnowledgeSpaceId,
-  getKnowledgeSpaceId,
 } from './spaces.js';
 
 /**
@@ -124,6 +136,8 @@ const MAX_RETAINED_JOB_RUNS = 500;
 export class KnowledgeStore {
   private readonly sqlite: SQLiteStore;
   private readonly dbPath: string;
+  private readonly nodeActivationScope = Object.freeze({});
+  private readonly nodeActivationConfidenceFloor: number | undefined;
   private ready = false;
   private initPromise: Promise<void> | null = null;
   private readonly sources = new Map<string, KnowledgeSourceRecord>();
@@ -139,11 +153,13 @@ export class KnowledgeStore {
   private readonly schedules = new Map<string, KnowledgeScheduleRecord>();
   private readonly nodeRevisions = new Map<string, KnowledgeNodeRevisionRecord[]>();
   private readonly semanticEnrichmentStates = new Map<string, KnowledgeSemanticEnrichmentStateRecord>();
-  private readonly nodeAutoAcceptConfidence: number;
 
   constructor(config: KnowledgeStoreConfig) {
     this.dbPath = resolveKnowledgeDbPath(config);
-    this.nodeAutoAcceptConfidence = clampConfidence(config.nodeAutoAcceptConfidence ?? DEFAULT_NODE_AUTO_ACCEPT_CONFIDENCE);
+    if (config.nodeAutoAcceptConfidence !== undefined && (!Number.isFinite(config.nodeAutoAcceptConfidence) || config.nodeAutoAcceptConfidence < 0 || config.nodeAutoAcceptConfidence > 100)) {
+      throw new RangeError('nodeAutoAcceptConfidence must be a finite 0-100 owner restriction.');
+    }
+    this.nodeActivationConfidenceFloor = config.nodeAutoAcceptConfidence;
     this.sqlite = new SQLiteStore(this.dbPath);
     void this.init().catch((error: unknown) => {
       logger.error('[knowledge-store] initialization failed', {
@@ -360,78 +376,8 @@ export class KnowledgeStore {
       : input.canonicalUri
         ? this.getSourceByCanonicalUri(input.canonicalUri)
         : null;
-    const now = nowMs();
-    // n1: `opt` is a local helper that collapses the 18 conditional spread expressions
-    // in the record below. Returns `{ [key]: newVal }` when newVal is non-null,
-    // falls back to `{ [key]: existingVal }` to preserve existing value on partial
-    // update, or `{}` when neither is present.
-    function opt<K extends string, V>(key: K, newVal: V | null, existingVal?: V): { [P in K]?: V } {
-      if (newVal !== null) return { [key]: newVal } as { [P in K]?: V };
-      if (existingVal !== undefined) return { [key]: existingVal } as { [P in K]?: V };
-      return {} as { [P in K]?: V };
-    }
-    const _title = stableText(input.title);
-    const _sourceUri = stableText(input.sourceUri);
-    const _canonicalUri = stableText(input.canonicalUri);
-    const _summary = stableText(input.summary);
-    const _description = stableText(input.description);
-    const _folderPath = stableText(input.folderPath);
-    const _artifactId = stableText(input.artifactId);
-    const _contentHash = stableText(input.contentHash);
-    const _crawlError = stableText(input.crawlError);
-    const _sessionId = stableText(input.sessionId);
-    const sourceMetadata = ensureKnowledgeSpaceMetadata({
-      ...(existing?.metadata ?? {}),
-      ...(input.metadata ?? {}),
-    });
-    const record: KnowledgeSourceRecord = {
-      id: existing?.id ?? input.id ?? `source-${randomUUID().slice(0, 8)}`,
-      connectorId: input.connectorId,
-      sourceType: input.sourceType,
-      ...opt('title', _title),
-      ...opt('sourceUri', _sourceUri),
-      ...opt('canonicalUri', _canonicalUri),
-      ...opt('summary', _summary),
-      ...opt('description', _description),
-      tags: uniq(input.tags ?? existing?.tags),
-      ...opt('folderPath', _folderPath, existing?.folderPath),
-      status: input.status,
-      ...opt('artifactId', _artifactId, existing?.artifactId),
-      ...opt('contentHash', _contentHash, existing?.contentHash),
-      ...(typeof input.lastCrawledAt === 'number' ? { lastCrawledAt: input.lastCrawledAt } : existing?.lastCrawledAt ? { lastCrawledAt: existing.lastCrawledAt } : {}),
-      ...opt('crawlError', _crawlError, existing?.crawlError && input.status !== 'indexed' ? existing.crawlError : undefined),
-      ...opt('sessionId', _sessionId, existing?.sessionId),
-      metadata: sourceMetadata,
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-    };
-    this.sqlite.run(`
-      INSERT OR REPLACE INTO knowledge_sources (
-        id, connector_id, source_type, title, source_uri, canonical_uri, summary, description,
-        tags, folder_path, status, artifact_id, content_hash, last_crawled_at, crawl_error,
-        session_id, metadata, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      record.id,
-      record.connectorId,
-      record.sourceType,
-      record.title ?? null,
-      record.sourceUri ?? null,
-      record.canonicalUri ?? null,
-      record.summary ?? null,
-      record.description ?? null,
-      JSON.stringify([...record.tags]),
-      record.folderPath ?? null,
-      record.status,
-      record.artifactId ?? null,
-      record.contentHash ?? null,
-      record.lastCrawledAt ?? null,
-      record.crawlError ?? null,
-      record.sessionId ?? null,
-      JSON.stringify(record.metadata),
-      record.createdAt,
-      record.updatedAt,
-    ]);
+    const record = prepareKnowledgeSourceRecord(input, existing);
+    writeKnowledgeSourceRow(this.sqlite, record);
     this.sources.set(record.id, record);
     await this.sqlite.save();
     return record;
@@ -481,18 +427,22 @@ export class KnowledgeStore {
     await this.sqlite.save();
   }
 
-  async upsertNode(input: KnowledgeNodeUpsertInput): Promise<KnowledgeNodeRecord> {
+  /** Read-only preflight; upsertNode independently rechecks at the final write. */
+  async assertNodeMutation(input: KnowledgeNodeUpsertInput): Promise<void> {
     await this.init();
+    this.prepareNodeMutation(input);
+  }
+
+  private prepareNodeMutation(input: KnowledgeNodeUpsertInput, mutation?: KnowledgeNodeMutationContext, observationInput = input): NodeMutationDraft {
     const existing = (input.id
       ? this.nodes.get(input.id)
       : this.getNodeByKindAndSlug(input.kind, input.slug)) ?? undefined;
+    const sameSlug = this.getNodeByKindAndSlug(input.kind, input.slug);
+    if (input.id && sameSlug && sameSlug.id !== input.id) throw new KnowledgeNodeActivationHeldError('stale');
     const now = nowMs();
     const _summary = stableText(input.summary);
     const _sourceId = stableText(input.sourceId);
-    const mergedNodeMetadata = {
-      ...(existing?.metadata ?? {}),
-      ...(input.metadata ?? {}),
-    };
+    const mergedNodeMetadata = mergeKnowledgeNodeMetadata(existing?.metadata, input.metadata);
     const explicitNodeSpaceId = getExplicitKnowledgeSpaceId({ metadata: mergedNodeMetadata });
     const relatedNodeSpaceId = inferRecordReferenceSpaceId({
       sourceId: _sourceId ?? existing?.sourceId,
@@ -504,35 +454,80 @@ export class KnowledgeStore {
     const nodeMetadata = nodeSpaceId
       ? ensureKnowledgeSpaceMetadata(mergedNodeMetadata, nodeSpaceId)
       : mergedNodeMetadata;
-    // clampConfidence (not an inline min/max) so a non-finite confidence, NaN or
-    // Infinity slips past `??`, which only catches null/undefined, resolves to the
-    // auto-accept default instead of `NaN >= autoAcceptConfidence === false`
-    // silently holding a node as a draft forever.
-    const confidence = clampConfidence(input.confidence ?? existing?.confidence ?? 70);
-    // Review gate: never silently active, stamp honest activation provenance. (Invariants 2 & 4.)
-    const gated = resolveNodeActivation({ input, existing, confidence, metadata: nodeMetadata, now, autoAcceptConfidence: this.nodeAutoAcceptConfidence });
-    const record: KnowledgeNodeRecord = {
+    // Existing confidence normalization is independent of operator authority.
+    const confidence = clampConfidence(input.confidence ?? existing?.confidence ?? 0);
+    const candidate: KnowledgeNodeRecord = {
       id: existing?.id ?? input.id ?? `node-${randomUUID().slice(0, 8)}`,
       kind: input.kind,
       slug: input.slug,
       title: input.title.trim(),
       ...(_summary !== null ? { summary: _summary } : existing?.summary ? { summary: existing.summary } : {}),
       aliases: uniq(input.aliases ?? existing?.aliases),
-      status: gated.status,
+      status: input.status ?? existing?.status ?? 'draft',
       confidence,
       ...(_sourceId !== null ? { sourceId: _sourceId } : existing?.sourceId ? { sourceId: existing.sourceId } : {}),
-      metadata: gated.metadata,
+      metadata: nodeMetadata,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
+    // Authority is resolved before automatic activation or any persistence.
+    const gated = resolveNodeActivation({ input, candidate, existing, mutation, now });
+    const record = retainKnowledgeNodeRecord({ ...candidate, ...gated });
+    return { input, existing, record, now, authority: gated !== undefined, observation: resolveKnowledgeNodeObservation(observationInput, existing) };
+  }
+
+  /** Prepare a complete semantic write pass before any affected persistence. */
+  async prepareNodeWrites(inputs: readonly KnowledgeNodeUpsertInput[], options: KnowledgeNodeActivationOptions = {}): Promise<KnowledgePreparedNodeWrites> {
+    const snapshots = inputs.map((input) => snapshotNodeInput(input));
+    await this.init();
+    const drafts = snapshots.map((input, index) => this.prepareNodeMutation(input, undefined, inputs[index]));
+    return prepareNodeActivationPass(this, drafts, options, this.nodeActivationConfidenceFloor, this.nodeActivationScope);
+  }
+
+  /** Stage imported evidence and judgments before a guarded all-or-none SQL/cache commit. */
+  async applyImport(input: KnowledgeImportInput, options: KnowledgeNodeActivationOptions = {}): Promise<void> {
+    input = snapshotNodeInput(input);
+    await this.init();
+    await applyKnowledgeImport(this, { sqlite: this.sqlite, sources: this.sources, extractions: this.extractions, nodes: this.nodes,
+      nodeRevisions: this.nodeRevisions, edges: this.edges, issues: this.issues }, input,
+    (node) => this.prepareNodeMutation(node), this.nodeActivationConfidenceFloor, this.nodeActivationScope, options);
+  }
+
+  /** Prepare a source-backed graph before committing evidence and nodes together. */
+  async applyPreparedIngest(input: KnowledgeImportInput, prepareGraph: PrepareKnowledgeImportGraph,
+    options: KnowledgeNodeActivationOptions = {}): Promise<void> {
+    input = snapshotNodeInput(input);
+    await this.init();
+    await applyKnowledgeImport(this, { sqlite: this.sqlite, sources: this.sources, extractions: this.extractions, nodes: this.nodes,
+      nodeRevisions: this.nodeRevisions, edges: this.edges, issues: this.issues }, input,
+    (node, original) => this.prepareNodeMutation(node, undefined, original),
+    this.nodeActivationConfidenceFloor, this.nodeActivationScope, options, prepareGraph);
+  }
+
+  assertPreparedNodeWrites(prepared: KnowledgePreparedNodeWrites): void { assertPreparedNodeWrites(this, prepared, this.nodeActivationScope); }
+
+  async upsertPreparedNode(prepared: KnowledgePreparedNodeWrites, index: number): Promise<KnowledgeNodeRecord> {
+    await this.init();
+    const { existing, record, now, observationEvidence } = preparedNodeWrite(this, prepared, index, this.nodeActivationScope);
+    if (record === existing) { retainKnowledgeNodeObservation(existing, record, observationEvidence); markPreparedNodeWritten(prepared, index); return record; }
+    // Everything after the final guard and before save is synchronous.
     writeKnowledgeNodeRow(this.sqlite, record);
-    recordKnowledgeNodeRevisions(this.sqlite, this.nodeRevisions, record, existing, now); // preserve prior content (Invariant 8)
+    recordKnowledgeNodeRevisions(this.sqlite, this.nodeRevisions, record, existing, now);
+    retainKnowledgeNodeObservation(existing, record, observationEvidence);
     this.nodes.set(record.id, record);
+    markPreparedNodeWritten(prepared, index);
     await this.sqlite.save();
     return record;
   }
 
-  /** Read a node's append-only revision history, oldest first. (Invariant 8.) */
+  async upsertNode(input: KnowledgeNodeUpsertInput, mutation?: KnowledgeNodeMutationContext): Promise<KnowledgeNodeRecord> {
+    const snapshot = snapshotNodeInput(input);
+    await this.init();
+    const prepared = await prepareNodeActivationPass(this, [this.prepareNodeMutation(snapshot, mutation, input)], {}, this.nodeActivationConfidenceFloor, this.nodeActivationScope);
+    return this.upsertPreparedNode(prepared, 0);
+  }
+
+  /** Read append-only node revisions, oldest first. */
   listNodeRevisions(nodeId: string): KnowledgeNodeRevisionRecord[] {
     return listKnowledgeNodeRevisions(this.nodeRevisions, nodeId);
   }
@@ -544,17 +539,33 @@ export class KnowledgeStore {
     return deleted;
   }
 
-  async replaceNodeRecord(record: KnowledgeNodeRecord): Promise<void> {
+  async replaceNodeRecord(record: KnowledgeNodeRecord, mutation?: KnowledgeNodeMutationContext): Promise<void> {
+    const restoration = mutation === undefined ? knowledgeNodeRestorationGuard(this, record, this.nodeActivationScope) : undefined;
+    record = snapshotNodeInput(record);
     await this.init();
-    writeKnowledgeNodeRow(this.sqlite, record);
-    this.nodes.set(record.id, record);
+    const existing = this.nodes.get(record.id);
+    const sameSlug = this.getNodeByKindAndSlug(record.kind, record.slug);
+    if (sameSlug && sameSlug.id !== record.id) throw new KnowledgeNodeActivationHeldError('stale');
+    const now = nowMs();
+    const replacement = prepareKnowledgeNodeReplacement(record, existing, mutation, now, restoration !== undefined);
+    const authority = mutation !== undefined || replacement === existing;
+    const prepared = await prepareNodeActivationPass(this, [{ input: record, existing, record: replacement, now, authority, restoration }], {}, this.nodeActivationConfidenceFloor, this.nodeActivationScope);
+    const guarded = preparedNodeWrite(this, prepared, 0, this.nodeActivationScope).record;
+    writeKnowledgeNodeRow(this.sqlite, guarded);
+    if (mutation) recordKnowledgeNodeRevisions(this.sqlite, this.nodeRevisions, guarded, existing, now);
+    retainKnowledgeNodeObservation(existing, guarded);
+    this.nodes.set(guarded.id, guarded);
+    markPreparedNodeWritten(prepared, 0);
     await this.sqlite.save();
   }
 
   /** Merge one node into another, re-pointing cross-reference edges. (Invariant 7.) */
   async mergeNodes(loserId: string, winnerId: string): Promise<{ merged: boolean; repointedEdges: number }> {
     await this.init();
-    return mergeKnowledgeNodes(this, loserId, winnerId);
+    return mergeKnowledgeNodes(this, loserId, winnerId, {
+      sqlite: this.sqlite, nodes: this.nodes, edges: this.edges,
+      nodeRevisions: this.nodeRevisions, nodeActivationScope: this.nodeActivationScope,
+    });
   }
 
   getSemanticEnrichmentState(sourceId: string): KnowledgeSemanticEnrichmentStateRecord | null {
@@ -575,45 +586,8 @@ export class KnowledgeStore {
 
   async upsertEdge(input: KnowledgeEdgeUpsertInput): Promise<KnowledgeEdgeRecord> {
     await this.init();
-    const existing = [...this.edges.values()].find((edge) => (
-      edge.fromKind === input.fromKind
-      && edge.fromId === input.fromId
-      && edge.toKind === input.toKind
-      && edge.toId === input.toId
-      && edge.relation === input.relation
-    ));
-    const now = nowMs();
-    const record: KnowledgeEdgeRecord = {
-      id: existing?.id ?? `edge-${randomUUID().slice(0, 8)}`,
-      fromKind: input.fromKind,
-      fromId: input.fromId,
-      toKind: input.toKind,
-      toId: input.toId,
-      relation: input.relation,
-      weight: Number.isFinite(input.weight) ? Number(input.weight) : existing?.weight ?? 1,
-      metadata: {
-        ...(existing?.metadata ?? {}),
-        ...(input.metadata ?? {}),
-      },
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-    };
-    this.sqlite.run(`
-      INSERT OR REPLACE INTO knowledge_edges (
-        id, from_kind, from_id, to_kind, to_id, relation, weight, metadata, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      record.id,
-      record.fromKind,
-      record.fromId,
-      record.toKind,
-      record.toId,
-      record.relation,
-      record.weight,
-      JSON.stringify(record.metadata),
-      record.createdAt,
-      record.updatedAt,
-    ]);
+    const record = prepareKnowledgeEdgeRecord(input, findKnowledgeEdge(this.edges, input));
+    writeKnowledgeEdgeRow(this.sqlite, record);
     this.edges.set(record.id, record);
     await this.sqlite.save();
     return record;
@@ -671,74 +645,53 @@ export class KnowledgeStore {
     return created;
   }
 
-  async upsertIssue(input: KnowledgeIssueUpsertInput): Promise<KnowledgeIssueRecord> {
+  /** Whole-pass ordinary replacement; preserves terminal and operator-reviewed issues. */
+  async replaceIssuesGuarded(inputs: readonly KnowledgeIssueUpsertInput[], namespace: string, beforeWrite: () => void, legacyHomeGraphIssues: readonly KnowledgeIssueRecord[] = []): Promise<KnowledgeIssueRecord[]> {
     await this.init();
-    const existing = input.id ? this.issues.get(input.id) : null;
-    const now = nowMs();
-    const _sourceId = stableText(input.sourceId);
-    const _nodeId = stableText(input.nodeId);
-    const mergedIssueMetadata = {
-      ...(existing?.metadata ?? {}),
-      ...(input.metadata ?? {}),
-    };
-    const issueSource = _sourceId !== null
-      ? this.sources.get(_sourceId)
-      : existing?.sourceId
-        ? this.sources.get(existing.sourceId)
-        : null;
-    const issueNode = _nodeId !== null
-      ? this.nodes.get(_nodeId)
-      : existing?.nodeId
-        ? this.nodes.get(existing.nodeId)
-        : null;
-    const issueSpaceId = preferRelatedNonDefaultSpace(
-      getExplicitKnowledgeSpaceId({ metadata: mergedIssueMetadata }),
-      inferRecordReferenceSpaceId({
-        sourceId: _sourceId ?? existing?.sourceId,
-        nodeId: _nodeId ?? existing?.nodeId,
-        metadata: mergedIssueMetadata,
-        sources: this.sources,
-        nodes: this.nodes,
-      }) ?? getExplicitKnowledgeSpaceId(issueSource) ?? getExplicitKnowledgeSpaceId(issueNode),
-    );
-    const issueMetadata = issueSpaceId
-      ? ensureKnowledgeSpaceMetadata(mergedIssueMetadata, issueSpaceId)
-      : mergedIssueMetadata;
-    const record: KnowledgeIssueRecord = {
-      id: existing?.id ?? input.id ?? `issue-${randomUUID().slice(0, 8)}`,
-      severity: input.severity,
-      code: input.code,
-      message: input.message.trim(),
-      status: input.status ?? issueStatusForUpsert(existing, input),
-      ...(_sourceId !== null ? { sourceId: _sourceId } : {}),
-      ...(_nodeId !== null ? { nodeId: _nodeId } : {}),
-      metadata: issueMetadata,
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-    };
-    this.sqlite.run(`
-      INSERT OR REPLACE INTO knowledge_issues (
-        id, severity, code, message, status, source_id, node_id, metadata, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      record.id,
-      record.severity,
-      record.code,
-      record.message,
-      record.status,
-      record.sourceId ?? null,
-      record.nodeId ?? null,
-      JSON.stringify(record.metadata),
-      record.createdAt,
-      record.updatedAt,
-    ]);
+    const records = commitGuardedKnowledgeIssueReplacement({ sqlite: this.sqlite, issues: this.issues, sources: this.sources, nodes: this.nodes }, inputs, namespace, beforeWrite, legacyHomeGraphIssues);
+    await this.sqlite.save();
+    return records;
+  }
+
+  async upsertIssue(input: KnowledgeIssueUpsertInput, mutation?: KnowledgeIssueOperatorMutation): Promise<KnowledgeIssueRecord> {
+    await this.init();
+    const { record, preserve } = prepareKnowledgeIssueRecord({ issues: this.issues, sources: this.sources, nodes: this.nodes }, input, mutation);
+    if (preserve) return record;
+    writeKnowledgeIssueRow(this.sqlite, record);
     this.issues.set(record.id, record);
     await this.sqlite.save();
     return record;
   }
 
+  /** Bounded ordinary writes with a synchronous guard at the all-or-none commit point. */
+  async applyGuardedNodeIssueWrites(input: KnowledgeGuardedNodeIssueWrites, beforeWrite: () => void): Promise<void> {
+    input = snapshotNodeInput(input);
+    await this.init();
+    if (input.nodes.length > 100 || input.issues.length > 100
+      || new Set(input.nodes.map((node) => node.id)).size !== input.nodes.length
+      || new Set(input.issues.map((issue) => issue.id)).size !== input.issues.length
+      || input.nodes.some((node) => !node.id || !this.nodes.has(node.id))
+      || input.issues.some((issue) => !issue.id || !this.issues.has(issue.id))) {
+      throw new Error('Guarded knowledge writes require at most 100 distinct existing nodes and issues.');
+    }
+    const prepared = await this.prepareNodeWrites(input.nodes);
+    const nodes = input.nodes.map((_, index) => preparedNodeWrite(this, prepared, index, this.nodeActivationScope));
+    const nodeView = new Map(this.nodes);
+    for (const { record } of nodes) nodeView.set(record.id, record);
+    const issues = input.issues.map((issue) => prepareKnowledgeIssueRecord({ issues: this.issues, sources: this.sources, nodes: nodeView }, issue));
+    beforeWrite();
+    assertPreparedNodeWrites(this, prepared, this.nodeActivationScope);
+    commitKnowledgeNodeIssueWrites({ sqlite: this.sqlite, nodes: this.nodes, issues: this.issues, nodeRevisions: this.nodeRevisions },
+      nodes, issues.filter((issue) => !issue.preserve).map((issue) => issue.record));
+    nodes.forEach(({ existing, record, observationEvidence }, index) => { retainKnowledgeNodeObservation(existing, record, observationEvidence); markPreparedNodeWritten(prepared, index); });
+    await this.sqlite.save();
+  }
+
   async replaceIssueRecord(record: KnowledgeIssueRecord): Promise<void> {
     await this.init();
+    const lifecycle = prepareKnowledgeIssueUpsert(this.issues.get(record.id), record, undefined, true);
+    if (lifecycle.preserve) return;
+    record = { ...record, status: lifecycle.status, metadata: lifecycle.metadata };
     this.sqlite.run(`
       INSERT OR REPLACE INTO knowledge_issues (
         id, severity, code, message, status, source_id, node_id, metadata, created_at, updated_at
@@ -764,69 +717,8 @@ export class KnowledgeStore {
     const existing = input.id
       ? this.extractions.get(input.id)
       : this.getExtractionBySourceId(input.sourceId);
-    const now = nowMs();
-    const _artifactId = stableText(input.artifactId);
-    const _title = stableText(input.title);
-    const _summary = stableText(input.summary);
-    const _excerpt = stableText(input.excerpt);
-    const mergedExtractionMetadata = {
-      ...(existing?.metadata ?? {}),
-      ...(input.metadata ?? {}),
-      // A freshly written extraction is produced by the current extractor
-      // generation, so it carries the current version (an explicit input version
-      // wins, e.g. import re-materialization). An advancing version then
-      // re-extracts only genuinely older stored captures (Defect 8) without
-      // looping on the extractions it just rewrote.
-      extractorVersion: typeof input.metadata?.extractorVersion === 'number'
-        ? input.metadata.extractorVersion
-        : KNOWLEDGE_EXTRACTOR_VERSION,
-    };
-    const extractionSource = this.sources.get(input.sourceId);
-    const extractionMetadata = getExplicitKnowledgeSpaceId({ metadata: mergedExtractionMetadata }) || !extractionSource
-      ? mergedExtractionMetadata
-      : ensureKnowledgeSpaceMetadata(mergedExtractionMetadata, getKnowledgeSpaceId(extractionSource));
-    const record: KnowledgeExtractionRecord = {
-      id: existing?.id ?? input.id ?? `extract-${randomUUID().slice(0, 8)}`,
-      sourceId: input.sourceId,
-      ...(_artifactId !== null ? { artifactId: _artifactId } : existing?.artifactId ? { artifactId: existing.artifactId } : {}),
-      extractorId: input.extractorId,
-      format: input.format,
-      ...(_title !== null ? { title: _title } : existing?.title ? { title: existing.title } : {}),
-      ...(_summary !== null ? { summary: _summary } : existing?.summary ? { summary: existing.summary } : {}),
-      ...(_excerpt !== null ? { excerpt: _excerpt } : existing?.excerpt ? { excerpt: existing.excerpt } : {}),
-      sections: uniq(input.sections ?? existing?.sections),
-      links: uniq(input.links ?? existing?.links),
-      estimatedTokens: Math.max(0, Number(input.estimatedTokens ?? existing?.estimatedTokens ?? 0)),
-      structure: {
-        ...(existing?.structure ?? {}),
-        ...(input.structure ?? {}),
-      },
-      metadata: extractionMetadata,
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-    };
-    this.sqlite.run(`
-      INSERT OR REPLACE INTO knowledge_extractions (
-        id, source_id, artifact_id, extractor_id, format, title, summary, excerpt,
-        sections, links, estimated_tokens, structure, metadata, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      record.id,
-      record.sourceId,
-      record.artifactId ?? null,
-      record.extractorId,
-      record.format,
-      record.title ?? null,
-      record.summary ?? null,
-      record.excerpt ?? null,
-      JSON.stringify([...record.sections]),
-      JSON.stringify([...record.links]),
-      record.estimatedTokens,
-      JSON.stringify(record.structure),
-      JSON.stringify(record.metadata),
-      record.createdAt,
-      record.updatedAt,
-    ]);
+    const record = prepareKnowledgeExtractionRecord(input, existing, this.sources.get(input.sourceId));
+    writeKnowledgeExtractionRow(this.sqlite, record);
     this.extractions.set(record.id, record);
     await this.sqlite.save();
     return record;
@@ -1093,7 +985,7 @@ export class KnowledgeStore {
     this.sources.clear();
     for (const record of snapshot.sources) this.sources.set(record.id, record);
     this.nodes.clear();
-    for (const record of snapshot.nodes) this.nodes.set(record.id, record);
+    for (const record of snapshot.nodes) this.nodes.set(record.id, retainKnowledgeNodeRecord(record));
     this.edges.clear();
     for (const record of snapshot.edges) this.edges.set(record.id, record);
     this.issues.clear();
@@ -1126,53 +1018,4 @@ export class KnowledgeStore {
     for (const record of snapshot.semanticEnrichmentStates) this.semanticEnrichmentStates.set(record.sourceId, record);
     this.ready = true;
   }
-}
-
-function inferRecordReferenceSpaceId(input: {
-  readonly sourceId?: string | null | undefined;
-  readonly nodeId?: string | null | undefined;
-  readonly metadata: Record<string, unknown>;
-  readonly sources: ReadonlyMap<string, KnowledgeSourceRecord>;
-  readonly nodes: ReadonlyMap<string, KnowledgeNodeRecord>;
-}): string | null {
-  const spaceIds = new Set<string>();
-  for (const sourceId of uniqueReferenceIds([
-    input.sourceId ?? undefined,
-    readMetadataString(input.metadata.sourceId),
-    ...readMetadataStringArray(input.metadata.sourceIds),
-  ])) {
-    const spaceId = getExplicitKnowledgeSpaceId(input.sources.get(sourceId));
-    if (spaceId) spaceIds.add(spaceId);
-  }
-  for (const nodeId of uniqueReferenceIds([
-    input.nodeId ?? undefined,
-    readMetadataString(input.metadata.nodeId),
-    ...readMetadataStringArray(input.metadata.linkedObjectIds),
-    ...readMetadataStringArray(input.metadata.subjectIds),
-  ])) {
-    const spaceId = getExplicitKnowledgeSpaceId(input.nodes.get(nodeId));
-    if (spaceId) spaceIds.add(spaceId);
-  }
-  return [...spaceIds].find((spaceId) => spaceId !== DEFAULT_KNOWLEDGE_SPACE_ID) ?? [...spaceIds][0] ?? null;
-}
-
-function preferRelatedNonDefaultSpace(explicitSpaceId: string | null, relatedSpaceId: string | null): string | null {
-  if (relatedSpaceId && relatedSpaceId !== DEFAULT_KNOWLEDGE_SPACE_ID && explicitSpaceId === DEFAULT_KNOWLEDGE_SPACE_ID) {
-    return relatedSpaceId;
-  }
-  return explicitSpaceId ?? relatedSpaceId;
-}
-
-function readMetadataString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function readMetadataStringArray(value: unknown): readonly string[] {
-  if (typeof value === 'string' && value.trim().length > 0) return [value.trim()];
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => readMetadataStringArray(entry));
-}
-
-function uniqueReferenceIds(values: readonly (string | undefined)[]): readonly string[] {
-  return [...new Set(values.filter((entry): entry is string => Boolean(entry && entry.trim().length > 0)))];
 }

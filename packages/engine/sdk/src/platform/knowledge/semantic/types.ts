@@ -1,3 +1,4 @@
+import type { KnowledgeAnswerQuality } from './answer-verification/types.js';
 import type {
   KnowledgeObjectProfilePolicy,
 } from '../extensions.js';
@@ -101,6 +102,8 @@ export interface KnowledgeSemanticEnrichmentResult {
 }
 
 export interface KnowledgeSemanticAnswerInput {
+  /** Programmatic cancellation; never part of the serialized judgment state. */
+  readonly signal?: AbortSignal | undefined;
   readonly query: string;
   readonly knowledgeSpaceId?: string | undefined;
   readonly mode?: 'concise' | 'standard' | 'detailed' | undefined;
@@ -111,6 +114,7 @@ export interface KnowledgeSemanticAnswerInput {
   readonly candidateSourceIds?: readonly string[] | undefined;
   readonly candidateNodeIds?: readonly string[] | undefined;
   readonly strictCandidates?: boolean | undefined;
+  /** Current local context candidates, including search-derived associations; never selected targets or operator authority. */
   readonly linkedObjects?: readonly KnowledgeNodeRecord[] | undefined;
   readonly noMatchMessage?: string | undefined;
   readonly autoRepairGaps?: boolean | undefined;
@@ -118,6 +122,7 @@ export interface KnowledgeSemanticAnswerInput {
 }
 
 export interface KnowledgeSemanticAnswer {
+  readonly quality?: KnowledgeAnswerQuality | undefined;
   readonly text: string;
   readonly mode: string;
   readonly confidence: number;

@@ -1,3 +1,5 @@
+import type { JudgmentLineage } from './types.ts';
+
 /**
  * Why a judgment call failed. Every decision site treats a failure as a
  * failure: there is no heuristic path to fall back to. What a site does when
@@ -25,12 +27,15 @@ export class JudgmentError extends Error {
   /** The endpoint's request id, when it sent one. */
   readonly requestId: string | undefined;
 
+  readonly lineage: JudgmentLineage | undefined;
+
   constructor(
     kind: JudgmentErrorKind,
     message: string,
-    options: { cause?: unknown; status?: number; requestId?: string } = {},
+    options: { cause?: unknown; status?: number; requestId?: string; lineage?: JudgmentLineage } = {},
   ) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
+    this.lineage = options.lineage;
     this.kind = kind;
     this.status = options.status;
     this.requestId = options.requestId;

@@ -1,3 +1,4 @@
+import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
 import { GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import type { ArtifactStore } from '../../artifacts/index.js';
 import type { ArtifactDescriptor } from '../../artifacts/types.js';
@@ -29,8 +30,7 @@ import {
 import {
   findHomeAssistantNode,
   missingDevicePassportFields,
-  readHomeGraphState,
-  renderHomeGraphState,
+  readHomeGraphServingState,
   safeHomeGraphFilename,
 } from './state.js';
 import {
@@ -39,11 +39,11 @@ import {
   renderPacketPage,
   renderRoomPage,
 } from './rendering.js';
-import { deriveRepairProfileFacts } from '../semantic/repair-profile.js';
-import { semanticFactId, semanticHash, semanticSlug } from '../semantic/utils.js';
-import { upsertSourceLinkedRepairProfileFact } from '../semantic/self-improvement-promotion.js';
-import { sourceAuthorityBoostForAnswer } from '../semantic/answer-source-ranking.js';
-import { compareHomeGraphPageSources, isUsefulHomeGraphPageFact, isUsefulHomeGraphPageSource } from './page-quality.js';
+import { semanticHash } from '../semantic/utils.js';
+import { createSemanticWriteGuard } from '../semantic/primary-source-plan.js';
+import { prepareSourceLinkedRepairProfileFacts } from '../semantic/self-improvement-promotion.js';
+import { buildDevicePageProfileFacts, devicePageProfileFactInput } from './page-profile-facts.js';
+import { createHomeGraphPageSourceReader, type HomeGraphPageSourceReader, isUsefulHomeGraphPageFact } from './page-quality.js';
 import type {
   HomeGraphDevicePassportResult,
   HomeGraphGeneratedPagesSummary,
@@ -57,6 +57,7 @@ export interface HomeGraphPageContext {
   readonly artifactStore: ArtifactStore;
   readonly spaceId: string;
   readonly installationId: string;
+  readonly signal?: AbortSignal | undefined;
 }
 
 export const HOME_GRAPH_PAGE_POLICY_VERSION = 'homegraph-pages-v7';
@@ -66,15 +67,12 @@ const DEFAULT_SYNC_PAGE_RUN_MS = 15_000;
 const MAX_FOREGROUND_SYNC_DEVICE_PASSPORTS = 32;
 const MAX_FOREGROUND_SYNC_ROOM_PAGES = 12;
 const MAX_FOREGROUND_SYNC_PAGE_RUN_MS = 30_000;
-const MAX_PROFILE_SOURCES_PER_DEVICE_PAGE = 8;
-const PAGE_PROFILE_SOURCE_WEIGHT = 0.78;
-const PAGE_PROFILE_DESCRIBES_WEIGHT = 0.76;
 
 interface DevicePassportSourceLookup {
   readonly sourcesById: ReadonlyMap<string, KnowledgeSourceRecord>;
   readonly sourceIdsByNodeId: ReadonlyMap<string, ReadonlySet<string>>;
 }
-type HomeGraphStateSnapshot = ReturnType<typeof readHomeGraphState>;
+type HomeGraphStateSnapshot = ReturnType<typeof readHomeGraphServingState>;
 type ExtractionBySourceId = ReadonlyMap<string, ReturnType<KnowledgeStore['getExtractionBySourceId']>>;
 
 export async function generateAutomaticHomeGraphPages(
@@ -111,6 +109,26 @@ async function generateHomeGraphPagesForCurrentState(
   context: HomeGraphPageContext,
   options: HomeGraphSnapshotInput['pageAutomation'],
 ): Promise<HomeGraphGeneratedPagesSummary> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (context.signal?.aborted) abort();
+  else context.signal?.addEventListener('abort', abort, { once: true });
+  const maxRunMs = options?.maxRunMs;
+  const budget = typeof maxRunMs === 'number' && Number.isFinite(maxRunMs)
+    ? Math.max(1_000, Math.trunc(maxRunMs)) : DEFAULT_SYNC_PAGE_RUN_MS;
+  const timer = setTimeout(abort, budget);
+  try {
+    return await generateHomeGraphPagesWithinBudget({ ...context, signal: controller.signal }, options);
+  } finally {
+    clearTimeout(timer);
+    context.signal?.removeEventListener('abort', abort);
+  }
+}
+
+async function generateHomeGraphPagesWithinBudget(
+  context: HomeGraphPageContext,
+  options: HomeGraphSnapshotInput['pageAutomation'],
+): Promise<HomeGraphGeneratedPagesSummary> {
   const effectiveOptions = options ?? {};
   const summary = createGeneratedPagesSummary();
   if (effectiveOptions.enabled === false) return summary;
@@ -118,13 +136,7 @@ async function generateHomeGraphPagesForCurrentState(
     ? Date.now() + Math.max(1_000, Math.trunc(effectiveOptions.maxRunMs))
     : undefined;
 
-  const state = readHomeGraphState(context.store, context.spaceId);
-  const sourceLookup = buildDevicePassportSourceLookup(state.sources, state.nodes, state.edges);
-  const extractionsBySourceId = new Map(
-    context.store
-      .listExtractionsForSources(new Set(state.sources.map((source) => source.id)))
-      .map((extraction) => [extraction.sourceId, extraction]),
-  );
+  const state = readHomeGraphServingState(context.store, context.spaceId);
   if (effectiveOptions.devicePassports !== false) {
     const allDevices = prioritizeNodesForGeneratedPages(
       state.nodes.filter((node) => node.kind === 'ha_device' && node.status !== 'stale'),
@@ -132,7 +144,7 @@ async function generateHomeGraphPagesForCurrentState(
     const devices = limitRecords(allDevices, effectiveOptions.maxDevicePassports);
     summary.deferredDevicePassports += Math.max(0, allDevices.length - devices.length);
     for (const [index, device] of devices.entries()) {
-      if (deadlineReached(deadlineAt)) {
+      if (context.signal?.aborted || deadlineReached(deadlineAt)) {
         summary.deferredDevicePassports += devices.length - index;
         break;
       }
@@ -141,9 +153,6 @@ async function generateHomeGraphPagesForCurrentState(
       try {
         const page = await refreshHomeGraphDevicePassport({
           ...context,
-          state,
-          sourceLookup,
-          extractionsBySourceId,
           input: {
             knowledgeSpaceId: context.spaceId,
             deviceId,
@@ -171,7 +180,7 @@ async function generateHomeGraphPagesForCurrentState(
     const rooms = limitRecords(allRooms, effectiveOptions.maxRoomPages);
     summary.deferredRoomPages += Math.max(0, allRooms.length - rooms.length);
     for (const [index, room] of rooms.entries()) {
-      if (deadlineReached(deadlineAt)) {
+      if (context.signal?.aborted || deadlineReached(deadlineAt)) {
         summary.deferredRoomPages += rooms.length - index;
         break;
       }
@@ -227,7 +236,10 @@ export async function refreshHomeGraphDevicePassport(
       operation: 'homegraph.refreshDevicePassport',
     });
   }
-  const state = context.state ?? readHomeGraphState(store, spaceId);
+  const state = context.state ?? readHomeGraphServingState(store, spaceId);
+  const writeGuard = createSemanticWriteGuard(store, context.signal);
+  writeGuard.watch('page-state', () => readHomeGraphServingState(store, spaceId), state);
+  for (const source of state.sources) writeGuard.extraction(source.id);
   throwIfAborted(context.signal);
   const device = findHomeAssistantNode(state.nodes, 'ha_device', input.deviceId);
   if (!device) {
@@ -248,16 +260,22 @@ export async function refreshHomeGraphDevicePassport(
     ))
   ));
   const sourceLookup = context.sourceLookup ?? buildDevicePassportSourceLookup(state.sources, state.nodes, state.edges);
-  const sources = sourcesForDevicePassport(device.id, sourceLookup);
+  const sourceReader = createHomeGraphPageSourceReader(context.signal);
+  const sources = await sourcesForDevicePassport(device.id, sourceLookup, sourceReader);
   const pageProfileFacts = await buildDevicePageProfileFacts({
     store,
     spaceId,
     installationId,
     device,
     sources,
+    sourceReader,
     extractionsBySourceId: context.extractionsBySourceId,
     signal: context.signal,
   });
+  const preparedProfileFacts = await prepareSourceLinkedRepairProfileFacts(
+    pageProfileFacts.map((fact) => devicePageProfileFactInput(store, spaceId, installationId, device, fact)),
+    { signal: context.signal },
+  );
   throwIfAborted(context.signal);
   const semanticFacts = uniqueNodesById([
     ...semanticFactsForNode(device.id, sources, state.nodes, state.edges),
@@ -265,7 +283,7 @@ export async function refreshHomeGraphDevicePassport(
   ]);
   const scopedNodeIds = new Set([device.id, ...entities.map((node) => node.id)]);
   const issues = filterDevicePassportIssues(issuesForScope(state.issues, state.edges, scopedNodeIds, sources), sources);
-  const missingFields = missingDevicePassportFields(device, sources, semanticFacts);
+  const missingFields = await missingDevicePassportFields(device, sources, semanticFacts, { entities, signal: context.signal });
   const markdown = renderDevicePassportPage({ spaceId, device, entities, sources, issues, missingFields, semanticFacts });
   const pageContentHash = semanticHash(markdown);
   const passportId = homeGraphNodeId(spaceId, 'ha_device_passport', input.deviceId);
@@ -276,6 +294,9 @@ export async function refreshHomeGraphDevicePassport(
     : undefined;
   const { passport, generated } = await store.batch(async () => {
     throwIfAborted(context.signal);
+    sourceReader.assertCurrent((id) => store.getSource(id));
+    writeGuard.assertCurrent();
+    preparedProfileFacts.assertCurrent();
     const priorRecords = captureDevicePassportRefreshRecords(store, passportId, pageProfileFacts.map((fact) => fact.node.id));
     const writtenNodeIds = new Set<string>();
     const writtenEdgeKeys: { fromKind: KnowledgeEdgeRecord['fromKind']; fromId: string; toKind: KnowledgeEdgeRecord['toKind']; toId: string; relation: string }[] = [];
@@ -284,7 +305,7 @@ export async function refreshHomeGraphDevicePassport(
     }
     let passport: KnowledgeNodeRecord | undefined;
     try {
-      passport = await store.upsertNode({
+      passport = await upsertObservedKnowledgeNode(store, {
         id: passportId,
         kind: 'ha_device_passport',
         slug: `${device.slug}-passport`,
@@ -302,7 +323,7 @@ export async function refreshHomeGraphDevicePassport(
             ? previousRefreshedAt
             : Date.now(),
         }),
-      });
+      }, 'generated-page-index', device, () => store.getNode(device.id));
       writtenNodeIds.add(passport.id);
       await store.upsertEdge({
         fromKind: 'node',
@@ -314,15 +335,12 @@ export async function refreshHomeGraphDevicePassport(
       });
       writtenEdgeKeys.push({ fromKind: 'node', fromId: passport.id, toKind: 'node', toId: device.id, relation: 'source_for' });
       throwIfAborted(context.signal);
-      for (const factPlan of pageProfileFacts) {
-        writtenNodeIds.add(factPlan.node.id);
-        writtenEdgeKeys.push(
-          { fromKind: 'source', fromId: factPlan.source.id, toKind: 'node', toId: factPlan.node.id, relation: 'supports_fact' },
-          { fromKind: 'node', fromId: factPlan.node.id, toKind: 'node', toId: device.id, relation: 'describes' },
-        );
-        const fact = await upsertDevicePageProfileFact(store, spaceId, installationId, device, factPlan);
-        throwIfAborted(context.signal);
-      }
+      preparedProfileFacts.assertCurrent();
+      await preparedProfileFacts.write({
+        nodeWritten: (node) => { writtenNodeIds.add(node.id); },
+        edgeWritten: (edge) => { writtenEdgeKeys.push(edgeKey(edge)); },
+      });
+      throwIfAborted(context.signal);
       const generated = await materializeGeneratedMarkdown({
         store,
         artifactStore,
@@ -345,6 +363,7 @@ export async function refreshHomeGraphDevicePassport(
       return { passport, generated };
     } catch (error) {
       await rollbackWrittenRecords();
+      throwIfAborted(context.signal);
       throw error;
     }
   });
@@ -422,10 +441,7 @@ async function restoreDevicePassportRefreshRecords(
   writtenNodeIds: ReadonlySet<string>,
   writtenEdgeKeys: readonly DevicePassportRefreshEdgeKey[],
 ): Promise<void> {
-  const edgeIds = uniqueStrings([
-    ...writtenEdgeKeys.map(edgeKeyId),
-    ...prior.edges.keys(),
-  ]);
+  const edgeIds = uniqueStrings(writtenEdgeKeys.map(edgeKeyId));
   for (const id of edgeIds) {
     const priorEdge = prior.edges.get(id);
     const current = findDevicePassportRefreshEdgeByKeyId(store, id);
@@ -435,7 +451,8 @@ async function restoreDevicePassportRefreshRecords(
       await store.deleteEdge(current.id);
     }
   }
-  const nodeIds = uniqueStrings([...writtenNodeIds, ...prior.nodes.keys()]);
+  // Captured rows that this pass never touched may contain a concurrent edit.
+  const nodeIds = [...writtenNodeIds];
   for (const id of nodeIds) {
     const priorNode = prior.nodes.get(id);
     const current = store.getNode(id);
@@ -479,13 +496,18 @@ function findDevicePassportRefreshEdgeByKeyId(
 }
 
 export async function generateHomeGraphRoomPage(
-  context: HomeGraphPageContext & { readonly input: HomeGraphProjectionInput },
+  context: HomeGraphPageContext & { readonly input: HomeGraphProjectionInput; readonly signal?: AbortSignal | undefined },
 ): Promise<HomeGraphProjectionResult & { readonly artifactCreated: boolean }> {
   const { store, artifactStore, spaceId, installationId, input } = context;
-  const state = readHomeGraphState(store, spaceId);
+  const state = readHomeGraphServingState(store, spaceId);
+  const writeGuard = createSemanticWriteGuard(store, context.signal);
+  writeGuard.watch('page-state', () => readHomeGraphServingState(store, spaceId), state);
   const areaId = input.areaId ?? input.roomId;
   const title = input.title ?? resolveRoomTitle(state.nodes, areaId) ?? 'Home Graph Room';
-  const markdown = renderRoomPage({ ...state, title }, areaId);
+  const sourceReader = createHomeGraphPageSourceReader(context.signal);
+  const markdown = await renderRoomPage({ ...state, title }, areaId, sourceReader);
+  sourceReader.assertCurrent((id) => store.getSource(id));
+  writeGuard.assertCurrent();
   const filename = `${safeHomeGraphFilename(title)}.md`;
   const targetNode = areaId
     ? findHomeAssistantNode(state.nodes, 'ha_area', areaId) ?? findHomeAssistantNode(state.nodes, 'ha_room', areaId)
@@ -498,6 +520,7 @@ export async function generateHomeGraphRoomPage(
     filename,
     markdown,
     projectionKind: 'room-page',
+    signal: context.signal,
     canonicalValue: `room-page:${areaId ?? 'home'}`,
     title,
     summary: `Living Home Graph room page for ${title}.`,
@@ -525,7 +548,7 @@ export async function generateHomeGraphPacket(
 ): Promise<HomeGraphProjectionResult & { readonly artifactCreated: boolean }> {
   const { store, artifactStore, spaceId, installationId, input } = context;
   const title = input.title ?? `${input.packetKind ?? 'home'} packet`;
-  const markdown = renderPacketPage(renderHomeGraphState(store, spaceId, title), input);
+  const markdown = renderPacketPage({ ...readHomeGraphServingState(store, spaceId), title }, input);
   const generated = await materializeGeneratedMarkdown({
     store,
     artifactStore,
@@ -810,15 +833,11 @@ function buildDevicePassportSourceLookup(
   return { sourcesById, sourceIdsByNodeId };
 }
 
-function sourcesForDevicePassport(
-  nodeId: string,
-  lookup: DevicePassportSourceLookup,
-): KnowledgeSourceRecord[] {
-  return [...(lookup.sourceIdsByNodeId.get(nodeId) ?? [])]
+async function sourcesForDevicePassport(nodeId: string, lookup: DevicePassportSourceLookup, reader: HomeGraphPageSourceReader): Promise<KnowledgeSourceRecord[]> {
+  const candidates = [...(lookup.sourceIdsByNodeId.get(nodeId) ?? [])]
     .map((sourceId) => lookup.sourcesById.get(sourceId))
-    .filter((source): source is KnowledgeSourceRecord => Boolean(source))
-    .filter((source) => isUsefulHomeGraphPageSource(source) || sourceAuthorityBoostForAnswer(source) > 0)
-    .sort(compareHomeGraphPageSources);
+    .filter((source): source is KnowledgeSourceRecord => Boolean(source));
+  return (await reader.rank(candidates)).map((item) => item.source);
 }
 
 function filterDevicePassportIssues(
@@ -827,147 +846,6 @@ function filterDevicePassportIssues(
 ): readonly KnowledgeIssueRecord[] {
   if (sources.length === 0) return issues;
   return issues.filter((issue) => issue.code !== 'homegraph.device.missing_manual');
-}
-
-interface DevicePageProfileFactPlan {
-  readonly node: KnowledgeNodeRecord;
-  readonly source: KnowledgeSourceRecord;
-  readonly title: string;
-  readonly summary: string;
-  readonly evidence: string;
-  readonly classification: ReturnType<typeof deriveRepairProfileFacts>[number];
-  readonly authority: 'official-vendor' | 'vendor' | 'secondary';
-}
-
-async function buildDevicePageProfileFacts(input: {
-  readonly store: KnowledgeStore;
-  readonly spaceId: string;
-  readonly installationId: string;
-  readonly device: KnowledgeNodeRecord;
-  readonly sources: readonly KnowledgeSourceRecord[];
-  readonly extractionsBySourceId?: ExtractionBySourceId | undefined;
-  readonly signal?: AbortSignal | undefined;
-}): Promise<DevicePageProfileFactPlan[]> {
-  throwIfAborted(input.signal);
-  const facts: DevicePageProfileFactPlan[] = [];
-  const sources = input.sources
-    .filter(isUsefulHomeGraphPageSource)
-    .sort(compareHomeGraphPageSources)
-    .slice(0, MAX_PROFILE_SOURCES_PER_DEVICE_PAGE);
-  for (const source of sources) {
-    throwIfAborted(input.signal);
-    const extraction = input.extractionsBySourceId?.get(source.id) ?? input.store.getExtractionBySourceId(source.id);
-    const sourceText = extractedPageSourceText(extraction);
-    if (!sourceText.trim()) continue;
-    const profileFacts = deriveRepairProfileFacts({
-      query: `complete features specifications ${input.device.title}`,
-      source,
-      text: sourceText,
-    });
-    for (const profileFact of profileFacts) {
-      throwIfAborted(input.signal);
-      const authorityBoost = sourceAuthorityBoostForAnswer(source);
-      const subjectIds = [input.device.id];
-      const sourceIds = [source.id];
-      const now = Date.now();
-      const factId = semanticFactId({
-        spaceId: input.spaceId,
-        kind: profileFact.kind,
-        title: profileFact.title,
-        value: profileFact.value,
-        summary: profileFact.summary,
-        subjectIds,
-        fallbackScope: source.id,
-      });
-      facts.push({
-        node: {
-          id: factId,
-          kind: 'fact',
-          slug: semanticSlug(`${input.spaceId}-${profileFact.title}-${profileFact.summary}-${source.id}`),
-          title: profileFact.title,
-          summary: profileFact.summary,
-          aliases: profileFact.aliases,
-          status: 'active',
-          confidence: 72,
-          sourceId: source.id,
-          metadata: buildHomeGraphMetadata(input.spaceId, input.installationId, {
-            semanticKind: 'fact',
-            factKind: profileFact.kind,
-            value: profileFact.value,
-            evidence: profileFact.evidence,
-            labels: profileFact.labels,
-            sourceId: source.id,
-            sourceIds,
-            subject: input.device.title,
-            subjectIds,
-            targetHints: [{ id: input.device.id, title: input.device.title, kind: input.device.kind }],
-            linkedObjectIds: subjectIds,
-            extractor: 'page-profile',
-            sourceAuthority: authorityBoost >= 120 ? 'official-vendor' : authorityBoost > 0 ? 'vendor' : 'secondary',
-          }),
-          createdAt: now,
-          updatedAt: now,
-        },
-        source,
-        title: profileFact.title,
-        summary: profileFact.summary,
-        evidence: profileFact.evidence,
-        classification: profileFact,
-        authority: authorityBoost >= 120 ? 'official-vendor' : authorityBoost > 0 ? 'vendor' : 'secondary',
-      });
-    }
-  }
-  return facts;
-}
-
-async function upsertDevicePageProfileFact(
-  store: KnowledgeStore,
-  spaceId: string,
-  installationId: string,
-  device: KnowledgeNodeRecord,
-  fact: DevicePageProfileFactPlan,
-): Promise<KnowledgeNodeRecord> {
-  return upsertSourceLinkedRepairProfileFact({
-    store,
-    spaceId,
-    source: fact.source,
-    subjects: [device],
-    authority: fact.authority,
-    title: fact.title,
-    summary: fact.summary,
-    evidence: fact.evidence,
-    classification: fact.classification,
-    extractor: 'page-profile',
-    confidence: 72,
-    supportWeight: PAGE_PROFILE_SOURCE_WEIGHT,
-    describesWeight: PAGE_PROFILE_DESCRIBES_WEIGHT,
-    edgeMetadata: {
-      linkedBy: 'generated-page-profile',
-    },
-    metadataBuilder: (metadata) => buildHomeGraphMetadata(spaceId, installationId, metadata),
-  });
-}
-
-function extractedPageSourceText(extraction: ReturnType<KnowledgeStore['getExtractionBySourceId']>): string {
-  if (!extraction) return '';
-  const structure = readRecord(extraction.structure);
-  const nestedStructure = readRecord(structure.structure);
-  const metadata = readRecord(extraction.metadata);
-  const nestedMetadata = readRecord(structure.metadata);
-  return [
-    extraction.excerpt,
-    ...extraction.sections,
-    typeof structure.searchText === 'string' ? structure.searchText : undefined,
-    typeof structure.text === 'string' ? structure.text : undefined,
-    typeof structure.content === 'string' ? structure.content : undefined,
-    typeof nestedStructure.searchText === 'string' ? nestedStructure.searchText : undefined,
-    typeof nestedStructure.text === 'string' ? nestedStructure.text : undefined,
-    typeof nestedStructure.content === 'string' ? nestedStructure.content : undefined,
-    typeof metadata.searchText === 'string' ? metadata.searchText : undefined,
-    typeof metadata.text === 'string' ? metadata.text : undefined,
-    typeof nestedMetadata.searchText === 'string' ? nestedMetadata.searchText : undefined,
-    typeof nestedMetadata.text === 'string' ? nestedMetadata.text : undefined,
-  ].filter(Boolean).join('\n\n');
 }
 
 function uniqueNodesById(nodes: readonly KnowledgeNodeRecord[]): KnowledgeNodeRecord[] {

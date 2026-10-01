@@ -1,3 +1,4 @@
+import type { JudgmentErrorKind } from './errors.ts';
 import type {
   JsonValue,
   ChoiceCriteria,
@@ -53,8 +54,38 @@ export interface JudgmentRequest<Q extends Questions> {
   readonly model?: string;
   /** Cancels the call and any pending retries. */
   readonly signal?: AbortSignal;
+  /** Optional tighter total budget for this logical reading; cannot exceed the port deadline. */
+  readonly totalTimeoutMs?: number;
   /** Attribution for the decision log; never sent to the model. */
   readonly context?: DecisionContext;
+}
+
+/** Credential-free evidence of one actual wire attempt in a logical reading. */
+export interface JudgmentAttempt {
+  readonly attempt: number;
+  /** Zero is the primary, then the configured fallback order. No addresses are stored. */
+  readonly endpointIndex: number;
+  readonly endpointKind: 'hosted' | 'local';
+  readonly requestedModel: string;
+  readonly latencyMs: number;
+  readonly outcome: 'answered' | JudgmentErrorKind;
+  readonly requestId?: string;
+  readonly status?: number;
+}
+
+export interface JudgmentLineage {
+  readonly logicalRequestId: string;
+  readonly attempts: readonly JudgmentAttempt[];
+}
+
+/** Observed health only; it never authorizes an unconfigured target or changes order. */
+export interface JudgmentEndpointHealth {
+  readonly endpointIndex: number;
+  readonly endpointKind: 'hosted' | 'local';
+  readonly model: string;
+  readonly attempts: number;
+  readonly consecutiveFailures: number;
+  readonly lastOutcome?: JudgmentAttempt['outcome'];
 }
 
 /** Typed answers for one call, with what answered and what it cost. */
@@ -70,6 +101,7 @@ export interface JudgmentResult<Q extends Questions> {
   readonly requestId: string | undefined;
   /** The decision log entry for this call, when the port records decisions. */
   readonly decisionId?: string;
+  readonly lineage?: JudgmentLineage;
 }
 
 /**
@@ -92,6 +124,8 @@ export interface JudgmentPort {
   ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>;
   /** Present when the port records decisions. */
   readonly recorder?: DecisionRecorder;
+  /** A credential-free snapshot of the currently configured targets. */
+  readonly health?: () => readonly JudgmentEndpointHealth[];
 }
 
 /** Question builders with the same shapes the wire expects. */

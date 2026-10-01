@@ -4,6 +4,9 @@
  * the conversation relaxes it. Each check was read for what it actually
  * decides (owner ruling 2026-09-27), and its disposition follows from that:
  *
+ * 0. Judgment input (code, judgment-input.ts). Known protected literals are
+ *    refused locally before any judgment request, including read-only calls.
+ *    Hosted judgment is itself an outward transmission.
  * 1. Catastrophic commands (Jev). Whether a shell command would destroy the
  *    machine or the user's data wholesale is a judgment about what the command
  *    does; the old frozen list only knew the spellings someone wrote down.
@@ -37,8 +40,10 @@
  *    Hash equality and a clock comparison decide nothing; the owner's answer is
  *    the decision.
  *
- * Which calls are outward is Jev's `outward` reading alone.
+ * Which tool calls are outward is Jev's `outward` reading alone. The earlier
+ * judgment-input check protects the judgment transmission independently.
  */
+import { judgmentInputProblem, snapshotJudgmentInput, JudgmentInputError } from './judgment-input.js';
 import { checkOwnerApproval, type OwnerApproval } from '../security/owner-approval.js';
 import { getProcessUntrustedContentLedger, type UntrustedContentLedger } from '../security/untrusted-content.js';
 import { findContentTaint } from '../security/content-taint.js';
@@ -46,7 +51,7 @@ import type { GateReading } from './reading.js';
 import { effectPermittedForProvenance, type AgentEffect } from './surface-authority.js';
 
 /** The boundary's checks, in the order they run. */
-export type BoundaryCheckName = 'catastrophic' | 'surface-authority' | 'card-details' | 'outward-effect';
+export type BoundaryCheckName = 'judgment-input' | 'catastrophic' | 'surface-authority' | 'card-details' | 'outward-effect';
 
 export interface BoundaryCheck {
   readonly check: BoundaryCheckName;
@@ -69,7 +74,7 @@ export type BoundaryVerdict =
 
 /** Every string value in the arguments, keyed by its path: the content an approval is bound to. */
 export function stringFieldsOf(args: Record<string, unknown>, prefix = ''): Record<string, string> {
-  const fields: Record<string, string> = {};
+  const fields = Object.create(null) as Record<string, string>;
   for (const [key, value] of Object.entries(args)) {
     const path = prefix ? `${prefix}.${key}` : key;
     if (typeof value === 'string') fields[path] = value;
@@ -125,7 +130,15 @@ async function outwardCheck(input: BoundaryInput, content: Record<string, string
       reason: `This turn read ${origins.join(', ')}, and none of that text was kept, so whether this ${input.toolName} call repeats it cannot be read. It needs the owner.`,
     };
   }
-  const findings = await findContentTaint(content, sources.slice(-MAX_UNTRUSTED_SOURCES));
+  const recentSources = sources.slice(-MAX_UNTRUSTED_SOURCES);
+  if (judgmentInputProblem(recentSources)) {
+    if (cleared()) return { check: 'outward-effect', result: 'pass', detail: 'owner approved this exact content', approvable: false };
+    return {
+      check: 'outward-effect', result: 'refuse', detail: 'protected source withheld from judgment', approvable: true,
+      reason: 'Untrusted source text contains protected material and cannot be sent for a derivation reading. The owner must approve this exact outward call.',
+    };
+  }
+  const findings = await findContentTaint(content, recentSources);
   if (findings.length === 0) {
     return { check: 'outward-effect', result: 'pass', detail: 'does not derive from untrusted text', approvable: false };
   }
@@ -143,12 +156,38 @@ async function outwardCheck(input: BoundaryInput, content: Record<string, string
   };
 }
 
+/** The privacy check runs before a judgment, hook, analysis or approval can see arguments. */
+export function judgmentInputBoundary(toolName: string, args: Record<string, unknown>, workingDirectory?: string): BoundaryVerdict {
+  const problem = judgmentInputProblem({ args, workingDirectory }, toolName);
+  if (!problem) return { passed: true, checks: [{ check: 'judgment-input', result: 'pass' }] };
+  return {
+    passed: false,
+    checks: [{ check: 'judgment-input', result: 'refuse', detail: problem }],
+    refusedBy: 'judgment-input',
+    reason: new JudgmentInputError(problem).message,
+  };
+}
+
+/** Match the public boundary's value-free refusal when preparing owned data. */
+function snapshotRefusal(error: unknown): BoundaryVerdict {
+  if (!(error instanceof JudgmentInputError)) throw error;
+  return {
+    passed: false,
+    checks: [{ check: 'judgment-input', result: 'refuse', detail: error.problem }],
+    refusedBy: 'judgment-input',
+    reason: error.message,
+  };
+}
+
 /**
  * Runs the boundary over one call. The first refusal stops the run; the
  * checks list records every check that ran and those it skipped.
  */
 export async function runBoundary(input: BoundaryInput): Promise<BoundaryVerdict> {
-  const checks: BoundaryCheck[] = [];
+  let args: Record<string, unknown>;
+  try { args = snapshotJudgmentInput(input.args, input.toolName) as Record<string, unknown>; }
+  catch (error) { return snapshotRefusal(error); }
+  const checks: BoundaryCheck[] = [{ check: 'judgment-input', result: 'pass' }];
   const refuse = (check: BoundaryCheck, reason: string, extra: Partial<Extract<BoundaryVerdict, { passed: false }>> = {}): BoundaryVerdict => {
     checks.push(check);
     return { passed: false, checks, refusedBy: check.check, reason, ...extra };
@@ -180,7 +219,7 @@ export async function runBoundary(input: BoundaryInput): Promise<BoundaryVerdict
     return { passed: true, checks };
   }
 
-  const content = stringFieldsOf(input.args);
+  const content = stringFieldsOf(args);
   const card = reading.boundary.cardDetails;
   if (card === 'yes') {
     return refuse({ check: 'card-details', result: 'refuse', detail: 'carries payment card details' }, 'Refused: this call would send payment card details. Card details are entered at a local terminal or in the web UI, never sent by a tool.');

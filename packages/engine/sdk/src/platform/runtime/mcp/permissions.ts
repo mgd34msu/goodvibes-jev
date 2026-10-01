@@ -22,7 +22,8 @@ import { logger } from '../../utils/logger.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { sideEffect } from '../../gate/batteries/side-effect.js';
 import { hostsInScope, pathsInScope, readScopedValues } from './scope.js';
-import { readingArguments, readToolCall } from '../../gate/reading.js';
+import { assertJudgmentInput } from '../../gate/judgment-input.js';
+import { readingState, readToolCall } from '../../gate/reading.js';
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
@@ -63,8 +64,10 @@ async function readMcpCall(
   args: Record<string, unknown>,
 ): Promise<{ readonly capability: McpCapabilityClass; readonly confident: boolean; readonly riskLevel: import('./types.js').McpRiskLevel }> {
   const site = 'engine.mcp.capability';
+  assertJudgmentInput(serverName);
+  const state = readingState(toolName, args);
   const [run, reading] = await Promise.all([
-    sideEffect.run(judgmentPort(site), { server: serverName, tool: toolName, arguments: readingArguments(args) }, { site, only: ['capability'] }),
+    sideEffect.run(judgmentPort(site), { ...state, server: serverName }, { site, only: ['capability'] }),
     readToolCall({ toolName: `mcp:${serverName}.${toolName}`, args }, site),
   ]);
   const capabilityReading = run.readings.capability;

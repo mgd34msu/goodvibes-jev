@@ -1,3 +1,5 @@
+export { KnowledgeAnswerQualityHeldError } from './answer-verification/types.js';
+export type { KnowledgeAnswerQuality, AnswerQualityBoolean, AnswerQualityHoldReason } from './answer-verification/types.js';
 export { createProviderBackedKnowledgeSemanticLlm } from './llm.js';
 export { createWebKnowledgeGapRepairer } from './gap-repair.js';
 export { KnowledgeSemanticService } from './service.js';

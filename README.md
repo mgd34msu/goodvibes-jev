@@ -123,7 +123,7 @@ bun run observe:report                          # decision-log analytics
 bun run judgment:lint                           # every registered decision has fixtures; no Jev call outside one
 ```
 
-The root `prepare` script points git at `.githooks/`. When a commit stages engine source or the engine's `package.json`, the pre-commit hook runs the file-length check, the credential scope check, the build, the typecheck and the API report check.
+The root `prepare` script points git at `.githooks/`. When a commit stages engine source, the engine's `package.json`, or product source, tests, scripts or configuration, the pre-commit hook runs the credential scope check, the build, the typecheck and the API report check.
 
 ## License
 

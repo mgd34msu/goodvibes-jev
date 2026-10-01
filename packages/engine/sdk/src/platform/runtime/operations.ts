@@ -241,8 +241,15 @@ export {
 } from './reachability-check.js';
 export type { ReachabilityCheckInput, ReachabilityCheckResult } from './reachability-check.js';
 
-export { createAgentGraph } from './agent-graph-composition.js';
-export type { AgentGraph } from './agent-graph-composition.js';
+export { createAgentGraph, createAgentExecutionGraph } from './agent-graph-composition.js';
+export type { AgentGraph, AgentGraphOptions, AgentExecutionGraph, AgentExecutionGraphOptions } from './agent-graph-composition.js';
+
+// Product roots compose these once their actual plans and fleet owners exist.
+export { composeContractRunner, resumeContracts } from './contract-composition.js';
+export type { ContractRunnerCompositionOptions, ComposedContractRunner } from './contract-composition.js';
+export { makeRuntimeFleetProbe } from './orchestration/fleet-count.js';
+export { composeJudgment } from './judgment-services.js';
+export type { JudgmentServices, JudgmentServicesInput, JudgmentSettingsSource } from './judgment-services.js';
 
 export { createChannelComposition } from './channel-composition.js';
 export type { ChannelComposition } from './channel-composition.js';
@@ -329,3 +336,17 @@ export type {
   WorkspaceTrustManagerOptions,
   WorkspaceTrustPaths,
 } from './workspace-trust.js';
+
+// Headless hosts ask through the shared broker and read explicit record provenance.
+export {
+  createWorkspaceTrustDecisionAsk,
+  trustGatedApprovalRaiser,
+  WorkspaceTrustDecisionUnsettledError,
+  WORKSPACE_TRUST_ASK_TIMEOUT_MS,
+} from './workspace-trust-approval.js';
+export type {
+  ApprovalRaise,
+  ApprovalRaiseExtras,
+  TrustGateManager,
+  WorkspaceTrustDecisionAskDeps,
+} from './workspace-trust-approval.js';

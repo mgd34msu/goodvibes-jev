@@ -1,4 +1,14 @@
-import { describe, expect, test } from 'bun:test';
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+
+const qualityReadings = useKnowledgeAnswerReadings();
+beforeEach(() => { qualityReadings.set({
+  activation: [['Sensing capabilities', 0.99], ['Garage control', 0.99]],
+  homeGraph: [['Front Door Sensor', { batteryApplicable: 0.99, manualApplicable: 0.99 }]],
+  quality: [['Amazon affiliate LG listing', 0.03], ['Pending LG candidate source', 0.03], ['LG 86NANO90UNA official specifications', 0.99]],
+  authorities: [['LG 86NANO90UNA official specifications', 'official-vendor']],
+}); });
+
+import { beforeEach, describe, expect, test } from 'bun:test';
 import { HomeGraphRoutes } from '../sdk/src/platform/daemon/http/home-graph-routes.js';
 import {
   HomeGraphService,
@@ -427,6 +437,8 @@ describe('Home Graph sync and generated pages', () => {
       status: 'indexed',
       metadata: { knowledgeSpaceId: spaceId },
     });
+    await store.upsertExtraction({ sourceId: source.id, extractorId: 'synthetic-reference', format: 'text',
+      excerpt: 'Kitchen Sensor reports temperature and motion.', metadata: { knowledgeSpaceId: spaceId } });
     const fact = await store.upsertNode({
       kind: 'fact',
       slug: 'kitchen-sensor-temperature-motion',

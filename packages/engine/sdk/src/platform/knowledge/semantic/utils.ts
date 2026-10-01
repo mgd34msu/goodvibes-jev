@@ -169,8 +169,10 @@ export function sourceSemanticText(source: KnowledgeSourceRecord, extraction?: K
     readString(nestedStructure.content),
     readString(metadata.searchText),
     readString(metadata.text),
+    readString(metadata.content),
     readString(nestedMetadata.searchText),
     readString(nestedMetadata.text),
+    readString(nestedMetadata.content),
   ]).join('\n\n');
 }
 

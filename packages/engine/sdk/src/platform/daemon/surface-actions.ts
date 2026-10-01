@@ -24,7 +24,7 @@ import { tryResolveApprovalReplyFromChannel, type ApprovalReplyBroker } from './
 import { tryResolveWorkProposalReplyFromChannel } from './work-proposal-reply.js';
 import { tryResolvePaymentReplyFromChannel } from './payment-reply.js';
 import { PaymentReplyInbox } from '../payments/reply-inbox.js';
-import { refuseCardShapedIngress, CARD_SHAPES_REFUSED_REASON } from './surface-card-gate.js';
+import { refuseCardShapedIngress, CARD_SHAPES_REFUSED_REASON, JUDGMENT_INPUT_REFUSED_REASON } from './surface-card-gate.js';
 import {
   deliverProposalNotice,
   gateSurfaceSpawn,
@@ -154,11 +154,12 @@ export class DaemonSurfaceActionHelper {
           ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
         };
         const decision = await this.authorizeSurfaceIngress(input);
-        // A card-refused message must not stay readable from the cell the gated
+        // A protected-input refusal must not stay readable from the cell the gated
         // spawn path reads. Every adapter does return early on a not-allowed
         // decision, so this changes no behaviour today, it stops the guarantee
         // from depending on all nineteen of them continuing to.
-        if (!decision.allowed && decision.reason.startsWith(CARD_SHAPES_REFUSED_REASON)) {
+        if (!decision.allowed && (decision.reason.startsWith(CARD_SHAPES_REFUSED_REASON)
+          || decision.reason.startsWith(JUDGMENT_INPUT_REFUSED_REASON))) {
           origin.current = null;
         }
         return decision;
@@ -210,7 +211,7 @@ export class DaemonSurfaceActionHelper {
     // FIRST, before anything below can store, log or transcribe the message
     // (docs/inbound-email.md §11.0). evaluateIngress writes input.text into the
     // channel policy audit trail and schedules it to disk, and an approval
-    // reply's trailing text becomes a stored steering note, so a card number
+    // reply's full text becomes a stored steering note, so a card number
     // typed here reaches disk by two routes unless this runs ahead of both.
     // Approvals and vetoes themselves keep working over remote channels: a
     // remote surface has authority to say yes or no about a purchase, and no
@@ -251,7 +252,7 @@ export class DaemonSurfaceActionHelper {
       routeBindings: this.context.routeBindings,
     });
     if (consumed) {
-      // The reply was an approval verb from the paired owner and resolved a
+      // The reply was a settled answer from the paired owner and resolved a
       // pending ask through the shared broker. Report it as not-allowed so
       // the adapter neither creates a session nor sends a chat turn, the
       // approval machinery publishes its own resolution events.

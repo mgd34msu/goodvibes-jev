@@ -91,6 +91,7 @@ export interface OperatorApprovalsClient {
     approvalId: string,
     input: {
       readonly approved: boolean;
+      readonly disposition?: 'approved' | 'denied' | 'amended' | undefined;
       readonly remember?: boolean | undefined;
       readonly actor: string;
       readonly actorSurface?: string | undefined;
@@ -196,6 +197,7 @@ export function createOperatorClient(services: OperatorClientServices): Operator
     claim: (approvalId: string, actor: string, actorSurface = 'operator', note?: string): Promise<SharedApprovalRecord | null> => services.approvalBroker.claimApproval(approvalId, actor, actorSurface, note),
     resolve: (approvalId: string, input: {
       readonly approved: boolean;
+      readonly disposition?: 'approved' | 'denied' | 'amended' | undefined;
       readonly remember?: boolean | undefined;
       readonly actor: string;
       readonly actorSurface?: string | undefined;
@@ -204,12 +206,14 @@ export function createOperatorClient(services: OperatorClientServices): Operator
     }): Promise<SharedApprovalRecord | null> => services.approvalBroker.resolveApproval(approvalId, input),
     approve: (approvalId: string, actor: string, actorSurface = 'operator', note?: string): Promise<SharedApprovalRecord | null> => services.approvalBroker.resolveApproval(approvalId, {
       approved: true,
+      disposition: 'approved',
       actor,
       actorSurface,
       note,
     }),
     deny: (approvalId: string, actor: string, actorSurface = 'operator', note?: string): Promise<SharedApprovalRecord | null> => services.approvalBroker.resolveApproval(approvalId, {
       approved: false,
+      disposition: 'denied',
       actor,
       actorSurface,
       note,

@@ -1,3 +1,5 @@
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { htmlExtractionPort } from '../_helpers/html-extraction-readings.js';
 /**
  * optional-dependency-lazy-entry.ts — the fixed shape, compilable.
  *
@@ -29,6 +31,7 @@ const availability = await describeHtmlReadabilityAvailability();
 process.stdout.write(`AVAILABLE=${String(availability.available)}\n`);
 process.stdout.write(`REASON=${availability.reason ?? 'none'}\n`);
 
+installJudgmentPort(htmlExtractionPort().port);
 const extracted = await extractKnowledgeArtifact(
   { id: 'fixture', mimeType: 'text/html', filename: 'fixture.html' },
   Buffer.from('<html><head><title>Fixture</title></head><body><h1>Heading</h1><p>Readable body text for the fixture.</p></body></html>'),

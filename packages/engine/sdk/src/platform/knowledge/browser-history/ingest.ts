@@ -1,3 +1,4 @@
+import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
 import { createHash } from 'node:crypto';
 import {
   emitKnowledgeIngestCompleted,
@@ -6,9 +7,12 @@ import {
 } from '../../runtime/emitters/index.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { compileKnowledgeSource } from '../ingest-compile.js';
+import { KnowledgeEntityAliasHoldError } from '../entity-aliases.js';
+import { KnowledgeNodeActivationHeldError } from '../activation/types.js';
+import { KnowledgeNodeMutationHeldError } from '../store-node-authority.js';
+import { JudgmentInputError } from '../../gate/judgment-input.js';
 import type { KnowledgeIngestContext } from '../ingest-context.js';
 import type {
-  KnowledgeBatchIngestResult,
   KnowledgeExtractionRecord,
   KnowledgeSourceRecord,
   KnowledgeSourceType,
@@ -20,7 +24,8 @@ import type {
   BrowserKnowledgeCollectResult,
   BrowserKnowledgeEntry,
   BrowserKnowledgeFilter,
-  BrowserKnowledgeProfile,
+  BrowserKnowledgeIngestOutcome,
+  BrowserKnowledgeIngestResult,
   BrowserKnowledgeSourceKind,
 } from './types.js';
 
@@ -189,11 +194,12 @@ function aggregateBrowserEntries(entries: readonly BrowserKnowledgeEntry[]): Bro
   }).sort((a, b) => (b.lastRecordedAt ?? 0) - (a.lastRecordedAt ?? 0));
 }
 
-async function upsertAggregate(
+async function captureAggregate(
   context: KnowledgeIngestContext,
   aggregate: BrowserKnowledgeAggregate,
-  options: Pick<BrowserKnowledgeIngestOptions, 'connectorId' | 'sessionId'> = {},
-): Promise<KnowledgeSourceRecord> {
+  options: Pick<BrowserKnowledgeIngestOptions, 'connectorId' | 'sessionId'>,
+  onSourceStored: (source: KnowledgeSourceRecord) => void,
+): Promise<{ source: KnowledgeSourceRecord; extraction: KnowledgeExtractionRecord }> {
   const existing = context.store.getSourceByCanonicalUri(aggregate.canonicalUri);
   const sourceType = existing?.sourceType ?? sourceTypeForAggregate(aggregate);
   const connectorId = existing?.connectorId ?? options.connectorId ?? 'browser-local';
@@ -220,6 +226,8 @@ async function upsertAggregate(
     },
   });
 
+  onSourceStored(source);
+
   const existingExtraction = context.store.getExtractionBySourceId(source.id);
   const extraction = existingExtraction ?? await context.store.upsertExtraction({
     sourceId: source.id,
@@ -227,7 +235,7 @@ async function upsertAggregate(
   });
 
   for (const entry of aggregate.entries) {
-    const browserNode = await context.store.upsertNode({
+    const browserNode = await upsertObservedKnowledgeNode(context.store, {
       kind: 'source_group',
       slug: slugify(`browser-${entry.browser}-${entry.profileName}`),
       title: `${entry.browser} ${entry.profileName}`,
@@ -240,7 +248,7 @@ async function upsertAggregate(
         browserFamily: entry.family,
         browserProfilePath: entry.profilePath,
       },
-    });
+    }, 'browser-profile', source, () => context.store.getSource(source.id));
     await context.store.upsertEdge({
       fromKind: 'source',
       fromId: source.id,
@@ -258,8 +266,7 @@ async function upsertAggregate(
     });
   }
 
-  await compileKnowledgeSource(context, source, extraction);
-  return source;
+  return { source, extraction };
 }
 
 export async function collectBrowserKnowledge(
@@ -295,16 +302,20 @@ export async function collectBrowserKnowledge(
 export async function ingestBrowserKnowledge(
   context: KnowledgeIngestContext,
   options: BrowserKnowledgeIngestOptions = {},
-): Promise<KnowledgeBatchIngestResult & { readonly profiles: readonly BrowserKnowledgeProfile[] }> {
+): Promise<BrowserKnowledgeIngestResult> {
   await context.store.init();
   const collected = await collectBrowserKnowledge(options);
   const aggregates = aggregateBrowserEntries(collected.entries);
   const sources: KnowledgeSourceRecord[] = [];
+  const capturedSources: KnowledgeSourceRecord[] = [];
+  const outcomes: BrowserKnowledgeIngestOutcome[] = [];
   const errors = [...collected.errors];
   let imported = 0;
   let failed = 0;
 
   for (const aggregate of aggregates) {
+    let sourceId: string | undefined;
+    let captureCompleted = false;
     try {
       context.emitIfReady((bus, ctx) => emitKnowledgeIngestStarted(bus, ctx, {
         sourceId: aggregate.canonicalUri,
@@ -312,9 +323,13 @@ export async function ingestBrowserKnowledge(
         sourceType: sourceTypeForAggregate(aggregate),
         uri: aggregate.canonicalUri,
       }), options.sessionId);
-      const source = await upsertAggregate(context, aggregate, options);
+      const { source, extraction } = await captureAggregate(context, aggregate, options, (stored) => { sourceId = stored.id; });
+      captureCompleted = true;
+      capturedSources.push(source);
+      await compileKnowledgeSource(context, source, extraction);
       sources.push(source);
       imported += 1;
+      outcomes.push({ canonicalUri: aggregate.canonicalUri, sourceId: source.id, capture: 'completed', compilation: 'completed' });
       context.emitIfReady((bus, ctx) => emitKnowledgeIngestCompleted(bus, ctx, {
         sourceId: source.id,
         status: source.status,
@@ -322,10 +337,18 @@ export async function ingestBrowserKnowledge(
       }), source.sessionId);
     } catch (error) {
       failed += 1;
-      errors.push(`${aggregate.canonicalUri}: ${summarizeError(error)}`);
+      const held = error instanceof KnowledgeEntityAliasHoldError || error instanceof KnowledgeNodeActivationHeldError
+        || error instanceof KnowledgeNodeMutationHeldError || error instanceof JudgmentInputError;
+      const capture = captureCompleted ? 'completed' : sourceId ? 'partial' : 'failed';
+      const compilation = captureCompleted ? held ? 'held' : 'failed' : 'not-attempted';
+      const message = captureCompleted
+        ? `Browser capture retained; compilation ${compilation}: ${summarizeError(error)}`
+        : `Browser capture ${capture === 'partial' ? 'partially retained' : 'failed'}; compilation not attempted: ${summarizeError(error)}`;
+      outcomes.push({ canonicalUri: aggregate.canonicalUri, ...(sourceId ? { sourceId } : {}), capture, compilation, error: message });
+      errors.push(`${aggregate.canonicalUri}: ${message}`);
       context.emitIfReady((bus, ctx) => emitKnowledgeIngestFailed(bus, ctx, {
-        sourceId: aggregate.canonicalUri,
-        error: summarizeError(error),
+        sourceId: sourceId ?? aggregate.canonicalUri,
+        error: message,
       }), options.sessionId);
     }
   }
@@ -337,6 +360,9 @@ export async function ingestBrowserKnowledge(
     imported,
     failed,
     sources,
+    captured: capturedSources.length,
+    capturedSources,
+    outcomes,
     errors,
     profiles: collected.profiles,
   };

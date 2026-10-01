@@ -516,3 +516,61 @@ There is no recovery path for a forgotten admin password beyond deleting both fi
 - The `ApiTokenAuditor` logs token IDs and labels, never the secret value itself
 - `UserAuthManager` stores only hashed passwords; plaintext passwords are never retained after hashing
 - Structured error responses from the daemon expose route names and scope names but not internal state or credential values
+
+
+## Hosted gate judgment input
+
+The gate's judgment request is an outward transmission in its own right. Before
+permission analysis, hooks, request recording, or any judgment-port request,
+`gate/judgment-input.ts` checks the complete argument tree and complete strings.
+It refuses protected input locally with the `judgment-input` boundary check and
+`boundary_judgment_input` reason. This refusal cannot be cleared by auto-approve,
+a preset, a remembered grant, an owner prompt, or the background-agent exemption.
+Direct gate readers, MCP capability readings and execution-ledger observers share
+the check. A refused ledger event keeps its lifecycle identifiers/status and a
+value-free reason, with argument and command previews withheld.
+
+The deterministic classes are deliberately bounded:
+
+- Credential config/store names declared by the platform registry, including
+  nested config paths, registered environment names and prefix families
+- Literal values in `credentials.set` envelopes; standard credential wire fields
+  (password/API key/OAuth token/private key) and HTTP authentication headers
+- `payments.cards.create` envelopes, declared card fields, CardMaterial fields,
+  field/value pairs, and explicit HTML payment/password descriptors or CSS
+  attribute-equality selectors paired with a value/text
+- Existing local PAN shapes (13–19 digits passing Luhn, with the existing space
+  and hyphen/group-window rules), including numeric JSON values; private-key PEM
+  headers; URL password userinfo and declared credential query fields; declared credential assignments/headers in
+  shell strings and JSON-encoded bodies
+
+These checks do not ask a remote model to discover a secret. They do not read the
+secret store, process environment, user files or live card material. The browser's
+page-scoped CardMaterialRedactor remains a separate downstream containment layer;
+it is not a global secret registry and cannot protect an earlier gate request.
+
+Protected material belongs in the existing secure credential/card setup surfaces.
+Those direct authenticated setup routes and daemon-side card fills are unchanged.
+Stored `goodvibes://secrets/…` references, card ids/field targets, metadata such as
+last4, empty credential fields, and value-free scalar schema declarations remain
+usable. Normal calls retain their semantic arguments and all Jev stakes,
+catastrophic, card-context, surface-authority and taint checks. The privacy scan
+precedes the existing 4,000-character reading display cap; it does not mutate the
+original execution/approval arguments. Malformed/non-JSON, cyclic, accessor-bearing
+or oversized inputs are refused rather than partially inspected.
+
+If a gate taint source contains a protected class, that source is withheld from
+derivation judgment. The outward call needs the owner's existing exact-content
+approval, bound to the original full strings, including text beyond the judgment
+cap. This never synthesizes a clean taint reading. Ordinary unprotected sources
+still receive the semantic derivation reading. Judgment errors propagate without
+an allow or heuristic fallback.
+
+This is not general PII/secret detection. Arbitrary secrets under unknown names,
+encoded/obfuscated payloads and unrecognized card spellings are outside these
+structural guarantees. Text illustrating populated credential syntax may also be
+refused; the gate cannot safely prove that an apparent example is not a real
+credential. Ordinary explanations and value-free schema descriptions are not
+blanket-censored. The deterministic PAN check can refuse a Luhn-valid identifier
+that is not a card; protecting the hosted request takes precedence over classifying
+that value remotely.

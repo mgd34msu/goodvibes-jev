@@ -644,6 +644,11 @@
       "types": "./sdk/dist/platform/config/index.d.ts",
       "import": "./sdk/dist/platform/config/index.js"
     },
+    "./sdk/platform/intake": {
+      "bun": "./sdk/src/platform/intake/index.ts",
+      "types": "./sdk/dist/platform/intake/index.d.ts",
+      "import": "./sdk/dist/platform/intake/index.js"
+    },
     "./sdk/platform/payments": {
       "bun": "./sdk/src/platform/payments/index.ts",
       "types": "./sdk/dist/platform/payments/index.d.ts",

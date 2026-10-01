@@ -1,5 +1,5 @@
 import { JudgmentError } from './errors.ts';
-import type { Question, Questions } from './types.ts';
+import type { JudgmentResult, Question, Questions } from './types.ts';
 
 /**
  * An answer as it arrives on the wire. The shape is what the endpoint
@@ -77,4 +77,18 @@ export function checkAnswers(questions: Questions, answers: WireAnswers | null |
     const problem = answerProblem(question, answer);
     if (problem !== undefined) failWith(`answer "${name}" has ${problem}`);
   }
+}
+
+/** Keep only documented answer fields; extensions must not smuggle response bodies into the log. */
+export function projectAnswers<Q extends Questions>(questions: Q, answers: WireAnswers): JudgmentResult<Q>['answers'] {
+  return Object.fromEntries(Object.entries(questions).map(([name, question]) => {
+    // checkAnswers has already validated these fields against the frozen questions.
+    const answer = answers[name]!;
+    if (question.type === 'noul') return [name, { type: 'noul', noul: answer.noul! }];
+    const probabilities = Object.fromEntries(distributionKeys(question).map((key) => [key, answer.probabilities![key]!]));
+    if (question.type === 'choice') return [name, { type: 'choice', choice: answer.choice!, confidence: answer.confidence!, probabilities }];
+    // The legend is the request's own rubric, not arbitrary metadata from the endpoint.
+    const legend = Object.fromEntries(question.criteria.map((description, index) => [String(index), description]));
+    return [name, { type: 'score', score: answer.score!, confidence: answer.confidence!, probabilities, legend }];
+  })) as JudgmentResult<Q>['answers'];
 }

@@ -1,3 +1,5 @@
+import { createKnowledgeIssueOperatorMutation } from '../store-lifecycle-authority.js';
+import { createKnowledgeNodeOperatorMutation } from '../store-node-authority.js';
 import { GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import type {
   KnowledgeIssueRecord,
@@ -24,6 +26,11 @@ export async function reviewHomeGraphFact(
   installationId: string,
   input: HomeGraphReviewInput,
 ): Promise<HomeGraphReviewResult> {
+  if (!['accept', 'reject', 'resolve', 'reopen', 'edit', 'forget'].includes(input.action)) {
+    throw new GoodVibesSdkError('Invalid Home Graph review action.', {
+      category: 'bad_request', source: 'runtime', operation: 'homegraph.review',
+    });
+  }
   const reviewedAt = Date.now();
   if (input.issueId) {
     const issue = store.getIssue(input.issueId);
@@ -34,6 +41,7 @@ export async function reviewHomeGraphFact(
         operation: 'homegraph.review',
       });
     }
+    const issueMutation = createKnowledgeIssueOperatorMutation(issue);
     const subjectNode = issue.nodeId ? store.getNode(issue.nodeId) : null;
     const appliedFacts = await applyHomeGraphReviewFacts(store, spaceId, issue, subjectNode, input);
     const suppression = buildSuppression(input, issue, reviewedAt);
@@ -49,7 +57,7 @@ export async function reviewHomeGraphFact(
         review: reviewMetadata(input, reviewedAt),
         ...(suppression ? { suppression } : {}),
       }),
-    });
+    }, issueMutation);
     const node = appliedFacts?.node ?? subjectNode ?? undefined;
     return {
       ok: true,
@@ -70,6 +78,12 @@ export async function reviewHomeGraphFact(
       });
     }
     const facts = normalizeReviewFacts(input);
+    const mutation = createKnowledgeNodeOperatorMutation(node, {
+      action: input.action === 'forget' || input.action === 'reject' ? 'reject' : input.action === 'accept' ? 'accept' : 'revise',
+      reviewer: input.reviewer ?? 'homeassistant', facts,
+      ...(['edit', 'reopen', 'resolve'].includes(input.action) && Object.keys(facts).length > 0
+        ? { fieldCorrections: Object.entries(facts).map(([key, value]) => ({ path: ['metadata', key], value })) } : {}),
+    });
     const updated = await store.upsertNode({
       id: node.id,
       kind: node.kind,
@@ -82,9 +96,8 @@ export async function reviewHomeGraphFact(
       sourceId: node.sourceId,
       metadata: buildHomeGraphMetadata(spaceId, installationId, {
         ...facts,
-        review: reviewMetadata(input, reviewedAt),
       }),
-    });
+    }, mutation);
     return { ok: true, spaceId, node: updated, ...(Object.keys(facts).length > 0 ? { appliedFacts: facts } : {}) };
   }
   if (input.sourceId) {
@@ -136,6 +149,14 @@ async function applyHomeGraphReviewFacts(
   if (!node || !belongsToSpace(node, spaceId)) return undefined;
   const facts = deriveIssueFacts(issue, input);
   if (Object.keys(facts).length === 0) return undefined;
+  // Rejecting an issue is not rejecting its node: supplied corrections revise it.
+  const mutation = createKnowledgeNodeOperatorMutation(node, {
+    action: input.action === 'forget' ? 'reject' : 'revise',
+    reviewer: input.reviewer ?? 'homeassistant', facts,
+    ...(input.action === 'accept' ? { confidence: 100 } : {}),
+    ...(input.action !== 'forget'
+      ? { fieldCorrections: Object.entries(facts).map(([key, value]) => ({ path: ['metadata', key], value })) } : {}),
+  });
   const updated = await store.upsertNode({
     id: node.id,
     kind: node.kind,
@@ -147,7 +168,7 @@ async function applyHomeGraphReviewFacts(
     confidence: Math.max(node.confidence, input.action === 'accept' ? 100 : node.confidence),
     sourceId: node.sourceId,
     metadata: facts,
-  });
+  }, mutation);
   return { node: updated, facts };
 }
 
@@ -226,6 +247,7 @@ function buildSuppression(
 }
 
 function issueStatusForAction(action: HomeGraphReviewInput['action'], current: KnowledgeIssueRecord['status']): KnowledgeIssueRecord['status'] {
+  if (action === 'edit') return 'open';
   return action === 'reject' || action === 'resolve' || action === 'accept' ? 'resolved' : current;
 }
 

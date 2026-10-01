@@ -4,6 +4,7 @@
 
 ```ts
 
+import type { CallOptions } from '@goodvibes-jev/judgment';
 import { JudgmentPort } from '@goodvibes-jev/judgment';
 import type { Outcome } from '@goodvibes-jev/judgment';
 import type { ReplyReadingName } from '@goodvibes-jev/judgment';
@@ -74,6 +75,7 @@ export class ApprovalBroker {
     // (undocumented)
     resolveApproval(approvalId: string, input: {
         readonly approved: boolean;
+        readonly disposition?: ExplicitApprovalDisposition | undefined;
         readonly remember?: boolean | undefined;
         readonly modifiedArgs?: Record<string, unknown> | undefined;
         readonly selectedHunks?: readonly number[] | undefined;
@@ -438,8 +440,9 @@ export interface SubmitSharedSessionMessageInput {
 
 // Warnings were encountered during analysis:
 //
-// sdk/src/platform/control-plane/approval-broker.ts:274:7 - (ae-forgotten-export) The symbol "PersistentStore" needs to be exported by the entry point embed.d.ts
-// sdk/src/platform/control-plane/approval-broker.ts:274:7 - (ae-forgotten-export) The symbol "SharedApprovalStoreSnapshot" needs to be exported by the entry point embed.d.ts
+// sdk/src/platform/control-plane/approval-broker.ts:281:7 - (ae-forgotten-export) The symbol "PersistentStore" needs to be exported by the entry point embed.d.ts
+// sdk/src/platform/control-plane/approval-broker.ts:281:7 - (ae-forgotten-export) The symbol "SharedApprovalStoreSnapshot" needs to be exported by the entry point embed.d.ts
+// sdk/src/platform/control-plane/approval-broker.ts:488:7 - (ae-forgotten-export) The symbol "ExplicitApprovalDisposition" needs to be exported by the entry point embed.d.ts
 // sdk/src/platform/control-plane/session-broker.ts:117:5 - (ae-forgotten-export) The symbol "SharedSessionStoreSnapshot" needs to be exported by the entry point embed.d.ts
 // sdk/src/platform/control-plane/session-broker.ts:119:5 - (ae-forgotten-export) The symbol "RouteBindingManager" needs to be exported by the entry point embed.d.ts
 // sdk/src/platform/control-plane/session-broker.ts:120:5 - (ae-forgotten-export) The symbol "SharedSessionAgentStatusProvider" needs to be exported by the entry point embed.d.ts

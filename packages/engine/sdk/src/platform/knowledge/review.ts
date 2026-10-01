@@ -1,3 +1,5 @@
+import { assertKnowledgeIssueOperatorMutation, createKnowledgeIssueOperatorMutation } from './store-lifecycle-authority.js';
+import { createKnowledgeNodeOperatorMutation } from './store-node-authority.js';
 import type { KnowledgeIssueRecord, KnowledgeNodeRecord, KnowledgeSourceRecord } from './types.js';
 import type { KnowledgeStore } from './store.js';
 
@@ -23,18 +25,34 @@ export async function reviewKnowledgeIssue(
   store: KnowledgeStore,
   input: KnowledgeIssueReviewInput,
 ): Promise<KnowledgeIssueReviewResult> {
+  if (!['accept', 'reject', 'resolve', 'reopen', 'edit', 'forget'].includes(input.action)) {
+    throw new Error('Invalid knowledge issue review action.');
+  }
   await store.init();
   const issue = store.getIssue(input.issueId);
   if (!issue) throw new Error(`Unknown knowledge issue: ${input.issueId}`);
+  const issueMutation = createKnowledgeIssueOperatorMutation(issue);
   const reviewedAt = Date.now();
   const facts = readReviewFacts(input.value);
   const source = issue.sourceId ? store.getSource(issue.sourceId) : null;
   const node = issue.nodeId ? store.getNode(issue.nodeId) : null;
+  const nodeMutation = node ? createKnowledgeNodeOperatorMutation(node, {
+    action: input.action === 'forget' ? 'reject' : 'revise',
+    reviewer: input.reviewer, facts,
+    ...(input.action === 'accept' ? { confidence: 100 } : {}),
+    ...(input.action !== 'forget' ? { fieldCorrections: ['title', 'summary']
+      .filter((key) => typeof facts[key] === 'string')
+      .map((key) => ({
+        path: [key],
+        value: key === 'title' ? String(facts[key]).trim() : String(facts[key]).trim() || node.summary,
+      })) } : {}),
+  }) : undefined;
   const updatedSource = source && Object.keys(facts).length > 0
     ? await applySourceFacts(store, source, facts, input, reviewedAt)
     : source ?? undefined;
+  assertKnowledgeIssueOperatorMutation(store.getIssue(issue.id), issueMutation);
   const updatedNode = node && Object.keys(facts).length > 0
-    ? await applyNodeFacts(store, node, facts, input, reviewedAt)
+    ? await applyNodeFacts(store, node, facts, input, nodeMutation!)
     : node ?? undefined;
   const suppression = buildSuppression(input, issue, reviewedAt);
   const updatedIssue = await store.upsertIssue({
@@ -54,7 +72,7 @@ export async function reviewKnowledgeIssue(
       },
       ...(suppression ? { suppression } : {}),
     },
-  });
+  }, issueMutation);
   return {
     ok: true,
     issue: updatedIssue,
@@ -101,7 +119,7 @@ async function applyNodeFacts(
   node: KnowledgeNodeRecord,
   facts: Record<string, unknown>,
   input: KnowledgeIssueReviewInput,
-  reviewedAt: number,
+  mutation: ReturnType<typeof createKnowledgeNodeOperatorMutation>,
 ): Promise<KnowledgeNodeRecord> {
   return store.upsertNode({
     id: node.id,
@@ -113,11 +131,7 @@ async function applyNodeFacts(
     status: input.action === 'forget' ? 'stale' : node.status,
     confidence: input.action === 'accept' ? 100 : node.confidence,
     sourceId: node.sourceId,
-    metadata: {
-      reviewedFacts: facts,
-      review: { action: input.action, reviewer: input.reviewer ?? 'knowledge-review', reviewedAt },
-    },
-  });
+  }, mutation);
 }
 
 function readReviewFacts(value: unknown): Record<string, unknown> {

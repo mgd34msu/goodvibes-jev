@@ -30,6 +30,39 @@ import type { SyncStoreCallbacks } from './sync.js';
 import type { TransportAdapter, ReconnectEngineCallbacks } from './reconnect.js';
 import { logger } from '../../utils/logger.js';
 
+// Host-side backend registration, distinct from paired distributed peers.
+export { PeerRegistry, PeerRegistryValidationError, normalizeBackendConfig } from './host/peer-registry.js';
+export type {
+  BackendKind,
+  CloudProvider,
+  DockerBackendConfig,
+  SshBackendConfig,
+  CloudTerminalBackendConfig,
+  LocalProcessBackendConfig,
+  BackendConfig,
+  PeerRecord,
+  PeerRegistrationInput,
+} from './host/peer-registry.js';
+export type { RemoteHostCredentialStore, RemoteHostLogger } from './host/context.js';
+export type { Backend, BackendContext, BackendDispatchResult, DispatchPayload } from './host/backends/types.js';
+export {
+  BackendDispatchError,
+  DEFAULT_SYNC_TIMEOUT_MS,
+  MAX_SYNC_TIMEOUT_MS,
+  resolveTimeout,
+  buildRemoteShellCommand,
+} from './host/backends/types.js';
+export { createLocalProcessBackend, tokenizeCommand } from './host/backends/local-process.js';
+export { createDockerBackend } from './host/backends/docker.js';
+export { createCloudTerminalBackend } from './host/backends/cloud-terminal.js';
+export { createSshBackend } from './host/backends/ssh.js';
+export { createBackends } from './host/backends/index.js';
+export { RemoteDispatcher, STDOUT_PREVIEW_LIMIT } from './host/dispatcher.js';
+export type { RemoteWorkItemInput, RemoteWorkEnqueuer, RemoteInvokeResult, RemoteDispatcherOptions, DispatchRequest } from './host/dispatcher.js';
+export { HostDistributedRuntime } from './host/service.js';
+export { registerRemoteSurface } from './host/surface.js';
+export type { RemoteSurfaceContext, RemoteInvokeAdapter, RemoteSurfaceRegistration, RegisterRemoteSurfaceOptions } from './host/surface.js';
+
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
 export type {

@@ -223,7 +223,9 @@ describe('ci.yml: build once, restore everywhere', () => {
     // The runner owns isolation; `bun run test` would first rebuild over the
     // restored artifact. Flags and environment settings need not be frozen.
     expect(bun?.['test-cmd']).toContain('packages/engine/scripts/test.ts');
+    expect(bun?.['test-cmd']).toContain('bun run products:test');
     expect(bun?.['test-cmd']).not.toMatch(/\bbun\s+(?:run\s+)?test(?:\s|$)/);
+    expect(bun?.['test-cmd']).toContain('products:test');
     for (const row of include) expect(row['test-cmd']).not.toContain('bun run build');
   });
 

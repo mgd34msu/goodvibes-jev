@@ -25,6 +25,7 @@ import {
   nullableSchema,
   recordSchema,
 } from './operator-contract-schemas-shared.js';
+import { KNOWLEDGE_BROWSER_PROFILE_SCHEMA, KNOWLEDGE_BROWSER_INGEST_OUTCOME_SCHEMA } from './operator-contract-schemas-knowledge-browser.js';
 
 export const KNOWLEDGE_INJECTION_TRUST_TIER_SCHEMA = enumSchema(['reviewed', 'fresh', 'stale']);
 export const KNOWLEDGE_INJECTION_USE_AS_SCHEMA = enumSchema(['reference-material']);
@@ -482,22 +483,16 @@ export const KNOWLEDGE_BATCH_INGEST_RESULT_SCHEMA = objectSchema({
   errors: STRING_LIST_SCHEMA,
 }, ['imported', 'failed', 'sources', 'errors']);
 
-const KNOWLEDGE_BROWSER_PROFILE_SCHEMA = objectSchema({
-  family: STRING_SCHEMA,
-  browser: STRING_SCHEMA,
-  profileName: STRING_SCHEMA,
-  profilePath: STRING_SCHEMA,
-  historyPath: STRING_SCHEMA,
-  bookmarksPath: STRING_SCHEMA,
-}, ['family', 'browser', 'profileName', 'profilePath'], { additionalProperties: true });
-
 export const KNOWLEDGE_BROWSER_SYNC_RESULT_SCHEMA = objectSchema({
   imported: NUMBER_SCHEMA,
   failed: NUMBER_SCHEMA,
+  captured: NUMBER_SCHEMA,
+  capturedSources: arraySchema(KNOWLEDGE_SOURCE_SCHEMA),
+  outcomes: arraySchema(KNOWLEDGE_BROWSER_INGEST_OUTCOME_SCHEMA),
   sources: arraySchema(KNOWLEDGE_SOURCE_SCHEMA),
   errors: STRING_LIST_SCHEMA,
   profiles: arraySchema(KNOWLEDGE_BROWSER_PROFILE_SCHEMA),
-}, ['imported', 'failed', 'sources', 'errors', 'profiles']);
+}, ['imported', 'failed', 'captured', 'capturedSources', 'outcomes', 'sources', 'errors', 'profiles']);
 
 const KNOWLEDGE_SEARCH_RESULT_SCHEMA = objectSchema({
   kind: STRING_SCHEMA,

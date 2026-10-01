@@ -1,3 +1,4 @@
+import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
 import { isGeneratedKnowledgeSource } from '../generated-projections.js';
 import { yieldEvery } from '../cooperative.js';
 import type { KnowledgeObjectProfilePolicy } from '../extensions.js';
@@ -99,7 +100,7 @@ async function upsertIntrinsicFeatureGap(
   const title = `What are the complete features and specifications for ${subjectTitle(subject)}?`;
   const primarySource = sources[0]!;
   return store.batch(async () => {
-    const gap = await store.upsertNode({
+    const gap = await upsertObservedKnowledgeNode(store, {
       id,
       kind: 'knowledge_gap',
       slug: semanticSlug(`${spaceId}-intrinsic-gap-${subject.title}`),
@@ -120,7 +121,7 @@ async function upsertIntrinsicFeatureGap(
         ...(typeof existing?.metadata.nextRepairAttemptAt === 'number' ? { nextRepairAttemptAt: existing.metadata.nextRepairAttemptAt } : {}),
         createdBy: 'semantic-self-improvement',
       }),
-    });
+    }, 'research-task', subject, () => store.getNode(subject.id));
     for (const source of sources) {
       await store.upsertEdge({
         fromKind: 'source',

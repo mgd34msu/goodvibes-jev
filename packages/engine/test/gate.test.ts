@@ -190,7 +190,7 @@ describe('the gate pipeline', () => {
     const r = await manager.checkDetailed('exec', { command: 'ls' });
     expect(r.approved).toBe(true);
     expect(r.reading).toEqual({ family: 'generic', stakes: 'low', facts: { mutates: false, outward: false, secrets: false, irreversible: false, beyondProject: false, weakensSecurity: false, obfuscated: false }, uncertain: [] });
-    expect(r.boundary?.checks.map((c) => `${c.check}=${c.result}`)).toEqual(['catastrophic=pass', 'surface-authority=pass', 'card-details=skipped', 'outward-effect=skipped']);
+    expect(r.boundary?.checks.map((c) => `${c.check}=${c.result}`)).toEqual(['judgment-input=pass', 'catastrophic=pass', 'surface-authority=pass', 'card-details=skipped', 'outward-effect=skipped']);
     expect(r.preset).toEqual({ preset: 'normal', action: 'allow' });
     expect(r.analysis.riskLevel).toBe('low');
   });

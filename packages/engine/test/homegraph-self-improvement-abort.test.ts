@@ -1,7 +1,16 @@
+import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+import { homeGraphRepairProfileValues } from './_helpers/repair-profile-fixture-readings.js';
+const qualityReadings = useKnowledgeAnswerReadings({ repairProfile: homeGraphRepairProfileValues });
+beforeEach(() => qualityReadings.set({ activation: [
+  ['Display and picture specifications', 0.99], ['Input and output ports', 0.99],
+  ['Network and wireless capabilities', 0.99], ['Gaming and HDMI features', 0.99], ['Audio capabilities', 0.99],
+] }));
+
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { ArtifactStore } from '../sdk/src/platform/artifacts/index.js';
 import { refreshHomeGraphDevicePassport } from '../sdk/src/platform/knowledge/home-graph/generated-pages.js';
 import { buildHomeGraphMetadata, homeGraphNodeId } from '../sdk/src/platform/knowledge/home-graph/helpers.js';
@@ -109,7 +118,7 @@ describe('Home Graph sync self-improvement cancellation', () => {
     const spaceId = 'homeassistant:house-1';
     const installationId = 'house-1';
     const deviceId = 'lg-tv';
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       id: homeGraphNodeId(spaceId, 'ha_device', deviceId),
       kind: 'ha_device',
       slug: 'lg-tv',
@@ -165,7 +174,7 @@ describe('Home Graph sync self-improvement cancellation', () => {
     const spaceId = 'homeassistant:house-1';
     const installationId = 'house-1';
     const deviceId = 'lg-tv';
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       id: homeGraphNodeId(spaceId, 'ha_device', deviceId),
       kind: 'ha_device',
       slug: 'lg-tv',
@@ -210,9 +219,10 @@ describe('Home Graph sync self-improvement cancellation', () => {
     });
     const controller = new AbortController();
     const abortingStore = Object.create(store) as KnowledgeStore;
-    abortingStore.upsertNode = async (input) => {
-      const node = await store.upsertNode(input);
-      if (input.kind === 'fact') controller.abort();
+    const commitPrepared = abortingStore.upsertPreparedNode.bind(abortingStore);
+    abortingStore.upsertPreparedNode = async (prepared, index) => {
+      const node = await commitPrepared(prepared, index);
+      if (node.kind === 'fact') controller.abort();
       return node;
     };
 

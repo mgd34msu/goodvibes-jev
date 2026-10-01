@@ -28,6 +28,7 @@ export type PermissionDecisionSource =
 
 export type PermissionDecisionReasonCode =
   // Boundary refusals, one per check
+  | 'boundary_judgment_input'
   | 'boundary_catastrophic'
   | 'boundary_surface_authority'
   | 'boundary_card_details'

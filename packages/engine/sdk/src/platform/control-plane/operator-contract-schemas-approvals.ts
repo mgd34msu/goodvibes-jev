@@ -24,6 +24,13 @@ import {
   PERMISSION_REMEMBER_TIER_SCHEMA,
   PERMISSION_RUNTIME_DECISION_SCHEMA,
 } from './operator-contract-schemas-permissions.js';
+import { SHARED_APPROVAL_DISPOSITIONS } from './approval-disposition.js';
+
+/** Provenance belongs to the stored record, not the legacy awaited prompt result. */
+export const SHARED_APPROVAL_DECISION_SCHEMA = objectSchema({
+  ...(PERMISSION_PROMPT_DECISION_SCHEMA['properties'] as Record<string, Record<string, unknown>>),
+  disposition: enumSchema(SHARED_APPROVAL_DISPOSITIONS),
+}, ['approved']);
 
 const APPROVAL_STATUS_SCHEMA = enumSchema(['pending', 'claimed', 'approved', 'denied', 'cancelled', 'expired']);
 
@@ -49,7 +56,7 @@ export const SHARED_APPROVAL_RECORD_SCHEMA = objectSchema({
   claimedAt: NUMBER_SCHEMA,
   resolvedAt: NUMBER_SCHEMA,
   resolvedBy: STRING_SCHEMA,
-  decision: PERMISSION_PROMPT_DECISION_SCHEMA,
+  decision: SHARED_APPROVAL_DECISION_SCHEMA,
   // The REAL session an ACCEPTED ask spawned (attach/resume-resolvable,
   // never a scheduling handle), stamped at the moment the session exists and
   // published as a record update so an attached surface can open it live.
@@ -92,6 +99,7 @@ export const APPROVAL_ACTION_INPUT_SCHEMA = objectSchema({
 // declined result so the model adapts instead of guessing.
 export const APPROVAL_DENY_INPUT_SCHEMA = objectSchema({
   approvalId: STRING_SCHEMA,
+  disposition: enumSchema(['denied', 'amended']),
   note: STRING_SCHEMA,
   remember: BOOLEAN_SCHEMA,
   rememberTier: PERMISSION_REMEMBER_TIER_SCHEMA,
@@ -108,6 +116,7 @@ export const APPROVAL_DENY_INPUT_SCHEMA = objectSchema({
 // prompt) to the waiting call, selectedHunks, when present, supersedes it.
 export const APPROVAL_APPROVE_INPUT_SCHEMA = objectSchema({
   approvalId: STRING_SCHEMA,
+  disposition: enumSchema(['approved']),
   note: STRING_SCHEMA,
   remember: BOOLEAN_SCHEMA,
   selectedHunks: arraySchema(NUMBER_SCHEMA),
