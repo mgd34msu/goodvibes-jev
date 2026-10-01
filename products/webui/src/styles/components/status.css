@@ -1,0 +1,125 @@
+/*
+ * Header chips and notices.
+ *
+ * The bottom status strip is gone (design doc "App shell": connection state
+ * lives in the avatar dot and the account menu). What remains are the chips
+ * that must never be invisible while their condition holds: the sleep-disabled
+ * chip (PowerChip), the wake-word listening chip (WakeChip) and the
+ * reload-to-update chip, rendered in the shell header's indicator slot; plus
+ * the relay overflow notice and the daemon receipts.
+ *
+ * Chips are neutral (--surface-2, full radius, 24 tall); only the icon carries
+ * the status hue, and a word always sits beside it.
+ */
+
+.status-strip__segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 9px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border-radius: var(--radius-full);
+  font-size: var(--text-meta);
+}
+
+.status-strip__icon {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.status-strip__label {
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+  color: inherit;
+}
+
+/* Sleep disabled and the reload-to-update warning: an active condition to
+ * notice. Same chip, the icon carries the hue. */
+.status-strip__segment--power,
+.status-strip__segment--compatibility-warning {
+  color: var(--text);
+}
+
+.status-strip__segment--power .status-strip__icon,
+.status-strip__segment--compatibility-warning .status-strip__icon {
+  color: var(--bad);
+}
+
+.status-strip__segment--power .status-strip__label,
+.status-strip__segment--compatibility-warning .status-strip__label {
+  font-weight: var(--weight-medium);
+}
+
+/* ── Relay live-event overflow notice ─────────────────────────────────────── */
+.relay-overflow-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.relay-overflow-resync {
+  margin-left: auto;
+}
+
+/* ── Daemon receipts (consumed once per connect) ──────────────────────────── */
+.daemon-receipts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.daemon-receipt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.daemon-receipt__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.daemon-receipt__dismiss {
+  margin-left: auto;
+  color: inherit;
+}
+
+/* Wake-word listening chip (voice.wake.indicator: "statusline"). Each state has
+   an icon and a word beside it, so colour is never the only signal:
+     --wake-live      the microphone is open right now (accent, gently pulsing)
+     --wake-attention restarting or stopped (the icon turns bad) */
+.status-strip__segment--wake-live,
+.status-strip__segment--wake-attention {
+  color: var(--text);
+}
+
+.status-strip__segment--wake-live .status-strip__icon {
+  color: var(--accent);
+  animation: status-strip-pulse 1.6s ease-in-out infinite alternate;
+}
+
+.status-strip__segment--wake-attention .status-strip__icon {
+  color: var(--bad);
+}
+
+.status-strip__segment--wake-live .status-strip__label,
+.status-strip__segment--wake-attention .status-strip__label {
+  font-weight: var(--weight-medium);
+}
+
+@keyframes status-strip-pulse {
+  from { opacity: 1; }
+  to   { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-strip__segment--wake-live .status-strip__icon {
+    animation: none;
+  }
+}

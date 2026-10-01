@@ -1,0 +1,11 @@
+{
+  "packageName": "@goodvibes-jev/webui",
+  "sdkPin": {
+    "sdkPackage": "@goodvibes-jev/engine",
+    "pinSource": "dependencies",
+    "lockfile": "../../bun.lock",
+    "overlayMarker": "node_modules/@goodvibes-jev/engine/.local-sdk-overlay.json",
+    "sourceRoots": ["src", "scripts", "e2e"],
+    "enforceExportsMap": true
+  }
+}

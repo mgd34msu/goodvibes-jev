@@ -1,0 +1,131 @@
+/*
+ * chat-artifacts.css: the artifacts panel (a reply's code blocks and files),
+ * shown in the right-side glass drawer. While it is open the sidebar folds to
+ * its rail (ArtifactsPanelContent calls useRightPanel). Code blocks match the
+ * chat's: hairline frame, language label, one copy icon button. Tokens only.
+ */
+
+.artifacts-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.artifacts-empty {
+  padding: 32px 8px;
+  text-align: center;
+}
+
+.artifacts-empty p {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-base);
+}
+
+.artifacts-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.artifacts-section-title {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-meta);
+}
+
+.artifacts-code-list,
+.artifacts-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.artifact-code-block {
+  overflow: hidden;
+  background: var(--code);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.artifact-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  padding: 4px 4px 4px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.artifact-code-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: var(--leading-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-code-pre {
+  max-height: 60vh;
+  margin: 0 14px;
+  padding: 12px 0;
+  overflow: auto;
+  background: transparent;
+  border: 0;
+}
+
+.artifact-code-pre code {
+  display: block;
+  min-width: max-content;
+  padding: 0;
+  color: var(--text);
+  font: var(--weight-regular) var(--text-sm) / var(--leading-ui) var(--font-mono);
+  white-space: pre;
+  background: transparent;
+  border: 0;
+}
+
+.artifact-file-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.artifact-file-icon {
+  flex: none;
+  color: var(--text-3);
+}
+
+.artifact-file-info {
+  display: grid;
+  min-width: 0;
+}
+
+.artifact-file-label {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-file-mime {
+  overflow: hidden;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

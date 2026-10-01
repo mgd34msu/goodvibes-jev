@@ -1,0 +1,73 @@
+/*
+ * Knowledge tab. Rows, panes, notices and forms come from the data-view template, the
+ * kit and library.css; this file holds the map canvas and packet result rules.
+ */
+
+.knowledge-map-render {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.knowledge-map-render__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.knowledge-map-render__total {
+  color: var(--text-3);
+}
+
+.knowledge-map-render__canvas {
+  display: flex;
+  justify-content: center;
+  max-height: 520px;
+  padding: 12px;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.knowledge-map-render__canvas img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Only meaningful where the map pans sideways (a narrow screen). */
+.knowledge-map-render__scale-note {
+  display: none;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+@media (max-width: 680px) {
+  .knowledge-map-render__canvas {
+    justify-content: flex-start;
+  }
+
+  .knowledge-map-render__canvas img {
+    min-width: 480px;
+    max-width: none;
+  }
+
+  .knowledge-map-render__scale-note {
+    display: block;
+  }
+}
+
+.knowledge-packet {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.knowledge-packet__result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}

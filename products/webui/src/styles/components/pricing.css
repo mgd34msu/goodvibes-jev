@@ -1,0 +1,71 @@
+/*
+ * pricing.css: the price source note under dollar figures and the manual
+ * model prices editor (ModelPricesEditor, ModelPricesModal).
+ * The editor is a divided list of kit Rows over a plain form; no card.
+ */
+
+.price-source-note {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+
+.model-prices-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.model-prices-empty {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+}
+
+/* Model keys are identifiers: mono. */
+.price-row__key {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-regular);
+}
+
+.model-prices-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.model-prices-form > .gv-field > .price-row__key {
+  font-size: var(--text-sm);
+}
+
+.model-prices-form-prices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--space-3);
+}
+
+.model-prices-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.model-prices-add {
+  align-self: flex-start;
+}
+
+@media (max-width: 480px) {
+  .price-row {
+    flex-wrap: wrap;
+  }
+
+  .price-row .gv-row__trailing {
+    width: 100%;
+    margin-left: 0;
+  }
+}

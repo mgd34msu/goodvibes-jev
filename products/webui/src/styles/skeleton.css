@@ -1,0 +1,35 @@
+/* =============================================================
+   Skeleton shimmer
+   Imported by Skeleton.tsx and toast.css
+   ============================================================= */
+
+.skeleton {
+  background: var(--surface);
+  position: relative;
+  overflow: hidden;
+  display: block;
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--glass) 50%,
+    transparent 100%
+  );
+  animation: skeleton-shimmer calc(var(--motion-slow) * 4) var(--ease-standard) infinite;
+}
+
+@keyframes skeleton-shimmer {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none;
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // Playwright specs and their support harness. DOM is in scope because
+    // `page.evaluate(() => ...)` callbacks are compiled here but execute in the
+    // browser, so they legitimately touch `document` / `window` / `navigator`.
+    // No "jsx" — nothing under e2e/ renders React.
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    // bun-types covers both the node builtins these files import and the
+    // `bun:test` API used by e2e/support/assert-contract-shape.test.ts, which
+    // is a bun unit test that lives beside the harness code it exercises.
+    "types": ["bun"]
+  },
+  "include": ["."]
+}

@@ -1,0 +1,424 @@
+/*
+ * Work view pieces on top of the data-view template (data-view.css): the
+ * status word beside a dot, transcripts, hunk checkboxes, forms in dialogs,
+ * the list footer. Rows, panes, facts, code frames and empty states come from
+ * the template.
+ */
+
+.work-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-2);
+}
+
+.work-row__lead {
+  display: inline-flex;
+  flex: none;
+  width: 7px;
+  justify-content: center;
+}
+
+.work-row--child .gv-row__title {
+  font-weight: var(--weight-regular);
+}
+
+.work-row__status {
+  color: var(--text-2);
+}
+
+.work-prose {
+  margin: 0;
+  color: var(--text);
+  line-height: var(--leading-ui);
+  overflow-wrap: anywhere;
+}
+
+.work-prose--quiet {
+  color: var(--text-3);
+}
+
+.work-mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/* The figure, "(estimated)" and the price-source note wrap onto a second
+   line on a narrow detail pane instead of pushing past its edge. */
+.work-cost {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 2px 6px;
+  max-width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.work-error {
+  color: var(--bad);
+  font-size: var(--text-meta);
+}
+
+.work-link {
+  color: var(--text-2);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+}
+
+.work-link:hover {
+  color: var(--text);
+}
+
+.work-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-2);
+}
+
+.work-inline-action {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 8px;
+}
+
+.work-notice {
+  margin: 0 0 12px;
+}
+
+.work-notice .gv-button {
+  margin-left: 4px;
+}
+
+.work-list-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 16px 0 8px -8px;
+}
+
+.work-footer__spacer {
+  flex: 1;
+}
+
+.work-raw {
+  max-height: 320px;
+  margin: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  color: var(--text-2);
+  background: var(--code);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  font: var(--weight-regular) var(--text-xs) / var(--leading-meta) var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Hunks of an edit approval. */
+.work-hunks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.work-hunks__row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.work-hunks__summary {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+/* Transcript inside a detail pane: role label over plain prose, hairlines between. */
+.work-transcript {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.work-transcript__message,
+.work-transcript__receipt {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.work-transcript__role {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.work-transcript__body {
+  color: var(--text);
+  line-height: var(--leading-ui);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.work-transcript__receipt {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.work-transcript__message--streaming .work-transcript__body {
+  color: var(--text-2);
+}
+
+/* Steer box (fleet processes). */
+.work-steer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.work-steer__form {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.work-steer__form .gv-input {
+  flex: 1;
+}
+
+.work-steer__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Checkpoints tab. */
+.work-checkpoints {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.work-checkpoints__create {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.work-checkpoints__create .gv-input {
+  flex: 1;
+}
+
+.work-checkpoints__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.work-checkpoints__title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.work-checkpoints .dv-section .gv-select__trigger {
+  width: auto;
+  min-width: 160px;
+  max-width: 240px;
+}
+
+/* CI report. */
+.work-ci-report {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Forms inside the New dialogs. */
+.work-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.work-form__pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.work-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.work-new__chevron {
+  width: 14px;
+  height: 14px;
+  margin-right: -4px;
+  opacity: 0.7;
+}
+
+/* Approvals by category and risk. */
+.work-breakdown {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.work-breakdown th,
+.work-breakdown td {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.work-breakdown th {
+  padding-right: 12px;
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+.work-breakdown td.dv-value {
+  text-align: right;
+}
+
+.work-breakdown__risk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 12px;
+  color: var(--text-2);
+}
+
+@media (max-width: 899px) {
+  .work-form__pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .work-steer__form,
+  .work-checkpoints__create {
+    flex-wrap: wrap;
+  }
+
+  .work-steer__form .gv-input,
+  .work-checkpoints__create .gv-input {
+    flex-basis: 100%;
+  }
+}
+
+/* Fleet tells in the process detail (components/fleet/NodeTells.tsx). */
+.node-headline {
+  color: var(--text-2);
+}
+
+.node-headline--block {
+  margin: 0;
+  color: var(--text);
+  line-height: var(--leading-ui);
+}
+
+.node-stall-note {
+  margin: 0;
+  color: var(--warn);
+  font-size: var(--text-sm);
+}
+
+.fleet-detail__review {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fleet-detail__review-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.fleet-detail__review-head strong {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+}
+
+.fleet-detail__review-verdict {
+  font-weight: var(--weight-medium);
+}
+
+.fleet-detail__review-verdict[data-tone="ok"] { color: var(--ok); }
+.fleet-detail__review-verdict[data-tone="bad"] { color: var(--bad); }
+
+.fleet-detail__review-meta {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.fleet-detail__review-empty {
+  margin: 0;
+  color: var(--bad);
+  font-size: var(--text-sm);
+}
+
+.fleet-detail__review-checklist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.fleet-detail__review-checklist > li {
+  display: flex;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.fleet-detail__review-mark {
+  flex: none;
+  width: 14px;
+  color: var(--text-3);
+}
+
+.fleet-detail__review-checklist > li.verified .fleet-detail__review-mark { color: var(--ok); }
+.fleet-detail__review-checklist > li.unverified .fleet-detail__review-mark { color: var(--bad); }
+
+.fleet-detail__review-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.fleet-detail__review-req {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.fleet-detail__review-state,
+.fleet-detail__review-evidence,
+.fleet-detail__review-exercised {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  overflow-wrap: anywhere;
+}

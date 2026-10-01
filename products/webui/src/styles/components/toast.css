@@ -1,0 +1,203 @@
+@import '../skeleton.css';
+
+/* =============================================================
+   Toast (design doc "Components > Toast")
+   Bottom center on desktop, above the docked composer on phone.
+   Glass, 12 radius, one line, optional action, 5 s, pauses on
+   hover and focus; danger toasts stay until dismissed.
+   ============================================================= */
+
+.toast-viewport {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--space-6) + env(safe-area-inset-bottom, 0px));
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: var(--space-2);
+  width: max-content;
+  max-width: calc(100vw - var(--space-8));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+@media (max-width: 899px) {
+  .toast-viewport {
+    /* Clear the docked composer (about 96 tall with its padding). */
+    bottom: calc(112px + env(safe-area-inset-bottom, 0px));
+    max-width: calc(100vw - 24px);
+  }
+}
+
+.toast-presence-wrapper {
+  max-width: 100%;
+  pointer-events: auto;
+}
+
+.toast-presence-wrapper[data-state="entering"] {
+  animation: gv-rise-in var(--motion-menu) var(--ease-standard) both;
+}
+
+.toast-presence-wrapper[data-state="visible"] {
+  opacity: 1;
+  transform: none;
+}
+
+.toast-presence-wrapper[data-state="leaving"] {
+  animation: toast-out var(--motion-base) var(--ease-standard) forwards;
+}
+
+@keyframes toast-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(4px); }
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  max-width: 560px;
+  padding: 6px 6px 6px 14px;
+  color: var(--text);
+  background: var(--glass-solid);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+}
+
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .toast {
+    background: var(--glass);
+    -webkit-backdrop-filter: blur(22px) saturate(1.4);
+    backdrop-filter: blur(22px) saturate(1.4);
+  }
+}
+
+/* Status in form, not paint: a 7px dot carries the tone. */
+.toast::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--text-3);
+}
+
+.toast[data-tone="info"]::before    { background: var(--info); }
+.toast[data-tone="success"]::before { background: var(--ok); }
+.toast[data-tone="warning"]::before { background: var(--warn); }
+.toast[data-tone="danger"]::before  { background: var(--bad); }
+
+.toast__body {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding-block: 4px;
+  white-space: nowrap;
+}
+
+/* One line (design doc "Toast"): the title, then any detail in --text-2, cut
+   with an ellipsis; the full text is the body's tooltip and the live region. */
+.toast__title {
+  /* The title keeps its words; the detail gives way first. */
+  flex: 0 1 auto;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: var(--weight-regular);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toast__description {
+  flex: 1 1000 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toast__actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+}
+
+.toast__action-btn {
+  height: 28px;
+  padding: 0 10px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: var(--weight-medium) var(--text-sm) / 1 var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) ease-out;
+}
+
+.toast__action-btn:hover {
+  background: var(--surface-2);
+}
+
+.toast__dismiss-btn {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-lg);
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
+}
+
+.toast__dismiss-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.toast__dismiss-btn:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+@media (pointer: coarse) {
+  .toast__action-btn,
+  .toast__dismiss-btn {
+    min-width: 44px;
+    height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast-presence-wrapper[data-state="entering"],
+  .toast-presence-wrapper[data-state="leaving"] {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .toast__action-btn,
+  .toast__dismiss-btn {
+    transition: none;
+  }
+}

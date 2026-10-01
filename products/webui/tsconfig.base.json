@@ -1,0 +1,29 @@
+{
+  "// Purpose": [
+    "Shared compiler options for every TypeScript project in this repo.",
+    "The repo is checked by THREE projects, not one, because the three source",
+    "trees have genuinely different runtimes:",
+    "  tsconfig.json     -> src/ + vite.config.ts + playwright.config.ts (browser: DOM + react-jsx + vite/client)",
+    "  scripts/tsconfig.json -> scripts/ (bun/node CLI: no DOM)",
+    "  e2e/tsconfig.json     -> e2e/ (playwright: DOM for page.evaluate callbacks, no react-jsx)",
+    "`bun run typecheck` runs all three. Adding a fourth source tree without a",
+    "project to cover it is caught by scripts/typecheck-coverage.ts, which",
+    "diffs git-tracked .ts/.tsx files against the union of every project's",
+    "`tsc --listFilesOnly` output."
+  ],
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true
+  }
+}

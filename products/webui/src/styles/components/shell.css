@@ -1,0 +1,632 @@
+/*
+ * App shell (design doc "App shell", "Sidebar auto-collapse", "Phone").
+ *
+ *   Sidebar ....... 260 wide (220 to 360), 10 padding, --sidebar, right --line
+ *   Rail .......... 56 wide; hover or Ctrl B peeks the full sidebar as glass
+ *   Nav item ...... 32 tall, 8 radius, 10 gap, 16 icon; active --surface-2
+ *   Account ....... 44 tall, avatar with connection dot, name, chevron
+ *   Header ........ 48 tall (52 on phone), 16 side padding, bottom --line
+ *   Phone (<900) .. no rail; the sidebar is a glass drawer over the scrim
+ */
+
+.app-shell {
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--page-art), var(--canvas);
+  background-color: var(--canvas);
+}
+
+/* The slot reserves the layout width. It changes once, after the sidebar's own
+   200 ms width animation, so the content reflows once rather than per frame. */
+.shell-sidebar-slot {
+  position: relative;
+  /* Above a right-side peek's backdrop: while a detail holds the rail, the rail
+     (and its hover peek) stays usable, so navigation is one click away. */
+  z-index: calc(var(--z-peek) + 1);
+  flex: none;
+  height: 100%;
+}
+
+.shell-sidebar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--sidebar-width);
+  background: var(--sidebar);
+  border-right: 1px solid var(--line);
+  transition: width var(--motion-rail) var(--ease-standard);
+}
+
+.shell-sidebar[data-form="rail"] {
+  width: var(--sidebar-width-collapsed);
+}
+
+.shell-sidebar[data-form="peek"] {
+  z-index: var(--z-rail-peek);
+  background: var(--glass-solid);
+  border-right-color: var(--line-strong);
+  box-shadow: var(--shadow);
+}
+
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .shell-sidebar[data-form="peek"] {
+    background: var(--glass);
+    -webkit-backdrop-filter: blur(22px) saturate(1.4);
+    backdrop-filter: blur(22px) saturate(1.4);
+  }
+}
+
+.shell-sidebar__inner {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  padding: 10px;
+  font-size: var(--text-base);
+}
+
+.shell-sidebar__inner--rail {
+  align-items: center;
+  padding: 10px 6px;
+}
+
+/* Brand row: spark, wordmark in the UI face at 600, pin and collapse. */
+.shell-brand {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  margin-bottom: 6px;
+  padding: 0 0 0 8px;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.shell-sidebar__inner--rail .shell-brand {
+  justify-content: center;
+  padding: 0;
+}
+
+.shell-brand__mark {
+  display: inline-grid;
+  place-items: center;
+}
+
+.shell-brand__word {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shell-brand__tools {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.gv-spark {
+  display: block;
+  flex: none;
+}
+
+.gv-spark__from { stop-color: var(--spark-from); }
+.gv-spark__to { stop-color: var(--spark-to); }
+
+/* Nav */
+.shell-nav {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+
+.shell-sidebar__inner--rail .shell-nav {
+  align-items: center;
+  gap: 4px;
+}
+
+.shell-nav-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: var(--nav-item-h);
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: var(--weight-regular) var(--text-base) / var(--leading-ui) var(--font-ui);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
+}
+
+.shell-nav-item svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.shell-nav-item:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+}
+
+.shell-nav-item[aria-current="page"] {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.shell-nav-item__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shell-nav-item .gv-kbd,
+.shell-nav-item__count {
+  margin-left: auto;
+}
+
+.shell-nav-item__icon {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+}
+
+.shell-nav-item--icon {
+  width: 40px;
+  height: 36px;
+  justify-content: center;
+  padding: 0;
+}
+
+.shell-rail-badge {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  width: 7px;
+  height: 7px;
+  background: var(--warn);
+  border: 2px solid var(--sidebar);
+  border-radius: 50%;
+  box-sizing: content-box;
+}
+
+.shell-rail-badge--header {
+  border-color: var(--canvas);
+}
+
+/* Recent chats */
+.shell-group-label {
+  flex: none;
+  margin: 0;
+  padding: 14px 8px 4px;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-regular);
+  line-height: 16px;
+}
+
+.shell-recent {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.shell-recent__list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.shell-recent__empty {
+  margin: 0;
+  padding: 4px 8px;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.shell-recent__row {
+  position: relative;
+}
+
+.shell-recent__open {
+  padding-right: 34px;
+}
+
+.shell-recent__delete {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease-out;
+}
+
+.shell-recent__row:hover .shell-recent__delete,
+.shell-recent__row:focus-within .shell-recent__delete,
+.shell-recent__row[data-active] .shell-recent__delete {
+  opacity: 1;
+}
+
+/* Foot: the account button (44 tall) */
+.shell-sidebar__foot {
+  flex: none;
+  width: 100%;
+  margin-top: auto;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.shell-sidebar__inner--rail .shell-sidebar__foot {
+  display: flex;
+  justify-content: center;
+}
+
+.shell-account {
+  display: flex;
+  width: 100%;
+  height: var(--account-h);
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px 0 6px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: var(--weight-medium) var(--text-base) / var(--leading-ui) var(--font-ui);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) ease-out;
+}
+
+.shell-account:hover,
+.shell-account[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+}
+
+.shell-account--compact {
+  width: 44px;
+  justify-content: center;
+  padding: 0;
+}
+
+.shell-account__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell-account__chevron {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--text-3);
+}
+
+.shell-avatar {
+  position: relative;
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  place-items: center;
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  border-radius: 50%;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.shell-avatar::after {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 8px;
+  height: 8px;
+  content: "";
+  background: var(--ok);
+  border: 2px solid var(--sidebar);
+  border-radius: 50%;
+  box-sizing: content-box;
+}
+
+.shell-avatar[data-tone="warn"]::after { background: var(--warn); }
+.shell-avatar[data-tone="bad"]::after { background: var(--bad); }
+
+.shell-drawer .shell-avatar::after,
+.shell-sidebar[data-form="peek"] .shell-avatar::after {
+  border-color: var(--surface);
+}
+
+.shell-account__spacer {
+  width: 16px;
+  flex: none;
+}
+
+.shell-mono {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+/* Resize handle on the sidebar's right edge */
+.shell-resize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  z-index: 1;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.shell-resize::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  content: "";
+  background: transparent;
+  transition: background-color var(--motion-fast) ease-out;
+}
+
+.shell-resize:hover::after,
+.shell-resize:focus-visible::after {
+  background: var(--accent);
+}
+
+.shell-resize:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Main column */
+.shell-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.shell-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: var(--header-h);
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.shell-header__title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A view's own title (the chat's click-to-rename title) portals in here. */
+.shell-header__title-slot {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+}
+
+.shell-header__title-slot[hidden] {
+  display: none;
+}
+
+/* A view's own header buttons join the shell's buttons in one row. */
+.shell-header__actions-slot {
+  display: contents;
+}
+
+.shell-header__end {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.shell-header__indicators {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+  overflow: hidden;
+}
+
+.shell-header--phone {
+  height: var(--header-h-phone);
+  padding: 0 4px;
+  padding-top: env(safe-area-inset-top, 0px);
+  height: calc(var(--header-h-phone) + env(safe-area-inset-top, 0px));
+}
+
+.shell-header--phone .shell-header__title {
+  flex: 1;
+  text-align: center;
+}
+
+.shell-header--phone .shell-header__title-slot {
+  justify-content: center;
+}
+
+.shell-header--phone .shell-header__indicators {
+  flex: none;
+  max-width: 40%;
+}
+
+/* Thin connection banner and the page-level banners */
+.shell-main > .banner {
+  flex: none;
+  max-width: none;
+  margin: 0;
+  padding: 6px 16px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--warn) 9%, var(--canvas));
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-meta);
+}
+
+.shell-main > .banner svg {
+  flex: none;
+  color: var(--warn);
+}
+
+.shell-main > .banner.info {
+  background: color-mix(in srgb, var(--info) 9%, var(--canvas));
+}
+
+.shell-main > .banner.info svg {
+  color: var(--info);
+}
+
+/* Content frame */
+.shell-main > .view-frame {
+  flex: 1;
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  margin: 0;
+  padding: 24px 32px 40px;
+  overflow-y: auto;
+}
+
+.shell-main[data-view="chat"] > .view-frame {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.shell-main[data-view="chat"] > .view-frame > .view-frame__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.shell-main[data-view="chat"] .view-frame__body > .chat-main {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+/* Phone drawer */
+.shell-drawer.gv-drawer {
+  max-width: 360px;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.shell-drawer .gv-drawer__body {
+  display: flex;
+  padding: 0;
+  overflow: hidden;
+}
+
+.shell-drawer .shell-sidebar__inner {
+  width: 100%;
+  padding: 12px;
+}
+
+.shell-drawer .shell-nav-item,
+.shell-drawer .shell-account {
+  height: 44px;
+}
+
+.shell-drawer .shell-recent__delete {
+  top: 0;
+  opacity: 1;
+}
+
+.shell-drawer .shell-recent__open {
+  padding-right: 48px;
+}
+
+@media (pointer: coarse) {
+  .shell-recent__delete {
+    opacity: 1;
+  }
+
+  /* Keyboard hints mean nothing on a touch screen. */
+  .shell-nav-item .gv-kbd {
+    display: none;
+  }
+}
+
+@media (max-width: 899px) {
+  /* Phone touch floor: header controls and drawer rows are at least 44 by 44. */
+  .shell-header .gv-icon-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .shell-drawer .gv-icon-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .shell-main > .view-frame {
+    padding: 16px 16px 32px;
+  }
+
+  .shell-main[data-view="chat"] > .view-frame {
+    padding: 0;
+  }
+
+  .shell-main > .banner {
+    padding: 6px 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell-sidebar,
+  .shell-nav-item,
+  .shell-account,
+  .shell-recent__delete {
+    transition: none;
+  }
+}

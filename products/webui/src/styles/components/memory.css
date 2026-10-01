@@ -1,0 +1,9 @@
+/*
+ * Memory tab. Record rows are kit Rows and record detail is a data-view pane, so
+ * almost everything lives in library.css; this file holds the one memory-only rule.
+ */
+
+/* The confidence figure ("82% confident") stays on one line beside the row. */
+.memory-record-row .dv-value {
+  white-space: nowrap;
+}

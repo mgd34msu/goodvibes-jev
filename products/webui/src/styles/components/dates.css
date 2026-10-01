@@ -1,0 +1,150 @@
+/*
+ * Occasions tab of Personal: rows, groups, detail pane and dialogs come from the
+ * data-view template and the kit, so this file holds only the notes, the nudge
+ * line, the answer buttons, the interview form, the gift history and the stored
+ * records disclosure.
+ */
+
+.dates-note {
+  margin-bottom: 16px;
+}
+
+.dates-note p {
+  margin: 0;
+}
+
+.dates-note__title {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+.dates-note ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+
+.dates-note code {
+  font-family: var(--font-mono);
+}
+
+.dates-note__row {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dates-nudge {
+  margin-bottom: 24px;
+}
+
+.dates-nudge__message {
+  margin: 0 0 12px;
+  color: var(--text);
+  line-height: 22px;
+}
+
+[data-testid="dates-conflicts"],
+[data-testid="dates-interview-list"],
+[data-testid="dates-occasion-list"],
+[data-testid="dates-plan-list"] {
+  margin-bottom: 24px;
+}
+
+.dates-answers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dates-answers .gv-button[aria-pressed="true"] {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.dates-interview {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 480px;
+}
+
+.dates-interview__done {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.dates-proposal p {
+  margin: 0;
+}
+
+.dates-proposal p + p {
+  margin-top: 4px;
+}
+
+.dates-gifts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.dates-gifts__item {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.dates-gifts__item p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.dates-gifts__landed {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+.dates-gifts__meta,
+.dates-gifts__notes {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.dates-gifts__empty {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-3);
+  line-height: var(--leading-ui);
+}
+
+.dates-gifts__empty svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin-top: 2px;
+}
+
+.dates-store {
+  margin-top: 8px;
+}
+
+.dates-state {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dates-state__text {
+  margin: 0;
+  color: var(--text-2);
+  line-height: var(--leading-ui);
+  overflow-wrap: anywhere;
+}

@@ -1,0 +1,96 @@
+/*
+ * queued-messages.css: messages waiting behind the reply in progress, shown
+ * just above the composer as divided rows with ghost icon actions. Tokens only.
+ */
+
+.queued-messages-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 4px 4px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.queued-messages-panel__note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.queued-messages-panel__note svg {
+  flex: none;
+}
+
+.queued-messages-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.queued-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 2px 0;
+  border-top: 1px solid var(--line);
+}
+
+.queued-message__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queued-message__actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.queued-message__delete:hover:not(:disabled) {
+  color: var(--bad);
+}
+
+.queued-message__edit-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 8px 8px 0;
+}
+
+.queued-message__edit-form textarea {
+  width: 100%;
+  min-height: 60px;
+  padding: 8px 12px;
+  color: var(--text);
+  background: var(--canvas);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font: var(--weight-regular) var(--text-base) / var(--leading-ui) var(--font-ui);
+  resize: vertical;
+}
+
+.queued-message__edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.queued-messages-panel > .banner {
+  margin: 6px 8px 6px 0;
+}

@@ -1,0 +1,284 @@
+/*
+ * Markdown prose and code blocks (MarkdownMessage), used by the chat, the
+ * Knowledge answers and data blocks. Tokens only.
+ *
+ * Design doc "Type": prose is 15 on 26. "Chat": code blocks have a hairline
+ * frame, a language label, one copy icon button and calm syntax colors from
+ * tokens; no line is ever painted with a full-width highlight band.
+ */
+
+.markdown-message {
+  min-width: 0;
+  color: inherit;
+  font-size: var(--text-md);
+  line-height: var(--leading-prose);
+  overflow-wrap: anywhere;
+}
+
+.markdown-message > :first-child {
+  margin-top: 0;
+}
+
+.markdown-message > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-message p {
+  margin: 0 0 12px;
+  white-space: normal;
+}
+
+.markdown-message h1,
+.markdown-message h2,
+.markdown-message h3,
+.markdown-message h4 {
+  margin: 20px 0 8px;
+  color: var(--text);
+  font-weight: var(--weight-semibold);
+  line-height: 1.35;
+}
+
+.markdown-message h1 { font-size: 20px; }
+.markdown-message h2 { font-size: 18px; }
+.markdown-message h3 { font-size: 16px; }
+.markdown-message h4 { font-size: var(--text-md); }
+
+.markdown-message ul,
+.markdown-message ol {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+
+.markdown-message li {
+  padding-left: 2px;
+}
+
+.markdown-message li > p {
+  margin: 0;
+}
+
+.markdown-message li::marker {
+  color: var(--text-3);
+}
+
+.markdown-message blockquote {
+  margin: 0 0 12px;
+  padding: 0 0 0 14px;
+  color: var(--text-2);
+  border-left: 2px solid var(--line-strong);
+}
+
+.markdown-message strong {
+  font-weight: var(--weight-semibold);
+}
+
+.markdown-message a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  text-underline-offset: 3px;
+}
+
+.markdown-message a:hover {
+  text-decoration-color: currentColor;
+}
+
+/* Inline code: a quiet chip, never accent colored. */
+.markdown-message :not(pre) > code {
+  padding: 1px 5px;
+  color: var(--text);
+  font-size: 0.87em;
+  background: var(--surface-2);
+  border: 0;
+  border-radius: var(--radius-xs);
+}
+
+.markdown-message hr {
+  height: 1px;
+  margin: 20px 0;
+  background: var(--line);
+  border: 0;
+}
+
+.markdown-message table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 0 0 12px;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+}
+
+.markdown-message th,
+.markdown-message td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+.markdown-message th {
+  color: var(--text-2);
+  font-weight: var(--weight-medium);
+  border-bottom-color: var(--line-strong);
+}
+
+/* ── Code block ─────────────────────────────────────────────── */
+.markdown-code-block {
+  margin: 4px 0 16px;
+  overflow: hidden;
+  background: var(--code);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.markdown-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  padding: 4px 4px 4px 14px;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.markdown-code-label {
+  min-width: 0;
+  overflow: hidden;
+  font: var(--weight-regular) var(--text-xs) / var(--leading-meta) var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The scroll viewport is inset from the frame by the frame's padding, so a
+   long line clips 14px inside the frame on both sides at every scroll
+   position: text never runs into the frame edge, and only the code scrolls,
+   never the page. */
+.markdown-code-block pre,
+.markdown-code-pre {
+  margin: 0 14px;
+  padding: 12px 0;
+  overflow-x: auto;
+  background: transparent;
+  border: 0;
+}
+
+.markdown-code-block code {
+  display: block;
+  min-width: max-content;
+  padding: 0;
+  color: var(--text);
+  font: var(--weight-regular) var(--text-sm) / var(--leading-ui) var(--font-mono);
+  white-space: pre;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+/* Line numbers (a preference): a plain gutter, no band behind any line. */
+.markdown-code-block.numbered .markdown-code-pre {
+  margin-left: 0;
+}
+
+.markdown-code-line {
+  display: grid;
+  grid-template-columns: 4.2ch minmax(0, 1fr);
+  min-width: max-content;
+  padding: 0;
+  background: none;
+}
+
+.markdown-code-line-number {
+  padding-right: 12px;
+  color: var(--text-3);
+  text-align: right;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.markdown-code-line-content {
+  white-space: pre;
+}
+
+/* Calm syntax colors, all from tokens (design mockup: keyword violet,
+   function cyan, string green, comment tertiary). */
+.markdown-code-block .hljs-keyword,
+.markdown-code-block .hljs-selector-tag,
+.markdown-code-block .hljs-built_in,
+.markdown-code-block .hljs-name,
+.markdown-code-block .hljs-tag,
+.artifact-code-block .hljs-keyword,
+.artifact-code-block .hljs-selector-tag,
+.artifact-code-block .hljs-built_in,
+.artifact-code-block .hljs-name,
+.artifact-code-block .hljs-tag {
+  color: var(--accent-2);
+}
+
+.markdown-code-block .hljs-title,
+.markdown-code-block .hljs-section,
+.markdown-code-block .hljs-attribute,
+.markdown-code-block .hljs-type,
+.artifact-code-block .hljs-title,
+.artifact-code-block .hljs-section,
+.artifact-code-block .hljs-attribute,
+.artifact-code-block .hljs-type {
+  color: var(--accent);
+}
+
+.markdown-code-block .hljs-string,
+.markdown-code-block .hljs-template-tag,
+.markdown-code-block .hljs-template-variable,
+.markdown-code-block .hljs-addition,
+.artifact-code-block .hljs-string,
+.artifact-code-block .hljs-template-tag,
+.artifact-code-block .hljs-template-variable,
+.artifact-code-block .hljs-addition {
+  color: var(--ok);
+}
+
+.markdown-code-block .hljs-number,
+.markdown-code-block .hljs-literal,
+.markdown-code-block .hljs-symbol,
+.markdown-code-block .hljs-bullet,
+.markdown-code-block .hljs-link,
+.markdown-code-block .hljs-variable,
+.artifact-code-block .hljs-number,
+.artifact-code-block .hljs-literal,
+.artifact-code-block .hljs-symbol,
+.artifact-code-block .hljs-bullet,
+.artifact-code-block .hljs-link,
+.artifact-code-block .hljs-variable {
+  color: var(--warn);
+}
+
+.markdown-code-block .hljs-comment,
+.markdown-code-block .hljs-quote,
+.markdown-code-block .hljs-meta,
+.artifact-code-block .hljs-comment,
+.artifact-code-block .hljs-quote,
+.artifact-code-block .hljs-meta {
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.markdown-code-block .hljs-deletion,
+.markdown-code-block .hljs-regexp,
+.artifact-code-block .hljs-deletion,
+.artifact-code-block .hljs-regexp {
+  color: var(--bad);
+}
+
+.markdown-code-block .hljs-emphasis,
+.artifact-code-block .hljs-emphasis {
+  font-style: italic;
+}
+
+.markdown-code-block .hljs-strong,
+.artifact-code-block .hljs-strong {
+  font-weight: var(--weight-semibold);
+}

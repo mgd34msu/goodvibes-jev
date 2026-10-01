@@ -1,0 +1,121 @@
+/*
+ * session-rewind.css: SessionRewind.tsx, the Rewind tab of a session's detail. The preview and the receipt are plain
+ * sections with divided lines, never cards.
+ */
+
+.session-rewind {
+  min-width: 0;
+}
+
+.session-rewind__intro {
+  margin: 0 0 var(--space-4);
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.session-rewind__body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding-bottom: var(--space-3);
+}
+
+.session-rewind__body > * {
+  align-self: stretch;
+}
+
+.session-rewind__body > .session-rewind__preview-btn,
+.session-rewind__apply-btn {
+  align-self: flex-start;
+}
+
+.session-rewind__controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3);
+}
+
+.session-rewind__field {
+  min-width: 0;
+}
+
+.session-rewind__plan,
+.session-rewind__receipt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.session-rewind__plan-title,
+.session-rewind__receipt-title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: 24px;
+}
+
+.session-rewind__plan-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+}
+
+.session-rewind__plan-list > li {
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.session-rewind__plan-list strong {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+.session-rewind__warnings {
+  margin: 0;
+  padding-left: var(--space-8);
+}
+
+.session-rewind__undo {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--text-2);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+}
+
+.session-rewind__note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.session-rewind__error {
+  margin: 0;
+  color: var(--bad);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.session-rewind__ok {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}

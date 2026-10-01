@@ -1,0 +1,13 @@
+/*
+ * Self-hosted type. Geist (UI) and Geist Mono (code, IDs, figures), weights
+ * 400, 500 and 600 only, latin subset. The @fontsource packages ship the woff2
+ * files; Vite copies them into the build and rewrites the URLs, so the app never
+ * fetches a font from a CDN at runtime. Family names: "Geist Sans", "Geist Mono"
+ * (see --font-ui / --font-mono in tokens.css).
+ */
+@import '@fontsource/geist-sans/latin-400.css';
+@import '@fontsource/geist-sans/latin-500.css';
+@import '@fontsource/geist-sans/latin-600.css';
+@import '@fontsource/geist-mono/latin-400.css';
+@import '@fontsource/geist-mono/latin-500.css';
+@import '@fontsource/geist-mono/latin-600.css';

@@ -1,0 +1,65 @@
+node_modules/
+dist/
+# The packed release asset (scripts/pack-bundle.ts) — built by the release lane
+# and attached to the GitHub release, never committed.
+release/
+coverage/
+*.log
+.DS_Store
+*.tsbuildinfo
+sbom.cdx.json*
+.tmp/
+
+# Local GoodVibes daemon/session state and credentials.
+.goodvibes/
+
+# Test and package scratch space.
+.test-tmp/
+temp/
+**/temp/
+
+# Defensive guard against accidental SQLite `:memory:` sentinel file leaks.
+:memory:
+
+# Review artifacts and local editor state.
+*-review.md
+*-review-*.md
+*-verification.md
+.idea/
+.vscode/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# Secret files
+*.pem
+*.key
+credentials.json
+secrets.json
+service-account*.json
+
+# Cloud credentials
+.aws/
+.gcp/
+kubeconfig
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+prisma/*.db
+
+# Log files
+logs/
+
+# Playwright harness artifacts
+/e2e/.artifacts/
+/test-results/
+/playwright-report/
+/playwright/.cache/
+
+# Harness-internal state — never committed.
+.claude/

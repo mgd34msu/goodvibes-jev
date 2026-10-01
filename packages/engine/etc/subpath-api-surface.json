@@ -44807,7 +44807,7 @@
     {
       "name": "alternateApi",
       "kind": "const",
-      "text": "alternateApi: import(\"@goodvibes-jev/judgment\").Battery<{ readonly unsupported: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
+      "text": "alternateApi: import(\"@goodvibes-jev/judgment/decisions\").Battery<{ readonly unsupported: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; }>"
     },
     {
       "name": "catalogProviderAccess",
@@ -44832,7 +44832,7 @@
     {
       "name": "contentPartKind",
       "kind": "const",
-      "text": "contentPartKind: import(\"@goodvibes-jev/judgment\").Battery<{ readonly reasoning: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
+      "text": "contentPartKind: import(\"@goodvibes-jev/judgment/decisions\").Battery<{ readonly reasoning: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; }>"
     },
     {
       "name": "createRoutePlanner",
@@ -44892,7 +44892,7 @@
     {
       "name": "localServerIdentity",
       "kind": "const",
-      "text": "localServerIdentity: import(\"@goodvibes-jev/judgment\").Dispatch<\"unknown\" | \"lm-studio\" | \"vllm\" | \"llamacpp\" | \"localai\" | \"tgi\" | \"ollama\">"
+      "text": "localServerIdentity: import(\"@goodvibes-jev/judgment/decisions\").Dispatch<\"unknown\" | \"lm-studio\" | \"vllm\" | \"llamacpp\" | \"localai\" | \"tgi\" | \"ollama\">"
     },
     {
       "name": "mainConversationRoute",
@@ -45022,12 +45022,12 @@
     {
       "name": "reasoningFamily",
       "kind": "const",
-      "text": "reasoningFamily: import(\"@goodvibes-jev/judgment\").Dispatch<\"none\" | \"deepseek-reasoner\" | \"claude-fable-mythos\" | \"claude-5\" | \"claude-opus-4-7-8\" | \"claude-4-6\" | \"claude-opus-4-5\" | \"claude-3-7\" | \"claude-4-early\" | \"claude-before-3-7\" | \"gemini-3\" | \"gemini-latest\" | \"gemini-2-5\" | \"gemini-legacy\" | \"grok-4-base\" | \"grok-4-plus\" | \"deepseek\" | \"openai-reasoning\" | \"mercury-edit\" | \"mercury\">"
+      "text": "reasoningFamily: import(\"@goodvibes-jev/judgment/decisions\").Dispatch<\"none\" | \"deepseek-reasoner\" | \"claude-fable-mythos\" | \"claude-5\" | \"claude-opus-4-7-8\" | \"claude-4-6\" | \"claude-opus-4-5\" | \"claude-3-7\" | \"claude-4-early\" | \"claude-before-3-7\" | \"gemini-3\" | \"gemini-latest\" | \"gemini-2-5\" | \"gemini-legacy\" | \"grok-4-base\" | \"grok-4-plus\" | \"deepseek\" | \"openai-reasoning\" | \"mercury-edit\" | \"mercury\">"
     },
     {
       "name": "reasoningRejection",
       "kind": "const",
-      "text": "reasoningRejection: import(\"@goodvibes-jev/judgment\").Battery<{ readonly reasoning: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
+      "text": "reasoningRejection: import(\"@goodvibes-jev/judgment/decisions\").Battery<{ readonly reasoning: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; }>"
     },
     {
       "name": "registerTaskRouteTool",
@@ -45087,7 +45087,7 @@
     {
       "name": "stopReason",
       "kind": "const",
-      "text": "stopReason: import(\"@goodvibes-jev/judgment\").Battery<{ readonly stop: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly completed: \"The model finished its answer normally, or the reason is housekeeping such as loading or unloading the model\"; readonly tool_call: \"The model stopped to call a tool or function\"; readonly max_tokens: \"Generation was cut off at the token or length limit\"; }>; }>"
+      "text": "stopReason: import(\"@goodvibes-jev/judgment/decisions\").Battery<{ readonly stop: import(\"@goodvibes-jev/judgment/decisions\").ChoiceItem<{ readonly completed: \"The model finished its answer normally, or the reason is housekeeping such as loading or unloading the model\"; readonly tool_call: \"The model stopped to call a tool or function\"; readonly max_tokens: \"Generation was cut off at the token or length limit\"; }>; }>"
     },
     {
       "name": "taskRouteEntry",

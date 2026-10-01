@@ -1,0 +1,24 @@
+/*
+ * PowerSettings layout. The switch and the inhibitor line are settings rows;
+ * only the held-state line and the note need rules.
+ */
+
+.power-panel__state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+.power-panel__note {
+  margin: var(--space-2) 0;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.power-panel__work-state {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}

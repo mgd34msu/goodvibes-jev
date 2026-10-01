@@ -1,0 +1,398 @@
+/*
+ * chat-composer.css: the composer (design doc "Chat" and "Phone").
+ *
+ * One surface (--surface, --line-strong border, 18 radius): the text on top,
+ * one control row underneath: attach (+), the model and effort as text, mic,
+ * voice settings, and a round send button that is grey until there is
+ * something to send and light (the primary fill) when there is. Tokens only.
+ */
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* A rounded notice above the composer, like .banner: the hue is only the dot. */
+.composer-error {
+  position: relative;
+  padding: 8px 14px 8px 30px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.composer-error::before {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--warn);
+  content: '';
+}
+
+.composer-box {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 12px 10px 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xl);
+  transition: border-color var(--motion-fast) ease-out, box-shadow var(--motion-fast) ease-out;
+}
+
+/* Focus shows on the surface, not as a ring around the bare text field. */
+/* The typing caret plus an accent-tinted border mark focus on the surface. */
+.composer-box:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line-strong));
+}
+
+
+.composer-box[data-drag-over="true"] {
+  border-color: var(--accent);
+  border-style: dashed;
+}
+
+.composer-box textarea {
+  display: block;
+  width: 100%;
+  min-height: 26px;
+  max-height: 200px;
+  margin: 0;
+  padding: 0 4px 10px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+  font: var(--weight-regular) var(--text-md) / 24px var(--font-ui);
+  resize: none;
+  overflow-y: auto;
+}
+
+.composer-box textarea:focus-visible {
+  outline: 0;
+  box-shadow: none;
+}
+
+.composer-box textarea::placeholder {
+  color: var(--text-3);
+  opacity: 1;
+}
+
+.composer--centered .composer-box textarea {
+  min-height: 52px;
+}
+
+/* ── Attachments inside the surface ────────────────────────── */
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.composer-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(240px, 100%);
+  height: 32px;
+  padding: 0 4px 0 10px;
+  color: var(--text);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+
+.composer-attachment > svg {
+  flex: none;
+  color: var(--text-3);
+}
+
+.composer-attachment-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-attachment-thumb {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  object-fit: cover;
+  border-radius: var(--radius-xs);
+}
+
+.composer-attachment button {
+  display: inline-grid;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-full);
+}
+
+.composer-attachment button:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-2) 60%, var(--line-strong));
+}
+
+/* ── Control row ───────────────────────────────────────────── */
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.composer-toolbar__end {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.composer-tool {
+  display: inline-grid;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-full);
+  transition: background-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
+}
+
+.composer-tool svg {
+  width: 18px;
+  height: 18px;
+}
+
+.composer-tool:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.composer-tool:disabled {
+  opacity: 0.4;
+}
+
+/* Model and effort, read as text ("Claude Opus 4.8 High"). */
+.composer-model-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 280px;
+  height: 32px;
+  padding: 0 8px 0 10px;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: var(--weight-regular) var(--text-sm) / 1 var(--font-ui);
+  white-space: nowrap;
+  transition: background-color var(--motion-fast) ease-out;
+}
+
+.composer-model-btn:hover:not(:disabled),
+.composer-model-btn[aria-expanded="true"] {
+  background: var(--surface-2);
+}
+
+.composer-model-btn:disabled {
+  opacity: 0.4;
+}
+
+.composer-model-btn > svg {
+  flex: none;
+  color: var(--text-3);
+}
+
+.composer-model-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+}
+
+.composer-model-effort {
+  flex: none;
+  color: var(--text-2);
+}
+
+.composer-model-btn[data-pending="true"] .composer-model-label {
+  color: var(--text-2);
+}
+
+.composer-model-menu {
+  max-height: min(440px, calc(100vh - 120px));
+  overflow-y: auto;
+}
+
+.composer-model-check {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+}
+
+.composer-model-check--off {
+  display: inline-block;
+}
+
+/* Round send: grey until there is something to send, light when ready. */
+.send-button {
+  display: inline-grid;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  margin-left: 4px;
+  padding: 0;
+  color: var(--text-3);
+  background: var(--surface-2);
+  border: 0;
+  border-radius: var(--radius-full);
+  transition: background-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
+}
+
+.send-button[data-ready="true"] {
+  color: var(--primary-fg);
+  background: var(--primary-bg);
+}
+
+.send-button[data-ready="true"]:hover {
+  background: color-mix(in srgb, var(--primary-bg) 86%, var(--canvas));
+}
+
+/* Grey is the not-ready look; it keeps full opacity (not the 40% disabled fade). */
+.send-button:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.send-button[data-pending="true"] {
+  opacity: 0.6;
+}
+
+/* Floating notes and popovers anchored to controls at the right end of the row
+   open leftwards so they never push past the viewport edge. */
+.composer .voice-mic-note,
+.composer .voice-settings-popover {
+  right: 0;
+  left: auto;
+}
+
+/* ── Slash commands (glass, above the composer) ─────────────── */
+.composer-slash-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: var(--z-overlay);
+  display: flex;
+  flex-direction: column;
+  width: min(320px, 100%);
+  padding: 6px;
+  color: var(--text);
+  background: var(--glass-solid);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+  animation: gv-rise-in var(--motion-menu) var(--ease-standard);
+}
+
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .composer-slash-menu {
+    background: var(--glass);
+  }
+}
+
+.composer-slash-menu-label {
+  padding: 6px 10px;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.composer-slash-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-height: 32px;
+  padding: 6px 10px;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-item);
+  font-size: var(--text-base);
+}
+
+.composer-slash-item:hover,
+.composer-slash-item[aria-selected="true"] {
+  background: var(--line-strong);
+}
+
+.composer-slash-item-name {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.composer-slash-item-desc {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Touch ─────────────────────────────────────────────────── */
+@media (pointer: coarse) {
+  .composer-tool,
+  .send-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .composer-model-btn {
+    height: 44px;
+  }
+}
+
+@media (max-width: 899px) {
+  .composer-box {
+    padding: 10px 6px 6px 10px;
+  }
+
+  .composer-model-btn {
+    max-width: 150px;
+    padding: 0 6px;
+  }
+
+  .composer-model-effort {
+    display: none;
+  }
+}
