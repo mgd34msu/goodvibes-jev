@@ -1,0 +1,180 @@
+/*
+ * Mail tab of Personal: the inbox rows come from the data-view template, so this
+ * file holds the row accents, the message body, the floating compose panel and
+ * (at the end, unchanged) the mail account rows the settings dialog reuses.
+ */
+
+/* The wrapper only carries the test id; the page inside owns the layout. */
+.mail-view {
+  display: contents;
+}
+
+.mail-count {
+  margin: 0 0 8px;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.mail-row__lead {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 7px;
+}
+
+.mail-row--unread .gv-row__title {
+  font-weight: var(--weight-semibold);
+}
+
+.mail-row__date {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+
+.mail-unreadable {
+  margin-bottom: 12px;
+}
+
+.mail-unreadable p {
+  margin: 0;
+}
+
+.mail-unreadable__title {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+.mail-unreadable ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+
+/* ── Message detail ────────────────────────────────────────── */
+.mail-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+
+.mail-detail__text {
+  margin: 0;
+  color: var(--text);
+  font: inherit;
+  line-height: 22px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.mail-detail__note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.mail-detail__uid {
+  margin: 0;
+  color: var(--text-3);
+  font: var(--weight-regular) var(--text-meta) / var(--leading-meta) var(--font-mono);
+}
+
+/* ── Compose panel: glass, lower right; a bottom sheet on phones ── */
+.mail-compose {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: var(--z-peek);
+  display: flex;
+  flex-direction: column;
+  width: min(480px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  animation: gv-rise-in var(--motion-base) var(--ease-standard) both;
+}
+
+.mail-compose__header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 12px 4px 20px;
+}
+
+.mail-compose__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: 24px;
+}
+
+.mail-compose__form {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 8px 20px 20px;
+  overflow-y: auto;
+}
+
+.mail-compose__reply {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.mail-compose__reply code {
+  max-width: 100%;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+}
+
+.mail-compose__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 899px) {
+  .mail-compose {
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: auto;
+    max-height: 88vh;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .mail-compose__header {
+    padding-left: 16px;
+  }
+
+  .mail-compose__form {
+    padding: 8px 16px 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mail-compose {
+    animation: none;
+  }
+}
+
+/* Settings panel (MailAccountSettings) */

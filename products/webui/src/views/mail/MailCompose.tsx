@@ -1,0 +1,99 @@
+/**
+ * The compose panel: glass, fixed to the lower right of the window (480 wide at
+ * most, 16 radius), a bottom sheet across the full width on phones. It floats
+ * over the inbox the way a mail app's compose window does, so the list and the
+ * open message stay in view while you write.
+ */
+import { useEffect, useRef, type KeyboardEvent, type SyntheticEvent } from 'react';
+import { Send, X } from 'lucide-react';
+import { Button, Field, IconButton, Input, Textarea } from '../../components/ui';
+
+export interface MailComposeProps {
+  to: string;
+  subject: string;
+  body: string;
+  inReplyTo: string;
+  onToChange: (value: string) => void;
+  onSubjectChange: (value: string) => void;
+  onBodyChange: (value: string) => void;
+  onClearReply: () => void;
+  onSend: () => void;
+  onSaveDraft: () => void;
+  onClose: () => void;
+  ready: boolean;
+  sending: boolean;
+  saving: boolean;
+}
+
+export function MailCompose({
+  to,
+  subject,
+  body,
+  inReplyTo,
+  onToChange,
+  onSubjectChange,
+  onBodyChange,
+  onClearReply,
+  onSend,
+  onSaveDraft,
+  onClose,
+  ready,
+  sending,
+  saving,
+}: MailComposeProps) {
+  const toRef = useRef<HTMLInputElement | null>(null);
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Start where the writing is: the recipient for a new message, the body for a reply.
+  useEffect(() => {
+    (to.trim() ? bodyRef.current : toRef.current)?.focus({ preventScroll: true });
+    // Only on open; typing must not move focus.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function submit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (ready) onSend();
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.key === 'Escape' && !event.defaultPrevented) {
+      event.preventDefault();
+      onClose();
+    }
+  }
+
+  return (
+    <section className="glass mail-compose" role="dialog" aria-label="Compose message" onKeyDown={onKeyDown} data-testid="mail-compose">
+      <header className="mail-compose__header">
+        <h3 className="mail-compose__title">{inReplyTo ? 'Reply' : 'New message'}</h3>
+        <IconButton label="Close compose" icon={<X />} onClick={onClose} size="sm" />
+      </header>
+      <form className="mail-compose__form" onSubmit={submit}>
+        <Field label="To">
+          <Input ref={toRef} value={to} onChange={(event) => onToChange(event.target.value)} placeholder="someone@example.com, another@example.com" />
+        </Field>
+        <Field label="Subject">
+          <Input value={subject} onChange={(event) => onSubjectChange(event.target.value)} />
+        </Field>
+        <Field label="Message">
+          <Textarea ref={bodyRef} value={body} onChange={(event) => onBodyChange(event.target.value)} rows={8} />
+        </Field>
+        {inReplyTo ? (
+          <p className="mail-compose__reply">
+            Replying to <code>{inReplyTo}</code>
+            <Button variant="ghost" size="sm" onClick={onClearReply}>Clear reply threading</Button>
+          </p>
+        ) : null}
+        <div className="mail-compose__actions">
+          <Button variant="primary" type="submit" icon={<Send />} disabled={!ready || sending}>
+            {sending ? 'Sending…' : 'Send'}
+          </Button>
+          <Button variant="outline" disabled={!ready || saving} onClick={onSaveDraft}>
+            {saving ? 'Saving…' : 'Save draft to account'}
+          </Button>
+        </div>
+      </form>
+    </section>
+  );
+}

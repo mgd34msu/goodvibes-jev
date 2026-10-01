@@ -1,0 +1,128 @@
+/*
+ * diff-multibuffer.css: DiffMultibuffer.tsx, one scrollable review surface with a
+ * section per changed file and a block per hunk. Shared by the session review
+ * (SessionChanges) and the best-of-N candidate comparison (AttemptComparison).
+ * A file is a header row (path left, status chip right) over a code frame whose
+ * hunks are divided by hairlines. An interactive hunk is a 44px tap target.
+ */
+
+.diff-mb {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.diff-mb__file {
+  min-width: 0;
+}
+
+.diff-mb__file-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 0 var(--space-2);
+}
+
+.diff-mb__file-path {
+  min-width: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.diff-mb__note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.diff-mb__frame {
+  overflow: hidden;
+  background: var(--code);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.diff-mb__hunk {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  font: inherit;
+}
+
+.diff-mb__hunk + .diff-mb__hunk {
+  border-top: 1px solid var(--line);
+}
+
+/* Interactive hunks (a <button>) are tap targets; static ones (read-only comparison) are not. */
+button.diff-mb__hunk {
+  min-height: 44px;
+  cursor: pointer;
+}
+
+button.diff-mb__hunk:hover {
+  background: color-mix(in srgb, var(--surface-2) 50%, transparent);
+}
+
+button.diff-mb__hunk:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.diff-mb__hunk--reverted {
+  opacity: 0.65;
+}
+
+.diff-mb__hunk-header {
+  display: block;
+  margin-bottom: var(--space-1);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.diff-mb__lines {
+  display: block;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-mb__line { display: block; }
+.diff-mb__line--add { color: var(--ok); }
+.diff-mb__line--del { color: var(--bad); }
+.diff-mb__line--context { color: var(--text-2); }
+.diff-mb__line--meta,
+.diff-mb__line--more { color: var(--text-3); }
+
+.diff-mb__hunk-cta {
+  display: block;
+  margin-top: var(--space-2);
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.diff-mb__hunk-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--space-2);
+  color: var(--text-2);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}

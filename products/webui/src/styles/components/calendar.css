@@ -1,0 +1,247 @@
+/*
+ * Calendar tab of Personal: the agenda rows come from the data-view template,
+ * so this file holds only the month grid, the month navigation and the event
+ * detail. Tokens only; hairlines, no fills behind text except the today marker.
+ */
+
+.calendar-filter-calendar {
+  width: 168px;
+  min-width: 0;
+}
+
+.calendar-month-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.calendar-month-nav__label {
+  min-width: 132px;
+  color: var(--text);
+  font-weight: var(--weight-medium);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.calendar-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+
+.calendar-detail__description {
+  margin: 0;
+  color: var(--text-2);
+  line-height: 22px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.calendar-detail__uid {
+  margin: 0;
+  color: var(--text-3);
+  font: var(--weight-regular) var(--text-meta) / var(--leading-meta) var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.calendar-drawer-body {
+  padding: 0;
+}
+
+.calendar-notice__errors {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.calendar-ics-input {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/* ── Month grid ────────────────────────────────────────────── */
+.cal-month {
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.cal-month__week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.cal-month__weekday {
+  padding: 8px 8px;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.cal-month__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  min-height: 96px;
+  padding: 6px 6px 8px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.cal-month__cell--outside {
+  color: var(--text-3);
+}
+
+.cal-month__cell--outside .cal-month__day,
+.cal-month__cell--outside .cal-month__event {
+  color: var(--text-3);
+}
+
+.cal-month__day {
+  align-self: flex-start;
+  min-width: 22px;
+  padding: 0 4px;
+  color: var(--text-2);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+  line-height: 22px;
+  text-align: center;
+}
+
+.cal-month__day--today {
+  color: var(--text);
+  background: var(--surface-2);
+  font-weight: var(--weight-semibold);
+}
+
+.cal-month__event {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 2px 4px;
+  overflow: hidden;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-xs);
+  font: inherit;
+  font-size: var(--text-meta);
+  line-height: 16px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cal-month__event:hover {
+  background: var(--surface);
+}
+
+.cal-month__event--selected {
+  background: var(--surface-2);
+}
+
+@media (max-width: 899px) {
+  .calendar-filter-calendar {
+    flex: 1 1 140px;
+    width: auto;
+  }
+
+  .cal-month__weekday {
+    padding: 6px 2px;
+    text-align: center;
+  }
+
+  .cal-month__cell {
+    min-height: 64px;
+    padding: 4px 2px 6px;
+  }
+
+  .cal-month__day {
+    align-self: center;
+  }
+
+  .cal-month__event {
+    padding: 1px 2px;
+    font-size: 10px;
+    line-height: 14px;
+  }
+
+  .calendar-drawer-body {
+    padding: 4px 16px 24px;
+  }
+}
+
+/* Phone: one compact row under the tabs (layout toggle, one date-range button,
+   the more menu), so the agenda starts high on the screen. */
+.calendar-phone-controls {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dv-filters .calendar-phone-controls > .calendar-layout-toggle {
+  width: auto;
+  flex: none;
+}
+
+.calendar-range-button {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-start;
+}
+
+.calendar-range-button__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.calendar-phone-controls .calendar-month-nav {
+  flex: 1 1 auto;
+  justify-content: center;
+  min-width: 0;
+  gap: 0;
+}
+
+.calendar-phone-controls .calendar-month-nav__label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-phone-controls > .gv-icon-button,
+.calendar-phone-controls > :last-child {
+  flex: none;
+}
+
+.calendar-range-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 4px 8px;
+}
+
+.calendar-range-sheet__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: 24px;
+}
+
+.calendar-range-sheet__done {
+  width: 100%;
+  min-height: 44px;
+}

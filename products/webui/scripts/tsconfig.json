@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // Bun/node CLI tools — but NOT a DOM-free program. scripts/live-daemon-smoke.ts
+    // dynamically imports the app's real SDK client (`../src/lib/goodvibes`) and
+    // `../src/lib/sessions-union` so the smoke test drives the same code the browser
+    // does, which pulls src/lib's browser modules into this program. Those modules
+    // legitimately use `window`, `navigator.credentials`, `PublicKeyCredential`,
+    // `RequestInfo` and `import.meta.env`, so this project needs the same DOM lib
+    // and vite/client ambient types the src project has. Dropping either turns
+    // ~50 real, correct lines of src/lib into phantom errors here.
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "types": ["bun", "vite/client"]
+  },
+  "include": ["."]
+}

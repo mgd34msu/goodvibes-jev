@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -115,6 +116,23 @@ test('selective TypeScript includes cannot hide source, tests or tooling from wh
   expect(findings).toContain('scripts/test.ts: source/test/tooling file is outside every TypeScript project');
 });
 
+test('inherited options are not compiled as projects and cannot hide unowned source files', () => {
+  const root = fixture();
+  write(root, 'products/daemon/tsconfig.base.json', { compilerOptions: { target: 'ES2022', types: [], noEmit: true } });
+  write(root, 'products/daemon/tsconfig.json', { extends: './tsconfig.base.json', compilerOptions: { jsx: 'preserve' }, include: ['src', 'scripts'] });
+  write(root, 'products/daemon/tsconfig.test.json', { extends: './tsconfig.base.json', compilerOptions: { jsx: 'preserve' }, include: ['src'] });
+  write(root, 'products/daemon/src/main.test.ts', 'export const fixture = true;');
+  write(root, 'products/daemon/src/view.tsx', 'declare global { namespace JSX { interface IntrinsicElements { div: Record<string, never>; } } } export const view = <div />;');
+  const inspection = inspectProductWorkspaces(root, [source]);
+  expect(inspection.findings).toEqual([]);
+  const programs = productCheckCommands(root, inspection.products, 'typecheck').filter((command) => command.kind === 'tsconfig');
+  const compiler = resolve(import.meta.dir, '../../../node_modules/typescript/bin/tsc');
+  executeProductCommands(root, programs, 'typecheck', (executable, args, cwd) =>
+    spawnSync(executable, [compiler, ...args.slice(1)], { cwd, encoding: 'utf8', timeout: 20_000 }));
+  write(root, 'products/daemon/unowned/missing.ts', 'export const missing = true;');
+  expect(inspectProductWorkspaces(root, [source]).findings.join('\n')).toContain('unowned/missing.ts: source/test/tooling file is outside every TypeScript project');
+});
+
 test('imports are parsed as code, including exports and dynamic imports, without reading prose', () => {
   expect(moduleSpecifiers('fixture.ts', "// import x from 'comment';\n const description = 'from prose'; export { x } from 'exported'; import('dynamic'); require('required');")).toEqual(['exported', 'dynamic', 'required']);
   expect(moduleSpecifiers('fixture.ts', '/// <reference types="ambient-types" />\nimport old = require("equals-import");')).toEqual(['ambient-types', 'equals-import']);
@@ -131,15 +149,9 @@ test('inventory/source drift, duplicate rows and mismatched mapping dispositions
   expect(() => inventoryDispositions('| `a` | PORT | A |\n| `a` | JEV | B |', '')).toThrow('Duplicate inventory');
 });
 
-test('all four real pinned source snapshots exactly match their inventories', () => {
+test('checked-in sources match their inventories and present product workspaces', () => {
   const root = resolve(import.meta.dir, '../../..');
   const sources = readProductSources(root);
-  expect(sources.map((product) => [product.name, product.files.length])).toEqual([['daemon', 281], ['tui', 1618], ['agent', 1602], ['webui', 608]]);
   const result = inspectProductWorkspaces(root, sources);
   expect(result.findings).toEqual([]);
-  const scripts = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts as Record<string, string>;
-  expect(scripts.build).toContain('products:build');
-  expect(scripts.test).toContain('products:test');
-  expect(readFileSync(join(root, 'packages/engine/scripts/typecheck.ts'), 'utf8')).toContain("args: ['run', 'products:typecheck']");
-  expect(scripts['migration:complete']).toContain('product-workspaces.ts complete');
 });

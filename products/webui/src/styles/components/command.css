@@ -1,0 +1,290 @@
+/*
+ * command.css: the command palette and the shortcut cheatsheet (design doc
+ * "Menus and modals", "Glass and elevation", "Motion").
+ *
+ * The palette is 640 wide glass with 16 radius over the scrim, a 52-tall search
+ * field on top divided by a hairline, results grouped Chats / Go to / Actions /
+ * Settings as 36-tall rows, and a quiet key-hint footer. It opens in 180 ms with
+ * a fade and a .98 to 1 scale; on a phone it is a full-height sheet sliding up in
+ * 240 ms. With reduced motion both are instant (ui.css zeroes the motion tokens).
+ */
+
+/* ─── Command palette ─────────────────────────────────────────────── */
+
+.cmd-overlay {
+  z-index: var(--z-palette, var(--z-overlay));
+}
+
+.cmd-palette {
+  position: absolute;
+  top: max(12vh, 64px);
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(520px, calc(100dvh - max(12vh, 64px) - 24px));
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  transform: translateX(-50%);
+  transform-origin: top center;
+  animation: cmd-palette-in var(--motion-base) var(--ease-standard) both;
+}
+
+.cmd-palette:focus {
+  outline: none;
+}
+
+@keyframes cmd-palette-in {
+  from { opacity: 0; transform: translateX(-50%) scale(0.98); }
+  to { opacity: 1; transform: translateX(-50%) scale(1); }
+}
+
+/* Phone: a full-height sheet with the grabber, 20 top radius. */
+.cmd-palette--sheet {
+  top: max(8px, env(safe-area-inset-top, 0px));
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  max-height: none;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-bottom: 0;
+  border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  transform: none;
+  animation: gv-slide-in-up var(--motion-slow) var(--ease-standard) both;
+}
+
+.cmd-search {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cmd-search__icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--text-3);
+}
+
+.cmd-input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: none;
+  font: var(--weight-regular) var(--text-md) / 24px var(--font-ui);
+  text-overflow: ellipsis;
+}
+
+.cmd-input:focus,
+.cmd-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Focus stays visible: the search row's hairline turns accent while the field
+   has the keyboard (design doc "Accessibility"). */
+.cmd-search:focus-within {
+  border-bottom-color: var(--accent);
+}
+
+.cmd-input::placeholder {
+  color: var(--text-3);
+}
+
+.cmd-search__cancel {
+  flex: none;
+  min-height: 44px;
+  padding: 0 8px;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: var(--weight-medium) var(--text-base) / 1 var(--font-ui);
+  cursor: pointer;
+}
+
+.cmd-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+}
+
+.cmd-group + .cmd-group {
+  margin-top: 6px;
+}
+
+.cmd-group-label {
+  padding: 8px 10px 4px;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+  line-height: 16px;
+}
+
+.cmd-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 10px;
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--motion-fast) ease-out;
+}
+
+.cmd-item--active {
+  background: var(--surface-2);
+}
+
+.cmd-item-icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+}
+
+.cmd-item-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.cmd-item--active .cmd-item-icon {
+  color: var(--text-2);
+}
+
+.cmd-item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmd-item-kbd,
+.cmd-footer kbd,
+.cheat-keys kbd {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  color: var(--text-3);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  font: var(--weight-regular) var(--text-xs) / 1 var(--font-ui);
+  white-space: nowrap;
+}
+
+.cmd-empty {
+  margin: 0;
+  padding: 28px 16px;
+  color: var(--text-2);
+  font-size: var(--text-base);
+  text-align: center;
+}
+
+.cmd-footer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 16px;
+  min-height: 36px;
+  padding: 0 16px;
+  color: var(--text-3);
+  border-top: 1px solid var(--line);
+  font-size: var(--text-meta);
+}
+
+.cmd-footer span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cmd-footer kbd svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Phone rows reach the 44 touch floor. */
+@media (max-width: 899px) {
+  .cmd-item {
+    min-height: 44px;
+  }
+
+  .cmd-list {
+    padding: 6px 8px 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cmd-palette,
+  .cmd-palette--sheet {
+    animation: none !important;
+  }
+}
+
+/* ─── Shortcut cheatsheet (a kit Dialog) ──────────────────────────── */
+
+.cheat-group + .cheat-group {
+  margin-top: 16px;
+}
+
+.cheat-group-label {
+  margin: 0 0 4px;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+  line-height: 16px;
+}
+
+.cheat-list {
+  margin: 0;
+}
+
+.cheat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cheat-row:last-child {
+  border-bottom: 0;
+}
+
+.cheat-action {
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--text-base);
+}
+
+.cheat-keys {
+  margin: 0;
+}
+
+.cheat-empty {
+  margin: 0;
+  color: var(--text-2);
+}

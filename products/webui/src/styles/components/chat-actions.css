@@ -1,0 +1,541 @@
+/*
+ * chat-actions.css: messages (design doc "Chat").
+ *
+ *   user ....... a --surface-2 bubble, right-aligned, max 70% of the column,
+ *                12 radius
+ *   assistant .. prose on the canvas with the spark as its mark, 15 on 26
+ *   footer ..... timestamp and actions as ghost icon buttons, shown on hover or
+ *                focus (always on touch screens); a state that needs attention
+ *                (not sent, stopped, queued) stays visible
+ *   tool row ... one line ("Read 2 files · 4 s") that expands inline
+ *
+ * Tokens only.
+ */
+
+.message {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
+
+.message-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.message.user .message-body {
+  align-items: flex-end;
+}
+
+.message-mark {
+  display: grid;
+  flex: none;
+  width: 24px;
+  height: var(--leading-prose);
+  place-items: center;
+}
+
+.message-bubble {
+  max-width: 100%;
+  min-width: 0;
+  color: var(--text);
+}
+
+.message.assistant .message-bubble {
+  width: 100%;
+}
+
+.message.user .message-bubble {
+  max-width: 70%;
+  padding: 9px 15px;
+  background: var(--surface-2);
+  border-radius: var(--radius-md);
+  font-size: var(--text-md);
+  line-height: var(--leading-bubble);
+}
+
+/* The user's words read at prose size, like the assistant's. */
+.message.user .message-bubble > p,
+.message.user .message-bubble .markdown-message {
+  font-size: var(--text-md);
+  line-height: var(--leading-bubble);
+}
+
+.message.system .message-bubble,
+.message.neutral .message-bubble {
+  padding: 8px 14px;
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.message.system .markdown-message,
+.message.neutral .markdown-message {
+  font-size: var(--text-base);
+  line-height: 22px;
+}
+
+.message-bubble > p {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+  overflow-wrap: anywhere;
+}
+
+/* Streaming: the caret sits at the end of the last paragraph. */
+.message.streaming .markdown-message {
+  display: inline;
+}
+
+.message.streaming .markdown-message > p:last-child {
+  display: inline;
+}
+
+/* ── Footer: timestamp + actions ───────────────────────────── */
+.message-actions {
+  display: flex;
+  min-height: 28px;
+  margin-top: 2px;
+}
+
+.message.assistant .message-actions {
+  margin-left: -6px;
+}
+
+.message-actions-inner {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.message.user .message-actions-inner {
+  justify-content: flex-end;
+}
+
+.message-actions__buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Hidden until hover or focus; a keyboard user tabbing in reveals the row. */
+.message-actions__buttons,
+.message-actions .message-meta,
+.message-actions .delivery-indicator.sent,
+.message-action-label {
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease-out;
+}
+
+.message:hover .message-actions__buttons,
+.message:hover .message-actions .message-meta,
+.message:hover .message-actions .delivery-indicator.sent,
+.message:hover .message-action-label,
+.message:focus-within .message-actions__buttons,
+.message:focus-within .message-actions .message-meta,
+.message:focus-within .message-actions .delivery-indicator.sent,
+.message:focus-within .message-action-label {
+  opacity: 1;
+}
+
+/* A touch screen has no hover: the row is always there. */
+@media (hover: none) {
+  .message-actions__buttons,
+  .message-actions .message-meta,
+  .message-actions .delivery-indicator.sent,
+  .message-action-label {
+    opacity: 1;
+  }
+}
+
+.message-meta {
+  padding: 0 6px;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+  white-space: nowrap;
+}
+
+.message-meta time {
+  font-variant-numeric: tabular-nums;
+}
+
+.message-action-label {
+  padding: 0 4px;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.delivery-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 6px;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+  white-space: nowrap;
+}
+
+.delivery-indicator.failed {
+  color: var(--bad);
+}
+
+.delivery-indicator.cancelled,
+.delivery-indicator.queued {
+  color: var(--text-2);
+}
+
+/* The read-aloud button joins the ghost icon row. */
+.message-actions .voice-speak-btn {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  color: var(--text-2);
+  border-radius: var(--radius-sm);
+}
+
+.message-actions .voice-speak-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.message-actions .voice-speak-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.message-actions .voice-speak-btn.is-playing {
+  color: var(--accent);
+}
+
+@media (pointer: coarse) {
+  .message-actions .voice-speak-btn {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* ── Attachments ───────────────────────────────────────────── */
+.message-attachments {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.message-attachment {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 320px;
+  padding: 8px 12px;
+  color: var(--text);
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.message-attachment > svg {
+  flex: none;
+  color: var(--text-3);
+}
+
+.message-attachment > div {
+  display: grid;
+  min-width: 0;
+}
+
+.message-attachment strong,
+.message-attachment span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-attachment strong {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-meta);
+}
+
+.message-attachment span {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: 16px;
+}
+
+/* ── Inline edit (user messages) ───────────────────────────── */
+.message-edit-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(560px, 100%);
+}
+
+.message-edit-textarea {
+  width: 100%;
+  min-height: 88px;
+  padding: 10px 14px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  font: var(--weight-regular) var(--text-md) / var(--leading-prose) var(--font-ui);
+  resize: vertical;
+}
+
+.message-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ── Honest lineage (regenerated / edited history) ─────────── */
+.message-lineage {
+  display: flex;
+  flex-direction: column;
+  align-items: inherit;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.message.user .message-lineage {
+  align-items: flex-end;
+}
+
+.message-lineage__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+  transition: background-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
+}
+
+.message.assistant .message-lineage {
+  margin-left: -8px;
+}
+
+.message-lineage__toggle:hover:not(:disabled) {
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.message-lineage__toggle:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.message-lineage__retained {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  margin: 4px 0 12px;
+  padding: 4px 0 4px 14px;
+  text-align: left;
+  border-left: 2px solid var(--line-strong);
+}
+
+.message-lineage__note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.retained-message {
+  display: grid;
+  gap: 2px;
+  color: var(--text-2);
+}
+
+.retained-message__role {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-meta);
+}
+
+.retained-message__body {
+  min-width: 0;
+}
+
+.retained-message__body .markdown-message {
+  font-size: var(--text-base);
+  line-height: 22px;
+}
+
+.retained-message__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.retained-message__attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+/* ── Collapsed tool row ────────────────────────────────────── */
+.message-tool-activity {
+  max-width: calc(100% + 6px);
+  margin: 0 0 8px -6px;
+}
+
+.message-tool-activity__summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0 8px 0 4px;
+  color: var(--text-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+  list-style: none;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
+}
+
+.message-tool-activity__summary::-webkit-details-marker {
+  display: none;
+}
+
+.message-tool-activity__summary:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.message-tool-activity__chevron {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--motion-fast) ease-out;
+}
+
+.message-tool-activity[open] > .message-tool-activity__summary .message-tool-activity__chevron {
+  transform: rotate(90deg);
+}
+
+.message-tool-activity__line {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-tool-activity__list {
+  display: grid;
+  gap: 10px;
+  margin: 6px 0 4px 3px;
+  padding: 2px 0 2px 14px;
+  list-style: none;
+  border-left: 1px solid var(--line-strong);
+}
+
+.message-tool-activity__item {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.message-tool-activity__header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.message-tool-activity__label {
+  flex: none;
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+.message-tool-activity__arg {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font: var(--weight-regular) var(--text-xs) / var(--leading-meta) var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-tool-activity__error-badge {
+  flex: none;
+  color: var(--bad);
+  font-size: var(--text-xs);
+}
+
+.message-tool-activity__result-inline,
+.message-tool-activity__result pre {
+  max-height: 240px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  color: var(--text-2);
+  background: var(--code);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font: var(--weight-regular) var(--text-xs) / var(--leading-meta) var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-tool-activity__result > summary {
+  color: var(--text-3);
+  font: var(--weight-regular) var(--text-xs) / var(--leading-meta) var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: pointer;
+}
+
+.message-tool-activity__result[open] > summary {
+  margin-bottom: 4px;
+}
+
+/* ── Compaction handoff (folded) ───────────────────────────── */
+.message-compaction-handoff {
+  padding: 4px 0;
+}
+
+.message-compaction-handoff > summary {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+  cursor: pointer;
+}
+
+.message-compaction-handoff[open] > summary {
+  margin-bottom: 8px;
+}
+
+@media (max-width: 899px) {
+  .message.user .message-bubble {
+    max-width: 85%;
+  }
+
+  .message {
+    gap: 10px;
+  }
+}

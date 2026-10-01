@@ -1,0 +1,183 @@
+/*
+ * Sign-in gate, daemon-unreachable gate and app splash: the front door. One
+ * centered column on the canvas. No box inside the card, no accent fills.
+ */
+
+.signed-out-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: var(--space-6) var(--space-4);
+}
+
+.signed-out-card {
+  display: flex;
+  width: min(440px, 100%);
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-8);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.signed-out-card h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  line-height: 28px;
+}
+
+.signed-out-mark {
+  display: flex;
+  color: var(--text-2);
+}
+
+.signed-out-lede {
+  margin: calc(var(--space-2) * -1) 0 0;
+  color: var(--text-2);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+}
+
+.signed-out-note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+/* The lead path: scan the terminal QR. A plain block on the card, no box. */
+.signed-out-pair {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+
+.signed-out-pair__mark {
+  display: flex;
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-2);
+}
+
+.signed-out-pair__copy {
+  min-width: 0;
+}
+
+.signed-out-pair__copy h2 {
+  margin: 0 0 var(--space-1);
+  color: var(--text);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-ui);
+}
+
+.signed-out-pair__copy p {
+  margin: 0 0 var(--space-3);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+/* "or paste a token" divider between the lead path and the fallback field. */
+.signed-out-or {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.signed-out-or::before,
+.signed-out-or::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.signed-out-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.signed-out-help {
+  margin: 0;
+  padding-left: var(--space-4);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.signed-out-help li + li {
+  margin-top: var(--space-1);
+}
+
+.signed-out-secondary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.signed-out-toggle {
+  align-self: flex-start;
+  margin-left: -8px;
+}
+
+.app-splash {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  min-height: 100%;
+  color: var(--text-2);
+}
+
+.app-splash__mark {
+  width: 56px;
+  height: 56px;
+  opacity: 0.85;
+}
+
+/* Reconnect spinner for the daemon-unreachable gate. */
+.signed-out-card .spin {
+  animation: auth-gate-spin 900ms linear infinite;
+}
+
+/*
+ * Daemon-unreachable overlay: App.tsx renders this ON TOP of the still-mounted
+ * (inert) workspace rather than replacing it, so a daemon blip mid-typing does not
+ * reset the selected session or discard a half-typed steer/follow-up draft.
+ */
+.app-shell-root {
+  position: relative;
+  min-height: 100vh;
+}
+
+.daemon-gate-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  overflow-y: auto;
+  background: var(--glass);
+}
+
+@keyframes auth-gate-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 480px) {
+  .signed-out-gate {
+    padding: var(--space-4);
+  }
+
+  .signed-out-card {
+    padding: var(--space-6) var(--space-4);
+  }
+}

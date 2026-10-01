@@ -1,0 +1,176 @@
+/*
+ * session-changes.css: SessionChanges.tsx (the Changes tab of a session's detail)
+ * and the three hunk dialogs (review, comment, revert). Nothing in it is a card.
+ * The diff itself is DiffMultibuffer (diff-multibuffer.css).
+ */
+
+.session-changes {
+  min-width: 0;
+}
+
+.session-changes__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+}
+
+.session-changes__toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.session-changes__refresh {
+  margin-left: auto;
+}
+
+.session-changes__baseline {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.session-changes__captured,
+.session-changes__sent,
+.session-changes__send-error {
+  margin: 0;
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.session-changes__captured { color: var(--text-3); }
+.session-changes__send-error { color: var(--bad); }
+
+.session-changes__sent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+}
+
+.session-changes__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+}
+
+/* ── Hunk sheets (kit Dialogs: review, comment, revert) ─────────────── */
+
+.hunk-sheet .gv-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hunk-sheet__context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.hunk-sheet__path {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.hunk-sheet__lines,
+.hunk-sheet__captured,
+.hunk-sheet__mode {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.hunk-sheet__excerpt {
+  max-height: 30vh;
+  margin: 0;
+  overflow: auto;
+  padding: 10px 14px 12px;
+  background: var(--code);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+  white-space: pre;
+}
+
+.hunk-sheet__form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hunk-sheet__input {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.hunk-sheet__error,
+.hunk-sheet__conflict {
+  margin: 0;
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.hunk-sheet__error { color: var(--bad); }
+.hunk-sheet__conflict { color: var(--warn); }
+
+.hunk-actions {
+  margin-top: 4px;
+}
+
+.hunk-actions__btn svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--text-3);
+}
+
+.hunk-actions__btn--approve svg { color: var(--ok); }
+.hunk-actions__btn--reject svg { color: var(--bad); }
+
+/* ── Review progress ──────────────────────────────────────────────────── */
+
+.session-changes__progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-2);
+  font-size: var(--text-meta);
+}
+
+.session-changes__progress-bar {
+  flex: 1;
+  height: 4px;
+  min-width: 40px;
+  overflow: hidden;
+  background: var(--surface-2);
+  border-radius: var(--radius-full);
+}
+
+.session-changes__progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--motion-fast) ease-out;
+}
+
+@media (max-width: 899px) {
+  .hunk-sheet__excerpt {
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+}

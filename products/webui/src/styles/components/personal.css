@@ -1,0 +1,39 @@
+/*
+ * Shared by the three Personal tabs: dialog forms and the inline result notice.
+ * The page, rows, detail pane and empty states come from data-view.css.
+ */
+
+.personal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.personal-form__split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.personal-form .gv-date {
+  width: 100%;
+}
+
+.personal-notice {
+  margin-bottom: 16px;
+}
+
+.personal-notice p {
+  margin: 0;
+}
+
+.personal-page .dv-filters .gv-checkbox {
+  white-space: nowrap;
+}
+
+@media (max-width: 899px) {
+  .personal-form__split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

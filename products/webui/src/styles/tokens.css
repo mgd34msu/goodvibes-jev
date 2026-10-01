@@ -1,0 +1,327 @@
+/*
+ * GoodVibes WebUI design tokens.
+ * SOURCE OF TRUTH for every color, material, radius, type and motion value the
+ * web UI paints. Components never use a color literal; they use these names.
+ *
+ * Themes (data-theme on <html>, written by src/lib/theme.ts):
+ *   (none) / "dark" ...... slate dark, the default
+ *   "light" .............. slate light, a full peer
+ *   "auto" ............... dark or light following prefers-color-scheme
+ *   "neon" ............... GoodVibes Neon: the pre-2026-09 palette kept whole,
+ *                          opt-in only. A stored choice is never migrated.
+ *
+ * Token names follow the design document's "Token migration" table:
+ *   --canvas --sidebar --surface --surface-2 --glass --scrim --line --line-strong
+ *   --text --text-2 --text-3 --primary-bg --primary-fg --accent --accent-2
+ *   --accent-soft --ok --warn --bad --info --code --shadow --brand
+ * plus soft status fills for chip-sized backgrounds (--ok-soft etc.) and
+ * --on-accent for the rare text drawn on an accent fill.
+ *
+ * WEBUI-ONLY LAYER. The SDK presentation contract (status glyphs, tone table)
+ * lives in src/styles/generated/presentation-tokens.css and is untouched here.
+ */
+
+/* ─────────────────────────────────────────
+   DARK (DEFAULT)
+───────────────────────────────────────── */
+:root {
+  color-scheme: dark;
+
+  --canvas:      #15161b;
+  --sidebar:     #111216;
+  --surface:     #1c1d23;
+  --surface-2:   #24252d;
+  --glass:       rgb(30 31 38 / 0.78);
+  --glass-solid: #1c1d23;
+  --scrim:       rgb(6 7 10 / 0.55);
+  --scrim-solid: rgb(6 7 10 / 0.7);
+  --line:        rgb(255 255 255 / 0.07);
+  --line-strong: rgb(255 255 255 / 0.12);
+
+  --text:   #ececf1;
+  --text-2: #a3a4af;
+  --text-3: #6f707b;
+
+  --primary-bg: #ececf1;
+  --primary-fg: #15161b;
+
+  --accent:      #5ee0e6;
+  --accent-2:    #d18cf5;
+  --accent-soft: rgb(94 224 230 / 0.12);
+  --on-accent:   #15161b;
+  --brand:       linear-gradient(135deg, #5ee0e6, #d18cf5);
+  --spark-from:  #5ee0e6;
+  --spark-to:    #d18cf5;
+
+  --ok:   #7ddcae;
+  --warn: #f0b660;
+  --bad:  #f2767e;
+  --info: #7aa7f5;
+  --ok-soft:   rgb(125 220 174 / 0.12);
+  --warn-soft: rgb(240 182 96 / 0.12);
+  --bad-soft:  rgb(242 118 126 / 0.12);
+  --info-soft: rgb(122 167 245 / 0.12);
+
+  --code:   #101115;
+  --shadow: 0 24px 64px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.3);
+
+  /* Page background. A flat color in every slate theme; only Neon layers art on it. */
+  --page-art: none;
+}
+
+/* ─────────────────────────────────────────
+   LIGHT
+───────────────────────────────────────── */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --canvas:      #f7f7f8;
+  --sidebar:     #efeff2;
+  --surface:     #ffffff;
+  --surface-2:   #f0f0f3;
+  --glass:       rgb(255 255 255 / 0.8);
+  --glass-solid: #ffffff;
+  --scrim:       rgb(20 20 28 / 0.25);
+  --scrim-solid: rgb(20 20 28 / 0.4);
+  --line:        rgb(0 0 0 / 0.07);
+  --line-strong: rgb(0 0 0 / 0.12);
+
+  --text:   #1c1d22;
+  --text-2: #5f606b;
+  --text-3: #888994;
+
+  --primary-bg: #1c1d22;
+  --primary-fg: #ffffff;
+
+  --accent:      #007a83;
+  --accent-2:    #9a32c4;
+  --accent-soft: rgb(0 122 131 / 0.1);
+  --on-accent:   #ffffff;
+  --brand:       linear-gradient(135deg, #5ee0e6, #d18cf5);
+
+  --ok:   #22814c;
+  --warn: #9a6400;
+  --bad:  #c8323c;
+  --info: #2e62c8;
+  --ok-soft:   rgb(34 129 76 / 0.1);
+  --warn-soft: rgb(154 100 0 / 0.1);
+  --bad-soft:  rgb(200 50 60 / 0.1);
+  --info-soft: rgb(46 98 200 / 0.1);
+
+  --code:   #f3f3f6;
+  --shadow: 0 24px 64px rgb(20 20 40 / 0.16), 0 2px 8px rgb(20 20 40 / 0.08);
+  --page-art: none;
+}
+
+/* AUTO: dark tokens above apply; the OS light preference swaps in the light set. */
+@media (prefers-color-scheme: light) {
+  :root[data-theme="auto"] {
+    color-scheme: light;
+
+    --canvas:      #f7f7f8;
+    --sidebar:     #efeff2;
+    --surface:     #ffffff;
+    --surface-2:   #f0f0f3;
+    --glass:       rgb(255 255 255 / 0.8);
+    --glass-solid: #ffffff;
+    --scrim:       rgb(20 20 28 / 0.25);
+    --scrim-solid: rgb(20 20 28 / 0.4);
+    --line:        rgb(0 0 0 / 0.07);
+    --line-strong: rgb(0 0 0 / 0.12);
+
+    --text:   #1c1d22;
+    --text-2: #5f606b;
+    --text-3: #888994;
+
+    --primary-bg: #1c1d22;
+    --primary-fg: #ffffff;
+
+    --accent:      #007a83;
+    --accent-2:    #9a32c4;
+    --accent-soft: rgb(0 122 131 / 0.1);
+    --on-accent:   #ffffff;
+
+    --ok:   #22814c;
+    --warn: #9a6400;
+    --bad:  #c8323c;
+    --info: #2e62c8;
+    --ok-soft:   rgb(34 129 76 / 0.1);
+    --warn-soft: rgb(154 100 0 / 0.1);
+    --bad-soft:  rgb(200 50 60 / 0.1);
+    --info-soft: rgb(46 98 200 / 0.1);
+
+    --code:   #f3f3f6;
+    --shadow: 0 24px 64px rgb(20 20 40 / 0.16), 0 2px 8px rgb(20 20 40 / 0.08);
+  }
+}
+
+/* ─────────────────────────────────────────
+   GOODVIBES NEON (opt-in)
+   The previous web UI palette, value for value, mapped onto the new names:
+   surface-base #08080f, raised 86%, overlay, cyan borders, #00dede accent,
+   neon status hues, the magenta/cyan glow and the 40px grid behind the page,
+   and the cyan-ringed elevation on everything that floats.
+───────────────────────────────────────── */
+:root[data-theme="neon"] {
+  color-scheme: dark;
+
+  --canvas:      #08080f;
+  --sidebar:     rgb(8 8 15 / 86%);
+  --surface:     rgb(8 8 15 / 86%);
+  --surface-2:   rgb(0 255 255 / 10%);
+  --glass:       rgb(12 10 28 / 94%);
+  --glass-solid: #0c0a1c;
+  --scrim:       rgb(4 2 12 / 60%);
+  --scrim-solid: rgb(4 2 12 / 78%);
+  --line:        rgb(0 255 255 / 18%);
+  --line-strong: rgb(0 255 255 / 38%);
+
+  --text:   #f8fbff;
+  --text-2: #a7b7d8;
+  --text-3: #7583a4;
+
+  --primary-bg: #00dede;
+  --primary-fg: #090717;
+
+  --accent:      #00dede;
+  --accent-2:    #ff00ff;
+  --accent-soft: rgb(0 255 255 / 10%);
+  --on-accent:   #090717;
+  --brand:       linear-gradient(135deg, #00ffff, #ff00ff);
+  --spark-from:  #00ffff;
+  --spark-to:    #ff00ff;
+
+  --ok:   #38ff8b;
+  --warn: #ffcc66;
+  --bad:  #ff6ac8;
+  --info: #8da2ff;
+  --ok-soft:   rgb(56 255 139 / 12%);
+  --warn-soft: rgb(255 204 102 / 12%);
+  --bad-soft:  rgb(255 106 200 / 12%);
+  --info-soft: rgb(141 162 255 / 14%);
+
+  --code:   rgb(0 0 0 / 34%);
+  --shadow: 0 0 0 1px rgb(0 255 255 / 18%), 0 28px 68px rgb(0 0 0 / 40%);
+
+  --page-art:
+    radial-gradient(circle at 26% 14%, rgb(255 0 255 / 16%), transparent 24rem),
+    radial-gradient(circle at 78% 18%, rgb(0 255 255 / 10%), transparent 24rem),
+    linear-gradient(90deg, rgb(0 255 255 / 4%) 1px, transparent 1px) 0 0 / 40px 40px,
+    linear-gradient(180deg, rgb(255 0 255 / 4%) 1px, transparent 1px) 0 0 / 40px 40px,
+    linear-gradient(180deg, #12071f 0%, #0c0820 42%, #08080f 100%);
+}
+
+/* ─────────────────────────────────────────
+   SCALE TOKENS (theme-invariant)
+───────────────────────────────────────── */
+:root {
+  /* Space: 4px grid */
+  --space-0:  0px;
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Radius (design doc "Space and radius") */
+  --radius-xs:    6px;
+  --radius-sm:    8px;
+  --radius-item:  7px;
+  --radius-md:    12px;
+  --radius-lg:    16px;
+  --radius-xl:    18px;
+  --radius-sheet: 20px;
+  --radius-full:  999px;
+
+  /* Type: Geist and Geist Mono, self-hosted (src/styles/fonts.css) */
+  --font-ui:   "Geist Sans", "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  /* One step above the design document's table (owner review 2026-09-30:
+     "bigger pretty much everywhere"): UI 14.5, meta 13, prose 16. */
+  --text-xs:   12.5px;
+  --text-meta: 13px;
+  --text-sm:   13.5px;
+  --text-base: 14.5px;
+  --text-md:   16px;
+  --text-lg:   17px;
+  --text-xl:   22px;
+  --text-2xl:  26px;
+  --text-3xl:  32px;
+
+  /* Line heights in pixels, about 1.5 like the proposal's mockups: interface
+     text, metadata, assistant prose, and the user's message bubble. */
+  --leading-ui:     22px;
+  --leading-meta:   20px;
+  --leading-prose:  28px;
+  --leading-bubble: 26px;
+
+  --leading-tight:   1.2;
+  --leading-normal:  1.45;
+  --leading-relaxed: 1.7;
+
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     600;
+
+  /* Motion (design doc "Motion") */
+  --motion-fast:  120ms;
+  --motion-menu:  140ms;
+  --motion-base:  180ms;
+  --motion-rail:  200ms;
+  --motion-slow:  240ms;
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring:   cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* Z-index */
+  --z-nav:     10;
+  --z-banner:  20;
+  --z-rail-peek: 35;
+  --z-peek:    40;
+  --z-overlay: 50;
+  --z-palette: 60;
+  --z-toast:   70;
+  --z-tooltip: 80;
+
+  /* Layout (design doc "App shell" and "Sidebar auto-collapse") */
+  --sidebar-width:           260px;
+  --sidebar-width-collapsed: 56px;
+  --header-h:                48px;
+  --header-h-phone:          52px;
+  --account-h:               44px;
+  --nav-item-h:              32px;
+  --row-h:                   36px;
+  --row-h-compact:           28px;
+  --reading-width:           720px;
+  --focus-ring: 0 0 0 3px var(--accent-soft);
+}
+
+/* ─────────────────────────────────────────
+   COMPACT DENSITY
+───────────────────────────────────────── */
+:root[data-density="compact"] {
+  --row-h:    28px;
+  --space-4:  12px;
+  --space-6:  18px;
+  --space-8:  24px;
+  --space-10: 32px;
+  --space-12: 40px;
+}
+
+/* ─────────────────────────────────────────
+   REDUCED MOTION: every transition becomes instant
+───────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-menu: 0ms;
+    --motion-base: 0ms;
+    --motion-rail: 0ms;
+    --motion-slow: 0ms;
+  }
+}

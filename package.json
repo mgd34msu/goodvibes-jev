@@ -127,8 +127,14 @@
     "ip-address": "^10.4.0",
     "undici": "^7.29.0"
   },
+  "patchedDependencies": {
+    "eslint-plugin-jsx-a11y@6.10.2": "patches/eslint-plugin-jsx-a11y@6.10.2.patch"
+  },
+  "patchedDependenciesRationale": {
+    "eslint-plugin-jsx-a11y@6.10.2": "Adapt two legacy default imports to the named minimatch function while preserving the patched minimatch 10.x override and all accessibility rules. Bun 1.3.14 does not support scoped overrides; remove this patch when the plugin supports minimatch 10.x."
+  },
   "overrides": {
-    "ajv": "8.18.0",
+    "@verdaccio/core": "8.0.0-next-8.37",
     "fast-uri": "^3.1.5",
     "fast-xml-parser": "5.7.1",
     "google-auth-library": "10.6.2",
@@ -147,7 +153,7 @@
     "ip-address": "^10.4.0"
   },
   "overridesRationale": {
-    "ajv": "Pinned to keep JSON Schema validation on the audited 8.x line used by release tooling dependencies.",
+    "@verdaccio/core": "Align legacy storage with Verdaccio 6.5.2 core, which requires patched Ajv 8.18.0 (GHSA-2g4f-4pwh-qvx6). A global Ajv override breaks ESLint, which requires the separately patched Ajv 6.14.0 line; Bun 1.3.14 does not support scoped overrides.",
     "bash-language-server": "Vendored to keep shell language support while preserving a clean high-severity audit surface for the Verdaccio dry-run dependency graph.",
     "fast-xml-parser": "Pinned to the audited 5.x parser release used by transitive Google/Cloud tooling.",
     "fast-uri": "Pinned to 3.1.2 to avoid GHSA-v39h-62p7-jpjc in AJV consumers used by release tooling.",

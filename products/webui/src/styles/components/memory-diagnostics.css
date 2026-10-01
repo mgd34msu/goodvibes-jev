@@ -1,0 +1,116 @@
+/*
+ * MemoryDiagnostics layout (Settings, Memory). The tier is a kit Chip with a
+ * status dot; the budget bar is the one place a hue fills (it is a meter).
+ */
+
+
+.memory-diagnostics__tier-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.memory-diagnostics__bar-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: var(--space-4);
+}
+
+.memory-diagnostics__bar-label {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.memory-diagnostics__bar-track {
+  height: 6px;
+  overflow: hidden;
+  background: var(--surface-2);
+  border-radius: var(--radius-full);
+}
+
+.memory-diagnostics__bar-fill {
+  height: 100%;
+  background: var(--ok);
+  border-radius: var(--radius-full);
+  transition: width var(--motion-fast) ease-out;
+}
+
+.memory-diagnostics__bar-fill--elevated { background: var(--info); }
+.memory-diagnostics__bar-fill--high { background: var(--warn); }
+.memory-diagnostics__bar-fill--critical { background: var(--bad); }
+
+.memory-diagnostics__note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.memory-diagnostics__caches {
+  width: 100%;
+  margin-bottom: var(--space-4);
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.memory-diagnostics__caption {
+  padding-bottom: var(--space-2);
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  text-align: left;
+}
+
+.memory-diagnostics__caches th,
+.memory-diagnostics__caches td {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.memory-diagnostics__caches th {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-regular);
+}
+
+.memory-diagnostics__caches td:not(:first-child),
+.memory-diagnostics__caches th:not(:first-child) {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.memory-diagnostics__caches th:not(:first-child) {
+  font-family: var(--font-ui);
+}
+
+.memory-diagnostics__subtitle {
+  margin: 0 0 var(--space-1);
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-regular);
+}
+
+.memory-diagnostics__paused-jobs {
+  margin: 0 0 var(--space-4);
+  padding-left: 20px;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.memory-diagnostics__tripwire {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.memory-diagnostics__tripwire--armed {
+  color: var(--bad);
+  font-weight: var(--weight-medium);
+}

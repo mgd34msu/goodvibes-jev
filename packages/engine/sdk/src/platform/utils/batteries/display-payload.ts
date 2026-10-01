@@ -36,7 +36,7 @@ import {
   type NoulResponse,
   type Question,
   type YesNoReading,
-} from '@goodvibes-jev/judgment';
+} from '@goodvibes-jev/judgment/decisions';
 
 export const PAYLOAD_BAND = STAKES_BANDS.low.yesNo;
 

@@ -1,0 +1,6 @@
+[test]
+# Order matters. test-temp-root repoints TMPDIR/TMP/TEMP at a gitignored
+# per-run directory inside the repo (and reaps roots abandoned by killed runs)
+# BEFORE any other module is evaluated, so nothing a test — or a process a test
+# spawns — creates via os.tmpdir() ever lands in the system temp directory.
+preload = ["./scripts/test-temp-preload.ts", "./src/test-setup.ts"]
