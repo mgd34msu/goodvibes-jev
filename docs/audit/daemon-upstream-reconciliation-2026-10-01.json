@@ -224,8 +224,8 @@
       "change": "A",
       "oldBlob": null,
       "newBlob": "0589790ff8eb38e3d61800422fabd522a7b8fd4b",
-      "ruling": "deferred",
-      "reason": "Port against the real configured graph next: wrong/missing-token WebSocket refusal, exact Last-Event-ID replay, and hosted streaming turn/detach/reattach with stored reply text. Existing boot/inbox tests are not this proof."
+      "ruling": "reconciled",
+      "reason": "Adapted to products/daemon/src/test/daemon/daemon-wire.test.ts against the real configured graph: wrong/missing-token WebSocket refusal, exact Last-Event-ID replay, and hosted streaming turn/detach/reattach with saved reply text. Inbox, metadata and Jev inputs are explicit offline fixtures; production default intake and binary proof remain separate."
     },
     {
       "path": "src/test/daemon/gateway-ci-principals-channel-profiles-round-trip.test.ts",
