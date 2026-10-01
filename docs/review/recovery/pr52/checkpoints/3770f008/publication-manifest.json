@@ -1,0 +1,307 @@
+{
+  "schemaVersion": 1,
+  "status": "UNMERGEABLE_EVIDENCE_ONLY",
+  "repository": "mgd34msu/goodvibes-jev",
+  "pullRequest": 52,
+  "runtimeIntegrationAuthorized": false,
+  "mergeAuthorized": false,
+  "evidenceBranch": "dot/evidence-pr52-notification-recovery",
+  "evidenceParent": "9363f44d186e152f5c829aa106d5645ce3ed02a0",
+  "evidenceParentTree": "4e0f24d474b588958ab7ac61037f7910071dc907",
+  "runtimePathsUnchanged": true,
+  "source": {
+    "validatedCommit": "3770f00807c56524c3eaa7632f9aae1a8a032ab2",
+    "tree": "8cb708a656e7ef57da978d5a9e6a033c9e6576ed",
+    "orderedParents": [
+      "f76dd159c5a20401d463635fedf11d66075434f7",
+      "9363f44d186e152f5c829aa106d5645ce3ed02a0"
+    ],
+    "publicReconstructionBase": "9363f44d186e152f5c829aa106d5645ce3ed02a0",
+    "publicRepairCommit": "f76dd159c5a20401d463635fedf11d66075434f7",
+    "publicRepairTree": "2199ba4907639f5ee2d4b7b2b266925b3ccc8d31",
+    "sourceManifestPath": "source-manifest.json",
+    "sourceManifestSha256": "9ce2484afc6910152b5b6c0f79b96f8545079d5d0b25f92019cf0abc945c92de",
+    "earlierSubstituteCheckpointNotUsed": true
+  },
+  "reconstruction": {
+    "method": "Read public main9363 into a new temporary Git index; decompress and apply changes-from-main.patch.gz; compare complete resulting tree",
+    "patch": {
+      "rawBytes": 191627,
+      "rawSha256": "af06c8c43566049e0be65363e4d0733a8f9342db2252743426a3c3e78fdc393f",
+      "gzipBytes": 42079,
+      "gzipSha256": "9f2cc1812eb64766a5d392513ed883ed91f419a78c8b4853fdde3d8ed56f6041"
+    },
+    "verifiedTree": "8cb708a656e7ef57da978d5a9e6a033c9e6576ed",
+    "exactTemporaryIndexReconstruction": "passed",
+    "localOnlyCommitsRequired": false,
+    "completeGeneratedSnapshotsUploaded": false
+  },
+  "postimages": [
+    {
+      "path": "docs/audit/sdk-notification-delivery-privacy.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "58d16d6b06c4a2fe4972561fb7c388507449d924",
+      "bytes": 7005,
+      "sha256": "284a6267818996b282ef6ff56f0fe84e164e2a8590c2c83cabdc2d5bace3a36b"
+    },
+    {
+      "path": "docs/inventory/engine.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "965cf30ac6a27ce4bc32aa81880b7f2527a4fb77",
+      "bytes": 2526600,
+      "sha256": "41df4da3b0fc23e015c6fb1b5b4aaa683750f5b364b88d85913d8a6ec9c264fd"
+    },
+    {
+      "path": "packages/engine/etc/subpath-api-surface.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fc00deea68368fb83c7a04651a0fa8e6a7b7e9e6",
+      "bytes": 8570204,
+      "sha256": "91f08f6034a3e0850fd45a0608b3a23a4c7fa4c99f36d3628709105b57722026"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/integrations/delivery-diagnostics.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6d3fc7b7f7e8b2d2768bc2110ce10ad4914de453",
+      "bytes": 1436,
+      "sha256": "193ab1ed37903dd2c10206100f5a4ad50f24fedf1a73d0c171e6fd6dd7a60c7e"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/integrations/delivery.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ca95a8192ea06d92ece0a630c7f669ead0095d31",
+      "bytes": 24454,
+      "sha256": "f99bfe6920503d385b7dda69d8b089c9d890fd8a80ad4d91be6cc0456230490a"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/integrations/notifier.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "844947ccc8b7af993c9c2981477b0cceeda67c42",
+      "bytes": 13388,
+      "sha256": "681e0134c88f5754e90217cdab837626c2827c9071046030345ce47a47248675"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/integrations/webhooks.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "393969b7d49d68b5dffb92d3786fd302f7c00c2e",
+      "bytes": 17362,
+      "sha256": "06e67cb6be15f7c7ab0e77a0059eb4cc3fe1e483f63060714697d1f1302ab0c8"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/runtime/notification-envelope.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f72f023f2f26923853387d1ff790f9c29f3f37a8",
+      "bytes": 7497,
+      "sha256": "cfad3b0cd2b877d3760d73664e3c740b37fcf3a976c6e8047986e697bad1a458"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/runtime/notification-metadata.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "038d5fb463f01432fb01afa73bb6525b4b9d3519",
+      "bytes": 1571,
+      "sha256": "7c298ed330db8128950ba9512b75ab7d50d3ced52efdd9d4c099af770722531b"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/runtime/operations.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "458e1196647ebd672cc48489e52127f8f2b56ddd",
+      "bytes": 10728,
+      "sha256": "0b266a75ad82e0023821a43358c7cc36b40a5ea5623e5e7935ec6604c9018f8a"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/runtime/turn-notification.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2fb7e42317585b0c559903839528816a7384a5ab",
+      "bytes": 18874,
+      "sha256": "ccde15de53642d1aa882abf3287e37cb87983f419e756919c2af374cff518364"
+    },
+    {
+      "path": "packages/engine/test/channel-workstream-labels.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "88f1033405be96e1868171c55ddcbb76f3a007b0",
+      "bytes": 21724,
+      "sha256": "22e05f49d1d7a50bc66e569b68be55996a7499628d563b421098aeafda71c918"
+    },
+    {
+      "path": "packages/engine/test/contract/event-consumers.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "60b72824631a16132fc943a062708c4b9002f288",
+      "bytes": 13243,
+      "sha256": "3cc6ef9578c9c36772c3fa189189b8281b04e4e66d2a3c31ed5c00277cb8c223"
+    },
+    {
+      "path": "packages/engine/test/notification-delivery-privacy.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "550ad43fe3557913ccf6cc89605c028fc04010ba",
+      "bytes": 20135,
+      "sha256": "b3de4148697002216cd8b2632e9d2b098b85e2502c713f38e391194ed1caf30e"
+    },
+    {
+      "path": "packages/engine/test/notification-runtime-adapters.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "75df1bbca83e3dbb24c1898c790bb0ac366bb505",
+      "bytes": 6104,
+      "sha256": "252741afa7518f42eed9a8662155019ab23132638e452a75e471553e72b50891"
+    }
+  ],
+  "reviewedSourceEquality": {
+    "sourceTestFiles": 5,
+    "allExactBlobMatchesToPublicRepair": true,
+    "files": [
+      {
+        "path": "packages/engine/sdk/src/platform/integrations/notifier.ts",
+        "blob": "844947ccc8b7af993c9c2981477b0cceeda67c42",
+        "bytes": 13388
+      },
+      {
+        "path": "packages/engine/sdk/src/platform/integrations/webhooks.ts",
+        "blob": "393969b7d49d68b5dffb92d3786fd302f7c00c2e",
+        "bytes": 17362
+      },
+      {
+        "path": "packages/engine/test/channel-workstream-labels.test.ts",
+        "blob": "88f1033405be96e1868171c55ddcbb76f3a007b0",
+        "bytes": 21724
+      },
+      {
+        "path": "packages/engine/test/contract/event-consumers.test.ts",
+        "blob": "60b72824631a16132fc943a062708c4b9002f288",
+        "bytes": 13243
+      },
+      {
+        "path": "packages/engine/test/notification-runtime-adapters.test.ts",
+        "blob": "75df1bbca83e3dbb24c1898c790bb0ac366bb505",
+        "bytes": 6104
+      }
+    ]
+  },
+  "proof": {
+    "affectedTests": {
+      "status": "passed",
+      "tests": 168,
+      "assertions": 719,
+      "files": 13
+    },
+    "rootBuild": {
+      "status": "passed",
+      "scope": "Present repository workspaces only"
+    },
+    "forcedTypes": {
+      "status": "passed",
+      "groups": 3,
+      "diagnostics": 0,
+      "scope": "Forced solution/tests/scripts, public consumer and present product workspaces",
+      "presentProducts": [
+        "daemon",
+        "webui"
+      ],
+      "pendingProducts": [
+        "tui",
+        "agent"
+      ]
+    },
+    "generatedApiUnion": {
+      "notification_side_export_changes": 30,
+      "main_side_export_changes": 34,
+      "overlapping_export": "./platform/runtime operations namespace, retaining both independent additions",
+      "expected_subpaths": 164,
+      "expected_exports": 10060,
+      "generated_export_differences": 0,
+      "preserved_empty_subpath": "./sql-js"
+    },
+    "api": {
+      "status": "passed"
+    },
+    "diffCheck": {
+      "status": "passed"
+    },
+    "normalCommitHook": {
+      "status": "passed",
+      "scope": "Credential-scope only",
+      "engineSdkFilesChecked": 2637
+    },
+    "logsArchive": {
+      "path": "proof-logs.tar.gz",
+      "gzipBytes": 7749,
+      "gzipSha256": "9b6f82628d9f9c50f1936df5d584db4aa52eaf6e7a42f5d3144c7d86345c63cb",
+      "members": {
+        "actual-parent-commit.log": {
+          "bytes": 335,
+          "sha256": "c7fab8b1e5cefc405e9f79cd66d2f24a661e4dc1378e8b07bc3359f7bfc02547"
+        },
+        "normal-pre-commit-hook.log": {
+          "bytes": 254,
+          "sha256": "84aa64187c0039402c95b6c9c486dee02972abe63d809f36e67377f6581d6a77"
+        },
+        "pr52-current-main-api-generate.log": {
+          "bytes": 369,
+          "sha256": "16c152b54bf7d5e9206ffbe2c9c5c9edadbb5e84728234dbd22bd758be780725"
+        },
+        "pr52-current-main-api.log": {
+          "bytes": 3872,
+          "sha256": "00094ca95f44e30548f9b4c1b7caefc09106821cae9cd1c715b2713d00174bf1"
+        },
+        "pr52-current-main-build.log": {
+          "bytes": 3488,
+          "sha256": "7b35a59777fbc90fd47fb7f803b3cb1c4b573fcf7f3d1fc44a9e7324060627b0"
+        },
+        "pr52-current-main-credential.log": {
+          "bytes": 231,
+          "sha256": "f9259704cdb3825aec66a02b8c2021b660a608bdd3f5cc0fe1406561ea4b4b0e"
+        },
+        "pr52-current-main-tests.log": {
+          "bytes": 19924,
+          "sha256": "6a8667b35428a2d722e045949e6d699c3e028b7fb873d436220269a368e0caf3"
+        },
+        "pr52-current-main-typecheck.log": {
+          "bytes": 630,
+          "sha256": "f223d51001fe2c55c26fb059eb4bf4d880b521d2c5e7084dea7037dbc47dbb77"
+        }
+      },
+      "deterministicMetadata": true
+    }
+  },
+  "credentialPreflight": {
+    "patchAndAllPostimagesAndProofLogsPatternScan": "passed",
+    "patterns": [
+      "private_key",
+      "github_token",
+      "aws_access_key",
+      "slack_token",
+      "openai_key",
+      "credential_url"
+    ],
+    "findings": 0,
+    "repositoryCredentialScopeCheck": {
+      "status": "passed",
+      "sourceTree": "8cb708a656e7ef57da978d5a9e6a033c9e6576ed",
+      "engineSdkFilesChecked": 2637,
+      "logSha256": "b76ba7c888c5e592d9712f2cd91733bae72fb8e44d3214a73edd6445e2a40e25",
+      "method": "Fresh isolated tracked materialization of the exact candidate SDK, scanner and configuration inputs"
+    },
+    "privateFilesAndInstalledDependenciesExcluded": true
+  },
+  "scopeBoundary": "Backup data only. The designated coordinator owns full Git-history publication and final integration. Publication scripts are checksum-verified as local packet metadata but neither executed nor included here.",
+  "originalPacketChecksums": "source-SHA256SUMS lists original packet names; source-manifest.json preserves original manifest.json bytes, compressed patch decompresses to the named original, and the eight log members remain exact. The publication helper is intentionally outside the evidence backup.",
+  "outstandingGates": [
+    "Authenticated full implementation publication and remote receipt",
+    "Fresh exact-head CI",
+    "Final release guard and authorized integration",
+    "Actual Agent/TUI caller acceptance as separately applicable"
+  ],
+  "prohibitedUse": "Do not merge this evidence branch as implementation or apply its patch to main."
+}

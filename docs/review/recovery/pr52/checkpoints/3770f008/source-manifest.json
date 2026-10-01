@@ -1,0 +1,200 @@
+{
+  "repository": "mgd34msu/goodvibes-jev",
+  "branch": "buzz/sdk-notification-delivery",
+  "verified_remote_head": "f76dd159c5a20401d463635fedf11d66075434f7",
+  "verified_main": "9363f44d186e152f5c829aa106d5645ce3ed02a0",
+  "intended_ordered_commit_parents": [
+    "f76dd159c5a20401d463635fedf11d66075434f7",
+    "9363f44d186e152f5c829aa106d5645ce3ed02a0"
+  ],
+  "tested_tree": "8cb708a656e7ef57da978d5a9e6a033c9e6576ed",
+  "base_tree": "4e0f24d474b588958ab7ac61037f7910071dc907",
+  "local_checkout": "/workspace/shared/gv-pr52-current-main-20261001",
+  "local_checkpoint_commit": "8d6acb1f066412a051f24670223199b072bd8431",
+  "local_checkpoint_note": "The public fetch materialized actual f76dd159. The final validated local merge commit has actual f76dd159 and main9363 parents. The earlier local substitute checkpoint is not in its ancestry.",
+  "tree_elements_relative_to_main": [
+    {
+      "path": "docs/audit/sdk-notification-delivery-privacy.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "58d16d6b06c4a2fe4972561fb7c388507449d924",
+      "bytes": 7005,
+      "sha256": "284a6267818996b282ef6ff56f0fe84e164e2a8590c2c83cabdc2d5bace3a36b"
+    },
+    {
+      "path": "docs/inventory/engine.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "965cf30ac6a27ce4bc32aa81880b7f2527a4fb77",
+      "bytes": 2526600,
+      "sha256": "41df4da3b0fc23e015c6fb1b5b4aaa683750f5b364b88d85913d8a6ec9c264fd"
+    },
+    {
+      "path": "packages/engine/etc/subpath-api-surface.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fc00deea68368fb83c7a04651a0fa8e6a7b7e9e6",
+      "bytes": 8570204,
+      "sha256": "91f08f6034a3e0850fd45a0608b3a23a4c7fa4c99f36d3628709105b57722026"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/integrations/delivery-diagnostics.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6d3fc7b7f7e8b2d2768bc2110ce10ad4914de453",
+      "bytes": 1436,
+      "sha256": "193ab1ed37903dd2c10206100f5a4ad50f24fedf1a73d0c171e6fd6dd7a60c7e"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/integrations/delivery.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ca95a8192ea06d92ece0a630c7f669ead0095d31",
+      "bytes": 24454,
+      "sha256": "f99bfe6920503d385b7dda69d8b089c9d890fd8a80ad4d91be6cc0456230490a"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/integrations/notifier.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "844947ccc8b7af993c9c2981477b0cceeda67c42",
+      "bytes": 13388,
+      "sha256": "681e0134c88f5754e90217cdab837626c2827c9071046030345ce47a47248675"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/integrations/webhooks.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "393969b7d49d68b5dffb92d3786fd302f7c00c2e",
+      "bytes": 17362,
+      "sha256": "06e67cb6be15f7c7ab0e77a0059eb4cc3fe1e483f63060714697d1f1302ab0c8"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/runtime/notification-envelope.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f72f023f2f26923853387d1ff790f9c29f3f37a8",
+      "bytes": 7497,
+      "sha256": "cfad3b0cd2b877d3760d73664e3c740b37fcf3a976c6e8047986e697bad1a458"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/runtime/notification-metadata.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "038d5fb463f01432fb01afa73bb6525b4b9d3519",
+      "bytes": 1571,
+      "sha256": "7c298ed330db8128950ba9512b75ab7d50d3ced52efdd9d4c099af770722531b"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/runtime/operations.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "458e1196647ebd672cc48489e52127f8f2b56ddd",
+      "bytes": 10728,
+      "sha256": "0b266a75ad82e0023821a43358c7cc36b40a5ea5623e5e7935ec6604c9018f8a"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/runtime/turn-notification.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2fb7e42317585b0c559903839528816a7384a5ab",
+      "bytes": 18874,
+      "sha256": "ccde15de53642d1aa882abf3287e37cb87983f419e756919c2af374cff518364"
+    },
+    {
+      "path": "packages/engine/test/channel-workstream-labels.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "88f1033405be96e1868171c55ddcbb76f3a007b0",
+      "bytes": 21724,
+      "sha256": "22e05f49d1d7a50bc66e569b68be55996a7499628d563b421098aeafda71c918"
+    },
+    {
+      "path": "packages/engine/test/contract/event-consumers.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "60b72824631a16132fc943a062708c4b9002f288",
+      "bytes": 13243,
+      "sha256": "3cc6ef9578c9c36772c3fa189189b8281b04e4e66d2a3c31ed5c00277cb8c223"
+    },
+    {
+      "path": "packages/engine/test/notification-delivery-privacy.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "550ad43fe3557913ccf6cc89605c028fc04010ba",
+      "bytes": 20135,
+      "sha256": "b3de4148697002216cd8b2632e9d2b098b85e2502c713f38e391194ed1caf30e"
+    },
+    {
+      "path": "packages/engine/test/notification-runtime-adapters.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "75df1bbca83e3dbb24c1898c790bb0ac366bb505",
+      "bytes": 6104,
+      "sha256": "252741afa7518f42eed9a8662155019ab23132638e452a75e471553e72b50891"
+    }
+  ],
+  "reviewed_repair_postimages": [
+    {
+      "path": "packages/engine/sdk/src/platform/integrations/notifier.ts",
+      "blob": "844947ccc8b7af993c9c2981477b0cceeda67c42",
+      "bytes": 13388
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/integrations/webhooks.ts",
+      "blob": "393969b7d49d68b5dffb92d3786fd302f7c00c2e",
+      "bytes": 17362
+    },
+    {
+      "path": "packages/engine/test/channel-workstream-labels.test.ts",
+      "blob": "88f1033405be96e1868171c55ddcbb76f3a007b0",
+      "bytes": 21724
+    },
+    {
+      "path": "packages/engine/test/contract/event-consumers.test.ts",
+      "blob": "60b72824631a16132fc943a062708c4b9002f288",
+      "bytes": 13243
+    },
+    {
+      "path": "packages/engine/test/notification-runtime-adapters.test.ts",
+      "blob": "75df1bbca83e3dbb24c1898c790bb0ac366bb505",
+      "bytes": 6104
+    }
+  ],
+  "generated_api_union": {
+    "notification_side_export_changes": 30,
+    "main_side_export_changes": 34,
+    "overlapping_export": "./platform/runtime operations namespace, retaining both independent additions",
+    "expected_subpaths": 164,
+    "expected_exports": 10060,
+    "generated_export_differences": 0,
+    "preserved_empty_subpath": "./sql-js"
+  },
+  "verification": {
+    "affected_tests": {
+      "passed": 168,
+      "failed": 0,
+      "assertions": 719,
+      "files": 13
+    },
+    "credential": "passed",
+    "root_build": "passed",
+    "forced_solution_tests_scripts_consumer_products": "passed: 3 groups, zero diagnostics",
+    "api": "passed",
+    "diff_check": "passed",
+    "normal_pre_commit_hook": "passed unchanged, including during final actual-parent commit",
+    "packet_reverse_apply_check": "passed against final committed postimages"
+  },
+  "remote_composition_published": false,
+  "no_large_blob_upload_attempted": true,
+  "publication_preconditions": [
+    "Fresh branch head must still equal verified_remote_head; fresh main must still equal verified_main. Stop and reconcile if either moved.",
+    "Use the actual remote repair and main commits as ordered parents, and verify the resulting full tree equals tested_tree.",
+    "Use non-forced fast-forward branch update only.",
+    "Verify exact-head CI and final release guard before any merge to main."
+  ],
+  "validated_local_commit": "3770f00807c56524c3eaa7632f9aae1a8a032ab2",
+  "actual_remote_parents_materialized": true,
+  "publication_script": "/workspace/shared/pr52-current-main-packet/publish-pr52.sh",
+  "publication_blocker": "Authenticated Git write access is pending. The required 8,570,204-byte generated API blob has not been sent through the connector."
+}
