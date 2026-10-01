@@ -1,0 +1,211 @@
+{
+  "schemaVersion": 1,
+  "repository": "mgd34msu/goodvibes-jev",
+  "status": "UNMERGEABLE_EVIDENCE_ONLY",
+  "checkpoint": "87bdf8a ordinary Agent adapters",
+  "runtimeIntegrationAuthorized": false,
+  "mergeAuthorized": false,
+  "candidate": {
+    "localCommit": "87bdf8a98a4d136bb0188337b940b53dcf9566ad",
+    "tree": "8ef56085dc5808e3545c8ac48aa4ad59c994da6e",
+    "parentLocalCommit": "4336fd37e8c2052ffb7233fd0ae9b0fab8d5ec46",
+    "parentTree": "ee3ced1a7d0325dc445abe867b18c44693093435",
+    "scope": "13 ordinary Agent product paths; no engine source changes",
+    "localCommitsRequiredForReconstruction": false
+  },
+  "authorManifestSha256": "d584e023567d9bdbc6940af53fda2e104e97c2b366651d008fee22114d161648",
+  "evidence": {
+    "branch": "dot/evidence-agent-source-recovery",
+    "parent": "00e028a01ee5b9aa90a53c7dd2ec1f666c69c430",
+    "parentTree": "f4440483cb31e1487725a4b16c1b0ca0b6489581",
+    "path": "docs/review/recovery/agent/checkpoints/87bdf8a",
+    "runtimePathsUnchanged": true
+  },
+  "reconstruction": {
+    "priorCheckpointEvidenceCommit": "00e028a01ee5b9aa90a53c7dd2ec1f666c69c430",
+    "priorManifestPath": "docs/review/recovery/agent/manifest.json",
+    "priorManifestSha256": "ea943186e12c2c53f1d41bd898bfbf05ae390ce64a53e49375924e86f85323ab",
+    "method": "Run the prior published public-tree reconstruction into a new index, verify ee3ced1a, apply adapter.patch with git apply --cached, and verify the final tree",
+    "patch": {
+      "path": "adapter.patch",
+      "bytes": 32469,
+      "sha256": "6a680e0a832b1661ef0b1dcfbab04530f274a481059f642a862b203fd9f569d3",
+      "format": "Exact author git diff --binary; original abbreviated index hashes preserved"
+    },
+    "verifiedResultTree": "8ef56085dc5808e3545c8ac48aa4ad59c994da6e",
+    "status": "passed"
+  },
+  "postimages": [
+    {
+      "path": "products/agent/RECOVERY.md",
+      "bytes": 1960,
+      "gitBlob": "5b6ea72a0a3550db99bbfff6448d43b1de50a2af",
+      "sha256": "5f6ed4bbd3b374f9c958083da820448908c787ccf2e86cff3b52295f438b325f"
+    },
+    {
+      "path": "products/agent/src/core/conversation.ts",
+      "bytes": 32102,
+      "gitBlob": "b05dd15b6007cb4988cc9832a88c839d72620053",
+      "sha256": "9944719412c37f63e23ee8f719275ef781aadc5c7c0cd42d140d7e3d11812cea"
+    },
+    {
+      "path": "products/agent/src/input/agent-workspace-categories.ts",
+      "bytes": 95839,
+      "gitBlob": "73de1aaea927e084fb54f224f306968563e12c48",
+      "sha256": "b7fd276366f93dd590a2e9c471ba47006d4e7a137f0fa6d9013bac875e94fc42"
+    },
+    {
+      "path": "products/agent/src/input/keybindings.ts",
+      "bytes": 13266,
+      "gitBlob": "5bfc60b1c0a30b43baacb718c27dcc63647e3b55",
+      "sha256": "93b9b2df2289920ce27ae63356c8b688df11ee1ce66a7bea5b76b73a27a1f399"
+    },
+    {
+      "path": "products/agent/src/input/profile-picker-modal.ts",
+      "bytes": 8491,
+      "gitBlob": "40df77b3a44e7d34b1b2fd97755fe88b869dcdb4",
+      "sha256": "60b37f5d980f5841d83a7a45ede5345f4ebafde059af86d155c1296b2dffe4e5"
+    },
+    {
+      "path": "products/agent/src/renderer/process-modal.ts",
+      "bytes": 5910,
+      "gitBlob": "d69370dd08361bb46f7c47e2c415dfcce36f0026",
+      "sha256": "2762e8d141efc8dcb043a0f0aeb9099f785b540805216167e7b660a420c0d32b"
+    },
+    {
+      "path": "products/agent/src/runtime/store/index.ts",
+      "bytes": 383,
+      "gitBlob": "b37dae0a6fe982ccd2f6d3e04ef3bede2d9ec438",
+      "sha256": "0a1829157b3858fa824ee052ef1cc939680c02daf3e5f1774feb6c7699d27e59"
+    },
+    {
+      "path": "products/agent/src/runtime/store/state.ts",
+      "bytes": 399,
+      "gitBlob": "f5001b0ea18df05858caae76b5c804e14778651b",
+      "sha256": "92cdeebefca0b076cc682ef715291e26c688cb4112f3e078f9388cfadfa00c12"
+    },
+    {
+      "path": "products/agent/src/test/input/profile-picker-modal.test.ts",
+      "bytes": 6538,
+      "gitBlob": "3b2e947cd5a99f9b5dc9b29f2f14e737475e379a",
+      "sha256": "12e6deff6d2e86d6df036a26a0762d87a1c97e40bb15068e8aee89c896cc3a2b"
+    },
+    {
+      "path": "products/agent/src/test/renderer/process-modal.test.ts",
+      "bytes": 6139,
+      "gitBlob": "a67ee8008370a1a415f6306c1d944c93d91370f0",
+      "sha256": "5a146546651617c41f030013d30b6aa12f58efad31433ddb2581391df066023f"
+    },
+    {
+      "path": "products/agent/src/utils/clipboard.ts",
+      "bytes": 1223,
+      "gitBlob": "98dcfd447d201030079a3c5399ed421259a72785",
+      "sha256": "e7e1e7c8e28a56ee5faf08b84ccb9cb344e75bf3a4090c85c5ad94a335983e5e"
+    },
+    {
+      "path": "products/agent/tsconfig.json",
+      "bytes": 453,
+      "gitBlob": "e6a9b77b3c90ee77df13703371c84fc0061f0822",
+      "sha256": "8ef1b4f75b79fdcaa89cc3da36126e2361cd07eaf2290adb0c1baff11fbe22e1"
+    },
+    {
+      "path": "products/agent/tsconfig.test.json",
+      "bytes": 321,
+      "gitBlob": "810ad3574a027a0e89c9c6f64b66db72b26d0bc4",
+      "sha256": "61df192c4a6d6b3ef2138093a14aa35f50f825069478b714694c313004ad4588"
+    }
+  ],
+  "proof": {
+    "focusedTests": {
+      "status": "passed",
+      "tests": 269,
+      "assertions": 2659,
+      "files": 18,
+      "appliesOnlyTo": "87bdf8a98a4d136bb0188337b940b53dcf9566ad",
+      "scope": "Ordinary CLI, rendering, configuration, store and profile adapters"
+    },
+    "sourceTypes": {
+      "status": "failed",
+      "typescriptDiagnostics": 108,
+      "exitCode": 2
+    },
+    "bundle": {
+      "status": "failed",
+      "exitCode": 1,
+      "reason": "Interactive runtime still imports removed WrfcController, continuationChainOptions, createFixWorkstreamRunner and createProviderBackedAttemptJudge exports"
+    },
+    "interactiveAcceptance": {
+      "status": "unverified"
+    },
+    "normalCommitHook": {
+      "status": "passed",
+      "scope": "Credential-scope only",
+      "engineSdkFilesChecked": 2633
+    },
+    "receipts": [
+      {
+        "fileName": "ordinary-adapters-final.log",
+        "sha256": "5defcd4523ac1a13ced854ca19602d838f246f216d3e78489347dc700b306857"
+      },
+      {
+        "fileName": "source-types-adapters.log",
+        "sha256": "9eb915d03b1af4ecc503397a122b217a2e4b4ed8fe0ffe3a82acac08cc2d9e34"
+      },
+      {
+        "fileName": "source-types-adapters.exit",
+        "sha256": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3"
+      },
+      {
+        "fileName": "bundle-after-store.log",
+        "sha256": "f627b4ffbdfcb752e159085a13527b1f72543acad5461cf3d95b4f122c26755e"
+      },
+      {
+        "fileName": "bundle-after-store.exit",
+        "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+      },
+      {
+        "fileName": "adapter-checkpoint.log",
+        "sha256": "31a84afde6c2bea70f607c8dd4db85e5b928ae8567e4eea113f52894ae0fbcb1"
+      }
+    ]
+  },
+  "credentialPreflight": {
+    "transferredPatchAndAll13PostimageSecretPatternScan": "passed",
+    "patterns": [
+      "private_key",
+      "github_token",
+      "aws_access_key",
+      "slack_token",
+      "openai_key",
+      "credential_url"
+    ],
+    "findings": 0,
+    "repositoryCredentialScopeCheck": {
+      "status": "passed",
+      "engineSdkFilesChecked": 2633,
+      "logSha256": "bc8db2d3104738cdb5c65f4647e9044b1be5f650ccc66215785ac6c0a477f98c",
+      "method": "Fresh scanner run against isolated tracked scanner inputs; each input tree/blob independently verified identical between both source checkpoints",
+      "verifiedInputs": [
+        "packages/engine/sdk/src",
+        "packages/engine/scripts",
+        "packages/engine/etc",
+        "packages/engine/package.json",
+        "packages/engine/errors/src",
+        "packages/judgment/src",
+        "packages/judgment/package.json"
+      ],
+      "scope": "SDK credential scope only; not full Agent product coverage"
+    },
+    "privateFilesAndDependenciesExcluded": true
+  },
+  "versioning": "The initial 4336fd37 checkpoint retains its own 58 tests/461 assertions and 146 type diagnostics. The 269/2659 proof and 108 diagnostics belong only to this later checkpoint. Neither is full product acceptance.",
+  "outstandingGates": [
+    "Resolve the remaining 108 source type diagnostics",
+    "Replace retired interactive runtime composition and obtain a passing bundle",
+    "Actual interactive startup and behavior acceptance",
+    "Product build, binary and end-to-end acceptance",
+    "Independent review and full repository/product CI",
+    "Authorized runtime integration and release acceptance"
+  ],
+  "prohibitedUse": "Backup data only; do not merge this evidence branch as implementation or apply the patch to main."
+}

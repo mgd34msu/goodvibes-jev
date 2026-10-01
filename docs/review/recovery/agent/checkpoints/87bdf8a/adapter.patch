@@ -1,0 +1,702 @@
+diff --git a/products/agent/RECOVERY.md b/products/agent/RECOVERY.md
+index 518e3d1..5b6ea72 100644
+--- a/products/agent/RECOVERY.md
++++ b/products/agent/RECOVERY.md
+@@ -15,12 +15,15 @@ The source and package launchers support help, version, completion and parser
+ errors through the original parser and help renderer before loading the
+ interactive graph. The interactive implementation remains in `src/interactive.ts`.
+ This early command boundary does not establish interactive runtime compatibility.
+-The first direct full-graph startup stopped on the removed `MIN_IMAGE_BYTES`
+-export. Further shared runtime and semantic migration remains unfinished.
++The obsolete unused clipboard export is removed, and the store now uses the
++public engine factories. Full bundling stops at the retired WRFC construction in
++`src/runtime/services.ts`. Further runtime and semantic migration remains unfinished.
+ 
+-Fresh local evidence for this checkpoint: 58 CLI and ordinary renderer tests,
+-461 assertions. This includes source/package launcher subprocesses and theme,
+-diff, markdown-width and terminal-size behavior. Full product compilation,
++Fresh local evidence for the ordinary adapter checkpoint: 269 CLI, renderer,
++profile and store tests, with 2,659 assertions. This includes source/package launcher subprocesses and theme,
++diff, markdown-width and terminal-size behavior. The corrected source diagnostic has 108 errors, down from 146 at initial
++materialization. The ordinary rendering/configuration fixes remove their own
++diagnostics and consume the SDK source declarations. Full product compilation,
+ interactive startup, binary packaging and end-to-end acceptance have not passed.
+ 
+ No captured-input authority proposal or unpublished shared engine overlay is
+diff --git a/products/agent/src/core/conversation.ts b/products/agent/src/core/conversation.ts
+index 8db4a81..b05dd15 100644
+--- a/products/agent/src/core/conversation.ts
++++ b/products/agent/src/core/conversation.ts
+@@ -1,3 +1,4 @@
++import { readTreeGlyphSet, TREE_GLYPHS_CONFIG_KEY } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
+ import { InfiniteBuffer } from '@goodvibes-jev/engine/terminal-shell';
+ import { createEmptyLine, type Line, type Cell } from '@goodvibes-jev/engine/sdk/platform/types';
+ import type { SplashOptions } from '../utils/splash-lines.ts';
+@@ -22,7 +23,7 @@ import type { WorkTreeSources } from './work-tree-sources.ts';
+ import { renderStreamingContinuation } from './work-tree-render.ts';
+ import { WorkTreeController } from './work-tree-focus.ts';
+ import { isWorkTreeFoldKey } from './work-tree-fold-store.ts';
+-import { probeUnicodeSupport, resolveTreeGlyphSet, type TreeGlyphSetName } from '../renderer/lane-graph/glyphs.ts';
++import { probeUnicodeSupport, type TreeGlyphSetName } from '../renderer/lane-graph/glyphs.ts';
+ 
+ /**
+  * ConversationManager - TUI subclass of the SDK's ConversationManager.
+@@ -465,7 +466,12 @@ export class ConversationManager extends SdkConversationManager {
+ 
+   /** The work tree's glyph set: display.treeGlyphs, ascii on a terminal without unicode. */
+   private treeGlyphSet(): TreeGlyphSetName {
+-    return resolveTreeGlyphSet(this._configManager?.get('display.treeGlyphs'), this.unicodeCapable);
++    return readTreeGlyphSet(
++      key => key === TREE_GLYPHS_CONFIG_KEY
++        ? Reflect.get(this._configManager?.getRaw().display ?? {}, 'treeGlyphs')
++        : undefined,
++      this.unicodeCapable,
++    );
+   }
+ 
+   /** Streaming text: under the spine of the turn it belongs to when there is one, else full width. */
+diff --git a/products/agent/src/input/agent-workspace-categories.ts b/products/agent/src/input/agent-workspace-categories.ts
+index 049741e..73de1aa 100644
+--- a/products/agent/src/input/agent-workspace-categories.ts
++++ b/products/agent/src/input/agent-workspace-categories.ts
+@@ -94,7 +94,7 @@ export const AGENT_WORKSPACE_CATEGORIES: readonly AgentWorkspaceCategory[] = [
+       settingAction({ id: 'behavior-auto-compact', label: 'Auto-compact threshold', detail: 'Set the context percentage that triggers automatic compaction.', key: 'behavior.autoCompactThreshold' }),
+       settingAction({ id: 'behavior-stale-context', label: 'Context warnings', detail: 'Toggle proactive warnings before compaction is required.', key: 'behavior.staleContextWarnings' }),
+       settingAction({ id: 'behavior-notify-complete', label: 'Notify on long turns', detail: 'Toggle terminal and desktop notification when a long turn completes.', key: 'behavior.notifyOnComplete' }),
+-      settingAction({ id: 'behavior-notifications-metadata-only', label: 'Notifications: metadata only', detail: 'Toggle whether notifications leave out the turn name, failure reasons, commands and file paths. Off by default, so notifications name the work they are about.', key: 'behavior.notificationsMetadataOnly' }),
++      settingAction({ id: 'behavior-notifications-metadata-only', label: 'Notifications: metadata only', detail: 'Notifications omit private details unless this preference is explicitly false. Changing this preference is unavailable in this build.', key: 'behavior.notificationsMetadataOnly' }),
+       settingAction({ id: 'behavior-return-context', label: 'Resume summary mode', detail: 'Cycle off, local, or assisted resume summaries.', key: 'behavior.returnContextMode' }),
+       settingAction({ id: 'behavior-show-thinking', label: 'Show thinking blocks', detail: 'Toggle visible reasoning/thinking content when the provider returns it.', key: 'display.showThinking' }),
+       settingAction({ id: 'behavior-show-reasoning-summary', label: 'Show reasoning summary', detail: 'Toggle visible reasoning summaries when supported.', key: 'display.showReasoningSummary' }),
+diff --git a/products/agent/src/input/keybindings.ts b/products/agent/src/input/keybindings.ts
+index 2b92a19..5bfc60b 100644
+--- a/products/agent/src/input/keybindings.ts
++++ b/products/agent/src/input/keybindings.ts
+@@ -27,7 +27,7 @@
+ import { readFileSync, existsSync } from 'node:fs';
+ import { join } from 'node:path';
+ import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
+-import { resolveSurfaceDirectory } from '@/runtime/index.ts';
++import { resolveSurfaceDirectory } from '@goodvibes-jev/engine/sdk/platform/runtime/shell';
+ import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
+ import { GOODVIBES_AGENT_SURFACE_ROOT } from '../config/surface.ts';
+ 
+diff --git a/products/agent/src/input/profile-picker-modal.ts b/products/agent/src/input/profile-picker-modal.ts
+index e47d634..40df77b 100644
+--- a/products/agent/src/input/profile-picker-modal.ts
++++ b/products/agent/src/input/profile-picker-modal.ts
+@@ -21,7 +21,7 @@ const DISPLAY_KEYS: ConfigKey[] = [
+ /** Known behavior setting keys (subset of ConfigKey that maps to behavior.*). */
+ const BEHAVIOR_KEYS: ConfigKey[] = [
+   'behavior.autoApprove', 'behavior.autoCompactThreshold',
+-  'behavior.saveHistory', 'behavior.notifyOnComplete', 'behavior.notificationsMetadataOnly',
++  'behavior.saveHistory', 'behavior.notifyOnComplete',
+ ] as const;
+ 
+ function configProfileDeletionDisabledMessage(name: string): string {
+@@ -151,6 +151,12 @@ export class ProfilePickerModal {
+ 
+     try {
+       const { data } = this.profileManager.load(profile.name);
++      // This upstream profile field has no classified writable Jev ConfigKey.
++      // Hold the complete load before even unrelated mutations (THE-17/THE-35).
++      if (data.behavior && Object.hasOwn(data.behavior, 'notificationsMetadataOnly')) {
++        this.statusMessage = 'This profile includes notification privacy settings that this Agent build cannot apply. No settings were changed.';
++        return false;
++      }
+ 
+       // Apply display settings using validated key list
+       if (data.display) {
+diff --git a/products/agent/src/renderer/process-modal.ts b/products/agent/src/renderer/process-modal.ts
+index a1e6be4..d69370d 100644
+--- a/products/agent/src/renderer/process-modal.ts
++++ b/products/agent/src/renderer/process-modal.ts
+@@ -75,8 +75,9 @@ export class ProcessModal {
+     const result: ProcessEntry[] = [];
+ 
+     for (const process of this.deps.processManager.list()) {
+-      if (process.done) continue;
+-      const startTime = this.deps.processManager.getStatus(process.id)?.startTime ?? now;
++      const current = this.deps.processManager.getStatus(process.id);
++      if (!current || current.done) continue;
++      const startTime = current.startTime;
+       result.push({
+         id: process.id,
+         label: truncateCmd(process.cmd),
+diff --git a/products/agent/src/runtime/store/index.ts b/products/agent/src/runtime/store/index.ts
+index 19e0b01..b37dae0 100644
+--- a/products/agent/src/runtime/store/index.ts
++++ b/products/agent/src/runtime/store/index.ts
+@@ -1,305 +1,5 @@
+-/**
+- * Runtime store, Zustand vanilla store for goodvibes-agent.
+- *
+- * Uses `createStore` from `zustand/vanilla` (NOT the React `create` hook)
+- * because goodvibes-agent is a terminal app with no React renderer.
+- */
+-
+-import { createStore } from 'zustand/vanilla';
+-import type { StoreApi } from 'zustand';
+-import type {
+-  AgentEvent,
+-  CommunicationEvent,
+-  CompactionEvent,
+-  McpEvent,
+-  OrchestrationEvent,
+-  PermissionEvent,
+-  PluginEvent,
+-  TaskEvent,
+-  ToolEvent,
+-  TransportEvent,
+-  TurnEvent,
+-} from '@goodvibes-jev/engine/sdk/events';
+-import type {
+-  SessionDomainState,
+-  ConversationDomainState,
+-  TaskDomainState,
+-  TaskLifecycleState,
+-  RuntimeTask,
+-  AgentDomainState,
+-  AgentLifecycleState,
+-  RuntimeAgent,
+-  PermissionDomainState,
+-  PermissionDecision,
+-  OrchestrationDomainState,
+-  CommunicationDomainState,
+-  PluginDomainState,
+-  McpDomainState,
+-  AcpDomainState,
+-  DaemonDomainState,
+-  IntegrationDomainState,
+-  IntegrationRecord,
+-  IntegrationStatus,
+-  AutomationDomainState,
+-  RoutesDomainState,
+-  ControlPlaneDomainState,
+-  ControlPlaneClientRecord,
+-  DeliveryDomainState,
+-  WatcherDomainState,
+-  WatcherRecord,
+-  SurfaceDomainState,
+-  SurfaceRecord,
+-} from '@goodvibes-jev/engine/sdk/platform/runtime/state';
+-import type { AutomationJob } from '@goodvibes-jev/engine/sdk/platform/automation';
+-import type { AutomationRun } from '@goodvibes-jev/engine/sdk/platform/automation';
+-import type { AutomationSourceRecord } from '@goodvibes-jev/engine/sdk/platform/automation';
+-import type { AutomationRouteBinding } from '@goodvibes-jev/engine/sdk/platform/automation';
+-import type { AutomationSurfaceKind } from '@goodvibes-jev/engine/sdk/platform/automation';
+-import type { AutomationDeliveryAttempt } from '@goodvibes-jev/engine/sdk/platform/automation';
+-import { createInitialRuntimeState } from './state.ts';
+-import type { RuntimeState } from './state.ts';
+-import {
+-  patchControlPlaneDomain,
+-  syncSessionStatePatch,
+-  transitionAgentDomainRecord,
+-  transitionTaskDomainRecord,
+-  updateAgentState,
+-  updateAutomationDomainFromJob,
+-  updateAutomationDomainFromRun,
+-  updateAutomationDomainFromSource,
+-  updateCommunicationState,
+-  updateConversationState,
+-  updateControlPlaneDomainFromClient,
+-  updateDeliveryDomainFromAttempt,
+-  updateIntegrationDomainFromRecord,
+-  updateMcpState,
+-  updateOrchestrationState,
+-  updatePermissionState,
+-  updatePluginState,
+-  updateRouteFailureState,
+-  updateRoutesDomainFromBinding,
+-  updateSessionState,
+-  updateSurfaceDomainFromRecord,
+-  updateTaskDomainFromRecord,
+-  updateTaskState,
+-  updateTransportState,
+-  updateWatcherDomainFromRecord,
+-} from '@goodvibes-jev/engine/sdk/platform/runtime/state';
+-
+-export type RuntimeStore = StoreApi<RuntimeState>;
+-
+-export function createRuntimeStore(): RuntimeStore {
+-  return createStore<RuntimeState>(() => createInitialRuntimeState());
+-}
+-
+-function mutateRuntimeStore(store: RuntimeStore, updater: (state: RuntimeState) => RuntimeState): void {
+-  store.setState(updater);
+-}
+-
+-export interface DomainDispatch {
+-  dispatchTurnEvent(event: TurnEvent): void;
+-  dispatchToolEvent(event: ToolEvent): void;
+-  dispatchPermissionEvent(event: PermissionEvent): void;
+-  dispatchTaskEvent(event: TaskEvent): void;
+-  dispatchAgentEvent(event: AgentEvent): void;
+-  dispatchOrchestrationEvent(event: OrchestrationEvent): void;
+-  dispatchCommunicationEvent(event: CommunicationEvent): void;
+-  dispatchPluginEvent(event: PluginEvent): void;
+-  dispatchMcpEvent(event: McpEvent): void;
+-  dispatchTransportEvent(event: TransportEvent): void;
+-  dispatchCompactionEvent(event: CompactionEvent): void;
+-  syncSessionState(patch: Partial<SessionDomainState>, source?: string): void;
+-  syncRuntimeTask(task: RuntimeTask, source?: string): void;
+-  transitionRuntimeTask(
+-    taskId: string,
+-    status: TaskLifecycleState,
+-    patch?: Partial<RuntimeTask>,
+-    source?: string,
+-  ): void;
+-  transitionRuntimeAgent(
+-    agentId: string,
+-    status: AgentLifecycleState,
+-    patch?: Partial<RuntimeAgent>,
+-    source?: string,
+-  ): void;
+-  syncIntegration(record: IntegrationRecord, source?: string): void;
+-  syncAutomationSource(record: AutomationSourceRecord, source?: string): void;
+-  syncAutomationJob(record: AutomationJob, source?: string): void;
+-  syncAutomationRun(record: AutomationRun, source?: string): void;
+-  syncRouteBinding(record: AutomationRouteBinding, source?: string): void;
+-  recordRouteBindingFailure(
+-    surfaceKind: AutomationSurfaceKind,
+-    externalId: string,
+-    source?: string,
+-  ): void;
+-  syncControlPlaneClient(record: ControlPlaneClientRecord, source?: string): void;
+-  syncControlPlaneState(patch: Partial<ControlPlaneDomainState>, source?: string): void;
+-  syncDeliveryAttempt(record: AutomationDeliveryAttempt, source?: string): void;
+-  syncSurface(record: SurfaceRecord, source?: string): void;
+-  syncWatcher(record: WatcherRecord, source?: string): void;
+-}
+-
+-export function createDomainDispatch(store: RuntimeStore): DomainDispatch {
+-  return {
+-    dispatchTurnEvent(event) {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        conversation: updateConversationState(state.conversation, event),
+-      }));
+-    },
+-    dispatchToolEvent(event) {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        conversation: updateConversationState(state.conversation, event),
+-      }));
+-    },
+-    dispatchPermissionEvent(event) {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        permissions: updatePermissionState(state.permissions, event),
+-      }));
+-    },
+-    dispatchTaskEvent(event) {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        tasks: updateTaskState(state.tasks, event),
+-      }));
+-    },
+-    dispatchAgentEvent(event) {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        agents: updateAgentState(state.agents, event),
+-      }));
+-    },
+-    dispatchOrchestrationEvent(event) {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        orchestration: updateOrchestrationState(state.orchestration, event),
+-      }));
+-    },
+-    dispatchCommunicationEvent(event) {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        communication: updateCommunicationState(state.communication, event),
+-      }));
+-    },
+-    dispatchPluginEvent(event) {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        plugins: updatePluginState(state.plugins, event),
+-      }));
+-    },
+-    dispatchMcpEvent(event) {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        mcp: updateMcpState(state.mcp, event),
+-      }));
+-    },
+-    dispatchTransportEvent(event) {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        ...updateTransportState(state.acp, state.daemon, event),
+-      }));
+-    },
+-    dispatchCompactionEvent(event) {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        session: updateSessionState(state.session, event),
+-      }));
+-    },
+-    syncSessionState(patch, source = 'domain-dispatch') {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        session: syncSessionStatePatch(state.session, patch, source),
+-      }));
+-    },
+-    syncRuntimeTask(task, source = 'domain-dispatch') {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        tasks: updateTaskDomainFromRecord(state.tasks, task, source),
+-      }));
+-    },
+-    transitionRuntimeTask(taskId, status, patch, source = 'domain-dispatch') {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        tasks: transitionTaskDomainRecord(state.tasks, taskId, status, patch, source),
+-      }));
+-    },
+-    transitionRuntimeAgent(agentId, status, patch, source = 'domain-dispatch') {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        agents: transitionAgentDomainRecord(state.agents, agentId, status, patch, source),
+-      }));
+-    },
+-    syncIntegration(record, source = 'domain-dispatch') {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        integrations: updateIntegrationDomainFromRecord(state.integrations, record, source),
+-      }));
+-    },
+-    syncAutomationSource(record, source = 'domain-dispatch') {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        automation: updateAutomationDomainFromSource(state.automation, record, source),
+-      }));
+-    },
+-    syncAutomationJob(record, source = 'domain-dispatch') {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        automation: updateAutomationDomainFromJob(state.automation, record, source),
+-      }));
+-    },
+-    syncAutomationRun(record, source = 'domain-dispatch') {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        automation: updateAutomationDomainFromRun(state.automation, record, source),
+-      }));
+-    },
+-    syncRouteBinding(record, source = 'domain-dispatch') {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        routes: updateRoutesDomainFromBinding(state.routes, record, source),
+-      }));
+-    },
+-    recordRouteBindingFailure(surfaceKind, externalId, source = 'domain-dispatch') {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        routes: updateRouteFailureState(state.routes, surfaceKind, externalId, source),
+-      }));
+-    },
+-    syncControlPlaneClient(record, source = 'domain-dispatch') {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        controlPlane: updateControlPlaneDomainFromClient(state.controlPlane, record, source),
+-      }));
+-    },
+-    syncControlPlaneState(patch, source = 'domain-dispatch') {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        controlPlane: patchControlPlaneDomain(state.controlPlane, patch, source),
+-      }));
+-    },
+-    syncDeliveryAttempt(record, source = 'domain-dispatch') {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        deliveries: updateDeliveryDomainFromAttempt(state.deliveries, record, source),
+-      }));
+-    },
+-    syncSurface(record, source = 'domain-dispatch') {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        surfaces: updateSurfaceDomainFromRecord(state.surfaces, record, source),
+-      }));
+-    },
+-    syncWatcher(record, source = 'domain-dispatch') {
+-      mutateRuntimeStore(store, (state) => ({
+-        ...state,
+-        watchers: updateWatcherDomainFromRecord(state.watchers, record, source),
+-      }));
+-    },
+-  };
+-}
+-
+-export type { RuntimeState } from './state.ts';
++/** The Agent UI consumes the canonical public engine store. */
++export { createRuntimeStore, createDomainDispatch } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
++export type { RuntimeStore, DomainDispatch, RuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
+ export { createInitialRuntimeState } from './state.ts';
+ export * from './selectors/index.ts';
+diff --git a/products/agent/src/runtime/store/state.ts b/products/agent/src/runtime/store/state.ts
+index fcc78d9..f5001b0 100644
+--- a/products/agent/src/runtime/store/state.ts
++++ b/products/agent/src/runtime/store/state.ts
+@@ -1,137 +1,7 @@
+-/**
+- * RuntimeState, the canonical top-level state shape for the goodvibes-agent
+- * runtime store. All domain slices are defined here.
+- *
+- * Each domain includes revision, lastUpdatedAt, and source metadata fields.
+- * These are defined per-domain in the domain files.
+- */
++import { createRuntimeStore, type RuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
++export type { RuntimeState, UiPerfDomainState } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
+ 
+-import type { SessionDomainState } from '@/runtime/index.ts';
+-import type { ModelDomainState } from '@/runtime/index.ts';
+-import type { ConversationDomainState } from '@/runtime/index.ts';
+-import type { OverlayDomainState } from '@/runtime/index.ts';
+-import type { PermissionDomainState } from '@/runtime/index.ts';
+-import type { TaskDomainState } from '@/runtime/index.ts';
+-import type { AgentDomainState } from '@/runtime/index.ts';
+-import type { OrchestrationDomainState } from '@/runtime/index.ts';
+-import type { CommunicationDomainState } from '@/runtime/index.ts';
+-import type { ProviderHealthDomainState } from '@/runtime/index.ts';
+-import type { McpDomainState } from '@/runtime/index.ts';
+-import type { PluginDomainState } from '@/runtime/index.ts';
+-import type { DaemonDomainState } from '@/runtime/index.ts';
+-import type { AutomationDomainState } from '@/runtime/index.ts';
+-import type { AcpDomainState } from '@/runtime/index.ts';
+-import type { RoutesDomainState } from '@/runtime/index.ts';
+-import type { ControlPlaneDomainState } from '@/runtime/index.ts';
+-import type { DeliveryDomainState } from '@/runtime/index.ts';
+-import type { WatcherDomainState } from '@/runtime/index.ts';
+-import type { SurfaceDomainState } from '@/runtime/index.ts';
+-import type { IntegrationDomainState } from '@/runtime/index.ts';
+-import type { TelemetryDomainState } from '@/runtime/index.ts';
+-import type { GitDomainState } from '@/runtime/index.ts';
+-import type { DiscoveryDomainState } from '@/runtime/index.ts';
+-import type { IntelligenceDomainState } from '@/runtime/index.ts';
+-import type { UiPerfDomainState } from '@/runtime/index.ts';
+-// UiPerfDomainState is structurally identical to SDK's SurfacePerfDomainState.
+-// Export as SurfacePerfDomainState alias for shared runtime callers.
+-export type { UiPerfDomainState };
+-
+-import { createInitialSessionState } from '@/runtime/index.ts';
+-import { createInitialModelState } from '@/runtime/index.ts';
+-import { createInitialConversationState } from '@/runtime/index.ts';
+-import { createInitialOverlaysState } from '@/runtime/index.ts';
+-import { createInitialPermissionsState } from '@/runtime/index.ts';
+-import { createInitialTasksState } from '@/runtime/index.ts';
+-import { createInitialAgentsState } from '@/runtime/index.ts';
+-import { createInitialOrchestrationState } from '@/runtime/index.ts';
+-import { createInitialCommunicationState } from '@/runtime/index.ts';
+-import { createInitialProviderHealthState } from '@/runtime/index.ts';
+-import { createInitialMcpState } from '@/runtime/index.ts';
+-import { createInitialPluginsState } from '@/runtime/index.ts';
+-import { createInitialDaemonState } from '@/runtime/index.ts';
+-import { createInitialAutomationState } from '@/runtime/index.ts';
+-import { createInitialAcpState } from '@/runtime/index.ts';
+-import { createInitialRoutesState } from '@/runtime/index.ts';
+-import { createInitialControlPlaneState } from '@/runtime/index.ts';
+-import { createInitialDeliveryState } from '@/runtime/index.ts';
+-import { createInitialWatcherState } from '@/runtime/index.ts';
+-import { createInitialSurfaceState } from '@/runtime/index.ts';
+-import { createInitialIntegrationsState } from '@/runtime/index.ts';
+-import { createInitialTelemetryState } from '@/runtime/index.ts';
+-import { createInitialGitState } from '@/runtime/index.ts';
+-import { createInitialDiscoveryState } from '@/runtime/index.ts';
+-import { createInitialIntelligenceState } from '@/runtime/index.ts';
+-import { createInitialUiPerfState } from '@/runtime/index.ts';
+-
+-/**
+- * RuntimeState, the complete state shape managed by the runtime store.
+- *
+- * Domain slices, each with revision/lastUpdatedAt/source metadata.
+- * All mutations must go through typed domain dispatch APIs.
+- */
+-export interface RuntimeState {
+-  session: SessionDomainState;
+-  model: ModelDomainState;
+-  conversation: ConversationDomainState;
+-  overlays: OverlayDomainState;
+-  permissions: PermissionDomainState;
+-  tasks: TaskDomainState;
+-  agents: AgentDomainState;
+-  orchestration: OrchestrationDomainState;
+-  communication: CommunicationDomainState;
+-  providerHealth: ProviderHealthDomainState;
+-  mcp: McpDomainState;
+-  plugins: PluginDomainState;
+-  daemon: DaemonDomainState;
+-  automation: AutomationDomainState;
+-  routes: RoutesDomainState;
+-  controlPlane: ControlPlaneDomainState;
+-  deliveries: DeliveryDomainState;
+-  watchers: WatcherDomainState;
+-  surfaces: SurfaceDomainState;
+-  acp: AcpDomainState;
+-  integrations: IntegrationDomainState;
+-  telemetry: TelemetryDomainState;
+-  git: GitDomainState;
+-  discovery: DiscoveryDomainState;
+-  intelligence: IntelligenceDomainState;
+-  /** Surface/UI performance metrics. SDK-compatible field name. */
+-  surfacePerf: UiPerfDomainState;
+-}
+-
+-/**
+- * Creates and returns a fully initialized RuntimeState with all domains
+- * set to their default initial values.
+- *
+- * This is the factory used by `createRuntimeStore()` and test harnesses.
+- */
++/** Preserve the local factory interface using the public engine state factory. */
+ export function createInitialRuntimeState(): RuntimeState {
+-  return {
+-    session: createInitialSessionState(),
+-    model: createInitialModelState(),
+-    conversation: createInitialConversationState(),
+-    overlays: createInitialOverlaysState(),
+-    permissions: createInitialPermissionsState(),
+-    tasks: createInitialTasksState(),
+-    agents: createInitialAgentsState(),
+-    orchestration: createInitialOrchestrationState(),
+-    communication: createInitialCommunicationState(),
+-    providerHealth: createInitialProviderHealthState(),
+-    mcp: createInitialMcpState(),
+-    plugins: createInitialPluginsState(),
+-    daemon: createInitialDaemonState(),
+-    automation: createInitialAutomationState(),
+-    routes: createInitialRoutesState(),
+-    controlPlane: createInitialControlPlaneState(),
+-    deliveries: createInitialDeliveryState(),
+-    watchers: createInitialWatcherState(),
+-    surfaces: createInitialSurfaceState(),
+-    acp: createInitialAcpState(),
+-    integrations: createInitialIntegrationsState(),
+-    telemetry: createInitialTelemetryState(),
+-    git: createInitialGitState(),
+-    discovery: createInitialDiscoveryState(),
+-    intelligence: createInitialIntelligenceState(),
+-    surfacePerf: createInitialUiPerfState(),
+-  };
++  return createRuntimeStore().getState();
+ }
+diff --git a/products/agent/src/test/input/profile-picker-modal.test.ts b/products/agent/src/test/input/profile-picker-modal.test.ts
+index 3591d58..3b2e947 100644
+--- a/products/agent/src/test/input/profile-picker-modal.test.ts
++++ b/products/agent/src/test/input/profile-picker-modal.test.ts
+@@ -1,8 +1,8 @@
+ /**
+  * Tests for ProfilePickerModal state class.
+  */
+-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+-import { rmSync, existsSync } from 'fs';
++import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
++import { rmSync, existsSync, readFileSync } from 'fs';
+ import { join } from 'path';
+ import { ProfilePickerModal } from '../../input/profile-picker-modal.ts';
+ import { ProfileManager } from '@goodvibes-jev/engine/sdk/platform/profiles';
+@@ -47,6 +47,39 @@ describe('ProfilePickerModal', () => {
+     if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
+   });
+ 
++  test.each([false, true, null, 'false'])('holds unsupported profile setting (%j) before mutation', (notificationsMetadataOnly) => {
++    const path = pm.save('privacy-profile', {
++      display: { stream: false },
++      provider: { model: 'fixture-profile-model', reasoningEffort: 'low' },
++      behavior: { autoApprove: true, ...{ notificationsMetadataOnly } },
++    });
++    const profileBefore = readFileSync(path, 'utf8');
++    const settingsBefore = structuredClone(cm.getRaw());
++    const set = spyOn(cm, 'set');
++    const dynamic = spyOn(cm, 'setDynamic');
++    const save = spyOn(cm, 'save');
++    try {
++      modal.open();
++      expect(modal.loadSelected(cm)).toBe(false);
++      expect(modal.statusMessage).toContain('cannot apply');
++      expect(modal.statusMessage).toContain('No settings were changed');
++      expect(set).not.toHaveBeenCalled();
++      expect(dynamic).not.toHaveBeenCalled();
++      expect(save).not.toHaveBeenCalled();
++      expect(cm.getRaw()).toEqual(settingsBefore);
++      expect(readFileSync(path, 'utf8')).toBe(profileBefore);
++    } finally { set.mockRestore(); dynamic.mockRestore(); save.mockRestore(); }
++  });
++
++  test('loads supported profile settings without an unsupported privacy field', () => {
++    pm.save('display-profile', { display: { stream: false }, behavior: { notifyOnComplete: false } });
++    modal.open();
++    expect(modal.loadSelected(cm)).toBe(true);
++    expect(cm.get('display.stream')).toBe(false);
++    expect(cm.get('behavior.notifyOnComplete')).toBe(false);
++    expect(modal.statusMessage).toBe('Loaded profile display-profile');
++  });
++
+   test('starts inactive', () => {
+     expect(modal.active).toBe(false);
+   });
+diff --git a/products/agent/src/test/renderer/process-modal.test.ts b/products/agent/src/test/renderer/process-modal.test.ts
+index 5165c6c..a67ee80 100644
+--- a/products/agent/src/test/renderer/process-modal.test.ts
++++ b/products/agent/src/test/renderer/process-modal.test.ts
+@@ -159,3 +159,21 @@ describe('renderProcessModal', () => {
+     expect(text).not.toContain('[agent]');
+   });
+ });
++
++
++test('process summaries use current typed records and omit entries removed during refresh', () => {
++  const active = seedProcess('synthetic active command');
++  const completed = seedProcess('synthetic completed command', 'timed out');
++  const listed = [...processes.values()].map(({ id, cmd, status }) => ({ id, pid: 0, cmd, status }));
++  listed.push({ id: 'already-pruned', pid: 0, cmd: 'missing record', status: 'running' });
++  const modal = new ProcessModal({ processManager: {
++    list: () => listed,
++    getStatus: id => processes.get(id),
++    stop: () => false,
++  } });
++  expect(listed.every(row => !Object.hasOwn(row, 'done'))).toBe(true);
++  expect(processes.get(completed)?.done).toBe(true);
++  modal.refresh();
++  expect(modal.entries.map(row => row.id)).toEqual([active]);
++  expect(modal.entries[0]!.elapsedMs).toBeGreaterThanOrEqual(1200);
++});
+diff --git a/products/agent/src/utils/clipboard.ts b/products/agent/src/utils/clipboard.ts
+index f6f152f..98dcfd4 100644
+--- a/products/agent/src/utils/clipboard.ts
++++ b/products/agent/src/utils/clipboard.ts
+@@ -19,7 +19,7 @@ export function copyToClipboard(text: string) {
+   }
+ }
+ 
+-export { pasteFromClipboard, pasteImageFromClipboard, MIN_IMAGE_BYTES } from '@goodvibes-jev/engine/sdk/platform/utils';
++export { pasteFromClipboard, pasteImageFromClipboard } from '@goodvibes-jev/engine/sdk/platform/utils';
+ 
+ // The detector lives beside the clipboard readers in the SDK; the agent's
+ // pinned platform runtime now carries it, so this file only re-exports.
+diff --git a/products/agent/tsconfig.json b/products/agent/tsconfig.json
+index ec7221d..e6a9b77 100644
+--- a/products/agent/tsconfig.json
++++ b/products/agent/tsconfig.json
+@@ -13,6 +13,6 @@
+       "@/*": ["./src/*"],
+     }
+   },
+-  "include": ["src"],
++  "include": ["src", "../../packages/engine/sdk/src/platform/types/*.d.ts"],
+   "exclude": ["src/test", "src/**/*.test.ts"]
+ }
+diff --git a/products/agent/tsconfig.test.json b/products/agent/tsconfig.test.json
+index 7d5a3b4..810ad35 100644
+--- a/products/agent/tsconfig.test.json
++++ b/products/agent/tsconfig.test.json
+@@ -5,6 +5,6 @@
+   "compilerOptions": {
+     "noEmit": true
+   },
+-  "include": ["src", "scripts", "bin"],
++  "include": ["src", "scripts", "bin", "../../packages/engine/sdk/src/platform/types/*.d.ts"],
+   "exclude": []
+ }
