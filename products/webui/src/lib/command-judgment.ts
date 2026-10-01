@@ -4,13 +4,14 @@ import { WEBUI_BUILTIN_COMMANDS, WEBUI_COMMAND_CATALOG_VERSION } from '@goodvibe
 import { runBrowserJudgment } from './goodvibes';
 import { getCommandRegistryRevision, getCommands, type CommandDef } from './commands';
 import { randomUuid } from './uuid';
+import { getClientLifetime, isClientLifetimeCurrent, subscribeClientLifetime } from './client-lifetime';
 
 type PaletteRequest = BrowserJudgmentRequest<'webui.palette.command-rank'>;
 type PaletteResponse = Extract<OperatorMethodOutput<'judgment.battery.run'>, { battery: 'webui.palette.command-rank' }>;
 type Settled = Extract<PaletteResponse, { status: 'settled' }>;
 type Held = Extract<PaletteResponse, { status: 'held' }>;
 export type CommandSearchResult =
-  | { readonly status: 'ready'; readonly commands: readonly CommandDef[]; readonly reading: Settled }
+  | { readonly status: 'ready'; readonly commands: readonly CommandDef[]; readonly reading: Settled; readonly isCurrent: () => boolean }
   | { readonly status: 'held'; readonly reason: 'uncertain'; readonly reading: Held }
   | { readonly status: 'held'; readonly reason: 'permission' | 'source' | 'unsupported' }
   | { readonly status: 'unavailable'; readonly reason: 'unavailable' | 'invalid-response' | 'aborted' | 'stale' };
@@ -108,23 +109,39 @@ export async function rankCommandSnapshot(query: string, snapshot: CommandSearch
     if (seen.has(identity)) return { status: 'held', reason: 'unsupported' };
     seen.add(identity); candidates.push(candidate);
   }
+  const lifetime = getClientLifetime();
+  const abort = new AbortController();
+  const cancel = () => abort.abort();
+  const unsubscribe = subscribeClientLifetime(cancel);
+  signal.addEventListener('abort', cancel, { once: true });
+  const isCurrent = () => isClientLifetimeCurrent(lifetime) && isCommandSearchCurrent(snapshot);
   try {
+    if (signal.aborted) return unavailable('aborted');
+    if (!isCurrent()) return unavailable('stale');
     const request: PaletteRequest = { protocolVersion: 1, requestId: randomUuid(), battery: 'webui.palette.command-rank', batteryVersion: 1,
       input: { query: { kind: 'inline', text: query }, registryVersion: WEBUI_COMMAND_CATALOG_VERSION, candidates } };
-    const raw = await runBrowserJudgment(request, signal);
+    const raw = await runBrowserJudgment(request, abort.signal);
     if (signal.aborted) return unavailable('aborted');
-    if (!isCommandSearchCurrent(snapshot)) return unavailable('stale');
+    if (!isCurrent()) return unavailable('stale');
     const reading = readCommandRankResponse(request, raw);
     if (!reading) return unavailable('invalid-response');
     if (reading.status === 'held') return { status: 'held', reason: 'uncertain', reading };
-    return { status: 'ready', reading, commands: reading.value.accepted.map(({ candidateIndex }) => snapshot.commands[candidateIndex]!) };
+    // Bind even direct consumers' returned callbacks to the originating identity.
+    // Closing the palette can cancel its request; identity and registry validity
+    // still decide whether the selected, already-settled command may execute.
+    return { status: 'ready', reading, isCurrent, commands: reading.value.accepted.map(({ candidateIndex }) => {
+      const command = snapshot.commands[candidateIndex]!;
+      return Object.freeze({ ...command, run: () => { if (isCurrent()) command.run(); } });
+    }) };
   } catch (error) {
     if (signal.aborted) return unavailable('aborted');
-    if (!isCommandSearchCurrent(snapshot)) return unavailable('stale');
+    if (!isCurrent()) return unavailable('stale');
     const code = object(object(object(error)?.body)?.error)?.code;
     if (typeof code === 'string' && ['JUDGMENT_PERMISSION_HELD', 'JUDGMENT_AUTH_REQUIRED', 'JUDGMENT_ACCESS_DENIED', 'JUDGMENT_ORIGIN_DENIED'].includes(code)) return { status: 'held', reason: 'permission' };
     if (code === 'JUDGMENT_REFERENCE_HELD') return { status: 'held', reason: 'source' };
     if (typeof code === 'string' && ['JUDGMENT_INPUT_HELD', 'JUDGMENT_INVALID_INPUT', 'JUDGMENT_INPUT_TOO_LARGE'].includes(code)) return { status: 'held', reason: 'unsupported' };
     return unavailable('unavailable');
+  } finally {
+    unsubscribe(); signal.removeEventListener('abort', cancel);
   }
 }

@@ -10,6 +10,8 @@ import { flushSync } from 'react-dom';
 import { CommandPalette, formatShortcut } from './CommandPalette';
 import { getCommands, registerCommand, unregisterCommand, type CommandDef } from '../../lib/commands';
 import type { BrowserJudgmentRequest } from '@goodvibes-jev/engine/daemon-sdk';
+import { clearStoredAuthToken, sdk, tokenStore } from '../../lib/goodvibes';
+import { setActiveRoute } from '../../lib/relay-connection';
 
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
@@ -78,15 +80,43 @@ beforeEach(() => {
   root = createRoot(container);
 });
 
-afterEach(() => {
+afterEach(async () => {
   flushSync(() => root.unmount());
   container.remove();
   opener.remove();
   for (const c of getCommands()) unregisterCommand(c.id);
   globalThis.fetch = originalFetch;
+  await tokenStore.clearToken();
 });
 
 describe('CommandPalette: rendering', () => {
+  for (const storage of ['missing', 'throwing'] as const) {
+    test(`${storage} storage preserves manual browse and holds semantic search before HTTP`, async () => {
+      const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+      let runs = 0;
+      let calls = 0;
+      globalThis.fetch = Object.assign(async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
+        calls++; throw new Error('No unauthenticated fixture request expected');
+      }, { preconnect: originalFetch.preconnect });
+      registerCommand(cmd('chat.new', { run: () => { runs++; } }));
+      try {
+        Object.defineProperty(globalThis, 'localStorage', storage === 'missing'
+          ? { configurable: true, value: undefined }
+          : { configurable: true, get() { throw new Error('Storage unavailable'); } });
+        renderPalette(true); key('Enter');
+        expect(runs).toBe(1);
+        type('start over');
+        await until(() => document.querySelector('[data-search-status="unavailable"]') !== null);
+        key('Enter');
+        expect(runs).toBe(1);
+        expect(calls).toBe(0);
+      } finally {
+        if (original) Object.defineProperty(globalThis, 'localStorage', original);
+        else Reflect.deleteProperty(globalThis, 'localStorage');
+      }
+    });
+  }
+
   test('renders nothing when closed', () => {
     renderPalette(false);
     expect(document.querySelector('[aria-label="Command palette"]')).toBeNull();
@@ -242,6 +272,69 @@ describe('CommandPalette: admitted semantic search', () => {
     ran = [];
     registerCommand(cmd('chat.new', { title: 'New Chat', group: 'chat', run: () => ran.push('chat.new') }));
     registerCommand(cmd('nav.chat', { title: 'Go to Chat', group: 'navigation', run: () => ran.push('nav.chat') }));
+  });
+
+  for (const [name, change] of [
+    ['sign-out', () => clearStoredAuthToken()],
+    ['account replacement', () => tokenStore.setToken('offline-account-b')],
+  ] as const) test(`${name} while the real authenticated request is pending cannot adopt or execute its answer`, async () => {
+    await tokenStore.setToken('offline-account-a');
+    let pending!: { request: RankRequest; finish: (response: Response) => void };
+    globalThis.fetch = ((_url, init) => new Promise<Response>((finish) => {
+      expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer offline-account-a');
+      pending = { request: JSON.parse(String(init?.body)) as RankRequest, finish };
+    })) as typeof fetch;
+    renderPalette(true); type('begin afresh');
+    await until(() => Boolean(pending));
+    await change();
+    pending.finish(answer(pending.request));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    key('Enter');
+    expect(ran).toEqual([]);
+    expect(options()).toHaveLength(0);
+  });
+
+  for (const [name, change] of [
+    ['sign-out', () => clearStoredAuthToken()],
+    ['account switch', () => tokenStore.setToken('offline-account-b')],
+    ['account A to B to A', async () => { await tokenStore.setToken('offline-account-b'); await tokenStore.setToken('offline-account-a'); }],
+    ['route away and back', () => { setActiveRoute('relay'); setActiveRoute('direct'); }],
+  ] as const) {
+    test(`settled rows and even an already-bound click cannot execute after ${name}`, async () => {
+      await tokenStore.setToken('offline-account-a');
+      let calls = 0;
+      globalThis.fetch = (async (_url, init) => { calls++; return answer(JSON.parse(String(init?.body)) as RankRequest); }) as typeof fetch;
+      renderPalette(true); type('begin afresh');
+      await until(() => options().length === 1);
+      const oldRow = options()[0]!;
+      await change();
+      // Exercise the existing handler before relying on a React repaint.
+      oldRow.click(); key('Enter');
+      expect(ran).toEqual([]);
+      await until(() => options().length === 0);
+      expect(document.querySelector('[data-search-status="unavailable"]')).not.toBeNull();
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      expect(calls).toBe(1); // Never replay the old account's query under a new identity.
+      type(''); key('Enter');
+      expect(ran).toEqual(['nav.chat']); // Explicit manual browse still works.
+    });
+  }
+
+  test('an account switch permits a new explicit query while the old result stays unusable', async () => {
+    await tokenStore.setToken('offline-account-a');
+    const headers: (string | null)[] = [];
+    globalThis.fetch = (async (_url, init) => {
+      headers.push(new Headers(init?.headers).get('Authorization'));
+      return answer(JSON.parse(String(init?.body)) as RankRequest);
+    }) as typeof fetch;
+    renderPalette(true); type('begin afresh');
+    await until(() => options().length === 1);
+    await sdk.auth.setToken('offline-account-b');
+    key('Enter'); expect(ran).toEqual([]);
+    type('new account request');
+    await until(() => options().length === 1);
+    key('Enter'); expect(ran).toEqual(['chat.new']);
+    expect(headers).toEqual(['Bearer offline-account-a', 'Bearer offline-account-b']);
   });
 
   test('a nonlexical answer selects only the real indexed command and keeps Enter behavior', async () => {

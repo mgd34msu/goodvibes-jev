@@ -5,7 +5,8 @@ import {
 } from '@goodvibes-jev/engine/sdk/browser/knowledge';
 import type { BrowserKnowledgeMethodId } from '@goodvibes-jev/engine/sdk/browser/knowledge';
 import { WEBUI_METHOD_ROUTES } from '@goodvibes-jev/engine/contracts/generated/webui-facade';
-import { createBrowserTokenStore } from '@goodvibes-jev/engine/sdk/auth';
+import { tokenStore, WEBUI_TOKEN_STORE_KEY } from './client-lifetime';
+export { tokenStore, WEBUI_TOKEN_STORE_KEY } from './client-lifetime';
 import { isRuntimeEventDomain } from '@goodvibes-jev/engine/contracts';
 import { routedFetch } from './relay-connection';
 import { readClientCompatibilityFloor, recordObservedClientCompatibilityFloor } from './client-compatibility';
@@ -160,7 +161,6 @@ export interface DaemonReceipt {
 
 export const WEBUI_SURFACE_KIND = 'webui';
 export const WEBUI_SURFACE_ID = 'goodvibes-webui';
-export const WEBUI_TOKEN_STORE_KEY = 'goodvibes.webui.token';
 // The daemon-served world is one origin: the web UI's own bundle and the API it calls
 // are served by the same control-plane listener, whose default port is 3421. A browser
 // context always has `window.location.origin`; the 3421 fallback below is reached only
@@ -173,7 +173,6 @@ export const GOODVIBES_BASE_URL = import.meta.env.VITE_GOODVIBES_BASE_URL
  * Undefined outside a Vite-built bundle (bun test, a bare module eval). */
 export const WEBUI_VERSION: string | undefined = import.meta.env.VITE_WEBUI_VERSION;
 
-export const tokenStore = createBrowserTokenStore({ key: WEBUI_TOKEN_STORE_KEY });
 
 type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 type JsonRecord = Record<string, unknown>;

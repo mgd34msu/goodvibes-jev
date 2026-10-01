@@ -13,6 +13,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from 'react-dom';
 import { type CommandDef, getCommandRegistryRevision, getCommands, subscribeCommands } from '../../lib/commands';
 import { isCommandSearchCurrent, rankCommandSnapshot, type CommandSearchResult } from '../../lib/command-judgment';
+import { getClientLifetime, isClientLifetimeCurrent, subscribeClientLifetime, type ClientLifetime } from '../../lib/client-lifetime';
 import {
   buildPaletteSections,
   PALETTE_SECTION_LABELS,
@@ -53,7 +54,8 @@ export function formatShortcut(shortcut: string): string {
 export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState('');
   const [snapshot, setSnapshot] = useState(() => ({ commands: getCommands(), revision: getCommandRegistryRevision() }));
-  const [search, setSearch] = useState<{ query: string; revision: number; result?: CommandSearchResult }>();
+  const [search, setSearch] = useState<{ query: string; revision: number; lifetime: ClientLifetime; result?: CommandSearchResult }>();
+  const [clientLifetime, setClientLifetime] = useState(getClientLifetime);
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -68,6 +70,12 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   useLayoutEffect(() => { if (!open) setQuery(''); }, [open]);
 
   useEffect(() => subscribeCommands(() => setSnapshot({ commands: getCommands(), revision: getCommandRegistryRevision() })), []);
+  useEffect(() => {
+    const refresh = () => setClientLifetime(getClientLifetime());
+    const unsubscribe = subscribeClientLifetime(refresh);
+    refresh();
+    return unsubscribe;
+  }, []);
 
   // Each search owns a request and index map. Closing, editing or replacing any
   // registered session snapshot invalidates it before another result can act.
@@ -86,20 +94,30 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     }
     if (!query.trim()) { setSearch(undefined); return; }
     const abort = new AbortController();
-    setSearch({ query, revision: snapshot.revision });
+    const lifetime = getClientLifetime();
+    if (!isClientLifetimeCurrent(lifetime)) {
+      setSearch({ query, revision: snapshot.revision, lifetime, result: { status: 'unavailable', reason: 'stale' } });
+      return;
+    }
+    const current = () => !abort.signal.aborted && isClientLifetimeCurrent(lifetime) && isCommandSearchCurrent(snapshot);
+    const unsubscribe = subscribeClientLifetime(() => abort.abort());
+    setSearch({ query, revision: snapshot.revision, lifetime });
     const timer = setTimeout(() => {
+      if (!current()) return;
       void rankCommandSnapshot(query, snapshot, abort.signal).then((result) => {
-        if (!abort.signal.aborted && isCommandSearchCurrent(snapshot)) setSearch({ query, revision: snapshot.revision, result });
+        if (current()) setSearch({ query, revision: snapshot.revision, lifetime, result });
       }).catch(() => {
-        if (!abort.signal.aborted && isCommandSearchCurrent(snapshot)) setSearch({ query, revision: snapshot.revision,
+        if (current()) setSearch({ query, revision: snapshot.revision, lifetime,
           result: { status: 'unavailable', reason: 'unavailable' } });
       });
     }, 200);
-    return () => { clearTimeout(timer); abort.abort(); };
+    return () => { unsubscribe(); clearTimeout(timer); abort.abort(); };
   }, [open, query, snapshot]);
 
   const searching = query.trim().length > 0;
-  const result = search?.query === query && search.revision === snapshot.revision ? search.result : undefined;
+  const result = search?.query === query && search.revision === snapshot.revision
+    ? search.lifetime === clientLifetime ? search.result : { status: 'unavailable', reason: 'stale' } as const
+    : undefined;
   const visibleCommands = !searching ? snapshot.commands : result?.status === 'ready' ? result.commands : [];
   const sections = useMemo(() => buildPaletteSections(visibleCommands), [visibleCommands]);
   // The keyboard order is the on-screen order: section by section.
@@ -121,10 +139,11 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const runCommand = useCallback(
     (cmd: CommandDef) => {
       if (!open || !isCommandSearchCurrent(snapshot) || !ordered.includes(cmd)) return;
+      if (searching && (result?.status !== 'ready' || !result.isCurrent())) return;
       onClose();
       cmd.run();
     },
-    [onClose, open, ordered, snapshot],
+    [onClose, open, ordered, snapshot, searching, result],
   );
 
   const onKeyDown = useCallback(

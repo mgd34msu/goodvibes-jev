@@ -4,7 +4,10 @@ import type { OperatorMethodOutput } from '@goodvibes-jev/engine/contracts';
 import { WEBUI_COMMAND_CATALOG_VERSION } from '@goodvibes-jev/engine/sdk/platform/judgment-browser/catalogs';
 import { rankCommandSnapshot, readCommandRankResponse } from './command-judgment';
 import { getCommands, getCommandRegistryRevision, registerCommand, unregisterCommand } from './commands';
-import { tokenStore } from './goodvibes';
+import { sdk, tokenStore } from './goodvibes';
+import { closeRelayClient, setActiveRoute } from './relay-connection';
+import { clearStoredRelayPairing, storeRelayPairing } from './relay-pairing';
+import { WEBUI_TOKEN_STORE_KEY } from './client-lifetime';
 
 type Request = BrowserJudgmentRequest<'webui.palette.command-rank'>;
 type Wire = Extract<OperatorMethodOutput<'judgment.battery.run'>, { battery: 'webui.palette.command-rank' }>;
@@ -36,6 +39,7 @@ beforeEach(async () => {
 afterEach(async () => {
   globalThis.fetch = originalFetch;
   await tokenStore.clearToken();
+  clearStoredRelayPairing();
   for (const command of getCommands()) unregisterCommand(command.id);
 });
 
@@ -79,11 +83,13 @@ describe('authenticated palette reader', () => {
     const result = await rankCommandSnapshot('start over', current, abort.signal);
     expect(result.status).toBe('ready');
     if (result.status !== 'ready') throw new Error('fixture result missing');
-    expect(result.commands).toEqual([current.commands[0]!]);
+    expect(result.commands.map(({ id }) => id)).toEqual([current.commands[0]!.id]);
+    expect(result.isCurrent()).toBe(true);
     expect(result.reading.value.accepted[0]?.probability).toBe(0.93);
     expect(calls).toHaveLength(1);
     expect(new URL(calls[0]!.url).pathname).toBe('/api/judgment/batteries/run');
-    expect(calls[0]!.init.signal).toBe(abort.signal);
+    expect(calls[0]!.init.signal).toBeInstanceOf(AbortSignal);
+    expect(calls[0]!.init.signal?.aborted).toBe(false);
     expect(calls[0]!.init.credentials).toBe('include');
     expect(new Headers(calls[0]!.init.headers).get('Authorization')).toBe('Bearer offline-fixture-token');
     expect(calls[0]!.input.input).toEqual({ query: { kind: 'inline', text: 'start over' }, registryVersion: WEBUI_COMMAND_CATALOG_VERSION,
@@ -139,6 +145,56 @@ describe('authenticated palette reader', () => {
     registerCommand({ id: 'chats.open.fixture', title: 'Same title', group: 'chats', judgmentSource: { kind: 'chat', sessionId: 'fixture-session' }, sourceRevision: 2, run() {} });
     finish();
     expect(await pending).toEqual({ status: 'unavailable', reason: 'stale' });
+  });
+
+  for (const [name, change] of [
+    ['logout', () => tokenStore.clearToken()],
+    ['account switch', () => sdk.auth.setToken('offline-account-b')],
+    ['account A to B to A', async () => { await tokenStore.setToken('offline-account-b'); await tokenStore.setToken('offline-fixture-token'); }],
+    ['sign out and back in', async () => { await sdk.auth.clearToken(); await sdk.auth.setToken('offline-fixture-token'); }],
+    ['expiring token entry', () => tokenStore.setTokenEntry('offline-account-b', Date.now() + 60_000)],
+    ['route away and back', () => { setActiveRoute('relay'); setActiveRoute('direct'); }],
+    ['reconnect', () => closeRelayClient()],
+    ['pairing replacement and removal', () => { storeRelayPairing({ protocol: 1, relayUrl: 'wss://relay.example.test', rid: 'offline-pairing', daemonPublicKey: 'offline-public-key' }); clearStoredRelayPairing(); }],
+    ['another-tab account transition', () => window.dispatchEvent(new window.StorageEvent('storage', { key: WEBUI_TOKEN_STORE_KEY, storageArea: window.localStorage }))],
+  ] as const) {
+    test(`pending response is stale and its transport is aborted after ${name}`, async () => {
+      let pending!: { input: Request; finish: (value: Response) => void; signal: AbortSignal };
+      globalThis.fetch = ((_url, init) => new Promise<Response>((finish) => {
+        pending = { input: JSON.parse(String(init?.body)) as Request, finish, signal: init!.signal! };
+      })) as typeof fetch;
+      const result = rankCommandSnapshot('start over', snapshot(), new AbortController().signal);
+      while (!pending) await new Promise((resolve) => setTimeout(resolve, 0));
+      await change();
+      expect(pending.signal.aborted).toBe(true);
+      pending.finish(response(wire(pending.input)));
+      expect(await result).toEqual({ status: 'unavailable', reason: 'stale' });
+    });
+
+    test(`settled direct-caller commands cannot execute after ${name}`, async () => {
+      let runs = 0;
+      registerCommand({ id: 'chat.new', title: 'New Chat', group: 'chat', run() { runs++; } });
+      globalThis.fetch = (async (_url, init) => response(wire(JSON.parse(String(init?.body)) as Request))) as typeof fetch;
+      const result = await rankCommandSnapshot('start over', snapshot(), new AbortController().signal);
+      if (result.status !== 'ready') throw new Error('fixture reading did not settle');
+      expect(result.isCurrent()).toBe(true);
+      await change();
+      expect(result.isCurrent()).toBe(false);
+      result.commands[0]!.run();
+      expect(runs).toBe(0);
+    });
+  }
+
+  test('a direct storage replacement cannot execute a settled callback even before its storage event', async () => {
+    let runs = 0;
+    registerCommand({ id: 'chat.new', title: 'New Chat', group: 'chat', run() { runs++; } });
+    globalThis.fetch = (async (_url, init) => response(wire(JSON.parse(String(init?.body)) as Request))) as typeof fetch;
+    const result = await rankCommandSnapshot('start over', snapshot(), new AbortController().signal);
+    if (result.status !== 'ready') throw new Error('fixture reading did not settle');
+    window.localStorage.setItem(WEBUI_TOKEN_STORE_KEY, 'offline-account-b');
+    result.commands[0]!.run();
+    expect(runs).toBe(0);
+    expect(result.isCurrent()).toBe(false);
   });
 
   test('an aborted HTTP request cannot produce a late actionable result', async () => {
