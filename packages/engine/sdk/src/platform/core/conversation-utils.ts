@@ -20,11 +20,15 @@ function toInternalMessage(message: ProviderMessage): Message {
   if (message.role === 'user') {
     return {
       role: 'user',
-      content: typeof message.content === 'string' ? message.content : (message.content as ContentPart[]),
+      content: typeof message.content === 'string' ? message.content : structuredClone(message.content as ContentPart[]),
     };
   }
   if (message.role === 'assistant') {
-    return { role: 'assistant', content: extractAssistantText(message.content) };
+    return {
+      role: 'assistant',
+      content: extractAssistantText(message.content),
+      ...(message.toolCalls?.length ? { toolCalls: structuredClone(message.toolCalls) } : {}),
+    };
   }
   const toolMsg = message as { role: 'tool'; callId: string; content: string | unknown; name?: string };
   return {
@@ -37,6 +41,66 @@ function toInternalMessage(message: ProviderMessage): Message {
 
 export function messagesToInternal(messages: ProviderMessage[]): Message[] {
   return messages.map(toInternalMessage);
+}
+
+/** Compare the complete model-facing projection, never outcome prose or model names. */
+function providerKey(message: ProviderMessage): string {
+  switch (message.role) {
+    case 'user': return JSON.stringify([message.role, message.content]);
+    case 'assistant': return JSON.stringify([message.role, message.content, message.toolCalls ?? []]);
+    case 'tool': return JSON.stringify([message.role, message.callId, message.content, message.name ?? null]);
+  }
+}
+
+/**
+ * Restore a compaction's retained messages whole, including non-provider metadata.
+ * The cached provider list maps one-to-one to non-system stored messages. Kept
+ * object identity is authoritative. An exact, uniquely matching copy can also
+ * retain its source; ambiguous copies stay metadata-free rather than borrowing
+ * another occurrence's model, usage, cancellation or outcome. Every source is
+ * consumed at most once. Newly written messages are converted with tool calls.
+ */
+export function restoreKeptMessages(
+  kept: readonly ProviderMessage[],
+  llm: readonly ProviderMessage[],
+  stored: readonly Message[],
+): Message[] {
+  const nonSystem = stored.filter((message) => message.role !== 'system');
+  if (nonSystem.length !== llm.length || llm.some((message, index) => message.role !== nonSystem[index]!.role)) {
+    return kept.map(toInternalMessage);
+  }
+  const sourceKeys = nonSystem.map((message) => {
+    if (message.role === 'tool') {
+      return providerKey({ role: 'tool', callId: message.callId, content: message.content, name: message.toolName });
+    }
+    if (message.role === 'assistant') {
+      return providerKey({ role: 'assistant', content: message.content,
+        ...(message.toolCalls ? { toolCalls: message.toolCalls } : {}) });
+    }
+    return providerKey(message);
+  });
+  if (llm.some((message, index) => providerKey(message) !== sourceKeys[index])) {
+    return kept.map(toInternalMessage);
+  }
+  const byIdentity = new Map(llm.map((message, index) => [message, index]));
+  const byValue = new Map<string, number[]>();
+  llm.forEach((message, index) => {
+    const key = providerKey(message);
+    const indices = byValue.get(key) ?? [];
+    indices.push(index);
+    byValue.set(key, indices);
+  });
+  const used = new Set<number>();
+  return kept.map((message) => {
+    let index = byIdentity.get(message);
+    if (index === undefined) {
+      const candidates = byValue.get(providerKey(message)) ?? [];
+      if (candidates.length === 1) index = candidates[0];
+    }
+    if (index === undefined || used.has(index)) return toInternalMessage(message);
+    used.add(index);
+    return structuredClone(nonSystem[index]!);
+  });
 }
 
 export function cloneBranchMap(branches: Map<string, Message[]>): Record<string, Message[]> {

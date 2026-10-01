@@ -35,6 +35,7 @@ import {
   type SessionLiveTurnControls,
 } from '../sdk/src/platform/control-plane/routes/session-runtime.ts';
 import { GatewayVerbError } from '../sdk/src/platform/control-plane/routes/gateway-verb-error.ts';
+import { ConversationManager } from '../sdk/src/platform/core/conversation.ts';
 
 const allowAll = { check: async () => true } as unknown as PermissionManager;
 
@@ -97,6 +98,12 @@ describe('per-tool cancel: one call dies, the turn continues', () => {
     expect(fast.cancelled).toBeUndefined();
     // The registry retired both calls after settlement.
     expect(aborts.list().length).toBe(0);
+    const conversation = new ConversationManager();
+    conversation.addToolResults(results);
+    expect(conversation.getMessageSnapshot()).toMatchObject([
+      { role: 'tool', callId: 'call-slow', outcome: 'cancelled' },
+      { role: 'tool', callId: 'call-fast', outcome: 'ok' },
+    ]);
   });
 
   test('cancel of an unknown/settled call returns false', () => {
