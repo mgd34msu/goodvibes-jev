@@ -1,5 +1,6 @@
 import { createSemanticNodeSlugPlanner } from './node-slug.js';
 import { writeSupportedRepairSubjectLinks } from './repair-subject-write-plan.js';
+import { createGeneratedClaimReferenceScope, type GeneratedClaimRelinking } from './verification/structural-references.js';
 import { withSupportBudget } from './support-budget.js';
 import { sleep, yieldEvery, yieldToEventLoop } from '../cooperative.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
@@ -78,10 +79,13 @@ async function promoteRepairSourcesWithinBudget(
   const subjects = linkedRepairSubjects(context.store, spaceId, gap, context.objectProfiles ?? []);
   const subjectIds = new Set(subjects.map((subject) => subject.id));
   const usefulness = createRepairFactUsefulnessReader({ signal });
+  const generatedClaims = createGeneratedClaimReferenceScope(context.store);
   const countUsable = (ids: readonly string[]) => countUsableRepairFacts(context.store, spaceId, ids, subjectIds,
     gap, subjects, usefulness, signal, context.shouldStop);
   const linkSubjects = (ids: readonly string[]) => linkPromotedFactsToRepairSubjects(context.store, spaceId, gap, ids,
-    usefulness, signal, context.shouldStop);
+    usefulness, signal, context.shouldStop, generatedClaims.relinking);
+  const promote = (ids: readonly string[]) => promoteRepairEvidenceFacts(context.store, spaceId, gap, ids,
+    usefulness, signal, context.shouldStop, generatedClaims.rememberGenerated);
   const processedSourceIds: string[] = [];
   if (context.enrichSource) {
     for (const [index, sourceId] of sourceIds.entries()) {
@@ -90,11 +94,11 @@ async function promoteRepairSourcesWithinBudget(
       processedSourceIds.push(sourceId);
       await linkSubjects([sourceId]);
       if ((await countUsable(processedSourceIds)).count >= targetUsableFactCount) break;
-      await promoteRepairEvidenceFacts(context.store, spaceId, gap, [sourceId], usefulness, signal, context.shouldStop);
+      await promote([sourceId]);
       await linkSubjects([sourceId]);
       if ((await countUsable(processedSourceIds)).count >= targetUsableFactCount) break;
       await waitForRepairSourceText(context.store, sourceId, Math.min(deadlineAt, Date.now() + REPAIR_SOURCE_TEXT_WAIT_MS));
-      await promoteRepairEvidenceFacts(context.store, spaceId, gap, [sourceId], usefulness, signal, context.shouldStop);
+      await promote([sourceId]);
       await linkSubjects([sourceId]);
       if ((await countUsable(processedSourceIds)).count >= targetUsableFactCount) break;
       const remainingMs = Math.max(0, deadlineAt - Date.now());
@@ -107,7 +111,7 @@ async function promoteRepairSourcesWithinBudget(
         // Earlier settled promotion/link passes stand; this hold must not start a fallback pass.
         if (isKnowledgeSourceQualityFailure(error) || error instanceof KnowledgeGeneratedFactSupportHeldError) throw error;
         await waitForRepairSourceText(context.store, sourceId, Math.min(deadlineAt, Date.now() + REPAIR_SOURCE_TEXT_WAIT_MS));
-        await promoteRepairEvidenceFacts(context.store, spaceId, gap, [sourceId], usefulness, signal, context.shouldStop);
+        await promote([sourceId]);
         await linkSubjects([sourceId]);
         const recoveryUsefulness = await countUsable(processedSourceIds);
         await context.store.batch(async () => {
@@ -121,7 +125,7 @@ async function promoteRepairSourcesWithinBudget(
         continue;
       }
       await waitForRepairSourceText(context.store, sourceId, Math.min(deadlineAt, Date.now() + REPAIR_SOURCE_TEXT_WAIT_MS));
-      await promoteRepairEvidenceFacts(context.store, spaceId, gap, [sourceId], usefulness, signal, context.shouldStop);
+      await promote([sourceId]);
       await linkSubjects([sourceId]);
       if ((await countUsable(processedSourceIds)).count >= targetUsableFactCount) break;
       await yieldToEventLoop();
@@ -131,7 +135,7 @@ async function promoteRepairSourcesWithinBudget(
   const promotionSourceIds = processedSourceIds.length > 0 ? uniqueStrings(processedSourceIds) : sourceIds;
   const promotedFactCount = processedSourceIds.length > 0
     ? 0
-    : await promoteRepairEvidenceFacts(context.store, spaceId, gap, sourceIds, usefulness, signal, context.shouldStop);
+    : await promote(sourceIds);
   await linkSubjects(promotionSourceIds);
   const finalUsefulness = await countUsable(promotionSourceIds);
   const usableFactCount = promotedFactCount > 0 ? promotedFactCount : finalUsefulness.count;
@@ -214,6 +218,7 @@ async function promoteRepairEvidenceFacts(
   sourceIds: readonly string[],
   reader: ReturnType<typeof createRepairFactUsefulnessReader>,
   signal?: AbortSignal, shouldStop?: () => boolean,
+  rememberGenerated?: (fact: KnowledgeNodeRecord) => void,
 ): Promise<number> {
   assertSemanticWriteAllowed(signal, shouldStop);
   const guard = createSemanticWriteGuard(store, signal, shouldStop);
@@ -298,7 +303,7 @@ async function promoteRepairEvidenceFacts(
   if (useful.count !== prepared.plans.length) throw new KnowledgeRepairFactUsefulnessHeldError('not-useful');
   await store.batch(async () => {
     guard.assertCurrent(); prepared.assertCurrent(); useful.assertCurrent();
-    await prepared.write();
+    await prepared.write(rememberGenerated ? { nodeWritten: rememberGenerated } : undefined);
   });
   return inputs.length;
 }
@@ -510,6 +515,7 @@ async function writeResolvedSourceLinkedRepairProfileFact(
 async function linkPromotedFactsToRepairSubjects(
   store: KnowledgeStore, spaceId: string, gap: KnowledgeNodeRecord, sourceIds: readonly string[],
   reader: ReturnType<typeof createRepairFactUsefulnessReader>, signal?: AbortSignal, shouldStop?: () => boolean,
+  generatedClaims?: GeneratedClaimRelinking,
 ): Promise<void> {
   const subjects = linkedRepairSubjects(store, spaceId, gap, []);
   if (!subjects.length) return;
@@ -522,7 +528,7 @@ async function linkPromotedFactsToRepairSubjects(
   ]).map((fact) => [fact.id, fact])).values()].filter((fact) => isRepairFactKind(fact) && isRepairFactCompatibleWithSubjects(fact, subjects));
   const prepared = await prepareRepairUsefulness({ store, spaceId, gap, subjects, candidates, guard, reader });
   await writeSupportedRepairSubjectLinks({ store, spaceId, gap, sourceIds, subjects, signal, shouldStop,
-    candidate: prepared.accepts, assertCurrent: prepared.assertCurrent,
+    candidate: prepared.accepts, assertCurrent: prepared.assertCurrent, generatedClaims,
   });
 }
 

@@ -8,6 +8,7 @@ import { createGeneratedFactWritePlanner, exactKnowledgeIds, generatedFactSuppor
 import { KnowledgeGeneratedFactSupportHeldError } from './verification/types.js';
 import { repairSubjectHints } from './repair-subjects.js';
 import { readString, readStringArray, semanticMetadata } from './utils.js';
+import { generatedClaimSupportReferences, retainRevalidatedGeneratedClaim, type GeneratedClaimRelinking } from './verification/structural-references.js';
 
 /** Verify all existing facts and proposed attachments before this pass changes any. */
 export async function writeSupportedRepairSubjectLinks(input: {
@@ -17,6 +18,8 @@ export async function writeSupportedRepairSubjectLinks(input: {
   readonly assertCurrent?: (() => void) | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly shouldStop?: (() => boolean) | undefined;
+  /** Opaque in-memory producer scope, never inferred from a stored ID or receipt. */
+  readonly generatedClaims?: GeneratedClaimRelinking | undefined;
 }): Promise<void> {
   const { store, spaceId, subjects } = input;
   assertSemanticWriteAllowed(input.signal, input.shouldStop);
@@ -59,7 +62,8 @@ export async function writeSupportedRepairSubjectLinks(input: {
     const key = support.add(spaceId, { id: fact.id, kind: readString(fact.metadata.factKind) ?? fact.kind,
       title: fact.title, summary: fact.summary, value: fact.metadata.value, evidence: fact.metadata.evidence,
       aliases: fact.aliases, labels: readStringArray(fact.metadata.labels), subject, targetHints,
-    }, sources, allSubjects);
+    }, sources, allSubjects, new Map(), new Set(), input.generatedClaims
+      ? generatedClaimSupportReferences(input.generatedClaims, store, fact) : undefined);
     return { fact, sources, primarySourceId: fact.sourceId ?? fallback, subjectIds, targetHints, subject, key };
   });
   const factIds = new Set(drafts.map((draft) => draft.fact.id));
@@ -82,7 +86,8 @@ export async function writeSupportedRepairSubjectLinks(input: {
     input.assertCurrent?.();
     for (const [index, { fact, primarySourceId, supportMetadata }] of plans.entries()) {
       assertSemanticWriteAllowed(input.signal, input.shouldStop);
-      await store.upsertPreparedNode(activation, index);
+      const written = await store.upsertPreparedNode(activation, index);
+      if (input.generatedClaims) retainRevalidatedGeneratedClaim(input.generatedClaims, store, fact, written);
       for (const object of subjects) await store.upsertEdge({
         fromKind: 'node', fromId: fact.id, toKind: 'node', toId: object.id,
         relation: 'describes', weight: 0.82,

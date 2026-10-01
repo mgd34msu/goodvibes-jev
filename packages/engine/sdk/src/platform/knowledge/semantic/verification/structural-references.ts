@@ -1,6 +1,6 @@
 import type { KnowledgeStore } from '../../store.js';
 import { captureKnowledgeSourceReferences } from '../../source-structural-references.js';
-import type { KnowledgeSourceRecord, KnowledgeExtractionRecord } from '../../types.js';
+import type { KnowledgeSourceRecord, KnowledgeExtractionRecord, KnowledgeNodeRecord } from '../../types.js';
 import { supportHash } from './projection.js';
 import { KnowledgeGeneratedFactSupportHeldError, type GeneratedFactSupportInput } from './types.js';
 
@@ -8,6 +8,48 @@ import { KnowledgeGeneratedFactSupportHeldError, type GeneratedFactSupportInput 
 export interface EngineGeneratedSupportReferences {
   readonly claimId: string;
   readonly subjectIds?: ReadonlySet<string> | undefined;
+}
+
+interface GeneratedClaimScope {
+  readonly store: KnowledgeStore;
+  readonly minted: WeakMap<KnowledgeNodeRecord, { readonly id: string; readonly hash: string }>;
+}
+/** Opaque operation-local token, never serialized or recovered from receipts. */
+export type GeneratedClaimRelinking = object;
+const claimScopes = new WeakMap<GeneratedClaimRelinking, GeneratedClaimScope>();
+function claimScope(token: GeneratedClaimRelinking, store: KnowledgeStore): GeneratedClaimScope {
+  const scope = claimScopes.get(token);
+  if (!scope || scope.store !== store) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+  return scope;
+}
+/** Only the actual producer remembers a record immediately after its generated write. */
+export function createGeneratedClaimReferenceScope(store: KnowledgeStore) {
+  const relinking = Object.freeze({});
+  const minted: GeneratedClaimScope['minted'] = new WeakMap();
+  claimScopes.set(relinking, { store, minted });
+  return { relinking, rememberGenerated(record: KnowledgeNodeRecord): void {
+    if (store.getNode(record.id) !== record) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+    minted.set(record, { id: record.id, hash: supportHash(record) });
+  } };
+}
+export function generatedClaimSupportReferences(token: GeneratedClaimRelinking, store: KnowledgeStore,
+  record: KnowledgeNodeRecord): EngineGeneratedSupportReferences | undefined {
+  const known = claimScope(token, store).minted.get(record);
+  if (!known) return undefined;
+  if (known.id !== record.id || known.hash !== supportHash(record) || store.getNode(record.id) !== record) {
+    throw new KnowledgeGeneratedFactSupportHeldError('stale');
+  }
+  return { claimId: known.id };
+}
+/** Called synchronously after the separately verified relinking write commits. */
+export function retainRevalidatedGeneratedClaim(token: GeneratedClaimRelinking, store: KnowledgeStore,
+  previous: KnowledgeNodeRecord, current: KnowledgeNodeRecord): void {
+  const { minted } = claimScope(token, store), known = minted.get(previous);
+  if (!known) return;
+  if (known.id !== current.id || known.hash !== supportHash(previous) || store.getNode(current.id) !== current) {
+    throw new KnowledgeGeneratedFactSupportHeldError('stale');
+  }
+  minted.set(current, { id: current.id, hash: supportHash(current) });
 }
 interface RegisteredReferences {
   readonly claimId: string;
