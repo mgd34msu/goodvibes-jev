@@ -7886,7 +7886,7 @@
       "target": "products/agent/src/runtime/client/hosted-frame-render.ts",
       "upstreamBlob": "098052a02e9a65dd2f616f5ed48a508e9d7abc41",
       "present": true,
-      "recoveredBlob": "487ce61bcfae20b807bc89817e479ad3b64b3fc7",
+      "recoveredBlob": "a57ac9853100bebdc33cb93b7764dcf57ed4b5cf",
       "materialization": "workspace-adapted"
     },
     {
@@ -7926,7 +7926,7 @@
       "target": "products/agent/src/runtime/client/remote-conversation.ts",
       "upstreamBlob": "b8ea98dc4f099f48e22599f7e2f372b1a5047a0f",
       "present": true,
-      "recoveredBlob": "390f40918afec4606cf575580be66694c09f75f4",
+      "recoveredBlob": "5b9779d421b84c32f19220a9103e9b5539e9bf81",
       "materialization": "workspace-adapted"
     },
     {
@@ -8430,7 +8430,7 @@
       "target": "products/agent/src/shell/remote-conversation-wiring.ts",
       "upstreamBlob": "674ec8b92b5d0b737bbd24701a279cf8c042dab1",
       "present": true,
-      "recoveredBlob": "32925765d7b4773c189e4466541a40acc36f22d0",
+      "recoveredBlob": "5178c01110743acdd7a2ee7c4df9954b55612112",
       "materialization": "workspace-adapted"
     },
     {
@@ -9198,8 +9198,8 @@
       "target": "products/agent/src/test/cli/run-turn.test.ts",
       "upstreamBlob": "21bfd55539b90d0ee8728a2d527a150e0d70e134",
       "present": true,
-      "recoveredBlob": "21bfd55539b90d0ee8728a2d527a150e0d70e134",
-      "materialization": "byte-identical"
+      "recoveredBlob": "15a2db53aa0b2b79b1b277cf4ed95ceff20addd5",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/cli/service-posture.test.ts",
@@ -13422,8 +13422,8 @@
       "target": "products/agent/src/test/runtime/remote-conversation-resume.test.ts",
       "upstreamBlob": "dc27e5c53cd483c136702f1760b706e8b49841c2",
       "present": true,
-      "recoveredBlob": "dc27e5c53cd483c136702f1760b706e8b49841c2",
-      "materialization": "byte-identical"
+      "recoveredBlob": "7ea45f51d6dd0bbcfabaef49210c9b4b6d0e279a",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/runtime/remote-conversation.test.ts",
@@ -16227,8 +16227,8 @@
     }
   ],
   "materializationSummary": {
-    "byte-identical": 824,
-    "workspace-adapted": 826
+    "byte-identical": 822,
+    "workspace-adapted": 828
   },
   "limits": [
     "Materialization hashes account for source retention, not semantic disposition completion.",
