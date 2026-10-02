@@ -222,14 +222,14 @@ describe('ConversationManager.getErrorLines: notices leave the transcript', () =
     cm.addUserMessage('run tool');
     cm.addSystemMessage('request failed: timeout');
     cm.addTypedSystemMessage('rate limited: 429 Too Many Requests', 'system');
-    cm.addTypedSystemMessage('[WRFC] Chain wrfc-1 FAILED: gates red', 'wrfc');
+    cm.addTypedSystemMessage('[Contract] contract-1 FAILED: checks red', 'contract');
     cm.addTypedSystemMessage('[Tool] edit error: file not found', 'operational');
     cm.getDisplayBlocks();
     expect(cm.getErrorLines()).toHaveLength(0);
   });
 
-  test('the kind rule: system and wrfc kinds are navigable, operational is not, unknown defaults to system', () => {
-    const registry = new Map<number, SystemMessageKind>([[0, 'system'], [1, 'wrfc'], [2, 'operational']]);
+  test('the kind rule: system and contract kinds are navigable, operational is not, unknown defaults to system', () => {
+    const registry = new Map<number, SystemMessageKind>([[0, 'system'], [1, 'contract'], [2, 'operational']]);
     const context = { messageKindRegistry: registry };
     expect(isNavigableSystemMessage(context, 0)).toBe(true);
     expect(isNavigableSystemMessage(context, 1)).toBe(true);

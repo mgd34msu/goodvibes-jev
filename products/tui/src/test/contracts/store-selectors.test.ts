@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { createInitialRuntimeState, type RuntimeState } from '../../runtime/store/state.ts';
+import { createRuntimeStore, type RuntimeState } from '../../runtime/store/index.ts';
 import {
   selectRunningTasks,
   selectRunningAgents,
@@ -13,15 +13,25 @@ import {
 type TurnState = RuntimeState['conversation']['turnState'];
 
 function withTurnState(turnState: TurnState): RuntimeState {
-  const state = createInitialRuntimeState();
+  const state = createRuntimeStore().getState();
   return { ...state, conversation: { ...state.conversation, turnState } };
 }
 
 describe('store selectors', () => {
-  const state = createInitialRuntimeState();
+  const state = createRuntimeStore().getState();
 
-  test('the runtime state has no slot for the removed side-view layout', () => {
-    expect(Object.keys(state)).not.toContain('panels');
+  test('shared compatibility panels stay isolated and do not activate a terminal overlay', () => {
+    // The canonical public RuntimeState retains a compatibility record. The
+    // TUI consumes that store directly; it does not reintroduce side-view UI.
+    const first = createRuntimeStore();
+    const second = createRuntimeStore();
+    expect(first.getState().panels).toEqual({});
+    expect(first.getState().panels).not.toBe(second.getState().panels);
+    first.setState(current => ({ ...current, panels: { fixture: { visible: true } } }));
+    expect(first.getState().panels).toEqual({ fixture: { visible: true } });
+    expect(second.getState().panels).toEqual({});
+    expect(selectAnyOverlayVisible(first.getState())).toBe(false);
+    expect(selectAnyOverlayVisible(second.getState())).toBe(false);
   });
 
   test('a fresh state has nothing running, no overlay, no preview, and no active turn', () => {
