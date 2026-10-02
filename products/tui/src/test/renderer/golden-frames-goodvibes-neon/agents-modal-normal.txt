@@ -2,7 +2,7 @@
 |                                                                                                    |
 |       ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄       |
 |                                                                                                    |
-|           ✦ Agents  4 running · 1 waiting on you · you $1.250 · fleet $0.931        esc            |
+|           ✦ Agents  4 running · 1 waiting on you · known fleet $0.931 · you $1.2    esc            |
 |                                                                                                    |
 |           ▏Type / to filter agents                                               6 shown           |
 |                                                                                                    |
@@ -23,7 +23,7 @@
 |                                                      No messages yet.                              |
 |                                                                                                    |
 |                                                                                                    |
-|            ⏎  open full screen    s  steer    ctrl+x  stop    n  new agent                         |
+|            ⏎  open full screen    ctrl+x  stop    n  new agent                                     |
 |            i  interrupt    p  pause    b  waiting on you (1)    v  archive                         |
 |            a  archive one    f  follow                                          2 more ↓           |
 |                                                                                                    |
@@ -697,9 +697,13 @@
 3 75 bg=#161a22
 3 76 fg=#94a3b8
 3 76 bg=#161a22
+3 77 fg=#94a3b8
 3 77 bg=#161a22
+3 78 fg=#94a3b8
 3 78 bg=#161a22
+3 79 fg=#94a3b8
 3 79 bg=#161a22
+3 80 fg=#94a3b8
 3 80 bg=#161a22
 3 81 bg=#161a22
 3 82 bg=#161a22
@@ -3706,32 +3710,33 @@
 24 36 fg=#e2e8f0
 24 36 bg=#64748b
 24 36 bold=1
-24 37 bg=#161a22
-24 38 fg=#94a3b8
-24 38 bg=#161a22
-24 39 fg=#94a3b8
-24 39 bg=#161a22
-24 40 fg=#94a3b8
-24 40 bg=#161a22
-24 41 fg=#94a3b8
-24 41 bg=#161a22
-24 42 fg=#94a3b8
+24 37 fg=#e2e8f0
+24 37 bg=#64748b
+24 37 bold=1
+24 38 fg=#e2e8f0
+24 38 bg=#64748b
+24 38 bold=1
+24 39 fg=#e2e8f0
+24 39 bg=#64748b
+24 39 bold=1
+24 40 fg=#e2e8f0
+24 40 bg=#64748b
+24 40 bold=1
+24 41 fg=#e2e8f0
+24 41 bg=#64748b
+24 41 bold=1
 24 42 bg=#161a22
+24 43 fg=#94a3b8
 24 43 bg=#161a22
+24 44 fg=#94a3b8
 24 44 bg=#161a22
+24 45 fg=#94a3b8
 24 45 bg=#161a22
-24 46 fg=#e2e8f0
-24 46 bg=#64748b
-24 46 bold=1
-24 47 fg=#e2e8f0
-24 47 bg=#64748b
-24 47 bold=1
-24 48 fg=#e2e8f0
-24 48 bg=#64748b
-24 48 bold=1
-24 49 fg=#e2e8f0
-24 49 bg=#64748b
-24 49 bold=1
+24 46 fg=#94a3b8
+24 46 bg=#161a22
+24 47 bg=#161a22
+24 48 bg=#161a22
+24 49 bg=#161a22
 24 50 fg=#e2e8f0
 24 50 bg=#64748b
 24 50 bold=1
@@ -3741,9 +3746,8 @@
 24 52 fg=#e2e8f0
 24 52 bg=#64748b
 24 52 bold=1
-24 53 fg=#e2e8f0
-24 53 bg=#64748b
-24 53 bold=1
+24 53 bg=#161a22
+24 54 fg=#94a3b8
 24 54 bg=#161a22
 24 55 fg=#94a3b8
 24 55 bg=#161a22
@@ -3753,36 +3757,25 @@
 24 57 bg=#161a22
 24 58 fg=#94a3b8
 24 58 bg=#161a22
+24 59 fg=#94a3b8
 24 59 bg=#161a22
+24 60 fg=#94a3b8
 24 60 bg=#161a22
+24 61 fg=#94a3b8
 24 61 bg=#161a22
-24 62 fg=#e2e8f0
-24 62 bg=#64748b
-24 62 bold=1
-24 63 fg=#e2e8f0
-24 63 bg=#64748b
-24 63 bold=1
-24 64 fg=#e2e8f0
-24 64 bg=#64748b
-24 64 bold=1
+24 62 fg=#94a3b8
+24 62 bg=#161a22
+24 63 bg=#161a22
+24 64 bg=#161a22
 24 65 bg=#161a22
-24 66 fg=#94a3b8
 24 66 bg=#161a22
-24 67 fg=#94a3b8
 24 67 bg=#161a22
-24 68 fg=#94a3b8
 24 68 bg=#161a22
-24 69 fg=#94a3b8
 24 69 bg=#161a22
-24 70 fg=#94a3b8
 24 70 bg=#161a22
-24 71 fg=#94a3b8
 24 71 bg=#161a22
-24 72 fg=#94a3b8
 24 72 bg=#161a22
-24 73 fg=#94a3b8
 24 73 bg=#161a22
-24 74 fg=#94a3b8
 24 74 bg=#161a22
 24 75 bg=#161a22
 24 76 bg=#161a22

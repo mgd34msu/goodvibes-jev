@@ -7,11 +7,11 @@
 |     agent ·                |
 |     executing-tool         |
 |                            |
+|            the             |
 |            expected        |
 |            rows next.      |
 |                            |
 |                            |
-|      s  steer              |
 |      ctrl+x  stop          |
 |     (asks first)           |
 |      [ ]  other agents     |
@@ -482,25 +482,14 @@
 12 2 bg=#161a22
 12 3 bg=#161a22
 12 4 bg=#161a22
-12 5 fg=#e2e8f0
-12 5 bg=#64748b
-12 5 bold=1
-12 6 fg=#e2e8f0
-12 6 bg=#64748b
-12 6 bold=1
-12 7 fg=#e2e8f0
-12 7 bg=#64748b
-12 7 bold=1
+12 5 bg=#161a22
+12 6 bg=#161a22
+12 7 bg=#161a22
 12 8 bg=#161a22
-12 9 fg=#94a3b8
 12 9 bg=#161a22
-12 10 fg=#94a3b8
 12 10 bg=#161a22
-12 11 fg=#94a3b8
 12 11 bg=#161a22
-12 12 fg=#94a3b8
 12 12 bg=#161a22
-12 13 fg=#94a3b8
 12 13 bg=#161a22
 12 14 bg=#161a22
 12 15 bg=#161a22
