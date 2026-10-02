@@ -206,6 +206,7 @@ export const PROJECT_PLANNING_STATE_OUTPUT_SCHEMA = objectSchema({
   projectId: STRING_SCHEMA,
   knowledgeSpaceId: STRING_SCHEMA,
   state: nullableSchema(PROJECT_PLANNING_STATE_SCHEMA),
+  revision: objectSchema({ sourceId: STRING_SCHEMA, generation: STRING_SCHEMA }, ['sourceId', 'generation']),
   source: KNOWLEDGE_SOURCE_SCHEMA,
 }, ['ok', 'projectId', 'knowledgeSpaceId'], { additionalProperties: true });
 

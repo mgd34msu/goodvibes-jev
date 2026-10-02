@@ -72551,6 +72551,22 @@
                 }
               ]
             },
+            "revision": {
+              "type": "object",
+              "properties": {
+                "sourceId": {
+                  "type": "string"
+                },
+                "generation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sourceId",
+                "generation"
+              ],
+              "additionalProperties": false
+            },
             "source": {
               "type": "object",
               "properties": {
@@ -73215,6 +73231,22 @@
                   "type": "null"
                 }
               ]
+            },
+            "revision": {
+              "type": "object",
+              "properties": {
+                "sourceId": {
+                  "type": "string"
+                },
+                "generation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sourceId",
+                "generation"
+              ],
+              "additionalProperties": false
             },
             "source": {
               "type": "object",

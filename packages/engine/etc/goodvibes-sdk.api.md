@@ -21557,6 +21557,10 @@ export interface OperatorMethodOutputMap {
         } & {
             readonly [key: string]: unknown;
         });
+        revision?: {
+            sourceId: string;
+            generation: string;
+        };
         source?: ({
             id: string;
             connectorId: string;
@@ -21690,6 +21694,10 @@ export interface OperatorMethodOutputMap {
         } & {
             readonly [key: string]: unknown;
         });
+        revision?: {
+            sourceId: string;
+            generation: string;
+        };
         source?: ({
             id: string;
             connectorId: string;
