@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { handleDoctorSubcommand } from '../../cli/doctor.ts';
 import type { GoodVibesCliOutputFormat } from '@goodvibes-jev/engine/terminal-shell';
@@ -13,12 +15,37 @@ function makeOptions(root: string, subcommand: string, args: string[], outputFor
 
 describe('goodvibes doctor subcommands', () => {
   let root = '';
-  beforeEach(() => { root = makeProjectTempDir('gv-doctor'); });
-  afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+  let previous: ReturnType<typeof installJudgmentPort>;
+  beforeEach(() => {
+    root = makeProjectTempDir('gv-doctor');
+    previous = installJudgmentPort(fakePort((name, _question, state) => {
+      const input = state as { tool?: string; arguments?: unknown; workingDirectory?: string };
+      // Authored facts for these explanation-only calls; verdicts still come from the real gate/preset.
+      const read = { mutates: 0.01, outward: 0.01, secrets: 0.01, kind: 'read', family: 'generic', irreversible: 0.01, beyondProject: 0.01, weakensSecurity: 0.01, catastrophic: 0.01, cardDetails: 0.01 };
+      const write = { ...read, mutates: 0.99, kind: 'write', family: 'file-mutation' };
+      const remove = { ...read, mutates: 0.99, kind: 'shell', family: 'shell-destructive', irreversible: 0.99, obfuscated: 0.01 };
+      const fixtures: Readonly<Record<string, Readonly<Record<string, string | number>>>> = {
+        'read:{"path":"./src/x.ts"}': read,
+        'write:{"path":"./src/x.ts"}': write,
+        'write:{"path":"./a.ts"}': write,
+        'exec:{"command":"rm -rf build"}': remove,
+        'exec:{"command":"rm -rf /tmp/x"}': { ...remove, beyondProject: 0.99 },
+      };
+      const facts = input.workingDirectory === root ? fixtures[`${input.tool}:${JSON.stringify(input.arguments)}`] : undefined;
+      const reading = facts && Object.hasOwn(facts, name) ? facts[name] : undefined;
+      if (reading === undefined) throw new Error(`Unexpected doctor fixture question: ${name}`);
+      return typeof reading === 'string' ? choiceAnswer(_question, reading, 0.99) : noulAnswer(reading);
+    }).port);
+  });
+  afterEach(() => { installJudgmentPort(previous); rmSync(root, { recursive: true, force: true }); });
 
   test('unknown subcommand returns null so the classic doctor renders', async () => {
     const result = await handleDoctorSubcommand(makeOptions(root, 'nonsense', []));
     expect(result).toBeNull();
+  });
+
+  test('explanation fixtures reject unlisted tool arguments rather than guessing', async () => {
+    await expect(handleDoctorSubcommand(makeOptions(root, 'explain', ['read', './unlisted.ts']))).rejects.toThrow('Unexpected doctor fixture question');
   });
 
   test('routing lists the conversation role and its config keys', async () => {
@@ -61,11 +88,21 @@ describe('goodvibes doctor subcommands', () => {
     expect(result!.output).toContain('exec');
   });
 
-  test('explain: allow-all mode approves even a destructive command', async () => {
+  test('explain: allow-all still asks for critical outside-project destruction', async () => {
     const opts = makeOptions(root, 'explain', ['rm', '-rf', '/tmp/x']);
     opts.configManager.set('permissions.mode', 'allow-all');
     const result = await handleDoctorSubcommand(opts);
+    expect(result!.output).toContain('Decision: ASK');
+    expect(result!.output).toContain('CRITICAL');
+    expect(result!.output).toContain('user_prompt');
+  });
+
+  test('explain: allow-all permits a below-critical destructive project call', async () => {
+    const opts = makeOptions(root, 'explain', ['rm', '-rf', 'build']);
+    opts.configManager.set('permissions.mode', 'allow-all');
+    const result = await handleDoctorSubcommand(opts);
     expect(result!.output).toContain('Decision: ALLOW');
+    expect(result!.output).toContain('HIGH');
   });
 
   test('explain: json output carries the authoritative verdict and layers', async () => {
