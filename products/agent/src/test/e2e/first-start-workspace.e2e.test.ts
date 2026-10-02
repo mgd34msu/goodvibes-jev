@@ -62,6 +62,8 @@ describe('first start in a new workspace', () => {
     expect(existsSync(register)).toBe(true);
     const recorded = JSON.parse(readFileSync(register, 'utf8')) as { declines?: Array<{ root: string }> };
     expect((recorded.declines ?? []).map((entry) => entry.root)).toContain(realpathSync(home.workspace));
+    expect(home.judgments.accepted).toContain('route');
+    expect(home.judgments.accepted).toContain('turn');
     expect(agent.alive()).toBe(true);
   }, 150_000);
 });

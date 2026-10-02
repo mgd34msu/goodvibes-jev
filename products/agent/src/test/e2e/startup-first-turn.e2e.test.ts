@@ -57,6 +57,8 @@ describe('main screen and first turn', () => {
     const answered = await agent.waitForScreen('the scripted reply', (s) => screenText(s).includes(REPLY), 45_000);
     expect(model.requests.some((request) => lastUserText(request).includes(PROMPT))).toBe(true);
     expect(screenText(answered)).toContain(PROMPT);
+    expect(home.judgments.accepted).toContain('route');
+    expect(home.judgments.accepted).toContain('turn');
     expect(agent.alive()).toBe(true);
   }, 120_000);
 });
