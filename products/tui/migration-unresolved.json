@@ -432,10 +432,6 @@
     "disposition": "JEV"
   },
   {
-    "source": "src/panels/fleet-spawn.ts",
-    "disposition": "JEV"
-  },
-  {
     "source": "src/panels/fleet-steer.ts",
     "disposition": "JEV"
   },
@@ -465,10 +461,6 @@
   },
   {
     "source": "src/panels/modals/planning-modal.ts",
-    "disposition": "JEV"
-  },
-  {
-    "source": "src/panels/modals/work-plan-modal.ts",
     "disposition": "JEV"
   },
   {
@@ -600,10 +592,6 @@
     "disposition": "JEV"
   },
   {
-    "source": "src/test/panels/fleet-spawn.test.ts",
-    "disposition": "JEV"
-  },
-  {
     "source": "src/test/panels/fleet-steer.test.ts",
     "disposition": "JEV"
   },
@@ -633,10 +621,6 @@
   },
   {
     "source": "src/test/panels/modals/planning-modal.test.ts",
-    "disposition": "JEV"
-  },
-  {
-    "source": "src/test/panels/modals/work-plan-modal.test.ts",
     "disposition": "JEV"
   },
   {

@@ -8124,6 +8124,75 @@
         "reviewRow": 46,
         "verification": "Forward expands notification history from200 to2000, adds system notices, subject routing, toast/restored state and event-key dedupe while preserving panel_only filtering, closed collapse reasons, exact group keys and true counts. Current equals forward bytes. Existing feed tests prove filtering/counts/subscribe/unsubscribe/dismiss/subject/unread; one-entry-per-event tests prove canonical bridge dedupe. Added off-tree current-boundary probe confirms2001 unique arrivals retain newest2000 and batch_window_collapsed accumulates exact3."
       }
+    },
+    {
+      "source": "src/panels/fleet-spawn.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/views/fleet-spawn.ts",
+        "products/tui/src/input/agents-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "8f50ea2d9087ac24e68b941274fdba27b68b25b4",
+        "forwardSourceBlob": "6359d6a0ab078ce8188f2912009a2ea854e65b46",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "reviewedImplementationRevision": "59815ad672b7f72622dfb2a0711c6aa7d5548f40",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 8,
+        "verification": "Delayed discovery/directory resolve and reject, Escape including filtered and admitted-create paths, close/reopen ownership, rapid keys and actual bounded modal frames. Admitted creation retains an honest receipt; only stale picker/finalizer repaint is suppressed."
+      }
+    },
+    {
+      "source": "src/test/panels/fleet-spawn.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/test/views/fleet-spawn.test.ts",
+        "products/tui/src/test/views/fleet-spawn-ownership.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "3333686d0f557ba8bb9aa0e0acd05bb2005d8294",
+        "forwardSourceBlob": "3bd4c0099bd7decacfa1073fb63de1d2bd1d6abc",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "reviewedImplementationRevision": "59815ad672b7f72622dfb2a0711c6aa7d5548f40",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 32,
+        "verification": "Current public SurfaceModalHost token/render regressions supplement retained spawn gateway fixtures; independent85tests385assertions plus97tests289assertions. Initial4Escape review failures retained and fixed."
+      }
+    },
+    {
+      "source": "src/panels/modals/work-plan-modal.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/views/modals/work-plan-modal.ts",
+        "products/tui/src/input/views.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "2dc87b771f0c7681d64567d81863ff2658e145d1",
+        "forwardSourceBlob": "83deaf82c56e1d6b322300476d7906409639270a",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "reviewedImplementationRevision": "179ff1a02acb35c1cbaa694306f5ff94376eeab6",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 19,
+        "verification": "Consumes public WorkPlanLinkTargets.contractId and contractNodeId; known final kind suffix preserves namespaced IDs. Missing target warns and returns false; existing first-row fallback is explicitly preserved, not claimed absent."
+      }
+    },
+    {
+      "source": "src/test/panels/modals/work-plan-modal.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/test/views/modals/work-plan-modal.test.ts",
+        "products/tui/src/test/input/work-plan-contract-links.test.ts",
+        "products/tui/src/test/input/view-target.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "c5d6932e64171564b439a716155ff018c076560d",
+        "forwardSourceBlob": "6dcd7a37d0aeb3f3a11e35a89e32544a3fd7b3a4",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "reviewedImplementationRevision": "179ff1a02acb35c1cbaa694306f5ff94376eeab6",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 42,
+        "verification": "Actual WorkPlanStore\u2192keyboard\u2192CommandRegistry\u2192public ProcessRegistry\u2192AgentsModal.reveal; contract/agent links, missing/stale links, parser negatives and unchanged goldens. Independent108tests359assertions plus6tests70assertions."
+      }
     }
   ],
   "verification": {
@@ -8132,10 +8201,10 @@
   "accounting": {
     "inventoryRows": 1618,
     "samePathMappings": 1027,
-    "unresolved": 530,
+    "unresolved": 526,
     "unresolvedManifest": "products/tui/migration-unresolved.json",
     "semantics": "Same-path mappings identify current locations, not evidence of completed JEV/HOIST decisions or feature parity.",
-    "verifiedRenameMappings": 61,
+    "verifiedRenameMappings": 65,
     "renameReview": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
     "retainedRenameReview": "docs/audit/tui-retained-rename-review-2026-10-02.json"
   }

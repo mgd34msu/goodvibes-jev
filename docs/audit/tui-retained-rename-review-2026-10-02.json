@@ -7241,5 +7241,86 @@
       ],
       "baselineRevision": "7c09d2fbfe60f2978ec6e219edd1f0769c8163c8"
     }
+  ],
+  "followUps": [
+    {
+      "validatedSourceRevision": "e47a8f7862f63be130a8793c63eaf0735397d874",
+      "rows": [
+        {
+          "row": 8,
+          "source": "src/panels/fleet-spawn.ts",
+          "disposition": "JEV",
+          "status": "proven-after-independent-source-repair",
+          "targets": [
+            "products/tui/src/views/fleet-spawn.ts",
+            "products/tui/src/input/agents-modal.ts"
+          ],
+          "origin": "59815ad672b7f72622dfb2a0711c6aa7d5548f40",
+          "review": "review_fleet_spawn_cancellation",
+          "proof": "Delayed discovery/directory resolve and reject, Escape including filtered and admitted-create paths, close/reopen ownership, rapid keys and actual bounded modal frames. Admitted creation retains an honest receipt; only stale picker/finalizer repaint is suppressed.",
+          "postimageSha256": {
+            "products/tui/src/views/fleet-spawn.ts": "11218f77824d555a8fff5662ef0cc32b811dc57eed20a2212536b5cb1cd6787e",
+            "products/tui/src/input/agents-modal.ts": "14cf477f056027d0b2c6af3ba5a2e15fb56206abbf8814830037f954fb672cef"
+          }
+        },
+        {
+          "row": 32,
+          "source": "src/test/panels/fleet-spawn.test.ts",
+          "disposition": "JEV",
+          "status": "proven-after-independent-source-repair",
+          "targets": [
+            "products/tui/src/test/views/fleet-spawn.test.ts",
+            "products/tui/src/test/views/fleet-spawn-ownership.test.ts"
+          ],
+          "origin": "59815ad672b7f72622dfb2a0711c6aa7d5548f40",
+          "review": "review_fleet_spawn_cancellation",
+          "proof": "Current public SurfaceModalHost token/render regressions supplement retained spawn gateway fixtures; independent85tests385assertions plus97tests289assertions. Initial4Escape review failures retained and fixed.",
+          "postimageSha256": {
+            "products/tui/src/test/views/fleet-spawn.test.ts": "34092ec81471c9d53f7bcac6147b30ce68f4da787d09a7c63432c19f3f70e2f8",
+            "products/tui/src/test/views/fleet-spawn-ownership.test.ts": "4919666014eebaf3c9aff374b846d3004ad073b630b79d653646ef8bfa0a1603"
+          }
+        },
+        {
+          "row": 19,
+          "source": "src/panels/modals/work-plan-modal.ts",
+          "disposition": "JEV",
+          "status": "proven-after-independent-source-repair",
+          "targets": [
+            "products/tui/src/views/modals/work-plan-modal.ts",
+            "products/tui/src/input/views.ts"
+          ],
+          "origin": "179ff1a02acb35c1cbaa694306f5ff94376eeab6",
+          "review": "review_workplan_contract_navigation",
+          "proof": "Consumes public WorkPlanLinkTargets.contractId and contractNodeId; known final kind suffix preserves namespaced IDs. Missing target warns and returns false; existing first-row fallback is explicitly preserved, not claimed absent.",
+          "postimageSha256": {
+            "products/tui/src/views/modals/work-plan-modal.ts": "666cdad02341f1120d98dc2e4ee6f7ece5bf8ee5a58fd79b71f2523bb0fdce57",
+            "products/tui/src/input/views.ts": "1d215f6722bb80304c833ea7d730b434fea8c29632048d09fafbae3e24a475e3"
+          }
+        },
+        {
+          "row": 42,
+          "source": "src/test/panels/modals/work-plan-modal.test.ts",
+          "disposition": "JEV",
+          "status": "proven-after-independent-source-repair",
+          "targets": [
+            "products/tui/src/test/views/modals/work-plan-modal.test.ts",
+            "products/tui/src/test/input/work-plan-contract-links.test.ts",
+            "products/tui/src/test/input/view-target.test.ts"
+          ],
+          "origin": "179ff1a02acb35c1cbaa694306f5ff94376eeab6",
+          "review": "review_workplan_contract_navigation",
+          "proof": "Actual WorkPlanStore\u2192keyboard\u2192CommandRegistry\u2192public ProcessRegistry\u2192AgentsModal.reveal; contract/agent links, missing/stale links, parser negatives and unchanged goldens. Independent108tests359assertions plus6tests70assertions.",
+          "postimageSha256": {
+            "products/tui/src/test/views/modals/work-plan-modal.test.ts": "ad8d6359da166763dada5943c277cd9fea31a56afa312c94bb47f837ebcbe0d3",
+            "products/tui/src/test/input/work-plan-contract-links.test.ts": "f775f2a7b0d7f408c5329b9f6555f08e4e4231cdf9d452e049ddfa3844911b2a",
+            "products/tui/src/test/input/view-target.test.ts": "c4f7c4505c534dd12e133b9fb2df2b83f713917672820e8ae50af9cf766fff09"
+          }
+        }
+      ],
+      "mapped": 1092,
+      "unresolved": 526,
+      "remainingRetainedRenames": 26,
+      "scope": "Only these four repaired source/test responsibilities close; original baseline30open rulings remain historical. Native planning replacement does not close any other row."
+    }
   ]
 }

@@ -122,3 +122,44 @@ Work Plan contract navigation, pending spawn cancellation, ACP receipt labels,
 footer eligibility and unpriced cost remain explicit until separate fixes pass
 independent review. This accounting change contains no runtime edits, source-pin
 advance, held dependency adoption or publication. Host SDK PR69 remains blocked.
+
+## Corrected typed host integration and coherent local source
+
+Reviewed source e47a8f7862f63be130a8793c63eaf0735397d874 includes the corrected host SDK
+on main f16dcf76, the independently accepted typed TUI consumer, Work Plan contract
+navigation and FleetSpawn ownership fixes. All reviewed source postimages and the
+API union are preserved. The host review passed45 tests/775 assertions and inspected
+14 styled renderer frames. The ordinary full test-program diagnostics are gone;
+exactly15 legacy planning diagnostics remain byte-identical to the recorded baseline.
+
+The zero-exclusion guarded source aggregate ran506 files:504passed, one stale mock
+failed4cases, and the legacy planning transaction timed out. The mock was corrected
+with an empty registered-host schema and independently passed unchanged daemon-write
+routing assertions. Runtime bytes did not change. Aggregate raw evidence retains
+6,080passing tests/27,763 assertions from complete summaries; the planning file has
+no complete summary. This is not a full green aggregate or native-workflow acceptance.
+
+Owned engine/terminal build, SDK prepare, canonical API check, standard Linux-x64
+build, strict standard smoke and private package check all passed. Package inspection
+saw607 files; staged sqlite-vec loaded as v0.1.9. Shared regressions passed319 tests/
+833 assertions across21 files, including the complete toolchain. Actual compiled
+launcher startup opened Settings; Enter persisted literal false, repeated Enter
+revoked it, and normal exit returned 0. Network guard violations were zero; only
+three previously approved exact synthetic metadata URLs answered locally. This is
+synthetic compiled-shell coverage, not a live provider/daemon or original tmux E2E.
+
+Binary SHA256: 9dc40492c054634aad299b8a089c5c86ca79358839a6256f69b5a9439c0f84c3.
+Native addon SHA256: 5923730861b86c707cca5602b5f91092f9e52a46706dbc6e269fd4bb9c4498e8.
+
+The native vibecheck direction supersedes the old planning-interview integration
+plan. Public engine ledger/evidence types and actor/revision/receipt semantics are
+pending; existing planning failures remain explicit until successor code/tests
+resolve them. No new planning implementation, plugin internals or destructive legacy
+data migration is included. Current accounting 1092/526 remains partial. ACP receipt
+labels, actual footer eligibility and unknown-cost display are separate known gaps.
+No publication is authorized by this local checkpoint.
+
+Dependency caches in the four recent TUI worktrees use audited read-only donor
+aliases after inode recovery. No package-manager install/remove/update or dependency
+mutation may run through those aliases; restore a private representation first.
+Verified archives and restoration receipts are retained in the proof directory.

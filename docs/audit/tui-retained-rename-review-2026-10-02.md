@@ -91,3 +91,29 @@ blocked pending canonical peer repairs. This review neither adopts that repair
 nor reopens the stopped PR56 captured-original-path authority/symlink race work.
 Authorized runtime corrections are separate local branches and need independent
 review before any affected mapping can close. No publication is included.
+
+## Independently accepted repairs and native successor direction
+
+Four originally open rows (8,32 spawn source/tests;19,42 Work Plan source/tests)
+now have independently accepted repairs and actual public UI-boundary regression
+coverage. Exact origins/postimage hashes and qualified findings are recorded in
+`followUps` in the companion JSON. The clean validated runtime source is e47a8f7.
+Work Plan keeps an existing default first-row selection after a missing-target
+warning; the review does not claim otherwise. Spawn Escape invalidates pending
+reads and UI ownership, while an admitted create still produces its honest receipt
+and may cause a normal shell redraw.
+
+Accounting is now **1,092 mapped /526 unresolved**, with26 retained rename rows,
+437 deleted-path reviews and63 other obligations. The old baseline rulings above stay
+historical. No extra deleted source is retired or assigned a fictional target.
+
+The owner subsequently approved a native vibecheck successor for the legacy
+project-planning interview. That changes the intended UX direction, not current
+completion evidence. The existing15 planning diagnostics and transaction timeout
+are now obligations to reconcile through that native replacement; this checkpoint
+does not adopt the legacy PR57 implementation merely to hide them. Inspect-only
+execution authority remains independent of mode, and old state/question/decision
+IDs and executionApproved metadata must remain readable without granting authority.
+Buzz owns the new engine ledger/evidence contract; method names, revision scope,
+actor binding and typed receipts remain pending before product wiring. No plugin
+internals or invented SDK APIs are imported here.
