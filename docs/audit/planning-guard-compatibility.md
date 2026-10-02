@@ -1,7 +1,8 @@
 # Legacy planning guard compatibility after PR76
 
 This bounded change reuses the planning-action portion of PR57 on main
-`8a96edeb9a2e214b9a565d1b44b585148398c8c9`. PR76 already supplies the hardened
+`ba5e85958ca58cc8cd47c88fa59d1bb236c20021`, preserving the merged PR78
+read-only ledger exports and PR79 product-test CI split. PR76 supplies the hardened
 KnowledgeStore/SQLite persistence boundary. None of those storage files is
 replaced here.
 
@@ -51,17 +52,17 @@ annotation is unrelated and is not included unless current API gates require it.
 
 ## Verification of this candidate
 
-- Nine focused engine suites: 70 tests, 274 assertions, no failures. Includes
+- Twelve focused engine suites: 147 tests, 1,393 assertions, no failures. Includes
   selected/current action races, legacy answer races/input capture/batch holds,
   real independent handles and process writers, strict locks, existing planning
-  answer/service/routes and plan integration.
+  answer/service/routes and plan integration, merged ledger readers and product CI contracts.
 - Forced repository solution plus engine test/scripts, public-consumer types and
   all present product typechecks: no diagnostics. TUI and Agent workspaces are
   absent, so these results do not claim their acceptance.
 - Regenerated contracts, OpenAPI, foundation client types, fixtures, web facade,
   operator docs and SDK/subpath reports from this source. Standard `api:check`,
   `contracts:check`, OpenAPI, facade and foundation-I/O checks pass: 165 SDK
-  subpaths / 10,106 exports, 3 terminal subpaths / 199 exports, 513 typed methods.
+  subpaths / 10,111 exports, 3 terminal subpaths / 199 exports, 513 typed methods.
   API Extractor retains the existing compiler-version, sql-js duplicate and
   Gaxios declaration warnings; extraction exits successfully.
 - No full engine test-suite, product build or compiled startup run is claimed.
