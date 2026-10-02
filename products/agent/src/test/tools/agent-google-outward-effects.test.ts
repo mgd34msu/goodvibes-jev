@@ -343,8 +343,8 @@ describe('what stays refused', () => {
     expect(sent).toHaveLength(0);
   });
 
-  test('the refusal names the field and shows the overlapping text', async () => {
-    const { tool } = googleTool({
+  test('the refusal names the field and shows the text judged as derived', async () => {
+    const { tool, sent } = googleTool({
       messages: [{ id: 'm1', from: 'stranger@evil.example', subject: STRANGER_SUBJECT, body: STRANGER_BODY }],
     });
     ownerTurn();
@@ -360,11 +360,13 @@ describe('what stays refused', () => {
 
     const message = send.error ?? '';
     // A refusal an operator cannot check is indistinguishable from a bug, so it
-    // has to name the field and quote the overlap, not merely assert one.
+    // has to name the field and quote the evidence, not merely assert one.
     expect(message).toContain('body');
     // The quoted excerpt must be text that is genuinely in the message that was
     // read, so the owner can go and look at it.
-    const quoted = /The overlapping text is "([^"]+)"/.exec(message)?.[1] ?? '';
+    const quoted = /The text in question is "([^"]+)"/.exec(message)?.[1] ?? '';
+    expect(send.success).toBe(false);
+    expect(sent).toHaveLength(0);
     expect(quoted.length).toBeGreaterThan(0);
     expect(STRANGER_BODY.toLowerCase()).toContain(quoted.toLowerCase());
   });
