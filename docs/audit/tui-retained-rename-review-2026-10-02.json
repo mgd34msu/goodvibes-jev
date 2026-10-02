@@ -7387,6 +7387,45 @@
       "unresolved": 523,
       "remainingRetainedRenames": 23,
       "scope": "Only receipt source/test rows9/33 and stop-discoverability row10 close. Cost display repaired, but format row5 broader actual-list equivalence remains open. Original baseline rulings and failed proofs preserved."
+    },
+    {
+      "validatedSourceRevision": "b9b277c1bfb7ffd446a887804eb513c8d2147652",
+      "authoritativeForwardRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+      "rows": [
+        {
+          "row": 5,
+          "source": "src/panels/fleet-panel-format.ts",
+          "disposition": "JEV",
+          "status": "partially-proven-residual-unresolved",
+          "provenResponsibilities": [
+            "Current AgentsModal.nodeRow and detail delegation byte-identical to authoritative ec057c forward presentation",
+            "Actual public registry to modal list/detail covers lifecycle, glyphs, tokens/costs, attempts/held, pick/input/approval, stopping, quiet, tool/headline, steer, observed liveness, contract criteria/workspace/application and qualified graph",
+            "Reviewed header correction renders absent aggregate as unpriced and numeric aggregate as known subtotal without a completeness claim"
+          ],
+          "remainingObligation": "Explicit retirement or supported successor decision for historical per-item isolation/integration posture: merged/hash/no-changes, conflict/kept, pending/not-yet-integrated and structured conflict paths. Old worktreeBranch presence acted as an isolation signal; no branch-name display is claimed. ContractUnitView supplies neither those per-item integration facts nor conflict paths.",
+          "proof": {
+            "reviewer": "review_actual_fleet_format",
+            "tests": 33,
+            "assertions": 1140,
+            "fail": 0,
+            "testSha256": "be6e90c46fad417bf23dca8f893f7fb226c10619c86919f83f70d2d9791ac3fc",
+            "directory": "gv-tui-format-equivalence-proof",
+            "actualListIdentity": "nodeRow and detail delegation equal ec057c; no inferred legacy layout restoration"
+          },
+          "targets": [
+            "products/tui/src/views/fleet-format.ts",
+            "products/tui/src/input/agents-modal.ts"
+          ],
+          "postimageSha256": {
+            "products/tui/src/views/fleet-format.ts": "5784e93d53644672cb0d313b002afe69d265a94d4a33dac2b6e678e8350be2a0",
+            "products/tui/src/input/agents-modal.ts": "8e4b51db89736f9e2d116825ebfe931f46ae8fc9a0d12a854a8feead0b612c67"
+          }
+        }
+      ],
+      "mapped": 1095,
+      "unresolved": 523,
+      "remainingRetainedRenames": 23,
+      "scope": "No additional whole inventory row closes. Proven actual-list/detail subresponsibilities are separated from the precise unsupported historical per-item integration/conflict obligation."
     }
   ]
 }
