@@ -27,7 +27,7 @@ import type { Compositor } from '../renderer/compositor.ts';
 import type { RuntimeContext, BootstrapOptions } from './context.ts';
 import type { SystemMessageRouter } from '../core/system-message-router.ts';
 import {
-  shutdownRuntime, fireSessionStart, createTaskManager, OpsControlPlane, AcpTaskAdapter,
+  fireSessionStart, createTaskManager, OpsControlPlane, AcpTaskAdapter,
   emitSessionReady, emitSessionStarted, loadLastConversation, leaveHostedSessionOnExit,
   scheduleBackgroundMcpDiscovery, startBackgroundProviderRegistration, restoreSavedModel, startExternalServices,
   type ExternalServicesHandle, type HostServiceStatus, createHttpTransport, createDeferredStartupCoordinator,
@@ -39,6 +39,7 @@ import { pruneStaleOperatorTokens } from '@goodvibes-jev/engine/sdk/platform/pai
 import { resolveDaemonCompanionToken, workspaceOperatorTokenCandidates } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import type { UiRuntimeServices } from './ui-services.ts';
 import { initializeBootstrapCore } from './bootstrap-core.ts';
+import { createBootstrapShutdown } from './bootstrap-shutdown.ts';
 import { ensureBootModelResolvable } from './provider-fallback.ts';
 import { createBootstrapShell } from './bootstrap-shell.ts';
 import type { ShellViews } from '../views/builtin-views.ts';
@@ -704,50 +705,32 @@ export async function bootstrapRuntime(
     _getConfiguredProviderIds: () => services.providerRegistry.getConfiguredProviderIds(),
     commandRegistry,
     systemMessageRouter,
-    shutdown: async (sessionData) => {
-      // Clear bootstrap-owned subscriptions
-      bootstrapUnsubs.forEach(fn => fn());
-      bootstrapUnsubs.length = 0;
-      runtimeUnsubs.forEach((fn) => fn());
-      runtimeUnsubs.length = 0;
-      forensicsCollector.dispose();
-      // Honest close on exit, fire-and-forget (never blocks shutdown);
-      // a no-op when the spine was never activated (embedded/local-only topology).
-      sessionSpine.close(runtime.sessionId);
-      sessionSpine.dispose();
-      sessionInboundInputs.dispose(); sessionUnionCache.dispose(); // stop the inbound-steer poll and the wire-refresh interval on exit
-      // Quitting has to SAY it is leaving: a hosted session's detach policy applies when the LAST client detaches, so an exit that never detaches leaves a kill-policy session (the shipped default) alive, attached to a process that is gone. Bounded and non-throwing, see client/hosted-exit.ts.
-      await Promise.all([leaveHostedSessionOnExit({ configManager, homeDirectory: services.homeDirectory }), deferredStartup.drain(100)]);
-      if (externalServicesPromise) {
-        try {
-          externalServices = await externalServicesPromise;
-        } catch {
-          // Startup failures are already surfaced through the deferred task handler.
-        }
-      }
-      await externalServices.stop();
-      // Clear agent status interval via ref (consistent with agentStatusIntervalRef usage)
-      if (agentStatusIntervalRef.value !== null) {
-        clearInterval(agentStatusIntervalRef.value);
-        agentStatusIntervalRef.value = null;
-      }
-      await shutdownRuntime(
-        runtime.sessionId,
-        sessionData,
-        runtime.model,
-        runtime.provider,
-        conversation.title || '',
-        services.workflow.scheduleManager,
-        services.hookDispatcher,
-        services.providerRegistry,
-        services.sessionOrchestration,
-        {
-          workingDirectory: services.workingDirectory,
-          homeDirectory: services.homeDirectory,
-          sessionManager: services.sessionManager,
-        },
-      );
-    },
+    shutdown: createBootstrapShutdown({
+      runtime,
+      conversationTitle: () => conversation.title || '',
+      bootstrapUnsubs,
+      runtimeUnsubs,
+      forensicsCollector,
+      sessionSpine,
+      sessionInboundInputs,
+      sessionUnionCache,
+      leaveHostedSession: () => leaveHostedSessionOnExit({ configManager, homeDirectory: services.homeDirectory }),
+      deferredStartup,
+      settleExternalServices: async () => {
+        if (externalServicesPromise) externalServices = await externalServicesPromise;
+      },
+      stopExternalServices: () => externalServices.stop(),
+      agentStatusIntervalRef,
+      scheduleManager: services.workflow.scheduleManager,
+      hookDispatcher: services.hookDispatcher,
+      providerRegistry: services.providerRegistry,
+      sessionOrchestration: services.sessionOrchestration,
+      persistenceOptions: {
+        workingDirectory: services.workingDirectory,
+        homeDirectory: services.homeDirectory,
+        sessionManager: services.sessionManager,
+      },
+    }),
   };
 
   // ── Phase 12b: Operator Control Plane wiring (capability-gated); store and

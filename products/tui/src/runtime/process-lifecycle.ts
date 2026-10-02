@@ -136,7 +136,10 @@ export function installProcessLifecycle(deps: ProcessLifecycleDeps): ProcessLife
   // Cleanup and its diagnostics must not prevent an independent owner from
   // releasing resources, or strand the terminal before the final process exit.
   const reportCleanupError = (phase: string, error: unknown): void => {
-    try { logger.debug(`${phase} error during process cleanup (non-fatal)`, { error: summarizeError(error) }); } catch { /* best-effort */ }
+    const failures: unknown[] = error instanceof AggregateError ? error.errors : [error];
+    for (const failure of failures) {
+      try { logger.debug(`${phase} error during process cleanup (non-fatal)`, { error: summarizeError(failure) }); } catch { /* best-effort */ }
+    }
   };
   const bestEffort = (phase: string, cleanup: () => void): void => {
     try { cleanup(); } catch (error) { reportCleanupError(phase, error); }
