@@ -389,13 +389,14 @@ export class ChangesModal implements SurfaceModal {
     q.answer(confirmed);
   }
 
-  private handleTextEntry(token: InputToken, draft: string, commit: (text: string) => void, cancel: () => void): string {
+  private handleTextEntry(token: InputToken, draft: string, commit: (text: string) => void, cancel: () => void): string | null {
     if (token.type === 'text') return draft + [...token.value].map((ch) => (ch === '\n' || ch === '\r' ? ' ' : ch)).filter((ch) => ch >= ' ').join('');
     if (token.type !== 'key') return draft;
     const key = token.logicalName ?? '';
-    if (key === 'enter') { commit(draft); return draft; }
+    // Completed/cancelled entry must not restore the draft after its callback.
+    if (key === 'enter') { commit(draft); return null; }
     if (isTextBackspace(key)) return draft.slice(0, -1);
-    if (key === 'escape') cancel();
+    if (key === 'escape') { cancel(); return null; }
     return draft;
   }
 
