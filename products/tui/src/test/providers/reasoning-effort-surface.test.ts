@@ -14,7 +14,8 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from 'bun:test';
-import type { ReasoningEffortSpec } from '@goodvibes-jev/engine/sdk/platform/providers';
+import type { LLMProvider, ReasoningEffortSpec } from '@goodvibes-jev/engine/sdk/platform/providers';
+import { createTestProviderRegistry } from '../helpers/test-managers.ts';
 import {
   describeConfiguredEffort,
   describeEffortForModel,
@@ -148,10 +149,23 @@ describe('the /effort explainer is generated from the resolved spec', () => {
     expect(text).not.toContain('thinking_config.thinking_budget');
   });
 
-  test('an Anthropic effort model is explained with its own field name', () => {
-    const anthropic = model(EFFORT_SPEC, { provider: 'anthropic', displayName: 'Claude Test' });
-    const text = describeEffortForModel(anthropic, 'xhigh').join('\n');
-    expect(text).toContain("output_config.effort = 'xhigh'");
+  test('a registered Anthropic adapter is explained with its own field regardless of provider name', () => {
+    const registry = createTestProviderRegistry();
+    const provider: LLMProvider = {
+      name: 'test-effort-wire-adapter', adapterKind: 'anthropic', models: [UNKNOWN_ID],
+      credentialAuthority: 'anonymous', modelSource: { kind: 'dated-static', asOf: '2026-01-01' },
+      chat: async () => { throw new Error('presentation fixture must not call a provider'); },
+    };
+    registry.register(provider);
+    try {
+      const anthropic = model(EFFORT_SPEC, { provider: provider.name, displayName: 'Claude Test' });
+      const text = describeEffortForModel(anthropic, 'xhigh').join('\n');
+      expect(text).toContain("output_config.effort = 'xhigh'");
+      expect(text).not.toContain("reasoning_effort = 'xhigh'");
+    } finally {
+      // Clear the global adapter record through the same public registration API.
+      registry.register({ ...provider, adapterKind: undefined });
+    }
   });
 
   test('a budget-typed model is explained as a token budget', () => {

@@ -186,7 +186,7 @@ describe('buildContextWindowStatusText provenance labels', () => {
     [{ contextWindowProvenance: 'configured_cap', contextWindowOrigin: { kind: 'provider_file' } }, 'source:   provider file'],
     [{ contextWindowProvenance: 'provider_api' }, 'source:   reported by the provider'],
     [{ contextWindowProvenance: 'catalog', contextWindowOrigin: { kind: 'catalog', catalogProviderId: 'abacus' } }, 'source:   catalog: abacus'],
-    [{ contextWindowProvenance: 'catalog', contextWindowOrigin: { kind: 'consensus', providers: 4, agreeing: 4 } }, 'source:   consensus of 4 providers'],
+    [{ contextWindowProvenance: 'catalog', contextWindowOrigin: { kind: 'consensus', providers: 4, agreeing: 4 } }, 'source:   estimate from 4 providers'],
   ] as const)('%o → %s', (overrides, label) => {
     const model = makeModel(overrides as Partial<ModelDefinition>);
     expect(buildContextWindowStatusText(model, 100_000, null)).toContain(label);
