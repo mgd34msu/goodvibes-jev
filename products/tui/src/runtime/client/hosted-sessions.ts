@@ -117,6 +117,7 @@ export function createHostedSessionsClient(verbs: DaemonVerbCaller): HostedSessi
         'sessions.hosted.create',
         withoutUndefined({
           workspaceRoot: input.workspaceRoot,
+          originSurface: input.originSurface,
           title: input.title,
           modelId: input.modelId,
           initialPrompt: input.initialPrompt,

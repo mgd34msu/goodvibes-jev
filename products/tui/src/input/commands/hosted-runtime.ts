@@ -233,6 +233,7 @@ export function registerHostedRuntimeCommands(registry: CommandRegistry): void {
             const prompt = rest.join(' ').trim();
             const record = await seams.client.create({
               workspaceRoot,
+              originSurface: 'tui',
               ...(prompt ? { initialPrompt: prompt } : {}),
               ...(policy ? { detachPolicy: policy } : {}),
             });

@@ -96,6 +96,17 @@ describe('hosted sessions client', () => {
     expect(record.effectiveDetachPolicy).toBe('survive');
   });
 
+  test('create preserves an explicitly supplied origin surface', async () => {
+    const calls: RecordedCall[] = [];
+    const client = createHostedSessionsClient(recordingVerbs({
+      'sessions.hosted.create': { session: makeRecord({ originSurface: 'agent' }) },
+    }, calls));
+
+    await client.create({ workspaceRoot: '/w', originSurface: 'agent' });
+
+    expect(calls[0]!.input).toMatchObject({ originSurface: 'agent' });
+  });
+
   test('steer, follow-up and tool-cancel use the ORDINARY session verbs, not a hosted spelling', async () => {
     const calls: RecordedCall[] = [];
     const client = createHostedSessionsClient(recordingVerbs({
