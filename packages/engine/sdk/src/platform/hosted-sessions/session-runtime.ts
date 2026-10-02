@@ -311,35 +311,30 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
     },
   });
 
-  let running = false;
   const runtime: HostedSessionRuntime = {
     sessionId,
     conversation,
     toolRegistry,
     orchestrator,
     liveTurnControls: {
+      cancelTurn: (expectedTurnId: string) => orchestrator.cancelTurn(expectedTurnId),
       cancelToolCall: (callId: string) => orchestrator.cancelToolCall(callId),
       listQueuedMessages: () => orchestrator.listQueuedMessages(),
       editQueuedMessage: (id: string, text: string) => orchestrator.editQueuedMessage(id, text),
       deleteQueuedMessage: (id: string) => orchestrator.deleteQueuedMessage(id),
     },
-    isRunning: () => running,
+    isRunning: () => orchestrator.isTurnInFlight,
     submit: async (text: string): Promise<void> => {
-      running = true;
-      try {
-        // `ownerDirect` is deliberately unset. It attests that the transport
-        // authenticated the OWNER himself, and a verb call carrying an operator
-        // token cannot honestly claim that, leaving it unset keeps the
-        // untrusted-content window open, which is the safe direction.
-        await orchestrator.handleUserInput(text, undefined, {
-          origin: { source: 'hosted-session', surface: 'service' },
-        });
-      } finally {
-        running = false;
-      }
+      // `ownerDirect` is deliberately unset. It attests that the transport
+      // authenticated the OWNER himself, and a verb call carrying an operator
+      // token cannot honestly claim that, leaving it unset keeps the
+      // untrusted-content window open, which is the safe direction.
+      await orchestrator.handleUserInput(text, undefined, {
+        origin: { source: 'hosted-session', surface: 'service' },
+      });
     },
     cancel: (): boolean => {
-      if (!orchestrator.isThinking) return false;
+      if (!orchestrator.isTurnInFlight) return false;
       orchestrator.abort();
       return true;
     },

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Session-preserving `sessions.turns.cancel` with required expected execution identity, synchronous currentness fencing, idempotent request acceptance, honest stale/ended outcomes, typed public client contracts, and the existing operator write policy. Terminal events remain settlement authority.
+
 ## [2.0.23] - 2026-08-23
 
 ### Fixed

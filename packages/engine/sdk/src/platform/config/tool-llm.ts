@@ -108,6 +108,7 @@ export function resolveToolLLM(deps: ToolLLMDeps): ResolvedToolLLM | null {
 export interface ToolLLMChatOptions {
   maxTokens?: number | undefined;
   systemPrompt?: string | undefined;
+  signal?: AbortSignal | undefined;
 }
 
 /**
@@ -126,11 +127,12 @@ export class ToolLLM {
    * Send a single-turn prompt to the tool LLM.
    *
    * @param prompt   The user prompt to send.
-   * @param options  Optional maxTokens and systemPrompt.
+   * @param options  Optional maxTokens, systemPrompt and cancellation signal.
    * @returns        The assistant's text response.
    */
   async chat(prompt: string, options: ToolLLMChatOptions = {}): Promise<string> {
     try {
+      options.signal?.throwIfAborted();
       const resolved = resolveToolLLM(this.deps);
       if (!resolved) {
         throw new ToolLLMUnavailableError('Tool LLM is disabled.');
@@ -142,6 +144,7 @@ export class ToolLLM {
         messages: [{ role: 'user', content: prompt }],
         maxTokens: options.maxTokens ?? 1024,
         systemPrompt: options.systemPrompt,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
 
       if (this.deps.runtimeBus) {

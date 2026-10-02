@@ -20723,6 +20723,20 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "cancelled": false
     }
   },
+  "sessions.turns.cancel": {
+    "methodId": "sessions.turns.cancel",
+    "http": {
+      "method": "POST",
+      "path": "/api/sessions/{sessionId}/turns/cancel"
+    },
+    "status": 200,
+    "body": {
+      "sessionId": "sample",
+      "expectedTurnId": "sample",
+      "status": "cancellation-requested",
+      "activeTurnId": "sample"
+    }
+  },
   "security.settings": {
     "methodId": "security.settings",
     "http": {

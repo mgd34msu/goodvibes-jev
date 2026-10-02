@@ -1,3 +1,4 @@
+import type { TurnCancellationResult } from '../../core/turn-cancellation.js';
 /**
  * routes/session-runtime.ts
  *
@@ -94,6 +95,7 @@ export interface SessionContextUsage {
  * methods structurally, so binding is `holder.bind(orchestrator)`.
  */
 export interface SessionLiveTurnControls {
+  cancelTurn?(expectedTurnId: string): TurnCancellationResult;
   cancelToolCall(callId: string): boolean;
   listQueuedMessages(): ReadonlyArray<{ readonly id: string; readonly queuedAt: number; readonly text: string }>;
   editQueuedMessage(id: string, text: string): boolean;
@@ -218,6 +220,18 @@ function requireLiveTurnControls(controls: SessionRuntimeControls, sessionId: st
     );
   }
   return live;
+}
+
+export function createSessionTurnCancelHandler(controls: SessionRuntimeControls): GatewayMethodHandler {
+  return (invocation) => {
+    const params = readInvocationParams(invocation);
+    const sessionId = requireLocalSessionId(controls, params);
+    const live = requireLiveTurnControls(controls, sessionId);
+    const expectedTurnId = typeof params.expectedTurnId === 'string' ? params.expectedTurnId.trim() : '';
+    if (!expectedTurnId) throw new GatewayVerbError('expectedTurnId is required', 'INVALID_ARGUMENT', 400, 'expectedTurnId');
+    if (!live.cancelTurn) throw new GatewayVerbError('Turn cancellation is unavailable for this runtime.', 'LIVE_TURN_CONTROLS_UNAVAILABLE', 404);
+    return { sessionId, expectedTurnId, ...live.cancelTurn(expectedTurnId) };
+  };
 }
 
 export function createSessionToolCallCancelHandler(controls: SessionRuntimeControls): GatewayMethodHandler {
@@ -391,6 +405,7 @@ export function registerSessionRuntimeGatewayMethods(
   attach('sessions.permissionMode.get', createSessionPermissionModeGetHandler(controls));
   attach('sessions.permissionMode.set', createSessionPermissionModeSetHandler(controls));
   attach('sessions.contextUsage.get', createSessionContextUsageGetHandler(controls));
+  attach('sessions.turns.cancel', createSessionTurnCancelHandler(controls));
   attach('sessions.toolCalls.cancel', createSessionToolCallCancelHandler(controls));
   attach('sessions.queuedMessages.list', createSessionQueuedMessagesListHandler(controls));
   attach('sessions.queuedMessages.edit', createSessionQueuedMessageEditHandler(controls));

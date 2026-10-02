@@ -254,6 +254,7 @@ describe('S2c re-point: session mutators advertise control.session_update', () =
       // QUEUED_MESSAGES_CHANGED on runtime.session (core/orchestrator.ts
       // emitQueueChange), each advertises its real channel, never a
       // session-update broadcast it does not drive.
+      'sessions.turns.cancel': 'runtime.turn',
       'sessions.toolCalls.cancel': 'runtime.tools',
       'sessions.queuedMessages.edit': 'runtime.session',
       'sessions.queuedMessages.delete': 'runtime.session',

@@ -97,6 +97,8 @@ const DIRECT_TRANSPORT_COVERAGE: Record<string, string> = {
   // nature, same deliberate 'http-only' skip as the session-runtime verbs.
   'power.status.get': 'http-only',
   'power.keepAwake.set': 'http-only',
+  // Expected whole-turn cancellation also targets the daemon-bound live runtime.
+  'sessions.turns.cancel': 'http-only',
   'sessions.toolCalls.cancel': 'http-only',
   'sessions.queuedMessages.list': 'http-only',
   'sessions.queuedMessages.edit': 'http-only',

@@ -31,6 +31,7 @@ describe('AgentManager.wakeWithSteer', () => {
     // First run (from spawn) is a no-op; we drive the failure manually.
     const manager = makeManager(async (record) => { runs.push(record); });
     const record = spawnAndFail(manager);
+    await manager.join(record.id);
     runs.length = 0; // ignore the spawn-time run
 
     const result = manager.wakeWithSteer(record.id, 'actually, focus on the parser');
@@ -71,6 +72,7 @@ describe('AgentManager.wakeWithSteer', () => {
 
     const unit = manager.spawn({ mode: 'spawn', task: 't', template: 'engineer', outsideContract: true }, { contractId: 'ctr-00000001', contractUnitId: 'u1' });
     unit.status = 'completed';
+    await manager.join(unit.id);
     unit.completedAt = Date.now();
     runs.length = 0;
     expect(manager.wakeWithSteer(unit.id, 'steer').woke).toBe(false);

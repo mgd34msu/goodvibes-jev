@@ -141,13 +141,24 @@ function buildOperation(method: OperatorMethodContract, untyped: Set<string>): O
   const parameters = buildParameters(method);
   if (parameters.length > 0) op.parameters = parameters;
   if (http.method === 'POST' || http.method === 'PATCH') {
+    // The expected-turn route's URL is canonical, and its typed SDK removes
+    // path keys from the wire body. Keep this new route's REST schema honest
+    // without migrating the legacy body contracts of unrelated endpoints.
+    const inputProperties = (method.inputSchema?.properties ?? {}) as Record<string, unknown>;
+    const requiredInputKeys = Array.isArray(method.inputSchema?.required) ? method.inputSchema.required as readonly string[] : [];
+    const bodySchema = method.id === 'sessions.turns.cancel'
+      ? { ...method.inputSchema,
+          properties: Object.fromEntries(Object.entries(inputProperties).filter(([key]) => !pathParamNames(http.path).includes(key))),
+          required: requiredInputKeys.filter((key) => !pathParamNames(http.path).includes(key)),
+        }
+      : method.inputSchema;
     op.requestBody = {
       required: !opaqueIn,
       content: {
         'application/json': {
           schema: opaqueIn
             ? { description: 'Schema-less request (no declared input schema).', 'x-schema-coverage': 'schema-less' }
-            : method.inputSchema,
+            : bodySchema,
         },
       },
     };
