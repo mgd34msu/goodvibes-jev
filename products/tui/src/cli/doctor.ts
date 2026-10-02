@@ -1,3 +1,4 @@
+import { describeConfiguredPermissions, describePermissionMode } from '../permissions/configured-posture.ts';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { PermissionManager, createPermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import type { PermissionCategory, PermissionCheckResult } from '@goodvibes-jev/engine/sdk/platform/permissions';
@@ -38,14 +39,7 @@ const KNOWN_TOOLS = new Set([
 const PATH_TOOLS = new Set(['read', 'write', 'edit', 'find', 'fetch', 'analyze', 'inspect', 'state', 'registry']);
 
 /** The permission-mode → human label map (matches the doctor/status wording). */
-function permissionModeLabel(mode: unknown): string {
-  if (mode === 'prompt') return 'Ask before powerful actions';
-  if (mode === 'allow-all') return 'Allow everything';
-  if (mode === 'plan') return 'Plan only (read-only)';
-  if (mode === 'accept-edits') return 'Auto-accept file edits';
-  if (mode === 'custom') return 'Custom rules';
-  return String(mode ?? 'unknown');
-}
+
 
 /**
  * Turn the `explain` argument list into the tool+args shape the
@@ -191,6 +185,8 @@ async function explain(options: DoctorSubcommandOptions): Promise<CliCommandOutp
         args: target.args,
         mode,
         autoApprove,
+        configuredPosture: describeConfiguredPermissions(config),
+        permissionEvaluated: true,
         policyEngine: policyEngineOn ? 'enabled' : 'disabled',
         verdict,
         decidedLayer: LAYER_NAMES[decidedIdx],
@@ -212,8 +208,9 @@ async function explain(options: DoctorSubcommandOptions): Promise<CliCommandOutp
     `  args         : ${JSON.stringify(target.args)}`,
     '',
     'Current settings:',
-    `  mode        : ${mode} (${permissionModeLabel(mode)})`,
+    `  mode        : ${mode} (${describePermissionMode(mode).label})`,
     `  autoApprove : ${autoApprove ? 'yes (behavior.autoApprove)' : 'no'}`,
+    `  posture     : ${describeConfiguredPermissions(config).detail}`,
     `  policyEngine: ${policyEngineOn ? 'enabled' : 'disabled'} (permissions.engine)`,
     '',
     'Analysis (from the platform analyzer):',

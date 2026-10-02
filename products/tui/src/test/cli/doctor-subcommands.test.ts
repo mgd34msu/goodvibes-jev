@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { buildCliStatusSnapshot, renderCliStatus } from '../../cli/status.ts';
+import { PERMISSION_MODE_OPTIONS } from '../../input/onboarding/onboarding-wizard-constants.ts';
 import { handleDoctorSubcommand } from '../../cli/doctor.ts';
 import type { GoodVibesCliOutputFormat } from '@goodvibes-jev/engine/terminal-shell';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
@@ -29,6 +31,7 @@ describe('goodvibes doctor subcommands', () => {
         'write:{"path":"./src/x.ts"}': write,
         'write:{"path":"./a.ts"}': write,
         'exec:{"command":"rm -rf build"}': remove,
+        'exec:{"command":"fixture-post"}': { ...read, mutates: 0.99, outward: 0.99, kind: 'shell', family: 'network-egress', obfuscated: 0.01, cardDetails: 0.5 },
         'exec:{"command":"rm -rf /tmp/x"}': { ...remove, beyondProject: 0.99 },
       };
       const facts = input.workingDirectory === root ? fixtures[`${input.tool}:${JSON.stringify(input.arguments)}`] : undefined;
@@ -95,6 +98,52 @@ describe('goodvibes doctor subcommands', () => {
     expect(result!.output).toContain('Decision: ASK');
     expect(result!.output).toContain('CRITICAL');
     expect(result!.output).toContain('user_prompt');
+  });
+
+  test('critical gate ASK agrees with status JSON and onboarding rather than promising bypass', async () => {
+    const opts = makeOptions(root, 'explain', ['rm', '-rf', '/tmp/x'], 'json');
+    opts.configManager.set('permissions.mode', 'allow-all');
+    opts.configManager.set('behavior.autoApprove', false);
+    const result = await handleDoctorSubcommand(opts);
+    const actual = JSON.parse(result!.output);
+    expect(actual.verdict).toBe('ASK');
+    expect(actual.sourceLayer).toBe('user_prompt');
+    expect(actual.permissionEvaluated).toBe(true);
+    const status = JSON.parse(renderCliStatus(opts));
+    expect(status.auth.permissionLabel).toBe('Automatic below critical stakes');
+    expect(status.auth.permissionDetail).toContain('critical calls still ask');
+    expect(status.auth.permissionDetail).toContain('boundary');
+    const option = PERMISSION_MODE_OPTIONS.find(option => option.id === 'allow-all')!;
+    expect(option.label).toBe(status.auth.permissionLabel);
+    expect(option.hint).toContain('critical calls still ask');
+    expect(option.hint).toContain('boundary');
+  });
+
+  test('auto-approve status preserves its warning and acknowledges a real boundary prompt', async () => {
+    const opts = makeOptions(root, 'explain', ['fixture-post'], 'json');
+    opts.configManager.set('permissions.mode', 'prompt');
+    opts.configManager.set('behavior.autoApprove', true);
+    const actual = JSON.parse((await handleDoctorSubcommand(opts))!.output);
+    expect(actual.verdict).toBe('ASK');
+    expect(actual.sourceLayer).toBe('user_prompt');
+    expect(actual.permissionEvaluated).toBe(true);
+    const snapshot = buildCliStatusSnapshot(opts);
+    expect(snapshot.auth.permissionLabel).toContain('Auto-approve ON');
+    expect(snapshot.auth.permissionDetail).toContain('boundary');
+    expect(snapshot.findings.some(f => f.id === 'auto-approve-permissions' && f.severity === 'risk')).toBe(true);
+  });
+
+  test('auto-approve override is reported instead of promising the underlying preset will ask', async () => {
+    const opts = makeOptions(root, 'explain', ['rm', '-rf', '/tmp/x'], 'json');
+    opts.configManager.set('permissions.mode', 'allow-all');
+    opts.configManager.set('behavior.autoApprove', true);
+    const actual = JSON.parse((await handleDoctorSubcommand(opts))!.output);
+    expect(actual.verdict).toBe('ALLOW');
+    expect(actual.permissionEvaluated).toBe(true);
+    const snapshot = buildCliStatusSnapshot(opts);
+    expect(snapshot.auth.permissionLabel).toContain('Auto-approve ON');
+    expect(snapshot.auth.permissionDetail).toContain('boundary');
+    expect(snapshot.findings.find(f => f.id === 'allow-all-permissions')?.impact).not.toContain('critical calls still ask');
   });
 
   test('explain: allow-all permits a below-critical destructive project call', async () => {

@@ -1,3 +1,4 @@
+import { describeConfiguredPermissions } from '../permissions/configured-posture.ts';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { resolveDaemonEnabled } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { OnboardingCheckMarkersState } from '../runtime/onboarding/index.ts';
@@ -108,6 +109,7 @@ export interface CliStatusSnapshot {
   readonly auth: {
     readonly permissionMode: unknown;
     readonly permissionLabel: string;
+    readonly permissionDetail: string;
     readonly secretPolicy: unknown;
     readonly secretPolicyLabel: string;
     readonly localUsers: CliAuthStatus | null;
@@ -157,13 +159,6 @@ export interface CliExposureSurface {
 
 function yesNo(value: unknown): string {
   return value === true ? 'yes' : 'no';
-}
-
-function permissionModeLabel(mode: unknown): string {
-  if (mode === 'prompt') return 'Ask before powerful actions';
-  if (mode === 'allow-all') return 'Allow everything';
-  if (mode === 'custom') return 'Custom rules';
-  return String(mode ?? 'unknown');
 }
 
 function secretPolicyLabel(policy: unknown): string {
@@ -450,14 +445,24 @@ export function buildCliDoctorFindings(options: CliStatusOptions): readonly CliD
     });
   }
 
+  if (config.get('behavior.autoApprove') === true) {
+    findings.push({
+      id: 'auto-approve-permissions', area: 'security', severity: 'risk',
+      summary: 'Broad automatic approvals are enabled.',
+      cause: 'behavior.autoApprove is true.',
+      impact: describeConfiguredPermissions(config).detail,
+      action: 'Disable automatic approvals unless this broad autonomy is intentional.',
+    });
+  }
+
   if (permissionMode === 'allow-all') {
     findings.push({
       id: 'allow-all-permissions',
       area: 'security',
       severity: 'risk',
-      summary: 'Allow everything permission mode is active.',
+      summary: 'Automatic below-critical-stakes permission preset is active.',
       cause: 'permissions.mode is allow-all.',
-      impact: 'Powerful write, edit, network, and execution tools can run without a Human-in-the-Loop (HITL) approval prompt.',
+      impact: describeConfiguredPermissions(config).detail,
       action: 'Use Ask before powerful actions or Custom rules unless this is an intentionally trusted environment.',
     });
   }
@@ -567,7 +572,8 @@ export function buildCliStatusSnapshot(options: CliStatusOptions): CliStatusSnap
     },
     auth: {
       permissionMode: config.get('permissions.mode'),
-      permissionLabel: permissionModeLabel(config.get('permissions.mode')),
+      permissionLabel: describeConfiguredPermissions(config).label,
+      permissionDetail: describeConfiguredPermissions(config).detail,
       secretPolicy: config.get('storage.secretPolicy'),
       secretPolicyLabel: secretPolicyLabel(config.get('storage.secretPolicy')),
       localUsers: options.auth ?? null,
@@ -628,7 +634,8 @@ export function renderCliStatus(options: CliStatusOptions): string {
     )}`,
     '',
     'Auth:',
-    `  permissions: ${permissionModeLabel(config.get('permissions.mode'))} (${String(config.get('permissions.mode'))})`,
+    `  permissions: ${describeConfiguredPermissions(config).label} (${String(config.get('permissions.mode'))})`,
+    `    ${describeConfiguredPermissions(config).detail}`,
     `  secretPolicy: ${secretPolicyLabel(config.get('storage.secretPolicy'))} (${String(config.get('storage.secretPolicy'))})`,
     options.auth
       ? `  localUsers: ${options.auth.userStorePresent ? 'present' : 'missing'} (${options.auth.userStorePath})`

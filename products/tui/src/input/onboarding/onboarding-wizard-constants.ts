@@ -1,3 +1,4 @@
+import { describePermissionMode } from '../../permissions/configured-posture.ts';
 import type { OnboardingStep1CapabilityItem } from '../../runtime/onboarding/index.ts';
 import type { OnboardingWizardRadioOption, OnboardingWizardStepId } from './onboarding-wizard-types.ts';
 
@@ -81,7 +82,7 @@ export const GUIDANCE_MODE_OPTIONS: readonly OnboardingWizardRadioOption[] = [
 
 export const PERMISSION_MODE_OPTIONS: readonly OnboardingWizardRadioOption[] = [
   { id: 'prompt', label: 'Ask before powerful actions', hint: 'Prompt before write, edit, network, and execution tools.' },
-  { id: 'allow-all', label: 'Allow everything', hint: 'Allow tools without approval prompts.' },
+  { id: 'allow-all', label: describePermissionMode('allow-all').label, hint: describePermissionMode('allow-all').detail },
   { id: 'custom', label: 'Custom advanced rules', hint: 'Use tool-specific permission rules.' },
 ];
 
