@@ -115997,7 +115997,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           ],
           "additionalProperties": false
         },
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "workLedger.snapshot",
@@ -116474,7 +116477,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           ],
           "additionalProperties": false
         },
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "workspaces.registrations.add",

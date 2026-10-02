@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.js';
 import { registerWorkLedgerGatewayMethods } from '../sdk/src/platform/control-plane/routes/work-ledger.js';
 import { DaemonControlPlaneHelper, type DaemonControlPlaneContext } from '../sdk/src/platform/daemon/control-plane.js';
@@ -21,10 +21,14 @@ function fixture(count = 0) {
   let closed = false;
   let revoked = false;
   let historyCalls = 0;
+  let snapshotCalls = 0;
+  let sessionRoles: readonly string[] = ['admin'];
+  let token = 'synthetic-owner-token';
   let beforeHistory: (() => void) | undefined;
   const reader = {
     projectId: 'fixture-project',
     async readSnapshot() {
+      snapshotCalls += 1;
       if (closed) throw new WorkLedgerAccessError('closed', 'closed');
       return { projectId: 'fixture-project', cursor: events.length, revision: events.length, works: [] as Array<{ work: WorkLedgerEvent['work']; attempt: null; verification: { state: 'unverified'; reason: string; evidence: null }; attention: [] }> };
     },
@@ -34,10 +38,11 @@ function fixture(count = 0) {
   };
   registerWorkLedgerGatewayMethods(catalog, reader);
   const helper = new DaemonControlPlaneHelper({
-    gatewayMethods: catalog, authToken: () => revoked ? null : 'synthetic-owner-token',
+    gatewayMethods: catalog, authToken: () => revoked ? null : token,
+    controlPlaneGateway: { touchWebSocketClient() {} },
     userAuth: {
-      validateSession: (token: string) => token === 'synthetic-reader-token' ? { username: 'reader' } : null,
-      getUser: () => ({ username: 'reader', roles: [] }),
+      validateSession: (value: string) => value === 'synthetic-reader-token' ? { username: 'reader' } : value === 'synthetic-admin-session' ? { username: 'session-user' } : null,
+      getUser: (username: string) => ({ username, roles: username === 'reader' ? [] : sessionRoles }),
     },
   } as unknown as DaemonControlPlaneContext);
   const requests: Request[] = [];
@@ -57,6 +62,8 @@ function fixture(count = 0) {
   };
   const sdk = (token = 'synthetic-owner-token') => createOperatorSdk({ baseUrl: 'http://127.0.0.1:1', authToken: token, fetch });
   return { catalog, helper, events, reader, requests, sdk, get historyCalls() { return historyCalls; },
+    get snapshotCalls() { return snapshotCalls; },
+    downgradeRole() { sessionRoles = []; }, rotateToken() { token = 'synthetic-replacement-token'; },
     revoke() { revoked = true; }, close() { closed = true; }, onHistory(fn: () => void) { beforeHistory = fn; } };
 }
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -289,4 +296,72 @@ test.each(['subscription', 'unavailable'] as const)('hostile %s thenable and ree
   await waitFor(() => thenRead > 0); await pause(120);
   expect(called).toBe(1); expect(thenRead).toBe(1);
   await expect(reader.readSnapshot()).rejects.toThrow('disposed'); reader.dispose();
+});
+
+
+function webSocketFixture(host: ReturnType<typeof fixture>, token = 'synthetic-owner-token') {
+  const principal = host.helper.describeAuthenticatedPrincipal(token);
+  if (!principal) throw new Error('Synthetic token did not authenticate');
+  const responses: Array<{ status: number; ok: boolean }> = [];
+  const socket = {
+    data: { channel: 'control-plane' as const, clientId: 'synthetic-client', authToken: token,
+      ...principal, authenticated: true, clientKind: 'web' as const, domains: [] },
+    send(message: string) { responses.push(JSON.parse(message)); },
+  };
+  return {
+    socket, responses,
+    async call(methodId: string, extra: Record<string, unknown> = {}) {
+      await host.helper.handleControlPlaneWebSocketMessage(
+        socket as unknown as Parameters<typeof host.helper.handleControlPlaneWebSocketMessage>[0],
+        JSON.stringify({ type: 'call', id: 'synthetic-request', methodId,
+          query: { projectId: 'fixture-project', ...(methodId === 'workLedger.history' ? { afterSequence: 0 } : {}) }, ...extra }),
+      );
+      return responses.at(-1);
+    },
+  };
+}
+
+describe('fresh authorization on every ledger entry point', () => {
+  test.each(['workLedger.snapshot', 'workLedger.history'])('%s reauthenticates existing WS after token revocation/rotation', async method => {
+    for (const invalidate of ['revoke', 'rotateToken'] as const) {
+      const host = fixture(); const ws = webSocketFixture(host);
+      expect((await ws.call(method))?.status).toBe(200);
+      const reads = host.snapshotCalls; const history = host.historyCalls;
+      host[invalidate]();
+      expect((await ws.call(method, { authToken: 'synthetic-replacement-token', principalId: 'shared-token', admin: true, scopes: ['*'] }))?.status).toBe(401);
+      expect(host.snapshotCalls).toBe(reads); expect(host.historyCalls).toBe(history);
+    }
+  });
+  test.each(['workLedger.snapshot', 'workLedger.history'])('%s rejects a current role downgrade despite cached WS admin', async method => {
+    const host = fixture(); const ws = webSocketFixture(host, 'synthetic-admin-session');
+    expect(ws.socket.data.admin).toBe(true); host.downgradeRole();
+    expect((await ws.call(method))?.status).toBe(403);
+    expect(host.snapshotCalls).toBe(0); expect(host.historyCalls).toBe(0);
+  });
+  test.each(['workLedger.snapshot', 'workLedger.history'])('%s never widens fresh or cached restricted scopes', async method => {
+    const host = fixture(); const ws = webSocketFixture(host);
+    ws.socket.data.scopes = ['read:events'];
+    expect((await ws.call(method))?.status).toBe(403); expect(host.snapshotCalls).toBe(0);
+    ws.socket.data.scopes = ['*'];
+    const original = host.helper.describeAuthenticatedPrincipal.bind(host.helper);
+    const fresh = spyOn(host.helper, 'describeAuthenticatedPrincipal').mockImplementation(token => {
+      const principal = original(token); return principal ? { ...principal, scopes: ['read:events'] } : null;
+    });
+    try {
+      expect((await ws.call(method))?.status).toBe(403); expect(host.snapshotCalls).toBe(0);
+    } finally { fresh.mockRestore(); }
+  });
+  test.each(['workLedger.snapshot', 'workLedger.history'])('%s refuses missing token and forged payload authority before reads', async method => {
+    const host = fixture(); const ws = webSocketFixture(host);
+    ws.socket.data.authToken = '';
+    expect((await ws.call(method, { authToken: 'synthetic-owner-token' }))?.status).toBe(401);
+    ws.socket.data.authToken = 'synthetic-owner-token';
+    expect((await ws.call(method, { body: { actorId: 'forged', authority: {}, context: { admin: true, scopes: ['*'] } } }))?.status).toBe(400);
+    expect(host.snapshotCalls).toBe(0); expect(host.historyCalls).toBe(0);
+  });
+  test('only these two catalog methods opt into the new fresh-auth gate', () => {
+    const host = fixture();
+    expect(host.catalog.list().filter(method => method.metadata?.requiresFreshOperatorAuth === true).map(method => method.id).sort())
+      .toEqual(['workLedger.history', 'workLedger.snapshot']);
+  });
 });

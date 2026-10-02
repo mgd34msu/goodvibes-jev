@@ -115995,7 +115995,10 @@
           ],
           "additionalProperties": false
         },
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "workLedger.snapshot",
@@ -116472,7 +116475,10 @@
           ],
           "additionalProperties": false
         },
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "workspaces.registrations.add",
