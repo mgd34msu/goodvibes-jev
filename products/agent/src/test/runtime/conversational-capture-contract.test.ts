@@ -305,6 +305,15 @@ describe('the boundary guard on a real tool', () => {
     expect(requested.read.calls).toHaveLength(1);
   });
 
+  test('an explicitly named Windows package path authorizes the corresponding source read', async () => {
+    const path = 'C:\\project\\node_modules\\@goodvibes-jev\\engine\\src\\index.ts';
+    expect(ownerAskedAboutPlatformSource(path)).toBe(true);
+    const { registry, read } = guardedRegistry(path);
+    expect((await registry.execute('windows-requested', 'read', { files: [{ path }] })).success).toBe(true);
+    expect(read.calls).toHaveLength(1);
+    expect(ownerAskedAboutPlatformSource('C:\\Documents\\engine\\notes.txt')).toBe(false);
+  });
+
   test('the refusal tells it to propose in one line and get back to the real request', async () => {
     const { registry } = guardedRegistry('can you see your email?');
     const tool = registry.list().find((candidate) => candidate.definition.name === 'read');

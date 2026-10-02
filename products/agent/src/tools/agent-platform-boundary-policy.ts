@@ -135,7 +135,7 @@ export function ownerAskedAboutPlatformSource(lastUserMessage: string | null | u
   // A path he typed himself. Split on whitespace and quotes so a path inside a
   // sentence is still seen as a path.
   for (const token of message.split(/[\s"'`,;()[\]{}<>]+/)) {
-    if (token.includes('/') && isGoodVibesPlatformSourcePath(token)) return true;
+    if ((token.includes('/') || token.includes('\\')) && isGoodVibesPlatformSourcePath(token)) return true;
   }
   if (!PLATFORM_NAME_WORDS.test(message)) return false;
   return SOURCE_WORDS.test(message) || PLATFORM_ATTENTION_WORDS.test(message);
