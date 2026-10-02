@@ -47,6 +47,16 @@ expectedTurnId })`. Both identities are required. `expectedTurnId` is the
 engine execution identity from `TURN_SUBMITTED`, not an input ID, a tool call
 ID, a locally generated UI ID, or the shared session's active agent ID.
 
+To associate a submitted input with its eventual execution, callers can use the
+existing `metadata.correlationId` on `sessions.steer` / `sessions.followUp`.
+The broker's collected input correlation is preserved through hosted delivery
+and queueing, then exposed as `TURN_SUBMITTED.origin.metadata.correlationId`.
+Match that correlation within the same session before adopting the event's
+`turnId`; the next observed start may belong to older preserved queued work.
+Correlation is only an association key, not cancellation authority or an owner
+attestation. Hosted delivery keeps its service origin and leaves `ownerDirect`
+unset, and forwards no other input metadata.
+
 The route uses the existing authenticated operator route and `write:sessions`
 policy. It resolves the session's bound runtime and compares the expected
 identity synchronously before invoking that runtime's existing abort path.

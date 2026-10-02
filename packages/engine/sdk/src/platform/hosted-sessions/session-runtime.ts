@@ -178,7 +178,7 @@ export interface HostedSessionRuntime {
    * a message submitted while a turn is running is QUEUED by the orchestrator
    * and this resolves immediately, which is the same contract a terminal has.
    */
-  submit(text: string): Promise<void>;
+  submit(text: string, correlationId?: string): Promise<void>;
   /** Interrupt the in-flight turn. Returns whether one was running. */
   cancel(): boolean;
   dispose(): void;
@@ -324,13 +324,19 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
       deleteQueuedMessage: (id: string) => orchestrator.deleteQueuedMessage(id),
     },
     isRunning: () => orchestrator.isTurnInFlight,
-    submit: async (text: string): Promise<void> => {
+    submit: async (text: string, correlationId?: string): Promise<void> => {
       // `ownerDirect` is deliberately unset. It attests that the transport
       // authenticated the OWNER himself, and a verb call carrying an operator
       // token cannot honestly claim that, leaving it unset keeps the
       // untrusted-content window open, which is the safe direction.
       await orchestrator.handleUserInput(text, undefined, {
-        origin: { source: 'hosted-session', surface: 'service' },
+        origin: {
+          source: 'hosted-session',
+          surface: 'service',
+          // Carry only the broker's correlation identity. It associates this
+          // actual turn with its submitting input; it conveys no authority.
+          ...(correlationId === undefined ? {} : { metadata: { correlationId } }),
+        },
       });
     },
     cancel: (): boolean => {
