@@ -7,9 +7,9 @@
 |           ▏Search all settings                                                   display           |
 |                                                                                                    |
 |         ✦ interface                                                                                |
-|           Display         10      stream                                          true             |
+|           Display          9      stream                                          true             |
 |           UI               4                                                                       |
-|           Behavior        24      display.stream · default true · boolean · source                 |
+|           Behavior        23      display.stream · default true · boolean · source                 |
 |           Notifications   14      default                                                          |
 |           Permissions     23                                                                       |
 |           Policy-as-Code   4      Stream LLM tokens as they arrive                                 |
@@ -19,13 +19,13 @@
 |           Provider         7      false: disabled or not allowed for this setting.                 |
 |           Pricing          1      4 more ↓ · pgdn                                                  |
 |           Subscriptions    1                                                                       |
-|           Helper           3      lineNumbers                                      off             |
-|           Tools            9      collapseThreshold                                 30             |
-|           TTS              6      theme                                      goodvibes             |
-|           Voice (local    34      themeMode                                       auto             |
-|                    43 more ↓                                                                       |
+|           Judgment         4      lineNumbers                                      off             |
+|           Helper           3      collapseThreshold                                 30             |
+|           Tools            9      theme                                      vaporwave             |
+|           TTS              6      themeMode                                       auto             |
+|                    45 more ↓                                                                       |
 |                                                                                                    |
-|            ↑↓  category    →  settings    tab  pane                             5 more ↓           |
+|            ↑↓  category    →  settings    tab  pane                             4 more ↓           |
 |                                                                                                    |
 |       ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀       |
 |                                                                                                    |
@@ -1250,7 +1250,6 @@
 8 24 bg=#9549ff
 8 25 bg=#9e3dff
 8 26 bg=#a831ff
-8 27 fg=#0f172a
 8 27 bg=#b224ff
 8 28 fg=#0f172a
 8 28 bg=#bc18ff
@@ -2973,7 +2972,9 @@
 20 15 bg=#161a22
 20 16 fg=#e2e8f0
 20 16 bg=#161a22
+20 17 fg=#e2e8f0
 20 17 bg=#161a22
+20 18 fg=#e2e8f0
 20 18 bg=#161a22
 20 19 bg=#161a22
 20 20 bg=#161a22
@@ -3106,6 +3107,7 @@
 21 14 bg=#161a22
 21 15 fg=#e2e8f0
 21 15 bg=#161a22
+21 16 fg=#e2e8f0
 21 16 bg=#161a22
 21 17 bg=#161a22
 21 18 bg=#161a22
@@ -3241,7 +3243,9 @@
 22 12 bg=#161a22
 22 13 fg=#e2e8f0
 22 13 bg=#161a22
+22 14 fg=#e2e8f0
 22 14 bg=#161a22
+22 15 fg=#e2e8f0
 22 15 bg=#161a22
 22 16 bg=#161a22
 22 17 bg=#161a22
@@ -3373,29 +3377,19 @@
 23 12 bg=#161a22
 23 13 fg=#e2e8f0
 23 13 bg=#161a22
-23 14 fg=#e2e8f0
 23 14 bg=#161a22
-23 15 fg=#e2e8f0
 23 15 bg=#161a22
-23 16 fg=#e2e8f0
 23 16 bg=#161a22
-23 17 fg=#e2e8f0
 23 17 bg=#161a22
-23 18 fg=#e2e8f0
 23 18 bg=#161a22
-23 19 fg=#e2e8f0
 23 19 bg=#161a22
-23 20 fg=#e2e8f0
 23 20 bg=#161a22
-23 21 fg=#e2e8f0
 23 21 bg=#161a22
-23 22 fg=#e2e8f0
 23 22 bg=#161a22
 23 23 bg=#161a22
 23 24 bg=#161a22
 23 25 bg=#161a22
 23 26 bg=#161a22
-23 27 fg=#4e5c6f
 23 27 bg=#161a22
 23 28 fg=#4e5c6f
 23 28 bg=#161a22

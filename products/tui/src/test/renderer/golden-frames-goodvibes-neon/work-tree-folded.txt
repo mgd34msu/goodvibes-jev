@@ -7,7 +7,7 @@
 |   │         Splitting this up: one agent adds the cap, a WRFC chain reviews it, Claude Code writes the docs.           |
 |   ✓       ▸ read src/net/retry.ts                                                                  20 lines     0.2s   |
 |   ◉         engineer add a maxDelayMs cap ▸                                               ✓ 4 tools · $0.12   2m 14s   |
-|   ◉         WRFC chain review the cap ▸                                                  ✓ 4 phases · $0.31   1m 18s   |
+|   ◉         Contract review the cap ▸                                             ✓ passed · 1 unit · $0.31   1m 18s   |
 |   ├─╮       Claude Code hosted · write retry docs                                                                      |
 |   │ ✓     ▸ edit docs/retry.md                                                                           +2     0.3s   |
 |   ✓ │     ▸ exec bun test                                                                 128 pass · exit 0     6.2s   |
@@ -868,10 +868,8 @@
 8 19 bold=1
 8 20 fg=#d000ff
 8 20 bold=1
-8 21 fg=#d000ff
-8 21 bold=1
-8 22 fg=#d000ff
-8 22 bold=1
+8 22 fg=#94a3b8
+8 23 fg=#94a3b8
 8 24 fg=#94a3b8
 8 25 fg=#94a3b8
 8 26 fg=#94a3b8
@@ -884,9 +882,14 @@
 8 33 fg=#94a3b8
 8 34 fg=#94a3b8
 8 35 fg=#94a3b8
-8 36 fg=#94a3b8
 8 37 fg=#94a3b8
-8 39 fg=#94a3b8
+8 83 fg=#22c55e
+8 84 fg=#22c55e
+8 85 fg=#22c55e
+8 86 fg=#22c55e
+8 87 fg=#22c55e
+8 88 fg=#22c55e
+8 89 fg=#22c55e
 8 90 fg=#22c55e
 8 91 fg=#22c55e
 8 92 fg=#22c55e
