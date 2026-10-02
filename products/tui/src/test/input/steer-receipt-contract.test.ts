@@ -138,3 +138,15 @@ test('closing an unknown receipt stops its late acknowledgement from mutating or
  emitCommunicationConsumed(f.bus, {sessionId:'synthetic',traceId:'synthetic',source:'test'}, {messageId:before!.messageId,agentId:'a1',turn:2}); await flush();
  expect(f.badge()).toEqual(before); expect(f.renders()).toBe(renders);
 });
+
+
+test('actual modal status follows unknown and late consumed receipt without overwriting a later action status', async () => {
+ const f = fixture('native'); f.start(); f.submit();
+ const id = f.badge()!.messageId;
+ reconcileSteerBadges(f.modal.tabs.tabs, nodeId => f.registry.getNode(nodeId), Date.now() + STEER_TTL_MS + 1);
+ expect(f.rendered()).toContain('Steer delivery unknown'); expect(f.rendered()).not.toContain('Steer queued;');
+ emitCommunicationConsumed(f.bus, {sessionId:'synthetic',traceId:'synthetic',source:'test'}, {messageId:id,agentId:'a1',turn:2}); await flush();
+ expect(f.rendered()).toContain('Steer consumed');
+ f.record.status = 'failed'; f.host.handleToken({type:'text',value:'x'});
+ expect(f.rendered()).toContain('already finished'); expect(f.rendered()).not.toContain('Steer consumed');
+});

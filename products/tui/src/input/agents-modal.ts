@@ -110,6 +110,7 @@ export class AgentsModal implements SurfaceModal {
   hostedFull = false;
   steer: { readonly id: string; draft: string } | null = null;
   status: AgentsText | null = null;
+  private receiptStatus: { nodeId: string; messageId: string; label: string; status: AgentsText } | null = null;
   readonly stopTracker = new FleetStopTracker();
   private readonly unsubs: Array<() => void> = [];
   private tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -272,6 +273,7 @@ export class AgentsModal implements SurfaceModal {
   // ── Actions ────────────────────────────────────────────────────────────────
 
   private say(text: string, tone: AgentsText['tone'] = 'muted'): void {
+    this.receiptStatus = null;
     this.status = { text, tone };
   }
 
@@ -343,6 +345,7 @@ export class AgentsModal implements SurfaceModal {
     }
     this.steer = null;
     this.say(steerReceiptLabel(badge, node?.label ?? steer.id));
+    if (node && this.status) this.receiptStatus = { nodeId: node.id, messageId: badge.messageId, label: node.label, status: this.status };
   }
 
   /** x / ctrl+x: stop the node and its descendants, after asking. */
@@ -535,6 +538,14 @@ export class AgentsModal implements SurfaceModal {
 
   // ── View ───────────────────────────────────────────────────────────────────
 
+  private renderedStatus(): AgentsText | null {
+    const receipt = this.receiptStatus;
+    if (!receipt || this.status !== receipt.status) return this.status;
+    const badge = this.badgeFor(receipt.nodeId);
+    if (!badge || badge.messageId !== receipt.messageId) return null;
+    return { text: steerReceiptLabel(badge, receipt.label), tone: badge.status === 'unknown' ? 'warning' : receipt.status.tone };
+  }
+
   private badgeFor(nodeId: string): FleetTab['steerBadge'] {
     return this.tabs.tabs.find((tab) => tab.nodeId === nodeId)?.steerBadge ?? null;
   }
@@ -684,7 +695,7 @@ export class AgentsModal implements SurfaceModal {
           : this.view === 'archived' ? ['archive'] : [],
       sub: level === 'list' ? this.sub() : '',
       hints: this.hints(level),
-      status: this.status,
+      status: this.renderedStatus(),
       input,
       filter: { query: this.query, active: this.filtering, count: this.query ? `${shown} of ${total}` : `${total} shown` },
       rows: level === 'list' ? this.listRows() : [],
