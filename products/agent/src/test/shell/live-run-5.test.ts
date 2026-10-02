@@ -1,5 +1,6 @@
+import { contractFixture, contractUnit, contractCriterion } from '../helpers/contract-work-tree-fixtures.ts';
 /**
- * Defects from the fifth live run (a real WRFC chain and a real background
+ * Defects from the fifth live run (a real Contract and a real background
  * process), each pinned against the code path that drew it.
  *
  *  1. The chain owner's view (af0a3b51, template "engineer") said "No
@@ -36,9 +37,9 @@ function scene(opts: { processStatus?: string; processDone?: boolean } = {}) {
     records.set(r.id, ({ tools: [], toolCallCount: 0, ...r }) as AgentRecord);
   };
   const task = 'Spawn exactly one background agent whose task is: read src/net/retry.ts';
-  add({ id: 'af0a3b51', template: 'engineer', task, status: 'running', startedAt: NOW - 43_000, wrfcRole: 'owner', wrfcId: 'wrfc-3c7f48cb' });
-  add({ id: 'ca572da6', template: 'engineer', task, status: 'completed', startedAt: NOW - 42_000, completedAt: NOW - 9_000, toolCallCount: 1, wrfcRole: 'engineer' });
-  add({ id: 'df40e5d8', template: 'reviewer', task: 'WRFC Review Request', status: 'running', startedAt: NOW - 8_000, wrfcRole: 'reviewer' });
+  add({ id: 'af0a3b51', template: 'engineer', task, status: 'running', startedAt: NOW - 43_000, contractRole: 'owner', contractId: 'wrfc-3c7f48cb' });
+  add({ id: 'ca572da6', template: 'engineer', task, status: 'completed', startedAt: NOW - 42_000, completedAt: NOW - 9_000, toolCallCount: 1, contractRole: 'unit' });
+  add({ id: 'df40e5d8', template: 'reviewer', task: 'WRFC Review Request', status: 'running', startedAt: NOW - 8_000, contractRole: 'unit' });
   const transcripts: Record<string, Message[]> = {
     ca572da6: [
       { role: 'user', content: task },
@@ -54,10 +55,15 @@ function scene(opts: { processStatus?: string; processDone?: boolean } = {}) {
     const base = { id, name: r.template, task: r.task, status: r.status, startedAt: r.startedAt, completedAt: r.completedAt, toolCallCount: r.toolCallCount };
     if (id === 'af0a3b51') {
       return {
-        ...base, messages: [], wrfcPhases: [
-          { agentId: 'ca572da6', role: 'engineer', task, status: 'completed', startedAt: NOW - 42_000, completedAt: NOW - 9_000 },
-          { agentId: 'df40e5d8', role: 'reviewer', task: 'WRFC Review Request', status: 'running', startedAt: NOW - 8_000 },
-        ],
+        ...base, messages: [], contract: contractFixture({
+          id: 'contract-3c7f48cb', ownerAgentId: id, ask: task, status: 'running', createdAt: NOW - 43_000, completedAt: undefined,
+          criteria: [contractCriterion({ status: 'unread', readings: [] })],
+          groups: [{ id: 'g1', title: 'Implementation and review', goal: 'Complete checked work', kind: 'work', dependsOn: [], criteria: [], unitIds: ['u1', 'u2'], status: 'running', checks: [], fixRounds: 0, usage: contractFixture().usage }],
+          units: [contractUnit({ id: 'u1', title: task, agentIds: ['ca572da6'], status: 'passed',
+              criteria: [contractCriterion({ id: 'u1.c1', origin: 'derived', quote: undefined, serves: ['c1'], readings: [{ checkId: 'u1.k1', at: NOW - 9_000, probabilityUnmet: 0.01, verdict: 'met', outcome: 'act', decisionId: 'u1.d1' }] })] }),
+            contractUnit({ id: 'u2', title: 'Review request', role: 'research', agentIds: ['df40e5d8'], activeAgentId: 'df40e5d8', status: 'running', checks: [],
+              criteria: [contractCriterion({ id: 'u2.c1', origin: 'derived', quote: undefined, serves: ['c1'], status: 'unread', readings: [] })] })],
+        }),
       };
     }
     return { ...base, messages: transcripts[id] ?? [] };
@@ -93,11 +99,11 @@ function scene(opts: { processStatus?: string; processDone?: boolean } = {}) {
 
 const text = (lines: readonly import('@goodvibes-jev/engine/sdk/platform/types').Line[]): string[] => lines.map((l) => lineToString(l).replace(/\s+$/, ''));
 
-describe('live run 5: a WRFC owner view shows its chain', () => {
-  test('the owner is named "WRFC chain" on its chip, not by its template', () => {
+describe('live run 5: a Contract owner view shows its chain', () => {
+  test('the owner is named "Contract" on its chip, not by its template', () => {
     const { views } = scene();
     const chips = lineToString(views.chips(120)!);
-    expect(chips).toContain('WRFC chain');
+    expect(chips).toContain('Contract');
     expect(chips).not.toContain('engineer');
   });
 
@@ -106,8 +112,8 @@ describe('live run 5: a WRFC owner view shows its chain', () => {
     views.open({ kind: 'agent', id: 'af0a3b51' });
     const body = text(views.frame(120, '2.0.21')!.body(30)).join('\n');
     expect(body).not.toContain('No transcript yet');
-    expect(body).toContain('◆ WRFC chain');
-    expect(body).toContain('WRFC chain · 2 phases');
+    expect(body).toContain('◆ Contract');
+    expect(body).toContain('Contract · running · 2 units');
     // The engineer phase's own read call, from its own transcript.
     expect(body).toMatch(/read src\/net\/retry\.ts/);
     expect(body).toContain('reviewer');
@@ -163,7 +169,7 @@ describe('live run 5: the process input area holds only what it is', () => {
 });
 
 describe('live run 5: busy text shares the status line with the cost and the context bar', () => {
-  const summary = { agents: 2, processes: 0, focused: false, progress: 'WRFC owner supervising child agents (reviewing)' };
+  const summary = { agents: 2, processes: 0, focused: false, progress: 'Contract owner supervising child agents (reviewing)' };
   const context = { usedTokens: 31_100, windowTokens: 200_000, compactFraction: 0.8 };
   const chips = [{ text: '! auto-approve', fg: '#ff0000', keep: true }];
   for (const width of [80, 90, 100, 120, 160]) {

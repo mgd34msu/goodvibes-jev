@@ -1,4 +1,4 @@
-import { useMemoryReadings } from '../../../../../packages/engine/test/_helpers/memory-readings.ts';
+import { useMemoryReadings } from '../helpers/memory-readings.ts';
 import { describe, it, expect, afterEach } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore } from '@goodvibes-jev/engine/sdk/platform/state';

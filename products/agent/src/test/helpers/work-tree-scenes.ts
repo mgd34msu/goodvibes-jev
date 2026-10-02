@@ -1,3 +1,4 @@
+import { correctedContractScene } from './contract-correction-scene.ts';
 /**
  * work-tree-scenes.ts, the concept page's work-tree scenes as transcripts.
  *
@@ -9,7 +10,7 @@
 
 import type { ConversationMessageSnapshot } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { ToolCall } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { AgentLaneInfo, CallTiming, WorkTreeSources, WrfcPhaseInfo } from '../../core/work-tree-sources.ts';
+import type { AgentLaneInfo, CallTiming, WorkTreeSources } from '../../core/work-tree-sources.ts';
 
 type Message = ConversationMessageSnapshot;
 
@@ -29,7 +30,8 @@ const MODEL = 'claude-opus-5-5';
 const user = (content: string): Message => ({ role: 'user', content });
 const call = (id: string, name: string, args: Record<string, unknown>): ToolCall => ({ id, name, arguments: args });
 const assistant = (content: string, toolCalls?: ToolCall[]): Message => ({ role: 'assistant', content, model: MODEL, provider: 'anthropic', ...(toolCalls ? { toolCalls } : {}) });
-const result = (callId: string, toolName: string, content: string): Message => ({ role: 'tool', callId, toolName, content });
+// Outcomes are execution facts in the canonical transcript, never inferred from output prose.
+const result = (callId: string, toolName: string, content: string, outcome: 'ok' | 'error' | 'cancelled' = 'ok'): Message => ({ role: 'tool', callId, toolName, content, outcome });
 
 /** Source text read results carry, cycled to the requested length. */
 const FILE_TEXT = [
@@ -166,7 +168,7 @@ export function openBeadScene(): WorkTreeScene {
 export function lanesScene(): WorkTreeScene {
   const messages: Message[] = [
     user('Add a maxDelayMs cap, get it reviewed, and document retry.'),
-    assistant('Splitting this up: one agent adds the cap, a WRFC chain reviews it, Claude Code writes the docs.', [
+    assistant('Splitting this up: one agent adds the cap, a contract checks and repairs it, Claude Code writes the docs.', [
       call('m-read', 'read', { files: [{ path: 'src/net/retry.ts' }] }),
       call('m-eng', 'agent', { mode: 'spawn', template: 'engineer', task: 'add a maxDelayMs cap' }),
       call('m-wrfc', 'agent', { mode: 'spawn', template: 'engineer', task: 'review the cap' }),
@@ -196,12 +198,7 @@ export function lanesScene(): WorkTreeScene {
     assistant('', [call('cc-edit', 'edit', { edits: [{ path: 'docs/retry.md', find: '# Retry', replace: '# Retry\n\nwithRetry retries with exponential backoff and jitter.' }] }), call('cc-lint', 'exec', { command: 'markdownlint docs/' }), call('cc-edit2', 'edit', { edits: [{ path: 'docs/retry.md', find: 'jitter.', replace: 'jitter, capped at maxDelayMs.' }] })]),
     result('cc-edit', 'edit', JSON.stringify({ applied: 1, failed: 0, dry_run: false })),
   ];
-  const phases: WrfcPhaseInfo[] = [
-    { agentId: 'w1', role: 'engineer', task: 'engineer output accepted', status: 'completed', startedAt: T0 + 5000, completedAt: T0 + 5000 },
-    { agentId: 'w2', role: 'reviewer', task: 'review the cap', status: 'completed', startedAt: T0 + 9000, completedAt: T0 + 79_000, findings: ['jitter can push the delay past maxDelayMs'], passed: false },
-    { agentId: 'w3', role: 'fixer', task: 'clamp after adding jitter', status: 'completed', startedAt: T0 + 80_000, completedAt: T0 + 80_400 },
-    { agentId: 'w4', role: 'reviewer', task: 'finding resolved', status: 'completed', startedAt: T0 + 81_000, completedAt: T0 + 81_900, findings: [], passed: true },
-  ];
+  const contract = correctedContractScene(T0 + 4000);
   return {
     name: 'lanes',
     messages,
@@ -216,7 +213,7 @@ export function lanesScene(): WorkTreeScene {
       turnTiming: (i) => (i === 0 ? { startedAt: T0 } : undefined),
       agent: (id) => {
         if (id === 'eng') return agentInfo({ id, name: 'engineer', task: 'add a maxDelayMs cap', messages: engMessages, startedAt: T0 + 1000, completedAt: T0 + 135_000, costUsd: 0.12 });
-        if (id === 'wrfc') return agentInfo({ id, name: 'engineer', task: 'review the cap', messages: [], toolCallCount: 0, wrfcPhases: phases, wrfcPassed: true, startedAt: T0 + 4000, completedAt: T0 + 82_000, costUsd: 0.31 });
+        if (id === 'wrfc') return agentInfo({ id, name: 'engineer', task: 'review the cap', messages: [], toolCallCount: 0, contract, startedAt: T0 + 4000, completedAt: T0 + 82_000, costUsd: 0.31 });
         if (id === 'cc') return agentInfo({ id, name: 'general', hostedLabel: 'Claude Code', task: 'write retry docs', messages: ccMessages, status: 'running', startedAt: T0 + 12_000 });
         return null;
       },
@@ -252,7 +249,7 @@ export function nestedScene(): WorkTreeScene {
     result('nt-res', 'agent', spawnResult('res', 'researcher', 'how do others test jittered backoff?')),
     assistant('', [call('nt-edit', 'edit', { edits: [{ path: 'test/retry.test.ts', find: '});', replace: '});\n\nit("never sleeps longer than maxDelayMs", async () => {});' }] }), call('nt-exec', 'exec', { command: 'bun test test/retry.test.ts' })]),
     result('nt-edit', 'edit', JSON.stringify({ applied: 1, failed: 0 })),
-    result('nt-exec', 'exec', 'Error: exit code 1\n2 failing'),
+    result('nt-exec', 'exec', 'Error: exit code 1\n2 failing', 'error'),
   ];
   const researcher: Message[] = [
     assistant('', [call('nr-find', 'find', { queries: [{ id: 'q1', mode: 'content', pattern: 'fake timers in bun:test' }] }), call('nr-fetch', 'fetch', { urls: [{ url: 'bun.sh/docs/test/time' }] })]),
@@ -287,7 +284,7 @@ export function statesScene(): WorkTreeScene {
       call('s-build', 'exec', { command: 'bun run build' }),
     ]),
     result('s-read', 'read', readResult('src/api/client.ts', 88)),
-    result('s-build', 'exec', "Error: exit code 1\nerror TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.\n  src/api/client.ts:31:18"),
+    result('s-build', 'exec', "Error: exit code 1\nerror TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.\n  src/api/client.ts:31:18", 'error'),
     assistant('', [
       call('s-edit', 'edit', { edits: [{ path: 'src/api/client.ts', find: 'fetchJson(url)', replace: 'fetchJson(url ?? DEFAULT_URL)' }] }),
       call('s-tester', 'agent', { mode: 'spawn', template: 'tester', task: 'verify the fix' }),
@@ -296,7 +293,7 @@ export function statesScene(): WorkTreeScene {
     ]),
     result('s-edit', 'edit', JSON.stringify({ applied: 1, failed: 0 })),
     result('s-tester', 'agent', spawnResult('tester', 'tester', 'verify the fix')),
-    result('s-watch', 'exec', 'Error: cancelled by user'),
+    result('s-watch', 'exec', 'Error: cancelled by user', 'cancelled'),
   ];
   const tester: Message[] = [
     assistant('', [call('st-find', 'find', { queries: [{ id: 'q1', mode: 'content', pattern: 'fetchJson callers' }] }), call('st-test', 'exec', { command: 'bun test test/api' })]),

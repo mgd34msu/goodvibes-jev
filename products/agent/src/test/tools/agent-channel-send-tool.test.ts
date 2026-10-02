@@ -1,4 +1,4 @@
-import { useSecurityReadings } from '../../../../../packages/engine/test/helpers/security-readings.ts';
+import { useSecurityReadings } from '../helpers/security-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import type { ChannelDeliveryRequest } from '@goodvibes-jev/engine/sdk/platform/channels';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';

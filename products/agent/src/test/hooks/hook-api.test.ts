@@ -1,3 +1,5 @@
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -6,6 +8,8 @@ import { getTestHookDispatcher } from '../helpers/runtime-services.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 describe('HookApi', () => {
+  let previousPort: ReturnType<typeof installJudgmentPort>;
+  const readings = fakePort((_name, _question, state) => noulAnswer(JSON.stringify(state).includes('tool') ? 0.99 : 0.01));
   const configManager = new ConfigManager({ surfaceRoot: 'tui',
     configDir: makeProjectTempDir(`gv-hook-api-config-${Date.now()}-${Math.random().toString(36).slice(2)}`),
   });
@@ -22,9 +26,11 @@ describe('HookApi', () => {
       getTestHookDispatcher(),
       () => configManager.get('tools.hooksFile') as string,
     );
+    previousPort = installJudgmentPort(readings.port);
   });
 
   afterEach(() => {
+    installJudgmentPort(previousPort);
     configManager.set('tools.hooksFile', originalHooksFile);
     getTestHookDispatcher().clear();
   });
@@ -39,7 +45,7 @@ describe('HookApi', () => {
       listContracts: () => listHookPointContracts(),
     });
 
-    expect(api.contracts('tool').length).toBeGreaterThan(0);
+    expect((await api.contracts('tool')).length).toBeGreaterThan(0);
 
     const hook = await api.workbench.scaffoldHook('guard-edit', 'Pre:tool:*', 'command');
     expect(hook.name).toBe('guard-edit');

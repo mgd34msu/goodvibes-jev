@@ -1,3 +1,5 @@
+import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 /**
  * Agent context window awareness tests.
  *
@@ -29,7 +31,7 @@ function makeRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
     orchestrationDepth: 0,
     toolCallCount: 0,
     executionProtocol: 'gather-plan-apply',
-    reviewMode: 'wrfc',
+    reviewMode: 'contract',
     communicationLane: 'direct',
     ...overrides,
   };
@@ -89,6 +91,14 @@ async function withMockProvider<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const reg = getTestProviderRegistry();
+  const previousPort = installJudgmentPort(fakePort((name, question, state) => {
+    const error = String(state);
+    if (name === 'category') return choiceAnswer(question, error.includes('401') ? 'authentication' : 'bad_request', 0.99);
+    if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.99);
+    if (name === 'context_exceeded') return noulAnswer(/context|prompt is too long/i.test(error) ? 0.99 : 0.01);
+    if (['billing', 'rate_limited', 'transient_network', 'provider_unusable', 'before_response'].includes(name)) return noulAnswer(0.01);
+    throw new Error(`Unexpected synthetic error reading: ${name}`);
+  }).port);
   const origGetForModel = reg.getForModel.bind(reg);
   const origGetCurrentModel = reg.getCurrentModel.bind(reg);
   reg.getForModel = mock(() => provider);
@@ -96,6 +106,7 @@ async function withMockProvider<T>(
   try {
     return await fn();
   } finally {
+    installJudgmentPort(previousPort);
     reg.getForModel = origGetForModel;
     reg.getCurrentModel = origGetCurrentModel;
   }

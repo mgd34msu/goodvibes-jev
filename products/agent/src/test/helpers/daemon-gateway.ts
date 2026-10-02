@@ -96,7 +96,7 @@ export function buildDaemonGatewayCatalog(
     providerRegistry: services.providerRegistry,
     automationManager: services.automationManager,
     sessionLister: view.sessionBroker,
-    attemptsController: services.orchestrationEngine,
+    attemptsController: services.contractRunner.fleetControls(),
     workingDirectory: services.workingDirectory,
     conversationRewindPort: options.conversationRewindPort ?? createSessionConversationRewindPort(),
   });

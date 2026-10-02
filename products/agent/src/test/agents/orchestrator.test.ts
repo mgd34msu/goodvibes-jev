@@ -13,6 +13,9 @@ import type { PermissionRequestHandler } from '@goodvibes-jev/engine/sdk/platfor
 import { PolicyRuntimeState } from '@/runtime/index.ts';
 import { getTestRuntimeServices, resetTestRuntimeServices } from '../helpers/runtime-services.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { forgetFailureReadings, installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { forgetCatastrophicReadings } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -30,7 +33,7 @@ function makeRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
     orchestrationDepth: 0,
     toolCallCount: 0,
     executionProtocol: 'gather-plan-apply',
-    reviewMode: 'wrfc',
+    reviewMode: 'contract',
     communicationLane: 'direct',
     ...overrides,
   };
@@ -164,11 +167,30 @@ describe('AgentOrchestrator', () => {
   }
 
   let orchestrator: AgentOrchestrator;
+  let previousJudgmentPort: ReturnType<typeof installJudgmentPort>;
 
   beforeEach(async () => {
     process.chdir(repoRoot);
     resetTestRuntimeServices();
     orchestratorRuntime = getTestRuntimeServices();
+    // Runtime construction installs its provider-backed port; replace it only
+    // afterwards with explicit readings for these runner integration cases.
+    forgetFailureReadings();
+    forgetCatastrophicReadings();
+    previousJudgmentPort = installJudgmentPort(fakePort((name, question) => {
+      if (name === 'category') return choiceAnswer(question, 'unknown', 0.97);
+      if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.97);
+      if (name === 'family') return choiceAnswer(question, 'file-mutation', 0.97);
+      if (name === 'kind') return choiceAnswer(question, 'write', 0.97);
+      if (name === 'capability') return choiceAnswer(question, 'generic', 0.97);
+      if (question.type === 'noul') {
+        // The write changes state; the sole reviewed runbook matches the
+        // knowledge-injection case. Other risks and retry causes read no.
+        const yes = ['mutates', 'relevant', 'task_match', 'scope_match'].includes(name);
+        return noulAnswer(yes ? 0.97 : 0.03);
+      }
+      throw new Error(`Unexpected agent-runner reading: ${name}`);
+    }).port);
     memoryDbPath = join(makeProjectTempDir('agent-orchestrator-db'), `agent-orchestrator-${randomUUID()}.db`);
     projectIndexRoot = makeProjectTempDir(`agent-orchestrator-project-${randomUUID()}`);
     memoryStore = new MemoryStore(memoryDbPath, {
@@ -193,6 +215,9 @@ describe('AgentOrchestrator', () => {
       modeManager: orchestratorRuntime.modeManager,
       processManager: orchestratorRuntime.processManager,
       agentMessageBus: orchestratorRuntime.agentMessageBus,
+      agentManager: orchestratorRuntime.agentManager,
+      contractRunner: orchestratorRuntime.contractRunner,
+      contractHooks: orchestratorRuntime.contractRunner.hooks(),
       webSearchService: orchestratorRuntime.webSearchService,
       channelRegistry: orchestratorRuntime.channelPlugins,
       remoteRunnerRegistry: orchestratorRuntime.remoteRunnerRegistry,
@@ -214,6 +239,9 @@ describe('AgentOrchestrator', () => {
   });
 
   afterEach(async () => {
+    installJudgmentPort(previousJudgmentPort);
+    forgetFailureReadings();
+    forgetCatastrophicReadings();
     process.chdir(originalCwd);
     memoryStore?.close();
     await projectIndex?.dispose();
@@ -470,7 +498,7 @@ describe('AgentOrchestrator', () => {
       }
     });
 
-    test('honors explicit provider failure policy when fallbacks are configured', async () => {
+    test('rejects fallbacks with explicit fail policy and preserves primary-provider failure', async () => {
       const primaryProvider: LLMProvider = {
         name: 'primary',
         models: ['primary-model'],
@@ -491,16 +519,32 @@ describe('AgentOrchestrator', () => {
       const reg = getActualRegistry();
       const origGetForModel = reg.getForModel.bind(reg);
       const origGetCurrentModel = reg.getCurrentModel.bind(reg);
-      reg.getForModel = mock((modelId: string) => modelId === 'fallback-model' ? fallbackProvider : primaryProvider);
-      reg.getCurrentModel = mock(() => ({ ...MOCK_MODEL, id: 'primary-model', provider: 'primary' }));
+      registerRuntimeModel(reg, 'primary', 'primary-model', primaryProvider);
+      registerRuntimeModel(reg, 'fallback', 'fallback-model', fallbackProvider);
+      reg.getForModel = mock((modelId: string) => modelId === 'fallback:fallback-model' ? fallbackProvider : primaryProvider);
+      reg.getCurrentModel = mock(() => ({ ...MOCK_MODEL, id: 'primary-model', provider: 'primary', registryKey: 'primary:primary-model' }));
       try {
         const record = makeRecord({
-          model: 'primary-model',
-          fallbackModels: ['fallback-model'],
+          model: 'primary:primary-model',
+          fallbackModels: ['fallback:fallback-model'],
           routing: { providerFailurePolicy: 'fail' },
         });
         await orchestrator.runAgent(record);
         expect(record.status).toBe('failed');
+        expect(record.error).toContain('fail routing cannot include fallback models');
+        expect(primaryProvider.chat).not.toHaveBeenCalled();
+        expect(fallbackProvider.chat).not.toHaveBeenCalled();
+
+        // A valid fail policy reaches the primary and preserves its failure
+        // without silently substituting the registered fallback provider.
+        const primaryOnly = makeRecord({
+          model: 'primary:primary-model',
+          routing: { providerFailurePolicy: 'fail' },
+        });
+        await orchestrator.runAgent(primaryOnly);
+        expect(primaryOnly.status).toBe('failed');
+        expect(primaryOnly.error).toContain('primary unavailable');
+        expect(primaryProvider.chat).toHaveBeenCalledTimes(1);
         expect(fallbackProvider.chat).not.toHaveBeenCalled();
       } finally {
         reg.getForModel = origGetForModel;
@@ -719,6 +763,9 @@ describe('AgentOrchestrator', () => {
         modeManager: orchestratorRuntime.modeManager,
         processManager: orchestratorRuntime.processManager,
         agentMessageBus: orchestratorRuntime.agentMessageBus,
+        agentManager: orchestratorRuntime.agentManager,
+        contractRunner: orchestratorRuntime.contractRunner,
+        contractHooks: orchestratorRuntime.contractRunner.hooks(),
         webSearchService: orchestratorRuntime.webSearchService,
         channelRegistry: orchestratorRuntime.channelPlugins,
         remoteRunnerRegistry: orchestratorRuntime.remoteRunnerRegistry,
@@ -739,10 +786,12 @@ describe('AgentOrchestrator', () => {
         permissionManager,
       });
 
+      const deniedWritePath = join(projectIndexRoot, 'gate-test.txt');
+      expect(existsSync(deniedWritePath)).toBe(false);
       const provider = makeMockProvider([
         {
           content: '',
-          toolCalls: [{ id: 'call-write-1', name: 'write', arguments: { path: 'gate-test.txt', content: 'x' } }],
+          toolCalls: [{ id: 'call-write-1', name: 'write', arguments: { files: [{ path: deniedWritePath, content: 'x' }] } }],
         },
         { content: 'Understood, the write was not approved.' },
       ]);
@@ -757,6 +806,7 @@ describe('AgentOrchestrator', () => {
       expect(askedRequest.tool).toBe('write');
       // Subagent attribution rides on the brokered ask (background-permission-gate.js).
       expect(askedRequest.attribution).toEqual({ kind: 'background-agent', agentId: record.id, template: record.template });
+      expect(existsSync(deniedWritePath)).toBe(false);
 
       // The denial was honored, the tool did not run, and the agent still
       // completes cleanly (denial becomes a tool result fed back to the model).
@@ -788,6 +838,9 @@ describe('AgentOrchestrator', () => {
         modeManager: orchestratorRuntime.modeManager,
         processManager: orchestratorRuntime.processManager,
         agentMessageBus: orchestratorRuntime.agentMessageBus,
+        agentManager: orchestratorRuntime.agentManager,
+        contractRunner: orchestratorRuntime.contractRunner,
+        contractHooks: orchestratorRuntime.contractRunner.hooks(),
         webSearchService: orchestratorRuntime.webSearchService,
         channelRegistry: orchestratorRuntime.channelPlugins,
         remoteRunnerRegistry: orchestratorRuntime.remoteRunnerRegistry,

@@ -6,7 +6,7 @@
  */
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { SlackIntegration } from '@goodvibes-jev/engine/sdk/platform/integrations';
-import { RuntimeEventBus } from '@/runtime/index.ts';
+import { createEventEnvelope, RuntimeEventBus } from '@/runtime/index.ts';
 import { createRuntimeNotifier } from '../../runtime/bootstrap-notifier.ts';
 
 const ctx = { sessionId: 's1', traceId: 't', source: 'test' };
@@ -15,7 +15,7 @@ describe('the agent Slack/Discord notifier', () => {
   let spy: ReturnType<typeof spyOn> | null = null;
   afterEach(() => { spy?.mockRestore(); spy = null; });
 
-  test('names the work while the privacy setting is off, and drops it the moment it is turned on', async () => {
+  test('contains legacy event content under both metadata-only settings', async () => {
     const sent: string[] = [];
     spy = spyOn(SlackIntegration.prototype, 'postWebhook').mockImplementation(async (text: string) => { sent.push(text); });
     const settings: Record<string, unknown> = {};
@@ -24,20 +24,18 @@ describe('the agent Slack/Discord notifier', () => {
     const bus = new RuntimeEventBus();
     notifier.attachToRuntimeBus(bus);
     try {
-      bus.emit('workflows', { type: 'WORKFLOW_CHAIN_CREATED', payload: { type: 'WORKFLOW_CHAIN_CREATED', chainId: 'c1', task: 'Rewrite the retry backoff' }, ...ctx } as never);
-      bus.emit('workflows', { type: 'WORKFLOW_CHAIN_FAILED', payload: { type: 'WORKFLOW_CHAIN_FAILED', chainId: 'c1', reason: 'review score 4/10' }, ...ctx } as never);
+      bus.emit('contracts', createEventEnvelope('CONTRACT_FAILED', { type: 'CONTRACT_FAILED', contractId: 'c1', reason: 'review score 4/10', failureKind: 'other', membersSettled: true }, ctx));
       await new Promise((resolve) => setTimeout(resolve, 10));
       settings['behavior.notificationsMetadataOnly'] = true;
-      bus.emit('workflows', { type: 'WORKFLOW_CHAIN_CREATED', payload: { type: 'WORKFLOW_CHAIN_CREATED', chainId: 'c2', task: 'Split the parser module' }, ...ctx } as never);
-      bus.emit('workflows', { type: 'WORKFLOW_CHAIN_FAILED', payload: { type: 'WORKFLOW_CHAIN_FAILED', chainId: 'c2', reason: 'private reason' }, ...ctx } as never);
+      bus.emit('contracts', createEventEnvelope('CONTRACT_FAILED', { type: 'CONTRACT_FAILED', contractId: 'c2', reason: 'private reason', failureKind: 'other', membersSettled: true }, ctx));
       await new Promise((resolve) => setTimeout(resolve, 10));
     } finally {
       notifier.detach();
-      notifier.dispose();
+      await notifier.close();
     }
     expect(sent).toEqual([
-      'Workstream could not be finished: Rewrite the retry backoff\nreview score 4/10',
-      'A workstream could not be finished.',
+      'GoodVibes: notification available',
+      'GoodVibes: notification available',
     ]);
   });
 });

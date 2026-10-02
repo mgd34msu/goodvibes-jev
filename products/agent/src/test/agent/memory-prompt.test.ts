@@ -1,4 +1,4 @@
-import { useMemoryReadings } from '../../../../../packages/engine/test/_helpers/memory-readings.ts';
+import { useMemoryReadings } from '../helpers/memory-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';

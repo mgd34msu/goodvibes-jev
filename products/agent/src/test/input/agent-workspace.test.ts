@@ -27,7 +27,7 @@ import { readOnboardingCheckMarker, readOnboardingCompletionMarker, writeOnboard
 import { connectedHostOperatorTokenPath } from '../../runtime/connected-host-auth.ts';
 import { ConfigManager } from '../../config/index.ts';
 import { THEME_MODE_CONFIG_KEY } from '../../renderer/theme-mode-config.ts';
-import { getActiveThemeMode, getActiveThemeName, listThemeChoices, setActiveThemeMode, setActiveThemeName } from '../../renderer/theme.ts';
+import { getActiveThemeMode, getActiveThemeName, listThemeChoices, normalizeThemeName, setActiveThemeMode, setActiveThemeName } from '../../renderer/theme.ts';
 import { isAgentHiddenSettingKey } from '../../config/agent-settings-policy.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../../config/surface.ts';
 import type { MemoryApi } from '@goodvibes-jev/engine/sdk/platform/knowledge';
@@ -221,8 +221,8 @@ function memoryApi(records: MemoryRecord[] = [memoryRecord()]): MemoryApi {
       records.unshift(record);
       return record;
     },
-    search: () => records,
-    searchSemantic: () => [],
+    search: async () => records,
+    searchSemantic: async () => [],
     vectorStats,
     rebuildVectors: vectorStats,
     rebuildVectorsAsync: async () => vectorStats(),
@@ -237,7 +237,7 @@ function memoryApi(records: MemoryRecord[] = [memoryRecord()]): MemoryApi {
       },
       checkedAt: Date.now(),
     }),
-    reviewQueue: () => records.filter((record) => record.reviewState !== 'reviewed'),
+    reviewQueue: async () => records.slice(0, 100),
     exportBundle: () => ({
       schemaVersion: 'v1',
       exportedAt: Date.now(),
@@ -286,7 +286,7 @@ function memoryApi(records: MemoryRecord[] = [memoryRecord()]): MemoryApi {
       records.splice(index, 1);
       return true;
     },
-    explain: () => ({ injections: [], prompt: null }),
+    explain: async () => ({ injections: [], prompt: null }),
   };
 }
 
@@ -764,7 +764,7 @@ describe('AgentWorkspace', () => {
 
       const names = listThemeChoices().map((choice) => choice.name);
       expect(names).not.toContain('vaporwave');
-      const start = names.indexOf('goodvibes');
+      const start = names.indexOf(normalizeThemeName(configManager.get('display.theme')));
       const visited: string[] = [];
       for (let step = 0; step < names.length; step++) {
         workspace.activateSelected();
@@ -995,11 +995,12 @@ describe('AgentWorkspace', () => {
   });
 
   test('renders Agent-owned memory in the workspace without default knowledge fallback', () => {
+    let reviewReads = 0;
     const ctx = {
       ...commandContext(),
       clients: {
         agentKnowledgeApi: {
-          memory: memoryApi([
+          memory: { ...memoryApi([
             memoryRecord({
               id: 'mem-source-policy',
               cls: 'constraint',
@@ -1009,7 +1010,7 @@ describe('AgentWorkspace', () => {
               reviewState: 'reviewed',
               confidence: 100,
             }),
-          ]),
+          ]), reviewQueue: async () => { reviewReads += 1; return []; } },
         },
       },
     } as unknown as CommandContext;
@@ -1021,7 +1022,11 @@ describe('AgentWorkspace', () => {
 
     expect(workspace.runtimeSnapshot?.localMemoryCount).toBe(1);
     expect(workspace.runtimeSnapshot?.localMemoryPromptActiveCount).toBe(1);
-    expect(output).toContain('Memory: 1; prompt 1; queue 0; session 0.');
+    // Canonical review ranks all candidates, including reviewed records. Paint
+    // uses the capped cardinality and never starts that async semantic ranking.
+    expect(workspace.runtimeSnapshot?.localMemoryReviewQueueCount).toBe(1);
+    expect(reviewReads).toBe(0);
+    expect(output).toContain('Memory: 1; prompt 1; queue 1; session 0.');
     expect(output).toContain('Never fallback to non-Agent knowledge segments');
     expect(output).toContain('project/constraint');
     expect(output).not.toContain('default knowledge');

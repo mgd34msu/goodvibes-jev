@@ -1,3 +1,4 @@
+import { getTestRuntimeServices } from '../helpers/runtime-services.ts';
 import { describe, test, expect } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -38,6 +39,8 @@ function registerTools(registry: ToolRegistry): string {
     modeManager: new ModeManager(),
     processManager: new ProcessManager(),
     agentManager,
+    contractRunner: getTestRuntimeServices().contractRunner,
+    projectRoot: workingDirectory,
     agentMessageBus,
     configManager: services.configManager,
     providerRegistry: services.providerRegistry,

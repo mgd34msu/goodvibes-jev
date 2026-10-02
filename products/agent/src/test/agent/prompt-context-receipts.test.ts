@@ -1,4 +1,4 @@
-import { useMemoryReadings } from '../../../../../packages/engine/test/_helpers/memory-readings.ts';
+import { useMemoryReadings } from '../helpers/memory-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

@@ -90,7 +90,7 @@ describe('capability discovery: the settings catalog answers in plain words', ()
   });
 
   test('total is the size of the catalog, never the size of the match', async () => {
-    const visible = CONFIG_SCHEMA.filter((setting) => setting.key !== 'ui.wrfcMessages').length;
+    const visible = CONFIG_SCHEMA.length;
 
     const matched = await settingsPage('payment');
     expect(matched.total).toBe(visible);

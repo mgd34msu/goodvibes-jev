@@ -1,4 +1,4 @@
-import { useSecurityReadings } from '../../../../../packages/engine/test/helpers/security-readings.ts';
+import { useSecurityReadings } from '../helpers/security-readings.ts';
 /**
  * agent-google-outward-effects.test.ts, the boundary, exercised through the
  * real `google` tool rather than through the guard in isolation.

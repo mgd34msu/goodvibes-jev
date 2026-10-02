@@ -1,3 +1,4 @@
+import { useMemoryReadings } from '../helpers/memory-readings.ts';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { createKnowledgeApi } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { resetTestRuntimeServices, getTestRuntimeServices } from '../helpers/runtime-services.ts';
@@ -9,6 +10,7 @@ describe('KnowledgeApi', () => {
 
   test('groups status, connector, and query surfaces over the knowledge runtime', async () => {
     const runtimeServices = getTestRuntimeServices();
+    readings.use({});
     const api = createKnowledgeApi(runtimeServices.knowledgeService, {
       memoryRegistry: runtimeServices.memoryRegistry,
     });
@@ -41,7 +43,7 @@ describe('KnowledgeApi', () => {
       provenance: [{ kind: 'file', ref: 'src/knowledge/knowledge-api.ts' }],
       review: { state: 'reviewed', confidence: 93 },
     });
-    const explain = api.memory?.explain('update knowledge api', ['src/knowledge']);
+    const explain = await api.memory?.explain('update knowledge api', ['src/knowledge']);
     expect(explain?.injections[0]).toMatchObject({
       trustTier: 'reviewed',
       useAs: 'reference-material',
@@ -56,9 +58,11 @@ describe('KnowledgeApi', () => {
 
   test('surfaces ingest, packets, projections, jobs, and consolidation through grouped domains', async () => {
     const runtimeServices = getTestRuntimeServices();
+    readings.use({});
     const api = createKnowledgeApi(runtimeServices.knowledgeService);
     const artifact = await runtimeServices.artifactStore.create({
       filename: 'knowledge-api.txt',
+      kind: 'document',
       text: 'GoodVibes knowledge api artifact body',
     });
 
@@ -98,3 +102,5 @@ describe('KnowledgeApi', () => {
     expect(api.consolidation.reports(10)).toEqual(expect.any(Array));
   });
 });
+
+const readings = useMemoryReadings();

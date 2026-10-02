@@ -1,3 +1,4 @@
+import { useMemoryReadings } from '../helpers/memory-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { createAgentLocalRegistryTool, registerAgentLocalRegistryTool } from '../../tools/agent-local-registry-tool.ts';
@@ -82,7 +83,7 @@ describe('agent_local_registry tool', () => {
     records = memoryRegistry.getAll();
     expect(records[0]?.reviewState).toBe('reviewed');
     expect(records[0]?.confidence).toBe(92);
-    expect(buildReviewedMemoryPrompt(memoryRegistry)).toContain('User prefers concise morning operator briefings.');
+    expect(await buildReviewedMemoryPrompt(memoryRegistry)).toContain('User prefers concise morning operator briefings.');
   });
 
   test('searches and shows Agent-local memory from the model-visible tool', async () => {
@@ -455,3 +456,5 @@ describe('agent_local_registry tool', () => {
     expect(result.output).toContain('Agent-local memory');
   });
 });
+
+useMemoryReadings();

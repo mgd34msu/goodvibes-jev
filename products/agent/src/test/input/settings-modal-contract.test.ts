@@ -12,7 +12,7 @@ test('every public contract and judgment setting is reachable in the Agent setti
   const modal = new SettingsModal();
   const keys = CONFIG_SCHEMA.filter(setting => setting.key.startsWith('contract.') || setting.key.startsWith('judgment.')).map(setting => setting.key);
   expect(keys.length).toBeGreaterThan(0);
-  modal.open(config, createFeatureFlagManager(), new SubscriptionManager(join(root, 'subscriptions.json')), { getAll: () => [] });
+  modal.open(config, createFeatureFlagManager(), new SubscriptionManager(join(root, 'subscriptions.json')), { getAll: () => ({}) });
   try {
     expect(SETTINGS_CATEGORIES).toContain('contract');
     expect(SETTINGS_CATEGORIES).not.toContain('wrfc');
@@ -20,7 +20,7 @@ test('every public contract and judgment setting is reachable in the Agent setti
     expect(CATEGORY_LABELS).toHaveProperty('contract', 'Contracts');
     for (const key of keys) {
       modal.selectTarget(key);
-      expect(modal.currentCategory).toBe(key.split('.')[0]);
+      expect(key.startsWith(`${modal.currentCategory}.`)).toBe(true);
       expect(modal.getSelected()?.setting.key).toBe(key);
       expect(modal.getSelected()?.currentValue).toEqual(config.get(key as Parameters<ConfigManager['get']>[0]));
     }

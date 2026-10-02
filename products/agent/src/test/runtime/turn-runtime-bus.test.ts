@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { join } from 'node:path';
 import { ConversationManager } from '../../core/conversation.ts';
 import { Orchestrator } from '@goodvibes-jev/engine/sdk/platform/core';
@@ -14,6 +14,8 @@ import { AgentManager } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { createPermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { createTestManagers } from '../helpers/test-managers.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 
 const configManager = new ConfigManager({ surfaceRoot: 'tui',
   configDir: makeProjectTempDir(`gv-turn-runtime-${Date.now()}-${Math.random().toString(36).slice(2)}`),
@@ -52,8 +54,18 @@ async function withMockProvider<T>(
 
 describe('runtime turn substrate', () => {
   const savedStream = configManager.get('display.stream') as boolean;
+  let previousJudgmentPort: ReturnType<typeof installJudgmentPort>;
+  beforeEach(() => {
+    previousJudgmentPort = installJudgmentPort(fakePort((name, question) => {
+      if (name === 'intent') return choiceAnswer(question, 'chat', 0.97);
+      if (name === 'needs_plan') return noulAnswer(0.03);
+      if (name === 'risk') return scoreAnswer(question, 0, 0.97);
+      throw new Error(`Unexpected turn reading: ${name}`);
+    }).port);
+  });
 
   afterEach(() => {
+    installJudgmentPort(previousJudgmentPort);
     configManager.set('display.stream', savedStream);
   });
 
@@ -97,7 +109,8 @@ describe('runtime turn substrate', () => {
       runtimeBus,
       services: {
         agentManager: new AgentManager({ configManager }),
-        wrfcController: { listChains: () => [] },
+        contractRunner: { list: () => [] },
+        contractIntake: { intake: async () => ({ kind: 'turn' }) },
       },
     });
     orchestrator.setCoreServices({

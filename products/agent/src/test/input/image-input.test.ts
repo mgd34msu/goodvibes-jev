@@ -8,7 +8,9 @@ import { createPermissionConfigReader, PermissionManager } from '@goodvibes-jev/
 import { PolicyRuntimeState } from '@/runtime/index.ts';
 import { createDefaultUiRuntimeServices } from '../helpers/ui-services.ts';
 import { getTestProviderRegistry } from '../helpers/runtime-services.ts';
-import type { ContentPart } from '@goodvibes-jev/engine/sdk/platform/providers';
+import type { ChatRequest, ContentPart } from '@goodvibes-jev/engine/sdk/platform/providers';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { AgentManager } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { handleClipboardPaste } from '../../input/handler-content-actions.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
@@ -315,7 +317,8 @@ describe('Orchestrator capability check for non-multimodal models', () => {
       runtimeBus,
       services: {
         agentManager: new AgentManager({ configManager }),
-        wrfcController: { listChains: () => [] },
+        contractRunner: { list: () => [] },
+        contractIntake: { intake: async () => ({ kind: 'turn' }) },
       },
     });
     orch.setCoreServices({
@@ -326,9 +329,11 @@ describe('Orchestrator capability check for non-multimodal models', () => {
 
     // Inject a non-multimodal model into provider registry for this test
     const originalGetCurrentModel = providerRegistry.getCurrentModel.bind(providerRegistry);
+    const originalGetForModel = providerRegistry.getForModel.bind(providerRegistry);
     const mockBackingProvider = providerRegistry.get('openrouter');
     if (!mockBackingProvider) throw new Error('Expected openrouter provider in test registry');
     const originalChat = mockBackingProvider.chat.bind(mockBackingProvider);
+    providerRegistry.getForModel = () => mockBackingProvider;
     let systemMessages: string[] = [];
     const origAddSystem = cm.addSystemMessage.bind(cm);
     cm.addSystemMessage = (msg: string) => {
@@ -348,25 +353,44 @@ describe('Orchestrator capability check for non-multimodal models', () => {
       capabilities: { multimodal: false, toolCalling: true, codeEditing: false, reasoning: false },
     });
 
-    // Patch the resolved provider instance to return a fast canned response.
-    mockBackingProvider.chat = async () => ({
-      content: 'ok',
-      toolCalls: [],
-      usage: { inputTokens: 1, outputTokens: 1 },
-      stopReason: 'completed' as const,
-    });
+    // The runtime constructor installs its own port, so inject the core
+    // fixture after the runtime and provider registry have been constructed.
+    const previousJudgmentPort = installJudgmentPort(fakePort((name, question) => {
+      if (name === 'intent') return choiceAnswer(question, 'chat', 0.97);
+      if (name === 'needs_plan') return noulAnswer(0.03);
+      if (name === 'risk') return scoreAnswer(question, 0, 0.97);
+      throw new Error(`Unexpected image-input turn reading: ${name}`);
+    }).port);
+    const providerRequests: ChatRequest[] = [];
+    // Capture what actually reaches the non-multimodal provider. A warning
+    // emitted before a failed judgment must not be enough to pass this test.
+    mockBackingProvider.chat = async (request) => {
+      providerRequests.push(request);
+      return {
+        content: 'ok',
+        toolCalls: [],
+        usage: { inputTokens: 1, outputTokens: 1 },
+        stopReason: 'completed',
+      };
+    };
 
     const content = [
       { type: 'text' as const, text: 'describe this' },
       { type: 'image' as const, data: 'abc', mediaType: 'image/png' },
     ];
 
-    await orch.handleUserInput('describe this', content);
-
-    // Restore
-    providerRegistry.getCurrentModel = originalGetCurrentModel;
-    mockBackingProvider.chat = originalChat;
-
-    expect(systemMessages.join('\n')).toContain('does not support image input');
+    try {
+      await orch.handleUserInput('describe this', content);
+      expect(systemMessages.join('\n')).toContain('does not support image input');
+      expect(providerRequests).toHaveLength(1);
+      expect(providerRequests[0]?.messages).toContainEqual({ role: 'user', content: 'describe this' });
+      expect(cm.getMessagesForLLM()).toContainEqual({ role: 'assistant', content: 'ok' });
+    } finally {
+      installJudgmentPort(previousJudgmentPort);
+      providerRegistry.getCurrentModel = originalGetCurrentModel;
+      providerRegistry.getForModel = originalGetForModel;
+      mockBackingProvider.chat = originalChat;
+      orch.dispose();
+    }
   });
 });

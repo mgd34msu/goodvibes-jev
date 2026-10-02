@@ -109,7 +109,8 @@ describe('Orchestrator: abort during streaming cleanup', () => {
       getSystemPrompt: () => '',
       services: {
         agentManager: new AgentManager({ configManager }),
-        wrfcController: { listChains: () => [] },
+        contractRunner: { list: () => [] },
+        contractIntake: { intake: async () => ({ kind: 'turn' }) },
       },
     });
     return { orch, cm };

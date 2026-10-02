@@ -21,7 +21,7 @@ describe('RemoteRunnerRegistry', () => {
 
   test('builds runner contracts from active ACP-backed agents', () => {
     const manager = getTestAgentManager();
-    const agent = manager.spawn({ mode: 'spawn', task: 'Remote contract task', template: 'engineer', tools: ['read', 'edit'], dangerously_disable_wrfc: true });
+    const agent = manager.spawn({ mode: 'spawn', task: 'Remote contract task', template: 'engineer', tools: ['read', 'edit'], outsideContract: true });
     const store = createRuntimeStore();
     store.setState((state) => ({
       ...state,
@@ -61,7 +61,7 @@ describe('RemoteRunnerRegistry', () => {
       task: 'Capture remote artifact export',
       template: 'engineer',
       tools: ['read'],
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
     });
     agent.status = 'completed';
     agent.fullOutput = 'Completed remote review flow successfully.';
@@ -104,7 +104,7 @@ describe('RemoteRunnerRegistry', () => {
 
   test('manages remote runner pools and preserves pool assignment on contracts', () => {
     const manager = getTestAgentManager();
-    const agent = manager.spawn({ mode: 'spawn', task: 'Pool-ready runner', template: 'engineer', tools: ['read'], dangerously_disable_wrfc: true });
+    const agent = manager.spawn({ mode: 'spawn', task: 'Pool-ready runner', template: 'engineer', tools: ['read'], outsideContract: true });
     const registry = new RemoteRunnerRegistry(manager);
     registry.createPool({ id: 'ops', label: 'Ops Pool', preferredTemplate: 'engineer', maxRunners: 2 });
     registry.registerContract({

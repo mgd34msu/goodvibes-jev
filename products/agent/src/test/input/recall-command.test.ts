@@ -10,6 +10,8 @@ import { createShellPathService } from '@/runtime/index.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { memoryReadingsPort } from '../helpers/memory-readings.ts';
 
 function makeRegistry(): MemoryRegistry {
   const links: Array<{ fromId: string; toId: string; relation: string; createdAt: number }> = [];
@@ -230,6 +232,7 @@ describe('recallCommand', () => {
       turnId: 'turn-1',
       taskId: 'task-1',
       phaseTimings: [],
+        slowPhases: [],
       phaseLedger: [],
       causalChain: [],
       cascadeEvents: [],
@@ -370,22 +373,31 @@ describe('recallCommand', () => {
       tags: ['deploy', 'mcp'],
       review: { state: 'reviewed', confidence: 92 },
     });
-    await recallCommand.handler(['explain', 'deploy', 'the', 'release'], makeRecallCommandContext(printed, {
-      memoryRegistry: registry,
-      forensicsRegistry,
-    }));
+    const { port, requests } = memoryReadingsPort({ relevance: (task, _scope, record) => {
+      expect(task).toBe('deploy the release');
+      expect(record.summary).toBe('Deploy tasks should quarantine risky MCP schemas first.');
+      return { relevant: 0.99, taskMatch: 0.99, scopeMatch: 0.01 };
+    } });
+    const previous = installJudgmentPort(port);
+    try {
+      await recallCommand.handler(['explain', 'deploy', 'the', 'release'], makeRecallCommandContext(printed, {
+        memoryRegistry: registry,
+        forensicsRegistry,
+      }));
 
-    expect(printed.join('\n')).toContain('Injected Project Knowledge');
-    expect(printed.join('\n')).toContain('matched task token "deploy"');
+      expect(printed.join('\n')).toContain('Injected Project Knowledge');
+      expect(printed.join('\n')).toContain('matched task');
+      expect(requests.length).toBeGreaterThan(0);
 
-    printed.length = 0;
-    await recallCommand.handler(['stale', 'mem-1', 'operator', 'revalidation', 'needed'], makeRecallCommandContext(printed, {
-      memoryRegistry: registry,
-      forensicsRegistry,
-    }));
+      printed.length = 0;
+      await recallCommand.handler(['stale', 'mem-1', 'operator', 'revalidation', 'needed'], makeRecallCommandContext(printed, {
+        memoryRegistry: registry,
+        forensicsRegistry,
+      }));
 
-    expect(printed.join('\n')).toContain('Reviewed mem-1: stale');
-    expect(registry.get('mem-1')?.reviewState).toBe('stale');
-    expect(registry.get('mem-1')?.staleReason).toContain('operator revalidation needed');
+      expect(printed.join('\n')).toContain('Reviewed mem-1: stale');
+      expect(registry.get('mem-1')?.reviewState).toBe('stale');
+      expect(registry.get('mem-1')?.staleReason).toContain('operator revalidation needed');
+    } finally { installJudgmentPort(previous); }
   });
 });

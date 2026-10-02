@@ -12,6 +12,8 @@ import { PolicyRuntimeState } from '@/runtime/index.ts';
 import { createTestManagers } from '../helpers/test-managers.ts';
 import { resetSettingsControlPlaneStore } from '../helpers/settings-control-plane.ts';
 import { AgentManager } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -44,6 +46,7 @@ function _makeMockProvider(responses: MockChatResponse[]) {
 // ---------------------------------------------------------------------------
 
 describe('Orchestrator', () => {
+  let previousJudgmentPort: ReturnType<typeof installJudgmentPort>;
   let runtimeBus: RuntimeEventBus;
   let toolRegistry: ToolRegistry;
   let testManagers: ReturnType<typeof createTestManagers>;
@@ -61,9 +64,23 @@ describe('Orchestrator', () => {
     resetSettingsControlPlaneStore(configManager);
     runtimeBus = new RuntimeEventBus();
     toolRegistry = new ToolRegistry();
+    // Core turn and tool-permission semantics are external readings. Keep
+    // this suite focused on token accounting, hooks and turn-loop behavior.
+    previousJudgmentPort = installJudgmentPort(fakePort((name, question) => {
+      if (name === 'intent') return choiceAnswer(question, 'chat', 0.97);
+      if (name === 'risk') return scoreAnswer(question, 0, 0.97);
+      if (name === 'family') return choiceAnswer(question, 'generic', 0.97);
+      if (name === 'kind') return choiceAnswer(question, 'other', 0.97);
+      if (name === 'capability') return choiceAnswer(question, 'generic', 0.97);
+      if (name === 'category') return choiceAnswer(question, 'unknown', 0.97);
+      if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.97);
+      if (question.type === 'noul') return noulAnswer(name === 'mutates' ? 0.97 : 0.03);
+      throw new Error(`Unexpected orchestrator reading: ${name}`);
+    }).port);
   });
 
   afterEach(() => {
+    installJudgmentPort(previousJudgmentPort);
     resetSettingsControlPlaneStore(configManager);
     releaseTestExecutionLock?.();
     releaseTestExecutionLock = null;
@@ -88,7 +105,8 @@ describe('Orchestrator', () => {
       runtimeBus,
       services: {
         agentManager,
-        wrfcController: { listChains: () => [] },
+        contractRunner: { list: () => [] },
+        contractIntake: { intake: async () => ({ kind: 'turn' }) },
       },
     });
     orch.setCoreServices({
@@ -116,7 +134,8 @@ describe('Orchestrator', () => {
       runtimeBus,
       services: {
         agentManager,
-        wrfcController: { listChains: () => [] },
+        contractRunner: { list: () => [] },
+        contractIntake: { intake: async () => ({ kind: 'turn' }) },
       },
     });
     orch.setCoreServices({
@@ -426,9 +445,11 @@ describe('Orchestrator', () => {
       reg.getForModel = mock(() => provider);
       reg.getCurrentModel = mock(() => replayMockModel);
       try {
-        runtimeBus.emit('workflows', createEventEnvelope('WORKFLOW_CHAIN_FAILED', {
-          type: 'WORKFLOW_CHAIN_FAILED',
-          chainId: 'wrfc-1',
+        runtimeBus.emit('contracts', createEventEnvelope('CONTRACT_FAILED', {
+          type: 'CONTRACT_FAILED',
+          contractId: 'contract-1',
+          failureKind: 'other',
+          membersSettled: true,
           reason: 'review score below threshold',
         }, {
           sessionId: 'test',

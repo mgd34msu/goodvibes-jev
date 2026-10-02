@@ -1,7 +1,22 @@
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { SystemMessageRouter, createSystemMessageRouter, type SystemMessageKind, type SystemMessagePriority, type SystemMessageTarget } from '../../core/system-message-router.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import type { ActivityFeed } from '../../core/activity-feed.ts';
 import type { ConversationManager } from '../../core/conversation';
+
+// The router consumes a semantic priority reading; fixture answers are explicit
+// per case so the test exercises async delivery, not a local text classifier.
+let priorityAnswer: SystemMessagePriority = 'high';
+let previousJudgmentPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  priorityAnswer = 'high';
+  previousJudgmentPort = installJudgmentPort(fakePort((name, question) => {
+    if (name !== 'priority') throw new Error(`Unexpected priority question: ${name}`);
+    return choiceAnswer(question, priorityAnswer, 0.97);
+  }).port);
+});
+afterEach(() => { installJudgmentPort(previousJudgmentPort); });
 
 // ---------------------------------------------------------------------------
 // Minimal stubs
@@ -23,7 +38,7 @@ function makePanel(): { push: ReturnType<typeof mock>; handleInput: ReturnType<t
 function makeTargetResolver(
   overrides: Partial<Record<SystemMessageKind, SystemMessageTarget>> = {},
 ): (kind: SystemMessageKind) => SystemMessageTarget {
-  return (kind) => overrides[kind] ?? (kind === 'wrfc' ? 'both' : 'panel');
+  return (kind) => overrides[kind] ?? (kind === 'contract' ? 'both' : 'panel');
 }
 
 // ---------------------------------------------------------------------------
@@ -45,62 +60,71 @@ describe('classifyPriority (via routeAuto)', () => {
     );
   });
 
-  test('messages with [Model] prefix classify as high', () => {
-    router.routeAuto('[Model] Switched to gpt-5 (openai)');
+  test('messages with [Model] prefix classify as high', async () => {
+    await router.routeAuto('[Model] Switched to gpt-5 (openai)');
     expect(conv.addSystemMessage).not.toHaveBeenCalled();
     expect(panel.push).toHaveBeenCalledTimes(1);
+    expect(panel._pushed[0]?.priority).toBe('high');
   });
 
-  test('messages with [Session] saved classify as high', () => {
-    router.routeAuto('[Session] saved abc123');
+  test('messages with [Session] saved classify as high', async () => {
+    await router.routeAuto('[Session] saved abc123');
     expect(conv.addSystemMessage).not.toHaveBeenCalled();
     expect(panel.push).toHaveBeenCalledTimes(1);
+    expect(panel._pushed[0]?.priority).toBe('high');
   });
 
-  test('messages with [Recovery] Failed classify as high', () => {
-    router.routeAuto('[Recovery] Failed to restore: disk error');
+  test('messages with [Recovery] Failed classify as high', async () => {
+    await router.routeAuto('[Recovery] Failed to restore: disk error');
     expect(conv.addSystemMessage).not.toHaveBeenCalled();
     expect(panel.push).toHaveBeenCalledTimes(1);
+    expect(panel._pushed[0]?.priority).toBe('high');
   });
 
-  test('messages with fatal classify as high', () => {
-    router.routeAuto('A fatal error occurred');
+  test('messages with fatal classify as high', async () => {
+    await router.routeAuto('A fatal error occurred');
     expect(conv.addSystemMessage).not.toHaveBeenCalled();
     expect(panel.push).toHaveBeenCalledTimes(1);
+    expect(panel._pushed[0]?.priority).toBe('high');
   });
 
-  test('[Scan] messages classify as low (not sent to conversation)', () => {
-    router.routeAuto('[Scan] Found ollama at localhost:11434');
+  test('[Scan] messages classify as low (not sent to conversation)', async () => {
+    priorityAnswer = 'low';
+    await router.routeAuto('[Scan] Found ollama at localhost:11434');
     expect(conv.addSystemMessage).not.toHaveBeenCalled();
     expect(panel.push).toHaveBeenCalledTimes(1);
     expect(panel._pushed[0]!.priority).toBe('low');
   });
 
-  test('[Agents] periodic running-snapshot is dropped by the noise gate', () => {
+  test('[Agents] periodic running-snapshot is dropped by the noise gate', async () => {
     // The 30s "[Agents] N running:" churn is dropped from the feed; the live
     // detail stays on the fleet/agents surface + footer count.
-    router.routeAuto('[Agents] 3 running:\n  abc12345: working');
+    priorityAnswer = 'low';
+    await router.routeAuto('[Agents] 3 running:\n  abc12345: working');
     expect(conv.addSystemMessage).not.toHaveBeenCalled();
     expect(panel.push).not.toHaveBeenCalled();
   });
 
-  test('[Agents] lifecycle (non-snapshot) still routes to the feed', () => {
-    router.routeAuto('[Agents] ✓ abc12345 completed');
+  test('[Agents] lifecycle (non-snapshot) still routes to the feed', async () => {
+    priorityAnswer = 'low';
+    await router.routeAuto('[Agents] ✓ abc12345 completed');
     expect(panel.push).toHaveBeenCalledTimes(1);
   });
 
-  test('[Tool] activity messages classify as operational and can route separately', () => {
+  test('[Tool] activity messages classify as operational and can route separately', async () => {
     const opsRouter = createSystemMessageRouter(
       conv as unknown as ConversationManager,
       panel as unknown as ActivityFeed,
       makeTargetResolver({ operational: 'conversation' }),
     );
-    opsRouter.routeAuto('[Tool] edit applied to src/main.ts');
+    priorityAnswer = 'low';
+    await opsRouter.routeAuto('[Tool] edit applied to src/main.ts');
     expect(conv.addSystemMessage).toHaveBeenCalledWith('[Tool] edit applied to src/main.ts');
   });
 
-  test('[MCP] discovery messages classify as low', () => {
-    router.routeAuto('[MCP] Discovered server myserver (npx myserver-mcp).');
+  test('[MCP] discovery messages classify as low', async () => {
+    priorityAnswer = 'low';
+    await router.routeAuto('[MCP] Discovered server myserver (npx myserver-mcp).');
     expect(conv.addSystemMessage).not.toHaveBeenCalled();
   });
 });
@@ -142,10 +166,10 @@ describe('routeSystemMessage', () => {
     expect(panel.push).toHaveBeenCalledWith('important!', 'high');
   });
 
-  test('wrfc convenience method routes to both by default', () => {
-    router.wrfc('[WRFC] Chain abc started');
-    expect(conv.addSystemMessage).toHaveBeenCalledWith('[WRFC] Chain abc started');
-    expect(panel.push).toHaveBeenCalledWith('[WRFC] Chain abc started', 'high');
+  test('contract convenience method routes to both by default', () => {
+    router.contract('[Contract] Chain abc started');
+    expect(conv.addSystemMessage).toHaveBeenCalledWith('[Contract] Chain abc started');
+    expect(panel.push).toHaveBeenCalledWith('[Contract] Chain abc started', 'high');
   });
 
   test('low convenience method routes low (panel only)', () => {
@@ -218,22 +242,23 @@ describe('routeAuto classification', () => {
   ];
 
   for (const msg of highCases) {
-    test(`classifies as high: "${msg.slice(0, 40)}"`, () => {
-      router.routeAuto(msg);
+    test(`classifies as high: "${msg.slice(0, 40)}"`, async () => {
+      await router.routeAuto(msg);
       expect(conv.addSystemMessage).toHaveBeenCalledWith(msg);
     });
   }
 
   for (const msg of lowCases) {
-    test(`classifies as low: "${msg.slice(0, 40)}"`, () => {
-      router.routeAuto(msg);
+    test(`classifies as low: "${msg.slice(0, 40)}"`, async () => {
+      priorityAnswer = 'low';
+      await router.routeAuto(msg);
       expect(conv.addSystemMessage).toHaveBeenCalledWith(msg);
     });
   }
 
-  test('WRFC messages classify as wrfc and follow WRFC target policy', () => {
-    router.routeAuto('[WRFC] Chain abc123 started');
-    expect(conv.addSystemMessage).toHaveBeenCalledWith('[WRFC] Chain abc123 started');
+  test('contract messages follow the contract target policy', async () => {
+    await router.routeAuto('[Contract] Chain abc123 started');
+    expect(conv.addSystemMessage).toHaveBeenCalledWith('[Contract] Chain abc123 started');
   });
 });
 
@@ -325,10 +350,10 @@ describe('noise gate', () => {
     const router = createSystemMessageRouter(
       conv as unknown as ConversationManager,
       panel as unknown as ActivityFeed,
-      makeTargetResolver({ wrfc: 'both' }),
+      makeTargetResolver({ contract: 'both' }),
       { isChainTerminal: (id) => id === 'chain-9' },
     );
-    router.wrfc('[Replay] WRFC chain chain-9 transitioned pending → review — waiting for action (first notified 3 turns ago)');
+    router.contract('[Replay] WRFC chain chain-9 transitioned pending → review — waiting for action (first notified 3 turns ago)');
     expect(panel.push).not.toHaveBeenCalled();
     expect(conv.addSystemMessage).not.toHaveBeenCalled();
   });

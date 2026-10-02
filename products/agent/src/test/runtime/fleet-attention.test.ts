@@ -19,7 +19,7 @@
  *     while it's pending, and clears once the approval resolves.
  */
 import { describe, test, expect, mock } from 'bun:test';
-import { existsSync, rmSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { AgentOrchestrator } from '@goodvibes-jev/engine/sdk/platform/agents';
@@ -34,6 +34,9 @@ import { PolicyRuntimeState } from '@/runtime/index.ts';
 import { approvalMetadataForRequest } from '../../runtime/bootstrap-core.ts';
 import { getTestRuntimeServices, resetTestRuntimeServices } from '../helpers/runtime-services.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { forgetCatastrophicReadings } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 
 /** Build a minimal AgentRecord for testing (mirrors orchestrator.test.ts's helper). */
 function makeRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
@@ -47,7 +50,7 @@ function makeRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
     orchestrationDepth: 0,
     toolCallCount: 0,
     executionProtocol: 'gather-plan-apply',
-    reviewMode: 'wrfc',
+    reviewMode: 'contract',
     communicationLane: 'direct',
     ...overrides,
   };
@@ -126,6 +129,16 @@ describe('fleet plane adoption', () => {
     const projectIndex = new ProjectIndex(projectIndexRoot);
     await Promise.all([memoryStore.init(), projectIndex.load()]);
 
+    // Install after runtime construction: the real gate sees an ordinary
+    // state-changing write and therefore brokers the normal preset's ask.
+    forgetCatastrophicReadings();
+    const previousJudgmentPort = installJudgmentPort(fakePort((name, question) => {
+      if (name === 'family') return choiceAnswer(question, 'file-mutation', 0.97);
+      if (name === 'kind') return choiceAnswer(question, 'write', 0.97);
+      if (name === 'capability') return choiceAnswer(question, 'generic', 0.97);
+      if (question.type === 'noul') return noulAnswer(name === 'mutates' ? 0.97 : 0.03);
+      throw new Error(`Unexpected fleet-attention reading: ${name}`);
+    }).port);
     try {
       runtime.configManager.set('permissions.mode', 'prompt');
       runtime.configManager.set('behavior.autoApprove', false);
@@ -164,6 +177,9 @@ describe('fleet plane adoption', () => {
         modeManager: runtime.modeManager,
         processManager: runtime.processManager,
         agentMessageBus: runtime.agentMessageBus,
+        agentManager: runtime.agentManager,
+        contractRunner: runtime.contractRunner,
+        contractHooks: runtime.contractRunner.hooks(),
         webSearchService: runtime.webSearchService,
         channelRegistry: runtime.channelPlugins,
         remoteRunnerRegistry: runtime.remoteRunnerRegistry,
@@ -180,7 +196,7 @@ describe('fleet plane adoption', () => {
         overflowHandler: runtime.overflowHandler,
         sandboxSessionRegistry: runtime.sandboxSessionRegistry,
         workflowServices: runtime.workflow,
-        workingDirectory: runtime.workingDirectory,
+        workingDirectory: projectIndexRoot,
         permissionManager,
       });
 
@@ -194,7 +210,7 @@ describe('fleet plane adoption', () => {
       // the pending ask's metadata.agentId to the registry.
       const fleetRegistry = createArchivableFleetRegistry({
         agentManager: { list: () => [record], cancel: () => false },
-        wrfcController: { listChains: () => [] },
+        contractRunner: { list: () => [], cancel: () => false },
         processManager: { list: () => [], stop: () => false, getStatus: () => undefined },
         watcherRegistry: { list: () => [], stopWatcher: () => null },
         workflow: {
@@ -205,10 +221,11 @@ describe('fleet plane adoption', () => {
         approvalBroker: runtime.approvalBroker,
       });
 
+      const approvedWritePath = join(projectIndexRoot, 'fleet-attention-test.txt');
       const provider = makeMockProvider([
         {
           content: '',
-          toolCalls: [{ id: 'call-write-1', name: 'write', arguments: { path: 'fleet-attention-test.txt', content: 'hi' } }],
+          toolCalls: [{ id: 'call-write-1', name: 'write', arguments: { files: [{ path: approvedWritePath, content: 'hi' }] } }],
         },
         { content: 'Done.' },
       ]);
@@ -245,6 +262,7 @@ describe('fleet plane adoption', () => {
         const pendingNode = pendingSnapshot.nodes.find((n) => n.id === record.id);
         expect(pendingNode?.state).toBe('awaiting-approval');
         expect(pendingNode?.needsAttention).toEqual({ reason: 'approval' });
+        expect(existsSync(approvedWritePath)).toBe(false);
 
         const pendingApproval = runtime.approvalBroker.listApprovals()
           .find((approval) => approval.status === 'pending' && approval.metadata['agentId'] === record.id);
@@ -254,6 +272,7 @@ describe('fleet plane adoption', () => {
         await runPromise;
 
         expect(record.status).toBe('completed');
+        expect(readFileSync(approvedWritePath, 'utf8')).toBe('hi');
         const resolvedSnapshot = fleetRegistry.query({ kinds: ['agent'] });
         const resolvedNode = resolvedSnapshot.nodes.find((n) => n.id === record.id);
         expect(resolvedNode?.state).not.toBe('awaiting-approval');
@@ -263,6 +282,8 @@ describe('fleet plane adoption', () => {
         runtime.providerRegistry.getCurrentModel = origGetCurrentModel;
       }
     } finally {
+      installJudgmentPort(previousJudgmentPort);
+      forgetCatastrophicReadings();
       memoryStore.close();
       await projectIndex.dispose();
       if (existsSync(memoryDbPath)) unlinkSync(memoryDbPath);

@@ -1,3 +1,4 @@
+import { useMemoryReadings } from '../helpers/memory-readings.ts';
 import { describe, it, expect, afterEach } from 'bun:test';
 import { rmSync } from 'node:fs';
 import {
@@ -41,7 +42,7 @@ describe('runMemoryConsolidation', () => {
     const survivor = await registry.add({ scope: 'project', cls: 'fact', summary: 'Deploy uses the release script', tags: ['deploy'], review: { state: 'reviewed', confidence: 80 } });
     const dup = await registry.add({ scope: 'project', cls: 'fact', summary: 'Deploy uses the release script', tags: ['ci'], review: { state: 'fresh', confidence: 60 } });
 
-    const receipt = runMemoryConsolidation({ memoryRegistry: registry, config: DEFAULT_MEMORY_CONSOLIDATION_CONFIG, now: Date.now(), trigger: 'manual', idle: true });
+    const receipt = await runMemoryConsolidation({ memoryRegistry: registry, config: DEFAULT_MEMORY_CONSOLIDATION_CONFIG, now: Date.now(), trigger: 'manual', idle: true });
 
     expect(receipt.merged).toHaveLength(1);
     expect(receipt.merged[0]!.survivorId).toBe(survivor.id);
@@ -58,7 +59,7 @@ describe('runMemoryConsolidation', () => {
     const record = await registry.add({ scope: 'project', cls: 'fact', summary: 'Rarely useful note', review: { state: 'fresh', confidence: 60 } });
     const usage: MemoryConsolidationUsageLookup = () => ({ injectedCount: 3, referencedCount: 0, lastReferencedAt: null });
 
-    const decayReceipt = runMemoryConsolidation({
+    const decayReceipt = await runMemoryConsolidation({
       memoryRegistry: registry,
       config: { ...DEFAULT_MEMORY_CONSOLIDATION_CONFIG, decayAgeDays: 0, decayConfidenceStep: 10, archiveConfidenceFloor: 40 },
       now: Date.now() + 1000,
@@ -72,7 +73,7 @@ describe('runMemoryConsolidation', () => {
     expect(registry.get(record.id)?.confidence).toBe(50);
 
     // A higher floor archives instead of decaying.
-    const archiveReceipt = runMemoryConsolidation({
+    const archiveReceipt = await runMemoryConsolidation({
       memoryRegistry: registry,
       config: { ...DEFAULT_MEMORY_CONSOLIDATION_CONFIG, decayAgeDays: 0, decayConfidenceStep: 10, archiveConfidenceFloor: 55 },
       now: Date.now() + 2000,
@@ -89,7 +90,7 @@ describe('runMemoryConsolidation', () => {
     const record = await registry.add({ scope: 'project', cls: 'fact', summary: 'Referenced note', review: { state: 'fresh', confidence: 60 } });
     const usage: MemoryConsolidationUsageLookup = () => ({ injectedCount: 5, referencedCount: 4, lastReferencedAt: Date.now() });
 
-    const receipt = runMemoryConsolidation({
+    const receipt = await runMemoryConsolidation({
       memoryRegistry: registry,
       config: { ...DEFAULT_MEMORY_CONSOLIDATION_CONFIG, decayAgeDays: 0 },
       now: Date.now() + 1000,
@@ -108,7 +109,7 @@ describe('runMemoryConsolidation', () => {
     await registry.add({ scope: 'team', cls: 'fact', summary: 'Shared naming convention', review: { state: 'reviewed', confidence: 80 } });
     const stale = await registry.add({ scope: 'project', cls: 'fact', summary: 'Ancient stale note', review: { state: 'stale', confidence: 30 } });
 
-    const receipt = runMemoryConsolidation({ memoryRegistry: registry, config: DEFAULT_MEMORY_CONSOLIDATION_CONFIG, now: Date.now() + 200 * 24 * 60 * 60 * 1000, trigger: 'manual', idle: true });
+    const receipt = await runMemoryConsolidation({ memoryRegistry: registry, config: DEFAULT_MEMORY_CONSOLIDATION_CONFIG, now: Date.now() + 200 * 24 * 60 * 60 * 1000, trigger: 'manual', idle: true });
 
     expect(receipt.proposed.some((p) => p.kind === 'cross-scope-duplicate')).toBe(true);
     const deleteProposal = receipt.proposed.find((p) => p.kind === 'stale-delete');
@@ -118,3 +119,5 @@ describe('runMemoryConsolidation', () => {
     expect(registry.get(stale.id)).not.toBeNull();
   });
 });
+
+useMemoryReadings();

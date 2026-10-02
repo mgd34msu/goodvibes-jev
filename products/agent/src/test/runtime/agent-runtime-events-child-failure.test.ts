@@ -1,3 +1,4 @@
+import { getTestRuntimeServices } from '../helpers/runtime-services.ts';
 import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -43,7 +44,7 @@ describe('registerAgentRuntimeEvents: AGENT_FAILED child-failure envelope enrich
     expect(record.status).toBe('failed');
 
     const toolRegistry = new ToolRegistry();
-    toolRegistry.register(createAgentTool({ manager: agentManager, messageBus: agentMessageBus, configManager }));
+    toolRegistry.register(createAgentTool({ manager: agentManager, messageBus: agentMessageBus, configManager, contractRunner: getTestRuntimeServices().contractRunner, projectRoot: configDir, resolveSessionId: () => 'session-1' }));
 
     const runtimeBus = new RuntimeEventBus();
     const domainDispatch = createDomainDispatch(createRuntimeStore());

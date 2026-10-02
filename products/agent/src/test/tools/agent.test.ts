@@ -1,7 +1,8 @@
+import { getTestRuntimeServices, resetTestRuntimeServices } from '../helpers/runtime-services.ts';
 import { describe, test, expect } from 'bun:test';
 import { createAgentTool, AgentManager, ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import { AgentMessageBus, WrfcController } from '@goodvibes-jev/engine/sdk/platform/agents';
+import { AgentMessageBus } from '@goodvibes-jev/engine/sdk/platform/agents';
 import { RuntimeEventBus } from '@/runtime/index.ts';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { join } from 'node:path';
@@ -62,26 +63,13 @@ import { makeProjectTempDir } from '../helpers/project-temp.ts';
 // ---------------------------------------------------------------------------
 
 function makeAgentHarness(options: { readonly guarded?: boolean } = {}) {
-  const configDir = makeProjectTempDir(`gv-agent-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  const configManager = new ConfigManager({ surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT, configDir });
-  const runtimeBus = new RuntimeEventBus();
-  const messageBus = new AgentMessageBus();
-  const manager = new AgentManager({
-    messageBus,
-    configManager,
-  });
-  manager.setRuntimeBus(runtimeBus);
-  const wrfcController = new WrfcController(runtimeBus, messageBus, {
-    agentManager: manager,
-    configManager,
-    projectRoot: configDir,
-    fixWorkstreamRunner: { run: async () => ({ status: 'failed', reason: 'agent tool tests run no fix cycles', structured: 'tasks-failed' }) },
-  });
-  manager.setWrfcController(wrfcController);
+  resetTestRuntimeServices();
+  const services = getTestRuntimeServices();
+  const { configManager, agentManager: manager, agentMessageBus: messageBus, contractRunner } = services;
   const agentTool = createAgentTool({
-    manager,
-    messageBus,
-    configManager,
+    manager, messageBus, configManager, contractRunner,
+    projectRoot: services.workingDirectory,
+    resolveSessionId: () => 'agent-tool-test',
   });
   if (options.guarded) wrapAgentToolForAgentPolicy(agentTool);
   return { agentTool, manager, messageBus, configManager };
@@ -512,7 +500,7 @@ describe('spawn mode', () => {
       task: 'Build the feature',
       template: 'engineer',
       reviewMode: 'none',
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
     });
 
     expect(result.success).toBe(true);
@@ -527,10 +515,10 @@ describe('spawn mode', () => {
     const result = await guarded.agentTool.execute({
       mode: 'batch-spawn',
       reviewMode: 'none',
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
       tasks: [
-        { task: 'Build the API adapter', template: 'engineer', reviewMode: 'none', dangerously_disable_wrfc: true },
-        { task: 'Build the CLI adapter', template: 'engineer', reviewMode: 'none', dangerously_disable_wrfc: true },
+        { task: 'Build the API adapter', template: 'engineer', reviewMode: 'none', outsideContract: true },
+        { task: 'Build the CLI adapter', template: 'engineer', reviewMode: 'none', outsideContract: true },
       ],
     });
 
@@ -555,13 +543,22 @@ describe('spawn mode', () => {
     expect(enumValues).toEqual([...AGENT_READ_ONLY_TOOL_MODES]);
     expect(enumValues).toContain('spawn');
     expect(enumValues).toContain('batch-spawn');
-    expect(enumValues).toContain('wrfc-chains');
-    expect(enumValues).toContain('wrfc-history');
+    expect(enumValues).toContain('contracts');
+    expect(enumValues).toContain('contract-history');
+    expect(enumValues).not.toContain('wrfc-chains');
+    expect(enumValues).not.toContain('wrfc-history');
   });
 
   test('Agent runtime guard allows local agent cancellation mode', async () => {
     const guarded = makeAgentHarness({ guarded: true });
-    const spawned = await guarded.agentTool.execute({ mode: 'spawn', task: 'Stuck task' });
+    guarded.manager.setExecutor({ runAgent: async (record) => {
+      const signal = guarded.manager.getCancellationSignal(record.id);
+      await new Promise<void>((resolve) => {
+        if (signal?.aborted) resolve();
+        else signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+    } });
+    const spawned = await guarded.agentTool.execute({ mode: 'spawn', task: 'Stuck task', outsideContract: true });
     expect(spawned.success).toBe(true);
     const spawnedPayload = JSON.parse(spawned.output ?? '{}') as { readonly agentId?: string };
     const result = await guarded.agentTool.execute({

@@ -104,8 +104,8 @@ function memoryApi(records: MemoryRecord[] = [memoryRecord()]): MemoryApi {
       records.unshift(record);
       return record;
     },
-    search: () => records,
-    searchSemantic: () => [],
+    search: async () => records,
+    searchSemantic: async () => [],
     vectorStats: () => ({
       backend: 'sqlite-vec',
       enabled: false,
@@ -156,7 +156,7 @@ function memoryApi(records: MemoryRecord[] = [memoryRecord()]): MemoryApi {
       },
       checkedAt: Date.now(),
     }),
-    reviewQueue: () => records.filter((record) => record.reviewState !== 'reviewed'),
+    reviewQueue: async () => records.slice(0, 100),
     exportBundle: () => ({
       schemaVersion: 'v1',
       exportedAt: Date.now(),
@@ -205,7 +205,7 @@ function memoryApi(records: MemoryRecord[] = [memoryRecord()]): MemoryApi {
       records.splice(index, 1);
       return true;
     },
-    explain: () => ({
+    explain: async () => ({
       injections: [],
       prompt: null,
     }),

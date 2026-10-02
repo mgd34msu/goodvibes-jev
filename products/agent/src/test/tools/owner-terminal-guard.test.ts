@@ -1,3 +1,6 @@
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { getTestRuntimeServices } from '../helpers/runtime-services.ts';
 /**
  * owner-terminal-guard.test.ts, the owner's terminal is untouchable on a
  * LOCAL turn too.
@@ -14,7 +17,7 @@
  * of the rule: driving a session this platform did not name is refused, and
  * reading tmux state still runs.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import { AgentMessageBus } from '@goodvibes-jev/engine/sdk/platform/agents';
 import { CrossSessionTaskRegistry } from '@goodvibes-jev/engine/sdk/platform/sessions';
@@ -32,6 +35,9 @@ import { AGENT_OWNER_TERMINAL_GUARD } from '../../runtime/agent-exec-posture.ts'
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../../config/surface.ts';
 import { createTestManagers } from '../helpers/test-managers.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+
+let previousPort: ReturnType<typeof installJudgmentPort>;
+afterEach(() => { installJudgmentPort(previousPort); });
 
 /** The line the refusal carries, so a person is told which rule stopped them. */
 const RULE = 'the owner\'s terminal is untouchable';
@@ -55,6 +61,8 @@ function localTurnTools(): ToolRegistry {
     modeManager: new ModeManager(),
     processManager: new ProcessManager(),
     agentManager,
+    contractRunner: getTestRuntimeServices().contractRunner,
+    projectRoot: workingDirectory,
     agentMessageBus: new AgentMessageBus(),
     configManager: services.configManager,
     providerRegistry: services.providerRegistry,
@@ -70,6 +78,18 @@ function localTurnTools(): ToolRegistry {
     channelRegistry: null,
     ownerTerminalGuard: AGENT_OWNER_TERMINAL_GUARD,
   });
+  previousPort = installJudgmentPort(fakePort((name, question, state) => {
+    const text = JSON.stringify(state);
+    if (name === 'acts_on_session') return noulAnswer(text.includes('send-keys') ? 0.999 : 0.001);
+    if (name === 'owned_targets') return noulAnswer(text.includes('goodvibes-agent-workspace') ? 0.999 : 0.001);
+    if (name === 'credential') {
+      const envName = typeof state === 'object' && state !== null && 'name' in state ? String(state.name) : '';
+      return noulAnswer(/key|token|secret|password|credential/i.test(envName) ? 0.999 : 0.001);
+    }
+    if (name === 'kind') return choiceAnswer(question, 'other', 0.99);
+    if (['catastrophic', 'needsNetwork', 'needsPrivilege', 'will_prompt'].includes(name)) return noulAnswer(0.001);
+    throw new Error(`Unexpected owner-terminal judgment: ${name}`);
+  }).port);
   return registry;
 }
 
@@ -110,6 +130,7 @@ describe('a local agent turn and the owner\'s tmux', () => {
     const outcome = await runCommand(registry, 'tmux list-sessions; echo probe-ran');
 
     expect(outcome.stderr).not.toContain(RULE);
+    expect(outcome.success, outcome.stderr).toBe(true);
     expect(outcome.stdout).toContain('probe-ran');
   });
 
@@ -122,6 +143,7 @@ describe('a local agent turn and the owner\'s tmux', () => {
     );
 
     expect(outcome.stderr).not.toContain(RULE);
+    expect(outcome.success, outcome.stderr).toBe(true);
     expect(outcome.stdout).toContain('probe-ran');
   });
 });

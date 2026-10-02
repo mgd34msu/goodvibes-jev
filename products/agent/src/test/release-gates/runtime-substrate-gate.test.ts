@@ -1,8 +1,5 @@
 // Deliberately per-repo test, byte-identical to the sibling product's copy by design: the module it exercises is this repo's own and has diverged from the sibling's, so the two copies prove different code and neither can stand in for the other.
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { ConversationManager } from '../../core/conversation.ts';
 import { Orchestrator } from '@goodvibes-jev/engine/sdk/platform/core';
 import { PermissionManager, createPermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
@@ -17,6 +14,8 @@ import { PolicyRuntimeState } from '@/runtime/index.ts';
 import { ProviderError } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { HookResult } from '@goodvibes-jev/engine/sdk/platform/hooks';
 import { createTestManagers } from '../helpers/test-managers.ts';
+import { forgetFailureReadings, installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 
 const testManagers = createTestManagers();
 
@@ -60,7 +59,6 @@ async function withMockProvider<T>(
 }
 
 function buildHarness(options: { hookResult?: HookResult } = {}) {
-  mkdirSync(join(homedir(), '.goodvibes', 'tui'), { recursive: true });
   const configManager = testManagers.configManager;
   const runtimeBus = new RuntimeEventBus();
   const store = createRuntimeStore();
@@ -90,7 +88,8 @@ function buildHarness(options: { hookResult?: HookResult } = {}) {
     runtimeBus,
     services: {
       agentManager: new AgentManager({ configManager }),
-      wrfcController: { listChains: () => [] },
+      contractRunner: { list: () => [] },
+      contractIntake: { intake: async () => ({ kind: 'turn' }) },
     },
   });
   orchestrator.setCoreServices({
@@ -101,17 +100,50 @@ function buildHarness(options: { hookResult?: HookResult } = {}) {
   return { runtimeBus, store, registry, collector, orchestrator };
 }
 
+/** Reports publish asynchronously after the classifier and phase readings. */
+async function waitForReport(registry: ForensicsRegistry) {
+  const existing = registry.latest();
+  if (existing) return existing;
+  return new Promise<NonNullable<ReturnType<ForensicsRegistry['latest']>>>((resolve) => {
+    const unsubscribe = registry.subscribe(() => {
+      const report = registry.latest();
+      if (report) {
+        unsubscribe();
+        resolve(report);
+      }
+    });
+  });
+}
+
 describe('runtime substrate gate', () => {
   const configManager = testManagers.configManager;
   const savedStream = configManager.get('display.stream') as boolean;
   const realDateNow = Date.now;
   let fakeNow = 1_800_000_000_000;
+  let previousJudgmentPort: ReturnType<typeof installJudgmentPort>;
+  let rateLimited = false;
 
   beforeEach(() => {
     Date.now = () => ++fakeNow;
+    forgetFailureReadings();
+    rateLimited = false;
+    previousJudgmentPort = installJudgmentPort(fakePort((name, question) => {
+      if (name === 'intent') return choiceAnswer(question, 'chat', 0.97);
+      if (name === 'risk') return scoreAnswer(question, 0, 0.97);
+      if (name === 'family') return choiceAnswer(question, 'generic', 0.97);
+      if (name === 'kind') return choiceAnswer(question, 'other', 0.97);
+      if (name === 'category') return choiceAnswer(question, rateLimited ? 'rate_limit' : 'unknown', 0.97);
+      if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.97);
+      if (name === 'pick') return choiceAnswer(question, 'none', 0.97);
+      if (name === 'unit') return choiceAnswer(question, 's', 0.97);
+      if (question.type === 'noul') return noulAnswer(name === 'rate_limited' && rateLimited ? 0.97 : 0.03);
+      throw new Error(`Unexpected substrate reading: ${name}`);
+    }).port);
   });
 
   afterEach(() => {
+    installJudgmentPort(previousJudgmentPort);
+    forgetFailureReadings();
     configManager.set('display.stream', savedStream);
     Date.now = realDateNow;
   });
@@ -137,7 +169,7 @@ describe('runtime substrate gate', () => {
 
     expect(store.getState().conversation.turnState).toBe('failed');
     expect(store.getState().conversation.lastTurnStopReason).toBe('context_overflow');
-    expect(registry.latest()?.classification).toBe('max_tokens');
+    expect((await waitForReport(registry)).classification).toBe('max_tokens');
     collector.dispose();
   });
 
@@ -161,11 +193,12 @@ describe('runtime substrate gate', () => {
 
     expect(store.getState().conversation.turnState).toBe('failed');
     expect(store.getState().conversation.lastTurnStopReason).toBe('hook_denied');
-    expect(registry.latest()?.classification).toBe('permission_denied');
+    expect((await waitForReport(registry)).classification).toBe('permission_denied');
     collector.dispose();
   });
 
   test('synthetic provider exhaustion classifies as llm_error with explicit stop reason', async () => {
+    rateLimited = true;
     configManager.set('display.stream', false);
     const { orchestrator, store, registry, collector } = buildHarness();
     const provider: LLMProvider = {
@@ -180,17 +213,19 @@ describe('runtime substrate gate', () => {
 
     expect(store.getState().conversation.turnState).toBe('failed');
     expect(store.getState().conversation.lastTurnStopReason).toBe('provider_exhausted');
-    expect(registry.latest()?.classification).toBe('llm_error');
+    expect((await waitForReport(registry)).classification).toBe('llm_error');
     collector.dispose();
   });
 
   test('abort during provider wait yields cancelled terminal state and forensics', async () => {
+    const providerStarted = Promise.withResolvers<void>();
     configManager.set('display.stream', false);
     const { orchestrator, store, registry, collector } = buildHarness();
     const provider: LLMProvider = {
       name: 'mock',
       models: ['mock-model'],
       chat: mock(async (params: ChatRequest): Promise<ChatResponse> => {
+        providerStarted.resolve();
         await new Promise((_, reject) => {
           if (params.signal?.aborted) {
             reject(new Error('aborted'));
@@ -203,12 +238,13 @@ describe('runtime substrate gate', () => {
     };
 
     const run = withMockProvider(provider, () => orchestrator.handleUserInput('cancel me'));
-    setTimeout(() => orchestrator.abort(), 0);
+    await providerStarted.promise;
+    orchestrator.abort();
     await run;
 
     expect(store.getState().conversation.turnState).toBe('cancelled');
     expect(store.getState().conversation.lastTurnStopReason).toBe('cancelled');
-    expect(registry.latest()?.classification).toBe('cancelled');
+    expect((await waitForReport(registry)).classification).toBe('cancelled');
     collector.dispose();
   });
 
@@ -230,7 +266,7 @@ describe('runtime substrate gate', () => {
 
     expect(store.getState().conversation.turnState).toBe('failed');
     expect(store.getState().conversation.lastTurnStopReason).toBe('tool_loop_circuit_breaker');
-    expect(registry.latest()?.classification).toBe('tool_failure');
+    expect((await waitForReport(registry)).classification).toBe('tool_failure');
     collector.dispose();
   });
 });

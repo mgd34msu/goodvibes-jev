@@ -1,3 +1,4 @@
+import { useMemoryReadings } from '../helpers/memory-readings.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -53,7 +54,7 @@ describe('Agent legacy memory fold covers the CLI-written store', () => {
       expect(report.totalImported).toBeGreaterThanOrEqual(1);
 
       const registry = new MemoryRegistry(canonicalStore);
-      const records = registry.search({});
+      const records = await registry.search({});
       expect(records.some((record) => record.summary === 'Written by the old CLI store, before the fix.')).toBe(true);
 
       // Idempotent: running the fold again imports nothing new (record is already present).
@@ -65,3 +66,5 @@ describe('Agent legacy memory fold covers the CLI-written store', () => {
     }
   });
 });
+
+useMemoryReadings();

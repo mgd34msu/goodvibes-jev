@@ -1,3 +1,5 @@
+import { withOfflineProviderMetadata } from '../helpers/offline-provider-metadata.ts';
+import { useSecurityReadings } from '../helpers/security-readings.ts';
 /**
  * Containment tests for the payment card material entered at the agent's
  * terminal: a value stored through the daemon secret path must never appear in
@@ -130,6 +132,7 @@ function createConfigManager(root: string): ConfigManager {
 }
 
 describe('payments card containment (agent terminal)', () => {
+  useSecurityReadings();
   const originalCwd = process.cwd();
   const originalHome = process.env.HOME;
   let tmpDir: string;
@@ -810,8 +813,8 @@ describe('payments card containment (agent terminal)', () => {
     expect(deliver).not.toHaveBeenCalled();
   });
 
-  test('the refusal never quotes, echoes or partially masks the value it refused', () => {
-    const refusal = screenOutboundForCardMaterial({
+  test('the refusal never quotes, echoes or partially masks the value it refused', async () => {
+    const refusal = await screenOutboundForCardMaterial({
       surface: 'telegram',
       message: `card ${FAKE_CARD_NUMBER}`,
       title: `exp ${FAKE_EXPIRY}`,
@@ -838,8 +841,8 @@ describe('payments card containment (agent terminal)', () => {
     }
   });
 
-  test('the card scan covers the TITLE as well as the body: a title is a message too', () => {
-    const refusal = screenOutboundForCardMaterial({
+  test('the card scan covers the TITLE as well as the body: a title is a message too', async () => {
+    const refusal = await screenOutboundForCardMaterial({
       surface: 'discord',
       message: 'nothing to see',
       title: FAKE_CARD_NUMBER,
@@ -892,12 +895,13 @@ describe('payments card containment (agent terminal)', () => {
     await persistSecretBackedConfigValue(cm, secrets, PAYMENTS_CARD_NUMBER_CONFIG_KEY, FAKE_CARD_NUMBER, { scope: 'daemon' });
 
     const bundlePath = join(tmpDir, 'bundle.json');
-    const result = await handleBundleCommand({
+    const { result, requests } = await withOfflineProviderMetadata(() => handleBundleCommand({
       cli: parseGoodVibesCli(['bundle', 'export', bundlePath]),
       configManager: cm,
       workingDirectory: tmpDir,
       homeDirectory: tmpDir,
-    });
+    }));
+    expect(requests.length).toBeGreaterThan(0);
     expect(result.exitCode).toBe(0);
     expect(existsSync(bundlePath)).toBe(true);
 

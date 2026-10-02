@@ -1,4 +1,4 @@
-import { useSecurityReadings } from '../../../../../packages/engine/test/helpers/security-readings.ts';
+import { useSecurityReadings } from '../helpers/security-readings.ts';
 /**
  * agent-outward-approval.test.ts, the remedy is real, and only the owner has it.
  *

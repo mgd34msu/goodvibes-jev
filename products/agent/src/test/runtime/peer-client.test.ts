@@ -101,7 +101,7 @@ describe('PeerClient', () => {
       task: 'peer-client artifact capture',
       template: 'engineer',
       tools: ['read', 'write'],
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
     });
     agent.status = 'completed';
     agent.fullOutput = 'peer client artifact captured';

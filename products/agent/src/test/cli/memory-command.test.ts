@@ -1,3 +1,4 @@
+import { useMemoryReadings } from '../helpers/memory-readings.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -190,7 +191,7 @@ describe('Agent memory CLI command', () => {
     const registry = new MemoryRegistry(canonicalStore);
     await canonicalStore.init();
     try {
-      const records = registry.search({});
+      const records = await registry.search({});
       expect(records.some((record) => record.summary === 'Canonical store cross-surface fact')).toBe(true);
     } finally {
       canonicalStore.close();
@@ -215,3 +216,5 @@ describe('Agent memory CLI command', () => {
     expect(memoryHelp).toContain('never falls back to default knowledge or non-Agent knowledge segments');
   });
 });
+
+useMemoryReadings();
