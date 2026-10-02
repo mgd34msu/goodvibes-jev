@@ -29,7 +29,7 @@ import { memoryModalGoldenSurface } from '../../views/modals/memory-modal.ts';
 import { workPlanModalGoldenSurface } from '../../views/modals/work-plan-modal.ts';
 import { keybindingsModalGoldenSurface } from '../../views/modals/keybindings-modal.ts';
 import { pairingModalGoldenSurface } from '../../views/modals/pairing-modal.ts';
-import { planningModalGoldenSurface } from '../../views/modals/planning-modal.ts';
+import { planningModalGoldenSurface } from '../helpers/planning-modal-fixture.ts';
 import type { Cell, Line } from '@goodvibes-jev/engine/sdk/platform/types';
 import { frameFromLayer } from '../helpers/surface-frame.ts';
 
@@ -79,7 +79,7 @@ function assertGolden(surface: string, lines: Line[]): void {
  * buildView() BEFORE surface.onOpen()'s refresh() loads its rows, and
  * getRenderModel() only overlays live values onto the FROZEN row ids, so a
  * naive render immediately after open() locks the pre-refresh chrome (empty
- * rows), not real content. We flush a microtask turn (settles any async
+ * rows), not real content. We flush a macrotask turn (settles chained async
  * onOpen; the Promise-backed surfaces also pre-await inside their factory)
  * then syncStructure() to re-freeze from the post-refresh buildView(), so the
  * committed golden locks content, not chrome.
@@ -87,7 +87,7 @@ function assertGolden(surface: string, lines: Line[]): void {
 async function renderSurface(surface: ConfigModalSurface, width: number): Promise<Line[]> {
   const modal = new ConfigModal();
   modal.open(surface, () => {});
-  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
   modal.syncStructure();
   const lines = frameFromLayer(renderConfigModal(modal, width, HEIGHT), width, HEIGHT);
   modal.close();

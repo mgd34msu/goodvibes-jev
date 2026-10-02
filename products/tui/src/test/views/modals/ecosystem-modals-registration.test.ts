@@ -11,7 +11,7 @@ import { memoryModalGoldenSurface } from '../../../views/modals/memory-modal.ts'
 import { workPlanModalGoldenSurface } from '../../../views/modals/work-plan-modal.ts';
 import { keybindingsModalGoldenSurface } from '../../../views/modals/keybindings-modal.ts';
 import { pairingModalGoldenSurface } from '../../../views/modals/pairing-modal.ts';
-import { planningModalGoldenSurface } from '../../../views/modals/planning-modal.ts';
+import { planningModalGoldenSurface } from '../../helpers/planning-modal-fixture.ts';
 
 // ---------------------------------------------------------------------------
 // Group-B config-modal-surface registration completeness (port).
