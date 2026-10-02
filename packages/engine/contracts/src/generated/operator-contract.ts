@@ -72553,6 +72553,22 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 }
               ]
             },
+            "revision": {
+              "type": "object",
+              "properties": {
+                "sourceId": {
+                  "type": "string"
+                },
+                "generation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sourceId",
+                "generation"
+              ],
+              "additionalProperties": false
+            },
             "source": {
               "type": "object",
               "properties": {
@@ -73217,6 +73233,22 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   "type": "null"
                 }
               ]
+            },
+            "revision": {
+              "type": "object",
+              "properties": {
+                "sourceId": {
+                  "type": "string"
+                },
+                "generation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sourceId",
+                "generation"
+              ],
+              "additionalProperties": false
             },
             "source": {
               "type": "object",

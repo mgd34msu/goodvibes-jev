@@ -13239,6 +13239,10 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "updatedAt": 0,
         "metadata": {}
       },
+      "revision": {
+        "sourceId": "sample",
+        "generation": "sample"
+      },
       "source": {
         "id": "sample",
         "connectorId": "sample",
@@ -13374,6 +13378,10 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "createdAt": 0,
         "updatedAt": 0,
         "metadata": {}
+      },
+      "revision": {
+        "sourceId": "sample",
+        "generation": "sample"
       },
       "source": {
         "id": "sample",

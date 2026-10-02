@@ -73579,6 +73579,22 @@ Return the current project-scoped planning state artifact. The TUI owns the acti
         }
       ]
     },
+    "revision": {
+      "type": "object",
+      "properties": {
+        "sourceId": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sourceId",
+        "generation"
+      ],
+      "additionalProperties": false
+    },
     "source": {
       "type": "object",
       "properties": {
@@ -74247,6 +74263,22 @@ Persist project-scoped planning state from the TUI interview loop and evaluate r
           "type": "null"
         }
       ]
+    },
+    "revision": {
+      "type": "object",
+      "properties": {
+        "sourceId": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sourceId",
+        "generation"
+      ],
+      "additionalProperties": false
     },
     "source": {
       "type": "object",
