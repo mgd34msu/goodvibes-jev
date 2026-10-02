@@ -528,10 +528,6 @@
     "disposition": "PORT"
   },
   {
-    "source": "src/panels/modals/modal-theme.ts",
-    "disposition": "PORT"
-  },
-  {
     "source": "src/panels/modals/pairing-modal.ts",
     "disposition": "PORT"
   },
@@ -736,10 +732,6 @@
     "disposition": "PORT"
   },
   {
-    "source": "src/test/panels/fixtures/agent-ledger-sample.jsonl",
-    "disposition": "PORT"
-  },
-  {
     "source": "src/test/panels/fleet-acts.test.ts",
     "disposition": "JEV"
   },
@@ -838,10 +830,6 @@
   {
     "source": "src/test/panels/modals/memory-modal.test.ts",
     "disposition": "JEV"
-  },
-  {
-    "source": "src/test/panels/modals/modal-surface-test-helpers.ts",
-    "disposition": "PORT"
   },
   {
     "source": "src/test/panels/modals/pairing-modal.test.ts",

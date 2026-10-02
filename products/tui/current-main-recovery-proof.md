@@ -54,3 +54,10 @@ The final strict source run uses zero exclusions and the unchanged network guard
 Final source-plus-test TypeScript has **15 diagnostics, all held planning API references**, and zero ordinary diagnostics. No held PR57 implementation was adopted. Inventory accounting remains partial at 591 unresolved rows.
 
 Standard Linux build, actual 605-file private package check, fresh launcher frame/help/dismissal/exit-zero PTY and staged sqlite-vec load pass. PTY metadata remains the explicitly bounded three-URL synthetic fixture proof. However, **standard smoke:tui fails the unchanged eager-namespace artifact scanner**: it reports 25 zod namespace schema-constructor reads despite preceding initializer calls. Actual startup success does not waive that gate. Emitted initialization evidence is preserved; checker/source remediation and independent review remain outstanding. This checkpoint is not full acceptance.
+
+
+## Three byte-identical upstream renames accounted
+
+The authoritative forward target remains `ec057c33`; the pinned `0d69500` inventory remains the accounting baseline. Three PORT rows now map to their verified renamed locations: modal-theme tokens, modal-surface test helpers, and the agent-ledger JSONL fixture. Their current Git blobs equal the pinned source blobs exactly. Inventory purposes remain unchanged; relative imports still resolve to the same renderer/input modules and the ledger fixture is consumed by the passing fleet-transcript test. No behaviors or assertions were removed to close these rows.
+
+Accounting is now 1,027 same-path locations plus three verified renames, with **588 unresolved rows**. Later upstream deletions are provenance only, not permission to mark pinned PORT rows DROP. The other renames and HOIST/JEV obligations remain open for semantic reconciliation.

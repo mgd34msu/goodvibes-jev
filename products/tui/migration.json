@@ -7195,6 +7195,42 @@
       "targets": [
         "products/tui/tsconfig.test.json"
       ]
+    },
+    {
+      "source": "src/panels/modals/modal-theme.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/modal-theme.ts"
+      ],
+      "provenance": {
+        "sourceBlob": "f36662f977ed1e9ca3ae100ee9a08fdb8cf61fec",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "verification": "Exact pinned bytes retained at upstream-renamed path; inventory purpose and relative imports preserved."
+      }
+    },
+    {
+      "source": "src/test/panels/fixtures/agent-ledger-sample.jsonl",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/fixtures/agent-ledger-sample.jsonl"
+      ],
+      "provenance": {
+        "sourceBlob": "042e276f2605efcd892d7bb439ebf3a91e4e89a7",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "verification": "Exact pinned bytes retained at upstream-renamed path; inventory purpose and relative imports preserved."
+      }
+    },
+    {
+      "source": "src/test/panels/modals/modal-surface-test-helpers.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/modals/modal-surface-test-helpers.ts"
+      ],
+      "provenance": {
+        "sourceBlob": "b0b6538ebcf04825d274db45644b560d316da875",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "verification": "Exact pinned bytes retained at upstream-renamed path; inventory purpose and relative imports preserved."
+      }
     }
   ],
   "verification": {
@@ -7203,8 +7239,9 @@
   "accounting": {
     "inventoryRows": 1618,
     "samePathMappings": 1027,
-    "unresolved": 591,
+    "unresolved": 588,
     "unresolvedManifest": "products/tui/migration-unresolved.json",
-    "semantics": "Same-path mappings identify current locations, not evidence of completed JEV/HOIST decisions or feature parity."
+    "semantics": "Same-path mappings identify current locations, not evidence of completed JEV/HOIST decisions or feature parity.",
+    "verifiedRenameMappings": 3
   }
 }
