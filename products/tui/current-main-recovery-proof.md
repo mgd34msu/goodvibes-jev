@@ -1,6 +1,47 @@
 # Current-main TUI recovery: incomplete draft
 
-## Latest reviewed repair evidence (2026-10-02)
+## Latest actual product-runner qualification (2026-10-02)
+
+Reviewed source `f276eaf460287b22653d0276aa98f8efae91b3f9` adds owned per-file
+POSIX teardown, bounded output drain and accurate timeout diagnostics to the actual
+TUI test command. Shared output/lifecycle repairs and the product runner were
+independently reviewed; the focused product matrix passed 41 tests /145 assertions.
+Exact source hashes, dependency origins and limits are in
+[`tui-test-runner-lifecycle-2026-10-02.json`](../../docs/audit/tui-test-runner-lifecycle-2026-10-02.json).
+
+The actual unchanged-guard product command ran all **519 source files**, with two
+workers and no timeout override/filter: **518 passed /1 failed**, exit 1, in 5m56s.
+Completed summaries contain **6,249 passing tests, five existing skips and 29,213
+assertions**, with zero network-violation reports. The retained legacy planning
+case failed its existing 60-second test timeout, then the 120-second per-file
+watchdog ended and reaped it. The runner printed the final aggregate summary and
+removed its owned scratch. No test was skipped to avoid the planning failure.
+
+A full type pass at 2,048 MiB hit explicit V8 heap exhaustion. The single authorized
+2,560 MiB retry completed in 44.21s with exactly the **15 pre-existing planning
+diagnostics**, byte-for-byte identical to the 7ff baseline, and no new diagnostics.
+This remains a failing full-type gate, not a green typecheck.
+
+The shared 720-second ceiling applies to each file invocation, not to the entire
+product queue. Existing longer test declarations have reviewed file allowances;
+the effective earlier shared/file ceiling wins, and CI's job budget remains the
+outer wall-clock limit. Direct product commands do not acquire the workspace lock;
+this qualification explicitly used the canonical lock. Windows child-tree cleanup
+remains unresolved, so this is a Linux/POSIX-qualified draft. An earlier independent
+shared backpressure timeout remains unexplained and retained alongside passing
+final monitored replays.
+
+The final architecture check currently blocks the runner’s direct cross-workspace
+import of the shared owner. A supported public tooling boundary is required before
+accepting that integration; the rule has not been waived. Generated fixture trees
+were moved intact into evidence, leaving only this real source-boundary diagnostic.
+
+No product runtime source changed after the parser checkpoint below. Its native
+build/package/startup evidence is inherited, not claimed rerun here. Accounting
+remains **1,095 mapped /523 unresolved**; native ledger UI integration, legacy
+planning replacement and broader live/E2E acceptance remain incomplete.
+
+## Historical parser checkpoint evidence (2026-10-02)
 
 The sections below retain historical checkpoints and their failures. The latest
 validated runtime is `ce235ce02f50447a68b5cb52e6303e5b8a9668e6`, following reviewed
