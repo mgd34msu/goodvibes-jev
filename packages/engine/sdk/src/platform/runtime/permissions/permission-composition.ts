@@ -52,6 +52,8 @@ import { buildLocalhostFetchApproval, type LocalhostFetchApproval } from './loca
  */
 export type ApprovalRaiser = (input: {
   readonly request: import('../../permissions/prompt.js').PermissionPromptRequest;
+  /** In-process cancellation, excluded from persisted/wire request data. */
+  readonly signal?: AbortSignal | undefined;
   readonly routeId?: string | undefined;
   readonly metadata?: Record<string, unknown> | undefined;
 }) => Promise<PermissionPromptDecision>;
@@ -108,8 +110,9 @@ export interface BrokeredPermissionManagerOptions {
  */
 export function createBrokeredPermissionManager(options: BrokeredPermissionManagerOptions): PermissionManager {
   return new PermissionManager(
-    (request) => options.requestApproval({
+    (request, execution) => options.requestApproval({
       request,
+      ...(execution?.signal === undefined ? {} : { signal: execution.signal }),
       ...(request.attribution?.kind === 'background-agent'
         ? {
             routeId: request.attribution.agentId,

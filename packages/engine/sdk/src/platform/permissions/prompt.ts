@@ -130,8 +130,14 @@ export interface PermissionPromptDecision {
   modifiedArgs?: Record<string, unknown> | undefined;
 }
 
+/** In-process lifetime only; never stored in a prompt or sent over the wire. */
+export interface PermissionExecutionOptions {
+  readonly signal?: AbortSignal | undefined;
+}
+
 export type PermissionRequestHandler = (
   request: PermissionPromptRequest,
+  options?: PermissionExecutionOptions,
 ) => Promise<PermissionPromptDecision>;
 
 export interface PermissionRequest extends PermissionPromptRequest {

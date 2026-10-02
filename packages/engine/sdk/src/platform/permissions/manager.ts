@@ -1,6 +1,7 @@
 import { getConfigSnapshot, isAutoApproveEnabled } from '../config/index.js';
 import type { PermissionAction, PermissionsToolConfig, PermissionMode, BackgroundAgentsMode } from '../config/schema.js';
-import type { PermissionAttribution, PermissionRequestHandler } from './prompt.js';
+import type { PermissionAttribution, PermissionExecutionOptions, PermissionRequestHandler } from './prompt.js';
+import { assertPermissionActive, awaitPermission } from './cancellation.js';
 import { analyzePermissionRequest, withReading } from './analysis.js';
 import { judgmentInputBoundary, runBoundary, type BoundaryCheckName, type BoundaryVerdict } from '../gate/boundary.js';
 import { decideByPreset, presetForMode, type GatePreset } from '../gate/presets.js';
@@ -238,8 +239,10 @@ export class PermissionManager {
   }
 
   /** Resolves to true when the gate approves the call. */
-  async check(toolName: string, args: Record<string, unknown>, attribution?: PermissionAttribution): Promise<boolean> {
-    const result = await this.checkDetailed(toolName, args, attribution);
+  async check(toolName: string, args: Record<string, unknown>, attribution?: PermissionAttribution, options?: PermissionExecutionOptions): Promise<boolean> {
+    const signal = options?.signal;
+    const result = await this.checkDetailed(toolName, args, attribution, { signal });
+    assertPermissionActive(signal);
     return result.approved;
   }
 
@@ -249,7 +252,13 @@ export class PermissionManager {
    * @param attribution When present, rides on the brokered ask so a surface can
    * render which background agent (or server, or sandbox) is asking.
    */
-  async checkDetailed(toolName: string, args: Record<string, unknown>, attribution?: PermissionAttribution): Promise<PermissionCheckResult> {
+  async checkDetailed(toolName: string, args: Record<string, unknown>, attribution?: PermissionAttribution, options?: PermissionExecutionOptions): Promise<PermissionCheckResult> {
+    const signal = options?.signal;
+    return awaitPermission(() => this.checkActive(toolName, args, attribution, signal), signal);
+  }
+
+  private async checkActive(toolName: string, args: Record<string, unknown>, attribution: PermissionAttribution | undefined, signal?: AbortSignal): Promise<PermissionCheckResult> {
+    assertPermissionActive(signal);
     const privacy = judgmentInputBoundary(toolName, args, this.configReader.getWorkingDirectory() ?? undefined);
     if (!privacy.passed) {
       // Do not build an argument preview, fire hooks or export request/decision
@@ -263,14 +272,16 @@ export class PermissionManager {
     let analysis = analyzePermissionRequest(toolName, args, category);
     const callId = crypto.randomUUID();
     await this.fireHook('Pre:permission:request', 'Pre', 'permission', 'request', { callId, toolName, category, analysis });
+    assertPermissionActive(signal);
     this.policyRuntimeState.recordPermissionRequest({ callId, tool: toolName, category, analysis });
-    const done = (result: PermissionCheckResult): PermissionCheckResult => this.emitAndReturn(callId, toolName, category, result);
+    const done = (result: PermissionCheckResult): PermissionCheckResult => { assertPermissionActive(signal); return this.emitAndReturn(callId, toolName, category, result); };
     const permsConfig = this.configReader.getSnapshot().permissions;
     const mode = permsConfig?.mode ?? 'prompt';
     const preset = presetForMode(mode);
 
     // 1. Jev reads the call (known read-only tools read only whether they touch secrets).
-    const reading = await this.readCall(toolName, args, category);
+    const reading = await this.readCall(toolName, args, category, signal);
+    assertPermissionActive(signal);
     if (reading !== null) {
       if (reading.kind !== undefined && TOOL_CATEGORIES[toolName] === undefined) category = categoryForSideEffectKind(reading.kind);
       analysis = withReading(analyzePermissionRequest(toolName, args, category), reading, category);
@@ -279,9 +290,10 @@ export class PermissionManager {
 
     // 2. The boundary, on the reading.
     const boundary = await this.runGateBoundary(toolName, args, reading);
+    assertPermissionActive(signal);
     if (!boundary.passed) {
       reading?.recordAction(`boundary:${boundary.refusedBy}`);
-      return done({ ...(await this.boundaryOutcome(callId, toolName, args, category, analysis, boundary, reading, attribution)), ...read });
+      return done({ ...(await this.boundaryOutcome(callId, toolName, args, category, analysis, boundary, reading, attribution, signal)), ...read });
     }
     const base = { boundary: boundaryRecord(boundary), ...read };
 
@@ -301,7 +313,7 @@ export class PermissionManager {
       forceAsk = true;
     }
     const key = this.getApprovalKey(toolName, args);
-    const remembered = this.rememberedDecision(key, toolName, args);
+    const remembered = this.rememberedDecision(key, toolName, args, signal);
     // Plan is read-only: a remembered allow does not carry a change into it.
     if (remembered && !(preset.readOnly && remembered.approved)) {
       return done(this.result(remembered.approved, true, remembered.source, remembered.reason, analysis, base));
@@ -310,7 +322,7 @@ export class PermissionManager {
     // 4. A known read-only tool that touches no secrets runs.
     if (reading === null) {
       if (!forceAsk) return done(this.result(true, false, 'config_policy', 'config_allow', analysis, base));
-      return done(await this.ask(callId, toolName, args, category, analysis, key, attribution, base));
+      return done(await this.ask(callId, toolName, args, category, analysis, key, attribution, base, signal));
     }
 
     // 5. The preset decides on the stakes.
@@ -330,7 +342,7 @@ export class PermissionManager {
     }
 
     // 6. Ask the owner.
-    return done(await this.ask(callId, toolName, args, category, analysis, key, attribution, withPreset));
+    return done(await this.ask(callId, toolName, args, category, analysis, key, attribution, withPreset, signal));
   }
 
   /**
@@ -340,13 +352,14 @@ export class PermissionManager {
    * call gets the full reading: side effects, risk family and the boundary
    * questions.
    */
-  private async readCall(toolName: string, args: Record<string, unknown>, category: PermissionCategory): Promise<GateReading | null> {
+  private async readCall(toolName: string, args: Record<string, unknown>, category: PermissionCategory, signal?: AbortSignal): Promise<GateReading | null> {
     const workingDirectory = this.configReader.getWorkingDirectory() ?? undefined;
-    if (isKnownReadOnly(toolName, category) && !(await readTouchesSecrets(toolName, args, workingDirectory))) return null;
+    if (isKnownReadOnly(toolName, category) && !(await readTouchesSecrets(toolName, args, workingDirectory, signal))) return null;
     return readToolCall({
       toolName,
       args,
       workingDirectory,
+      ...(signal === undefined ? {} : { signal }),
       askKind: TOOL_CATEGORIES[toolName] === undefined,
       askObfuscated: shellCommandsIn(args).length > 0,
     });
@@ -356,10 +369,15 @@ export class PermissionManager {
    * Whether the call passes the boundary. The background-agent escape hatch
    * uses it: exempt from presets and prompts, never from the boundary.
    */
-  async passesBoundary(toolName: string, args: Record<string, unknown>): Promise<boolean> {
-    if (!judgmentInputBoundary(toolName, args, this.configReader.getWorkingDirectory() ?? undefined).passed) return false;
-    const reading = await this.readCall(toolName, args, this.getCategory(toolName, args));
-    return (await this.runGateBoundary(toolName, args, reading)).passed;
+  async passesBoundary(toolName: string, args: Record<string, unknown>, options?: PermissionExecutionOptions): Promise<boolean> {
+    const signal = options?.signal;
+    return awaitPermission(async () => {
+      assertPermissionActive(signal);
+      if (!judgmentInputBoundary(toolName, args, this.configReader.getWorkingDirectory() ?? undefined).passed) return false;
+      const reading = await this.readCall(toolName, args, this.getCategory(toolName, args), signal);
+      assertPermissionActive(signal);
+      return (await this.runGateBoundary(toolName, args, reading)).passed;
+    }, signal);
   }
 
   /** The boundary over one call, with this gate's surface and ledger. */
@@ -390,6 +408,7 @@ export class PermissionManager {
     verdict: Extract<BoundaryVerdict, { passed: false }>,
     reading: GateReading | null,
     attribution: PermissionAttribution | undefined,
+    signal?: AbortSignal,
   ): Promise<PermissionCheckResult> {
     const detail = [verdict.reason, verdict.fix ?? ''].filter((part) => part.length > 0).join(' ');
     const refused = this.result(false, false, 'boundary', BOUNDARY_REASON[verdict.refusedBy], analysis, { boundary: boundaryRecord(verdict), detail });
@@ -402,10 +421,14 @@ export class PermissionManager {
       analysis: { ...analysis, summary: `Outward call the owner must see: ${analysis.summary}`, reasons: [verdict.reason] },
       workingDirectory: this.configReader.getWorkingDirectory() ?? undefined,
       ...(attribution ? { attribution } : {}),
-    });
-    if (!decision.approved) return { ...refused, sourceLayer: 'user_prompt', reasonCode: 'user_denied', userReason: decision.reason };
+    }, { signal });
+    assertPermissionActive(signal);
+    const approved = decision.approved;
+    assertPermissionActive(signal);
+    if (!approved) return { ...refused, sourceLayer: 'user_prompt', reasonCode: 'user_denied', userReason: decision.reason };
     const approval = grantOwnerApproval({ action: verdict.approvable.action, surface: 'owner-direct', content: verdict.approvable.content });
     const cleared = await this.runGateBoundary(toolName, args, reading, approval);
+    assertPermissionActive(signal);
     if (!cleared.passed) return refused;
     return this.result(true, false, 'user_prompt', 'owner_approved_outward', analysis, { boundary: boundaryRecord(cleared) });
   }
@@ -415,6 +438,7 @@ export class PermissionManager {
     key: string,
     toolName: string,
     args: Record<string, unknown>,
+    signal?: AbortSignal,
   ): { approved: boolean; source: PermissionDecisionSource; reason: PermissionDecisionReasonCode } | null {
     if (this.sessionApprovals.has(key)) {
       const approved = this.sessionApprovals.get(key)!;
@@ -424,8 +448,10 @@ export class PermissionManager {
       ? matchDurableRules(this.userRuleStore.rules(), toolName, args, { projectRoot: this.configReader.getWorkingDirectory() ?? undefined })
       : null;
     if (!durable) return null;
-    this.sessionApprovals.set(key, durable.effect === 'allow');
-    return { approved: durable.effect === 'allow', source: 'user_rule', reason: durable.effect === 'allow' ? 'user_rule_allow' : 'user_rule_deny' };
+    const approved = durable.effect === 'allow';
+    assertPermissionActive(signal);
+    this.sessionApprovals.set(key, approved);
+    return { approved, source: 'user_rule', reason: approved ? 'user_rule_allow' : 'user_rule_deny' };
   }
 
   /** Asks the owner through the surface's prompt, and remembers the answer at the tier they chose. */
@@ -438,6 +464,7 @@ export class PermissionManager {
     key: string,
     attribution: PermissionAttribution | undefined,
     extra: Partial<PermissionCheckResult>,
+    signal?: AbortSignal,
   ): Promise<PermissionCheckResult> {
     let decision: Awaited<ReturnType<PermissionRequestHandler>>;
     try {
@@ -450,26 +477,35 @@ export class PermissionManager {
         workingDirectory: this.configReader.getWorkingDirectory() ?? undefined,
         ...(attribution ? { attribution } : {}),
         rememberOptions: buildRememberOptions(toolName, args),
-      });
+      }, { signal });
+      assertPermissionActive(signal);
     } catch (error) {
+      assertPermissionActive(signal);
       void this.fireHook('Fail:permission:request', 'Fail', 'permission', 'request', { callId, toolName, category, analysis, error: summarizeError(error) });
       throw error;
     }
+    // Project a borrowed decision before admitting any grant: evaluating a
+    // getter may itself cancel the caller, even without an intervening await.
+    const approved = decision.approved;
     const tier = decision.rememberTier ?? (decision.remember ? 'session' : undefined);
+    const modifiedArgs = decision.modifiedArgs;
+    const userReason = decision.reason;
+    const rule = tier && tier !== 'session' && this.userRuleStore
+      ? buildDurableRuleForDecision({ toolName, args, tier, effect: approved ? 'allow' : 'deny' })
+      : null;
+    assertPermissionActive(signal);
     if (tier) {
-      this.sessionApprovals.set(key, decision.approved);
-      if (tier !== 'session' && this.userRuleStore) {
-        const rule = buildDurableRuleForDecision({ toolName, args, tier, effect: decision.approved ? 'allow' : 'deny' });
-        if (rule) {
-          // Await: the grant must be durable before the call proceeds.
-          await this.userRuleStore.add({ rule, createdAt: Date.now(), tier, tool: toolName });
-        }
+      this.sessionApprovals.set(key, approved);
+      if (rule && tier !== 'session' && this.userRuleStore) {
+        // Once admitted while active, this owned write is awaited rather than
+        // rolled back if its caller later cancels during persistence.
+        await this.userRuleStore.add({ rule, createdAt: Date.now(), tier, tool: toolName });
       }
     }
     return {
-      ...this.result(decision.approved, Boolean(tier), 'user_prompt', decision.approved ? 'user_approved' : 'user_denied', analysis, extra),
-      modifiedArgs: decision.modifiedArgs,
-      userReason: decision.reason,
+      ...this.result(approved, Boolean(tier), 'user_prompt', approved ? 'user_approved' : 'user_denied', analysis, extra),
+      modifiedArgs,
+      userReason,
     };
   }
 
