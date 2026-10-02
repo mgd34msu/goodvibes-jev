@@ -7,6 +7,13 @@ export class HostSettingsReadError extends ConfigError {
   constructor(readonly file: string, message: string) { super(message); }
 }
 
+/** Publish the verified host state, then preserve the original persistence failure. */
+export function recoverHostSettingsWriteFailure(error: unknown, refresh: () => void): never {
+  try { refresh(); }
+  catch { /* The refresh already applied restrictive defaults and recorded its read failure. */ }
+  throw error;
+}
+
 /** existsSync conflates unreadable ancestors with absence; host permission must not. */
 export function hostSettingsFileExists(path: string): boolean {
   try { statSync(path); return true; }

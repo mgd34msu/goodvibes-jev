@@ -22,7 +22,7 @@
  * unknown later moment. A write landing at any point after the synchronous
  * baseline, including during watcher startup, differs from it and fires.
  */
-import { statSync } from 'node:fs';
+import { accessSync, constants, statSync } from 'node:fs';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 
@@ -47,6 +47,9 @@ interface FileSnapshot {
 function readSnapshot(path: string, trackReadErrors = false): FileSnapshot {
   try {
     const stats = statSync(path);
+    // A file may remain stat-able after chmod/ACL changes deny its contents.
+    // Host permissions must observe both the failure and readable recovery.
+    if (trackReadErrors) accessSync(path, constants.R_OK);
     return { mtimeMs: stats.mtimeMs, size: stats.size, exists: true };
   } catch (error) {
     if (trackReadErrors) {
