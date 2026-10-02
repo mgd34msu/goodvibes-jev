@@ -61,18 +61,19 @@ interface HarnessOptions {
 function harness(opts: HarnessOptions = {}) {
   const desktop: Array<{ title: string; body: string }> = [];
   const terminal: string[] = [];
-  const webhook: string[] = [];
+  const webhook: Array<Parameters<WebhookNotifier['sendNotification']>[0]> = [];
   const bells: number[] = [];
   const retries: string[] = [];
-  const turns = bus(); const tools = bus(); const agents = bus(); const workflows = bus();
+  const turns = bus(); const tools = bus(); const agents = bus(); const contracts = bus();
   let now = 1_000;
   const tracker = new FocusTracker();
   tracker.setFocused(false);
-  const settings: Record<string, unknown> = { 'behavior.notifyAfterSeconds': 30, ...opts.config };
+  // These named-notice routing tests explicitly use the public content-enabled setting.
+  const settings: Record<string, unknown> = { 'behavior.notifyAfterSeconds': 30, 'behavior.notificationsMetadataOnly': false, ...opts.config };
   const orchestrator: Record<string, unknown> = { lastInputTokens: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
   if (opts.handOff) orchestrator['turnEndNotice'] = { handOff: opts.handOff };
   const turnOptions = {
-    events: { turns, tools, agents, workflows },
+    events: { turns, tools, agents, contracts },
     conversation: {
       toJSON: () => { throw new Error('stub: no persistence in this test'); },
       getTitleSource: () => 'system',
@@ -96,7 +97,7 @@ function harness(opts: HarnessOptions = {}) {
     render: () => {},
     webhookNotifier: {
       getUrls: () => ['https://example.invalid/hook'],
-      send: mock(async (text: string) => { webhook.push(text); return {}; }),
+      sendNotification: mock(async (delivery: Parameters<WebhookNotifier['sendNotification']>[0]) => { webhook.push(delivery); }),
     } as unknown as WebhookNotifier,
     focusTracker: tracker,
     terminalNotifier: { notify: (_signal: string, message: string) => { terminal.push(message); } },
@@ -234,7 +235,10 @@ describe('one notice per user turn across a provider failover', () => {
     await flush();
     expect(h.desktop).toEqual([{ title: ASK, body: 'Done in 1m' }]);
     expect(h.terminal).toEqual([`${ASK}: Done in 1m`]);
-    expect(h.webhook).toEqual([`${ASK}\nDone in 1m`]);
+    expect(h.webhook.map(delivery => delivery.kind === 'turn' ? { ...delivery, facts: { ...delivery.facts } } : delivery)).toEqual([{ kind: 'turn', facts: {
+      outcome: 'completed', elapsedMs: 60_000, name: ASK, reason: null,
+      sessionId: 'test-sess-id-001', subject: 'turn', toolCalls: 0, filesChanged: 0, agentsStarted: 0, reviewScore: null,
+    } }]);
   });
 
   test('failover whose retry also fails: one failure notice, with the final reason', async () => {
