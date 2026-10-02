@@ -44,7 +44,7 @@ import {
   activeFleetTab, attachFleetTab, EMPTY_FLEET_TABS_STATE, isAttachableFleetKind, stepFleetTab, type FleetTab, type FleetTabsState,
 } from '../views/fleet-session-tabs.ts';
 import { liveSteerableLabels, reconcileSteerBadges, steerBadgeGlyph, steerRefusalMessage, steerBadgeFromReceipt, steerReceiptLabel } from '../views/fleet-steer.ts';
-import { FleetStopTracker, fleetKillConfirmArgs, fleetStateDisplay, toggleFleetPause } from '../views/fleet-stop.ts';
+import { buildFleetTreeHints, FleetStopTracker, fleetKillConfirmArgs, fleetStateDisplay, toggleFleetPause } from '../views/fleet-stop.ts';
 import { formatFleetCost, renderFleetDetailLines } from '../views/fleet-format.ts';
 import { hasFleetCost } from '../views/fleet-read-model.ts';
 import { parseAgentLedger, renderFleetAgentTranscript, renderFleetContractSummary, renderFleetLedgerFallback, renderFleetTranscriptLoading } from '../views/fleet-transcript.ts';
@@ -648,9 +648,13 @@ export class AgentsModal implements SurfaceModal {
     const parts = [`${snapshot.runningCount} running`];
     if (failed > 0) parts.push(`${failed} failed`);
     if (blocked > 0) parts.push(`${blocked} waiting on you`);
+    // The read model sums known leaf readings, not a completeness guarantee:
+    // absent/unpriced costs are omitted, while a recorded zero stays real.
+    // Keep that qualified amount before the secondary session cost so it
+    // remains visible at ordinary terminal widths.
+    parts.push(snapshot.totalCost === null ? 'fleet unpriced' : `known fleet ${formatUsd(snapshot.totalCost)}`);
     const you = this.deps.sessionCost?.();
     if (you !== undefined) parts.push(`you ${you === null ? 'unpriced' : formatUsd(you)}`);
-    parts.push(`fleet ${snapshot.totalCost === null ? '$0.00' : formatUsd(snapshot.totalCost)}`);
     return parts.join(' · ');
   }
 
@@ -661,15 +665,28 @@ export class AgentsModal implements SurfaceModal {
     if (this.filtering) return [['⏎', 'done'], ['esc', 'stop filtering']];
     if (level === 'full') {
       if (this.hostedFull) return [['s', 'say'], ['esc', 'back']];
-      return [['s', 'steer'], ['ctrl+x', 'stop (asks first)'], ['[ ]', 'other agents'], ['esc', 'back']];
+      const tab = activeFleetTab(this.tabs);
+      const node = tab ? this.findNode(tab.nodeId) : null;
+      const allowed = new Set(buildFleetTreeHints(node ?? undefined, this.follow, true).map((hint) => hint.keys));
+      const hints: KitHint[] = [];
+      if (allowed.has('s')) hints.push(['s', 'steer']);
+      if (allowed.has('K')) hints.push(['ctrl+x', 'stop (asks first)']);
+      hints.push(['[ ]', 'other agents'], ['esc', 'back']);
+      return hints;
     }
     const node = this.selectedNode();
     const attention = node ? fleetNodeAttention(node) : null;
     const enter = attention?.reason === 'pick' ? 'pick a winner' : attention?.reason === 'conflict' ? 'resolve conflict' : 'open full screen';
-    const hints: KitHint[] = [['⏎', enter], ['s', 'steer'], ['ctrl+x', 'stop'], ['n', 'new agent']];
-    if (node && !isTerminalProcessState(node.state) && node.capabilities.interruptible) hints.push(['i', 'interrupt']);
-    if (node && (node.state === 'paused' ? node.capabilities.resumable : node.capabilities.pausable && !isTerminalProcessState(node.state))) hints.push(['p', node.state === 'paused' ? 'resume' : 'pause']);
     const blocked = this.deps.readModel.getSnapshot().blockedNodeIds.length;
+    const allowed = new Set(buildFleetTreeHints(node ?? undefined, this.follow, this.tabs.tabs.length > 0, this.view, blocked).map((hint) => hint.keys));
+    const hints: KitHint[] = [['⏎', enter]];
+    if (allowed.has('s')) hints.push(['s', 'steer']);
+    else if (this.selectedEntry()?.kind === 'hosted' && this.deps.steerHosted) hints.push(['s', 'say']);
+    if (allowed.has('K')) hints.push(['ctrl+x', 'stop']);
+    hints.push(['n', 'new agent']);
+    if (allowed.has('i')) hints.push(['i', 'interrupt']);
+    if (allowed.has('p')) hints.push(['p', node?.state === 'paused' ? 'resume' : 'pause']);
+    if (allowed.has('D') && this.deps.acts) hints.push(['D', 'discard worktree']);
     if (blocked > 0) hints.push(['b', `waiting on you (${blocked})`]);
     hints.push(['v', this.view === 'archived' ? 'live' : 'archive'], ['a', this.view === 'archived' ? 'restore' : 'archive one'], ['f', this.follow ? 'following' : 'follow']);
     return hints;
