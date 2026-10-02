@@ -7834,6 +7834,296 @@
         "review": "docs/audit/tui-changes-comment-flow-2026-10-02.md",
         "verification": "Five model tests retained plus current public modal-host interaction regression for attach/send,batch dedupe and source labels. Old pane class/a binding retired by forward target; supported comment flow repaired and independently reviewed."
       }
+    },
+    {
+      "source": "src/panels/fleet-gateway.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/views/fleet-gateway.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "320ca2243db00af4dc641bfacc81ff7c0a72ce3e",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "faa8faefe749e557ed561b2c7318ecb41a359dd4",
+        "currentSourceBlob": "568e962af55a8d3a73da0ee808815b2863de23d0",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 3,
+        "verification": "Gateway method/result types now come from declared public engine exports. Current group:<contract>:<group> and unit:<contract>:<unit> parsing retains qualification matching engine splitQualifiedId; old unqualified IDs and root IDs are refused. Verb names and confirm payloads stay operator.invoke calls. Read-only graph controls confirm this qualification is actually accepted by the public contract bridge."
+      }
+    },
+    {
+      "source": "src/panels/fleet-read-model.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/views/fleet-read-model.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "2b442383621e9cf64855fd8569b664ef6240a6ab",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "41819801f8a0d02fcd567daab434c0d1221bbe4c",
+        "currentSourceBlob": "8c9332145d0696e07790727d2dc4dc5c6ddc55fc",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 7,
+        "verification": "Read model consumes public ProcessNode as before and rewrites old WRFC/workstream/phase kinds to contract/group/unit wrappers. It excludes these rollups and raw.contractRole owner from usage/cost and running actor totals; agents remain leaves. Tree parent equality, cycle handling, attention ordering, quiet duration formatting, archive and communication-consumed forwarding stay exact machine-field operations rather than new meaning guesses."
+      }
+    },
+    {
+      "source": "src/panels/fleet-tabs.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/views/fleet-session-tabs.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "f87522b775515139f7d2c8b3181b8e4a4f22e551",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "153b69327719fdaff704cf7d091fc894e24ff730",
+        "currentSourceBlob": "5b8d82e091ea5d3fbb5679698956846f99b93e84",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 11,
+        "verification": "Immutable attach/refocus/detach/switch/step semantics survive; wrfc-chain attach kind becomes public contract root, with agent and acp-agent retained. Contract tabs have no agent transcript handle; current consumer passes real ContractView to summary. CR/LF normalization still exact character grammar."
+      }
+    },
+    {
+      "source": "src/panels/fleet-transcript.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/views/fleet-transcript.ts",
+        "products/tui/src/core/work-tree-contract.ts",
+        "products/tui/src/input/agents-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "dfc8174dbcd5ee6deaa5b79ea599afe9c26226cd",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "956cdc5290ca97d867d7d8b25ed75803a57f5adf",
+        "currentSourceBlob": "1a3874c43c41b6c99ae42f090a586b2d11530682",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 12,
+        "verification": "Agent live/frozen/unavailable modes, height budgeting and honest ledger degradation are retained. Retired chain-summary successor is renderFleetContractSummary: public root ContractView renders criteria/checks/groups/units/attempts/owner questions and commit/application facts; absence says lifecycle unavailable rather than guessing completion. Actual AgentsModal supplies recorded raw ContractView and bypasses agent transcript lookup for contract tabs."
+      }
+    },
+    {
+      "source": "src/panels/modals/marketplace-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/marketplace-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "278684ecb15884c4a29c79563e9dadae757fa223",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "1444cb658d56c124369175047a6de949f8755f03",
+        "currentSourceBlob": "69cb3cdc721d2d8794d0e00a723b5be4e60714f6",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 14,
+        "verification": "Catalog display and install/uninstall dispatch survive pinned\u2192forward, with current theme headers. Current adapter awaits authoritative asynchronous ecosystem review, blocks install while pending, aborts on close and rejects obsolete results. Local catalog counts, provenance, installed membership, first-three recommendations and errors remain. Tests drive actual public review port with synthetic entries, preserving operation assertions."
+      }
+    },
+    {
+      "source": "src/panels/modals/memory-modal.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/views/modals/memory-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "e59afeb740be009fbc216a90e5547a9376768e70",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "931c77e1e3c745d13c2165d4815511108c09b3f7",
+        "currentSourceBlob": "9f7a02715ae133341a6b1dbbcce3dd5e338365b7",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 15,
+        "verification": "Forward preserves old modal while Jev inventory specifically replaces hand-weighted rankForReview. Current source removes that ranking and uses public MemoryAccess.reviewQueue(24) alongside honestSearch(100), preserving backend order independently of search batch. Review/delete command confidence values, proposal correlation/jump and honest unavailable/error states remain. Generation guards reject stale refresh/reopen results. Tests assert backend order contrary to old heuristic, exact top24 request, cross-scope records and late success/failure behavior."
+      }
+    },
+    {
+      "source": "src/panels/modals/sandbox-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/sandbox-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "55ee37c6cd286b2aa1380f61a7f3428f676cd306",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "f0e49947c9ae92c2d70b27dae066755d62f9106b",
+        "currentSourceBlob": "bc72757daada045914f5c453d06e3d6534691034",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 17,
+        "verification": "Forward delta is comment-only. Current uses public SandboxSessionRegistry.execute(sessionId,command,args,options) four-argument contract instead of stale extra config argument. Profiles/session rendering, exact start/stop/probe dispatch, action gates and error status remain. Existing authbox tests drive modal actions and confirm stop confirmation metadata; no captured-path implementation was investigated."
+      }
+    },
+    {
+      "source": "src/panels/modals/security-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/security-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "c4ae0602a52dbd3bad5db64b7333ce03555c7f8c",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "15a6452f868d621f0813e0e11f7499fa440bc3dc",
+        "currentSourceBlob": "a577699254d3321f4e7e29d784ab10a4865ad5a2",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 18,
+        "verification": "Forward changes theme refresh/header styles, preserving typed token audit, MCP governance and incident/attack-path rendering and command dispatch. Current differs only public package namespace and required empty slowPhases fixture field. Tests assert identity, honest empty state, token/governance rendering, preflight route and gated incident jump. No security enforcement behavior is modified."
+      }
+    },
+    {
+      "source": "src/panels/project-planning-answer-actions.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/knowledge/project-planning/answer-actions.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "0055da441ba2f80299d872fdc6b67dd47a19beeb",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "6e1664cbec0a3f1666bf16fe62423e641a2214e2",
+        "currentSourceBlob": "c2d551d4d1f89848fbfeee6bcfea4f0c29e6392d",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 20,
+        "verification": "Current thin module reexports buildProjectPlanningAnswerActions/readProjectPlanningAnswerActions and types from public knowledge owner. Engine source owns semantic fan-out and specific recommendation reading; deterministic bundle composition, whitespace/case dedupe, detail truncation, manual/ask-narrower rows and unavailable/held behavior remain. Guarded public-export tests prove semantic decisions independent of keywords, held/negative withholding, changed-question invalidation and exact composition. This helper ownership does not claim held planning transaction readiness."
+      }
+    },
+    {
+      "source": "src/panels/workstream-graph-render.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/views/workstream-graph-render.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "0f96b34fb0e50e4d39f2d76f4ff433dc6f6385de",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "d815c15ace76b2439aea9055af9a52a6791d8ae9",
+        "currentSourceBlob": "5ac086a37e9f517a9c139e146763ddae26c4f767",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 23,
+        "verification": "Renderer is deliberately still code: joins graph edges by exact IDs, renders typed states/flags and pool posture, wraps to terminal width. The public fleet.graph.get result remains WorkstreamGraphSnapshot but contract fleet controls now qualify group/unit IDs; renderer consumes that actual bridge output unchanged. This is a legitimate JEV-view adaptation through authoritative producer, not a required new local judgment."
+      }
+    },
+    {
+      "source": "src/test/panels/fleet-detail-surfaces.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/test/views/fleet-detail-surfaces.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "bbd05123d18e668d426ad0cfbdd6ecbb69dddfce",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "447c85ed48fcbce5ea9a402b6b8e11042330becf",
+        "currentSourceBlob": "95702e2553a13cfa7cf84d8d79a4721198f8fe2d",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 26,
+        "verification": "Retained or appropriately rewritten test obligations are demonstrated at the stated component boundary; this is not whole-product acceptance."
+      }
+    },
+    {
+      "source": "src/test/panels/fleet-observed-steer.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/test/views/fleet-observed-steer.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "537a4da89e1b67c5fc33f8867ac6ab9291c6a8e2",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "96512ab48849b699af929b268577ce5ac6a8aae9",
+        "currentSourceBlob": "b8238fa4139fd7751fbe5f171d959b075f74cfba",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 29,
+        "verification": "Retained or appropriately rewritten test obligations are demonstrated at the stated component boundary; this is not whole-product acceptance."
+      }
+    },
+    {
+      "source": "src/test/panels/fleet-tabs.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/test/views/fleet-session-tabs.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "dca484c1ab2355055c7436701535b956c3d4da41",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "fbad3476085c4ed2c28d36d85c0f803fe1763c40",
+        "currentSourceBlob": "eb11392d88a2739e7e3b295e678204b28151af7b",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 35,
+        "verification": "Retained or appropriately rewritten test obligations are demonstrated at the stated component boundary; this is not whole-product acceptance."
+      }
+    },
+    {
+      "source": "src/test/panels/fleet-transcript.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/test/views/fleet-transcript.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "d407b43df3196eaca82291d7704e796da3b13354",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "9d5217b21590f0cbff491f237843ef259b9795a6",
+        "currentSourceBlob": "8750aa7dd9d7ccb167a2560452aba6a5cccb96cf",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 36,
+        "verification": "Retained or appropriately rewritten test obligations are demonstrated at the stated component boundary; this is not whole-product acceptance."
+      }
+    },
+    {
+      "source": "src/test/panels/modals/hooks-modal.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/modals/hooks-modal.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "4cc08fa8309503b23de79c79c13e842f6a7dc608",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "346ec227a10df4c76bee5da7914b7d527129fcd9",
+        "currentSourceBlob": "c4260fd8d302533027aac91cddec3ea5a1fdbc9f",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 38,
+        "verification": "Retained or appropriately rewritten test obligations are demonstrated at the stated component boundary; this is not whole-product acceptance."
+      }
+    },
+    {
+      "source": "src/test/panels/modals/marketplace-modal.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/modals/marketplace-modal.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "a183a51861f47bbdd9fb0c816697b98958f240ba",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "57922ac78c5c43ff65a012b112aa6e28a9be1271",
+        "currentSourceBlob": "dde8b67773fe2d438017c46944cc5a9eb6b29a36",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 39,
+        "verification": "Retained or appropriately rewritten test obligations are demonstrated at the stated component boundary; this is not whole-product acceptance."
+      }
+    },
+    {
+      "source": "src/test/panels/workstream-graph-render.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/test/views/workstream-graph-render.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "d3b50b90cdbaace7e29fe5aecec1b62b644adabf",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "82c36e65e6f9c0bfeeda157420f1fc5a4e38ad7c",
+        "currentSourceBlob": "82c36e65e6f9c0bfeeda157420f1fc5a4e38ad7c",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 43,
+        "verification": "Retained or appropriately rewritten test obligations are demonstrated at the stated component boundary; this is not whole-product acceptance."
+      }
+    },
+    {
+      "source": "src/panels/notifications-feed.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/notifications-feed.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "39196264c70b6db5e4447c5b7d60f9e486ee0591",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "bf56c9c328846bb3fd21d2037e2c38f333a0c03e",
+        "currentSourceBlob": "bf56c9c328846bb3fd21d2037e2c38f333a0c03e",
+        "review": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "reviewRow": 46,
+        "verification": "Forward expands notification history from200 to2000, adds system notices, subject routing, toast/restored state and event-key dedupe while preserving panel_only filtering, closed collapse reasons, exact group keys and true counts. Current equals forward bytes. Existing feed tests prove filtering/counts/subscribe/unsubscribe/dismiss/subject/unread; one-entry-per-event tests prove canonical bridge dedupe. Added off-tree current-boundary probe confirms2001 unique arrivals retain newest2000 and batch_window_collapsed accumulates exact3."
+      }
     }
   ],
   "verification": {
@@ -7842,10 +8132,11 @@
   "accounting": {
     "inventoryRows": 1618,
     "samePathMappings": 1027,
-    "unresolved": 548,
+    "unresolved": 530,
     "unresolvedManifest": "products/tui/migration-unresolved.json",
     "semantics": "Same-path mappings identify current locations, not evidence of completed JEV/HOIST decisions or feature parity.",
-    "verifiedRenameMappings": 43,
-    "renameReview": "docs/audit/tui-rename-reconciliation-2026-10-02.json"
+    "verifiedRenameMappings": 61,
+    "renameReview": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+    "retainedRenameReview": "docs/audit/tui-retained-rename-review-2026-10-02.json"
   }
 }

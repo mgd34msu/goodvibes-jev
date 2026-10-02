@@ -111,3 +111,14 @@ The separate successor-coverage mapping names both unchanged model tests and the
 new actual modal-host token tests, bringing unresolved accounting to 548. No new
 compiled-E2E/full-suite claim is made for this source fix. See the detailed audit
 and retirement proposal under docs/audit/tui-*-2026-10-02.*.
+
+## Retained rename review after 7c09
+
+The bounded 48-row review closes 18 proven mappings, leaving 530 obligations
+(30 retained rename rows, 437 deleted-path reconciliations and 63 other rows).
+See `docs/audit/tui-retained-rename-review-2026-10-02.{md,json}` for exact semantic
+and test evidence. Passing helper tests did not conceal actual modal gaps:
+Work Plan contract navigation, pending spawn cancellation, ACP receipt labels,
+footer eligibility and unpriced cost remain explicit until separate fixes pass
+independent review. This accounting change contains no runtime edits, source-pin
+advance, held dependency adoption or publication. Host SDK PR69 remains blocked.

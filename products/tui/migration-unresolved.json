@@ -416,10 +416,6 @@
     "disposition": "JEV"
   },
   {
-    "source": "src/panels/fleet-gateway.ts",
-    "disposition": "JEV"
-  },
-  {
     "source": "src/panels/fleet-observed-render.ts",
     "disposition": "JEV"
   },
@@ -436,10 +432,6 @@
     "disposition": "JEV"
   },
   {
-    "source": "src/panels/fleet-read-model.ts",
-    "disposition": "JEV"
-  },
-  {
     "source": "src/panels/fleet-spawn.ts",
     "disposition": "JEV"
   },
@@ -449,14 +441,6 @@
   },
   {
     "source": "src/panels/fleet-stop.ts",
-    "disposition": "JEV"
-  },
-  {
-    "source": "src/panels/fleet-tabs.ts",
-    "disposition": "JEV"
-  },
-  {
-    "source": "src/panels/fleet-transcript.ts",
     "disposition": "JEV"
   },
   {
@@ -480,32 +464,12 @@
     "disposition": "HOIST"
   },
   {
-    "source": "src/panels/modals/marketplace-modal.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/modals/memory-modal.ts",
-    "disposition": "JEV"
-  },
-  {
     "source": "src/panels/modals/planning-modal.ts",
     "disposition": "JEV"
   },
   {
-    "source": "src/panels/modals/sandbox-modal.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/modals/security-modal.ts",
-    "disposition": "PORT"
-  },
-  {
     "source": "src/panels/modals/work-plan-modal.ts",
     "disposition": "JEV"
-  },
-  {
-    "source": "src/panels/notifications-feed.ts",
-    "disposition": "PORT"
   },
   {
     "source": "src/panels/notifications-panel.ts",
@@ -522,10 +486,6 @@
   {
     "source": "src/panels/plugins-panel.ts",
     "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/project-planning-answer-actions.ts",
-    "disposition": "HOIST"
   },
   {
     "source": "src/panels/provider-health-domains.ts",
@@ -550,10 +510,6 @@
   {
     "source": "src/panels/types.ts",
     "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/workstream-graph-render.ts",
-    "disposition": "JEV"
   },
   {
     "source": "src/panels/wrfc-panel-format.ts",
@@ -620,19 +576,11 @@
     "disposition": "JEV"
   },
   {
-    "source": "src/test/panels/fleet-detail-surfaces.test.ts",
-    "disposition": "JEV"
-  },
-  {
     "source": "src/test/panels/fleet-headline-stall.test.ts",
     "disposition": "JEV"
   },
   {
     "source": "src/test/panels/fleet-observed-render.test.ts",
-    "disposition": "JEV"
-  },
-  {
-    "source": "src/test/panels/fleet-observed-steer.test.ts",
     "disposition": "JEV"
   },
   {
@@ -664,14 +612,6 @@
     "disposition": "JEV"
   },
   {
-    "source": "src/test/panels/fleet-tabs.test.ts",
-    "disposition": "JEV"
-  },
-  {
-    "source": "src/test/panels/fleet-transcript.test.ts",
-    "disposition": "JEV"
-  },
-  {
     "source": "src/test/panels/formatting-antipatterns.test.ts",
     "disposition": "PORT"
   },
@@ -685,14 +625,6 @@
   },
   {
     "source": "src/test/panels/modals/ecosystem-modals-registration.test.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/test/panels/modals/hooks-modal.test.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/test/panels/modals/marketplace-modal.test.ts",
     "disposition": "PORT"
   },
   {
@@ -762,10 +694,6 @@
   {
     "source": "src/test/panels/workspace/cost-tracker-panel.test.ts",
     "disposition": "PORT"
-  },
-  {
-    "source": "src/test/panels/workstream-graph-render.test.ts",
-    "disposition": "JEV"
   },
   {
     "source": "src/renderer/diff-view.ts",
