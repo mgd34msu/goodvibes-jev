@@ -24,7 +24,9 @@ const END_TO_END_BUDGET_MS = 180_000;
 //   - the "old binary" is an executable (bun-shebang script) at
 //     <scratch>/goodvibes, pinned to fixture version 1.0.0 (never the live
 //     build VERSION), that invokes the actual selfUpdateAtLaunch machinery
-//     (runLaunchAutoUpdate + restartOntoUpdatedBinary) exactly as main() does;
+//     (runLaunchAutoUpdate + restartOntoUpdatedBinary) for the retained binary
+//     updater. Private workspace main() instead returns rebuild guidance; its
+//     no-network boundary is covered in workspace-update-policy.test.ts;
 //   - the release payload served for download is ITSELF an executable that
 //     prints its own version and argv, so the respawn assertion observes what
 //     actually ran, not what was supposed to run;
@@ -40,7 +42,7 @@ const END_TO_END_BUDGET_MS = 180_000;
 const OLD_VERSION = '1.0.0';
 const NEW_VERSION = '1.1.0';
 const NEW_TAG = `v${NEW_VERSION}`;
-const GITHUB_BASE = 'https://github.com/mgd34msu/goodvibes-tui';
+const GITHUB_BASE = 'https://github.com/mgd34msu/goodvibes-jev';
 const LAUNCH_MODULE = join(import.meta.dir, '..', '..', 'cli', 'launch-auto-update.ts');
 
 const artifacts = resolveArtifactNames(process.platform, process.arch);
@@ -83,7 +85,10 @@ function oldBinarySource(): string {
     `const CURRENT_VERSION = ${JSON.stringify(OLD_VERSION)};`,
     "const base = process.env['GV_TEST_RELEASES_BASE'] ?? '';",
     '// The one seam: point the hardcoded GitHub release URLs at the local server.',
-    `const fetchImpl = (url, init) => fetch(url.replace(${JSON.stringify(GITHUB_BASE)}, base), init);`,
+    `const fetchImpl = (url, init) => {`,
+    `  if (!url.startsWith(${JSON.stringify(GITHUB_BASE + '/releases/')})) throw new Error('Unexpected updater fixture URL: ' + url);`,
+    `  return fetch(base + url.slice(${GITHUB_BASE.length}), init);`,
+    `};`,
     "const applyTimeoutMs = process.env['GV_TEST_APPLY_TIMEOUT_MS'];",
     "const settings = process.env['GV_TEST_DISABLE'] === '1'",
     '  ? { autoUpdateAtLaunch: false }',
