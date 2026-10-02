@@ -16,7 +16,7 @@ function makeRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
     orchestrationDepth: 0,
     toolCallCount: 0,
     executionProtocol: 'gather-plan-apply',
-    reviewMode: 'wrfc',
+    reviewMode: 'contract',
     communicationLane: 'direct',
     writeScope: ['src/runtime/store'],
     ...overrides,

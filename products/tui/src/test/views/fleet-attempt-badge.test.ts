@@ -10,7 +10,7 @@ import { renderFleetRowLine } from '../../views/fleet-format.ts';
 
 function row(node: Partial<ProcessNode> & { id: string }): FleetTreeRow {
   const full: ProcessNode = {
-    kind: 'work-item',
+    kind: 'contract-unit',
     label: node.id,
     state: 'executing-tool',
     elapsedMs: 1_000,
