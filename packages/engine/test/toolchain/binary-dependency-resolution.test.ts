@@ -142,3 +142,49 @@ test('an SDK export subpath resolves the enclosing engine package manifest', () 
   symlinkSync(engine, join(f.product, 'node_modules', '@fixture', 'engine'), 'dir');
   expect(resolveOwnedPackageManifest(join(f.product, 'package.json'), '@fixture/engine/sdk')).toBe(join(engine, 'package.json'));
 });
+
+function engineOwnedFixture(declareEngine = true, declareSqlite = true, optional = false) {
+  const f = fixture();
+  rmSync(join(f.product, 'node_modules', 'sqlite-vec'));
+  pkg(f.product, 'fixture-app', '1.0.0', { dependencies: declareEngine ? { '@fixture/engine': 'workspace:*' } : {} });
+  const engine = pkg(join(f.root, 'engine'), '@fixture/engine', '1.0.0', { [optional ? 'optionalDependencies' : 'dependencies']: declareSqlite ? { 'sqlite-vec': '0.1.9' } : {} });
+  mkdirSync(join(f.product, 'node_modules', '@fixture'), { recursive: true });
+  symlinkSync(engine, join(f.product, 'node_modules', '@fixture', 'engine'), 'dir');
+  mkdirSync(join(engine, 'node_modules'), { recursive: true });
+  symlinkSync(f.owner, join(engine, 'node_modules', 'sqlite-vec'), 'dir');
+  const stage = () => provideNativeAddon({ root: f.product, sdkPackage: '@fixture/engine/sdk', addonOutDir: 'dist/lib', target, sameHost: true, exec: () => { throw new Error('host build must not fetch'); } });
+  return { ...f, stage };
+}
+
+test('declared engine-owned sqlite stages exact installed addon without a product-level dependency', () => {
+  const f = engineOwnedFixture(); f.install();
+  expect(f.stage()).toBe(true);
+  expect(readFileSync(f.destination(), 'utf8')).toBe('fixture linux-x64');
+  expect(existsSync(join(f.product, 'node_modules', 'sqlite-vec'))).toBe(false);
+});
+
+test.each([[false, true], [true, false]])('engine traversal requires both ownership declarations (%s, %s)', (engine, sqlite) => {
+  const f = engineOwnedFixture(engine, sqlite); f.install();
+  expect(f.stage()).toBe(false);
+  expect(existsSync(f.destination())).toBe(false);
+});
+
+test('engine-owned addon retains exact target version validation', () => {
+  const f = engineOwnedFixture(); f.install(target, '0.1.1');
+  expect(() => f.stage()).toThrow('different installed version');
+  expect(existsSync(f.destination())).toBe(false);
+});
+
+test('engine-owned addon retains payload containment validation', () => {
+  const f = engineOwnedFixture(); const native = f.install();
+  const outside = join(f.root, 'outside.so'); writeFileSync(outside, 'unrelated');
+  rmSync(join(native, 'vec0.so')); symlinkSync(outside, join(native, 'vec0.so'));
+  expect(() => f.stage()).toThrow('outside its package directory');
+  expect(existsSync(f.destination())).toBe(false);
+});
+
+test('engine optional dependency ownership matches the real private workspace layout', () => {
+  const f = engineOwnedFixture(true, true, true); f.install();
+  expect(f.stage()).toBe(true);
+  expect(readFileSync(f.destination(), 'utf8')).toBe('fixture linux-x64');
+});

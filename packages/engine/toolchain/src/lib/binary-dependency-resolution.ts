@@ -8,6 +8,7 @@ import { consoleLogger, realExec, type Exec, type Logger } from './effects.js';
 interface PackageManifest {
   readonly name?: unknown;
   readonly version?: unknown;
+  readonly dependencies?: Readonly<Record<string, unknown>>;
   readonly optionalDependencies?: Readonly<Record<string, unknown>>;
 }
 
@@ -70,6 +71,7 @@ export interface ProvideNativeAddonOptions {
   readonly addonOutDir: string;
   readonly target: BinaryTarget;
   readonly sameHost: boolean;
+  readonly sdkPackage?: string;
   readonly exec?: Exec;
   readonly logger?: Logger;
 }
@@ -80,7 +82,23 @@ export function provideNativeAddon(options: ProvideNativeAddonOptions): boolean 
   const packageName = target.nativeAddonPackage;
   const file = target.nativeAddonFile;
   if (!packageName || !file) return true;
-  const ownerPath = resolveOwnedPackageManifest(join(root, 'package.json'), 'sqlite-vec');
+  const productManifest = join(root, 'package.json');
+  let ownerPath = resolveOwnedPackageManifest(productManifest, 'sqlite-vec');
+  // Private clients depend on the engine; sqlite-vec belongs to that declared
+  // dependency, not to a fictitious product-level or hoisted installation.
+  if (ownerPath === null && options.sdkPackage) {
+    const sdkName = options.sdkPackage.split('/').slice(0, options.sdkPackage.startsWith('@') ? 2 : 1).join('/');
+    const product = JSON.parse(readFileSync(productManifest, 'utf8')) as PackageManifest;
+    if (Object.hasOwn(product.dependencies ?? {}, sdkName) || Object.hasOwn(product.optionalDependencies ?? {}, sdkName)) {
+      const sdkPath = resolveOwnedPackageManifest(productManifest, options.sdkPackage);
+      if (sdkPath !== null) {
+        const sdk = JSON.parse(readFileSync(sdkPath, 'utf8')) as PackageManifest;
+        if (Object.hasOwn(sdk.dependencies ?? {}, 'sqlite-vec') || Object.hasOwn(sdk.optionalDependencies ?? {}, 'sqlite-vec')) {
+          ownerPath = resolveOwnedPackageManifest(sdkPath, 'sqlite-vec');
+        }
+      }
+    }
+  }
   if (ownerPath === null) return false;
   const owner = JSON.parse(readFileSync(ownerPath, 'utf8')) as PackageManifest;
   const version = owner.optionalDependencies?.[packageName];

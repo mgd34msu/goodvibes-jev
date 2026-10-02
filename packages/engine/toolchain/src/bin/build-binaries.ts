@@ -57,7 +57,7 @@ function isPackageInstalled(packageName: string): boolean {
 try {
   const selection = resolveTargets(process.argv.slice(2), build, nativeKey);
   const outcomes = runBuildBinaries({
-    cwd: root, config: build, selection, nativeKey, provideAddon: (target, sameHost) => provideNativeAddon({ root, addonOutDir: build.addonOutDir, target, sameHost }), logger: consoleLogger,
+    cwd: root, config: build, selection, nativeKey, provideAddon: (target, sameHost) => provideNativeAddon({ root, sdkPackage: config.sdkPin?.sdkPackage ?? DEFAULT_SDK_PACKAGE, addonOutDir: build.addonOutDir, target, sameHost }), logger: consoleLogger,
     dependencyManifests: manifests,
     isPackageInstalled,
   });
