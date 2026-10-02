@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { homedir } from 'node:os';
+import { settleInteractiveExit } from './shell/exit-completion.ts';
 import { Compositor } from './renderer/compositor.ts';
 import { installStartupThemeProbe } from './renderer/startup-theme-probe.ts';
 import { ThinkingStallClock, buildThinkingOverlay, createThrobberSource, mainPermissionAsk } from './core/thinking-overlay.ts';
@@ -292,14 +293,13 @@ async function main() {
     let spokenOutputDrain: Promise<void> = Promise.resolve();
     try {
       spokenOutputDrain = Promise.resolve(stopSpokenOutputForExit?.()).then(() => undefined);
-    } catch { /* non-fatal to exit */ }
+    } catch (error) { spokenOutputDrain = Promise.reject(error); }
     unsubs.forEach(fn => fn());
     // Persist last-seen before shutdown so the next launch can compute the digest.
     autonomy.stop();
     const snapshot = buildCurrentSessionSnapshot();
-    ctx.shutdown(snapshot).catch((err) => {
-      logger.debug('ctx.shutdown error during exitApp (non-fatal)', { error: summarizeError(err) });
-    });
+    const runtimeShutdown = ctx.shutdown(snapshot);
+    const exitCompletion = settleInteractiveExit(runtimeShutdown, spokenOutputDrain);
     if (recoveryInterval !== null) { clearInterval(recoveryInterval); recoveryInterval = null; }
     // Scoped to this session only, a keyless call would clear every snapshot in the recovery dir.
     removeRecoveryPoint(ctx.services.surface, runtime.sessionId);
@@ -310,9 +310,12 @@ async function main() {
     allowTerminalWrite(() => stdout.write(buildExitSequence(cli.flags.noAltScreen)));
     terminalOutputGuard.dispose();
     stdin.setRawMode(false);
-    // The terminal is already restored above; only the process exit waits for
-    // the (internally capped, ~2s max) audio drain.
-    void spokenOutputDrain.catch(() => undefined).then(() => process.exit(handOver ? handOver() : 0));
+    // The terminal is restored immediately. Process exit and executable
+    // handover wait for runtime ownership release and the bounded audio drain.
+    void exitCompletion.then((failures) => {
+      for (const error of failures) logger.warn('Owned cleanup failed during exitApp', { error: summarizeError(error) });
+      process.exit(handOver ? handOver() : 0);
+    });
   };
 
   commandContext.exit = exitApp;

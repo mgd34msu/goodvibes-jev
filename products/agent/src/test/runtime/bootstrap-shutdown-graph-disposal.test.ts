@@ -105,3 +105,118 @@ test('the graph is disposed when the session could not be persisted', async () =
   await expect(shutdown(SESSION_DATA)).rejects.toThrow(/failed to persist session/);
   expect(order).toContain('graph-dispose');
 });
+
+// An owner failure must not prevent later owners from releasing their resources.
+test('early close failure still reaches every later owned teardown', async () => {
+  const order: string[] = [];
+  const failure = new Error('spine close failed');
+  const deps = makeDeps(order, {
+    sessionSpineClient: { close: () => { order.push('close'); throw failure; }, dispose: () => { order.push('spine-dispose'); } },
+    bootstrapUnsubs: [() => { order.push('bootstrap-unsub'); }],
+    runtimeUnsubs: [() => { order.push('runtime-unsub'); }],
+    forensicsCollector: { dispose: () => { order.push('forensics'); } },
+    executionLedger: { dispose: () => { order.push('execution'); } },
+    deferredStartup: { drain: async () => { order.push('drain'); } },
+    agentExternalServices: { stop: async () => { order.push('external-stop'); } },
+  });
+  await expect(createRuntimeShutdown(deps)(SESSION_DATA)).rejects.toBe(failure);
+  expect(order).toEqual(['close', 'spine-dispose', 'bootstrap-unsub', 'runtime-unsub', 'forensics', 'execution', 'write-ledger', 'drain', 'external-stop', 'schedule-manager', 'provider-registry', 'graph-dispose']);
+  expect(deps.bootstrapUnsubs).toHaveLength(0);
+  expect(deps.runtimeUnsubs).toHaveLength(0);
+});
+
+test('an unsubscribe failure does not strand other subscriptions or async owners', async () => {
+  const order: string[] = [];
+  const failure = new Error('unsubscribe failed');
+  const deps = makeDeps(order, {
+    bootstrapUnsubs: [() => { order.push('broken'); throw failure; }, () => { order.push('remaining'); }],
+    agentExternalServices: { stop: async () => { await Promise.resolve(); order.push('external-stopped'); } },
+  });
+  await expect(createRuntimeShutdown(deps)(SESSION_DATA)).rejects.toBe(failure);
+  expect(order).toContain('remaining');
+  expect(order).toContain('external-stopped');
+  expect(order.at(-1)).toBe('graph-dispose');
+  expect(deps.bootstrapUnsubs).toHaveLength(0);
+});
+
+test('multiple early, middle and final failures remain visible in original order', async () => {
+  const order: string[] = [];
+  const early = new Error('early rejection');
+  const middle = new Error('middle rejection');
+  const late = new Error('graph rejection');
+  const shutdown = createRuntimeShutdown(makeDeps(order, {
+    sessionSpineClient: { close: async () => { throw early; }, dispose: () => { order.push('spine-dispose'); } },
+    agentExternalServices: { stop: async () => { order.push('external-stop'); throw middle; } },
+    disposeRuntimeGraph: async () => { order.push('graph-dispose'); throw late; },
+  }));
+  const failure = await shutdown(SESSION_DATA).then(() => null, error => error);
+  expect(failure).toBeInstanceOf(AggregateError);
+  expect(failure.errors).toEqual([early, middle, late]);
+  expect(order).toContain('schedule-manager');
+  expect(order.at(-1)).toBe('graph-dispose');
+});
+
+test('awaits each asynchronous owner before disposing the next one', async () => {
+  const order: string[] = [];
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const shutdown = createRuntimeShutdown(makeDeps(order, {
+    forensicsCollector: { dispose: async () => { order.push('forensics-start'); await held; order.push('forensics-end'); } },
+    executionLedger: { dispose: () => { order.push('execution'); } },
+  }));
+  const pending = shutdown(SESSION_DATA);
+  for (let i = 0; i < 30 && !order.includes('forensics-start'); i++) await Promise.resolve();
+  expect(order).toContain('forensics-start');
+  expect(order).not.toContain('execution');
+  expect(order).not.toContain('graph-dispose');
+  release();
+  await pending;
+  expect(order.indexOf('forensics-end')).toBeLessThan(order.indexOf('execution'));
+});
+
+test('concurrent, reentrant and later close calls share one owned teardown', async () => {
+  const order: string[] = [];
+  let reentrant: Promise<void> | undefined;
+  let shutdown!: ReturnType<typeof createRuntimeShutdown>;
+  shutdown = createRuntimeShutdown(makeDeps(order, {
+    sessionSpineClient: { close: () => { order.push('close'); reentrant = shutdown(SESSION_DATA); }, dispose: () => { order.push('spine-dispose'); } },
+  }));
+  const first = shutdown(SESSION_DATA);
+  expect(shutdown(SESSION_DATA)).toBe(first);
+  await first;
+  expect(reentrant).toBe(first);
+  expect(shutdown(SESSION_DATA)).toBe(first);
+  expect(order.filter(entry => entry === 'close')).toHaveLength(1);
+  expect(order.filter(entry => entry === 'graph-dispose')).toHaveLength(1);
+});
+
+test('failed close is also stable on repeat and does not repeat effects', async () => {
+  const order: string[] = [];
+  const failure = new Error('owned graph rejected');
+  const shutdown = createRuntimeShutdown(makeDeps(order, { disposeRuntimeGraph: async () => { order.push('graph-dispose'); throw failure; } }));
+  const first = shutdown(SESSION_DATA);
+  await expect(first).rejects.toBe(failure);
+  expect(shutdown(SESSION_DATA)).toBe(first);
+  await expect(shutdown(SESSION_DATA)).rejects.toBe(failure);
+  expect(order.filter(entry => entry === 'graph-dispose')).toHaveLength(1);
+});
+
+test('unavailable title does not prevent SDK shutdown and graph disposal', async () => {
+  const order: string[] = [];
+  const failure = new Error('title getter failed');
+  await expect(createRuntimeShutdown(makeDeps(order, { conversationTitle: () => { throw failure; } }))(SESSION_DATA)).rejects.toBe(failure);
+  expect(order).toContain('schedule-manager');
+  expect(order).toContain('provider-registry');
+  expect(order.at(-1)).toBe('graph-dispose');
+});
+
+test('a callback returning its own close promise reports a cycle and releases later owners', async () => {
+  const order: string[] = [];
+  let shutdown!: ReturnType<typeof createRuntimeShutdown>;
+  shutdown = createRuntimeShutdown(makeDeps(order, {
+    sessionSpineClient: { close: () => shutdown(SESSION_DATA), dispose: () => { order.push('spine-dispose'); } },
+  }));
+  await expect(shutdown(SESSION_DATA)).rejects.toThrow('cannot await its own shutdown');
+  expect(order).toContain('spine-dispose');
+  expect(order.at(-1)).toBe('graph-dispose');
+});

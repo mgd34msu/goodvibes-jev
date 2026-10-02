@@ -26,8 +26,8 @@ export interface RuntimeShutdownDependencies {
   readonly provider: string;
   readonly conversationTitle: () => string;
   readonly sessionSpineClient: {
-    close(sessionId: string): void;
-    dispose(): void;
+    close(sessionId: string): void | Promise<void>;
+    dispose(): void | Promise<void>;
   };
   /** Reads and clears the memory-spine reachability recheck timer. */
   readonly takeMemorySpineTimer: () => ReturnType<typeof setInterval> | null;
@@ -35,13 +35,13 @@ export interface RuntimeShutdownDependencies {
   readonly runtimeUnsubs: (() => void)[];
   readonly forensicsCollector: { dispose(): void };
   readonly executionLedger: { dispose(): void };
-  readonly disposeSessionWriteLedger: () => void;
+  readonly disposeSessionWriteLedger: () => void | Promise<void>;
   /**
    * `RuntimeServices.dispose()`, stops every poller the composed graph started.
    * Runs LAST, after shutdownRuntime: the final flushes below still need the
    * schedulers, the orchestration registry and the provider registry alive.
    */
-  readonly disposeRuntimeGraph: () => void;
+  readonly disposeRuntimeGraph: () => void | Promise<void>;
   readonly deferredStartup: { drain(ms: number): Promise<unknown> };
   readonly agentExternalServices: { stop(): Promise<unknown> };
   readonly agentStatusIntervalRef: IntervalRef;
@@ -61,61 +61,59 @@ export interface RuntimeShutdownDependencies {
 export function createRuntimeShutdown(
   deps: RuntimeShutdownDependencies,
 ): (sessionData: Parameters<typeof shutdownRuntime>[1]) => Promise<void> {
-  return async (sessionData) => {
-    try {
-      // Best-effort spine close (short timeout, fire-and-forget) then stop the
-      // heartbeat timer. Tolerates a racing daemon stop; never blocks teardown.
-      deps.sessionSpineClient.close(deps.sessionId);
-      deps.sessionSpineClient.dispose();
-      // Stop the memory-spine reachability recheck timer. No wire close call is
-      // needed, unlike sessions, memory ops are request/response rather than a
-      // registered, heartbeat-tracked record.
-      const memoryTimer = deps.takeMemorySpineTimer();
-      if (memoryTimer !== null) clearInterval(memoryTimer);
+  // Latch before invoking any collaborator, including a synchronously reentrant
+  // close. Repeated callers share the same completion and failure result.
+  // Collaborators must not await this owner's shutdown from inside their own
+  // disposal: that is a dependency cycle, including indirectly wrapped waits.
+  let closing: Promise<void> | undefined;
+  return (sessionData) => closing ??= Promise.resolve().then(async () => {
+    const failures: unknown[] = [];
+    const attempt = async (dispose: () => unknown): Promise<void> => {
+      try {
+        const result = dispose();
+        if (result === closing) throw new Error('A shutdown callback cannot await its own shutdown');
+        await result;
+      } catch (error) { failures.push(error); }
+    };
+    await attempt(() => deps.sessionSpineClient.close(deps.sessionId));
+    await attempt(() => deps.sessionSpineClient.dispose());
+    await attempt(() => {
+      const timer = deps.takeMemorySpineTimer();
+      if (timer !== null) clearInterval(timer);
+    });
 
-      // Clear bootstrap-owned subscriptions.
-      deps.bootstrapUnsubs.forEach((fn) => fn());
-      deps.bootstrapUnsubs.length = 0;
-      deps.runtimeUnsubs.forEach((fn) => fn());
-      deps.runtimeUnsubs.length = 0;
-      deps.forensicsCollector.dispose();
-      deps.executionLedger.dispose();
-      deps.disposeSessionWriteLedger();
-      // Browser sessions own real Chromium processes; a session torn down
-      // without this leaves them behind.
-      await shutdownAgentBrowserSessions();
-      await deps.deferredStartup.drain(100);
-      await deps.agentExternalServices.stop();
-      if (deps.agentStatusIntervalRef.value !== null) {
-        clearInterval(deps.agentStatusIntervalRef.value);
-        deps.agentStatusIntervalRef.value = null;
-      }
-      await shutdownRuntime(
-        deps.sessionId,
-        sessionData,
-        deps.model,
-        deps.provider,
-        deps.conversationTitle(),
-        deps.scheduleManager,
-        deps.hookDispatcher,
-        deps.providerRegistry,
-        deps.sessionOrchestration,
-        deps.shutdownOptions,
-      );
-    } finally {
-      // Outermost-last: the graph's own pollers. Every step above is finished
-      // with the schedulers it needed, so the config watch, fleet tick, memory
-      // governor, watcher registry and the rest can finally stop. Without this
-      // a session that shut down cleanly left most of its timers ticking.
-      //
-      // In a `finally` covering the WHOLE body, on the principle stated at the
-      // top of this file: a step that fails must not strand the ones after it.
-      // Several steps here can throw, an unreachable daemon, a browser that
-      // will not close, a conversation that could not be persisted, and every
-      // one of those is a process that must still let go of its timers. This is
-      // the last teardown step in the session's life, so nothing legitimately
-      // needs the graph after it.
-      deps.disposeRuntimeGraph();
-    }
-  };
+    // Take subscriptions out of the live arrays before invoking callbacks. One
+    // broken unsubscribe must neither retain itself nor strand its siblings.
+    for (const unsubscribe of deps.bootstrapUnsubs.splice(0)) await attempt(unsubscribe);
+    for (const unsubscribe of deps.runtimeUnsubs.splice(0)) await attempt(unsubscribe);
+    await attempt(() => deps.forensicsCollector.dispose());
+    await attempt(() => deps.executionLedger.dispose());
+    await attempt(() => deps.disposeSessionWriteLedger());
+    await attempt(() => shutdownAgentBrowserSessions());
+    await attempt(() => deps.deferredStartup.drain(100));
+    await attempt(() => deps.agentExternalServices.stop());
+    await attempt(() => {
+      const timer = deps.agentStatusIntervalRef.value;
+      deps.agentStatusIntervalRef.value = null;
+      if (timer !== null) clearInterval(timer);
+    });
+    let title = '';
+    await attempt(() => { title = deps.conversationTitle(); });
+    await attempt(() => shutdownRuntime(
+      deps.sessionId,
+      sessionData,
+      deps.model,
+      deps.provider,
+      title,
+      deps.scheduleManager,
+      deps.hookDispatcher,
+      deps.providerRegistry,
+      deps.sessionOrchestration,
+      deps.shutdownOptions,
+    ));
+    // Always last: final persistence and SDK shutdown still need the graph.
+    await attempt(() => deps.disposeRuntimeGraph());
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, 'Agent shutdown failed to release one or more owned resources');
+  });
 }
