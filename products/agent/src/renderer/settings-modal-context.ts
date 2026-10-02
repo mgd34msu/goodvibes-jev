@@ -5,6 +5,8 @@
  * text builders; settings-modal.ts lays them out with the surface kit.
  */
 
+import { computeApprovalPosture } from '../permissions/approval-posture.ts';
+import { NOTIFICATIONS_METADATA_ONLY_KEY } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import type { SettingsModal, SettingEntry, FlagEntry, McpEntry, SubscriptionEntry, SettingsCategory } from '../input/settings-modal.ts';
 import { describeUiRouting, formatValue, getSettingLabel, inferSubscriptionRouteReason } from './settings-modal-helpers.ts';
 import { isSecretConfigKey } from '../config/secret-config.ts';
@@ -85,13 +87,14 @@ export const ENUM_VALUE_DESCRIPTIONS: Record<string, Record<string, string>> = {
     minimal: 'Show concise guidance only when it helps avoid mistakes.',
     guided: 'Provide more explanation and next-step context during configuration and operations.',
   },
-  'permissions.mode': {
-    prompt: 'Ask before powerful or risky actions according to tool policy.',
-    'allow-all': 'Allow actions without prompting. This is fast but removes an important safety gate.',
-    custom: 'Use per-tool-class permission settings from the rows below.',
-    plan: 'Read-only: every write, execute, or delegate tool call is refused outright (never asked) so the model presents a plan instead of acting.',
-    'accept-edits': 'File write/edit tool calls auto-approve without asking; execute and every other risky class still prompt for approval.',
-  },
+  'permissions.mode': Object.fromEntries(
+    ['prompt', 'allow-all', 'custom', 'plan', 'accept-edits'].map((mode) => {
+      const posture = computeApprovalPosture({ mode, autoApprove: false });
+      const warning = posture.automaticApprovals ? 'Broad automatic approvals. ' : '';
+      const example = mode === 'plan' ? ' Read-only local shell calls may run, subject to their readings and boundary checks.' : '';
+      return [mode, `${warning}${posture.detail}${example}`];
+    }),
+  ),
   'permissions.backgroundAgents': {
     inherit: 'Background/subagent tool calls consult the same session permission mode as the foreground turn, prompt/plan/accept-edits/custom apply their matrices, and any resulting ask still brokers through the normal approval prompt with subagent attribution.',
     'allow-all': 'Background/subagent tool calls are exempt from the session permission mode and auto-approve regardless of it.',
@@ -169,6 +172,9 @@ function buildSettingContext(modal: SettingsModal, entry: SettingEntry): string[
   if (entry.conflict) lines.push(`Conflict: inspect with /settings and resolve host-owned sync state in the owning host.`);
 
   lines.push('', entry.setting.description);
+  if (entry.setting.key === 'permissions.mode') {
+    lines.push('', 'These preset summaries assume behavior.autoApprove is off. When enabled, it takes precedence; boundary checks still apply.');
+  }
 
   if (
     entry.setting.key === 'ui.systemMessages'
@@ -180,8 +186,13 @@ function buildSettingContext(modal: SettingsModal, entry: SettingEntry): string[
   if (entry.setting.type === 'boolean') {
     lines.push('');
     lines.push('Possible values:');
-    lines.push('true: enabled or allowed for this setting.');
-    lines.push('false: disabled or not allowed for this setting.');
+    if (String(entry.setting.key) === NOTIFICATIONS_METADATA_ONLY_KEY) {
+      lines.push('true: Keep notifications metadata-only (restrictive default).');
+      lines.push('false: Explicitly permit notification details on supported paths.');
+    } else {
+      lines.push('true: enabled or allowed for this setting.');
+      lines.push('false: disabled or not allowed for this setting.');
+    }
   }
 
   if (entry.setting.type === 'enum' && entry.setting.enumValues) {

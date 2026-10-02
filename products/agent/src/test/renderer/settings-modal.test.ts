@@ -1,3 +1,4 @@
+import { presetForMode } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { settingContextLines } from '../../renderer/settings-modal-context.ts';
 /**
  * Tests for renderSettingsModal renderer.
@@ -14,7 +15,7 @@ import { createFeatureFlagManager } from '@/runtime/index.ts';
 import type { FeatureFlagManager } from '@/runtime/index.ts';
 import type { McpRegistry } from '@goodvibes-jev/engine/sdk/platform/mcp';
 import { renderSettingsModal } from '../../renderer/settings-modal.ts';
-import { layerText, layerTextBlock } from '../helpers/surface-frame.ts';
+import { layerText, layerTextBlock, frameFromLayer, frameText } from '../helpers/surface-frame.ts';
 import { activeTokens } from '../../renderer/theme.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
@@ -137,6 +138,34 @@ describe('renderSettingsModal', () => {
     modal.activateSelected();
     expect(modal.pendingSettingsPickerAction).toBe('theme');
     expect(modal.editingMode).toBe(false);
+  });
+
+  test('permission-mode help retains public preset summaries, critical prompts and boundaries', () => {
+    modal.selectTarget('permissions.mode');
+    try {
+      const context=settingContextLines(modal).join('\n');
+      for (const mode of ['prompt','allow-all','plan','accept-edits','custom']) {
+        expect(context).toContain(presetForMode(mode).summary);
+      }
+      expect(context).toContain('Boundary checks still apply');
+      expect(context).toContain('These preset summaries assume behavior.autoApprove is off. When enabled, it takes precedence; boundary checks still apply.');
+      expect(context).toContain('Read-only local shell calls may run');
+      expect(context).not.toContain('removes an important safety gate');
+      expect(context).not.toContain('every write, execute, or delegate');
+      const initial=frameText(frameFromLayer(renderSettingsModal(modal,120,40),120,40));
+      const rightX=initial.find(row=>row.includes('permissions.mode'))!.indexOf('permissions.mode');
+      expect(rightX).toBeGreaterThan(0);
+      const rendered: string[]=[];
+      for (let offset=0; offset<80; offset+=2) {
+        modal.contextScroll=offset;
+        rendered.push(...frameText(frameFromLayer(renderSettingsModal(modal,120,40),120,40)).map(row=>row.slice(rightX).trim()));
+      }
+      const text=rendered.join(' ').replace(/\s+/g,' ');
+      expect(text.includes('critical calls still ask')).toBe(true);
+      expect(text.includes('behavior.autoApprove is off. When enabled, it takes precedence; boundary checks still apply.')).toBe(true);
+      expect(text.includes('Boundary checks still apply')).toBe(true);
+      expect(text.includes('Read-only local shell calls may run')).toBe(true);
+    } finally {modal.close();}
   });
 
   test('category list shows each category with its count', () => {
