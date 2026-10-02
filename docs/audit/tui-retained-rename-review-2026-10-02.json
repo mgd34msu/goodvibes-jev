@@ -7406,11 +7406,13 @@
           "proof": {
             "reviewer": "review_actual_fleet_format",
             "tests": 33,
-            "assertions": 1140,
+            "assertions": 1141,
             "fail": 0,
             "testSha256": "be6e90c46fad417bf23dca8f893f7fb226c10619c86919f83f70d2d9791ac3fc",
             "directory": "gv-tui-format-equivalence-proof",
-            "actualListIdentity": "nodeRow and detail delegation equal ec057c; no inferred legacy layout restoration"
+            "actualListIdentity": "nodeRow and detail delegation equal ec057c; no inferred legacy layout restoration",
+            "finalReportSha256": "730c9d3f4a004004d900cd57e4259962be5f1fcf8d97bdf5cf85ebc01c2b245c",
+            "finalRunSha256": "b5306c05a0ec32da11babd6b93407a2389a8c2979fffc5d2600a3b891149accb"
           },
           "targets": [
             "products/tui/src/views/fleet-format.ts",
