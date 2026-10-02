@@ -1,0 +1,139 @@
+{
+  "//": "Private workspace build configuration. Build/smoke invoke only the CLI declared by the installed Jev engine package.",
+  "packageName": "@goodvibes-jev/tui",
+  "sdkPin": {
+    "sdkPackage": "@goodvibes-jev/engine",
+    "pinSource": "dependencies",
+    "lockfile": "../../bun.lock",
+    "sourceRoots": [
+      "src"
+    ],
+    "enforceExportsMap": false
+  },
+  "build": {
+    "appEntrypoint": "src/main.ts",
+    "outDir": "dist",
+    "addonOutDir": "dist/lib",
+    "prebuild": [
+      [
+        "bun",
+        "run",
+        "scripts/prebuild.ts"
+      ]
+    ],
+    "targets": [
+      {
+        "key": "linux-x64",
+        "bunTarget": "bun-linux-x64",
+        "appArtifact": "goodvibes-linux-x64",
+        "nativeAddonPackage": "sqlite-vec-linux-x64",
+        "nativeAddonFile": "vec0.so"
+      },
+      {
+        "key": "linux-arm64",
+        "bunTarget": "bun-linux-arm64",
+        "appArtifact": "goodvibes-linux-arm64",
+        "nativeAddonPackage": "sqlite-vec-linux-arm64",
+        "nativeAddonFile": "vec0.so"
+      },
+      {
+        "key": "darwin-x64",
+        "bunTarget": "bun-darwin-x64",
+        "appArtifact": "goodvibes-macos-x64",
+        "nativeAddonPackage": "sqlite-vec-darwin-x64",
+        "nativeAddonFile": "vec0.dylib"
+      },
+      {
+        "key": "darwin-arm64",
+        "bunTarget": "bun-darwin-arm64",
+        "appArtifact": "goodvibes-macos-arm64",
+        "nativeAddonPackage": "sqlite-vec-darwin-arm64",
+        "nativeAddonFile": "vec0.dylib"
+      },
+      {
+        "//": "windows-x64 is BETA and deliberately absent from release.yml's binary matrix; it exists here so windows-beta.yml builds through the same toolchain path as every shipped target instead of a hand-rolled bun build. `goodvibes-build-binaries --all` therefore builds five targets, one more than the release matrix consumes.",
+        "key": "windows-x64",
+        "bunTarget": "bun-windows-x64",
+        "appArtifact": "goodvibes-windows-x64.exe",
+        "nativeAddonPackage": "sqlite-vec-windows-x64",
+        "nativeAddonFile": "vec0.dll"
+      }
+    ]
+  },
+  "smoke": {
+    "bannerPrefix": "goodvibes ",
+    "forbiddenStrings": [
+      "sqlite-vec",
+      "$bunfs/root"
+    ],
+    "binaryDefault": "dist/goodvibes-linux-x64"
+  },
+  "releaseCut": {
+    "branch": "main",
+    "versionFiles": [
+      "platform-packages/linux-x64/package.json",
+      "platform-packages/linux-arm64/package.json",
+      "platform-packages/darwin-x64/package.json",
+      "platform-packages/darwin-arm64/package.json"
+    ],
+    "syncCommands": [
+      [
+        "bun",
+        "run",
+        "scripts/sync-platform-optional-deps.ts"
+      ],
+      [
+        "bun",
+        "run",
+        "scripts/release-prepare.ts",
+        "--no-bump",
+        "--no-changelog"
+      ]
+    ],
+    "commitPaths": [
+      "package.json",
+      "src/version.ts",
+      "README.md",
+      "CHANGELOG.md",
+      "docs/foundation-artifacts",
+      "platform-packages",
+      "bun.lock",
+      "docs/commands-reference.md",
+      ".github/workflows"
+    ],
+    "changelogHeading": "bracket",
+    "changelogInsertMarker": "first-separator"
+  },
+  "publish": {
+    "packageName": "@pellux/goodvibes-tui",
+    "defaultRegistry": "https://registry.npmjs.org",
+    "requiredTarballPaths": [
+      "README.md",
+      "CHANGELOG.md",
+      "package.json",
+      "src/main.ts",
+      "bin/goodvibes",
+      "scripts/check-bun.sh",
+      "scripts/postinstall.js",
+      ".goodvibes/GOODVIBES.md"
+    ],
+    "forbiddenTarballPrefixes": [
+      ".github/",
+      "src/test/",
+      "src/.test/",
+      ".goodvibes/memory/",
+      "vendor/"
+    ],
+    "maxTarballBytes": 52428800
+  },
+  "perJobGreen": {
+    "owner": "mgd34msu",
+    "repo": "goodvibes-tui",
+    "workflow": "ci.yml",
+    "event": "push",
+    "pollIntervalMs": 20000,
+    "deadlineMs": 1800000,
+    "retryAttempts": 8,
+    "retryDelayMs": 7000
+  }
+}

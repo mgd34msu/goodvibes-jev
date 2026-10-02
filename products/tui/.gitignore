@@ -1,0 +1,62 @@
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+*.pyc
+
+# Build output
+dist/
+vendor/
+
+# Platform binary packages: scaffolds are committed, populated binaries are not
+platform-packages/*/bin/*
+!platform-packages/*/bin/.gitkeep
+platform-packages/*/README.md.bak
+
+# Environment & secrets
+.env
+.env.*
+*.enc
+
+# Runtime state
+.goodvibes/*
+!.goodvibes/skills/
+!.goodvibes/agents/
+!.goodvibes/GOODVIBES.md
+!.goodvibes/.npmignore
+!.goodvibes/eval/
+.goodvibes/eval/*
+!.goodvibes/eval/baseline.json
+.codex
+.claude/
+
+# UAT validation reports — local-only; live-daemon smoke results, not canonical
+docs/uat/
+
+# Artifacts
+scripts/reset-suite.sh
+.test-tmp/
+.test-edit-tmp*/
+.tmp-tests/
+test-tmp-hooks/
+test-tmp*
+tmp/
+tmp*
+src/test/providers/__favorites_tmp__/
+
+# Transpiler compile cache
+.gvtmp/
+
+# Test leak: code that passes literal ':memory:' as a filesystem path instead of SQLite's in-memory sentinel
+:memory:
+
+# External review writeup (local reference only, not for publication)
+docs/goodvibes-ecosystem-deep-dive-2026-07-09.md
+
+# Local test scratch (never committed)
+.test-tmp-scratch/
+
+# Probe file written and removed by src/test/scripts/typecheck-coverage.test.ts.
+# Ignored so a crashed run cannot leave the repo dirty, or make the coverage gate
+# report its own probe as an uncovered source file.
+.typecheck-coverage-probe.ts

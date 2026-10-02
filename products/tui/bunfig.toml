@@ -1,0 +1,7 @@
+[test]
+# Loaded once per test process, before any test file. It contains every temp
+# directory the process creates under one root and deletes them in a top-level
+# afterAll — `bun test` never fires `process.on('exit')`, so the exit hooks this
+# repo relied on were dead code and a fully GREEN run left over a thousand
+# directories behind. See src/test/preload/temp-cleanup.ts.
+preload = ["./src/test/preload/temp-cleanup.ts"]

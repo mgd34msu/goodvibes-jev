@@ -108,6 +108,24 @@
         "@goodvibes-jev/judgment": "workspace:*",
       },
     },
+    "products/tui": {
+      "name": "@goodvibes-jev/tui",
+      "version": "2.1.0",
+      "bin": {
+        "goodvibes": "bin/goodvibes",
+      },
+      "dependencies": {
+        "@goodvibes-jev/daemon": "workspace:*",
+        "@goodvibes-jev/engine": "workspace:*",
+        "fuse.js": "^7.1.0",
+        "onnxruntime-web": "^1.27.0",
+      },
+      "devDependencies": {
+        "@goodvibes-jev/judgment": "workspace:*",
+        "@types/bun": "1.3.14",
+        "typescript": "6.0.3",
+      },
+    },
     "products/webui": {
       "name": "@goodvibes-jev/webui",
       "version": "2.0.0",
@@ -412,6 +430,8 @@
     "@goodvibes-jev/engine": ["@goodvibes-jev/engine@workspace:packages/engine"],
 
     "@goodvibes-jev/judgment": ["@goodvibes-jev/judgment@workspace:packages/judgment"],
+
+    "@goodvibes-jev/tui": ["@goodvibes-jev/tui@workspace:products/tui"],
 
     "@goodvibes-jev/webui": ["@goodvibes-jev/webui@workspace:products/webui"],
 
@@ -1254,6 +1274,8 @@
     "gcp-metadata": ["gcp-metadata@8.1.2", "", { "dependencies": { "gaxios": "^7.0.0", "google-logging-utils": "^1.0.0", "json-bigint": "^1.0.0" } }, "sha512-zV/5HKTfCeKWnxG0Dmrw51hEWFGfcF2xiXqcA3+J90WDuP0SvoiSO5ORvcBsifmx/FoIjgQN3oNOGaQ5PhLFkg=="],
 
     "generator-function": ["generator-function@2.0.1", "", {}, "sha512-SFdFmIJi+ybC0vjlHN0ZGVGHc3lgE0DxPAT0djjVg+kjOnSqclqmj0KQ7ykTOLP6YxoqOvuAODGdcHJn+43q3g=="],
+
+    "fuse.js": ["fuse.js@7.5.0", "", {}, "sha512-sQtrEfA+ez/3G0cCZecF70oqpCRttCexYUG4mUrtWL49ULUzUyxokt5kyqwtKzj1270RaKih+hcP3qLcumccow=="],
 
     "gensync": ["gensync@1.0.0-beta.2", "", {}, "sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg=="],
 
