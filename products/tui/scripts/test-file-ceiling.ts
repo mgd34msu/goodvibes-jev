@@ -4,7 +4,7 @@ export const DEFAULT_TEST_FILE_CEILING_MS = 120_000;
 // Reviewed source declarations, not source-code parsing. Keep these with the
 // named tests when their budgets change. The extra minute covers loading,
 // teardown and ordinary cases; the compile file also has one ordinary test.
-// The shared owner's existing overall ceiling still wins if it is earlier.
+// The shared owner's existing per-invocation ceiling still wins if earlier.
 const DECLARED_FILE_CEILINGS: Readonly<Record<string, { fileMs: number; stallMs: number }>> = {
   'src/test/cli/launch-auto-update-endtoend.test.ts': { fileMs: 4 * 180_000 + 60_000, stallMs: 180_000 + 60_000 },
   'src/test/runtime/session-spine-daemon-integration.test.ts': { fileMs: 4 * 120_000 + 60_000, stallMs: 120_000 + 60_000 },

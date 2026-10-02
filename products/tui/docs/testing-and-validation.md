@@ -49,8 +49,10 @@ their sequential declared allowances plus setup/teardown time: launch updater
 780 seconds, session spine 540, memory spine 900, and compiled HTML extraction
 480. Their stall allowances also account for the longest declared test. These
 are file allowances, not extensions to the shared owner's existing 720-second
-overall ceiling or the CI job limit; the earlier limit wins and is named in the
-failure diagnostic. No test's own timeout changes.
+invocation ceiling: each file receives the earlier limit, named in its failure
+diagnostic. This limit is reapplied to each file; the product queue has no
+separate 12-minute wall-clock timer. The CI job limit still bounds the whole CI
+job. No test's own timeout changes.
 
 Timeouts stop and reap the owned process before scratch cleanup, then the runner
 continues remaining files and exits unsuccessfully. Cancellation or parent death
@@ -63,6 +65,12 @@ descendants are stopped with their test process. Windows source-runner support
 remains an unresolved gate: no verified Windows child-tree cleanup adapter is
 available, and the runner fails explicitly there. Linux validation and Windows
 binary compilation targets do not establish Windows source-runner support.
+
+The product runner does not acquire the shared workspace lock itself. Local
+qualification must hold the canonical engine workspace lock around the complete
+product command when it can overlap a build or another qualification run. The
+engine's `scripts/test.ts` wrapper acquires that lock for the runner regression
+tests; a direct `bun run test` or `products:test` command does not inherit it.
 
 ## Test layers
 
