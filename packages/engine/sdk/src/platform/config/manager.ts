@@ -9,6 +9,7 @@ import type { HookDispatcher } from '../hooks/index.js';
 import type { HookEvent } from '../hooks/types.js';
 import { attachOwnedConfigHook } from './hook-attachment.js';
 import { getManagedSettingLock } from '../runtime/settings/control-plane.js';
+import { readHostManagedSettingLock } from '../runtime/settings/host-setting-policy-read.js';
 import { requireSurfaceRoot, resolveSharedDirectory, resolveSurfaceDirectory, resolveSurfaceSharedFile } from '../runtime/surface-root.js';
 import { summarizeError } from '../utils/error-display.js';
 import { FeatureAnnouncementStore, featureAnnouncementsPath } from '../runtime/feature-announcements.js';
@@ -38,6 +39,9 @@ import { resolveWithProfileFallback, type ConfigProfileFallbackReader } from './
 import { ingestManagerSettings, toConfigLoadFailure, UnknownSettingFormsQueue, type IngestionNoticeSink, type SettingsIngestionNotice } from './manager-ingestion.js';
 import { persistCategoryKeyRemoval, persistCategoryPatch, type CategoryIoDeps } from './manager-category-io.js';
 import { isSecretBearingConfigKey } from './secret-bearing-config-keys.js';
+import { HostSettings, type HostBooleanSetting, type HostBooleanSettingHandle, type HostSettingValues } from './host-settings.js';
+import { HostSettingsReadError, hostSettingsFileExists, readHostSettingValues, readHostSettingsFile, recoverHostSettingsWriteFailure } from './manager-host-settings.js';
+import { announceIngestionNotice } from './settings-ingestion.js';
 
 /** Typed values for a single daemon-settings update; scope is checked at runtime. */
 export type DaemonConfigPatch = { readonly [K in ConfigKey]?: ConfigValue<K> };
@@ -49,6 +53,8 @@ export type DeepReadonly<T> = {
 
 /** Constructor overrides for CLI args and programmatic instantiation. */
 interface ConfigCliOverrides {
+  /** Per-instance surface-owned boolean leaves; their declared defaults must be restrictive. */
+  hostSettings?: readonly HostBooleanSetting[] | undefined;
   /** Read without creating files, persisting migrations or receipts; mutators refuse. */
   readOnly?: boolean | undefined;
   model?: string | undefined;
@@ -117,6 +123,8 @@ export type ConfigUnsubscribe = () => void;
  */
 export class ConfigManager {
   private readonly readOnly: boolean;
+  private readonly hostSettings: HostSettings;
+  private hostLoadValues: HostSettingValues | null = null;
   private config: GoodVibesConfig;
   private readonly configDir: string;
   private readonly configPath: string;
@@ -145,6 +153,7 @@ export class ConfigManager {
 
   constructor(overrides: ConfigOverrides) {
     this.readOnly = overrides.readOnly ?? false;
+    this.hostSettings = new HostSettings(overrides.hostSettings);
     const roots = overrides as ConfigRoots;
     const configDir = requireAbsoluteOwnedPath(roots.configDir, 'configDir');
     const homeDirectory = requireAbsoluteOwnedPath(roots.homeDir, 'homeDir') ?? null;
@@ -163,6 +172,7 @@ export class ConfigManager {
       ? resolveSurfaceDirectory(this.workingDirectory, surfaceRoot!, 'settings.json')
       : null;
     this.config = cloneDefaultConfig();
+    this.hostSettings.apply(this.config, this.hostSettings.defaults());
 
     const ownedSharedConfigPath = sharedConfigPath ?? (
       this.homeDirectory ? resolveSurfaceSharedFile(this.homeDirectory, surfaceRoot!) : null
@@ -271,10 +281,35 @@ export class ConfigManager {
     return resolveWithProfileFallback(key, parent[field], this.profileFallback) as ConfigValue<K>;
   }
 
+  /** Validate registration and return an immutable, manager-bound boolean handle. */
+  getHostBooleanSetting(key: string): HostBooleanSettingHandle {
+    if (!this.hostSettings.has(key)) throw new ConfigError(`Host boolean setting ${key} is not registered on this manager.`);
+    const registeredKey = key as ConfigKey;
+    const definition = this.hostSettings.definitions.find(entry => entry.key === key)!;
+    const handle: HostBooleanSettingHandle = {
+      key,
+      get: () => this.get(registeredKey) as boolean,
+      getResolved: () => {
+        const value = this.get(registeredKey) as boolean;
+        return Object.freeze({ key, value, defaultValue: definition.default, source: value === definition.default ? 'default' : 'local',
+          managedLock: readHostManagedSettingLock(key, this.configDir) });
+      },
+      set: (value, options) => this.setDynamic(registeredKey, value, options),
+      setProjectValue: (value, options) => this.setProjectValue(registeredKey, value as never, options),
+      subscribe: (callback) => this.subscribe(registeredKey, (next, previous) => callback(next as boolean, previous as boolean)),
+      reset: () => this.reset(registeredKey),
+    };
+    return Object.freeze(handle);
+  }
+
   /** Set a config value by dot-path key and auto-save to disk. */
   set<K extends ConfigKey>(key: K, value: ConfigValue<K>, options: ConfigSetOptions = {}): void {
     this.requireWritable();
-    const schema = CONFIG_SCHEMA.find(s => s.key === key);
+    if (this.hostSettings.has(key) && this.hostSettingHasProjectValue(key)) {
+      (this.setProjectValue as (k: ConfigKey, v: unknown, o: ConfigSetOptions) => void)(key, value, options);
+      return;
+    }
+    const schema = this.hostSettings.schema(key) ?? CONFIG_SCHEMA.find(s => s.key === key);
     value = coerceSchemaValue(key, schema, value) as ConfigValue<K>;
     if (schema?.validate && !schema.validate(value)) {
       const hint = schema.validationHint ? ` (${schema.validationHint})` : '';
@@ -292,6 +327,7 @@ export class ConfigManager {
 
     const { parent, field } = this.resolvePath(key);
     const previousValue = parent[field]!;
+    const previousHost = this.hostSettings.has(key) ? this.hostSettings.snapshot(this.config) : null;
     parent[field] = value;
     // Ownership decides the store. A daemon-owned key persists to the daemon's
     // own settings file, never the surface silo, so the runtime that acts on
@@ -309,12 +345,17 @@ export class ConfigManager {
       }
     } catch (error) {
       parent[field] = previousValue;
+      if (previousHost) recoverHostSettingsWriteFailure(error, () => this.refreshHostSettings(previousHost, true));
       throw error;
     }
     if (useDaemonTier) this.daemonKeysPresent.add(key);
     if (useSharedTier) this.sharedKeysPresent.add(key);
-    this.notifyListeners(key, previousValue, value);
-    this.emitConfigHook(key, previousValue, value);
+    if (previousHost) {
+      this.refreshHostSettings(previousHost, true);
+    } else {
+      this.notifyListeners(key, previousValue, value);
+      this.emitConfigHook(key, previousValue, value);
+    }
   }
 
   /**
@@ -380,7 +421,7 @@ export class ConfigManager {
       (this.set as (k: ConfigKey, v: unknown, o: ConfigSetOptions) => void)(key, value, options);
       return;
     }
-    const schema = CONFIG_SCHEMA.find(s => s.key === key);
+    const schema = this.hostSettings.schema(key) ?? CONFIG_SCHEMA.find(s => s.key === key);
     value = coerceSchemaValue(key, schema, value) as ConfigValue<K>;
     if (schema?.validate && !schema.validate(value)) {
       const hint = schema.validationHint ? ` (${schema.validationHint})` : '';
@@ -397,6 +438,7 @@ export class ConfigManager {
     }
     const { parent, field } = this.resolvePath(key);
     const previousValue = parent[field];
+    const previousHost = this.hostSettings.has(key) ? this.hostSettings.snapshot(this.config) : null;
     parent[field] = value;
     // Read-merge-write: a file this cannot parse is quarantined (moved aside
     // with a receipt) rather than silently discarded, because the write below
@@ -414,10 +456,15 @@ export class ConfigManager {
       writeJsonFileAtomic(this.projectConfigPath, raw);
     } catch (error) {
       parent[field] = previousValue;
+      if (previousHost) recoverHostSettingsWriteFailure(error, () => this.refreshHostSettings(previousHost, true));
       throw error;
     }
-    this.notifyListeners(key, previousValue, value);
-    this.emitConfigHook(key, previousValue, value);
+    if (previousHost) {
+      this.refreshHostSettings(previousHost, true);
+    } else {
+      this.notifyListeners(key, previousValue, value);
+      this.emitConfigHook(key, previousValue, value);
+    }
   }
 
   /** Subscribe to changes on a config key; returns an unsubscribe function. */
@@ -444,7 +491,7 @@ export class ConfigManager {
     const paths = [this.configPath, this.projectConfigPath, this.sharedTierPath, this.daemonTierPath].filter(
       (p): p is string => typeof p === 'string' && p.length > 0,
     );
-    this._fileWatch = watchConfigFiles(paths, () => this.reloadFromDiskAndNotify(), options.intervalMs);
+    this._fileWatch = watchConfigFiles(paths, () => this.reloadFromDiskAndNotify(), options.intervalMs, this.hostSettings.active);
     return () => this.stopWatchingConfigFiles();
   }
 
@@ -457,7 +504,8 @@ export class ConfigManager {
   /** Re-read config from disk and fire subscribers for every watched key that changed. */
   private reloadFromDiskAndNotify(): void {
     reloadAndNotifyChanges({
-      listenerKeys: this._listeners.keys(),
+      // Registered host leaves notify inside load(), including failed reads.
+      listenerKeys: [...this._listeners.keys()].filter((key) => !this.hostSettings.has(key)),
       get: (key) => this.get(key as ConfigKey),
       load: () => this.load(),
       notify: (key, oldValue, newValue) => {
@@ -533,10 +581,13 @@ export class ConfigManager {
     return structuredClone(this.config) as Readonly<GoodVibesConfig>;
   }
 
-  /** Return the full schema. */
+  /** Return the builtin schema; host descriptors are a separate typed surface. */
   getSchema(): ConfigSetting[] {
     return CONFIG_SCHEMA;
   }
+
+  /** Immutable descriptors for the boolean settings registered by this host. */
+  getHostSettingsSchema(): readonly HostBooleanSetting[] { return this.hostSettings.definitions; }
 
   /**
    * Persist a single key to the global settings file by read-merge-write, so
@@ -562,6 +613,7 @@ export class ConfigManager {
     const { config: minimal } = stripFrozenDefaults(
       structuredClone(this.config) as unknown as Record<string, unknown>,
     );
+    this.preserveHostSettingsForBulkSave(minimal, this.configPath);
     this.writeRawGlobal(this.withoutDaemonOwned(minimal));
   }
 
@@ -586,6 +638,7 @@ export class ConfigManager {
     const { config: minimal } = stripFrozenDefaults(
       structuredClone(this.config) as unknown as Record<string, unknown>,
     );
+    this.preserveHostSettingsForBulkSave(minimal, this.projectConfigPath);
     writeJsonFileAtomic(this.projectConfigPath, this.withoutDaemonOwned(minimal));
   }
 
@@ -608,7 +661,25 @@ export class ConfigManager {
     };
   }
   private ingest(parsed: Record<string, unknown>, file: string, migrate?: (raw: Record<string, unknown>) => Record<string, unknown>): Record<string, unknown> {
-    return ingestManagerSettings(parsed, file, this.ingestionSink(), migrate);
+    // Existing ingestion/migration may remove malformed categories in place.
+    // Capture the host's restrictive projection first, but commit it only
+    // AFTER that same persisted-setting validation gate accepts the layer.
+    const nextHost = this.hostLoadValues && (file === this.configPath || file === this.projectConfigPath)
+      ? new Map(this.hostLoadValues) : null;
+    const malformedHostKeys = nextHost ? this.hostSettings.overlay(nextHost, parsed) : [];
+    const ingested = ingestManagerSettings(parsed, file, this.ingestionSink(), migrate, new Set(this.hostSettings.keys()));
+    if (nextHost) {
+      this.hostLoadValues = nextHost;
+      for (const key of malformedHostKeys) {
+        const notice: SettingsIngestionNotice = {
+          file, key, action: 'skipped', reason: 'Host setting requires a literal boolean or object category',
+          remedy: 'Fix the stored value; until then this host setting uses its declared restrictive default',
+        };
+        announceIngestionNotice(notice);
+        this.ingestionNotices.push(notice);
+      }
+    }
+    return ingested;
   }
   private loadFailure(label: string, file: string, err: unknown): ConfigError {
     return toConfigLoadFailure(label, file, err, this.ingestionSink());
@@ -616,45 +687,55 @@ export class ConfigManager {
 
   /** Load config from disk: global then project (project wins). Deep-merges with defaults. */
   load(): void {
-    this.ingestionNotices = [];
-    // Load global settings
-    if (existsSync(this.configPath)) {
-      try {
-        const raw = readFileSync(this.configPath, 'utf-8');
-        const migrated = this.ingest(
-          JSON.parse(raw) as Record<string, unknown>,
-          this.configPath,
-          (p) => this.applyLoadMigrations(p, this.configPath),
-        );
+    const previousHost = this.hostSettings.snapshot(this.config);
+    this.hostLoadValues = this.hostSettings.active ? this.hostSettings.defaults() : null;
+    try {
+      this.ingestionNotices = [];
+      // Load global settings
+      if (this.hostSettings.active ? hostSettingsFileExists(this.configPath) : existsSync(this.configPath)) {
+        try {
+          const raw = readFileSync(this.configPath, 'utf-8');
+          const migrated = this.ingest(
+            JSON.parse(raw) as Record<string, unknown>,
+            this.configPath,
+            (p) => this.applyLoadMigrations(p, this.configPath),
+          );
 
-        this.config = sanitizeConfigShape(deepMerge(cloneDefaultConfig(), migrated) as GoodVibesConfig);
-      } catch (err) {
-        throw this.loadFailure('Global', this.configPath, err);
+          this.config = sanitizeConfigShape(deepMerge(cloneDefaultConfig(), migrated) as GoodVibesConfig);
+        } catch (err) {
+          throw this.loadFailure('Global', this.configPath, err);
+        }
       }
-    }
 
-    // Load project settings and deep-merge on top (project wins)
-    if (this.projectConfigPath && existsSync(this.projectConfigPath)) {
-      try {
-        const raw = readFileSync(this.projectConfigPath, 'utf-8');
-        const migrated = this.ingest(
-          JSON.parse(raw) as Record<string, unknown>,
-          this.projectConfigPath,
-          (p) => this.applyLoadMigrations(p, this.projectConfigPath!),
-        );
-        this.config = sanitizeConfigShape(deepMerge(this.config, migrated) as GoodVibesConfig);
-      } catch (err) {
-        throw this.loadFailure('Project', this.projectConfigPath, err);
+      // Load project settings and deep-merge on top (project wins)
+      if (this.projectConfigPath && (this.hostSettings.active ? hostSettingsFileExists(this.projectConfigPath) : existsSync(this.projectConfigPath))) {
+        try {
+          const raw = readFileSync(this.projectConfigPath, 'utf-8');
+          const migrated = this.ingest(
+            JSON.parse(raw) as Record<string, unknown>,
+            this.projectConfigPath,
+            (p) => this.applyLoadMigrations(p, this.projectConfigPath!),
+          );
+          this.config = sanitizeConfigShape(deepMerge(this.config, migrated) as GoodVibesConfig);
+        } catch (err) {
+          throw this.loadFailure('Project', this.projectConfigPath, err);
+        }
       }
-    }
 
-    // Overlay the shared tier (it wins over the surface silo) for the shared
-    // keys only; an absent shared key falls back to the local value.
-    this.loadSharedTier();
-    // Then the daemon tier, LAST of all: a daemon-owned key's value in the
-    // daemon store is the only one that describes what the daemon will do, so
-    // no surface-local leftover may shadow it.
-    this.loadDaemonTier();
+      // Overlay the shared tier (it wins over the surface silo) for the shared
+      // keys only; an absent shared key falls back to the local value.
+      this.loadSharedTier();
+      // Then the daemon tier, LAST of all: a daemon-owned key's value in the
+      // daemon store is the only one that describes what the daemon will do, so
+      // no surface-local leftover may shadow it.
+      this.loadDaemonTier();
+      if (this.hostLoadValues) this.applyHostValues(this.hostLoadValues, previousHost, true);
+    } catch (error) {
+      this.applyHostValues(this.hostSettings.defaults(), previousHost, true);
+      throw error instanceof HostSettingsReadError ? this.loadFailure('Host', error.file, error) : error;
+    } finally {
+      this.hostLoadValues = null;
+    }
   }
 
   /**
@@ -751,6 +832,57 @@ export class ConfigManager {
     new FeatureAnnouncementStore(featureAnnouncementsPath(this)).record(id, text);
   }
 
+  private applyHostValues(values: HostSettingValues, previous: HostSettingValues, emitHooks = false): void {
+    this.hostSettings.apply(this.config, values);
+    for (const [key, value] of values) {
+      if (previous.get(key) === value) continue;
+      this.notifyListeners(key as ConfigKey, previous.get(key), value);
+      if (emitHooks) this.emitConfigHook(key as ConfigKey, previous.get(key), value);
+    }
+  }
+
+  private refreshHostSettings(previous: HostSettingValues, emitHooks = false): void {
+    this.ingestionNotices = this.ingestionNotices.filter((notice) => notice.file !== this.configPath && notice.file !== this.projectConfigPath);
+    try {
+      const values = readHostSettingValues(this.hostSettings, this.configPath, this.projectConfigPath,
+        (raw, path) => { this.ingest(raw, path); });
+      this.applyHostValues(values, previous, emitHooks);
+    } catch (error) {
+      this.applyHostValues(this.hostSettings.defaults(), previous, true);
+      throw error instanceof HostSettingsReadError ? this.loadFailure('Host', error.file, error) : error;
+    }
+  }
+
+  private preserveHostSettingsForBulkSave(snapshot: Record<string, unknown>, path: string): void {
+    if (!this.hostSettings.active) return;
+    try {
+      this.hostSettings.preserveDestination(snapshot, readHostSettingsFile(path));
+    } catch (error) {
+      this.applyHostValues(this.hostSettings.defaults(), this.hostSettings.snapshot(this.config), true);
+      throw error;
+    }
+  }
+
+  private hostSettingHasProjectValue(key: string): boolean {
+    try { return this.projectConfigPath !== null && readDotPath(readHostSettingsFile(this.projectConfigPath), key).present; }
+    catch (error) {
+      recoverHostSettingsWriteFailure(error, () => this.refreshHostSettings(this.hostSettings.snapshot(this.config), true));
+    }
+  }
+
+  private resetHostSetting(key: ConfigKey, value: boolean): void {
+    if (this.hostSettingHasProjectValue(key)) this.setProjectValue(key, value as never);
+    const lock = getManagedSettingLock(key, this.configDir);
+    if (lock) throw new ConfigError(`Setting ${key} is locked by ${lock.source}: ${lock.reason}`);
+    const previous = this.hostSettings.snapshot(this.config);
+    // Reset must revoke the global copy too even when ordinary host set() edits
+    // an existing higher-priority project leaf. This is the same owned scalar
+    // persistence used by set(), with its read-only and managed-lock guards.
+    try { this.persistGlobalKey(key, value); }
+    catch (error) { recoverHostSettingsWriteFailure(error, () => this.refreshHostSettings(previous, true)); }
+    this.refreshHostSettings(previous, true);
+  }
+
   /**
    * Merge a partial patch into a config category and auto-save, the correct
    * way to update array/object fields that cannot be expressed as a scalar
@@ -758,6 +890,9 @@ export class ConfigManager {
    */
   mergeCategory<C extends keyof GoodVibesConfig>(category: C, patch: Partial<GoodVibesConfig[C]>): void {
     this.requireWritable();
+    if (Object.keys(patch).some((key) => this.hostSettings.has(`${String(category)}.${key}`))) {
+      throw new ConfigError('Registered host settings require the guarded scalar set API.');
+    }
     persistCategoryPatch(
       String(category),
       patch as Record<string, unknown>,
@@ -773,6 +908,8 @@ export class ConfigManager {
    */
   removeCategoryKey<C extends keyof GoodVibesConfig>(category: C, key: string): void {
     this.requireWritable();
+    const hostKey = `${String(category)}.${key}`;
+    if (this.hostSettings.has(hostKey)) { this.reset(hostKey as ConfigKey); return; }
     const current = this.config[category]! as Record<string, unknown>;
     if (!(key in current)) return;
     delete current[key];
@@ -794,12 +931,18 @@ export class ConfigManager {
   /** Reset one key (or all config) to defaults and persist the removal. */
   reset(key?: ConfigKey): void {
     this.requireWritable();
+    for (const definition of this.hostSettings.definitions) {
+      if (key !== undefined && key !== definition.key) continue;
+      this.resetHostSetting(definition.key as ConfigKey, definition.default);
+      if (key !== undefined) return;
+    }
     if (key === undefined) {
       this.config = cloneDefaultConfig();
+      this.hostSettings.apply(this.config, this.hostSettings.defaults());
       // A full reset means no explicit keys remain, clear the file to defaults.
       this.writeRawGlobal({});
     } else {
-      const schema = CONFIG_SCHEMA.find(s => s.key === key);
+      const schema = this.hostSettings.schema(key) ?? CONFIG_SCHEMA.find(s => s.key === key);
       if (!schema) throw new ConfigError(`Unknown config key: ${key}`);
       const livePath = this.resolvePath(key);
       livePath.parent[livePath.field] = structuredClone(readDotPath(DEFAULT_CONFIG_SNAPSHOT, key).value);
