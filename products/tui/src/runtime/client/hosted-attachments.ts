@@ -35,6 +35,15 @@ async function release(state: Ownership, id: string): Promise<HostedSessionRecor
   return record;
 }
 
+function stopStream(feed: HostedSessionFeed, state: Ownership): unknown[] {
+  const errors: unknown[] = [];
+  try { state.streamAbort?.abort(); } catch (error) { errors.push(error); }
+  state.streamAbort = null;
+  try { feed.closeStream(); } catch (error) { errors.push(error); }
+  try { feed.setStreaming(false, 'the local event stream was closed while leaving the attachment'); } catch (error) { errors.push(error); }
+  return errors;
+}
+
 /** One remote attachment owner per feed; failed cleanup stays tracked for retry/exit. */
 export function replaceHostedAttachment(
   feed: HostedSessionFeed,
@@ -93,28 +102,30 @@ export function hasHostedAttachments(feed: HostedSessionFeed): boolean {
   return Boolean(feed.getState().record || (state && (state.sessions.size || state.pendingReplacements)));
 }
 
-async function releaseAll(feed: HostedSessionFeed, state: Ownership): Promise<HostedSessionRecord | null> {
-  let currentResult: HostedSessionRecord | null = null;
+async function releaseAll(feed: HostedSessionFeed, state: Ownership): Promise<readonly HostedSessionRecord[]> {
+  const records: HostedSessionRecord[] = [];
   const current = feed.getState().record;
   const currentId = current?.id;
   if (current?.status === 'terminated') state.sessions.delete(current.id);
   const errors: string[] = [];
   for (const id of [...state.sessions.keys()]) {
-    try { const record = await release(state, id); if (id === currentId || currentResult === null) currentResult = record; }
+    try { records.push(await release(state, id)); }
     catch (error) { errors.push(`${id}: ${errorText(error)}`); }
   }
   if (!currentId || !state.sessions.has(currentId)) feed.clear();
-  if (errors.length) throw new Error(`Hosted detach failed: ${errors.join('; ')}`);
-  return currentResult;
+  if (errors.length) throw new Error(`Hosted detach failed: ${errors.join('; ')}${records.length ? `; released ${records.map(record => `${record.id} (${record.status})`).join(', ')}` : ''}`);
+  return records;
 }
 
-export function detachHostedAttachments(feed: HostedSessionFeed, client: HostedSessionsClient): Promise<HostedSessionRecord | null> {
+export function detachHostedAttachments(feed: HostedSessionFeed, client: HostedSessionsClient): Promise<readonly HostedSessionRecord[]> {
   const state = owner(feed, client);
   state.generation++;
-  state.streamAbort?.abort();
+  const streamErrors = stopStream(feed, state);
   return enqueue(state, async () => {
     if (state.closing) throw new Error('Hosted attachment is closing');
-    return releaseAll(feed, state);
+    const records = await releaseAll(feed, state);
+    if (streamErrors.length) throw new Error(`Hosted attachments released, but stream cleanup failed: ${streamErrors.map(errorText).join('; ')}`);
+    return records;
   });
 }
 
@@ -124,14 +135,15 @@ export function closeHostedAttachments(feed: HostedSessionFeed, client: HostedSe
   if (state.closeResult) return state.closeResult;
   state.closing = true;
   state.generation++;
-  state.streamAbort?.abort();
-  let streamError: unknown;
-  try { feed.closeStream(); } catch (error) { streamError = error; }
-  state.closeResult = enqueue(state, async () => {
+  const streamErrors = stopStream(feed, state);
+  const result = enqueue(state, async () => {
     const detached = await releaseAll(feed, state);
-    if (streamError) throw streamError;
-    return detached !== null;
+    if (streamErrors.length) throw new Error(`Hosted stream cleanup failed: ${streamErrors.map(errorText).join('; ')}`);
+    return detached.length > 0;
   });
+  state.closeResult = result;
+  // Keep admission closed, but a failed cleanup can retry its retained receipts.
+  void result.catch(() => { if (state.closeResult === result) delete state.closeResult; });
   return state.closeResult;
 }
 

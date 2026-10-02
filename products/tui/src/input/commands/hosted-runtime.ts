@@ -301,11 +301,13 @@ export function registerHostedRuntimeCommands(registry: CommandRegistry): void {
           }
           case 'detach': {
             if (!hasHostedAttachments(feed)) { ctx.print('[hosted] no hosted session is attached.'); return; }
-            const record = await detachHostedAttachments(feed, seams.client);
-            if (!record) { ctx.print('[hosted] no hosted session is attached.'); return; }
-            ctx.print(record.status === 'terminated'
-              ? `[hosted] detached: the session ended (${record.terminatedReason ?? 'no reason recorded'}), which is what its detach policy said would happen.`
-              : '[hosted] detached: the session is still running in the daemon and can be reattached.');
+            const records = await detachHostedAttachments(feed, seams.client);
+            if (records.length === 0) { ctx.print('[hosted] no hosted session is attached.'); return; }
+            for (const record of records) {
+              ctx.print(record.status === 'terminated'
+                ? `[hosted] detached ${hostedSessionLabel(record)}: the session ended (${record.terminatedReason ?? 'no reason recorded'}), which is what its detach policy said would happen.`
+                : `[hosted] detached ${hostedSessionLabel(record)}: the session is still running in the daemon and can be reattached.`);
+            }
             return;
           }
           case 'kill': {
@@ -313,7 +315,7 @@ export function registerHostedRuntimeCommands(registry: CommandRegistry): void {
             if (!target) { ctx.print('Usage: /hosted kill <id> (or attach one first)'); return; }
             const record = await seams.client.kill(target);
             forgetHostedAttachment(feed, target);
-            if (target === attachedId) feed.clear();
+            if (target === feed.getState().record?.id) feed.clear();
             ctx.print(`[hosted] ended ${hostedSessionLabel(record)}: ${record.terminatedReason ?? 'no reason recorded'}.`);
             return;
           }

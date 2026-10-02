@@ -9,14 +9,19 @@ const calls: string[] = [];
 const attached = new Set<string>();
 let failAttach: string | null = null;
 let failDetach = new Set<string>();
+let terminated = new Set<string>();
+let killPolicy = new Set<string>();
+let holdKill: Promise<void> | null = null;
+let holdDetach: { id: string; wait: Promise<void> } | null = null;
 let holdCreate: Promise<void> | null = null;
 let holdAttach: { id: string; wait: Promise<void> } | null = null;
-const record = (id: string): HostedSessionRecord => ({id,workspaceRoot:'/synthetic/work',title:id,status:'idle',detachPolicy:'survive',effectiveDetachPolicy:'survive',attachedClients:attached.has(id)?['synthetic']:[],createdAt:1,updatedAt:1,turnCount:0,messageCount:0,restoredFromDisk:false,contractIds:[]});
+const record = (id: string): HostedSessionRecord => ({id,workspaceRoot:'/synthetic/work',title:id,status:terminated.has(id)?'terminated':'idle',detachPolicy:killPolicy.has(id)?'kill':'survive',effectiveDetachPolicy:killPolicy.has(id)?'kill':'survive',attachedClients:attached.has(id)?['synthetic']:[],createdAt:1,updatedAt:1,turnCount:0,messageCount:0,restoredFromDisk:false,contractIds:[]});
 const verbs: DaemonVerbCaller = {probe:()=>({available:false,reason:'synthetic recording transport'}),async invoke<T>(method: string, input?: unknown): Promise<T> {
  if(method==='sessions.hosted.create') { calls.push('sessions.hosted.create:B'); if(holdCreate) await holdCreate; attached.add('B'); return {session:record('B')} as T; }
  const id = (input as {sessionId:string}).sessionId; calls.push(`${method}:${id}`);
  if(method==='sessions.hosted.attach') { if(holdAttach?.id===id) await holdAttach.wait; if(failAttach===id) throw new Error('synthetic attach refusal'); attached.add(id);return {session:record(id),history:[]} as T; }
- if(method==='sessions.hosted.detach') { if(failDetach.has(id)) throw new Error('synthetic detach refusal'); attached.delete(id);return {session:record(id)} as T; }
+ if(method==='sessions.hosted.kill') { if(holdKill) await holdKill; attached.delete(id); terminated.add(id); return {session:record(id)} as T; }
+ if(method==='sessions.hosted.detach') { if(holdDetach?.id===id) await holdDetach.wait; if(failDetach.has(id)) throw new Error('synthetic detach refusal'); attached.delete(id); if(killPolicy.has(id)) terminated.add(id);return {session:record(id)} as T; }
  throw new Error(`unexpected synthetic verb ${method}`);
 }};
 mock.module('../../runtime/client/operator-endpoint.ts',()=>({...endpoint,createDaemonVerbCaller:()=>verbs,resolveControlPlaneBaseUrl:()=>null}));
@@ -25,7 +30,7 @@ const {leaveHostedSessionOnExit}=await import('../../runtime/client/hosted-exit.
 let registry:CommandRegistry;let output:string[];
 const context=():CommandContext=>({platform:{configManager:{}},workspace:{shellPaths:{homeDirectory:'/synthetic',workingDirectory:'/synthetic/work'}},print:(s:string)=>output.push(s),openAgents:()=>{}} as unknown as CommandContext);
 const run=(...args:string[])=>registry.execute('hosted',args,context());
-beforeEach(()=>{resetSharedHostedSessionFeed();resetHostedCommandState();calls.length=0;attached.clear();failAttach=null;failDetach.clear();holdCreate=null;holdAttach=null;output=[];registry=new CommandRegistry();registerHostedRuntimeCommands(registry);});
+beforeEach(()=>{resetSharedHostedSessionFeed();resetHostedCommandState();calls.length=0;attached.clear();failAttach=null;failDetach.clear();holdCreate=null;holdAttach=null;holdKill=null;holdDetach=null;terminated.clear();killPolicy.clear();output=[];registry=new CommandRegistry();registerHostedRuntimeCommands(registry);});
 afterEach(()=>resetSharedHostedSessionFeed());
 
 test('successful A to B replacement releases A and final detach releases B without kill',async()=>{
@@ -121,4 +126,44 @@ test('already-terminated current session closes its local stream without a remot
  await run('attach','A');const feed=getSharedHostedSessionFeed();feed.setRecord({...record('A'),status:'terminated'});let closed=0;feed.bindStream(()=>{closed++;});
  expect(await leaveHostedSessionOnExit({configManager:context().platform.configManager,homeDirectory:'/synthetic'})).toBe('none');expect(closed).toBe(1);
  expect(calls).toEqual(['sessions.hosted.attach:A']);expect(feed.getState().record).toBeNull();
+});
+
+
+const {createHostedSessionsClient}=await import('../../runtime/client/hosted-sessions.ts');
+const {replaceHostedAttachment,detachHostedAttachments}=await import('../../runtime/client/hosted-attachments.ts');
+const {watchHostedSession}=await import('../../runtime/client/hosted-session-stream.ts');
+
+test('review: refused detach must not claim its aborted real SSE stream is open',async()=>{
+ const feed=getSharedHostedSessionFeed();const client=createHostedSessionsClient(verbs);let fetchAborted=false;
+ await replaceHostedAttachment(feed,client,'A',async(attachment,signal)=>{
+  const subscription=await watchHostedSession({baseUrl:'http://synthetic.invalid',sessionId:attachment.session.id,signal,onEvent:()=>{},fetchImpl:(async(_url,init)=>{
+   const body=new ReadableStream<Uint8Array>({start(controller){init?.signal?.addEventListener('abort',()=>{fetchAborted=true;controller.close();},{once:true});}});
+   return new Response(body,{headers:{'content-type':'text/event-stream'}});
+  }) as typeof fetch});
+  feed.bindStream(()=>subscription?.close());feed.setStreaming(subscription!==null);
+ });
+ expect(feed.getState().streaming).toBe(true);failDetach.add('A');
+ await expect(detachHostedAttachments(feed,client)).rejects.toThrow('synthetic detach refusal');
+ expect(fetchAborted).toBe(true);expect(feed.getState().record?.id).toBe('A');
+ expect(feed.getState().streaming).toBe(false);
+});
+
+test('review: retrying exit after transient detach refusal must retry retained receipt',async()=>{
+ await run('attach','A');failDetach.add('A');
+ expect(await leaveHostedSessionOnExit({configManager:context().platform.configManager,homeDirectory:'/synthetic'})).toBe('failed');
+ failDetach.clear();const again=await leaveHostedSessionOnExit({configManager:context().platform.configManager,homeDirectory:'/synthetic'});
+ expect(again).toBe('detached');expect([...attached]).toEqual([]);
+});
+
+test('review: explicit detach after retained mixed-policy receipt reports B termination',async()=>{
+ await run('attach','A');killPolicy.add('B');failDetach.add('A');await run('attach','B');
+ failDetach.clear();output=[];await run('detach');
+ expect([...attached]).toEqual([]);expect([...terminated]).toEqual(['B']);
+ expect(output.join(' ')).toContain('B');expect(output.join(' ')).toContain('ended');
+});
+
+test('review: kill A delayed across switch B must not clear B and allow three receipts',async()=>{
+ await run('attach','A');let release!:()=>void;holdKill=new Promise<void>(resolve=>{release=resolve;});
+ const killing=run('kill','A');await new Promise(resolve=>setImmediate(resolve));await run('attach','B');release();await killing;
+ expect(getSharedHostedSessionFeed().getState().record?.id).toBe('B');
 });
