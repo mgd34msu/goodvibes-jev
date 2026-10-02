@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { SurfaceModalHost } from '../../input/surface-modal-host.ts';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -1737,77 +1739,87 @@ describe('product breadth commands', () => {
   });
 
   test('managed command exports, inspects, and applies managed settings bundles', async () => {
-    const registry = new CommandRegistry();
-    registerBuiltinCommands(registry);
-    const managed = registry.get('managed');
-    const settingsSync = registry.get('settingssync');
-    expect(managed).toBeDefined();
-    expect(settingsSync).toBeDefined();
+    const previousJudgment = installJudgmentPort(fakePort((name, question, state) => {
+      const change = state as { key?: string; nextValue?: unknown };
+      const expected = (change.key === 'provider.model' && change.nextValue === 'openai:model-1')
+        || (change.key === 'provider.reasoningEffort' && change.nextValue === 'low');
+      if (name !== 'risk' || !expected) throw new Error(`Unexpected managed risk fixture: ${name} / ${change.key}`);
+      // These recorded synthetic model/effort changes are medium risk under the public battery.
+      return choiceAnswer(question, 'medium', 0.99);
+    }).port);
+    try {
+      const registry = new CommandRegistry();
+      registerBuiltinCommands(registry);
+      const managed = registry.get('managed');
+      const settingsSync = registry.get('settingssync');
+      expect(managed).toBeDefined();
+      expect(settingsSync).toBeDefined();
 
-    const out: string[] = [];
-    const ctx = makeContext(out);
+      const out: string[] = [];
+      const ctx = makeContext(out);
 
-    runtimeServices.configManager.setDynamic('provider.model', 'openai:model-1');
-    ctx.session.runtime.model = 'openai:model-1';
-    const bundlePath = join(root, 'artifacts', 'managed.json');
-    mkdirSync(dirname(bundlePath), { recursive: true });
-    writeFileSync(bundlePath, JSON.stringify({
-      version: 1,
-      exportedAt: Date.now(),
-      profileName: 'ops',
-      settings: {
-        'provider.model': 'openai:model-1',
-        'provider.provider': 'openai',
-        'provider.reasoningEffort': 'low',
-      },
-    }, null, 2));
+      runtimeServices.configManager.setDynamic('provider.model', 'openai:model-1');
+      ctx.session.runtime.model = 'openai:model-1';
+      const bundlePath = join(root, 'artifacts', 'managed.json');
+      mkdirSync(dirname(bundlePath), { recursive: true });
+      writeFileSync(bundlePath, JSON.stringify({
+        version: 1,
+        exportedAt: Date.now(),
+        profileName: 'ops',
+        settings: {
+          'provider.model': 'openai:model-1',
+          'provider.reasoningEffort': 'low',
+        },
+      }, null, 2));
 
-    out.length = 0;
-    await managed!.handler(['inspect', bundlePath], ctx);
-    expect(out.join('\n')).toContain('Managed Settings Review');
-    expect(out.join('\n')).toContain('changes:');
+      out.length = 0;
+      await managed!.handler(['inspect', bundlePath], ctx);
+      expect(out.join('\n')).toContain('Managed Settings Review');
+      expect(out.join('\n')).toContain('risk: medium');
+      expect(out.join('\n')).toContain('changes:');
 
-    runtimeServices.configManager.setDynamic('provider.model', 'openai:changed-model');
-    ctx.session.runtime.model = 'openai:changed-model';
-    out.length = 0;
-    await managed!.handler(['apply', bundlePath], ctx);
-    expect(out.join('\n')).toContain('Managed settings bundle applied');
-    expect(ctx.session.runtime.model).toBe('openai:model-1');
+      runtimeServices.configManager.setDynamic('provider.model', 'openai:changed-model');
+      ctx.session.runtime.model = 'openai:changed-model';
+      out.length = 0;
+      await managed!.handler(['apply', bundlePath], ctx);
+      expect(out.join('\n')).toContain('Managed settings bundle applied');
+      expect(ctx.session.runtime.model).toBe('openai:model-1');
 
-    const rollbackToken = out.join('\n').match(/rollback ([A-Za-z0-9-]+)/)?.[1];
-    expect(rollbackToken).toBeDefined();
+      const rollbackToken = out.join('\n').match(/rollback ([A-Za-z0-9-]+)/)?.[1];
+      expect(rollbackToken).toBeDefined();
 
-    out.length = 0;
-    await managed!.handler(['rollback', rollbackToken!], ctx);
-    expect(out.join('\n')).toContain('Managed rollback');
+      out.length = 0;
+      await managed!.handler(['rollback', rollbackToken!], ctx);
+      expect(out.join('\n')).toContain('Managed rollback');
 
-    const syncPath = join(root, 'artifacts', 'settings-sync.json');
-    out.length = 0;
-    await settingsSync!.handler(['export', syncPath], ctx);
-    expect(out.join('\n')).toContain('Settings sync bundle exported');
+      const syncPath = join(root, 'artifacts', 'settings-sync.json');
+      out.length = 0;
+      await settingsSync!.handler(['export', syncPath], ctx);
+      expect(out.join('\n')).toContain('Settings sync bundle exported');
 
-    out.length = 0;
-    await settingsSync!.handler(['inspect', syncPath], ctx);
-    expect(out.join('\n')).toContain('Settings Sync Bundle');
+      out.length = 0;
+      await settingsSync!.handler(['inspect', syncPath], ctx);
+      expect(out.join('\n')).toContain('Settings Sync Bundle');
 
-    out.length = 0;
-    await settingsSync!.handler(['show', 'provider.model'], ctx);
-    expect(out.join('\n')).toContain('Resolved Setting Review');
-    expect(out.join('\n')).toContain('key: provider.model');
+      out.length = 0;
+      await settingsSync!.handler(['show', 'provider.model'], ctx);
+      expect(out.join('\n')).toContain('Resolved Setting Review');
+      expect(out.join('\n')).toContain('key: provider.model');
 
-    runtimeServices.configManager.setDynamic('provider.model', 'openai:sync-model');
-    ctx.session.runtime.model = 'openai:sync-model';
-    out.length = 0;
-    await settingsSync!.handler(['pull', syncPath], ctx);
-    expect(out.join('\n')).toContain('Settings sync bundle pulled');
+      runtimeServices.configManager.setDynamic('provider.model', 'openai:sync-model');
+      ctx.session.runtime.model = 'openai:sync-model';
+      out.length = 0;
+      await settingsSync!.handler(['pull', syncPath], ctx);
+      expect(out.join('\n')).toContain('Settings sync bundle pulled');
 
-    out.length = 0;
-    await managed!.handler(['stage', bundlePath], ctx);
-    expect(out.join('\n')).toContain('Managed settings bundle staged');
+      out.length = 0;
+      await managed!.handler(['stage', bundlePath], ctx);
+      expect(out.join('\n')).toContain('Managed settings bundle staged');
 
-    out.length = 0;
-    await managed!.handler(['staged'], ctx);
-    expect(out.join('\n')).toContain('Staged Managed Bundle Review');
+      out.length = 0;
+      await managed!.handler(['staged'], ctx);
+      expect(out.join('\n')).toContain('Staged Managed Bundle Review');
+    } finally { installJudgmentPort(previousJudgment); }
   });
 
   test('session command surfaces saved return-context posture in list and info output', async () => {
