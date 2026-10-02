@@ -173,7 +173,7 @@ describe('policy explain never substitutes configuration for a live gate decisio
     tools?: Record<string, 'allow' | 'deny' | 'prompt'>;
     call: keyof typeof POSTURE_CALLS;
     approved: boolean;
-    reason: string;
+    reason: Awaited<ReturnType<PermissionManager['checkDetailed']>>['reasonCode'];
   }[] = [
     { name: 'critical shell in allow-all', mode: 'allow-all', call: 'critical', approved: false, reason: 'user_denied' },
     { name: 'catastrophic shell with autoApprove', mode: 'prompt', autoApprove: true, call: 'catastrophic', approved: false, reason: 'boundary_catastrophic' },
