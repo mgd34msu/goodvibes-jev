@@ -1,0 +1,41 @@
+{
+  "purpose": "THE-92 reconstructed awaited webhook shutdown: recovery checkpoint, not the full tested implementation tree.",
+  "base_commit": "302a1109a4f73133200fd2dcbc6bef30fc8607e9",
+  "tested_commit": "bb2313f6e7c22e4b2aae2ad04e9a379567114962",
+  "tested_tree": "3cc11b46a211fe18ed88c759a8bbd958e682de2c",
+  "files": {
+    "packages/engine/sdk/src/platform/integrations/webhooks.ts": {
+      "git_blob": "50184c61dfc964c5063a3b5eca42dba603dc5568",
+      "sha256": "6578169b9a0f5c4533026df5e64ca2705c3b8d92da7fa31dfeaf16547c4ff2e2"
+    },
+    "packages/engine/test/webhook-lifecycle.test.ts": {
+      "git_blob": "530c5980ab1c755827827be68c77bb0a4b3f4b3e",
+      "sha256": "6100121607ba9263539b5197c20ef1a2460a7f345fe50f56eff8b4d0c7445f03"
+    },
+    "packages/engine/etc/subpath-api-surface.json": {
+      "git_blob": "ca2fbd9c1a508a0297f2929789da7e3384d914d8",
+      "sha256": "5eb5a0edcd0aa380337488a216979b9678ed7104039dfcd6cb2378a90b7ea879"
+    }
+  },
+  "reconstruction": [
+    "Start from base_commit.",
+    "Apply full.patch. This contains exactly the tested source, lifecycle tests, and narrow generated API snapshot delta.",
+    "Verify every listed blob SHA and resulting git write-tree equals tested_tree. Do not include recovery checkpoint documentation in the implementation tree.",
+    "Run guarded tests and applicable build, types and API gates on reconstructed tree before publication."
+  ],
+  "checks": {
+    "guarded_tests": "163 pass / 559 assertions across 12 files, including 33 new lifecycle tests",
+    "independent_review": "Source SHA256 equality confirmed; 36 tests / 134 assertions including three independent edge probes",
+    "failing_before": "Clean isolated original-parent identity/disposal test fails because close() is absent",
+    "build": "root build including all present products and WebUI passed",
+    "types": "forced full solution including tests/scripts with 3072MB Node old-space cap, zero diagnostics; consumer and all present product typechecks passed",
+    "api": "API extraction and subpath equality passed; only close and Symbol.asyncDispose public members added",
+    "source_checks": "credential scope, no-any, test containment and git diff --check passed"
+  },
+  "limitations": [
+    "Normal git push could not read Username for https://github.com; no credentials configured or requested.",
+    "No full validation/release lane claim and no merge/deployment performed.",
+    "Historical THE-92 test counts do not apply to this new implementation.",
+    "THE-98 production adoption and THE-102 provider drain remain separate."
+  ]
+}
