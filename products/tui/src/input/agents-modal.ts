@@ -118,6 +118,8 @@ export class AgentsModal implements SurfaceModal {
   constructor(private readonly deps: AgentsModalDeps) {
     this.unsubs.push(deps.readModel.subscribe(() => { this.onFleetChange(); deps.requestRender(); }));
     this.unsubs.push(deps.readModel.subscribeConsumed((event) => {
+      // Unsubscribe cannot retract delivery already queued by the event bus.
+      if (this.closed) return;
       for (const tab of this.tabs.tabs) {
         const badge = tab.steerBadge;
         if (badge && badge.messageId === event.messageId && (badge.status === 'queued' || badge.status === 'dropped')) {

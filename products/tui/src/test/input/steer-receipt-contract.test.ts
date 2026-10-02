@@ -102,3 +102,11 @@ test('compact rendered acceptance keeps delivery uncertainty before a long targe
  expect(text).toContain('ACP host accepted'); expect(text).toContain('delivery unknown');
  expect(f.badge()?.status).toBe('accepted');
 });
+
+test('a queued consumed notification cannot repaint the modal after close', async () => {
+ const f = fixture('native'); f.start(); f.submit();
+ const before = f.badge();
+ emitCommunicationConsumed(f.bus, { sessionId: 'synthetic', traceId: 'synthetic', source: 'test' }, { messageId: before!.messageId, agentId: 'a1', turn: 2 });
+ f.host.clear(); const renders = f.renders(); await flush();
+ expect(f.renders()).toBe(renders); expect(f.badge()).toEqual(before);
+});
