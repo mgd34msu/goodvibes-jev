@@ -19,7 +19,8 @@
  *
  * Nothing here opens a socket. The connection port is scripted in-process so a
  * test can say "this batch comes back unreadable" and count what the watcher
- * does next, and every wait runs on the injected clock.
+ * does next. Protocol waits use the injected clock; one regression deliberately
+ * delays the real cursor store to cover asynchronous persistence completion.
  */
 
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
@@ -199,6 +200,7 @@ afterEach(async () => {
 
 async function build(options: ScriptedMailboxOptions & {
   readonly seedUid?: number;
+  readonly cursorResolveDelayMs?: number;
 }): Promise<Harness> {
   const clock = new FakeClock();
   const { store: cursors } = await makeCursorStore({
@@ -207,6 +209,15 @@ async function build(options: ScriptedMailboxOptions & {
     uidValidity: UID_VALIDITY,
     lastSeenUid: options.seedUid ?? 101,
   });
+  // Keep the real persisted cursor implementation; delay only its completion
+  // to prove fake-clock driving cannot race ahead of asynchronous disk work.
+  if (options.cursorResolveDelayMs) {
+    const resolveCursor = cursors.resolve.bind(cursors);
+    cursors.resolve = async input => {
+      await new Promise<void>(resolve => { setTimeout(resolve, options.cursorResolveDelayMs); });
+      return resolveCursor(input);
+    };
+  }
   const sink = new RecordingSink();
   const observer = new RecordingObserver();
   const connections = new ScriptedMailbox(options);
@@ -262,7 +273,18 @@ async function pumpUntil(
   for (let step = 0; step < maxSteps; step += 1) {
     if (predicate()) return;
     const due = harness.clock.nextDueIn;
-    await (Number.isFinite(due) ? harness.clock.advance(due) : harness.clock.advance(0));
+    if (Number.isFinite(due)) {
+      await harness.clock.advance(due);
+    } else {
+      // The cursor store performs real asynchronous I/O. Spending fake-clock
+      // steps on advance(0) races that I/O and can exhaust all 200 steps before
+      // the next reconnect is even scheduled. Keep the existing bounded real
+      // wait helper and resume only on an actual timer or the terminal event.
+      await waitFor(
+        () => predicate() || Number.isFinite(harness.clock.nextDueIn),
+        `a scheduled wait or ${what}`,
+      );
+    }
     if (predicate()) return;
   }
   throw new Error(`Gave up after ${String(maxSteps)} steps waiting for: ${what}`);
@@ -315,13 +337,14 @@ describe('a mailbox whose answers cannot be read does not become a login flood',
     expect(harness.connections.opens).toBeLessThan(62);
   });
 
-  test('an unreadable mailbox escalates to a named terminal reason with an owner notice', async () => {
+  test.each([0, 100])('an unreadable mailbox escalates to a named terminal reason with an owner notice (%i ms cursor I/O)', async (cursorResolveDelayMs) => {
     // The asymmetry that was the defect: the THROW path escalated through
     // MAX_CONSECUTIVE_LOCAL_FAILURES to a terminal reason and an owner notice,
     // and the UNREADABLE path had no counterpart at all, no ceiling, no
     // terminal, no notice. A mailbox that can never be read must say so rather
     // than retry forever.
     const harness = await build({
+      cursorResolveDelayMs,
       present: [102, 103],
       readable: [103],
       unreadable: [namedProblem(102)],

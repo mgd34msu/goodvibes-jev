@@ -74229,6 +74229,11 @@
       "text": "export type LedgerWork = z.infer<typeof ledgerWorkSchema>; ;; via output = export type output<T> = T extends { _zod: { output: any; }; } ? T[\"_zod\"][\"output\"] : unknown;"
     },
     {
+      "name": "LocalWorkLedgerReadBindingOptions",
+      "kind": "type",
+      "text": "export type LocalWorkLedgerReadBindingOptions = { readonly available: false; readonly reason: string; } | { readonly available: true; readonly projectId: string; readonly actorId: string; readonly service: Pick<WorkLedgerService, 'readSnapshot' | 'history' | 'subscribe'>; readonly authority: WorkLedgerAuthority; }; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
+    },
+    {
       "name": "WorkEvidenceReference",
       "kind": "type",
       "text": "export type WorkEvidenceReference = z.infer<typeof evidenceReferenceSchema>; ;; via output = export type output<T> = T extends { _zod: { output: any; }; } ? T[\"_zod\"][\"output\"] : unknown;"
@@ -74305,6 +74310,31 @@
       "text": "export interface WorkLedgerHostIdentity { readonly actorId: string; readonly projectId: string; readonly role: 'coordinator' | 'worker' | 'verifier'; }"
     },
     {
+      "name": "WorkLedgerReadBinding",
+      "kind": "type",
+      "text": "export type WorkLedgerReadBinding = { readonly available: true; readonly client: WorkLedgerReadClient; } | { readonly available: false; readonly reason: string; };"
+    },
+    {
+      "name": "WorkLedgerReadClient",
+      "kind": "interface",
+      "required": [
+        "dispose",
+        "history",
+        "projectId",
+        "readSnapshot",
+        "subscribe"
+      ],
+      "text": "export interface WorkLedgerReadClient { readonly projectId: string; readSnapshot(): Promise<WorkLedgerReadSnapshot>; history(afterSequence: number): Promise<readonly WorkLedgerEvent[]>; subscribe(listener: (snapshot: WorkLedgerReadSnapshot) => void): () => void; dispose(): void; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "WorkLedgerReadSnapshot",
+      "kind": "interface",
+      "required": [
+        "works"
+      ],
+      "text": "export interface WorkLedgerReadSnapshot extends Omit<WorkLedgerSnapshot, 'works'> { readonly works: readonly Omit<WorkLedgerView, 'allowedActions'>[]; } ;; via Omit = type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;"
+    },
+    {
       "name": "WorkLedgerRejection",
       "kind": "type",
       "text": "export type WorkLedgerRejection = 'invalid_command' | 'forbidden' | 'conflict' | 'stale_evidence' | 'not_found' | 'invalid_transition' | 'request_conflict' | 'cancelled' | 'closed' | 'invalid_state' | 'host_error';"
@@ -74378,6 +74408,11 @@
       "name": "createEmptyWorkLedgerState",
       "kind": "function",
       "text": "export declare function createEmptyWorkLedgerState(projectId: string): WorkLedgerState;"
+    },
+    {
+      "name": "createLocalWorkLedgerReadBinding",
+      "kind": "function",
+      "text": "export declare function createLocalWorkLedgerReadBinding(options: LocalWorkLedgerReadBindingOptions): WorkLedgerReadBinding;"
     },
     {
       "name": "createWorkLedger",

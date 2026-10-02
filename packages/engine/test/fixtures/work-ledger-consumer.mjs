@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {
   createEmptyWorkLedgerState,
   createWorkLedger,
+  createLocalWorkLedgerReadBinding,
   WorkLedgerAccessError,
   workLedgerCommandSchema,
   workLedgerStateSchema,
@@ -48,6 +49,17 @@ try {
   assert.equal(snapshot.works.length, 1);
   assert.equal(snapshot.works[0].work.title, command.title);
   assert.deepEqual(await service.history(0, actor), [receipt.event]);
+  const binding = createLocalWorkLedgerReadBinding({ available: true, projectId, actorId: 'reader', service, authority });
+  assert.equal(binding.available, true);
+  assert.equal(binding.client.projectId, projectId);
+  assert.equal((await binding.client.readSnapshot()).revision, 1);
+  assert.equal('allowedActions' in (await binding.client.readSnapshot()).works[0], false);
+  assert.equal('execute' in binding.client, false);
+  assert.deepEqual(await binding.client.history(0), [receipt.event]);
+  binding.client.dispose();
+  await assert.rejects(binding.client.readSnapshot(), error => error.code === 'closed');
+  assert.equal((await service.readSnapshot(actor)).revision, 1);
+  assert.deepEqual(createLocalWorkLedgerReadBinding({ available: false, reason: 'Host unavailable' }), { available: false, reason: 'Host unavailable' });
   authority.revokeActor(actor);
   await assert.rejects(service.readSnapshot(actor), (error) =>
     error instanceof WorkLedgerAccessError && error.code === 'forbidden');
