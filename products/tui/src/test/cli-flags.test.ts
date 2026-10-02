@@ -1,3 +1,4 @@
+import { seedProviderMetadataCacheFixture } from './helpers/provider-metadata-cache-fixture.ts';
 import { describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -24,6 +25,7 @@ async function captureGoodVibesCliCommand(args: readonly string[], configManager
   const originalLog = console.log;
   try {
     console.log = (value?: unknown) => { logs.push(String(value)); };
+    seedProviderMetadataCacheFixture({ configManager, homeDirectory: root, workingDirectory: root });
     const result = await handleGoodVibesCliCommand({
       cli: parseGoodVibesCli(args),
       configManager,
@@ -320,6 +322,7 @@ describe('parseCliFlags', () => {
     const originalLog = console.log;
     try {
       console.log = () => {};
+      seedProviderMetadataCacheFixture({ configManager, homeDirectory: root, workingDirectory: root });
       const result = await handleGoodVibesCliCommand({
         cli,
         configManager,
@@ -357,6 +360,7 @@ describe('parseCliFlags', () => {
     const originalLog = console.log;
     try {
       console.log = () => {};
+      seedProviderMetadataCacheFixture({ configManager, homeDirectory: root, workingDirectory: root });
       const result = await handleGoodVibesCliCommand({
         cli,
         configManager,
@@ -387,6 +391,7 @@ describe('parseCliFlags', () => {
     const originalLog = console.log;
     try {
       console.log = () => {};
+      seedProviderMetadataCacheFixture({ configManager, homeDirectory: root, workingDirectory: root });
       const result = await handleGoodVibesCliCommand({
         cli,
         configManager,
@@ -517,6 +522,7 @@ describe('parseCliFlags', () => {
     const originalLog = console.log;
     try {
       console.log = (value?: unknown) => { logs.push(String(value)); };
+      seedProviderMetadataCacheFixture({ configManager, homeDirectory: root, workingDirectory: root });
       const result = await handleGoodVibesCliCommand({
         cli,
         configManager,

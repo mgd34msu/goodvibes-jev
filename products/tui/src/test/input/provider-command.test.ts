@@ -1,3 +1,4 @@
+import { seedProviderMetadataCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { CommandContext } from '../../input/command-registry.ts';
 import { providerCommand } from '../../input/commands/provider.ts';
@@ -15,6 +16,7 @@ disposeTestRuntimeServicesAfterAll();
 
 function createProviderCommandContext(output: string[]): CommandContext {
   const runtimeServices = getTestRuntimeServices();
+  seedProviderMetadataCacheFixture({ configManager: runtimeServices.configManager, homeDirectory: runtimeServices.homeDirectory, workingDirectory: runtimeServices.workingDirectory });
   runtimeServices.providerRegistry.initModelLimits();
   runtimeServices.providerRegistry.initCatalog();
   return {
