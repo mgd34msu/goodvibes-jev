@@ -346,7 +346,33 @@ export interface ProjectPlanningEvaluateInput extends ProjectPlanningSpaceInput 
   readonly planningId?: string | undefined;
 }
 
+/** Opaque complete-source binding; a revision is a precondition, not authority. */
+export interface ProjectPlanningRevision {
+  readonly sourceId: string;
+  readonly generation: string;
+}
+
+export type ProjectPlanningStateExpectation =
+  | { readonly kind: 'revision'; readonly revision: ProjectPlanningRevision }
+  | { readonly kind: 'current' };
+
+export type ProjectPlanningStateAction =
+  | { readonly kind: 'approve' }
+  | { readonly kind: 'answer'; readonly questionId?: string | undefined; readonly questionIndex?: number | undefined; readonly answer: string };
+
+export interface ProjectPlanningStateActionInput extends ProjectPlanningSpaceInput {
+  readonly planningId?: string | undefined;
+  readonly expected: ProjectPlanningStateExpectation;
+  readonly action: ProjectPlanningStateAction;
+}
+
+export type ProjectPlanningStateActionResult =
+  | { readonly ok: true; readonly applied: true; readonly state: ProjectPlanningState; readonly revision: ProjectPlanningRevision; readonly evaluation: ProjectPlanningEvaluation; readonly question?: ProjectPlanningQuestion | undefined }
+  | { readonly ok: true; readonly applied: false; readonly reason: 'state-changed' | 'pending-local-changes' | ProjectPlanningAnswerFailureReason; readonly state: ProjectPlanningState | null; readonly revision?: ProjectPlanningRevision | undefined };
+
 export interface ProjectPlanningStateResult {
+  /** Absent on legacy readers; view-selected mutations must require it. */
+  readonly revision?: ProjectPlanningRevision | undefined;
   readonly ok: true;
   readonly projectId: string;
   readonly knowledgeSpaceId: string;
@@ -373,7 +399,9 @@ export type ProjectPlanningAnswerFailureReason =
   | 'no-state'
   | 'empty-answer'
   | 'missing-selector'
-  | 'question-not-found';
+  | 'question-not-found'
+  | 'state-changed'
+  | 'pending-local-changes';
 
 export interface ProjectPlanningAnswerResult {
   readonly ok: true;
