@@ -47,4 +47,3 @@ export async function compileBunBinary(root: string, args: readonly string[]): P
   });
   if (!result.success) throw new AggregateError(result.logs, 'Bun compilation failed');
 }
-
