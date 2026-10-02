@@ -44,7 +44,7 @@ function makeNode(overrides: Partial<ProcessNode> & { id: string }): ProcessNode
 
 describe('steerBadgeGlyph / steerBadgeTone', () => {
   test('every status maps to a distinct, non-empty glyph', () => {
-    const statuses: SteerBadgeStatus[] = ['queued', 'consumed', 'dropped'];
+    const statuses: SteerBadgeStatus[] = ['queued', 'accepted', 'consumed', 'dropped'];
     const glyphs = statuses.map(steerBadgeGlyph);
     expect(glyphs.every((g) => g.length > 0)).toBe(true);
     expect(new Set(glyphs).size).toBe(statuses.length);
@@ -53,6 +53,7 @@ describe('steerBadgeGlyph / steerBadgeTone', () => {
   test('tone falls back to the DEFAULT_VIEW_PALETTE when the given palette omits the optional tone fields', () => {
     const bare = { label: '#fff', value: '#fff', dim: '#888', info: '#0af', empty: '#000' };
     expect(steerBadgeTone('queued', bare)).toBe(DEFAULT_VIEW_PALETTE.warn);
+    expect(steerBadgeTone('accepted', bare)).toBe(bare.info);
     expect(steerBadgeTone('consumed', bare)).toBe(DEFAULT_VIEW_PALETTE.good);
     expect(steerBadgeTone('dropped', bare)).toBe(DEFAULT_VIEW_PALETTE.bad);
   });

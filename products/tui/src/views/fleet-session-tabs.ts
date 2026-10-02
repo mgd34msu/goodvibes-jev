@@ -32,9 +32,10 @@ export function isAttachableFleetKind(kind: ProcessKind): kind is FleetAttachabl
 }
 
 /**
- * Lifecycle of a queued steer message, tracked
- * per-tab. `queued` means `ProcessRegistry.steer()` accepted the message
- * onto the target's inbox, NOT that the agent has seen it, that is the
+ * Lifecycle of a steer receipt, tracked per-tab. `accepted` records ACP-host
+ * or wake admission with delivery unknown; it has no bus expiry/consumption
+ * inference and remains until replaced or the tab closes. `queued` is only
+ * for a real message-bus receipt, NOT evidence the agent has seen it. That is the
  * later, honest `consumed` transition (a `COMMUNICATION_CONSUMED` runtime-bus
  * event matching this badge's `messageId`). `dropped` is a TUI-side
  * inference: the SDK emits no "expired"/"cancelled" signal for a queued
@@ -44,12 +45,14 @@ export function isAttachableFleetKind(kind: ProcessKind): kind is FleetAttachabl
  * src/input/agents-modal.ts reconcileSteerBadges, cross-WO note: the SDK engineer
  * confirmed no dropped signal exists).
  */
-export type SteerBadgeStatus = 'queued' | 'consumed' | 'dropped';
+export type SteerBadgeStatus = 'queued' | 'accepted' | 'consumed' | 'dropped';
 
 /** A tab's steer-message badge state (null on the tab = no active/recent steer). */
 export interface SteerBadge {
   readonly messageId: string;
   readonly status: SteerBadgeStatus;
+  /** Host/wake acceptance is a receipt, not message-bus delivery evidence. */
+  readonly acceptedVia?: 'acp-host' | 'wake' | 'runtime';
   /** Present for 'dropped', a one-line honest explanation shown in the tab. */
   readonly note?: string;
   /** epoch ms when status left 'queued' (consumed or dropped), drives the Agents modal's linger-then-clear tick. */

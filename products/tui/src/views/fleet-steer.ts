@@ -9,7 +9,7 @@
 // module rather than duplicating the logic inline.
 // ---------------------------------------------------------------------------
 
-import { STEER_TTL_MS, type ProcessNode } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
+import { STEER_TTL_MS, type ProcessNode, type ProcessKind, type SteerResult } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
 import { isTerminalProcessState } from './fleet-read-model.ts';
 import type { FleetTab, SteerBadge, SteerBadgeStatus } from './fleet-session-tabs.ts';
 import { buildViewLine, DEFAULT_VIEW_PALETTE, type ViewPalette } from './polish.ts';
@@ -21,6 +21,7 @@ export const STEER_BADGE_LINGER_MS = 4_000;
 export function steerBadgeGlyph(status: SteerBadgeStatus): string {
   switch (status) {
     case 'queued': return '⧗';
+    case 'accepted': return '↗';
     case 'consumed': return '✓';
     case 'dropped': return '⚠';
   }
@@ -29,6 +30,7 @@ export function steerBadgeGlyph(status: SteerBadgeStatus): string {
 export function steerBadgeTone(status: SteerBadgeStatus, palette: ViewPalette): string {
   switch (status) {
     case 'queued': return palette.warn ?? DEFAULT_VIEW_PALETTE.warn;
+    case 'accepted': return palette.info;
     case 'consumed': return palette.good ?? DEFAULT_VIEW_PALETTE.good;
     case 'dropped': return palette.bad ?? DEFAULT_VIEW_PALETTE.bad;
   }
@@ -49,20 +51,36 @@ export function steerRefusalMessage(reason: string, siblingLabels: readonly stri
   return `${reason}.${suggestion}`;
 }
 
-/** One-line honest status for a tab's steer badge; the queued line names the target and points at the ⧗ delivery badge (WO item 4). */
-export function renderSteerBadgeLine(badge: SteerBadge, width: number, palette: ViewPalette, targetLabel?: string): Line {
-  const glyph = steerBadgeGlyph(badge.status);
-  const tone = steerBadgeTone(badge.status, palette);
+/** Only receipts backed by the message bus receive its delivery/expiry tracking. */
+export function steerBadgeFromReceipt(
+  result: Extract<SteerResult, { readonly queued: true }>,
+  kind: ProcessKind | undefined,
+  now: number,
+): SteerBadge {
+  if (result.woke) return { messageId: result.messageId, status: 'accepted', acceptedVia: 'wake' };
+  if (kind === 'acp-agent') return { messageId: result.messageId, status: 'accepted', acceptedVia: 'acp-host' };
+  if (kind === 'agent' || kind === 'contract-unit') return { messageId: result.messageId, status: 'queued', queuedAt: now };
+  return { messageId: result.messageId, status: 'accepted', acceptedVia: 'runtime' };
+}
+
+export function steerReceiptLabel(badge: SteerBadge, targetLabel?: string): string {
   const forTarget = targetLabel ? ` for ${targetLabel}` : '';
-  const label = badge.status === 'queued'
-    ? `steer queued${forTarget}: delivers on its next turn (watch the ${glyph} badge)`
-    : badge.status === 'consumed'
-      ? 'steer consumed'
-      : `steer dropped: ${badge.note ?? 'the target ended before delivery'}`;
+  if (badge.status === 'accepted') {
+    const origin = badge.acceptedVia === 'acp-host' ? 'ACP host accepted the steer'
+      : badge.acceptedVia === 'wake' ? 'Wake accepted' : 'Runtime accepted the steer';
+    return `${origin}; delivery unknown${forTarget}.`;
+  }
+  if (badge.status === 'queued') return `Steer queued; the delivery badge tracks consumption${forTarget}.`;
+  if (badge.status === 'consumed') return 'Steer consumed';
+  return `Steer dropped: ${badge.note ?? 'the target ended before delivery'}`;
+}
+
+/** One receipt label shared by the actual modal and standalone line renderer. */
+export function renderSteerBadgeLine(badge: SteerBadge, width: number, palette: ViewPalette, targetLabel?: string): Line {
   return buildViewLine(width, [
     [' ', palette.dim],
-    [glyph, tone],
-    [` ${label}`, palette.dim],
+    [steerBadgeGlyph(badge.status), steerBadgeTone(badge.status, palette)],
+    [` ${steerReceiptLabel(badge, targetLabel)}`, palette.dim],
   ]);
 }
 

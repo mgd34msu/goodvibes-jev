@@ -43,7 +43,7 @@ import type { FleetSpawn } from '../views/fleet-spawn.ts';
 import {
   activeFleetTab, attachFleetTab, EMPTY_FLEET_TABS_STATE, isAttachableFleetKind, stepFleetTab, type FleetTab, type FleetTabsState,
 } from '../views/fleet-session-tabs.ts';
-import { liveSteerableLabels, reconcileSteerBadges, steerBadgeGlyph, steerRefusalMessage } from '../views/fleet-steer.ts';
+import { liveSteerableLabels, reconcileSteerBadges, steerBadgeGlyph, steerRefusalMessage, steerBadgeFromReceipt, steerReceiptLabel } from '../views/fleet-steer.ts';
 import { FleetStopTracker, fleetKillConfirmArgs, fleetStateDisplay, toggleFleetPause } from '../views/fleet-stop.ts';
 import { formatFleetCost, renderFleetDetailLines } from '../views/fleet-format.ts';
 import { hasFleetCost } from '../views/fleet-read-model.ts';
@@ -113,6 +113,7 @@ export class AgentsModal implements SurfaceModal {
   readonly stopTracker = new FleetStopTracker();
   private readonly unsubs: Array<() => void> = [];
   private tickTimer: ReturnType<typeof setInterval> | null = null;
+  private closed = false;
 
   constructor(private readonly deps: AgentsModalDeps) {
     this.unsubs.push(deps.readModel.subscribe(() => { this.onFleetChange(); deps.requestRender(); }));
@@ -131,6 +132,7 @@ export class AgentsModal implements SurfaceModal {
   }
 
   onClose(): void {
+    this.closed = true;
     this.deps.spawn?.cancel();
     for (const unsub of this.unsubs) unsub();
     this.unsubs.length = 0;
@@ -317,23 +319,28 @@ export class AgentsModal implements SurfaceModal {
       this.say('Sent to the hosted session.');
       return;
     }
+    const submittedKind = this.findNode(steer.id)?.kind;
     const result = this.deps.actions.steer(steer.id, text);
+    // A synchronous host callback can close this modal or replace the composer.
+    // Its receipt must not overwrite a newer target/draft or paint a closed view.
+    if (this.closed || this.steer !== steer) return;
     if (!result.queued) {
       // The draft stays so nothing typed is lost.
       const siblings = liveSteerableLabels(this.deps.readModel.getSnapshot().rows.map((row) => row.node), steer.id);
       this.say(steerRefusalMessage(result.reason, siblings), 'error');
       return;
     }
+    const badge = steerBadgeFromReceipt(result, submittedKind, Date.now());
     const node = this.findNode(steer.id);
     if (node) {
       const keep = this.tabs.activeTabIndex;
       this.tabs = attachFleetTab(this.tabs, node);
       if (this.level() !== 'full' || keep === 0) this.tabs = { tabs: this.tabs.tabs, activeTabIndex: keep };
       const tab = this.tabs.tabs.find((t) => t.nodeId === steer.id);
-      if (tab) tab.steerBadge = { messageId: result.messageId, status: 'queued', queuedAt: Date.now() };
+      if (tab) tab.steerBadge = badge;
     }
     this.steer = null;
-    this.say(`Steer queued for ${node?.label ?? steer.id}: it arrives at its next turn (⧗ until then).`);
+    this.say(steerReceiptLabel(badge, node?.label ?? steer.id));
   }
 
   /** x / ctrl+x: stop the node and its descendants, after asking. */
