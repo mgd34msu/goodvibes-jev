@@ -154,17 +154,18 @@ describe('createDomainDispatch', () => {
     const store = createRuntimeStore();
     const dispatch = createDomainDispatch(store);
 
-    dispatch.dispatchPermissionEvent({
-      type: 'PERMISSION_REQUESTED',
+    dispatch.dispatchGateEvent({
+      type: 'GATE_REQUESTED',
       callId: 'call-2',
       tool: 'exec',
       args: { cmd: 'ls' },
-      category: 'exec',
+      category: 'execute',
     });
-    dispatch.dispatchPermissionEvent({
+    dispatch.dispatchGateEvent({
       type: 'DECISION_EMITTED',
       callId: 'call-2',
       tool: 'exec',
+      category: 'execute',
       approved: true,
       source: 'user_prompt',
     });
@@ -273,79 +274,63 @@ describe('createDomainDispatch', () => {
     expect(state.daemon.transportState).toBe('connected');
   });
 
-  test('tracks orchestration graphs, node state, and recursion guard evidence', () => {
+  test('tracks contract groups, unit progress, checks and spawn-guard evidence', () => {
     const store = createRuntimeStore();
     const dispatch = createDomainDispatch(store);
-
-    dispatch.dispatchOrchestrationEvent({
-      type: 'ORCHESTRATION_GRAPH_CREATED',
-      graphId: 'graph-1',
-      title: 'Graph run',
-      mode: 'graph-execute',
+    dispatch.dispatchContractEvent({ type: 'CONTRACT_CREATED', contractId: 'contract-1', sessionId: 'session-1', origin: 'turn', ask: 'Repair the fixture', ownerAgentId: 'owner-1' });
+    dispatch.dispatchContractEvent({
+      type: 'CONTRACT_PLANNED', contractId: 'contract-1', goal: 'A validated repair', repair: 0,
+      criteria: [{ id: 'criterion-1', text: 'The test passes', origin: 'stated', serves: [], disposition: 'judged' }],
+      groups: [{ id: 'group-1', title: 'Repair', kind: 'work', dependsOn: [], unitIds: ['unit-1', 'unit-2'] }],
+      units: [
+        { id: 'unit-1', groupId: 'group-1', title: 'Implement', role: 'implement', dependsOn: [], attempts: 1 },
+        { id: 'unit-2', groupId: 'group-1', title: 'Integrate', role: 'integration', dependsOn: ['unit-1'], attempts: 1 },
+      ],
     });
-    dispatch.dispatchOrchestrationEvent({
-      type: 'ORCHESTRATION_NODE_ADDED',
-      graphId: 'graph-1',
-      nodeId: 'node-1',
-      title: 'Engineer node',
-      role: 'engineer',
+    dispatch.dispatchContractEvent({ type: 'CONTRACT_STATUS_CHANGED', contractId: 'contract-1', from: 'queued', to: 'running' });
+    dispatch.dispatchContractEvent({ type: 'CONTRACT_GROUP_STATUS_CHANGED', contractId: 'contract-1', groupId: 'group-1', from: 'pending', to: 'running' });
+    dispatch.dispatchContractEvent({ type: 'CONTRACT_UNIT_STATUS_CHANGED', contractId: 'contract-1', groupId: 'group-1', unitId: 'unit-1', from: 'pending', to: 'running', agentId: 'agent-1' });
+    dispatch.dispatchContractEvent({ type: 'CONTRACT_UNIT_STATUS_CHANGED', contractId: 'contract-1', groupId: 'group-1', unitId: 'unit-2', from: 'pending', to: 'blocked' });
+    dispatch.dispatchContractEvent({
+      type: 'CONTRACT_CHECKED', contractId: 'contract-1', scope: 'unit', targetId: 'unit-1', checkId: 'check-1', trigger: 'completion', result: 'pass',
+      criteria: [{ criterionId: 'criterion-1', verdict: 'met', probabilityUnmet: 0.01, outcome: 'act' }],
+      goal: { verdict: 'met', outcome: 'act' }, quality: [], gates: [], decisionIds: [],
     });
-    dispatch.dispatchOrchestrationEvent({
-      type: 'ORCHESTRATION_NODE_ADDED',
-      graphId: 'graph-1',
-      nodeId: 'node-2',
-      title: 'Reviewer node',
-      role: 'reviewer',
-      dependsOn: ['node-1'],
-    });
-    dispatch.dispatchOrchestrationEvent({
-      type: 'ORCHESTRATION_NODE_READY',
-      graphId: 'graph-1',
-      nodeId: 'node-1',
-    });
-    dispatch.dispatchOrchestrationEvent({
-      type: 'ORCHESTRATION_NODE_STARTED',
-      graphId: 'graph-1',
-      nodeId: 'node-1',
-      agentId: 'agent-1',
-      taskId: 'task-1',
-    });
-    dispatch.dispatchOrchestrationEvent({
-      type: 'ORCHESTRATION_NODE_PROGRESS',
-      graphId: 'graph-1',
-      nodeId: 'node-1',
-      message: 'gathered files',
-    });
-    dispatch.dispatchOrchestrationEvent({
-      type: 'ORCHESTRATION_RECURSION_GUARD_TRIGGERED',
-      graphId: 'graph-1',
-      nodeId: 'node-1',
-      depth: 2,
-      activeAgents: 9,
-      reason: 'breadth limit',
-    });
-    dispatch.dispatchOrchestrationEvent({
-      type: 'ORCHESTRATION_NODE_COMPLETED',
-      graphId: 'graph-1',
-      nodeId: 'node-1',
-      summary: 'done',
-    });
-    dispatch.dispatchOrchestrationEvent({
-      type: 'ORCHESTRATION_NODE_BLOCKED',
-      graphId: 'graph-1',
-      nodeId: 'node-2',
-      reason: 'awaiting review input',
-    });
+    dispatch.dispatchContractEvent({ type: 'CONTRACT_UNIT_STATUS_CHANGED', contractId: 'contract-1', groupId: 'group-1', unitId: 'unit-1', from: 'running', to: 'passed' });
+    dispatch.dispatchContractEvent({ type: 'CONTRACT_SPAWN_GUARD_TRIGGERED', contractId: 'contract-1', agentId: 'agent-1', depth: 2, activeAgents: 9, reason: 'breadth limit' });
 
     const state = store.getState();
-    const graph = state.orchestration.graphs.get('graph-1');
-    expect(graph?.status).toBe('blocked');
-    expect(graph?.nodes.get('node-1')?.status).toBe('completed');
-    expect(graph?.nodes.get('node-1')?.latestMessage).toBe('done');
-    expect(graph?.nodes.get('node-2')?.dependencyNodeIds).toEqual(['node-1']);
-    expect(graph?.lastRecursionGuard?.reason).toBe('breadth limit');
-    expect(state.orchestration.recursionGuardTrips).toBe(1);
-    expect(state.orchestration.activeGraphIds).toEqual(['graph-1']);
+    const contract = state.contracts.contracts.get('contract-1');
+    expect(contract?.status).toBe('running');
+    expect(contract?.ownerAgentId).toBe('owner-1');
+    expect(contract?.groups.get('group-1')?.unitIds).toEqual(['unit-1', 'unit-2']);
+    expect(contract?.units.get('unit-1')?.status).toBe('passed');
+    expect(contract?.units.get('unit-1')?.agentId).toBe('agent-1');
+    expect(contract?.units.get('unit-1')?.lastCheckId).toBe('check-1');
+    expect(contract?.units.get('unit-1')?.verdicts).toEqual({ 'criterion-1': 'met' });
+    expect(contract?.units.get('unit-2')?.status).toBe('blocked');
+    expect(state.contracts.spawnGuardTrips).toBe(1);
+    expect(state.contracts.activeContractIds).toEqual(['contract-1']);
+  });
+
+  test('keeps owner escalation and terminal contract outcomes distinct', () => {
+    const store = createRuntimeStore();
+    const dispatch = createDomainDispatch(store);
+    dispatch.dispatchContractEvent({ type: 'CONTRACT_CREATED', contractId: 'waiting', sessionId: 'session-1', origin: 'turn', ask: 'Repair', ownerAgentId: 'owner-1' });
+    dispatch.dispatchContractEvent({ type: 'CONTRACT_ESCALATED', contractId: 'waiting', escalationId: 'question-1', scope: 'deliverable', targetId: 'waiting', reason: 'owner-decision-needed', question: 'Proceed?', unmetCriterionIds: [] });
+    expect(store.getState().contracts.contracts.get('waiting')?.openEscalations).toMatchObject([{ escalationId: 'question-1', question: 'Proceed?' }]);
+    dispatch.dispatchContractEvent({ type: 'CONTRACT_OWNER_REPLIED', contractId: 'waiting', escalationId: 'question-1', reading: 'approve', outcome: 'act', action: 'approved' });
+    expect(store.getState().contracts.contracts.get('waiting')?.openEscalations).toEqual([]);
+    dispatch.dispatchContractEvent({ type: 'CONTRACT_PASSED', contractId: 'waiting', criteriaMet: 1, criteriaJudged: 1, excluded: 0, nudges: 0 });
+    dispatch.dispatchContractEvent({ type: 'CONTRACT_FAILED', contractId: 'failed', reason: 'Reader unavailable', failureKind: 'judgment-unavailable', membersSettled: true });
+    dispatch.dispatchContractEvent({ type: 'CONTRACT_CANCELLED', contractId: 'cancelled', reason: 'Owner stopped work', filesModified: 0 });
+    const state = store.getState().contracts;
+    expect(state.activeContractIds).toEqual([]);
+    expect([state.totalPassed, state.totalFailed, state.totalCancelled]).toEqual([1, 1, 1]);
+    expect(state.contracts.get('failed')?.failureKind).toBe('judgment-unavailable');
+    expect(state.contracts.get('failed')?.reason).toBe('Reader unavailable');
+    expect(state.contracts.get('cancelled')?.status).toBe('cancelled');
+    expect(state.contracts.get('cancelled')?.reason).toBe('Owner stopped work');
   });
 
   test('tracks structured communication history and blocked-route evidence', () => {
@@ -362,7 +347,7 @@ describe('createDomainDispatch', () => {
       content: 'Please address findings.',
       fromRole: 'reviewer',
       toRole: 'engineer',
-      wrfcId: 'wrfc-1',
+      contractId: 'contract-1',
     });
     dispatch.dispatchCommunicationEvent({
       type: 'COMMUNICATION_DELIVERED',
@@ -390,6 +375,7 @@ describe('createDomainDispatch', () => {
     expect(state.communication.recentRecordIds).toEqual(['comm-2', 'comm-1']);
     expect(state.communication.records.get('comm-1')?.status).toBe('delivered');
     expect(state.communication.records.get('comm-1')?.kind).toBe('review');
+    expect(state.communication.records.get('comm-1')?.contractId).toBe('contract-1');
     expect(state.communication.records.get('comm-2')?.status).toBe('blocked');
     expect(state.communication.records.get('comm-2')?.reason).toContain('broadcast');
   });
