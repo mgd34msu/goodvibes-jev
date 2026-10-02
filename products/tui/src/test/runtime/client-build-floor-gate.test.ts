@@ -13,8 +13,9 @@
  * Driven through the real broker rather than a stand-in runner: a copy of the
  * runner would pass this test while the shipped one spawned anyway.
  */
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
+  applyTestAgentExecutor,
   disposeTestRuntimeServicesAfterAll,
   getTestRuntimeServices,
   resetTestRuntimeServices,
@@ -24,7 +25,20 @@ disposeTestRuntimeServicesAfterAll();
 
 // The guard latches for the lifetime of the graph it belongs to, so every test
 // builds its own rather than inheriting a latch from the one before it.
-beforeEach(() => resetTestRuntimeServices());
+const releaseAgents: Array<() => void> = [];
+beforeEach(() => {
+  resetTestRuntimeServices();
+  // No external work: keep this executor busy until teardown while the real
+  // broker controls when queued continuation requests may be admitted.
+  applyTestAgentExecutor({ runAgent: async (record) => {
+    record.status = 'running';
+    await new Promise<void>(resolve => { releaseAgents.push(resolve); });
+  } });
+});
+afterEach(() => {
+  for (const release of releaseAgents.splice(0)) release();
+  applyTestAgentExecutor(null);
+});
 
 const FROM_A_CHANNEL = { surfaceKind: 'telegram' as const, surfaceId: 'surface:telegram:test' };
 
@@ -55,7 +69,8 @@ async function bindRunningAgent(
   sessionId: string,
   task: string,
 ): Promise<string> {
-  const record = services.agentManager.spawn({ mode: 'spawn', task });
+  const record = services.agentManager.spawn({ mode: 'spawn', task, outsideContract: true });
+  expect(record.status).toBe('running');
   await services.sessionBroker.bindAgent(sessionId, record.id);
   return record.id;
 }
