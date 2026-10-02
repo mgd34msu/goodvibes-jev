@@ -120,3 +120,27 @@ test('rapid discovery keys share one read; current discovery errors stay visible
  expect(f.notes).toEqual(['Could not list ACP agents: current discovery failed']);
  expect(f.spawn.spawnModeActive()).toBe(false); f.host.clear();
 });
+
+for (const settlement of ['resolve', 'reject'] as const) {
+ test(`filtered list Escape invalidates pending discovery ${settlement} while clearing query`, async () => {
+  const pending = deferred<readonly AcpDiscoveredAgent[]>();
+  const f = setup({ listAgents: () => pending.promise });
+  f.host.handleToken({ type: 'text', value: '/' }); f.host.handleToken({ type: 'text', value: 'review' }); f.host.handleToken(key('enter'));
+  f.host.handleToken({ type: 'text', value: 'n' }); f.host.escape();
+  expect(f.host.depth).toBe(1); const renders = f.renders();
+  if (settlement === 'resolve') pending.resolve([agent]); else pending.reject(new Error('obsolete discovery'));
+  await flush(); expect(f.spawn.spawnModeActive()).toBe(false); expect(f.notes).toEqual([]); expect(f.renders()).toBe(renders); f.host.clear();
+ });
+ test(`Escape dismisses an admitted create UI but retains its honest ${settlement} receipt`, async () => {
+  const pending = deferred<Awaited<ReturnType<AcpSpawnGateway['createSession']>>>(); let creates = 0;
+  const f = setup({ createSession: () => { creates++; return pending.promise; } });
+  f.host.handleToken({ type: 'text', value: 'n' }); await flush(); f.host.handleToken(key('enter')); await flush(); f.host.handleToken(key('enter'));
+  expect(creates).toBe(1); f.host.escape(); expect(f.spawn.spawnModeActive()).toBe(false);
+  const renders = f.renders();
+  if (settlement === 'resolve') pending.resolve({ hosted: { id: 'synthetic-created', agentId: agent.id, title: agent.title, binaryPath: agent.binaryPath, cwd: '/synthetic/current', state: 'starting', startedAt: 1, promptCount: 0 }, started: true });
+  else pending.reject(new Error('admitted create failed'));
+  await flush(); expect(f.spawn.spawnModeActive()).toBe(false); expect(f.renders()).toBe(renders);
+  expect(f.notes).toHaveLength(1); expect(f.notes[0]).toContain(settlement === 'resolve' ? 'Hosting Synthetic agent' : 'admitted create failed');
+  expect(creates).toBe(1); f.host.clear();
+ });
+}

@@ -162,9 +162,9 @@ export class FleetSpawn {
 
   /** Input while the spawn picker is active. Absorbs every key it owns. */
   public handleSpawnInput(key: string): boolean {
-    if (!this.mode || this.creating) return true;
+    if (!this.mode) return true;
     if (key === 'escape' || key === 'esc') { this.cancel(); this.deps.markDirty(); return true; }
-    if (this.reading) return true;
+    if (this.creating || this.reading) return true;
     const list = this.mode.step === 'agent' ? this.mode.agents : this.mode.candidates;
     if (key === 'up' || key === 'k') { this.mode.index = (this.mode.index - 1 + list.length) % list.length; this.deps.markDirty(); return true; }
     if (key === 'down' || key === 'j') { this.mode.index = (this.mode.index + 1) % list.length; this.deps.markDirty(); return true; }

@@ -401,6 +401,9 @@ export class AgentsModal implements SurfaceModal {
   // ── Keys ───────────────────────────────────────────────────────────────────
 
   escape(): boolean {
+    // Discovery owns no visible picker yet; Escape must invalidate it even
+    // when another sub-level (filter/query/tab) consumes this key.
+    if (!this.deps.spawn?.spawnModeActive()) this.deps.spawn?.cancel();
     if (this.steer) { this.steer = null; return true; }
     if (this.deps.acts?.observedSteerActive()) { this.deps.acts.handleObservedSteerInput('escape'); return true; }
     if (this.deps.acts?.pickModeActive()) { this.deps.acts.handlePickInput('escape'); return true; }
