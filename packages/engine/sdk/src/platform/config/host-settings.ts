@@ -1,14 +1,17 @@
-import { CONFIG_SCHEMA, DEFAULT_CONFIG, type ConfigKey, type ConfigSetting, type GoodVibesConfig } from './schema.js';
+import { CONFIG_SCHEMA, DEFAULT_CONFIG, type ConfigSetting, type GoodVibesConfig } from './schema.js';
 import { configKeyScope } from './config-ownership.js';
 import { ConfigError } from '../types/errors.js';
 import { readDotPath } from './shared-config-tier.js';
 import { deleteRawDotPath, writeRawDotPath } from './settings-io.js';
+import type { ConfigSetOptions, ConfigUnsubscribe } from './manager.js';
+import type { ManagedSettingLock } from '../runtime/settings/control-plane-store.js';
 
 /**
  * A surface-owned scalar leaf under an existing config category. Registration
- * is per instance, never a change to the SDK's shared schema/defaults. The
- * declared default must be the host's restrictive fallback: absent preferences,
- * malformed stored values, and failed reloads resolve to it.
+ * is per instance, never a change to the SDK's shared schema/defaults. The host
+ * owner chooses the default and must choose a restrictive fallback for a
+ * policy-sensitive setting; the SDK cannot determine what either boolean means.
+ * Absent preferences, malformed stored values, and failed reloads resolve to it.
  *
  * set/setDynamic edit an existing explicit project leaf, otherwise the global
  * leaf. setProjectValue remains explicitly project-scoped. Bulk saves preserve
@@ -20,6 +23,30 @@ export interface HostBooleanSetting {
   readonly type: 'boolean';
   readonly default: boolean;
   readonly description: string;
+}
+
+/** A validated boolean setting bound to the manager that registered its key. */
+export interface HostBooleanSettingHandle {
+  readonly key: string;
+  readonly get: () => boolean;
+  /** Current value and policy metadata; unreadable policy throws without changing it. */
+  readonly getResolved: () => HostBooleanSettingResolved;
+  /** Set the existing explicit project leaf, otherwise the global leaf. */
+  readonly set: (value: boolean, options?: ConfigSetOptions) => void;
+  /** Set the project leaf, falling back to the global leaf without a project. */
+  readonly setProjectValue: (value: boolean, options?: ConfigSetOptions) => void;
+  readonly subscribe: (callback: (next: boolean, previous: boolean) => void) => ConfigUnsubscribe;
+  /** Reset both global and explicit project leaves to the registered default. */
+  readonly reset: () => void;
+}
+
+/** Read-only host metadata; source describes the value, not a storage tier. */
+export interface HostBooleanSettingResolved {
+  readonly key: string;
+  readonly value: boolean;
+  readonly defaultValue: boolean;
+  readonly source: 'default' | 'local';
+  readonly managedLock: Readonly<Omit<ManagedSettingLock, 'key'>> | null;
 }
 
 export type HostSettingValues = Map<string, boolean>;
@@ -64,10 +91,10 @@ export class HostSettings {
   has(key: string): boolean { return this.byKey.has(key); }
   keys(): IterableIterator<string> { return this.byKey.keys(); }
 
-  schema(key: string): ConfigSetting | undefined {
+  schema(key: string): Omit<ConfigSetting, 'key'> | undefined {
     const definition = this.byKey.get(key);
     return definition ? {
-      ...definition, key: definition.key as ConfigKey,
+      type: definition.type, default: definition.default, description: definition.description,
       validate: (value: unknown) => typeof value === 'boolean', validationHint: 'literal boolean',
     } : undefined;
   }

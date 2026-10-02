@@ -408,6 +408,8 @@ function buildResolvedEntries(configManager: ConfigManager, store: SettingsContr
 
 export function getSettingsControlPlaneSnapshot(configManager: ConfigManager): SettingsControlPlaneSnapshot {
   const store = readStore(getConfigControlPlaneDir(configManager));
+  const hostKeys = new Set(configManager.getHostSettingsSchema?.().map(entry => entry.key) ?? []);
+  const managedLocks = store.managedLocks.filter(entry => !hostKeys.has(entry.key));
   const resolvedEntries = buildResolvedEntries(configManager, store);
   const profileManager = new ProfileManager(join(configManager.getControlPlaneConfigDir(), 'profiles'));
   const resolvedCounts: Record<SettingsSource, number> = {
@@ -420,12 +422,12 @@ export function getSettingsControlPlaneSnapshot(configManager: ConfigManager): S
   return {
     liveKeyCount: configManager.getSchema().length,
     profileCount: profileManager.list().length,
-    managedLockCount: store.managedLocks.length,
+    managedLockCount: managedLocks.length,
     resolvedCounts,
     lastSync: store.events[store.events.length - 1],
     recentEvents: store.events.slice(-8).reverse(),
     recentFailures: store.failures.slice(-6).reverse(),
-    managedLocks: store.managedLocks,
+    managedLocks,
     conflicts: store.conflicts.slice(-10).reverse(),
     stagedManagedBundle: store.stagedManagedBundle,
     rollbackHistory: store.rollbackHistory.slice(-8).reverse(),
