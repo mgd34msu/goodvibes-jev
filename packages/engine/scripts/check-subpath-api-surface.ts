@@ -82,6 +82,7 @@ import {
   missingFromReport,
   readManifest,
   render,
+  sameApiSurface,
   type ExportManifest,
   resolveSubpathEntryPoints,
   type Snapshot,
@@ -227,6 +228,7 @@ function check(pkg: TrackedPackage): void {
   }
 
   const committed = JSON.parse(committedText) as Snapshot;
+  const observed = JSON.parse(rendered) as Snapshot;
 
   const missing = missingFromReport(entryPoints, committed);
   if (missing.length > 0) {
@@ -241,7 +243,7 @@ function check(pkg: TrackedPackage): void {
     );
   }
 
-  if (committedText === rendered) {
+  if (committedText === rendered || sameApiSurface(committed, observed)) {
     const exports = Object.values(committed).reduce((n, e) => n + e.length, 0);
     console.log(
       `subpath-api-surface: OK, ${pkg.name}, ${Object.keys(committed).length} subpaths,`
@@ -254,7 +256,7 @@ function check(pkg: TrackedPackage): void {
     [
       `subpath-api-surface FAILED (${pkg.name}): the published subpath surface changed.`,
       '',
-      ...diffSnapshots(committed, JSON.parse(rendered) as Snapshot),
+      ...diffSnapshots(committed, observed),
       '',
       'If the change is intended, re-record it: bun run api:subpath',
     ].join('\n'),
