@@ -56,7 +56,7 @@ describe('owned fixture cleanup races', () => {
       const pid = 2147483000;
       writeFileSync(join(root, 'owned.pid'), String(pid));
       const failure = Object.assign(new Error(`Synthetic ${code}`), { code });
-      const signals: Array<NodeJS.Signals | number | undefined> = [];
+      const signals: Array<Parameters<typeof process.kill>[1]> = [];
       const originalKill = process.kill;
       const kill = spyOn(process, 'kill').mockImplementation((target, signal) => {
         if (target !== pid) return originalKill(target, signal);
