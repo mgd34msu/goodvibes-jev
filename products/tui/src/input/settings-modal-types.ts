@@ -14,6 +14,8 @@ export type SettingsCategory =
   | 'permissions'
   | 'orchestration'
   | 'planner'
+  | 'contract'
+  | 'judgment'
   | 'wrfc'
   | 'tools'
   | 'helper'
@@ -100,7 +102,7 @@ export const SETTINGS_CATEGORY_GROUPS: ReadonlyArray<{
   readonly categories: readonly SettingsCategory[];
 }> = [
   { label: 'Interface', categories: ['display', 'ui', 'behavior', 'notifications', 'permissions', 'policy', 'security'] },
-  { label: 'AI Routing', categories: ['provider', 'pricing', 'subscriptions', 'helper', 'tools', 'tts', 'voice'] },
+  { label: 'AI Routing', categories: ['provider', 'pricing', 'subscriptions', 'judgment', 'helper', 'tools', 'tts', 'voice'] },
   { label: 'Service & Network', categories: ['service', 'daemon', 'network', 'controlPlane', 'httpListener', 'web', 'relay'] },
   // 'hostedSessions' sits beside 'surfaces' and 'conversationGate': all three
   // answer "where does this conversation actually run, and who can reach it",
@@ -115,7 +117,7 @@ export const SETTINGS_CATEGORY_GROUPS: ReadonlyArray<{
   // facts held about the owner, the data occasions/plans declare lives in
   // the owner profile file itself (docs/occasions.md §3), but these SETTINGS
   // rows tune the loop, exactly like checkin's.
-  { label: 'Automation', categories: ['batch', 'automation', 'checkin', 'occasions', 'watchers', 'orchestration', 'planner', 'wrfc', 'payments'] },
+  { label: 'Automation', categories: ['batch', 'automation', 'checkin', 'occasions', 'watchers', 'orchestration', 'planner', 'contract', 'wrfc', 'payments'] },
   // 'profile' sits beside 'memory' and 'learning': all three are what the
   // platform retains about the person using it, and this is the group a reader
   // looking for "what does it know about me" already scans, Interface is
