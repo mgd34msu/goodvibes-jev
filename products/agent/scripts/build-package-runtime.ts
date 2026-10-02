@@ -1,20 +1,20 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
-import { patchBunCompileCompatibility } from './bun-compile-compat.ts';
+import { bunCompileCompatibilityFiles } from './bun-compile-compat.ts';
 
 const root = process.cwd();
 const outDir = join(root, 'dist', 'package');
 const entry = join(outDir, 'main.js');
 
 rmSync(outDir, { recursive: true, force: true });
-patchBunCompileCompatibility(root);
-
-execFileSync('bun', ['build', 'src/main.ts', '--target=bun', '--outdir', outDir], {
-  cwd: root,
-  stdio: 'inherit',
+const result = await Bun.build({
+  entrypoints: [join(root, 'src/main.ts')],
+  target: 'bun',
+  outdir: outDir,
+  files: bunCompileCompatibilityFiles(root),
 });
+if (!result.success) throw new AggregateError(result.logs, 'Agent package runtime build failed');
 
 if (!existsSync(entry)) {
   throw new Error(`package runtime build did not create ${entry}`);

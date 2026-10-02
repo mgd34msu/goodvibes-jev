@@ -33,7 +33,7 @@
     "dev": "bun run src/main.ts",
     "tui": "bun run src/main.ts",
     "dev:watch": "bun --watch src/main.ts",
-    "build": "bun build src/main.ts --target=bun --outdir dist/package",
+    "build": "bun scripts/build-package-runtime.ts",
     "build:binary": "bun scripts/build.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",

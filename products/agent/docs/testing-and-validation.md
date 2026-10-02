@@ -1,5 +1,22 @@
 # Testing and validation
 
+## Private workspace CI
+
+The monorepo builds the Agent package with `bun run --cwd products/agent build`
+and the native test artifact with `bun run --cwd products/agent build:binary --target linux-x64`.
+The shared CI build job archives that executable and its sqlite-vec library with
+commit, SHA-256 and file-mode provenance. The Bun lane restores and verifies those
+exact files, installs tmux, then runs the unchanged canonical terminal E2Es as part
+of `products:test`. Missing binaries, tmux or failed product behavior fail the lane.
+
+Build-local compatibility transforms resolve jsdom and css-tree from their actual
+dependency owners and leave installed files untouched. The compiled HTML regression
+runs the real lazy loader and extractor from an isolated directory, asserting the
+DOM extraction path and parsed metadata; only its semantic judgment port is synthetic.
+
+The standalone upstream commands and release workflows below remain historical
+recovery documentation; the current workspace manifests and root CI define active gates.
+
 ## What runs where
 
 | When | What | Command |

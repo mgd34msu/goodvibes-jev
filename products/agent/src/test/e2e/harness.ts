@@ -1,7 +1,7 @@
 /**
  * End-to-end harness: the BUILT goodvibes-agent binary in a real terminal.
  *
- * Every test here drives the compiled artifact (`bun run build`, or
+ * Every test here drives the compiled artifact (`bun run build:binary`, or
  * GOODVIBES_E2E_BINARY), never the source. The terminal is a tmux server this
  * harness owns (a private `-L` socket per session, killed on stop), which gives
  * a real pty, keystrokes, the rendered screen (capture-pane) and the raw byte
@@ -30,7 +30,7 @@ const ARTIFACT_BY_PLATFORM: Record<string, string> = {
 
 /**
  * The compiled binary under test: GOODVIBES_E2E_BINARY, else the platform
- * artifact (`bun run build:linux-x64`), else the native `bun run build` output.
+ * artifact (`bun run build:binary`), else the legacy native output.
  * Fails loudly when none has been built.
  */
 export function resolveBinary(): string {
@@ -43,7 +43,7 @@ export function resolveBinary(): string {
     ];
   const found = candidates.find((candidate) => existsSync(candidate));
   if (!found) {
-    throw new Error(`E2E: no built binary at ${candidates.join(' or ')}. Run \`bun run build\` first, or set GOODVIBES_E2E_BINARY.`);
+    throw new Error(`E2E: no built binary at ${candidates.join(' or ')}. Run \`bun run build:binary\` first, or set GOODVIBES_E2E_BINARY.`);
   }
   return found;
 }

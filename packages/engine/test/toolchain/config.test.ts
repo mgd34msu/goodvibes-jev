@@ -2,6 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import { parseToolchainConfig, resolveSdkPinConfig, resolvePerJobGreenConfig, DEFAULT_SDK_PACKAGE } from '@goodvibes-jev/engine/toolchain';
 
 describe('toolchain config', () => {
+  test('accepts an optional compile driver and rejects an empty path', () => {
+    const build = { appEntrypoint: 'src/main.ts', outDir: 'dist', addonOutDir: 'dist/lib', prebuild: [], targets: [] };
+    expect(parseToolchainConfig(JSON.stringify({ packageName: 'fixture', build })).build?.compileDriver).toBeUndefined();
+    expect(parseToolchainConfig(JSON.stringify({ packageName: 'fixture', build: { ...build, compileDriver: 'scripts/compile.ts' } })).build?.compileDriver).toBe('scripts/compile.ts');
+    expect(() => parseToolchainConfig(JSON.stringify({ packageName: 'fixture', build: { ...build, compileDriver: '' } }))).toThrow(/compileDriver/);
+  });
   test('parses a minimal config', () => {
     const config = parseToolchainConfig('{"packageName":"@pellux/goodvibes-tui"}');
     expect(config.packageName).toBe('@pellux/goodvibes-tui');
