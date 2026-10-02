@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runOwnedTestChild } from '@goodvibes-jev/engine/toolchain/test-runner';
 import { runOwnedTestChild as compatibilityOwner } from '../../scripts/owned-test-child.ts';
 import { normalizeManifest, readPackage } from '../../scripts/release-shared.ts';
+import { capturePackManifest } from '../helpers/pack-manifest-output.ts';
 
 const ENGINE = resolve(import.meta.dir, '../..');
 const REPO = resolve(ENGINE, '../..');
@@ -35,8 +36,8 @@ beforeAll(() => {
     if (existsSync(join(ENGINE, path))) cpSync(join(ENGINE, path), join(stage, path), { recursive: true });
   }
   writeFileSync(join(stage, 'package.json'), JSON.stringify(manifest, null, 2));
-  const packed = spawnSync('npm', ['pack', '--offline', '--ignore-scripts', '--json', '--pack-destination', root], {
-    cwd: stage, encoding: 'utf8', timeout: 20_000,
+  const packed = capturePackManifest('npm', ['pack', '--offline', '--ignore-scripts', '--json', '--pack-destination', root], {
+    cwd: stage, timeout: 20_000,
     env: { PATH: process.env.PATH, HOME: root, npm_config_cache: join(root, 'npm-cache') },
   });
   expect({ status: packed.status, error: packed.error?.message }, packed.stderr).toEqual({ status: 0, error: undefined });
