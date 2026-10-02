@@ -55,7 +55,7 @@ export function prepareKnowledgeSourceRecord(input: KnowledgeSourceUpsertInput, 
     return record;
 }
 
-export function writeKnowledgeSourceRow(sqlite: SQLiteStore, record: KnowledgeSourceRecord): void {
+export function writeKnowledgeSourceRow(sqlite: Pick<SQLiteStore, 'run'>, record: KnowledgeSourceRecord): void {
     sqlite.run(`
       INSERT OR REPLACE INTO knowledge_sources (
         id, connector_id, source_type, title, source_uri, canonical_uri, summary, description,

@@ -35,11 +35,18 @@ import type { MemoryRegistry } from '@goodvibes-jev/engine/sdk/platform/state';
 import type { RuntimeEventBus } from './index.js';
 import { WorkPlanStore } from '@goodvibes-jev/engine/sdk/platform/workflow';
 import { GOODVIBES_DAEMON_SURFACE_ROOT } from '../config/surface.js';
+import type { AsyncDisposalRegistry } from '@goodvibes-jev/engine/sdk/platform/runtime/disposal';
+import { createNativeWorkLedgerOwner, type NativeWorkLedgerOwner } from './work-ledger-composition.js';
 
 const REGULAR_KNOWLEDGE_DB_FILE = 'knowledge-wiki.sqlite';
 const HOME_GRAPH_KNOWLEDGE_DB_FILE = 'knowledge-home-graph.sqlite';
 
 export interface KnowledgeServicesDeps {
+  /** Acquire owners immediately, including when a later constructor fails. */
+  readonly ownership: {
+    readonly registry: AsyncDisposalRegistry;
+    ownUntilRegistered(label: string, dispose: () => void | Promise<void>): void;
+  };
   readonly configManager: ConfigManager;
   readonly providerRegistry: ProviderRegistry;
   readonly artifactStore: ArtifactStore;
@@ -66,24 +73,34 @@ export interface KnowledgeServices {
   readonly projectPlanningService: ProjectPlanningService;
   readonly projectPlanningProjectId: string;
   readonly workPlanStore: WorkPlanStore;
+  /** Trusted host-local authority; the runtime exposes only its service. */
+  readonly workLedgerOwner: NativeWorkLedgerOwner;
 }
 
 /** Construct the knowledge/wiki + home-graph stack with governor backpressure wired in. */
 export function createKnowledgeServices(deps: KnowledgeServicesDeps): KnowledgeServices {
   const { configManager, providerRegistry, artifactStore, memoryRegistry, runtimeBus, isBackgroundPaused, admitExpensiveWork } = deps;
   const knowledgeStore = new KnowledgeStore({ configManager, dbFileName: REGULAR_KNOWLEDGE_DB_FILE });
+  deps.ownership.registry.add('regular knowledge store', () => knowledgeStore.close());
   const agentKnowledgeStore = new KnowledgeStore({ configManager, dbFileName: GOODVIBES_AGENT_KNOWLEDGE_DB_FILE });
+  deps.ownership.registry.add('agent knowledge store', () => agentKnowledgeStore.close());
   const homeGraphKnowledgeStore = new KnowledgeStore({ configManager, dbFileName: HOME_GRAPH_KNOWLEDGE_DB_FILE });
+  deps.ownership.registry.add('home graph knowledge store', () => homeGraphKnowledgeStore.close());
+  const projectPlanningProjectId = projectPlanningProjectIdFromPath(deps.workingDirectory);
+  const workLedgerOwner = createNativeWorkLedgerOwner({ projectId: projectPlanningProjectId, knowledgeStore });
+  deps.ownership.registry.add('native work ledger', workLedgerOwner.close);
   const knowledgeSemanticLlm = createProviderBackedKnowledgeSemanticLlm(providerRegistry, { timeoutMs: 20_000, maxConcurrent: 1 });
   const knowledgeSemanticService = new KnowledgeSemanticService(knowledgeStore, { llm: knowledgeSemanticLlm, maxLlmSourcesPerReindex: 3, isBackgroundPaused, admitExpensiveWork });
   const homeGraphSemanticService = new KnowledgeSemanticService(homeGraphKnowledgeStore, { llm: knowledgeSemanticLlm, maxLlmSourcesPerReindex: 3, objectProfiles: HOME_GRAPH_KNOWLEDGE_EXTENSION.objectProfiles, isBackgroundPaused, admitExpensiveWork });
   const agentKnowledgeSemanticService = new KnowledgeSemanticService(agentKnowledgeStore, { llm: knowledgeSemanticLlm, maxLlmSourcesPerReindex: 3, isBackgroundPaused, admitExpensiveWork });
   const knowledgeService = new KnowledgeService(knowledgeStore, artifactStore, undefined, { memoryRegistry, runtimeBus, semanticService: knowledgeSemanticService, admitExpensiveWork });
+  deps.ownership.ownUntilRegistered('knowledge service', () => knowledgeService.dispose());
   knowledgeService.attachRuntimeBus(runtimeBus);
   const agentKnowledgeService = new KnowledgeService(agentKnowledgeStore, artifactStore, undefined, { memoryRegistry, runtimeBus, semanticService: agentKnowledgeSemanticService, admitExpensiveWork });
+  deps.ownership.ownUntilRegistered('agent knowledge service', () => agentKnowledgeService.dispose());
   agentKnowledgeService.attachRuntimeBus(runtimeBus);
   const homeGraphService = new HomeGraphService(homeGraphKnowledgeStore, artifactStore, { semanticService: homeGraphSemanticService, admitExpensiveWork });
-  const projectPlanningProjectId = projectPlanningProjectIdFromPath(deps.workingDirectory);
+  deps.ownership.ownUntilRegistered('home graph service', () => homeGraphService.dispose());
   const projectPlanningService = new ProjectPlanningService(knowledgeStore, { defaultProjectId: projectPlanningProjectId });
   const workPlanStore = new WorkPlanStore({
     homeDirectory: deps.homeDirectory,
@@ -96,6 +113,6 @@ export function createKnowledgeServices(deps: KnowledgeServicesDeps): KnowledgeS
     knowledgeStore, agentKnowledgeStore, homeGraphKnowledgeStore,
     knowledgeSemanticService, homeGraphSemanticService, agentKnowledgeSemanticService,
     knowledgeService, agentKnowledgeService, homeGraphService,
-    projectPlanningService, projectPlanningProjectId, workPlanStore,
+    projectPlanningService, projectPlanningProjectId, workPlanStore, workLedgerOwner,
   };
 }
