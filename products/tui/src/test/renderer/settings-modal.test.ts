@@ -7,7 +7,7 @@ import { mkdirSync, rmSync, existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { SettingsModal } from '../../input/settings-modal.ts';
-import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { CONFIG_SCHEMA, ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { SecretsManager } from '../../config/secrets.ts';
 import { ServiceRegistry } from '@goodvibes-jev/engine/sdk/platform/config';
 import { SubscriptionManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -120,8 +120,9 @@ describe('renderSettingsModal', () => {
   test('category rail shows the active category count right-aligned', () => {
     const lines = frameFromLayer(renderSettingsModal(modal, W), W, 24);
     const texts = linesToText(lines).join('\n');
-    // 10 = the SDK's 10 display.* CONFIG_SCHEMA keys (display.themeMode and display.treeGlyphs included).
-    expect(texts).toMatch(/Display +10/);
+    const displayCount = CONFIG_SCHEMA.filter(setting => setting.key.startsWith('display.')).length;
+    expect(displayCount).toBeGreaterThan(0);
+    expect(texts).toMatch(new RegExp(`Display +${displayCount}\\b`));
   });
 
   test('category rail is grouped and opens with category focus', () => {
@@ -135,8 +136,10 @@ describe('renderSettingsModal', () => {
     const interfaceIndex = lineToString(interfaceLine!).indexOf('interface');
     expect(interfaceLine![interfaceIndex]?.bold).toBe(true);
     // The focused category is the selected (gradient, bold, dark text) row.
-    const displayLine = lines.find(line => /Display +10/.test(lineToString(line)))!;
-    const displayCell = displayLine[lineToString(displayLine).indexOf('Display')]!;
+    const displayCount = CONFIG_SCHEMA.filter(setting => setting.key.startsWith('display.')).length;
+    const displayLine = lines.find(line => new RegExp(`Display +${displayCount}\\b`).test(lineToString(line)));
+    expect(displayLine).toBeDefined();
+    const displayCell = displayLine![lineToString(displayLine!).indexOf('Display')]!;
     expect(displayCell.bold).toBe(true);
     expect(displayCell.fg).toBe(activeTokens().selectedListItemText);
   });
