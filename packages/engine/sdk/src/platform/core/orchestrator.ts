@@ -1100,6 +1100,7 @@ export class Orchestrator {
 
   private async executeToolCalls(turnId: string, calls: ToolCall[]): Promise<ToolResult[]> {
     const results = await executeToolCalls({
+      turnSignal: this.abortController?.signal,
       toolRegistry: this.toolRegistry,
       permissionManager: this.permissionManager,
       hookDispatcher: this.hookDispatcher,

@@ -11,7 +11,12 @@ The route uses the existing authenticated operator route and `write:sessions`
 policy. It resolves the session's bound runtime and compares the expected
 identity synchronously before invoking that runtime's existing abort path.
 There is no await between comparison and cancellation, no new runner, and no
-cancellation signal retained for future turns.
+cancellation signal retained for future turns. The immutable whole-turn signal
+also gates every tool admission: before each serial call, after permission and
+pre/post-hook waits, and after reentrant tool-event callbacks. Each admitted tool
+receives the combined whole-turn and per-call signal. A cancelled turn cannot
+open an un-aborted signal for a later tool; per-call cancellation alone still
+allows other calls in the same turn.
 
 ## Responses
 

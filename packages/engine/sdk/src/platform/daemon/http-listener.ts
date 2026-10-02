@@ -258,6 +258,7 @@ export class HttpListener {
   private _restartingPromise: Promise<void> | null = null;
   /** True if a config change arrived while _restarting was set; triggers a second cycle. */
   private _restartDirty = false;
+  private _restartAdmissionClosed = false;
   /**
    * True once stop() has released this listener; cleared by a successful bind.
    *
@@ -375,6 +376,18 @@ export class HttpListener {
   }
 
   /**
+   * Permanently fence config-driven restart admission without stopping owners.
+   * Already admitted work remains observable through waitForRestart(). Hosts
+   * call this synchronously before draining consumers, then await and stop.
+   */
+  fenceRestartAdmission(): void {
+    this._restartAdmissionClosed = true;
+    this._restartDirty = false;
+    this._configWatchUnsub?.();
+    this._configWatchUnsub = null;
+  }
+
+  /**
    * Wait for any in-progress config-driven restart to settle.
    */
   async waitForRestart(): Promise<void> {
@@ -419,9 +432,11 @@ export class HttpListener {
    * Called once from start() after the server is up. Clears itself on stop().
    */
   private _attachHttpListenerConfigWatcher(): void {
+    if (this._restartAdmissionClosed) return;
     if (this._configWatchUnsub) return; // idempotent
 
     const restart = (): void => {
+      if (this._restartAdmissionClosed) return;
       if (this._restarting) {
         // A change arrived mid-restart, queue a second cycle via dirty flag.
         // Check _restarting BEFORE isRunning: stop() runs synchronously inside the
@@ -435,6 +450,7 @@ export class HttpListener {
         try {
           logger.info('HttpListener: httpListener binding changed, restarting HTTP listener…');
           await this.stop();
+          if (this._restartAdmissionClosed) return;
           // Re-resolve host/port from updated config
           const newBinding = resolveHostBinding(
             (this.configManager.get('httpListener.hostMode') as 'local' | 'network' | 'custom' | undefined) ?? 'local',
@@ -451,7 +467,7 @@ export class HttpListener {
           this._restarting = false;
           // If a config change arrived while we were restarting, kick off a second
           // cycle BEFORE nulling _restartingPromise so waitForRestart() chains correctly.
-          if (this._restartDirty) {
+          if (this._restartDirty && !this._restartAdmissionClosed) {
             this._restartDirty = false;
             restart(); // sets this._restartingPromise to the new cycle
           } else {

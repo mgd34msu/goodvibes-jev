@@ -81,6 +81,26 @@ interface ControlPlaneWebSocketPeer { data: ControlPlaneWebSocketData; send(mess
 
 // --- DaemonServer ---
 
+type StartupOwner = 'session broker' | 'approval broker' | 'channel policy' | 'automation manager' | 'distributed runtime' | 'cluster rollback';
+interface StartupDrain { readonly pending: Set<Promise<void>>; readonly failures: Set<StartupOwner>; }
+// Per-facade ownership without widening the public declaration surface. A
+// fail-fast join cannot retire sibling acquisitions or the first rollback stop.
+const startupDrains = new WeakMap<object, StartupDrain>();
+function ownStartup(owner: object, label: StartupOwner, action: () => Promise<void>): Promise<void> {
+  let drain = startupDrains.get(owner);
+  if (!drain) { drain = { pending: new Set(), failures: new Set() }; startupDrains.set(owner, drain); }
+  const state = drain;
+  // Defer invocation until ownership is recorded, including synchronous throws.
+  const result = Promise.resolve().then(action).catch(() => {
+    state.failures.add(label);
+    throw new Error(`Daemon ${label} startup operation failed`);
+  });
+  const settled = result.then(() => {}, () => {});
+  state.pending.add(settled);
+  void settled.then(() => { state.pending.delete(settled); });
+  return result;
+}
+
 /**
  * DaemonServer, HTTP task server. Enabled by default via `daemon.enabled`
  * (loopback-bound), resolved via resolveDaemonEnabled.
@@ -159,6 +179,7 @@ export class DaemonServer {
   private _restartingPromise: Promise<void> | null = null;
   /** True if a config change arrived while _restarting was set; triggers a second cycle. */
   private _restartDirty = false;
+  private _restartAdmissionClosed = false;
   private tornDown = false; // True once stop() tore this daemon down; cleared by a successful bind. Teardown was gated on `server === null`, which conflated "never bound a socket" with "has nothing to release". The CONSTRUCTOR starts the companion-chat GC sweep and the batch tick, so enable() plus a failed or never-called start() left both running with no reachable stop. What must not run twice is the teardown, so that is what this guards.
 
   constructor(private config: DaemonConfig = {}) {
@@ -467,11 +488,11 @@ export class DaemonServer {
       // Boot precondition: fold legacy session stores into the store the broker serves, then sweep the pre-split one aside. See daemon-session-store-boot.ts.
       await runDaemonSessionStoreBoot({ sessionBroker: this.sessionBroker, shellPaths: this.runtimeServices.shellPaths, surfaceRoot: this.runtimeServices.surfaceRoot, recordReceipt: (text) => this.lifecycle?.receiptStore().record(text) });
       await Promise.all([
-        this.sessionBroker.start(),
-        this.approvalBroker.start(),
-        this.channelPolicy.start(),
-        this.automationManager.start(),
-        this.distributedRuntime.start(),
+        ownStartup(this, 'session broker', () => this.sessionBroker.start()),
+        ownStartup(this, 'approval broker', () => this.approvalBroker.start()),
+        ownStartup(this, 'channel policy', () => this.channelPolicy.start()),
+        ownStartup(this, 'automation manager', () => this.automationManager.start()),
+        ownStartup(this, 'distributed runtime', () => this.distributedRuntime.start()),
       ]);
       await this.clusterCoordinator.start();
       this.channelHealth.start(); // after the coordinator, so the first sweep sees the ingress this node actually won rather than calling every surface dead mid-election
@@ -536,7 +557,9 @@ export class DaemonServer {
       this.pendingSurfaceReplies.clear();
       this.channelHealth.stop();
       this.automationManager.stop();
-      void this.clusterCoordinator.stop('daemon start failed');
+      // Retain the FIRST stop: the coordinator fences synchronously and later
+      // stop calls may return before this admitted consumer drain finishes.
+      void ownStartup(this, 'cluster rollback', () => this.clusterCoordinator.stop('daemon start failed')).catch(() => {});
       try {
         this.watcherRegistry.stopWatcher('daemon-heartbeat', 'daemon-start-failed');
       } catch (cleanupError) {
@@ -560,13 +583,37 @@ export class DaemonServer {
   }
 
   /**
-   * Wait for any in-progress config-driven restart to settle.
-   * Callers that change config mid-flight and need to know when the server
-   * has rebounded should await this before inspecting state.
+   * Permanently fence config-driven restart admission without stopping owners.
+   * Already admitted work remains observable through waitForRestart(). Hosts
+   * call this synchronously before draining consumers, then await and stop.
+   */
+  fenceRestartAdmission(): void {
+    this._restartAdmissionClosed = true;
+    this._restartDirty = false;
+    this._configWatchUnsub?.();
+    this._configWatchUnsub = null;
+  }
+
+  /**
+   * Wait for admitted startup, rollback and config-driven restart work.
+   * Failed startup remains fail-fast; owners await this barrier before stopping
+   * borrowed dependencies. Rejected operations retain fixed diagnostic labels.
    */
   async waitForRestart(): Promise<void> {
-    // Loop to handle dirty-flag chained restarts: each cycle may spawn another.
-    while (this._restartingPromise) await this._restartingPromise;
+    // Loop also includes work admitted by a failed/chained restart or rollback.
+    let restartFailed = false;
+    while (this._restartingPromise || startupDrains.get(this)?.pending.size) {
+      const pending = [...(startupDrains.get(this)?.pending ?? [])];
+      const restart = this._restartingPromise;
+      // Pending startup observations never reject; their fixed failures are
+      // retained separately. A restart failure must not bypass their drain.
+      if (restart) pending.push(restart.catch(() => { restartFailed = true; }));
+      await Promise.all(pending);
+    }
+    const failures = [...(startupDrains.get(this)?.failures ?? [])]
+      .map((label) => new Error(`Daemon ${label} startup operation failed`));
+    if (restartFailed) failures.push(new Error('Daemon config restart failed'));
+    if (failures.length) throw new AggregateError(failures, 'Daemon startup drain failed');
   }
 
   async stop(): Promise<void> {
@@ -642,9 +689,11 @@ export class DaemonServer {
    * Called once from start() after the server is up. Clears itself on stop().
    */
   private _attachControlPlaneConfigWatcher(): void {
+    if (this._restartAdmissionClosed) return;
     if (this._configWatchUnsub) return; // idempotent
 
     const restart = (): void => {
+      if (this._restartAdmissionClosed) return;
       if (this._restarting) {
         // Change arrived mid-restart, queue a second cycle (check _restarting
         // before isRunning: stop() runs synchronously inside the restart IIFE).
@@ -657,6 +706,7 @@ export class DaemonServer {
         try {
           logger.info('DaemonServer: controlPlane binding changed, restarting daemon server…');
           await this.stop();
+          if (this._restartAdmissionClosed) return;
           // Re-resolve host/port from updated config
           const newBinding = resolveHostBinding((this.configManager.get('controlPlane.hostMode') as 'local' | 'network' | 'custom' | undefined) ?? 'local', String(this.configManager.get('controlPlane.host') ?? '127.0.0.1'), Number(this.configManager.get('controlPlane.port') ?? 3421), 'controlPlane');
           this.host = newBinding.host;
@@ -668,7 +718,7 @@ export class DaemonServer {
           this._restarting = false;
           // If a config change arrived while we were restarting, kick off a second
           // cycle BEFORE nulling _restartingPromise so waitForRestart() chains correctly.
-          if (this._restartDirty) {
+          if (this._restartDirty && !this._restartAdmissionClosed) {
             this._restartDirty = false;
             restart(); // sets this._restartingPromise to the new cycle
           } else {

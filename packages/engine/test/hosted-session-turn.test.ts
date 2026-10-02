@@ -450,3 +450,66 @@ test('a cancellation reentered from TURN_COMPLETED is already-ended and cannot r
     expect(session.conversation.getMessageSnapshot().some((m) => m.content === '[Response cancelled]')).toBe(false);
   } finally { session.dispose(); }
 });
+
+for (const boundary of ['serial-tool', 'permission', 'pre-hook', 'post-hook'] as const) {
+  test(`whole-turn cancellation fences new tool admission after held ${boundary}`, async () => {
+    const session = cancellationSession();
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const calls: string[] = [];
+    const terminal: string[] = [];
+    let turnId = '';
+    runtimeBus.on('TURN_SUBMITTED', (event) => { if (event.payload.type === 'TURN_SUBMITTED') turnId = event.payload.turnId; });
+    runtimeBus.on('TURN_CANCEL', () => { terminal.push('cancel'); });
+    runtimeBus.on('TURN_COMPLETED', () => { terminal.push('completed'); });
+    const originalCheck = services.permissionManager.checkDetailed.bind(services.permissionManager);
+    const originalHook = services.hookDispatcher.fire.bind(services.hookDispatcher);
+    let heldHook = false;
+    if (boundary === 'pre-hook' || boundary === 'post-hook') services.hookDispatcher.fire = async (event) => {
+      if (!heldHook && event.path === `${boundary === 'pre-hook' ? 'Pre' : 'Post'}:tool:read`) { heldHook = true; enter(); await held; }
+      return originalHook(event);
+    };
+    if (boundary === 'permission') services.permissionManager.checkDetailed = async (...args) => { enter(); await held; return originalCheck(...args); };
+    session.toolRegistry.unregister('read');
+    session.toolRegistry.register({ definition: { name: 'read', description: 'Read test note.', parameters: { type: 'object', properties: {} } }, execute: async () => {
+      calls.push('read');
+      if (boundary === 'serial-tool' && calls.length === 1) { enter(); await held; }
+      return { success: true, output: 'done' };
+    } });
+    answers.push({ content: '', toolCalls: [{ id: 'first', name: 'read', arguments: {} }, { id: 'second', name: 'read', arguments: {} }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse);
+    try {
+      const turn = session.submit('two reads');
+      await entered;
+      expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('cancellation-requested');
+      expect(terminal).toEqual([]);
+      release();
+      await turn;
+      expect(calls).toEqual(boundary === 'serial-tool' || boundary === 'post-hook' ? ['read'] : []);
+      expect(terminal).toEqual(['cancel']);
+      expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('already-ended');
+    } finally { release(); services.permissionManager.checkDetailed = originalCheck; services.hookDispatcher.fire = originalHook; session.dispose(); }
+  });
+}
+
+
+for (const eventType of ['TOOL_RECEIVED', 'TOOL_PERMISSIONED', 'TOOL_EXECUTING', 'TOOL_SUCCEEDED'] as const) {
+  test(`whole-turn cancellation from ${eventType} prevents later tool admission`, async () => {
+    const session = cancellationSession();
+    const calls: string[] = [];
+    let turnId = '';
+    let cancelled = false;
+    runtimeBus.on('TURN_SUBMITTED', (event) => { if (event.payload.type === 'TURN_SUBMITTED') turnId = event.payload.turnId; });
+    runtimeBus.on(eventType, () => { if (!cancelled) { cancelled = true; expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('cancellation-requested'); } });
+    session.toolRegistry.unregister('read');
+    session.toolRegistry.register({ definition: { name: 'read', description: 'Read test note.', parameters: { type: 'object', properties: {} } }, execute: async () => { calls.push('read'); return { success: true, output: 'done' }; } });
+    answers.push({ content: '', toolCalls: [{ id: 'first', name: 'read', arguments: {} }, { id: 'second', name: 'read', arguments: {} }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse);
+    try {
+      await session.submit('two reads');
+      expect(cancelled).toBe(true);
+      expect(calls).toEqual(eventType === 'TOOL_SUCCEEDED' ? ['read'] : []);
+      expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('already-ended');
+    } finally { session.dispose(); }
+  });
+}

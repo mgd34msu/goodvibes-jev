@@ -43,15 +43,16 @@ async function resolvePermissionCheck(
   permissionManager: Pick<PermissionManager, 'checkDetailed' | 'check'> | { check: PermissionManager['check'] },
   toolName: string,
   args: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<import('../permissions/types.js').PermissionCheckResult> {
   const manager = permissionManager as {
     checkDetailed?: PermissionManager['checkDetailed'];
     check: PermissionManager['check'];
   };
   if (typeof manager.checkDetailed === 'function') {
-    return manager.checkDetailed(toolName, args);
+    return manager.checkDetailed(toolName, args, undefined, { signal });
   }
-  const approved = await manager.check(toolName, args);
+  const approved = await manager.check(toolName, args, undefined, { signal });
   return {
     approved,
     persisted: false,
@@ -69,6 +70,8 @@ async function resolvePermissionCheck(
 type EmitterContextFactory = (turnId: string) => import('../runtime/emitters/index.js').EmitterContext;
 
 export type ToolExecutionDeps = {
+  /** This execution's immutable whole-turn signal, never a later turn's controller. */
+  turnSignal?: AbortSignal | undefined;
   toolRegistry: ToolRegistry;
   permissionManager: PermissionManager;
   hookDispatcher: HookDispatcherLike | null;
@@ -122,8 +125,11 @@ export async function executeToolCalls(
   calls: ToolCall[],
 ): Promise<ToolResult[]> {
   const results: ToolResult[] = [];
+  const turnSignal = deps.turnSignal;
+  const assertTurnActive = () => turnSignal?.throwIfAborted();
 
   for (const call of calls) {
+    assertTurnActive();
     if (deps.runtimeBus) {
       emitToolReceived(deps.runtimeBus, deps.emitterContext(turnId), {
         callId: call.id,
@@ -133,7 +139,10 @@ export async function executeToolCalls(
       });
     }
 
-    const checkResult = await resolvePermissionCheck(deps.permissionManager, call.name, call.arguments);
+    // Event observers and every awaited admission boundary can cancel the turn.
+    assertTurnActive();
+    const checkResult = await resolvePermissionCheck(deps.permissionManager, call.name, call.arguments, turnSignal);
+    assertTurnActive();
     const approved = checkResult.approved;
     if (deps.runtimeBus) {
       emitToolPermissioned(deps.runtimeBus, deps.emitterContext(turnId), {
@@ -143,6 +152,7 @@ export async function executeToolCalls(
         approved,
       });
     }
+    assertTurnActive();
     if (!approved) {
       // Structured, call-scoped denial: the asking agent gets reason + scope on
       // the failed result (not just a bare string) and can continue honestly.
@@ -179,6 +189,7 @@ export async function executeToolCalls(
       });
     }
 
+    assertTurnActive();
     if (deps.hookDispatcher) {
       try {
         const preEvent: HookEvent = {
@@ -191,6 +202,7 @@ export async function executeToolCalls(
           payload: { callId: call.id, tool: call.name, args: call.arguments },
         };
         const preResult = await deps.hookDispatcher.fire(preEvent);
+        assertTurnActive();
         if (preResult.decision === 'deny') {
           const deniedResult: ToolResult = {
             callId: call.id,
@@ -218,9 +230,15 @@ export async function executeToolCalls(
       }
     }
 
+    // The hook catch deliberately tolerates hook failures, but cannot swallow
+    // cancellation. No new call may acquire a fresh, un-aborted execution signal.
+    assertTurnActive();
     let result: ToolResult;
-    const callSignal = deps.toolCallSignals?.open(call.id);
+    const perCallSignal = deps.toolCallSignals?.open(call.id);
+    const callSignal = turnSignal && perCallSignal ? AbortSignal.any([turnSignal, perCallSignal]) : turnSignal ?? perCallSignal;
     try {
+      assertTurnActive();
+      callSignal?.throwIfAborted();
       // Open a cost-attribution origin scope around the tool body: any LLM usage
       // a tool drives synchronously (e.g. an MCP tool's model call) is attributed
       // to this tool/MCP server rather than the agent's own reasoning.
@@ -254,7 +272,7 @@ export async function executeToolCalls(
           error: message,
         };
 
-      if (deps.hookDispatcher) {
+      if (deps.hookDispatcher && !turnSignal?.aborted) {
         try {
           const failEvent: HookEvent = {
             path: `Fail:tool:${call.name}`,
@@ -277,6 +295,9 @@ export async function executeToolCalls(
       deps.toolCallSignals?.close(call.id);
     }
 
+    // Do not race the tool promise: abort-ignoring work must actually return
+    // before this throw allows the turn's terminal cancellation event.
+    assertTurnActive();
     if (deps.hookDispatcher && result.success === true) {
       try {
         const postEvent: HookEvent = {
@@ -297,6 +318,7 @@ export async function executeToolCalls(
       }
     }
 
+    assertTurnActive();
     if (deps.runtimeBus) {
       if (result.success) {
         emitToolSucceeded(deps.runtimeBus, deps.emitterContext(turnId), {
@@ -318,6 +340,7 @@ export async function executeToolCalls(
       }
     }
 
+    assertTurnActive();
     if (deps.hookDispatcher && (call.name === 'write' || call.name === 'edit')) {
       const filePath = typeof call.arguments['path'] === 'string' ? call.arguments['path'] :
         (Array.isArray(call.arguments['files']) ? JSON.stringify(call.arguments['files']) : '');
@@ -379,6 +402,7 @@ export async function executeToolCalls(
     results.push(result);
   }
 
+  assertTurnActive();
   return results;
 }
 
