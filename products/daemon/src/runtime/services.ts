@@ -16,8 +16,14 @@ export async function createRuntimeServices(options: RuntimeServicesOptions): Pr
   const { services, handlerOptions } = await createRuntimeBaseServices(options);
   const scope = createDisposalScope('Daemon runtime acquisition');
   let shutdownRequested = false;
-  const close = (): Promise<void> => { shutdownRequested = true; return scope.close(); };
-  const dispose = (): void => { shutdownRequested = true; scope.dispose(); };
+  const close = (): Promise<void> => {
+    shutdownRequested = true;
+    // Admission closes now, even if boot or handler cleanup is still pending.
+    // The base graph's registered owner awaits and reports this same drain.
+    void services.workLedger.close().catch(() => {});
+    return scope.close();
+  };
+  const dispose = (): void => { void close().catch(() => {}); };
   scope.registry.add('runtime graph', services.close);
   const distributedRuntimeReady = services.distributedRuntime.start();
   // Own the in-flight initialization even if an earlier surface fails before
@@ -45,7 +51,7 @@ export async function createRuntimeServices(options: RuntimeServicesOptions): Pr
     }
     return runtime;
   } catch (startupError) {
-    try { await scope.close(); }
+    try { await close(); }
     catch (cleanupError) { throw new AggregateError([startupError, cleanupError], 'Daemon runtime startup and cleanup failed'); }
     throw startupError;
   }

@@ -268,3 +268,24 @@ export function productCheckCommands(root: string, products: readonly ProductWor
     return [{ kind: 'script', label: `${product.source.name}:${mode}`, cwd, script: mode }];
   });
 }
+
+/** Explicit CI lanes never silently accept a typo, duplicate, or absent product. */
+export function selectProductWorkspaces(products: readonly ProductWorkspace[], names: readonly string[]): readonly ProductWorkspace[] {
+  if (names.length === 0) return products;
+  if (new Set(names).size !== names.length) throw new Error('Duplicate product selector');
+  for (const name of names) {
+    if (!PRODUCT_NAMES.includes(name as ProductName)) throw new Error(`Unknown product selector ${name}`);
+    if (!products.some((product) => product.source.name === name)) throw new Error(`Selected product ${name} is not present`);
+  }
+  // Keep the aggregate's canonical order, independently of selector order.
+  return products.filter((product) => names.includes(product.source.name));
+}
+
+/** CI must cover every inspected workspace exactly once, never an empty matrix. */
+export function productTestMatrix(inspection: ProductInspection): readonly ProductName[] {
+  if (inspection.findings.length > 0) throw new Error(`Product inspection failed: ${inspection.findings.join('; ')}`);
+  const names = inspection.products.map((product) => product.source.name);
+  if (names.length === 0) throw new Error('No present product workspaces for the CI matrix');
+  selectProductWorkspaces(inspection.products, names);
+  return names;
+}

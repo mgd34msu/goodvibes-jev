@@ -406,7 +406,7 @@ describe('Home Graph repair and generated pages', () => {
     }
 
     service.dispose();
-    const sqlite = new SQLiteStore(store.storagePath); await sqlite.init(createSchema);
+    const sqlite = new SQLiteStore(store.storagePath); await sqlite.init(createSchema, { schemaVersion: 2 });
     for (const record of legacyFacts) writeKnowledgeNodeRow(sqlite, record);
     await sqlite.save();
     store = new KnowledgeStore({ dbPath: store.storagePath }); await store.init();

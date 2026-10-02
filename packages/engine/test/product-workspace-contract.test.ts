@@ -1,9 +1,9 @@
 import { afterEach, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { inspectProductWorkspaces, inventoryDispositions, moduleSpecifiers, productCheckCommands, readProductSources, type ProductSource } from '../scripts/product-workspace-contract.ts';
+import { inspectProductWorkspaces, inventoryDispositions, moduleSpecifiers, productCheckCommands, productTestMatrix, readProductSources, selectProductWorkspaces, type ProductSource } from '../scripts/product-workspace-contract.ts';
 import { executeProductCommands } from '../scripts/product-workspaces.ts';
 
 const roots: string[] = [];
@@ -214,4 +214,121 @@ test('product failures retain spawn errors alongside missing exit status', async
   await expect(executeProductCommands(root, commands, 'build', () => ({
     status: null, signal: null, stdout: '', stderr: '', error: new Error('spawn bun ENOENT'),
   }))).rejects.toThrow('daemon:build failed (exit code null, signal none): spawn bun ENOENT');
+});
+
+
+test.each([0, 23])('real product commands inherit both complete output streams at exit %i', (status) => {
+  const root = fixture();
+  const runner = resolve(import.meta.dir, '../scripts/product-workspaces.ts');
+  const outputSize = 1024 * 1024;
+  write(root, 'package.json', { scripts: { test: 'bun child.ts' } });
+  write(root, 'child.ts', `
+    await Promise.all([
+      new Promise<void>((resolve, reject) => process.stdout.write('O'.repeat(${outputSize}) + '\\nSTDOUT-END\\n', (error) => error ? reject(error) : resolve())),
+      new Promise<void>((resolve, reject) => process.stderr.write('E'.repeat(${outputSize}) + '\\nSTDERR-END\\n', (error) => error ? reject(error) : resolve())),
+    ]);
+    process.exit(${status});
+  `);
+  write(root, 'output-fixture.ts', `
+    import { executeProductCommands } from ${JSON.stringify(runner)};
+    await executeProductCommands(${JSON.stringify(root)}, [
+      { kind: 'script', label: 'fixture:test', cwd: ${JSON.stringify(root)}, script: 'test' },
+    ], 'test');
+  `);
+  const run = spawnSync('bun', [join(root, 'output-fixture.ts')], { cwd: root, encoding: 'utf8', maxBuffer: 4 * outputSize, timeout: 10_000 });
+  expect(run.error).toBeUndefined();
+  expect(run.status).toBe(status === 0 ? 0 : 1);
+  expect(run.stdout).toContain('O'.repeat(outputSize) + '\nSTDOUT-END\n');
+  expect(run.stderr).toContain('E'.repeat(outputSize) + '\nSTDERR-END\n');
+  expect(run.stdout).not.toContain('STDERR-END');
+  expect(run.stderr).not.toContain('STDOUT-END');
+  if (status !== 0) expect(run.stderr).toContain('fixture:test failed (exit code 23, signal none)');
+});
+
+test('real product progress reaches both outer sinks before the command exits', async () => {
+  const root = fixture();
+  const runner = resolve(import.meta.dir, '../scripts/product-workspaces.ts');
+  write(root, 'package.json', { scripts: { test: 'bun child.ts' } });
+  write(root, 'child.ts', `
+    import { existsSync } from 'node:fs';
+    console.log('LIVE-STDOUT');
+    console.error('LIVE-STDERR');
+    const deadline = Date.now() + 5_000;
+    while (!existsSync('release')) {
+      if (Date.now() > deadline) throw new Error('outer sinks did not receive live output');
+      await Bun.sleep(10);
+    }
+    console.log('CHILD-FINISHED');
+  `);
+  write(root, 'output-fixture.ts', `
+    import { executeProductCommands } from ${JSON.stringify(runner)};
+    await executeProductCommands(${JSON.stringify(root)}, [
+      { kind: 'script', label: 'fixture:test', cwd: ${JSON.stringify(root)}, script: 'test' },
+    ], 'test');
+  `);
+  const child = spawn('bun', [join(root, 'output-fixture.ts')], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  let released = false;
+  const release = (): void => {
+    if (!released && stdout.includes('LIVE-STDOUT') && stderr.includes('LIVE-STDERR')) {
+      expect(stdout).not.toContain('CHILD-FINISHED');
+      released = true;
+      write(root, 'release', 'observed both streams while running');
+    }
+  };
+  child.stdout.on('data', (chunk) => { stdout += String(chunk); release(); });
+  child.stderr.on('data', (chunk) => { stderr += String(chunk); release(); });
+  const status = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', resolve);
+  });
+  expect(released).toBe(true);
+  expect(status, stderr).toBe(0);
+  expect(stdout).toContain('CHILD-FINISHED');
+}, 10_000);
+
+
+test('product matrix and explicit lanes cover all present declared suites exactly once', () => {
+  const root = fixture();
+  const daemon = inspectProductWorkspaces(root, [source]).products[0]!;
+  const products = ['daemon', 'tui', 'agent', 'webui'].map((name) => ({
+    ...daemon, source: { ...source, name: name as ProductSource['name'], path: `products/${name}` },
+  }));
+  // Exercise every nonempty subset, including main and the two product branches.
+  for (let mask = 1; mask < 16; mask++) {
+    const present = products.filter((_, index) => mask & (1 << index));
+    const matrix = productTestMatrix({ products: present, findings: [], missing: [] });
+    expect(matrix).toEqual(present.map((product) => product.source.name));
+    const aggregate = productCheckCommands(root, present, 'test');
+    const lanes = matrix.flatMap((name) => productCheckCommands(root, selectProductWorkspaces(present, [name]), 'test'));
+    expect(lanes).toEqual([...aggregate]);
+    expect(selectProductWorkspaces(present, [])).toBe(present);
+    expect(selectProductWorkspaces(present, [...matrix].reverse())).toEqual(present);
+  }
+});
+
+test('product selectors and matrix reject omissions disguised as successful selection', () => {
+  const root = fixture();
+  const inspection = inspectProductWorkspaces(root, [source]);
+  expect(() => selectProductWorkspaces(inspection.products, ['deamon'])).toThrow('Unknown product selector');
+  expect(() => selectProductWorkspaces(inspection.products, ['tui'])).toThrow('Selected product tui is not present');
+  expect(() => selectProductWorkspaces(inspection.products, ['daemon', 'daemon'])).toThrow('Duplicate product selector');
+  expect(() => productTestMatrix({ products: [], missing: [], findings: [] })).toThrow('No present product');
+  expect(() => productTestMatrix({ ...inspection, findings: ['unselected product is invalid'] })).toThrow('unselected product is invalid');
+  expect(() => productTestMatrix({ ...inspection, products: [...inspection.products, ...inspection.products] })).toThrow('Duplicate product selector');
+});
+
+
+test('the product matrix CLI emits only complete inspected JSON and refuses selectors', () => {
+  const root = resolve(import.meta.dir, '../../..');
+  const runner = join(root, 'packages/engine/scripts/product-workspaces.ts');
+  const expected = productTestMatrix(inspectProductWorkspaces(root, readProductSources(root)));
+  const run = spawnSync('bun', [runner, 'matrix'], { cwd: root, encoding: 'utf8', timeout: 10_000 });
+  expect(run.error).toBeUndefined();
+  expect(run.status, run.stderr).toBe(0);
+  expect(JSON.parse(run.stdout)).toEqual(expected);
+  const filtered = spawnSync('bun', [runner, 'matrix', 'daemon'], { cwd: root, encoding: 'utf8', timeout: 10_000 });
+  expect(filtered.status).toBe(1);
+  expect(filtered.stderr).toContain('matrix does not accept product selectors');
 });

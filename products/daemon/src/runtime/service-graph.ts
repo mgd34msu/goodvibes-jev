@@ -78,6 +78,13 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
   // The SDK's disposal scope and its all-required poller list, plus the four
   // pollers only the daemon has, see disposal-wiring.ts.
   const disposalScope = createRuntimeAcquisitionScope('RuntimeServices');
+  let fenceWorkLedger: (() => Promise<void>) | undefined;
+  const close = (): Promise<void> => {
+    // Fence immediately, before reverse-order drains can await other owners.
+    // The registered ledger owner reports any cleanup failure through the scope.
+    void fenceWorkLedger?.().catch(() => {});
+    return disposalScope.close();
+  };
   try {
     const workingDirectory = options.workingDir;
     const homeDirectory = options.homeDirectory;
@@ -322,11 +329,9 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       knowledgeStore, agentKnowledgeStore, homeGraphKnowledgeStore,
       knowledgeSemanticService, homeGraphSemanticService, agentKnowledgeSemanticService,
       knowledgeService, agentKnowledgeService, homeGraphService,
-      projectPlanningService, projectPlanningProjectId, workPlanStore,
-    } = createKnowledgeServices({ configManager, providerRegistry, artifactStore, memoryRegistry, runtimeBus: options.runtimeBus, workingDirectory, homeDirectory, isBackgroundPaused: isKnowledgeBackgroundPaused, admitExpensiveWork });
-    disposalScope.ownUntilRegistered('knowledge service', () => knowledgeService.dispose());
-    disposalScope.ownUntilRegistered('agent knowledge service', () => agentKnowledgeService.dispose());
-    disposalScope.ownUntilRegistered('home graph service', () => homeGraphService.dispose());
+      projectPlanningService, projectPlanningProjectId, workPlanStore, workLedgerOwner,
+    } = createKnowledgeServices({ ownership: disposalScope, configManager, providerRegistry, artifactStore, memoryRegistry, runtimeBus: options.runtimeBus, workingDirectory, homeDirectory, isBackgroundPaused: isKnowledgeBackgroundPaused, admitExpensiveWork });
+    fenceWorkLedger = workLedgerOwner.close;
     const voiceProviders = new VoiceProviderRegistry();
     ensureBuiltinVoiceProviders(voiceProviders, { readConfig: (key) => configManager.get(key as Parameters<typeof configManager.get>[0]) });
     const voiceService = new VoiceService(voiceProviders);
@@ -701,6 +706,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       projectPlanningService,
       projectPlanningProjectId,
       workPlanStore,
+      workLedger: workLedgerOwner.service,
       memoryStore,
       memoryRegistry,
       memorySpine,
@@ -785,8 +791,8 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       // Cancel hosted calls before their runtime dependencies close; the shared
       // poller registry places this ahead of runner, fleet and process teardown.
       cancelHostedAgentRuns: () => cancelAllAgentRuns(agentManager),
-      close: disposalScope.close,
-      dispose: (): void => disposalScope.dispose(),
+      close,
+      dispose: (): void => { void close().catch(() => {}); },
     };
     registerDaemonRuntimeBasePollers(disposalScope.registry, { ...services, contractRunner: contracts }, { stopConfigWatch });
     // Drain plugin work before releasing the graph it can call into.
@@ -804,7 +810,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     };
     return { services, handlerOptions };
   } catch (startupError) {
-    try { await disposalScope.close(); }
+    try { await close(); }
     catch (cleanupError) { throw new AggregateError([startupError, cleanupError], 'Runtime graph construction and cleanup failed'); }
     throw startupError;
   }
