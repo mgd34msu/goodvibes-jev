@@ -6,11 +6,11 @@
  * handlers and the graceful `exitApp` teardown, then returns them so main() can
  * register them on the exact same process/stdin/stdout listeners it used before.
  *
- * Behavior is identical to the previous inline version: the synchronous terminal
- * restore runs BEFORE the (possibly slow) async shutdown, the shutdown races a 3s
- * hard timeout, the recovery file is deleted only when the durable save completed,
+ * The synchronous terminal restore runs BEFORE the (possibly slow) async
+ * shutdown. All asynchronous cleanup races a 3s hard timeout, the recovery
+ * file is deleted only when the durable save completed,
  * signal exit codes are preserved (SIGHUP -> 129, otherwise 143; uncaught -> 1;
- * exitApp -> 0), and the `exiting`/`terminalRestored` reentrancy guards are kept.
+ * exitApp -> 0), and repeated exit requests join one teardown promise.
  *
  * Some captured values are late-bound or mutable in main(): the InputHandler, the
  * render closure, and the terminal output guard are constructed AFTER this factory
@@ -78,7 +78,7 @@ export interface ProcessLifecycleDeps {
   readonly getPromptContentWidth: () => number;
   readonly buildSessionContinuityHints: () => Parameters<typeof buildPersistedSessionContext>[2];
   /** Teardown registry shared with main(); drained on exit. */
-  readonly unsubs: ReadonlyArray<() => void>;
+  readonly unsubs: ReadonlyArray<() => void | Promise<void>>;
   readonly getRecoveryInterval: () => ReturnType<typeof setInterval> | null;
   readonly setRecoveryInterval: (value: ReturnType<typeof setInterval> | null) => void;
   readonly getStopSpokenOutputForExit: () => (() => void | Promise<void>) | null;
@@ -132,6 +132,15 @@ export function installProcessLifecycle(deps: ProcessLifecycleDeps): ProcessLife
     shutdownHardTimeoutMs = SHUTDOWN_HARD_TIMEOUT_MS,
     recoverySnapshotExists = defaultRecoverySnapshotExists,
   } = deps;
+
+  // Cleanup and its diagnostics must not prevent an independent owner from
+  // releasing resources, or strand the terminal before the final process exit.
+  const reportCleanupError = (phase: string, error: unknown): void => {
+    try { logger.debug(`${phase} error during process cleanup (non-fatal)`, { error: summarizeError(error) }); } catch { /* best-effort */ }
+  };
+  const bestEffort = (phase: string, cleanup: () => void): void => {
+    try { cleanup(); } catch (error) { reportCleanupError(phase, error); }
+  };
 
   const sigintHandler = (): void => getInput().feed('\x03');
   let _unhandledRejectionCount = 0;
@@ -198,11 +207,11 @@ export function installProcessLifecycle(deps: ProcessLifecycleDeps): ProcessLife
   // exit deliberately uses the package's CLEAR_VIEWPORT_HOME ('\x1b[2J\x1b[H',
   // no ESC[3J), never ansi.CLEAR_SCREEN, which carries the scrollback-wiping 3J.
   const terminalLifecycle = createTerminalLifecycle({
-    write: (data) => { stdout.write(data); },
+    write: (data) => bestEffort('terminal restore write', () => { stdout.write(data); }),
     noAltScreen,
     guardedWrite: allowTerminalWrite,
-    disposeOutputGuard: () => getTerminalOutputGuard().dispose(),
-    setRawMode: (enabled) => stdin.setRawMode(enabled),
+    disposeOutputGuard: () => bestEffort('terminal output guard disposal', () => getTerminalOutputGuard().dispose()),
+    setRawMode: (enabled) => bestEffort('terminal raw mode reset', () => stdin.setRawMode(enabled)),
     escapes: {
       ...TERMINAL_ESCAPES,
       ALT_SCREEN_EXIT: ansi.ALT_SCREEN_EXIT,
@@ -220,100 +229,107 @@ export function installProcessLifecycle(deps: ProcessLifecycleDeps): ProcessLife
 
   const uncaughtExceptionHandler = (err: Error): void => {
     restoreTerminal();
-    logger.error('uncaughtException: terminal restored, exiting', { error: summarizeError(err) });
+    bestEffort('uncaughtException logging', () => logger.error('uncaughtException: terminal restored, exiting', { error: summarizeError(err) }));
     // The line naming the crash is the only record of it. process.exit does not
     // drain the activity log's buffer, so it goes to disk here rather than
     // relying on the exit hook that also runs, the crash log is worth stating
     // the intent for at the site that produces it.
-    flushActivityLogSync();
+    bestEffort('activity log flush', flushActivityLogSync);
     process.exit(1);
   };
   const terminationSignalHandler = (signal: NodeJS.Signals): void => {
     restoreTerminal();
-    logger.error(`Received ${signal}: terminal restored, exiting`, {});
-    flushActivityLogSync();
+    bestEffort('termination signal logging', () => logger.error(`Received ${signal}: terminal restored, exiting`, {}));
+    bestEffort('activity log flush', flushActivityLogSync);
     process.exit(signal === 'SIGHUP' ? 129 : 143);
   };
   const exitListener = (): void => { restoreTerminal(); };
 
-  let exiting = false;
-  const exitApp = async (): Promise<void> => {
-    // Reentrancy guard: a second /exit or keypress during the awaited shutdown below
-    // must not re-run teardown or double-fire ctx.shutdown.
-    if (exiting) return;
-    exiting = true;
-    // Exit lets the spoken audio the user is already hearing finish inside a
-    // short bounded window (capped inside stopForExit, under the 3s shutdown
-    // budget below) while the rest of teardown proceeds; queued-but-unplayed
-    // speech is dropped. Deliberate interrupts (Ctrl+C, /tts stop) still cut
-    // instantly through controller.stop() before this path is ever reached.
-    let spokenOutputDrain: Promise<void> = Promise.resolve();
-    try {
-      spokenOutputDrain = Promise.resolve(getStopSpokenOutputForExit()?.()).then(() => undefined);
-    } catch { /* non-fatal to exit */ }
-    spokenOutputDrain = spokenOutputDrain.catch(() => undefined);
-    unsubs.forEach(fn => fn());
-    const interval = getRecoveryInterval();
-    if (interval !== null) { clearInterval(interval); setRecoveryInterval(null); }
-    stdin.removeAllListeners('data');
-    stdout.removeListener('resize', resizeHandler);
-    process.removeListener('SIGINT', sigintHandler);
-    process.removeListener('unhandledRejection', unhandledRejectionHandler);
-    // Restore the terminal synchronously BEFORE the (possibly slow) async shutdown so the
-    // user is not left staring at a frozen alt screen while we drain and persist.
+  const performExit = async (): Promise<void> => {
+    // Start each owner in order, attach rejection handlers immediately, and let
+    // asynchronous drains finish together after the synchronous terminal hand-back.
+    const drains: Promise<void>[] = [];
+    const startCleanup = (phase: string, cleanup: () => void | Promise<void>): void => {
+      try {
+        drains.push(Promise.resolve(cleanup()).catch((error) => reportCleanupError(phase, error)));
+      } catch (error) {
+        reportCleanupError(phase, error);
+      }
+    };
+    // Already-playing speech may finish while other cleanup proceeds; queued
+    // speech is dropped by stopForExit. The shared deadline bounds every drain.
+    startCleanup('spoken output drain', () => getStopSpokenOutputForExit()?.());
+    unsubs.forEach((fn, index) => startCleanup(`unsubscribe ${index}`, fn));
+    let interval: ReturnType<typeof setInterval> | null = null;
+    bestEffort('recovery interval lookup', () => { interval = getRecoveryInterval(); });
+    if (interval !== null) bestEffort('recovery interval clear', () => clearInterval(interval!));
+    bestEffort('recovery interval reset', () => setRecoveryInterval(null));
+    bestEffort('stdin listener removal', () => { stdin.removeAllListeners('data'); });
+    bestEffort('resize listener removal', () => { stdout.removeListener('resize', resizeHandler); });
+    bestEffort('SIGINT listener removal', () => { process.removeListener('SIGINT', sigintHandler); });
+    bestEffort('rejection listener removal', () => { process.removeListener('unhandledRejection', unhandledRejectionHandler); });
+    // Return the terminal before any asynchronous cleanup is awaited.
     restoreTerminal();
-    const snapshot = ctx.conversation.toJSON() as { messages: Array<ConversationMessageSnapshot>; timestamp?: number };
     let shutdownOk = false;
-    // Quiet exit stays quiet: only speak up if the save is taking a moment.
-    // The terminal is already restored above, so a plain stdout line lands on
-    // the shell prompt exactly like any other command's output would.
+    let beforeDeadline = true;
     const saveNoticeTimer = setTimeout(() => {
-      try { stdout.write('saving session…\n'); } catch { /* best-effort */ }
+      bestEffort('save progress notice', () => { stdout.write('saving session…\n'); });
     }, saveNoticeAfterMs);
+    let shutdownTimer: ReturnType<typeof setTimeout> | undefined;
+    startCleanup('ctx.shutdown', async () => {
+      // If the snapshot itself fails, keep recovery rather than overwrite a
+      // durable session with fabricated empty data. Optional metadata failure
+      // still allows the intact conversation to reach the durable save.
+      const snapshot = ctx.conversation.toJSON() as { messages: Array<ConversationMessageSnapshot>; timestamp?: number };
+      let persisted: Awaited<ReturnType<typeof buildPersistedSessionContext>> = {};
+      try {
+        persisted = await buildPersistedSessionContext(snapshot.messages, ctx.conversation.getTitleSource(), buildSessionContinuityHints());
+      } catch (error) {
+        reportCleanupError('session continuity', error);
+      }
+      // A late metadata result must not start new shutdown work after exit.
+      if (!beforeDeadline) return;
+      await ctx.shutdown({ ...snapshot, ...persisted });
+      shutdownOk = beforeDeadline;
+    });
     try {
-      // Race the graceful shutdown against a hard timeout, externalServices.stop() can hang
-      // and we must still exit; deferredStartup.drain only budgets 100ms internally.
-      // The spoken-audio drain runs concurrently and is internally capped below
-      // this budget, so it never extends the exit beyond the hard timeout.
-      await Promise.all([
-        spokenOutputDrain,
-        Promise.race([
-          ctx.shutdown({ ...snapshot, ...buildPersistedSessionContext(snapshot.messages, ctx.conversation.getTitleSource(), buildSessionContinuityHints()) }).then(() => { shutdownOk = true; }),
-          new Promise<void>((resolve) => setTimeout(resolve, shutdownHardTimeoutMs)),
-        ]),
+      await Promise.race([
+        Promise.all(drains),
+        new Promise<void>((resolve) => { shutdownTimer = setTimeout(resolve, shutdownHardTimeoutMs); }),
       ]);
-    } catch (err) {
-      logger.debug('ctx.shutdown error during exitApp (non-fatal)', { error: summarizeError(err) });
+    } finally {
+      beforeDeadline = false;
+      clearTimeout(saveNoticeTimer);
+      clearTimeout(shutdownTimer);
     }
-    clearTimeout(saveNoticeTimer);
-    // Only remove the recovery fallback once the durable shutdown save actually completed,
-    // so an interrupted or timed-out shutdown leaves the snapshot for the next launch.
-    // Scoped to THIS session's id: without it, one session's clean exit wipes
-    // every session's crash snapshot (the concurrent-session isolation bug).
+    // Recovery is removed only after the durable save confirms success.
+    // Each finalizer is independent: a recovery or marker failure cannot skip
+    // the log flush or process exit, and a logging failure cannot stop exit.
     if (shutdownOk) {
-      deleteRecoveryFile({ surface: ctx.services.surface }, ctx.runtime.sessionId);
+      bestEffort('recovery removal', () => deleteRecoveryFile({ surface: ctx.services.surface }, ctx.runtime.sessionId));
     } else {
-      // The hard timeout won the race, the durable save never confirmed, so
-      // whatever the periodic autosave last wrote (see recovery-autosave.ts)
-      // is deliberately kept above. But that autosave only ticks every 60s
-      // and skips empty conversations, so a session that dies sooner than
-      // that (or never had anything in it) has no snapshot to keep, check
-      // before claiming otherwise, since a silent exit here previously left
-      // no trace that anything was amiss.
-      const kept = recoverySnapshotExists(ctx.services.surface, ctx.runtime.sessionId);
-      const line = kept
-        ? 'exit before save completed: a recovery snapshot was kept for next launch\n'
-        : 'exit before save completed: no recovery snapshot had been written yet\n';
-      try { stdout.write(line); } catch { /* best-effort */ }
+      bestEffort('recovery receipt', () => {
+        const kept = recoverySnapshotExists(ctx.services.surface, ctx.runtime.sessionId);
+        stdout.write(kept
+          ? 'exit before save completed: a recovery snapshot was kept for next launch\n'
+          : 'exit before save completed: no recovery snapshot had been written yet\n');
+      });
     }
-    // Best-effort, unconditional: this process is exiting either way, so its
-    // multi-instance liveness marker (see session-liveness-marker.ts) should
-    // stop claiming the session is live regardless of whether the durable
-    // save itself completed in time.
-    removeLivenessMarker(ctx.services.surface, ctx.runtime.sessionId);
-    // An orderly exit's own record lands before the process stops being one.
-    flushActivityLogSync();
+    bestEffort('liveness marker removal', () => removeLivenessMarker(ctx.services.surface, ctx.runtime.sessionId));
+    bestEffort('activity log flush', flushActivityLogSync);
     process.exit(0);
+  };
+
+  let exitPromise: Promise<void> | undefined;
+  const exitApp = (): Promise<void> => {
+    if (exitPromise) return exitPromise;
+    let resolveExit!: () => void;
+    let rejectExit!: (error: unknown) => void;
+    // Publish ownership before invoking a cleanup callback: one can reenter
+    // exitApp synchronously, and every caller must wait for this same drain.
+    exitPromise = new Promise<void>((resolve, reject) => { resolveExit = resolve; rejectExit = reject; });
+    void performExit().then(resolveExit, rejectExit);
+    return exitPromise;
   };
 
   return {
