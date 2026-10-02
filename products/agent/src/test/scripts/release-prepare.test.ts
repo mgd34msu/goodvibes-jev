@@ -4,10 +4,14 @@
  * checking them on every push.
  */
 import { describe, expect, test } from 'bun:test';
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import {
   bumpVersion,
   parsePrepareArgs,
   peeledTagSha,
+  prepareRelease,
   rewriteWorkflowPins,
   scaffoldChangelogText,
   scaffoldReleaseNotesText,
@@ -88,10 +92,10 @@ describe('workflow pins', () => {
   const NEW = 'b'.repeat(40);
   const WORKFLOW = [
     `    uses: mgd34msu/goodvibes-sdk/.github/workflows/reusable-release-verify.yml@${OLD} # sdk 2.1.0 release`,
-    '      toolchain-spec: "@goodvibes-jev/engine/toolchain@2.1.0"',
+    '      toolchain-spec: "@pellux/goodvibes-toolchain@2.1.0"',
     `    uses: mgd34msu/goodvibes-sdk/.github/workflows/reusable-gh-release.yml@${OLD} # sdk 2.1.0 release`,
     '      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1',
-    `      publish-command: 'bunx @goodvibes-jev/engine/toolchain@2.1.0 goodvibes-publish-package --poll'`,
+    `      publish-command: 'bunx @pellux/goodvibes-toolchain@2.1.0 goodvibes-publish-package --poll'`,
   ].join('\n');
 
   test('every SDK reusable-workflow ref and toolchain spec moves; other actions do not', () => {
@@ -116,5 +120,86 @@ describe('workflow pins', () => {
     expect(peeledTagSha(output, 'v2.2.0')).toBe('d'.repeat(40));
     expect(peeledTagSha(`${'c'.repeat(40)}\trefs/tags/v2.2.0\n`, 'v2.2.0')).toBe('c'.repeat(40));
     expect(peeledTagSha('', 'v2.2.0')).toBeNull();
+  });
+});
+
+
+describe('retained standalone release boundary', () => {
+  test('a synthetic legacy registry package can still prepare workflow pins with injected execution', async () => {
+    const root = makeProjectTempDir('gv-legacy-release-prepare');
+    try {
+      writeFileSync(join(root, 'package.json'), JSON.stringify({
+        name: '@pellux/goodvibes-agent', private: false, version: '2.1.0',
+        devDependencies: { '@pellux/goodvibes-sdk': '2.1.0', '@pellux/goodvibes-toolchain': '2.1.1' },
+      }));
+      writeFileSync(join(root, 'README.md'), '# GoodVibes Agent\n');
+      writeFileSync(join(root, 'CHANGELOG.md'), CHANGELOG);
+      mkdirSync(join(root, '.github/workflows'), { recursive: true });
+      const workflow = [
+        `uses: mgd34msu/goodvibes-sdk/.github/workflows/release.yml@${'a'.repeat(40)} # sdk 2.0.0 release`,
+        'toolchain-spec: "@pellux/goodvibes-toolchain@2.0.0"',
+      ].join('\n');
+      writeFileSync(join(root, '.github/workflows/release.yml'), workflow);
+      const calls: Array<{ command: string; args: readonly string[]; cwd: string }> = [];
+      await prepareRelease(['--no-bump', '--no-install', '--no-changelog', '--no-live'], {
+        root,
+        runCommand: (command, args, options) => {
+          calls.push({ command, args, cwd: options.cwd });
+          return { status: 0, stdout: command === 'git' ? `${'b'.repeat(40)}\trefs/tags/v2.1.0\n` : '' };
+        },
+      });
+      expect(calls.map(({ command, args }) => [command, ...args])).toEqual([
+        ['bun', 'run', 'scripts/prebuild.ts'],
+        ['bun', 'run', 'scripts/generate-google-runbook.ts'],
+        ['git', 'ls-remote', 'https://github.com/mgd34msu/goodvibes-sdk', 'refs/tags/v2.1.0', 'refs/tags/v2.1.0^{}'],
+      ]);
+      expect(calls.every((call) => call.cwd === root)).toBe(true);
+      const result = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8');
+      expect(result).toContain('@pellux/goodvibes-toolchain@2.1.1');
+      expect(result).toContain(`@${'b'.repeat(40)} # sdk 2.1.0 release`);
+      expect(result).not.toContain('@goodvibes-jev/engine/toolchain@');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('the actual private workspace refuses before any command or write', async () => {
+    const root = resolve(import.meta.dir, '../../..');
+    const before = readFileSync(join(root, 'package.json'), 'utf8');
+    const calls: string[] = [];
+    await expect(prepareRelease(['--patch'], {
+      root,
+      runCommand: (command) => { calls.push(command); throw new Error('must not execute'); },
+    })).rejects.toThrow('refuses a private/workspace package');
+    expect(calls).toEqual([]);
+    expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(before);
+  });
+
+  test.each([
+    { private: true },
+    { private: false, dependencies: { '@goodvibes-jev/engine': 'workspace:*' } },
+    { private: false, devDependencies: { '@goodvibes-jev/engine': 'workspace:^' } },
+  ])('refuses %j without changing the fixture or executing commands', async (fields) => {
+    const root = makeProjectTempDir('gv-release-refusal');
+    try {
+      const manifest = JSON.stringify({ name: '@goodvibes-jev/agent', version: '2.1.0', ...fields });
+      writeFileSync(join(root, 'package.json'), manifest);
+      writeFileSync(join(root, 'bun.lock'), 'unchanged lock');
+      mkdirSync(join(root, 'release'));
+      writeFileSync(join(root, 'release/release-notes.md'), 'unchanged notes');
+      const calls: string[] = [];
+      const beforeFiles = readdirSync(root, { recursive: true }).sort();
+      await expect(prepareRelease(['--patch'], {
+        root,
+        runCommand: (command) => { calls.push(command); throw new Error('must not execute'); },
+      })).rejects.toThrow('refuses a private/workspace package');
+      expect(calls).toEqual([]);
+      expect(readdirSync(root, { recursive: true }).sort()).toEqual(beforeFiles);
+      expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(manifest);
+      expect(readFileSync(join(root, 'bun.lock'), 'utf8')).toBe('unchanged lock');
+      expect(readFileSync(join(root, 'release/release-notes.md'), 'utf8')).toBe('unchanged notes');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

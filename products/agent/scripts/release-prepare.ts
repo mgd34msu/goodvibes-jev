@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 /**
- * release:prepare, the one command that makes a version bump complete.
+ * Retained standalone release:prepare flow. The private workspace is refused
+ * before any command or write; pure helpers remain useful for legacy fixtures.
  *
  * Every file that is generated from source, or that carries a version or a
  * pinned SHA, is rewritten here, at the bump, instead of being policed by a red
@@ -30,7 +31,7 @@
  *   4. docs/google-setup-runbook.md from the pinned SDK's step plan
  *   5. workflow pins: every `mgd34msu/goodvibes-sdk/.github/workflows/*.yml@<sha>`
  *      reference moves to the commit the pinned SDK version's tag points at,
- *      and every `@goodvibes-jev/engine/toolchain@<version>` moves to the
+ *      and every `@pellux/goodvibes-toolchain@<version>` moves to the
  *      devDependencies pin
  *   6. a `## X.Y.Z - YYYY-MM-DD` CHANGELOG section and a release/release-notes.md
  *      scaffold ending in `GoodVibes Agent X.Y.Z - YYYY-MM-DD`, when the version
@@ -47,6 +48,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { assertStandaloneReleaseAllowed } from './standalone-release-policy.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const SDK_REPO_URL = 'https://github.com/mgd34msu/goodvibes-sdk';
@@ -161,16 +163,39 @@ export function parsePrepareArgs(argv: readonly string[]): PrepareArgs {
   };
 }
 
-function run(label: string, command: string, args: readonly string[]): void {
+export interface PrepareCommandOptions {
+  readonly cwd: string;
+  readonly captureOutput: boolean;
+  readonly timeout?: number;
+}
+
+export type PrepareCommandRunner = (
+  command: string,
+  args: readonly string[],
+  options: PrepareCommandOptions,
+) => { readonly status: number | null; readonly stdout: string };
+
+const runPrepareCommand: PrepareCommandRunner = (command, args, options) => {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd,
+    encoding: 'utf8',
+    stdio: options.captureOutput ? 'pipe' : 'inherit',
+    ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+  });
+  return { status: result.status, stdout: result.stdout ?? '' };
+};
+
+function run(root: string, execute: PrepareCommandRunner, label: string, command: string, args: readonly string[]): void {
   console.log(`[release:prepare] ${label}: ${command} ${args.join(' ')}`);
-  const result = spawnSync(command, args, { cwd: ROOT, stdio: 'inherit' });
+  const result = execute(command, args, { cwd: root, captureOutput: false });
   if (result.status !== 0) throw new Error(`${label} failed (exit ${result.status ?? 'signal'})`);
 }
 
-function resolveSdkTagSha(sdkVersion: string): string {
+function resolveSdkTagSha(root: string, execute: PrepareCommandRunner, sdkVersion: string): string {
   const tag = `v${sdkVersion}`;
-  const result = spawnSync('git', ['ls-remote', SDK_REPO_URL, `refs/tags/${tag}`, `refs/tags/${tag}^{}`], {
-    encoding: 'utf8',
+  const result = execute('git', ['ls-remote', SDK_REPO_URL, `refs/tags/${tag}`, `refs/tags/${tag}^{}`], {
+    cwd: root,
+    captureOutput: true,
     timeout: 60_000,
   });
   const sha = result.status === 0 ? peeledTagSha(result.stdout, tag) : null;
@@ -180,8 +205,8 @@ function resolveSdkTagSha(sdkVersion: string): string {
   return sha;
 }
 
-function rewriteFile(relativePath: string, rewrite: (text: string) => string): boolean {
-  const path = join(ROOT, relativePath);
+function rewriteFile(root: string, relativePath: string, rewrite: (text: string) => string): boolean {
+  const path = join(root, relativePath);
   const before = existsSync(path) ? readFileSync(path, 'utf8') : '';
   const after = rewrite(before);
   if (after === before) return false;
@@ -189,11 +214,18 @@ function rewriteFile(relativePath: string, rewrite: (text: string) => string): b
   return true;
 }
 
-async function main(argv: readonly string[]): Promise<void> {
+export async function prepareRelease(
+  argv: readonly string[],
+  options: { readonly root?: string; readonly runCommand?: PrepareCommandRunner } = {},
+): Promise<void> {
+  const root = options.root ?? ROOT;
+  const execute = options.runCommand ?? runPrepareCommand;
   const args = parsePrepareArgs(argv);
-  const pkgPath = join(ROOT, 'package.json');
+  const pkgPath = join(root, 'package.json');
   const pkgText = readFileSync(pkgPath, 'utf8');
-  const current = (JSON.parse(pkgText) as { version: string }).version;
+  const manifest = JSON.parse(pkgText) as Record<string, unknown>;
+  assertStandaloneReleaseAllowed(manifest, 'release:prepare');
+  const current = String(manifest.version ?? '');
 
   let version = current;
   if (args.bump !== null) {
@@ -202,20 +234,20 @@ async function main(argv: readonly string[]): Promise<void> {
     console.log(`[release:prepare] package.json ${current} -> ${version}`);
   }
 
-  if (args.install) run('relock', 'bun', ['install']);
-  run('project surfaces', 'bun', ['run', 'scripts/prebuild.ts']);
-  run('google setup runbook', 'bun', ['run', 'scripts/generate-google-runbook.ts']);
+  if (args.install) run(root, execute, 'relock', 'bun', ['install']);
+  run(root, execute, 'project surfaces', 'bun', ['run', 'scripts/prebuild.ts']);
+  run(root, execute, 'google setup runbook', 'bun', ['run', 'scripts/generate-google-runbook.ts']);
 
   if (args.pins) {
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { devDependencies?: Record<string, string> };
-    const sdkVersion = pkg.devDependencies?.['@goodvibes-jev/engine/sdk'];
-    const toolchainVersion = pkg.devDependencies?.['@goodvibes-jev/engine/toolchain'];
-    if (!sdkVersion || !/^\d+\.\d+\.\d+$/.test(sdkVersion)) throw new Error(`@goodvibes-jev/engine/sdk is not pinned to an exact version: ${String(sdkVersion)}`);
-    if (!toolchainVersion || !/^\d+\.\d+\.\d+$/.test(toolchainVersion)) throw new Error(`@goodvibes-jev/engine/toolchain is not pinned to an exact version: ${String(toolchainVersion)}`);
-    const sdkSha = resolveSdkTagSha(sdkVersion);
-    const workflowsDir = join(ROOT, '.github', 'workflows');
+    const sdkVersion = pkg.devDependencies?.['@pellux/goodvibes-sdk'];
+    const toolchainVersion = pkg.devDependencies?.['@pellux/goodvibes-toolchain'];
+    if (!sdkVersion || !/^\d+\.\d+\.\d+$/.test(sdkVersion)) throw new Error(`@pellux/goodvibes-sdk is not pinned to an exact version: ${String(sdkVersion)}`);
+    if (!toolchainVersion || !/^\d+\.\d+\.\d+$/.test(toolchainVersion)) throw new Error(`@pellux/goodvibes-toolchain is not pinned to an exact version: ${String(toolchainVersion)}`);
+    const sdkSha = resolveSdkTagSha(root, execute, sdkVersion);
+    const workflowsDir = join(root, '.github', 'workflows');
     for (const name of readdirSync(workflowsDir).filter((f) => /\.ya?ml$/.test(f))) {
-      if (rewriteFile(join('.github', 'workflows', name), (text) => rewriteWorkflowPins(text, { sdkVersion, sdkSha, toolchainVersion }))) {
+      if (rewriteFile(root, join('.github', 'workflows', name), (text) => rewriteWorkflowPins(text, { sdkVersion, sdkSha, toolchainVersion }))) {
         console.log(`[release:prepare] .github/workflows/${name}: sdk ${sdkVersion} (${sdkSha.slice(0, 12)}), toolchain ${toolchainVersion}`);
       }
     }
@@ -223,22 +255,22 @@ async function main(argv: readonly string[]): Promise<void> {
 
   if (args.changelog) {
     const date = new Date().toISOString().slice(0, 10);
-    console.log(rewriteFile('CHANGELOG.md', (text) => scaffoldChangelogText(text, version, date))
+    console.log(rewriteFile(root, 'CHANGELOG.md', (text) => scaffoldChangelogText(text, version, date))
       ? `[release:prepare] CHANGELOG.md: scaffolded ## ${version}; write the notes before pushing.`
       : `[release:prepare] CHANGELOG.md already has a ## ${version} section.`);
-    console.log(rewriteFile(RELEASE_NOTES_PATH, (text) => scaffoldReleaseNotesText(text, version, date))
+    console.log(rewriteFile(root, RELEASE_NOTES_PATH, (text) => scaffoldReleaseNotesText(text, version, date))
       ? `[release:prepare] ${RELEASE_NOTES_PATH}: scaffolded for ${version}; write the notes before pushing.`
       : `[release:prepare] ${RELEASE_NOTES_PATH} already names ${version}.`);
   }
 
   if (args.live) {
-    run('build', 'bun', ['run', 'build']);
-    run('live verification report', 'bun', ['run', 'scripts/verify-live.ts', '--strict', '--out', join('release', 'live-verification')]);
+    run(root, execute, 'build', 'bun', ['run', 'build']);
+    run(root, execute, 'live verification report', 'bun', ['run', 'scripts/verify-live.ts', '--strict', '--out', join('release', 'live-verification')]);
   }
 
   // Imported here, after the relock, so the check reads the files this run wrote.
   const { verifyPackageFacingText, verifyReleaseStamps } = await import('../src/cli/package-verification.ts');
-  const issues = [...verifyPackageFacingText(ROOT).failures, ...(args.changelog ? verifyReleaseStamps(ROOT) : [])];
+  const issues = [...verifyPackageFacingText(root).failures, ...(args.changelog ? verifyReleaseStamps(root) : [])];
   if (issues.length > 0) {
     throw new Error(`package-facing text or version stamps need a fix:\n${issues.map((issue) => `  - ${issue}`).join('\n')}`);
   }
@@ -247,7 +279,7 @@ async function main(argv: readonly string[]): Promise<void> {
 
 if (import.meta.main) {
   try {
-    await main(process.argv.slice(2));
+    await prepareRelease(process.argv.slice(2));
   } catch (error) {
     console.error(`[release:prepare] ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);

@@ -1,14 +1,16 @@
 import { describe, expect, test } from 'bun:test';
+import { DRIVER_VERSION, loadDriverModule, resolveDriver } from '@goodvibes-jev/engine/sdk/platform/browser';
 
 async function expectImportable(specifier: string): Promise<void> {
   expect(await import(specifier)).toEqual(expect.any(Object));
 }
 
 describe('dependency surface', () => {
-  test('the browser driver is still resolvable, supplied by the SDK', async () => {
-    // Not a declared dependency of this package, but it must be installed:
-    // `bun run build` stages node_modules/playwright-core beside the binary.
-    await expectImportable('playwright-core');
+  test('the public engine browser API resolves and loads its owned driver', () => {
+    const location = { surfaceRoot: 'agent' };
+    // Resolve and load only. This must not launch, provision or download a browser.
+    expect(resolveDriver(location)).toMatchObject({ available: true, version: DRIVER_VERSION, error: null });
+    expect(loadDriverModule(location)?.chromium.executablePath).toBeFunction();
   });
 
   test('runtime import entrypoints used by the product resolve from installed dependencies', async () => {

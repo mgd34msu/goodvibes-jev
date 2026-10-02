@@ -1,5 +1,5 @@
 /**
- * Package verification: what a published @pellux/goodvibes-agent tarball must
+ * Retained standalone package verification: what a published @pellux/goodvibes-agent tarball must
  * hold, what it must never hold, and the package.json shape npm and `bun add -g`
  * rely on. publish:check and package:install-check run it per push; the
  * package-facing text rule and the version-stamp agreement run at the version
@@ -12,6 +12,7 @@
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, normalize } from 'node:path';
+import { assertStandaloneReleaseAllowed } from '../../scripts/standalone-release-policy.ts';
 
 export interface PackageCliBinVerification {
   readonly command: 'goodvibes-agent';
@@ -149,8 +150,8 @@ const PACKAGE_FACING_FORBIDDEN_TEXT = [
 ] as const;
 const EXACT_SEMVER_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+$/;
 /**
- * Package-facing text names no GoodVibes package but this one: the platform
- * runtime the Agent bundles is "the bundled GoodVibes platform runtime" there.
+ * Legacy registry package names remain restricted to Agent. Public monorepo
+ * engine package/export names are valid references and are not legacy packages.
  */
 const ALLOWED_PACKAGE_FACING_PACKAGE_NAMES = new Set([
   '@pellux/goodvibes-agent',
@@ -552,24 +553,32 @@ export function parseNpmPackJson(raw: string): NpmPackDryRunResult {
   };
 }
 
-function registryPackDryRun(root: string): NpmPackDryRunResult {
-  execSync('bun run build:package-runtime', {
-    cwd: root,
-    stdio: 'inherit',
-  });
-  const raw = execSync('npm pack --json --dry-run', {
+export type PackageInstallCommandRunner = (command: string, root: string) => string;
+
+const runPackageInstallCommand: PackageInstallCommandRunner = (command, root) => {
+  if (command === 'bun run build:package-runtime') {
+    execSync(command, { cwd: root, stdio: 'inherit' });
+    return '';
+  }
+  return execSync(command, {
     cwd: root,
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'inherit'],
   });
+};
+
+function registryPackDryRun(root: string, runCommand: PackageInstallCommandRunner): NpmPackDryRunResult {
+  runCommand('bun run build:package-runtime', root);
+  const raw = runCommand('npm pack --json --dry-run', root);
   return parseNpmPackJson(raw);
 }
 
-export function verifyPackageCliInstall(root: string): PackageCliVerificationReport {
+export function verifyPackageCliInstall(root: string, runCommand: PackageInstallCommandRunner = runPackageInstallCommand): PackageCliVerificationReport {
   const pkg = readPackageJson(root);
+  assertStandaloneReleaseAllowed(pkg, 'package install verification');
   const bin = pkg.bin && typeof pkg.bin === 'object' ? pkg.bin as Record<string, string | undefined> : {};
   const bins = REQUIRED_BIN_COMMANDS.map((command) => verifyBin(root, command, bin[command]));
-  const pack = registryPackDryRun(root);
+  const pack = registryPackDryRun(root, runCommand);
   const requiredPaths = requiredTarballPaths(root);
   const requiredPathsPresent = requiredPaths.filter((path) => pack.files.includes(path));
   const forbiddenPaths = pack.files.filter(isForbiddenPackageTarballPath);

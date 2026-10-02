@@ -1,124 +1,161 @@
-// ---------------------------------------------------------------------------
-// sdk-release-gates.test.ts
-//
-// Drives the publish-blocking SDK release gates (scripts/sdk-release-gates.ts)
-// against filesystem fixtures: each gate must FAIL when it should (overlay
-// marker present, pin not an exact semver, pin/installed/lock disagreement,
-// a non-npm SDK import injected into the source tree) and PASS on a clean tree.
-// ---------------------------------------------------------------------------
-
+/** Agent adapter contracts: installable engine package, public exports and root lock. */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
+  AGENT_SDK_PIN,
+  OVERLAY_MARKER_REL,
+  SDK_PACKAGE,
   readSdkPin,
   sdkPinAgreementIssues,
   sdkReleaseGateIssues,
 } from '../../../scripts/sdk-release-gates.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
-const SDK = '@goodvibes-jev/engine/sdk';
+const SDK = '@goodvibes-jev/engine';
+const PUBLIC_IMPORT = `${SDK}/sdk/platform/state`;
 
 interface FixtureSpec {
-  readonly pin?: string; // devDependencies pin (default 0.38.0)
-  readonly installedVersion?: string | null; // node_modules SDK version; null = not installed
-  readonly lockPin?: string | null; // version string written into bun.lock; null = omit lockfile entry
-  readonly marker?: boolean; // write the overlay marker
-  readonly srcFiles?: Record<string, string>; // relative-to-src path -> file contents
+  readonly pin?: string;
+  readonly installedVersion?: string | null;
+  readonly lockPin?: string | null;
+  readonly localLockPin?: string;
+  readonly marker?: boolean;
+  readonly devPin?: string;
+  readonly srcFiles?: Record<string, string>;
 }
 
 const created: string[] = [];
 
-function makeFixture(spec: FixtureSpec): string {
-  const root = makeProjectTempDir('gv-sdk-gate');
-  created.push(root);
-  const pin = spec.pin ?? '0.38.0';
+function makeFixture(spec: FixtureSpec = {}): string {
+  const repository = makeProjectTempDir('gv-sdk-gate');
+  created.push(repository);
+  const root = join(repository, 'products', 'agent');
+  mkdirSync(root, { recursive: true });
+  const pin = spec.pin ?? 'workspace:*';
+  writeFileSync(join(repository, 'package.json'), JSON.stringify({ private: true, workspaces: ['products/*', 'packages/*'] }));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({
+    name: '@goodvibes-jev/agent', version: '2.1.0', private: true,
+    dependencies: { [SDK]: pin },
+    ...(spec.devPin === undefined ? {} : { devDependencies: { [SDK]: spec.devPin } }),
+  }));
 
-  writeFileSync(
-    join(root, 'package.json'),
-    JSON.stringify({ name: '@pellux/goodvibes-agent', version: '1.5.5', devDependencies: { [SDK]: pin } }, null, 2),
-  );
-
-  // Installed package
+  // The shared workspace branch proves manifest presence only. Exact registry
+  // pins below separately exercise installed-version agreement.
   if (spec.installedVersion !== null) {
-    const pkgDir = join(root, 'node_modules', '@pellux', 'goodvibes-sdk');
+    const pkgDir = join(root, 'node_modules', SDK);
     mkdirSync(pkgDir, { recursive: true });
-    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: SDK, version: spec.installedVersion ?? pin }));
-    if (spec.marker) writeFileSync(join(pkgDir, '.local-sdk-overlay.json'), JSON.stringify({ sdkGit: 'x@y' }));
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+      name: SDK,
+      version: spec.installedVersion ?? '2.0.23',
+      exports: { '.': './index.js', './sdk': './sdk/index.js', './sdk/platform/state': './sdk/state.js', './sdk/platform/tools': './sdk/tools.js', './toolchain': './toolchain/index.js' },
+    }));
+    if (spec.marker) writeFileSync(join(pkgDir, '.local-sdk-overlay.json'), '{}');
   }
 
-  // Lockfile
   const lockPin = spec.lockPin === undefined ? pin : spec.lockPin;
-  const lockBody = lockPin === null ? '{"lockfileVersion": 1, "packages": {}}' : `{"packages": {"${SDK}": ["${SDK}@${lockPin}"]}}`;
-  writeFileSync(join(root, 'bun.lock'), lockBody);
+  const lockText = (value: string | null): string => JSON.stringify({
+    lockfileVersion: 1,
+    packages: value === null ? {} : { [SDK]: [`${SDK}@${value.startsWith('workspace:') ? 'workspace:packages/engine' : value}`] },
+  });
+  writeFileSync(join(repository, 'bun.lock'), lockText(lockPin));
+  // A stale nested lock cannot rescue or invalidate the authoritative root lock.
+  if (spec.localLockPin !== undefined) writeFileSync(join(root, 'bun.lock'), lockText(spec.localLockPin));
 
-  // Source tree
   const srcDir = join(root, 'src');
   mkdirSync(srcDir, { recursive: true });
-  const files = spec.srcFiles ?? { 'clean.ts': `import { x } from '${SDK}/platform/state';\n` };
-  for (const [rel, body] of Object.entries(files)) {
-    const abs = join(srcDir, rel);
-    mkdirSync(join(abs, '..'), { recursive: true });
-    writeFileSync(abs, body);
+  for (const [relative, body] of Object.entries(spec.srcFiles ?? { 'clean.ts': `import { x } from '${PUBLIC_IMPORT}';\n` })) {
+    const path = join(srcDir, relative);
+    mkdirSync(join(path, '..'), { recursive: true });
+    writeFileSync(path, body);
   }
-
   return root;
 }
 
 afterEach(() => {
-  while (created.length > 0) {
-    const dir = created.pop();
-    if (dir) rmSync(dir, { recursive: true, force: true });
-  }
+  for (const root of created.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 describe('sdk-release-gates', () => {
-  test('clean fixture passes every gate', () => {
-    const root = makeFixture({});
+  test('the adapter names the installable package, root lock and engine-owned marker', () => {
+    expect(SDK_PACKAGE).toBe('@goodvibes-jev/engine');
+    expect(AGENT_SDK_PIN).toMatchObject({ pinSource: 'dependencies', lockfile: '../../bun.lock', enforceExportsMap: true });
+    expect(OVERLAY_MARKER_REL).toBe('node_modules/@goodvibes-jev/engine/.local-sdk-overlay.json');
+  });
+
+  test('the actual Agent workspace passes dependency, root-lock and installed-presence checks', () => {
+    const root = resolve(import.meta.dir, '../../..');
+    expect(readSdkPin(root)).toBe('workspace:*');
+    expect(sdkPinAgreementIssues(root)).toEqual([]);
+  });
+
+  test('clean workspace fixture passes presence, root-lock and public-import gates', () => {
+    expect(sdkReleaseGateIssues(makeFixture())).toEqual([]);
+  });
+
+  test('clean exact registry fixture passes installed-version agreement', () => {
+    expect(sdkReleaseGateIssues(makeFixture({ pin: '2.0.23' }))).toEqual([]);
+  });
+
+  test('the engine-owned overlay marker is a blocking issue', () => {
+    const issues = sdkPinAgreementIssues(makeFixture({ marker: true }));
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain(`overlay marker present at ${OVERLAY_MARKER_REL}`);
+  });
+
+  test.each(['^2.0.23', '~2.0.23', 'latest', 'file:../../packages/engine'])('non-exact registry pin %s fails', (pin) => {
+    expect(sdkPinAgreementIssues(makeFixture({ pin })).some((issue) => issue.includes('must be exact'))).toBe(true);
+  });
+
+  test.each(['workspace:*', '2.0.23'])('missing installed engine fails for %s', (pin) => {
+    const issues = sdkPinAgreementIssues(makeFixture({ pin, installedVersion: null }));
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatch(/not installed|@missing != pin/);
+  });
+
+  test('wrong installed version fails an exact registry pin', () => {
+    const issues = sdkPinAgreementIssues(makeFixture({ pin: '2.0.23', installedVersion: '2.0.22' }));
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('installed @goodvibes-jev/engine@2.0.22 != pin 2.0.23');
+  });
+
+  test.each([
+    { pin: 'workspace:*', lockPin: '2.0.23' },
+    { pin: 'workspace:*', lockPin: null },
+    { pin: '2.0.23', lockPin: '2.0.22' },
+  ])('root-lock mismatch blocks even when a local lock agrees: %j', (spec) => {
+    const issues = sdkPinAgreementIssues(makeFixture({ ...spec, localLockPin: spec.pin }));
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('../../bun.lock does not resolve');
+  });
+
+  test('an obsolete local lock does not override a correct root lock', () => {
+    expect(sdkReleaseGateIssues(makeFixture({ localLockPin: '0.1.0' }))).toEqual([]);
+  });
+
+  test.each([
+    `../../../goodvibes-${'sdk'}/dist/secret.js`,
+    `../../../packages/${'engine'}/sdk/src/private.ts`,
+  ])('relative private engine/legacy imports are caught: %s', (specifier) => {
+    const root = makeFixture({ srcFiles: { 'bad.ts': `import { secret } from '${specifier}';\n` } });
+    expect(sdkReleaseGateIssues(root).some((issue) => issue.includes('non-npm goodvibes-sdk import'))).toBe(true);
+  });
+
+  test('package-qualified private engine imports are rejected by the exports map', () => {
+    const root = makeFixture({ srcFiles: { 'bad.ts': `import { secret } from '${SDK}/sdk/src/private';\n` } });
+    const issues = sdkReleaseGateIssues(root);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('not in the published exports map');
+  });
+
+  test('public engine SDK and toolchain exports pass', () => {
+    const root = makeFixture({ srcFiles: {
+      'public.ts': `import { sdk } from '${SDK}/sdk';\nimport { state } from '${PUBLIC_IMPORT}';\nimport { tools } from '${SDK}/toolchain';\n`,
+    } });
     expect(sdkReleaseGateIssues(root)).toEqual([]);
   });
 
-  test('overlay marker present is a publish-blocking issue', () => {
-    const root = makeFixture({ marker: true });
-    const issues = sdkPinAgreementIssues(root);
-    expect(issues.some((i) => i.includes('overlay marker present'))).toBe(true);
-  });
-
-  test('a non-exact pin (caret range) fails the exact-semver gate', () => {
-    const root = makeFixture({ pin: '^0.38.0' });
-    const issues = sdkPinAgreementIssues(root);
-    expect(issues.some((i) => i.includes('must be exact'))).toBe(true);
-  });
-
-  test('installed version disagreeing with the pin fails', () => {
-    const root = makeFixture({ installedVersion: '0.37.2' });
-    const issues = sdkPinAgreementIssues(root);
-    expect(issues.some((i) => i.includes('!= pin'))).toBe(true);
-  });
-
-  test('lockfile lagging the pin bump fails', () => {
-    const root = makeFixture({ lockPin: '0.35.0' });
-    const issues = sdkPinAgreementIssues(root);
-    expect(issues.some((i) => i.includes('does not resolve'))).toBe(true);
-  });
-
-  test('a non-npm SDK import injected into source is caught', () => {
-    const root = makeFixture({
-      srcFiles: {
-        'ok.ts': `import { a } from '${SDK}/platform/tools';\n`,
-        // Build the overlay specifier so THIS test file's own source text never
-        // contains the contiguous literal "goodvibes-sdk". The written fixture is
-        // byte-identical at runtime, but the release gate's source sweep
-        // (publish:check → toolchain sdk-pin-gate) walks src/ including this
-        // test file, and a raw literal here is flagged as a real offender.
-        'bad.ts': `import { evil } from '../../../goodvibes-${'sdk'}/dist/secret.js';\n`,
-      },
-    });
-    expect(sdkReleaseGateIssues(root).some((i) => i.includes('non-npm goodvibes-sdk import'))).toBe(true);
-  });
-
-  test('readSdkPin reads the devDependencies pin', () => {
-    const root = makeFixture({ pin: '0.38.0' });
-    expect(readSdkPin(root)).toBe('0.38.0');
+  test('readSdkPin reads the authoritative dependencies group rather than a stale dev pin', () => {
+    expect(readSdkPin(makeFixture({ devPin: '0.38.0' }))).toBe('workspace:*');
   });
 });
