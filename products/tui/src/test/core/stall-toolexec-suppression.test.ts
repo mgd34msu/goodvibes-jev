@@ -65,7 +65,7 @@ function makeBus() {
   };
 }
 
-/** An inert RuntimeEventFeed for domains wireStreamEventMetrics never subscribes to (sessions, providers, agents, workflows, planner, ops). */
+/** An inert RuntimeEventFeed for domains wireStreamEventMetrics never subscribes to (sessions, providers, agents, contracts, planner, ops). */
 function makeInertFeed() {
   return {
     on: () => () => {},
@@ -92,7 +92,7 @@ function makeOptions(turns: ReturnType<typeof makeBus>, tools: ReturnType<typeof
       tools,
       providers: makeInertFeed(),
       agents: makeInertFeed(),
-      workflows: makeInertFeed(),
+      contracts: makeInertFeed(),
       planner: makeInertFeed(),
       ops: makeInertFeed(),
     } as WireStreamEventMetricsOptions['events'],

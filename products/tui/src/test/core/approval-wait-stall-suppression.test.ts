@@ -67,7 +67,7 @@ function setup(isApprovalPending?: () => boolean) {
       sessions: makeUnusedFeed(),
       providers: makeUnusedFeed(),
       agents: makeUnusedFeed(),
-      workflows: makeUnusedFeed(),
+      contracts: makeUnusedFeed(),
       planner: makeUnusedFeed(),
       ops: makeUnusedFeed(),
     } as WireStreamEventMetricsOptions['events'],
