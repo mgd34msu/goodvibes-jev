@@ -19,6 +19,22 @@ import {
 
 export const builtinGatewayControlLiveTurnMethodDescriptors: readonly GatewayMethodDescriptor[] = [
   methodDescriptor({
+    id: 'sessions.turns.cancel',
+    title: 'Request Cancellation of an Expected Turn',
+    description: 'Atomically compare expectedTurnId and request cancellation of that live turn, preserving the session and future queued work. Acceptance does not establish settlement: observe the existing runtime turn terminal event for the same sessionId and turnId. Repeated requests are idempotent. Known recently ended IDs report already-ended; unknown or expired IDs report stale-turn when another turn is active, otherwise turn-not-found. Missing local sessions return SESSION_NOT_LOCAL. Requires write:sessions.',
+    category: 'sessions',
+    scopes: ['write:sessions'],
+    http: { method: 'POST', path: '/api/sessions/{sessionId}/turns/cancel' },
+    events: [runtimeEventId('turn')],
+    inputSchema: objectSchema({ sessionId: STRING_SCHEMA, expectedTurnId: STRING_SCHEMA }, ['sessionId', 'expectedTurnId']),
+    outputSchema: objectSchema({
+      sessionId: STRING_SCHEMA,
+      expectedTurnId: STRING_SCHEMA,
+      status: { type: 'string', enum: ['cancellation-requested', 'already-ended', 'stale-turn', 'turn-not-found'] },
+      activeTurnId: STRING_SCHEMA,
+    }, ['sessionId', 'expectedTurnId', 'status']),
+  }),
+  methodDescriptor({
     id: 'sessions.toolCalls.cancel',
     title: 'Cancel One In-Flight Tool Call',
     description: 'Cancel a single running tool call by its callId, leaving the turn and any other running calls untouched. The cancelled call settles as a structured "cancelled by user" tool result the model adapts to in the same turn, distinct from a whole-turn interrupt. Only the daemon\'s live local runtime session is controllable; any other session id is a 404 SESSION_NOT_LOCAL, and an unknown or already-settled callId is a 404 TOOL_CALL_NOT_RUNNING.',

@@ -128,6 +128,8 @@ interface HookDispatcherLike {
 type EmitterContext = import('../runtime/emitters/index.js').EmitterContext;
 
 export interface OrchestratorTurnLoopContext {
+  /** Close the cancellation boundary before publishing a terminal outcome. */
+  readonly onTurnTerminal?: (() => void) | undefined;
   readonly conversation: ConversationManager;
   readonly toolRegistry: ToolRegistry;
   readonly getSystemPrompt: (signal?: AbortSignal) => string | Promise<string>;
@@ -275,6 +277,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
     if (intake.kind !== 'turn') {
       const line = describeIntake(intake);
       context.conversation.addSystemMessage(line);
+      context.onTurnTerminal?.();
       if (context.runtimeBus) {
         emitTurnCompleted(context.runtimeBus, context.emitterContext(context.turnId), { turnId: context.turnId, response: line, stopReason: 'completed' });
       }
@@ -327,6 +330,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         context.setStreamingActive(false);
         context.conversation.finalizeStreamingBlock();
       }
+      context.onTurnTerminal?.();
       if (context.runtimeBus) {
         emitStreamEnd(context.runtimeBus, context.emitterContext(context.turnId), { turnId: context.turnId });
         emitPreflightFail(context.runtimeBus, context.emitterContext(context.turnId), {
@@ -375,6 +379,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
       assertActiveTurn();
       if (preResult.decision === 'deny') {
         context.conversation.addSystemMessage(preResult.reason ?? 'LLM call blocked by hook');
+        context.onTurnTerminal?.();
         if (context.runtimeBus) {
           emitTurnError(context.runtimeBus, context.emitterContext(context.turnId), {
             turnId: context.turnId,
@@ -576,6 +581,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
           + `  • Switch to a different model with /model\n`
           + `  • Switch to a free model via /model and selecting the free tier`,
         );
+        context.onTurnTerminal?.();
         if (context.runtimeBus) {
           emitTurnError(context.runtimeBus, context.emitterContext(context.turnId), {
             turnId: context.turnId,
@@ -744,6 +750,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         configManager: context.configManager,
         providerRegistry: context.providerRegistry,
         runtimeBus: context.runtimeBus,
+        onTurnTerminal: context.onTurnTerminal,
         emitterContext: (id) => context.emitterContext(id),
         turnId: context.turnId,
         response: enrichedResponse,
@@ -768,6 +775,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
             + `The loop is stopping to prevent an infinite failure cycle. `
             + `Please reassess your approach and try a completely different strategy.`,
           );
+          context.onTurnTerminal?.();
           if (context.runtimeBus) {
             emitTurnError(context.runtimeBus, context.emitterContext(context.turnId), {
               turnId: context.turnId,
@@ -805,6 +813,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
       configManager: context.configManager,
       providerRegistry: context.providerRegistry,
       runtimeBus: context.runtimeBus,
+      onTurnTerminal: context.onTurnTerminal,
       emitterContext: (id) => context.emitterContext(id),
       turnId: context.turnId,
       response: enrichedResponse,

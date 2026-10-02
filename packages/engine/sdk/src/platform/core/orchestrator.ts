@@ -1,3 +1,4 @@
+import { TurnCancellationFence, type TurnCancellationResult } from './turn-cancellation.js';
 import { resolveSystemPrompt } from './orchestrator-system-prompt.js';
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import { JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
@@ -486,6 +487,13 @@ export class Orchestrator {
     });
   }
 
+  private readonly turnCancellation = new TurnCancellationFence();
+
+  /** Compare and request cancellation synchronously; terminal events establish settlement. */
+  public cancelTurn(expectedTurnId: string): TurnCancellationResult {
+    return this.turnCancellation.cancel(expectedTurnId);
+  }
+
   /** Abort the current in-flight LLM request, if any. */
   public abort(): void {
     this.abortController?.abort();
@@ -699,17 +707,20 @@ export class Orchestrator {
     providerRegistry: ReturnType<typeof requireProviderRegistry>,
   ): { submissionKey: string; turnId: string } | null {
     // Session, transcript position and prompt prefix identify one in-flight submission.
-    const turnId = createHash('sha256')
+    const submissionIdentity = createHash('sha256')
       .update(`${this.sessionId}:${this.conversation.getMessageCount()}:${text.slice(0, 512)}`)
       .digest('hex')
       .slice(0, 16); // 16-char prefix is sufficient for in-process dedup
     const idempotencyStore = getIdempotencyStore(this.coreServices, this.ownedIdempotencyStore);
     const submissionKey = idempotencyStore.generateKey({
       sessionId: this.sessionId,
-      turnId,
+      turnId: submissionIdentity,
       callId:    text.slice(0, 64), // use prompt prefix for human-readable correlation
     });
     const submissionCheck = idempotencyStore.checkAndRecord(submissionKey);
+    // A retried prompt can have the same transcript position. Execution IDs
+    // must never alias an old cancellation target, even before admission.
+    const turnId = randomUUID();
     this.currentSubmissionKey = submissionKey;
 
     if (submissionCheck.status === 'in-flight') {
@@ -737,6 +748,11 @@ export class Orchestrator {
     // 'duplicate' (completed/failed), allow re-run (user sent same text intentionally).
     // We just let it proceed; the prior record will be overwritten.
 
+    // Reserve and bind before notifying synchronous submitted-event observers.
+    this.turnInFlight = true;
+    this.startThinking();
+    this.turnCancellation.begin(turnId, () => this.abort());
+
     if (this.runtimeBus) {
       emitTurnSubmitted(this.runtimeBus, createEmitterContext(this.sessionId, turnId), {
         turnId,
@@ -745,10 +761,6 @@ export class Orchestrator {
       });
     }
 
-    // Reserve the turn before any asynchronous judgment. Queueing and abort
-    // must work while the port is answering, just as while the provider runs.
-    this.turnInFlight = true;
-    this.startThinking();
     return { submissionKey, turnId };
   }
 
@@ -763,6 +775,10 @@ export class Orchestrator {
     turnClassification?: ClassificationResult,
   ): Promise<void> {
     await executeOrchestratorTurnLoop({
+      onTurnTerminal: () => {
+        this.abortController?.signal.throwIfAborted();
+        this.turnCancellation.end(turnId);
+      },
       conversation: this.conversation,
       toolRegistry: this.toolRegistry,
       getSystemPrompt: this.getSystemPrompt,
@@ -880,6 +896,7 @@ export class Orchestrator {
       this.conversation.removeMessagesAfter(this.turnStartMessageCount);
       this.conversation.markLastUserMessageCancelled();
       this.conversation.addSystemMessage('[Response cancelled]');
+      this.turnCancellation.end(turnId);
       if (this.runtimeBus) {
         emitTurnCancel(this.runtimeBus, createEmitterContext(this.sessionId, turnId), {
           turnId,
@@ -910,6 +927,7 @@ export class Orchestrator {
       }
     }
     this._turnFailed = true;
+    this.turnCancellation.end(turnId);
     if (this.runtimeBus) {
       emitTurnError(this.runtimeBus, createEmitterContext(this.sessionId, turnId), {
         turnId,
@@ -947,6 +965,7 @@ export class Orchestrator {
       this.currentSubmissionKey = null;
       this._turnFailed = false;
     }
+    this.turnCancellation.end(turnId);
     this.stopThinking();
     this.turnInFlight = false;
     const durationMs = Date.now() - turnStartTime;

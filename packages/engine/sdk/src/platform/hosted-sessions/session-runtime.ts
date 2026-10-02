@@ -318,6 +318,7 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
     toolRegistry,
     orchestrator,
     liveTurnControls: {
+      cancelTurn: (expectedTurnId: string) => orchestrator.cancelTurn(expectedTurnId),
       cancelToolCall: (callId: string) => orchestrator.cancelToolCall(callId),
       listQueuedMessages: () => orchestrator.listQueuedMessages(),
       editQueuedMessage: (id: string, text: string) => orchestrator.editQueuedMessage(id, text),

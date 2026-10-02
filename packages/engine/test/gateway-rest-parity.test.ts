@@ -71,6 +71,26 @@ function buildHarness(options?: {
 }
 
 describe('gateway REST parity: advertised paths reach the gateway handler', () => {
+  test('POST expected-turn cancellation reaches the native verb with both identities', async () => {
+    const { calls, handlers } = buildHarness();
+    const response = await dispatchDaemonApiRoutes(makeRequest('POST', 'http://localhost/api/sessions/hosted-1/turns/cancel', { expectedTurnId: 'turn-1' }), handlers);
+    expect(response?.status).toBe(200);
+    expect(calls[0]!.methodId).toBe('sessions.turns.cancel');
+    expect(calls[0]!.body).toEqual({ sessionId: 'hosted-1', expectedTurnId: 'turn-1' });
+  });
+
+  test('expected-turn cancellation rejects JSON and query attempts to retarget the URL session', async () => {
+    for (const [url, body] of [
+      ['http://localhost/api/sessions/absent/turns/cancel', { sessionId: 'hosted-1', expectedTurnId: 'turn-1' }],
+      ['http://localhost/api/sessions/absent/turns/cancel?sessionId=hosted-1', { expectedTurnId: 'turn-1' }],
+    ] as const) {
+      const { calls, handlers } = buildHarness();
+      const response = await dispatchDaemonApiRoutes(makeRequest('POST', url, body), handlers);
+      expect(response?.status).toBe(400);
+      expect(calls).toHaveLength(0);
+    }
+  });
+
   test('GET /api/skills routes to skills.list', async () => {
     const { calls, handlers } = buildHarness();
     const res = await dispatchDaemonApiRoutes(makeRequest('GET', 'http://localhost/api/skills'), handlers);

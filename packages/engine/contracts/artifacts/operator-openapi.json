@@ -3,7 +3,7 @@
   "info": {
     "title": "GoodVibes Operator API",
     "version": "2.0.23",
-    "description": "Generated from the operator contract (packages/contracts/artifacts/operator-contract.json). 513 cataloged methods: 441 with dedicated REST bindings, 72 reachable only through the generic invoke endpoint. 0 methods lack typed SDK client IO and are marked with `x-typed-client-io: false`. They are represented honestly, never omitted. Regenerate with `bun run openapi:generate`; drift fails `contracts:check`."
+    "description": "Generated from the operator contract (packages/contracts/artifacts/operator-contract.json). 514 cataloged methods: 442 with dedicated REST bindings, 72 reachable only through the generic invoke endpoint. 0 methods lack typed SDK client IO and are marked with `x-typed-client-io: false`. They are represented honestly, never omitted. Regenerate with `bun run openapi:generate`; drift fails `contracts:check`."
   },
   "servers": [
     {
@@ -105401,6 +105401,95 @@
         }
       }
     },
+    "/api/sessions/{sessionId}/turns/cancel": {
+      "post": {
+        "operationId": "sessions.turns.cancel",
+        "summary": "Request Cancellation of an Expected Turn",
+        "description": "Atomically compare expectedTurnId and request cancellation of that live turn, preserving the session and future queued work. Acceptance does not establish settlement: observe the existing runtime turn terminal event for the same sessionId and turnId. Repeated requests are idempotent. Known recently ended IDs report already-ended; unknown or expired IDs report stale-turn when another turn is active, otherwise turn-not-found. Missing local sessions return SESSION_NOT_LOCAL. Requires write:sessions.",
+        "tags": [
+          "sessions"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "expectedTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "cancellation-requested",
+                        "already-ended",
+                        "stale-turn",
+                        "turn-not-found"
+                      ]
+                    },
+                    "activeTurnId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "expectedTurnId",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-typed-client-io": true,
+        "x-access": "authenticated",
+        "x-transport": [
+          "http",
+          "ws"
+        ],
+        "x-scopes": [
+          "write:sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expectedTurnId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "expectedTurnId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/security-settings": {
       "get": {
         "operationId": "security.settings",
@@ -118896,6 +118985,15 @@
       "category": "sessions",
       "access": "authenticated",
       "rest": "POST /api/sessions/{sessionId}/tool-calls/{callId}/cancel",
+      "typedClientIo": true,
+      "inputSchemaCoverage": "typed",
+      "outputSchemaCoverage": "typed"
+    },
+    {
+      "id": "sessions.turns.cancel",
+      "category": "sessions",
+      "access": "authenticated",
+      "rest": "POST /api/sessions/{sessionId}/turns/cancel",
       "typedClientIo": true,
       "inputSchemaCoverage": "typed",
       "outputSchemaCoverage": "typed"

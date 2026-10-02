@@ -243,6 +243,7 @@ function attachAuthoritativeTaskToAgentCalls(toolCalls: readonly ToolCall[], use
 }
 
 export async function handleToolResponseOutcome(args: {
+  onTurnTerminal?: (() => void) | undefined;
   conversation: ConversationManager;
   agentManager: Pick<AgentManager, 'list' | 'spawn'>;
   planManager: Pick<ExecutionPlanManager, 'getActive' | 'getSummary' | 'getNextItems' | 'updateItem'> | null;
@@ -346,6 +347,7 @@ export async function handleToolResponseOutcome(args: {
     if (args.contractSession && await holdSessionCompletion(args, args.contractSession, args.response.content)) {
       return { continueLoop: true, results };
     }
+    args.onTurnTerminal?.();
     if (args.runtimeBus) {
       emitTurnCompleted(args.runtimeBus, args.emitterContext(args.turnId), {
         turnId: args.turnId,
@@ -368,6 +370,7 @@ export async function handleToolResponseOutcome(args: {
 }
 
 export function handleFinalResponseOutcome(args: {
+  onTurnTerminal?: (() => void) | undefined;
   conversation: ConversationManager;
   agentManager: Pick<AgentManager, 'list' | 'spawn'>;
   planManager: Pick<ExecutionPlanManager, 'parseFromMarkdown' | 'replaceItems' | 'load' | 'save' | 'getActive' | 'getNextItems' | 'updateItem'> | null;
@@ -392,6 +395,7 @@ export function handleFinalResponseOutcome(args: {
     model: args.providerRegistry.getCurrentModel().displayName,
     provider: args.providerRegistry.getCurrentModel().provider,
   });
+  args.onTurnTerminal?.();
   if (args.runtimeBus) {
     emitTurnCompleted(args.runtimeBus, args.emitterContext(args.turnId), {
       turnId: args.turnId,

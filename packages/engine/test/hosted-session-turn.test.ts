@@ -46,6 +46,7 @@ let runtimeBus: RuntimeEventBus;
 let requests: ChatRequest[];
 /** The answers the stub gives, in order. */
 let answers: ChatResponse[];
+let heldChat: ((request: ChatRequest) => Promise<ChatResponse>) | undefined;
 let readings: ReturnType<typeof installHostedSessionReadings>;
 
 function textAnswer(content: string): ChatResponse {
@@ -66,6 +67,7 @@ function stubProvider(): LLMProvider {
     isConfigured: () => true,
     chat: async (request: ChatRequest): Promise<ChatResponse> => {
       requests.push(request);
+      if (heldChat) return heldChat(request);
       return answers.shift() ?? textAnswer('nothing left to say');
     },
   } as unknown as LLMProvider;
@@ -92,6 +94,7 @@ beforeEach(() => {
   writeFileSync(join(workspace, 'note.txt'), 'the file this session can read\n');
   requests = [];
   answers = [];
+  heldChat = undefined;
   runtimeBus = new RuntimeEventBus();
 
   const configManager = new ConfigManager({
@@ -319,4 +322,131 @@ test('cancelling a slow judgment retains the user turn and queues a newer turn u
     expect(session.orchestrator.listQueuedMessages()).toHaveLength(0);
     expect(session.orchestrator.isThinking).toBe(false);
   } finally { release(); installJudgmentPort(previous); session.dispose(); }
+});
+
+function cancellationSession() {
+  return createHostedSessionRuntime({ sessionId: 'cancel-target', workspaceRoot: workspace, floor: { services, contractRunner: services.contractRunner, dispose: (): void => {} }, systemPrompt: 'hosted' });
+}
+
+test('expected cancellation during submitted notification is admitted before dispatch; identical retry has a fresh identity', async () => {
+  const session = cancellationSession();
+  const ids: string[] = [];
+  const cancelled: string[] = [];
+  runtimeBus.on('TURN_CANCEL', (event) => { if (event.payload.type !== 'TURN_CANCEL') return; cancelled.push(event.payload.turnId); });
+  runtimeBus.on('TURN_SUBMITTED', (event) => { if (event.payload.type !== 'TURN_SUBMITTED') return;
+    ids.push(event.payload.turnId);
+    if (ids.length === 1) {
+      expect(session.liveTurnControls.cancelTurn!(ids[0]!).status).toBe('cancellation-requested');
+      expect(cancelled).toHaveLength(0);
+    } else {
+      expect(session.liveTurnControls.cancelTurn!(ids[0]!).status).toBe('already-ended');
+    }
+  });
+  try {
+    expect(session.liveTurnControls.cancelTurn!('unknown').status).toBe('turn-not-found');
+    await session.submit('identical prompt');
+    expect(requests).toHaveLength(0);
+    expect(cancelled).toEqual([ids[0]!]);
+    expect(session.liveTurnControls.cancelTurn!(ids[0]!).status).toBe('already-ended');
+    await session.submit('identical prompt');
+    expect(ids[1]).not.toBe(ids[0]);
+    expect(requests).toHaveLength(1);
+  } finally { session.dispose(); }
+});
+
+test('held provider cancellation is idempotent, settles honestly, and cannot cancel queued future work', async () => {
+  const session = cancellationSession();
+  let start!: () => void;
+  const started = new Promise<void>((resolve) => { start = resolve; });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let signal: AbortSignal | undefined;
+  heldChat = async (request) => { signal = request.signal; start(); await held; return textAnswer('late provider answer'); };
+  const ids: string[] = [];
+  const cancelled: string[] = [];
+  runtimeBus.on('TURN_SUBMITTED', (event) => { if (event.payload.type !== 'TURN_SUBMITTED') return; ids.push(event.payload.turnId); });
+  runtimeBus.on('TURN_CANCEL', (event) => { if (event.payload.type !== 'TURN_CANCEL') return; cancelled.push(event.payload.turnId); });
+  try {
+    const first = session.submit('first');
+    await started;
+    expect(session.liveTurnControls.cancelTurn!('wrong').status).toBe('stale-turn');
+    expect(signal?.aborted).toBe(false);
+    expect(session.liveTurnControls.cancelTurn!(ids[0]!).status).toBe('cancellation-requested');
+    expect(signal?.aborted).toBe(true);
+    expect(session.liveTurnControls.cancelTurn!(ids[0]!).status).toBe('cancellation-requested');
+    expect(cancelled).toHaveLength(0);
+    await session.submit('future');
+    heldChat = undefined;
+    release();
+    await first;
+    expect(cancelled).toEqual([ids[0]!]);
+    expect(requests).toHaveLength(2);
+    expect(session.liveTurnControls.cancelTurn!(ids[0]!).status).toBe('already-ended');
+    expect(session.liveTurnControls.cancelTurn!(ids[1]!).status).toBe('already-ended');
+    expect(session.conversation.getMessageSnapshot().some((m) => m.content === 'nothing left to say')).toBe(true);
+  } finally { release(); session.dispose(); }
+});
+
+test('shutdown aborts the same held turn and never admits future work', async () => {
+  const session = cancellationSession();
+  let start!: () => void;
+  const started = new Promise<void>((resolve) => { start = resolve; });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let id = '';
+  runtimeBus.on('TURN_SUBMITTED', (event) => { if (event.payload.type !== 'TURN_SUBMITTED') return; id = event.payload.turnId; });
+  heldChat = async () => { start(); await held; return textAnswer('late'); };
+  const turn = session.submit('first');
+  await started;
+  session.dispose();
+  expect(session.liveTurnControls.cancelTurn!(id).status).toBe('cancellation-requested');
+  release();
+  await turn;
+  expect(session.liveTurnControls.cancelTurn!(id).status).toBe('already-ended');
+  await session.submit('never');
+  expect(requests).toHaveLength(1);
+});
+
+test('whole-turn request aborts a held actual tool and the following turn uses fresh signals', async () => {
+  const session = cancellationSession();
+  let start!: () => void;
+  const started = new Promise<void>((resolve) => { start = resolve; });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let signal: AbortSignal | undefined;
+  const ids: string[] = [];
+  runtimeBus.on('TURN_SUBMITTED', (event) => { if (event.payload.type !== 'TURN_SUBMITTED') return; ids.push(event.payload.turnId); });
+  session.toolRegistry.unregister('read');
+  session.toolRegistry.register({ definition: { name: 'read', description: 'Read a test note.', parameters: { type: 'object', properties: {} } }, execute: async (_args, options) => { signal = options?.signal; start(); await held; return { success: true, output: 'late tool result' }; } });
+  answers.push({ content: '', toolCalls: [{ id: 'held-read', name: 'read', arguments: {} }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse);
+  try {
+    const turn = session.submit('read');
+    await started;
+    expect(signal?.aborted).toBe(false);
+    expect(session.liveTurnControls.cancelTurn!(ids[0]!).status).toBe('cancellation-requested');
+    expect(signal?.aborted).toBe(true);
+    release();
+    await turn;
+    expect(session.liveTurnControls.cancelTurn!(ids[0]!).status).toBe('already-ended');
+    await session.submit('next');
+    expect(requests.at(-1)?.signal?.aborted).toBe(false);
+    expect(ids).toHaveLength(2);
+  } finally { release(); session.dispose(); }
+});
+
+test('a cancellation reentered from TURN_COMPLETED is already-ended and cannot rewrite the completed transcript', async () => {
+  const session = cancellationSession();
+  const terminal: string[] = [];
+  runtimeBus.on('TURN_COMPLETED', (event) => { if (event.payload.type !== 'TURN_COMPLETED') return;
+    terminal.push('completed');
+    expect(session.liveTurnControls.cancelTurn!(event.payload.turnId).status).toBe('already-ended');
+  });
+  runtimeBus.on('TURN_CANCEL', () => { terminal.push('cancel'); });
+  answers.push(textAnswer('completed answer'));
+  try {
+    await session.submit('finish');
+    expect(terminal).toEqual(['completed']);
+    expect(session.conversation.getMessageSnapshot().some((m) => m.content === 'completed answer')).toBe(true);
+    expect(session.conversation.getMessageSnapshot().some((m) => m.content === '[Response cancelled]')).toBe(false);
+  } finally { session.dispose(); }
 });
