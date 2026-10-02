@@ -18,5 +18,3 @@ export type {
   KnownStreamArgs,
 } from './client-core.js';
 export { OPERATOR_WORK_CANCEL_REASON, createOperatorContractWorkAdapter } from './contract-work-adapter.js';
-export { createOperatorWorkLedgerReadClient } from './work-ledger-read-client.js';
-export type { OperatorWorkLedgerReadOptions } from './work-ledger-read-client.js';

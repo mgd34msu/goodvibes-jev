@@ -5,7 +5,7 @@ import { DaemonControlPlaneHelper, type DaemonControlPlaneContext } from '../sdk
 import { dispatchGatewayRestRoutes } from '../daemon-sdk/src/gateway-rest-routes.js';
 import { createOperatorSdk } from '../operator-sdk/src/client.js';
 import type { OperatorRemoteClient } from '../operator-sdk/src/client-core.js';
-import { createOperatorWorkLedgerReadClient } from '../operator-sdk/src/work-ledger-read-client.js';
+import { createOperatorWorkLedgerReadClient } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/operator-read-client';
 import { WorkLedgerAccessError, type WorkLedgerEvent } from '../sdk/src/platform/workflow/work-ledger/types.js';
 
 function event(sequence: number): WorkLedgerEvent {

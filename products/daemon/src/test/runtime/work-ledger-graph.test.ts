@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from 'bun:test';
-import { createOperatorSdk, createOperatorWorkLedgerReadClient } from '@goodvibes-jev/engine/operator-sdk';
+import { createOperatorSdk } from '@goodvibes-jev/engine/operator-sdk';
+import { createOperatorWorkLedgerReadClient } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/operator-read-client';
 import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';

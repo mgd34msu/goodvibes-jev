@@ -68,7 +68,8 @@ const status = await operator.control.status();
 
 ## Native work ledger reads
 
-`createOperatorWorkLedgerReadClient(operator, expectedProjectId, options?)` adapts
+`createOperatorWorkLedgerReadClient(operator, expectedProjectId, options?)`, from
+`@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/operator-read-client`, adapts
 an already selected, authenticated `OperatorRemoteClient` to the shared host
 read-client contract. It never discovers a database or selects another host.
 The runtime owns `dispose()`; a view owns only the cleanup returned by

@@ -1,7 +1,8 @@
 import { getOperatorContract } from '@goodvibes-jev/engine/contracts';
 import { firstJsonSchemaFailure } from '@goodvibes-jev/engine/transport-http';
-import type { WorkLedgerEvent, WorkLedgerReadClient, WorkLedgerReadSnapshot } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
-import type { OperatorRemoteClient } from './client-core.js';
+import type { WorkLedgerEvent } from './types.js';
+import type { WorkLedgerReadClient, WorkLedgerReadSnapshot } from './read-client.js';
+import type { OperatorRemoteClient } from '@goodvibes-jev/engine/operator-sdk';
 
 interface HistoryPage {
   readonly projectId: string;
