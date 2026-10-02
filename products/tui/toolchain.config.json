@@ -12,6 +12,7 @@
   },
   "build": {
     "appEntrypoint": "src/main.ts",
+    "compileDriver": "scripts/compile.ts",
     "outDir": "dist",
     "addonOutDir": "dist/lib",
     "prebuild": [
