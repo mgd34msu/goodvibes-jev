@@ -954,6 +954,7 @@ describe('submission correlation is required before hosted ownership', () => {
     f.behavior.steer = async () => ++steers === 2 ? new Response('stale session', { status: 404 }) : Response.json({});
     try {
       const first = await f.start(); const firstCorrelation = f.correlationId();
+      if (!firstCorrelation) throw new Error('Expected the first hosted submission to have a nonempty correlation');
       f.send('TURN_COMPLETED', 'turn-1'); await first.outcome.completion;
       const second = routed(await f.router.submit('identical input'));
       expect(second.action).toBe('recreated');
