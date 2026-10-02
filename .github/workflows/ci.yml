@@ -36,6 +36,25 @@ jobs:
         uses: ./.github/actions/setup # composite, no SHA needed
       - name: Validate workspace
         run: bun run validate
+      - name: Record TUI native artifact provenance
+        if: hashFiles('products/tui/package.json') != ''
+        env:
+          TUI_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          bun products/tui/scripts/ci-artifact.ts record "$GITHUB_SHA" "$TUI_SOURCE_HEAD"
+          bun products/tui/scripts/ci-artifact.ts verify "$GITHUB_SHA" "$TUI_SOURCE_HEAD"
+          tar -czf /tmp/tui-native-linux-x64.tgz \
+            products/tui/dist/goodvibes-linux-x64 \
+            products/tui/dist/lib/sqlite-vec-linux-x64/vec0.so \
+            products/tui/dist/ci-artifact.json
+      - name: Upload TUI native artifact
+        if: hashFiles('products/tui/package.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tui-native-linux-x64
+          path: /tmp/tui-native-linux-x64.tgz
+          retention-days: 7
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   # Standing eval gate. Runs the all-floors-passing standing-gate suite through
