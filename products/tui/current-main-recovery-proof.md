@@ -1,5 +1,40 @@
 # Current-main TUI recovery: incomplete draft
 
+## Latest reviewed repair evidence (2026-10-02)
+
+The sections below retain historical checkpoints and their failures. The latest
+validated runtime is `ce235ce02f50447a68b5cb52e6303e5b8a9668e6`, following reviewed
+PR73 repair `7ff101e9e5864b91361a0b225ecb6839c4e04de1` on main `2c181f51` history.
+Exact affected source hashes and scope are recorded in
+[`tui-parser-readiness-2026-10-02.json`](../../docs/audit/tui-parser-readiness-2026-10-02.json).
+
+Hosted origin/attachment ownership, outer and bootstrap shutdown, compiled HTML
+compatibility, steering receipts and Fleet hints/cost corrections are separately
+reviewed. The latest four-line renderer fix waits for memoized parser readiness
+before grammar loading. Controlled initialization reproduced the old golden
+failure; the fix restores the entire committed frame without golden changes or
+sleep-based timing assumptions.
+
+The full unchanged-guard source run now passes 516 of 517 files, with zero
+exclusions or network violations. Completed summaries contain 6,232 passing tests,
+five existing skips and 29,109 assertions. The only failing file is the retained
+legacy planning timeout (60-second test / 120-second file watchdog, exit 137).
+The source/test compiler retains exactly 15 legacy planning diagnostics. The prior
+7ff run (514/516, including the golden failure) remains preserved as failed evidence.
+
+Fresh engine preparation/build, standard Linux native build and strict smoke pass.
+Actual compiled shell/settings opt-in and revocation exit normally with zero
+violations using only the three established synthetic metadata responses. This is
+not a live provider, full hosted daemon restart or original tmux E2E claim. The
+engine tree is unchanged from 7ff, preserving its canonical API evidence.
+
+Accounting remains **1,095 mapped / 523 unresolved**, with no closure from this
+readiness fix. Historical per-item integration/conflict presentation and other
+migration responsibilities remain open. The branch includes reviewed ledger
+foundation source, but native workflow product composition is still incomplete;
+legacy planning failures are not hidden or repaired by importing old integration.
+
+
 Base: `b6cd286c1cf7c1328844fb680d4582cbde538e59` (tree `d428ef7156c8b9bdbe538efb08a216b6fc33c740`).
 Recovered product: `562a206326af716a0da29b40b71a62abbabc4e6f`, exact original product subtree `641413f32e3c0840cfe60709d00fdd42bc79d2f2` (1,592 files).
 Only this product subtree was imported; recovery ancestry and held engine planning/persistence changes were not merged. The original checkpoint remains unchanged.
