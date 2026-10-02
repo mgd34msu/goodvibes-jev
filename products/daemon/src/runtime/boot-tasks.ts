@@ -18,7 +18,7 @@ export interface DaemonBootAttachment {
 export interface DaemonBootOperations {
   foldMemory(): Promise<void>;
   startProviderWatch(): void;
-  stopProviderWatch(): void;
+  stopProviderWatch(): void | Promise<void>;
   createWebhooks(): DaemonBootAttachment | Promise<DaemonBootAttachment>;
   createNotifier(): DaemonBootAttachment | Promise<DaemonBootAttachment>;
   synchronizeServices(): Promise<void>;
@@ -60,6 +60,7 @@ const BOOT_INTERRUPTED = Symbol('daemon boot interrupted');
  */
 export function createDaemonBootController(operations: DaemonBootOperations): DaemonBootController {
   const scope = createDisposalScope('Daemon boot tasks');
+  const fences: Array<() => Promise<void>> = [];
   const steps = new Map<DaemonBootStep, DaemonBootStepState>(STEPS.map((name) => [name, 'pending']));
   let state: DaemonBootSnapshot['state'] = 'idle';
   let closed = false;
@@ -85,25 +86,39 @@ export function createDaemonBootController(operations: DaemonBootOperations): Da
     }
   }
 
-  async function attach(name: 'webhooks' | 'notifier', acquire: () => DaemonBootAttachment | Promise<DaemonBootAttachment>): Promise<void> {
-    const resource = await acquire();
+  function own(label: 'provider watch' | 'webhooks' | 'notifier' | 'plugins', action: () => void | Promise<void>): () => Promise<void> {
     let cleanup: Promise<void> | undefined;
     const closeResource = (): Promise<void> => {
       if (cleanup) return cleanup;
       let resolve!: () => void;
-      let reject!: (error: unknown) => void;
+      let reject!: (error: Error) => void;
       cleanup = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
-      // Own reentrant cleanup before calling the resource's synchronous fence.
-      try { void Promise.resolve(resource.close()).then(resolve, reject); }
-      catch (error) { reject(error); }
+      // Observe immediately: every owner's fence runs before any drain is awaited.
+      // Raw rejection values may carry secrets or hostile getters; never retain them.
+      void cleanup.catch(() => {});
+      const failed = (): void => reject(new Error(`${label} cleanup failed`));
+      try {
+        const result = action();
+        if (result !== undefined && (result === closing || result === cleanup)) failed();
+        else void Promise.resolve(result).then(resolve, failed);
+      }
+      catch { failed(); }
       return cleanup;
     };
-    scope.registry.add(name, closeResource);
+    fences.push(closeResource);
+    scope.registry.add(label, closeResource);
+    if (closed) void closeResource();
+    return closeResource;
+  }
+
+  async function attach(name: 'webhooks' | 'notifier', acquire: () => DaemonBootAttachment | Promise<DaemonBootAttachment>): Promise<void> {
+    const resource = await acquire();
+    const closeResource = own(name, () => resource.close());
     if (closed) throw BOOT_INTERRUPTED;
     try { await resource.attach(); }
     catch (error) {
       try { await closeResource(); }
-      catch (cleanupError) { throw new AggregateError([error, cleanupError], `${name} attachment and cleanup failed`); }
+      catch { /* The disposal scope owns the bounded cleanup failure. */ }
       throw error;
     }
     // An attachment may synchronously reenter close or finish after it.
@@ -113,15 +128,19 @@ export function createDaemonBootController(operations: DaemonBootOperations): Da
   async function run(): Promise<DaemonBootSnapshot> {
     await runStep('memory-fold', () => operations.foldMemory());
     await runStep('provider-watch', async () => {
-      scope.registry.add('provider watch', () => operations.stopProviderWatch());
+      own('provider watch', () => operations.stopProviderWatch());
       try { operations.startProviderWatch(); }
-      finally { if (closed) operations.stopProviderWatch(); }
+      finally {
+        // A synchronous start may request close before acquiring its watcher.
+        // The first stop cannot memoize away that post-start cleanup obligation.
+        if (closed) own('provider watch', () => operations.stopProviderWatch());
+      }
     });
     await runStep('webhooks', () => attach('webhooks', () => operations.createWebhooks()));
     await runStep('notifier', () => attach('notifier', () => operations.createNotifier()));
     await runStep('configured-services', () => operations.synchronizeServices());
     await runStep('plugins', async () => {
-      scope.registry.add('plugins', () => operations.closePlugins());
+      own('plugins', () => operations.closePlugins());
       await operations.initializePlugins();
     });
     if (!closed) state = [...steps.values()].includes('failed') ? 'degraded' : 'ready';
@@ -145,6 +164,10 @@ export function createDaemonBootController(operations: DaemonBootOperations): Da
     let resolve!: () => void;
     let reject!: (error: unknown) => void;
     closing = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+    // Notification and watcher owners have independent admission fences. Invoke
+    // every one now, before a held plugin drain can delay the remaining fences.
+    // Handler/base dependency teardown remains outside this controller's drain.
+    for (const fence of [...fences].reverse()) void fence();
     const initial = scope.close();
     // Observe the first drain while waiting for late acquisition. Its failures
     // remain recorded by the scope and are returned by the final drain.
