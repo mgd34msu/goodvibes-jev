@@ -652,7 +652,25 @@ export class DaemonControlPlaneHelper {
         body: refusalBody(`Unknown gateway method: ${input.methodId}`, SDKErrorCodes.METHOD_NOT_FOUND, 404),
       };
     }
-    const denied = this.validateGatewayInvocation(descriptor, input.context);
+    // Native ledger reads require current authority even on an already-open WS.
+    // Other verbs retain their existing policy; no cached context can re-grant
+    // a revoked token or widen a scope/role narrowed since authentication.
+    let context = input.context;
+    if (descriptor.metadata?.requiresFreshOperatorAuth === true) {
+      const principal = this.describeAuthenticatedPrincipal(input.authToken);
+      if (!principal) {
+        return { status: 401, ok: false, body: refusalBody('Operator authentication is no longer valid', 'UNAUTHORIZED', 401) };
+      }
+      const cachedScopes = new Set(context?.scopes ?? []);
+      const scopes = cachedScopes.has('*') ? principal.scopes
+        : principal.scopes.includes('*') ? [...cachedScopes]
+        : principal.scopes.filter(scope => cachedScopes.has(scope));
+      context = {
+        ...context, principalId: principal.principalId, principalKind: principal.principalKind,
+        admin: context?.admin === true && principal.admin, scopes,
+      };
+    }
+    const denied = this.validateGatewayInvocation(descriptor, context);
     if (denied) return denied;
     // Input validation gate: reject a wrong-typed / missing-required body against
     // the verb's typed inputSchema before the handler runs (honest 400, not silent
@@ -693,14 +711,14 @@ export class DaemonControlPlaneHelper {
           query: input.query,
           context: {
             authToken: input.authToken,
-            principalId: input.context?.principalId,
-            principalKind: input.context?.principalKind,
-            admin: input.context?.admin,
-            scopes: input.context?.scopes,
-            clientKind: input.context?.clientKind,
-            ...(input.context?.explicitUserRequest === undefined
+            principalId: context?.principalId,
+            principalKind: context?.principalKind,
+            admin: context?.admin,
+            scopes: context?.scopes,
+            clientKind: context?.clientKind,
+            ...(context?.explicitUserRequest === undefined
               ? {}
-              : { metadata: { explicitUserRequest: input.context.explicitUserRequest } }),
+              : { metadata: { explicitUserRequest: context.explicitUserRequest } }),
           },
         });
         return { status: 200, ok: true, body };
@@ -762,9 +780,9 @@ export class DaemonControlPlaneHelper {
       synthesizedDepth: input.synthesizedDepth,
       body: descriptor.http.method === 'GET' || descriptor.http.method === 'DELETE' ? undefined : input.body,
       context: {
-        principalKind: input.context?.principalKind,
-        admin: input.context?.admin,
-        scopes: input.context?.scopes,
+        principalKind: context?.principalKind,
+        admin: context?.admin,
+        scopes: context?.scopes,
       },
     });
   }

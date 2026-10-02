@@ -55,6 +55,8 @@ function route(method: string, template: string, methodId: string): GatewayRestR
  * bindings (the reconcile gate enforces it).
  */
 export const GATEWAY_REST_ROUTES: readonly GatewayRestRoute[] = [
+  route('GET', '/api/work-ledger/snapshot', 'workLedger.snapshot'),
+  route('GET', '/api/work-ledger/history', 'workLedger.history'),
   // skills.*
   route('GET', '/api/skills', 'skills.list'),
   route('POST', '/api/skills', 'skills.create'),
