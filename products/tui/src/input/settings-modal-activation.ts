@@ -30,6 +30,7 @@ export interface ActivateSelectedContext {
   getSelectedSubscription(): SubscriptionEntry | null;
   getSelected(): SettingEntry | null;
   setValue(key: ConfigKey, value: unknown): void;
+  setHostValue?(key: string, value: boolean): void;
   setEditingMode(value: boolean): void;
   setEditBuffer(value: string): void;
   setMcpAllowAllConfirmationTarget(value: string | null): void;
@@ -63,6 +64,11 @@ export function activateSelected(ctx: ActivateSelectedContext): void {
   const entry = ctx.getSelected();
   if (!entry || !ctx.configManager) return;
 
+  if (entry.kind === 'host') {
+    ctx.setHostValue?.(entry.setting.key, !entry.currentValue);
+    return;
+  }
+  if (entry.metadataUnavailable) return;
   const { setting } = entry;
 
   // Delegate provider/model picker settings to the model picker UI

@@ -14,7 +14,7 @@ import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { logger, summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import type { FeatureFlagManager } from '@/runtime/index.ts';
 import type { FlagEntry, SettingEntry } from './settings-modal-types.ts';
-import { deepEqual, refreshHostSettingEntry } from './settings-modal-data.ts';
+import { deepEqual, refreshHostSettingEntry, refreshSettingsPolicyAvailability } from './settings-modal-data.ts';
 
 // ---------------------------------------------------------------------------
 // ApplyValueResult, returned by applySettingValue so the caller can react
@@ -30,7 +30,7 @@ export interface ApplyValueResult {
 }
 
 export type SettingAppliedCallback = (change: {
-  readonly key: ConfigKey;
+  readonly key: string;
   readonly previousValue: unknown;
   readonly value: unknown;
 }) => { readonly message?: string } | void;
@@ -76,6 +76,11 @@ export function applySettingValue({
   /** Renders a refused daemon write, so a failed save is never silent. */
   onAsyncError?: ((message: string) => void) | undefined;
 }): ApplyValueResult {
+  refreshSettingsPolicyAvailability(groups, configManager);
+  const unavailable = [...groups.values()].flat().find(entry => entry.setting.key === key && entry.metadataUnavailable);
+  if (unavailable) {
+    return { restartDomain: null, effectMessage: `Save failed: ${unavailable.metadataUnavailable}`, changed: false };
+  }
   // Defensive: a handful of TUI-local synthetic keys (see worktree-setup-config.ts)
   // live under a config section CONFIG_SCHEMA/DEFAULT_CONFIG has never populated
   // (e.g. 'worktree' as of the SDK 1.6.1 repack), so configManager.get can throw
@@ -148,6 +153,38 @@ export function applySettingValue({
   }
 
   return { restartDomain, effectMessage, changed: previousValue !== value };
+}
+
+/** Host UI writes use the validated boolean handle, never a generic consumer key cast. */
+export function applyHostSettingValue({ key, value, configManager, groups, onSettingApplied }: {
+  key: string;
+  value: unknown;
+  configManager: ConfigManager;
+  groups: Map<string, SettingEntry[]>;
+  onSettingApplied: SettingAppliedCallback | null;
+}): ApplyValueResult {
+  const refresh = () => {
+    for (const entries of groups.values()) for (const entry of entries) {
+      if (entry.setting.key === key) refreshHostSettingEntry(entry, configManager);
+    }
+  };
+  try {
+    const handle = configManager.getHostBooleanSetting(key);
+    if (typeof value !== 'boolean') throw new Error('Host settings require a literal boolean.');
+    // Check current metadata at action time as well as at modal open. A stale
+    // unlocked row must not permit a write through unavailable policy metadata.
+    const before = handle.getResolved();
+    if (before.managedLock) throw new Error(`Managed setting is locked: ${before.managedLock.source}: ${before.managedLock.reason}`);
+    handle.set(value);
+    const currentValue = handle.get();
+    refresh();
+    const changed = before.value !== currentValue;
+    const result = changed ? onSettingApplied?.({ key, previousValue: before.value, value: currentValue }) : undefined;
+    return { restartDomain: null, effectMessage: result?.message ?? null, changed };
+  } catch (error) {
+    refresh();
+    return { restartDomain: null, effectMessage: `Save failed: ${summarizeError(error)}`, changed: false };
+  }
 }
 
 /**

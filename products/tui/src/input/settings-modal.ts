@@ -46,13 +46,13 @@ import {
   buildSubscriptionEntries,
   buildNetworkFilteredItems,
   refreshEntryValues,
-  refreshHostSettingEntry,
+  refreshSettingsPolicyAvailability,
   searchSettingEntries,
 } from './settings-modal-data.ts';
-import { TUI_NOTIFICATIONS_METADATA_ONLY_KEY } from '../config/host-settings.ts';
 import { getSettingLabel } from '../renderer/settings-modal-helpers.ts';
 import {
   applySettingValue,
+  applyHostSettingValue,
   syncFlagEntryFromManager,
   type DaemonOwnedConfigWriter,
   type SettingAppliedCallback,
@@ -75,7 +75,7 @@ import {
 import { commitEditValue as _commitEditValue } from './settings-modal-commit.ts';
 
 export interface SettingsModalChange {
-  readonly key: ConfigKey;
+  readonly key: string;
   readonly previousValue: unknown;
   readonly value: unknown;
 }
@@ -271,14 +271,13 @@ export class SettingsModal {
     this.searchFocused = false;
     this.contextScroll = 0;
     this.active = true;
-    if (configManager.getSchema().some(setting => setting.key === TUI_NOTIFICATIONS_METADATA_ONLY_KEY)) {
-      this.unsubscribeHostSetting = configManager.subscribe(TUI_NOTIFICATIONS_METADATA_ONLY_KEY, () => {
-        for (const entries of this.groups.values()) {
-          for (const entry of entries) refreshHostSettingEntry(entry, configManager);
-        }
+    const unsubscribes = configManager.getHostSettingsSchema().map(setting =>
+      configManager.getHostBooleanSetting(setting.key).subscribe(() => {
+        refreshSettingsPolicyAvailability(this.groups, configManager);
         this.requestRender?.();
-      });
-    }
+      }),
+    );
+    this.unsubscribeHostSetting = () => { for (const unsubscribe of unsubscribes) unsubscribe(); };
   }
 
   /** Scroll the documentation region by `delta` wrapped lines (renderer clamps the top end). */
@@ -512,6 +511,7 @@ export class SettingsModal {
    * Toggle boolean or begin cycling enum values, or enter edit mode for string/number.
    */
   activateSelected(): void {
+    this._refreshPolicyAvailability();
     _activateSelected({
       currentCategory: this.currentCategory,
       configManager: this.configManager,
@@ -519,6 +519,7 @@ export class SettingsModal {
       getSelectedSubscription: () => this.getSelectedSubscription(),
       getSelected: () => this.getSelected(),
       setValue: (key, value) => this._setValue(key, value),
+      setHostValue: (key, value) => this._setHostValue(key, value),
       setEditingMode: (v) => { this.editingMode = v; },
       setEditBuffer: (v) => { this.editBuffer = v; },
       setMcpAllowAllConfirmationTarget: (v) => { this.mcpAllowAllConfirmationTarget = v; },
@@ -549,6 +550,7 @@ export class SettingsModal {
   }
 
   adjustSelected(direction: 'left' | 'right', step = 1): void {
+    this._refreshPolicyAvailability();
     _adjustSelected({
       editingMode: this.editingMode,
       currentCategory: this.currentCategory,
@@ -559,6 +561,7 @@ export class SettingsModal {
       getSelectedMcp: () => this.getSelectedMcp(),
       getSelected: () => this.getSelected(),
       setValue: (key, value) => this._setValue(key, value),
+      setHostValue: (key, value) => this._setHostValue(key, value),
       setMcpEntries: (entries) => { this.mcpEntries = entries; },
       setMcpAllowAllConfirmationTarget: (v) => { this.mcpAllowAllConfirmationTarget = v; },
     }, direction, step);
@@ -572,8 +575,9 @@ export class SettingsModal {
    * (non-boolean keys) are left to their domain settings.
    */
   toggleSelectedFlag(): void {
+    this._refreshPolicyAvailability();
     const entry = this.getSelected();
-    if (!entry?.flag) return;
+    if (!entry?.flag || entry.metadataUnavailable) return;
     if (entry.flag.state === 'killed') return;
     const feature = entry.flag.feature;
     const currentlyOn = isFeatureValueEnabled(feature, entry.currentValue);
@@ -587,6 +591,7 @@ export class SettingsModal {
    * Returns true on success, false if validation failed.
    */
   commitEdit(): boolean {
+    this._refreshPolicyAvailability();
     return _commitEditValue({
       editingMode: this.editingMode,
       currentCategory: this.currentCategory,
@@ -614,13 +619,15 @@ export class SettingsModal {
     this.mcpAllowAllConfirmationTarget = null;
   }
 
-  resetSelected(): { key: ConfigKey; value: unknown } | null {
+  resetSelected(): { key: string; value: unknown } | null {
+    this._refreshPolicyAvailability();
     return _resetSelected({
       editingMode: this.editingMode,
       hasConfigManager: this.configManager !== null,
       selected: this.getSelected(),
       secretsManager: this.secretsManager,
       setValue: (key, value) => this._setValue(key, value),
+      setHostValue: (key, value) => this._setHostValue(key, value),
     });
   }
 
@@ -645,6 +652,7 @@ export class SettingsModal {
 
   /** Route a key through the active reset confirm gate. See ResetConfirmKeyResult for the return contract. */
   handleResetConfirmKey(key: string): ResetConfirmKeyResult {
+    if (this.resetCategoryConfirm || this.resetAllConfirm) this._refreshPolicyAvailability();
     return _handleResetConfirmKey({
       key,
       resetCategoryConfirm: this.resetCategoryConfirm,
@@ -653,6 +661,7 @@ export class SettingsModal {
       currentItems: () => this._currentItems(),
       groups: this.groups,
       setValue: (k, value) => this._setValue(k, value),
+      setHostValue: (key, value) => this._setHostValue(key, value),
       setResetCategoryConfirm: (v) => { this.resetCategoryConfirm = v; },
       setResetAllConfirm: (v) => { this.resetAllConfirm = v; },
     });
@@ -698,6 +707,19 @@ export class SettingsModal {
       return buildNetworkFilteredItems(items, this.configManager);
     }
     return items;
+  }
+
+  private _refreshPolicyAvailability(): void {
+    if (this.configManager) refreshSettingsPolicyAvailability(this.groups, this.configManager);
+  }
+
+  private _setHostValue(key: string, value: boolean): void {
+    if (!this.configManager) return;
+    const result = applyHostSettingValue({
+      key, value, configManager: this.configManager, groups: this.groups,
+      onSettingApplied: this.onSettingApplied,
+    });
+    this.lastSettingEffectMessage = result.effectMessage;
   }
 
   private _setValue(key: ConfigKey, value: unknown): void {

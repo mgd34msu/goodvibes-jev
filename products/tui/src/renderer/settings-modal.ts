@@ -71,7 +71,7 @@ function settingRow(modal: SettingsModal, entry: SettingEntry, selected: boolean
     const value = pendingRestart ? `${raw} ⟳` : raw;
     return {
       label: feature.name,
-      desc: category,
+      desc: [category, entry.metadataUnavailable ? 'unavailable' : ''].filter(Boolean).join(' · ') || undefined,
       right: fitValue(value, width, editing, feature.name),
       rightFg: valueColor(entry),
       mark: state === 'killed' ? '✕' : configOn ? '●' : '○',
@@ -81,7 +81,7 @@ function settingRow(modal: SettingsModal, entry: SettingEntry, selected: boolean
       labelFg: danger ? t.error : undefined,
     };
   }
-  const flags = [entry.locked ? 'locked' : '', entry.conflict ? 'conflict' : ''].filter(Boolean).join(' · ');
+  const flags = [entry.metadataUnavailable ? 'unavailable' : '', entry.locked ? 'locked' : '', entry.conflict ? 'conflict' : ''].filter(Boolean).join(' · ');
   const desc = [category, flags].filter(Boolean).join(' · ');
   return {
     // Sub-options of a feature unit read as part of the unit above them.

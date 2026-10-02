@@ -66,6 +66,7 @@ export function buildConfigKeyOwnership(): Map<string, string> {
  */
 export function buildFeatureHeaderEntry(entry: FlagEntry, base: SettingEntry | null): SettingEntry {
   const feature = entry.feature;
+  if (base?.kind === 'host') base = null;
   const setting: ConfigSetting = base?.setting
     ?? getConfigSchemaSetting(feature.enablement.key)
     ?? {
@@ -130,6 +131,7 @@ export function applyFeatureUnitLayout(
     const ownedByFeature = new Map<string, SettingEntry[]>();
     const orphans: SettingEntry[] = [];
     for (const entry of existing) {
+      if (entry.kind === 'host') { orphans.push(entry); continue; }
       const key = entry.setting.key;
       if (hostedEnablementKeys.has(key)) continue; // consumed into header(s)
       const ownerId = owner.get(key);

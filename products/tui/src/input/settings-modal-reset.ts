@@ -29,16 +29,25 @@ export function resetSelected({
   selected,
   secretsManager,
   setValue,
+  setHostValue,
 }: {
   editingMode: boolean;
   hasConfigManager: boolean;
   selected: SettingEntry | null;
   secretsManager: SettingsSecretsManager | null;
   setValue: (key: ConfigKey, value: unknown) => void;
-}): { key: ConfigKey; value: unknown } | null {
+  setHostValue?: (key: string, value: boolean) => void;
+}): { key: string; value: unknown } | null {
   if (editingMode || !hasConfigManager) return null;
   if (!selected) return null;
-  const key = selected.setting.key as ConfigKey;
+  if (selected.kind === 'host') {
+    if (!setHostValue) return null;
+    // Modal reset is scoped set(default), not the handle's full-owner reset().
+    setHostValue(selected.setting.key, selected.setting.default);
+    return { key: selected.setting.key, value: selected.setting.default };
+  }
+  if (selected.metadataUnavailable) return null;
+  const key = selected.setting.key;
   setValue(key, selected.setting.default);
   if (isSecretConfigKey(key) && secretsManager) {
     // Delete from the tier the write went to. A daemon-owned key was stored in
@@ -108,6 +117,7 @@ export function handleResetConfirmKey({
   currentItems,
   groups,
   setValue,
+  setHostValue,
   setResetCategoryConfirm,
   setResetAllConfirm,
 }: {
@@ -118,6 +128,7 @@ export function handleResetConfirmKey({
   currentItems: () => SettingEntry[];
   groups: Map<SettingsCategory, SettingEntry[]>;
   setValue: (key: ConfigKey, value: unknown) => void;
+  setHostValue?: (key: string, value: boolean) => void;
   setResetCategoryConfirm: (value: { readonly subject: string } | null) => void;
   setResetAllConfirm: (value: { readonly subject: 'all' } | null) => void;
 }): ResetConfirmKeyResult {
@@ -130,7 +141,9 @@ export function handleResetConfirmKey({
       // Reset all settings in the current category to defaults.
       const items = currentItems();
       for (const item of items) {
-        setValue(item.setting.key as ConfigKey, item.setting.default);
+        if (item.kind === 'host' ? !setHostValue : item.metadataUnavailable) continue;
+        if (item.kind === 'host') setHostValue?.(item.setting.key, item.setting.default);
+        else setValue(item.setting.key, item.setting.default);
         entries.push({ key: item.setting.key, value: item.setting.default });
       }
       setResetCategoryConfirm(null);
@@ -138,7 +151,9 @@ export function handleResetConfirmKey({
       // Reset ALL settings across all categories to defaults.
       for (const [, items] of groups) {
         for (const item of items) {
-          setValue(item.setting.key as ConfigKey, item.setting.default);
+          if (item.kind === 'host' ? !setHostValue : item.metadataUnavailable) continue;
+          if (item.kind === 'host') setHostValue?.(item.setting.key, item.setting.default);
+          else setValue(item.setting.key, item.setting.default);
           entries.push({ key: item.setting.key, value: item.setting.default });
         }
       }

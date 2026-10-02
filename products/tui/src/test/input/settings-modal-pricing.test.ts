@@ -16,6 +16,7 @@ import type { SettingEntry } from '../../input/settings-modal-types.ts';
 function findEntry(groups: ReturnType<typeof buildSettingGroups>, key: string) {
   for (const entries of groups.values()) {
     const found = entries.find((e) => e.setting.key === key);
+    if (found?.kind === 'host') throw new Error('The bare SDK fixture must contain only builtin rows');
     if (found) return found;
   }
   return undefined;

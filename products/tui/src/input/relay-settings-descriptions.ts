@@ -26,7 +26,7 @@ export function enrichRelaySettingDescriptions(groups: Map<SettingsCategory, Set
   if (!relayEntries) return;
   for (let i = 0; i < relayEntries.length; i++) {
     const entry = relayEntries[i];
-    if (!entry || !entry.setting.key.startsWith('relay.') || entry.setting.description.includes(RELAY_THREAT_MODEL_NOTE)) continue;
+    if (!entry || entry.kind === 'host' || !entry.setting.key.startsWith('relay.') || entry.setting.description.includes(RELAY_THREAT_MODEL_NOTE)) continue;
     relayEntries[i] = {
       ...entry,
       setting: { ...entry.setting, description: `${entry.setting.description} ${RELAY_THREAT_MODEL_NOTE}` },

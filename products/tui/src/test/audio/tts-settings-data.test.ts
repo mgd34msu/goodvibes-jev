@@ -24,7 +24,7 @@ import {
   refreshEntryValues,
 } from '../../input/settings-modal-data.ts';
 import { getNumericAdjustmentMeta } from '../../input/settings-modal-behavior.ts';
-import type { SettingEntry, SettingsCategory } from '../../input/settings-modal-types.ts';
+import type { BuiltinSettingEntry, SettingEntry, SettingsCategory } from '../../input/settings-modal-types.ts';
 
 const TTS_SPEED = 'tts.speed' as ConfigKey;
 
@@ -41,11 +41,13 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-function ttsSpeedRow(): SettingEntry {
+function ttsSpeedRow(): BuiltinSettingEntry {
   const rows = buildSettingGroups(cm).get('tts') ?? [];
   const matches = rows.filter((row) => row.setting.key === TTS_SPEED);
   expect(matches, 'tts.speed appears exactly once in the tts group').toHaveLength(1);
-  return matches[0]!;
+  const row = matches[0]!;
+  if (row.kind === 'host') throw new Error('tts.speed must remain a builtin schema row');
+  return row;
 }
 
 describe('tts.speed comes from the config schema', () => {

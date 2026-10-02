@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readTuiConfigValue, subscribeTuiConfigValue } from './config/host-settings.ts';
 import { resolveGoodVibesDaemonHome, resolveGoodVibesHome } from '@goodvibes-jev/engine/sdk/platform/config';
 import { Compositor } from './renderer/compositor.ts';
 import { type Line } from '@goodvibes-jev/engine/sdk/platform/types';
@@ -268,7 +269,7 @@ async function main() {
   // are restore-gated so no escape sequence lands after the shell resumes.
   const terminalNotifier = createTerminalNotifier({
     stdout, focusTracker: ctx.services.focusTracker, isReleased: () => lifecycle.isTerminalRestored(),
-    configGet: (k: string) => configManager.get(k as Parameters<typeof configManager.get>[0]),
+    configGet: (k: string) => readTuiConfigValue(configManager, k),
   });
 
   // Spoken output, scriptable statusline, auto-titling, spoken-turn routing.
@@ -359,7 +360,7 @@ async function main() {
         ...buildPendingPermissionExtras(request, resolve, approvalBroker),
       };
       render();
-    }), { focusTracker: ctx.services.focusTracker, configGet: (k: string) => configManager.get(k as Parameters<typeof configManager.get>[0]), webhookNotifier: ctx.services.webhookNotifier, terminalNotifier, conversation });
+    }), { focusTracker: ctx.services.focusTracker, configGet: (k: string) => readTuiConfigValue(configManager, k), webhookNotifier: ctx.services.webhookNotifier, terminalNotifier, conversation });
 
   const input: InputHandler = new InputHandler(
     () => render(),
@@ -683,7 +684,10 @@ async function main() {
     conversation,
     runtime,
     orchestrator,
-    configManager,
+    configManager: {
+      get: (key) => readTuiConfigValue(configManager, key),
+      subscribe: (key, callback) => subscribeTuiConfigValue(configManager, key, callback),
+    },
     providerRegistry,
     systemMessageRouter,
     hookDispatcher,

@@ -420,9 +420,11 @@ export function wireShellUiOpeners(options: WireShellUiOpenersOptions): void {
           }
           return { message: 'Theme mode: auto (probes terminal on next startup)' };
         }
+        const builtinSetting = configManager.getSchema().find(setting => setting.key === change.key);
+        if (!builtinSetting) return;
         return syncServiceSettingToPlatform(
           { configManager, workingDirectory, homeDirectory },
-          change,
+          { ...change, key: builtinSetting.key },
         );
       },
     });

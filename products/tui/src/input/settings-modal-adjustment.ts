@@ -31,6 +31,7 @@ export interface AdjustSelectedContext {
   getSelectedMcp(): McpEntry | null;
   getSelected(): SettingEntry | null;
   setValue(key: ConfigKey, value: unknown): void;
+  setHostValue?(key: string, value: boolean): void;
   setMcpEntries(entries: McpEntry[]): void;
   setMcpAllowAllConfirmationTarget(value: string | null): void;
 }
@@ -62,6 +63,11 @@ export function adjustSelected(
 
   const entry = ctx.getSelected();
   if (!entry || !ctx.configManager) return;
+  if (entry.kind === 'host') {
+    ctx.setHostValue?.(entry.setting.key, direction === 'right');
+    return;
+  }
+  if (entry.metadataUnavailable) return;
   const { setting } = entry;
 
   if (setting.type === 'boolean') {

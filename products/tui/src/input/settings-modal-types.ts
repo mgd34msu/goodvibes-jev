@@ -1,4 +1,4 @@
-import type { ConfigSetting } from '@goodvibes-jev/engine/sdk/platform/config';
+import type { ConfigSetting, HostBooleanSetting } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ProviderAuthFreshness, ProviderAuthRoute } from '@/runtime/index.ts';
 import type { FeatureFlag, FeatureSetting, FlagState } from '@/runtime/index.ts';
 
@@ -128,8 +128,21 @@ export const SETTINGS_CATEGORY_GROUPS: ReadonlyArray<{
 
 export const SETTINGS_CATEGORIES: SettingsCategory[] = SETTINGS_CATEGORY_GROUPS.flatMap(group => group.categories);
 
-export interface SettingEntry {
+/** Builtin and host rows keep their distinct public SDK key contracts. */
+export type SettingEntry = BuiltinSettingEntry | HostSettingEntry;
+
+export interface BuiltinSettingEntry extends SettingEntryState {
+  kind?: 'builtin';
   setting: ConfigSetting;
+}
+
+export interface HostSettingEntry extends SettingEntryState {
+  kind: 'host';
+  setting: HostBooleanSetting & { readonly enumValues?: never };
+  currentValue: boolean;
+}
+
+interface SettingEntryState {
   currentValue: unknown;
   isDefault: boolean;
   effectiveSource?: 'default' | 'local' | 'synced' | 'managed';
@@ -137,6 +150,8 @@ export interface SettingEntry {
   conflict?: boolean;
   sourceLabel?: string;
   lockReason?: string;
+  /** A failed metadata read is unavailable, never evidence that the row is unlocked. */
+  metadataUnavailable?: string;
   /**
    * Present when this row is a feature-unit header (a platform capability
    * rendered as one unit with the settings that tune it beneath). The row IS

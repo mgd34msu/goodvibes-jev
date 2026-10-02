@@ -12,10 +12,10 @@ test('real TUI entrypoint constructs the registered host manager', async () => {
   try {
     const runtime = await prepareShellCliRuntime(['tui'], { defaultWorkingDirectory: project, homeDirectory: root });
     expect(runtime.configManager).toBeInstanceOf(TuiConfigManager);
-    expect(runtime.configManager.getSchema().filter(row => row.key === KEY)).toHaveLength(1);
-    expect(runtime.configManager.get(KEY)).toBe(true);
-    runtime.configManager.setDynamic(KEY, false);
-    expect(new TuiConfigManager({ workingDir: project, homeDir: root, surfaceRoot: 'tui' }).get(KEY)).toBe(false);
+    expect(runtime.configManager.getHostSettingsSchema().filter(row => row.key === KEY)).toHaveLength(1);
+    expect(runtime.configManager.getHostBooleanSetting(KEY).get()).toBe(true);
+    runtime.configManager.getHostBooleanSetting(KEY).set(false);
+    expect(new TuiConfigManager({ workingDir: project, homeDir: root, surfaceRoot: 'tui' }).getHostBooleanSetting(KEY).get()).toBe(false);
   } finally {
     globalThis.fetch = originalFetch;
     rmSync(root, { recursive: true, force: true });

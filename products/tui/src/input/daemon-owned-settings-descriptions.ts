@@ -41,7 +41,7 @@ export function enrichDaemonOwnedSettingDescriptions(
   for (const entries of groups.values()) {
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
-      if (!entry) continue;
+      if (!entry || entry.kind === 'host') continue;
       if (!isDaemonOwnedConfigKey(entry.setting.key)) continue;
       if (entry.setting.description.includes(note)) continue;
       entries[i] = {

@@ -169,6 +169,7 @@ describe('settings modal: feature units', () => {
       if (category === 'network') continue; // combined cross-list view keeps plain copies
       for (const entry of entries) {
         if (entry.flag) continue;
+        if (entry.kind === 'host') throw new Error('The bare SDK fixture must contain only builtin rows');
         expect(ENABLEMENT_KEYS.has(entry.setting.key)).toBe(false);
       }
     }

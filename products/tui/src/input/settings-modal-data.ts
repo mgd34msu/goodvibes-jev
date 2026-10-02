@@ -39,6 +39,7 @@ import {
 import {
   SETTINGS_CATEGORIES,
   type FlagEntry,
+  type HostSettingEntry,
   type McpEntry,
   type SettingEntry,
   type SettingsCategory,
@@ -92,20 +93,74 @@ export function deepEqual(a: unknown, b: unknown): boolean {
 // buildSettingGroups, loads the instance schema into per-category SettingEntry maps
 // ---------------------------------------------------------------------------
 
-/** Refresh the registered host row from the same public value/source/lock authority. */
+const POLICY_METADATA_UNAVAILABLE = 'Managed policy metadata is unavailable. Editing is disabled until it can be read.';
+
+/** Refresh a host row exclusively through its validated public handle. */
 export function refreshHostSettingEntry(entry: SettingEntry, configManager: ConfigManager): void {
-  if (entry.setting.key !== (NOTIFICATIONS_METADATA_ONLY_KEY as ConfigKey)) return;
-  const lookup = getResolvedSettingLookup(configManager, entry.setting.key);
-  const resolved = lookup?.entry;
-  entry.currentValue = configManager.get(entry.setting.key);
-  entry.isDefault = deepEqual(entry.currentValue, entry.setting.default);
-  Object.assign(entry, {
-    effectiveSource: resolved?.effectiveSource,
-    locked: resolved?.locked,
-    conflict: resolved?.conflict,
-    sourceLabel: resolved?.sourceLabel,
-    lockReason: resolved?.lockReason ?? (lookup?.lock ? `${lookup.lock.source}: ${lookup.lock.reason}` : undefined),
-  });
+  if (entry.kind !== 'host') return;
+  const handle = configManager.getHostBooleanSetting(entry.setting.key);
+  entry.currentValue = handle.get();
+  entry.isDefault = entry.currentValue === entry.setting.default;
+  try {
+    const resolved = handle.getResolved();
+    entry.currentValue = resolved.value;
+    entry.isDefault = resolved.value === resolved.defaultValue;
+    Object.assign(entry, {
+      effectiveSource: resolved.source,
+      locked: resolved.managedLock !== null,
+      conflict: false,
+      sourceLabel: undefined,
+      lockReason: resolved.managedLock ? `${resolved.managedLock.source}: ${resolved.managedLock.reason}` : undefined,
+      metadataUnavailable: undefined,
+    });
+  } catch {
+    // The SDK deliberately withholds lock metadata when policy cannot be read.
+    // Do not turn that absence into an unlocked/default provenance claim.
+    Object.assign(entry, {
+      effectiveSource: undefined,
+      locked: undefined,
+      conflict: undefined,
+      sourceLabel: undefined,
+      lockReason: undefined,
+      metadataUnavailable: POLICY_METADATA_UNAVAILABLE,
+    });
+  }
+}
+
+/**
+ * Best-effort UI preflight, not an atomic policy transaction or new authority.
+ * Host metadata reads are pure; defer legacy builtin recovery until they work.
+ */
+export function refreshSettingsPolicyAvailability(groups: Map<string, SettingEntry[]>, configManager: ConfigManager): boolean {
+  const schema = configManager.getHostSettingsSchema();
+  if (schema.length === 0) return true;
+  let unavailable = false;
+  for (const setting of schema) {
+    try { configManager.getHostBooleanSetting(setting.key).getResolved(); }
+    catch { unavailable = true; }
+  }
+  const entries = [...groups.values()].flat();
+  for (const entry of entries) {
+    if (entry.kind !== 'host') continue;
+    refreshHostSettingEntry(entry, configManager);
+    unavailable ||= entry.metadataUnavailable !== undefined;
+  }
+  for (const entry of entries) {
+    if (unavailable) {
+      Object.assign(entry, {
+        effectiveSource: undefined, locked: undefined, conflict: undefined,
+        sourceLabel: undefined, lockReason: undefined, metadataUnavailable: POLICY_METADATA_UNAVAILABLE,
+      });
+    } else if (entry.kind !== 'host' && entry.metadataUnavailable) {
+      const resolved = getResolvedSettingLookup(configManager, entry.setting.key)?.entry;
+      Object.assign(entry, {
+        effectiveSource: resolved?.effectiveSource, locked: resolved?.locked,
+        conflict: resolved?.conflict, sourceLabel: resolved?.sourceLabel, lockReason: resolved?.lockReason,
+        metadataUnavailable: undefined,
+      });
+    }
+  }
+  return !unavailable;
 }
 
 export function buildSettingGroups(
@@ -117,11 +172,24 @@ export function buildSettingGroups(
   // feature-unit layout pass then folds each capability's rows into one unit.
   for (const cat of SETTINGS_CATEGORIES) groups.set(cat, []);
 
+  // Host descriptors are a separate readonly schema, not builtin ConfigKeys.
+  const hostEntries = configManager.getHostSettingsSchema().map(setting => {
+    const entry: HostSettingEntry = {
+      kind: 'host', setting, currentValue: setting.default, isDefault: true,
+    };
+    refreshHostSettingEntry(entry, configManager);
+    return entry;
+  });
+  const hostMetadataUnavailable = hostEntries.some(entry => entry.metadataUnavailable !== undefined);
+
+  // The legacy builtin governance reader can quarantine malformed policy.
+  // Keep that recovery out of this read pass when pure host metadata is
+  // unavailable; otherwise opening settings could erase the policy failure.
   for (const setting of configManager.getSchema()) {
     const rawCat = setting.key.split('.')[0] as string;
     const cat = rawCat as SettingsCategory;
     const currentValue = configManager.get(setting.key as ConfigKey);
-    const resolved = getResolvedSettingLookup(configManager, setting.key as ConfigKey)?.entry;
+    const resolved = hostMetadataUnavailable ? undefined : getResolvedSettingLookup(configManager, setting.key)?.entry;
     const entry: SettingEntry = {
       setting,
       currentValue,
@@ -131,8 +199,8 @@ export function buildSettingGroups(
       conflict: resolved?.conflict,
       sourceLabel: resolved?.sourceLabel,
       lockReason: resolved?.lockReason,
+      metadataUnavailable: hostMetadataUnavailable ? POLICY_METADATA_UNAVAILABLE : undefined,
     };
-    refreshHostSettingEntry(entry, configManager);
     if (groups.has(cat)) groups.get(cat)!.push(entry);
     if ((rawCat === 'controlPlane' || rawCat === 'httpListener' || rawCat === 'web') && groups.has('network')) {
       groups.get('network')!.push(entry);
@@ -153,6 +221,10 @@ export function buildSettingGroups(
     // its own it would match nothing and drop out of the workspace entirely,
     // reachable only by hand-editing a settings file.
     if (rawCat === 'cluster' && groups.has('network')) groups.get('network')!.push(entry);
+  }
+
+  for (const entry of hostEntries) {
+    groups.get(entry.setting.key.split('.')[0] as SettingsCategory)?.push(entry);
   }
 
   const uiEntries = groups.get('ui');
@@ -209,7 +281,7 @@ export function buildSettingGroups(
     }
     // The TUI registers behavior.notificationsMetadataOnly on its manager.
     // Keep the host-owned privacy control next to the notification toggles.
-    const privacyIndex = behaviorEntries.findIndex((e) => e.setting.key === (NOTIFICATIONS_METADATA_ONLY_KEY as ConfigKey));
+    const privacyIndex = behaviorEntries.findIndex((e) => e.setting.key === NOTIFICATIONS_METADATA_ONLY_KEY);
     if (privacyIndex >= 0) behaviorEntries.push(...behaviorEntries.splice(privacyIndex, 1));
   }
 
@@ -287,6 +359,17 @@ export function buildSettingGroups(
   // learning.consolidation.* is a real SDK config domain now, so its keys arrive
   // through the CONFIG_SCHEMA loop above; the old TUI-local synthetic entries were
   // removed for this reason.
+
+  // Synthetic and feature-header rows use the same guarded mutation paths.
+  // They must not remain editable while the shared policy read is suspended.
+  if (hostMetadataUnavailable) {
+    for (const entries of groups.values()) for (const entry of entries) {
+      Object.assign(entry, {
+        effectiveSource: undefined, locked: undefined, conflict: undefined,
+        sourceLabel: undefined, lockReason: undefined, metadataUnavailable: POLICY_METADATA_UNAVAILABLE,
+      });
+    }
+  }
 
   return groups;
 }
@@ -561,8 +644,13 @@ export function refreshEntryValues(
   groups: Map<SettingsCategory, SettingEntry[]>,
   configManager: ConfigManager,
 ): void {
+  refreshSettingsPolicyAvailability(groups, configManager);
   for (const entries of groups.values()) {
     for (const entry of entries) {
+      if (entry.kind === 'host') {
+        refreshHostSettingEntry(entry, configManager);
+        continue;
+      }
       // worktree.setup.* read through a defensive array-normalizing helper (see worktree-setup-config.ts).
       if (isWorktreeSetupListConfigKey(entry.setting.key)) {
         entry.currentValue = readWorktreeSetupList(configManager, entry.setting.key);
@@ -618,12 +706,16 @@ export function refreshEntryValues(
 
 export function updateEntryForKey(
   groups: Map<SettingsCategory, SettingEntry[]>,
-  key: ConfigKey,
+  key: string,
   configManager: ConfigManager,
 ): void {
   for (const entries of groups.values()) {
     const entry = entries.find((candidate) => candidate.setting.key === key);
     if (entry) {
+      if (entry.kind === 'host') {
+        refreshHostSettingEntry(entry, configManager);
+        continue;
+      }
       if (key === MEMORY_PROJECTION_DIR_CONFIG_KEY) {
         const refreshed = buildMemoryProjectionDirSyntheticEntry(configManager);
         entry.currentValue = refreshed.currentValue; entry.isDefault = refreshed.isDefault;
@@ -638,17 +730,17 @@ export function updateEntryForKey(
         refreshPaymentsSyntheticEntry(entry, configManager);
         continue;
       }
-      if (isSandboxExecListConfigKey(key)) {
-        entry.currentValue = readSandboxExecList(configManager, key);
+      if (isSandboxExecListConfigKey(entry.setting.key)) {
+        entry.currentValue = readSandboxExecList(configManager, entry.setting.key);
         entry.isDefault = (entry.currentValue as string[]).length === 0;
         continue;
       }
-      if (isExecEnvScrubAllowlistConfigKey(key)) {
+      if (isExecEnvScrubAllowlistConfigKey(entry.setting.key)) {
         entry.currentValue = readExecEnvScrubAllowlist(configManager);
         entry.isDefault = (entry.currentValue as string[]).length === 0;
         continue;
       }
-      const raw = configManager.get(key);
+      const raw = configManager.get(entry.setting.key);
       entry.currentValue = raw;
       entry.isDefault = deepEqual(entry.currentValue, entry.setting.default);
       refreshHostSettingEntry(entry, configManager);

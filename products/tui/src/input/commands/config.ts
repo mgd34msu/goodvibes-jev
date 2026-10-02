@@ -1,3 +1,4 @@
+import { TUI_NOTIFICATIONS_METADATA_ONLY_KEY } from '../../config/host-settings.ts';
 import type { CommandContext, CommandRegistry } from '../command-registry.ts';
 import type { ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
 import { setActiveThemeMode, setActiveThemeName, type ThemeMode } from '../../renderer/theme.ts';
@@ -39,6 +40,17 @@ export function registerConfigCommand(registry: CommandRegistry): void {
           return;
         }
         try {
+          if (key === TUI_NOTIFICATIONS_METADATA_ONLY_KEY) {
+            const parsed = coerceConfigValue(value);
+            if (typeof parsed !== 'boolean') throw new Error('Host setting requires a literal boolean.');
+            const handle = ctx.platform.configManager.getHostBooleanSetting(key);
+            // Refuse an unavailable policy view before a legacy writer can
+            // quarantine it and accidentally erase the operator's warning.
+            const before = handle.getResolved().value;
+            handle.set(parsed);
+            ctx.print(`Set ${key}: ${JSON.stringify(before)} → ${JSON.stringify(handle.get())}`);
+            return;
+          }
           const before = ctx.platform.configManager.get(key as ConfigKey);
           ctx.platform.configManager.setDynamic(key as ConfigKey, coerceConfigValue(value));
           const after = ctx.platform.configManager.get(key as ConfigKey);

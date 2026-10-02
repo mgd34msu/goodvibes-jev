@@ -1,3 +1,4 @@
+import { readTuiNotificationsMetadataOnly } from '../config/host-settings.ts';
 import { ConversationManager } from '../core/conversation';
 import { createShellNoticeSink } from './notification-dispatch.ts';
 import { getSharedNotificationFeed } from '../views/notifications-feed.ts';
@@ -609,11 +610,7 @@ export async function initializeBootstrapCore(
   }
   runtimeUnsubs.push(attachTypedRuntimeNotifications(services.webhookNotifier, runtimeBus));
 
-  const notifier = await createRuntimeNotifier(services.serviceRegistry, () => {
-    const behavior: unknown = configManager.getCategory('behavior');
-    return behavior && typeof behavior === 'object' && 'notificationsMetadataOnly' in behavior
-      ? behavior.notificationsMetadataOnly : undefined;
-  });
+  const notifier = await createRuntimeNotifier(services.serviceRegistry, () => readTuiNotificationsMetadataOnly(configManager));
   runtimeUnsubs.push(syncNotifierQueueIntegrations(notifier, runtimeBus, domainDispatch));
 
   await syncConfiguredServices(domainDispatch.syncIntegration, services.serviceRegistry);

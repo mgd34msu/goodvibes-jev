@@ -95,6 +95,7 @@ export function commitEditValue(ctx: CommitEditContext): boolean {
   const entry = ctx.getSelected();
   if (!entry || !ctx.configManager) return false;
 
+  if (entry.kind === 'host' || entry.metadataUnavailable) return false;
   const { setting } = entry;
   let parsed: unknown = ctx.editBuffer;
 
