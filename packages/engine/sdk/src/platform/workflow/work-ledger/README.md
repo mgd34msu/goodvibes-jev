@@ -34,6 +34,13 @@ transport. Subscribe first, then read snapshot and catch up with history(cursor)
 ignore cursors already seen. On reconnect, catch up again from durable history.
 Unsubscribe is idempotent; revocation and close detach owned subscriptions.
 
+Admission ownership is reserved before entering adapters, command getters or
+other host hooks. A synchronous reentrant `close()` cannot miss the operation
+that invoked it. Subscription cleanup ownership is also installed before the
+adapter runs; failed admission silences queued notifications and late-returned
+cleanup executes exactly once. The close promise is published before cleanup
+hooks, so reentrant and repeated closes share one drain.
+
 `close` stops new admissions and notifications, then drains all already admitted
 reads and commands. Already admitted writes can commit. Reads still in flight
 reject `closed` after their underlying read finishes. Hosts must bound storage

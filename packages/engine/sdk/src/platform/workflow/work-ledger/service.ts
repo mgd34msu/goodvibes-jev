@@ -164,10 +164,20 @@ export function createWorkLedger(options: {
   createEmptyWorkLedgerState(projectId);
   const identities = new WeakMap<WorkLedgerActor, WorkLedgerHostIdentity>();
   const pending = new Set<Promise<unknown>>();
-  function track<T>(operation: Promise<T>): Promise<T> {
-    pending.add(operation);
-    void operation.then(() => pending.delete(operation), () => pending.delete(operation));
-    return operation;
+  // Reserve ownership BEFORE invoking any adapter, parser getter or host hook.
+  // Tracking an already-created Promise is too late: creating it can reenter close.
+  function reserve<T>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<T>((accept, fail) => { resolve = accept; reject = fail; });
+    pending.add(promise);
+    void promise.then(() => pending.delete(promise), () => pending.delete(promise));
+    return { promise, resolve, reject };
+  }
+  function admit<T>(run: () => T | Promise<T>): Promise<T> {
+    const owned = reserve<T>();
+    try { owned.resolve(run()); } catch (error) { owned.reject(error); }
+    return owned.promise;
   }
   const subscriptions = new Set<() => void>();
   const actorSubscriptions = new WeakMap<WorkLedgerActor, Set<() => void>>();
@@ -339,16 +349,16 @@ export function createWorkLedger(options: {
 
   const service: WorkLedgerService = {
     readSnapshot(actor) {
-      return track((async () => {
+      return admit(async () => {
       if (closed) throw new WorkLedgerAccessError('closed', 'Work ledger is closed');
       requireIdentity(actor);
       const state = await readAuthoritativeState();
       if (closed) throw new WorkLedgerAccessError('closed', 'Work ledger is closed');
       return snapshot(state, requireIdentity(actor));
-      })());
+      });
     },
     history(afterSequence, actor) {
-      return track((async () => {
+      return admit(async () => {
       if (closed) throw new WorkLedgerAccessError('closed', 'Work ledger is closed');
       requireIdentity(actor);
       if (!Number.isSafeInteger(afterSequence) || afterSequence < 0) throw new WorkLedgerAccessError('invalid_cursor', 'Invalid history cursor');
@@ -356,51 +366,65 @@ export function createWorkLedger(options: {
       if (closed) throw new WorkLedgerAccessError('closed', 'Work ledger is closed');
       requireIdentity(actor);
       return state.history.filter(event => event.sequence > afterSequence);
-      })());
+      });
     },
     subscribe(actor, listener) {
       if (closed) throw new WorkLedgerAccessError('closed', 'Work ledger is closed');
       requireIdentity(actor);
+      const admission = reserve<void>();
       let active = true;
       let cursor = -1;
-      const cleanup = storage.subscribe(raw => {
-        // Take ownership before deferring: adapters may reuse buffers/objects.
-        let notification: unknown;
-        try { notification = structuredClone(raw); } catch { return; }
-        // Never run product code on the storage commit stack.
-        queueMicrotask(() => {
-          if (!active || closed || !identity(actor)) return;
-          try {
-            const state = readState(notification, projectId);
-            if (state.revision <= cursor) return;
-            cursor = state.revision;
-            const returned: unknown = listener(snapshot(state, requireIdentity(actor)));
-            // Also contain accidental async listeners without awaiting them.
-            void Promise.resolve(returned).catch(() => {});
-          } catch { /* Bad observers cannot fail writes or the service lifecycle. */ }
-        });
-      });
-      if (closed || !identity(actor)) {
-        active = false;
-        try { cleanup(); } catch { /* Preserve the admission error. */ }
-        if (closed) throw new WorkLedgerAccessError('closed', 'Work ledger is closed');
-        throw new WorkLedgerAccessError('forbidden', 'Actor was revoked during subscription admission');
-      }
+      let cleanup: (() => void) | undefined;
+      let cleaned = false;
+      const cleanupOnce = () => {
+        if (cleaned || !cleanup) return;
+        cleaned = true;
+        cleanup();
+      };
       const unsubscribe = () => {
-        if (!active) return;
         active = false;
         subscriptions.delete(unsubscribe);
         actorSubscriptions.get(actor)?.delete(unsubscribe);
-        cleanup();
+        cleanupOnce();
       };
+      // Publish cleanup ownership before entering an adapter that may close or
+      // revoke synchronously. Late-returned cleanup is still invoked exactly once.
       subscriptions.add(unsubscribe);
       const owned = actorSubscriptions.get(actor) ?? new Set<() => void>();
       owned.add(unsubscribe);
       actorSubscriptions.set(actor, owned);
-      return unsubscribe;
+      try {
+        cleanup = storage.subscribe(raw => {
+          let notification: unknown;
+          try { notification = structuredClone(raw); } catch { return; }
+          // Never run product code on the storage commit stack.
+          queueMicrotask(() => {
+            if (!active || closed || !identity(actor)) return;
+            try {
+              const state = readState(notification, projectId);
+              if (state.revision <= cursor) return;
+              cursor = state.revision;
+              const returned: unknown = listener(snapshot(state, requireIdentity(actor)));
+              void Promise.resolve(returned).catch(() => {});
+            } catch { /* Bad observers cannot fail writes or the service lifecycle. */ }
+          });
+        });
+        if (!active || closed || !identity(actor)) {
+          try { unsubscribe(); } catch { /* Preserve the admission error. */ }
+          if (closed) throw new WorkLedgerAccessError('closed', 'Work ledger is closed');
+          throw new WorkLedgerAccessError('forbidden', 'Actor was revoked during subscription admission');
+        }
+        return unsubscribe;
+      } catch (error) {
+        try { unsubscribe(); } catch { /* Preserve the original adapter error. */ }
+        throw error;
+      } finally {
+        admission.resolve();
+      }
     },
     execute(input, actor, executeOptions) {
       if (closed) return Promise.resolve(rejected('closed', 'Work ledger is closed.', null));
+      return admit<WorkLedgerResult>(() => {
       if (!identity(actor)) return Promise.resolve(rejected('forbidden', 'Invalid or revoked host actor.', null));
       const parsed = workLedgerCommandSchema.safeParse(input);
       if (!parsed.success) return Promise.resolve(rejected('invalid_command', parsed.error.message, null));
@@ -430,20 +454,27 @@ export function createWorkLedger(options: {
         }
         // Trusted clocks/ID factories can reenter authority/abort synchronously.
         // This final guard must follow every callback and precede publication.
+        // Read the extensible signal accessor before the final identity check:
+        // a host-provided getter can itself synchronously revoke the actor.
+        const aborted = signal?.aborted;
         if (!identity(actor)) return { next: null, value: rejected('forbidden', 'Host actor was revoked before commit.', initialRevision) };
-        if (signal?.aborted) return { next: null, value: rejected('cancelled', 'Command was cancelled before commit.', initialRevision) };
+        if (aborted) return { next: null, value: rejected('cancelled', 'Command was cancelled before commit.', initialRevision) };
         return { next, value: result };
       })).catch((): WorkLedgerResult => ({ kind: 'indeterminate', requestId: command.requestId, actorId,
         reason: 'Storage outcome is unknown. Reconcile by exact retry against the authoritative store.' }));
-      return track(operation);
+      return operation;
+      });
     },
     close() {
       if (closePromise) return closePromise;
       closed = true;
+      let finish!: () => void;
+      // Reentrant cleanup must observe this exact promise, not start a new drain.
+      closePromise = new Promise<void>(resolve => { finish = resolve; });
       for (const unsubscribe of [...subscriptions]) {
         try { unsubscribe(); } catch { /* Cleanup failures must not strand drains. */ }
       }
-      closePromise = Promise.allSettled([...pending]).then(() => {});
+      void Promise.allSettled([...pending]).then(finish);
       return closePromise;
     },
   };

@@ -750,3 +750,154 @@ describe('stored record integrity', () => {
     }
   });
 });
+
+describe('reentrant admission ownership', () => {
+  for (const method of ['readSnapshot', 'history'] as const) {
+    for (const fails of [false, true]) {
+    test(`${method} owns ${fails ? 'rejecting' : 'resolving'} IO before storage.read synchronously closes the host`, async () => {
+      const release = deferred();
+      let onRead = () => {};
+      class ReentrantReadStore extends TransactionalTestStore {
+        override read(): Promise<unknown> {
+          onRead();
+          return release.promise.then(() => {
+            if (fails) throw new Error('Read failed after reentrant close');
+            return super.read();
+          });
+        }
+      }
+      const f = fixture(new ReentrantReadStore());
+      let drained = false;
+      let closing: Promise<void> | undefined;
+      onRead = () => { closing = f.service.close().then(() => { drained = true; }); };
+      const reading = method === 'readSnapshot' ? f.service.readSnapshot(f.worker) : f.service.history(0, f.worker);
+      const result = reading.then(() => null, error => error as WorkLedgerAccessError);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+      const prematurelyDrained = drained;
+      release.resolve();
+      expect(await result).toMatchObject({ code: fails ? 'storage_error' : 'closed' });
+      await closing;
+      expect(prematurelyDrained).toBe(false);
+      expect(drained).toBe(true);
+    });
+    }
+  }
+
+  test('execute owns admission before command getters can synchronously close the host', async () => {
+    const f = fixture();
+    const gate = f.storage.holdNextTransaction('before_decision');
+    let drained = false;
+    let closing: Promise<void> | undefined;
+    const command = f.command({ type: 'create', title: 'Title', goal: 'Goal', criteria: ['Pass'] }, 0);
+    Object.defineProperty(command, 'title', { enumerable: true, get() {
+      closing = f.service.close().then(() => { drained = true; });
+      return 'Title';
+    } });
+    const execution = f.service.execute(command, f.coordinator);
+    await gate.entered;
+    for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    const prematurelyDrained = drained;
+    gate.release();
+    expect((await execution).kind).toBe('accepted');
+    await closing;
+    expect(prematurelyDrained).toBe(false);
+    expect(drained).toBe(true);
+  });
+
+  test('execute owns admission before a transaction adapter can synchronously close the host', async () => {
+    let onTransaction = () => {};
+    class ReentrantTransactionStore extends TransactionalTestStore {
+      override transaction<T>(decide: (current: unknown) => WorkLedgerDecision<T>): Promise<T> {
+        onTransaction();
+        return super.transaction(decide);
+      }
+    }
+    const f = fixture(new ReentrantTransactionStore());
+    const gate = f.storage.holdNextTransaction('before_decision');
+    let drained = false;
+    let closing: Promise<void> | undefined;
+    onTransaction = () => { closing = f.service.close().then(() => { drained = true; }); };
+    const execution = f.service.execute(f.command({ type: 'create', title: 'Title', goal: 'Goal', criteria: ['Pass'] }, 0), f.coordinator);
+    await gate.entered;
+    for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    const prematurelyDrained = drained;
+    gate.release();
+    expect((await execution).kind).toBe('accepted');
+    await closing;
+    expect(prematurelyDrained).toBe(false);
+    expect(drained).toBe(true);
+  });
+
+  test('close publishes one stable promise before subscription cleanup can reenter close', async () => {
+    let onCleanup = () => {};
+    class ReentrantCleanupStore extends TransactionalTestStore {
+      override subscribe(listener: (state: WorkLedgerState) => void): () => void {
+        const cleanup = super.subscribe(listener);
+        return () => { cleanup(); onCleanup(); };
+      }
+    }
+    const f = fixture(new ReentrantCleanupStore());
+    let nested: Promise<void> | undefined;
+    onCleanup = () => { nested = f.service.close(); };
+    f.service.subscribe(f.worker, () => {});
+    const closing = f.service.close();
+    await closing;
+    expect(nested).toBe(closing);
+    expect(f.service.close()).toBe(closing);
+  });
+});
+
+
+describe('subscription admission reentrancy', () => {
+  test('synchronous notification followed by adapter throw never escapes failed admission', async () => {
+    class ThrowingSubscribeStore extends TransactionalTestStore {
+      override subscribe(listener: (state: WorkLedgerState) => void): () => void {
+        listener(createEmptyWorkLedgerState(PROJECT));
+        throw new Error('Subscription admission failed');
+      }
+    }
+    const f = fixture(new ThrowingSubscribeStore());
+    let observed = 0;
+    expect(() => f.service.subscribe(f.worker, () => { observed += 1; })).toThrow('Subscription admission failed');
+    for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    expect(observed).toBe(0);
+    await f.service.close();
+  });
+
+  test('reentrant close owns the late-returned subscription cleanup and preserves its promise', async () => {
+    let onSubscribe = () => {};
+    let onCleanup = () => {};
+    let cleanupCalls = 0;
+    class ClosingSubscribeStore extends TransactionalTestStore {
+      override subscribe(listener: (state: WorkLedgerState) => void): () => void {
+        listener(createEmptyWorkLedgerState(PROJECT));
+        onSubscribe();
+        return () => { cleanupCalls += 1; onCleanup(); };
+      }
+    }
+    const f = fixture(new ClosingSubscribeStore());
+    let closing: Promise<void> | undefined;
+    let nested: Promise<void> | undefined;
+    let observed = 0;
+    onSubscribe = () => { closing = f.service.close(); };
+    onCleanup = () => { nested = f.service.close(); };
+    expect(() => f.service.subscribe(f.worker, () => { observed += 1; })).toThrow('Work ledger is closed');
+    await closing;
+    expect(nested).toBe(closing);
+    expect(cleanupCalls).toBe(1);
+    expect(observed).toBe(0);
+  });
+});
+
+test('final abort-state accessor cannot revoke authority after the commit guard', async () => {
+  const f = fixture();
+  let reads = 0;
+  const signal = { get aborted() {
+    reads += 1;
+    if (reads === 2) f.authority.revokeActor(f.coordinator);
+    return false;
+  } } as AbortSignal;
+  const result = await f.service.execute(f.command({ type: 'create', title: 'Title', goal: 'Goal', criteria: ['Pass'] }, 0), f.coordinator, { signal });
+  rejected(result, 'forbidden', 0);
+  expect(f.storage.commits).toBe(0);
+});
