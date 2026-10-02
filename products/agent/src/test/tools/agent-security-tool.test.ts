@@ -96,6 +96,7 @@ describe('security adapter', () => {
       readonly policyLayers: readonly { readonly layer: string; readonly outcome: string; readonly reason: string }[];
     };
     expect(body.status).toBe('denied');
+    expect(body).toMatchObject({ preflight: { approvedWithoutMoreInput: false, permissionOutcome: 'unknown' } });
     expect(body.category).toBe('execute');
     expect(body.policyLayers[0]).toMatchObject({
       layer: 'Agent route guard',
@@ -131,6 +132,7 @@ describe('security adapter', () => {
       readonly toolArgs: { readonly value?: string };
     };
     expect(body.status).toBe('confirmation_required');
+    expect(body).toMatchObject({ preflight: { approvedWithoutMoreInput: false, permissionOutcome: 'unknown' } });
     expect(body.requiredActions.join('\n')).toContain('confirm:true');
     expect(body.preflight.toolConfirmationRequired).toBe(true);
     expect(body.preflight.toolConfirmationSatisfied).toBe(false);
@@ -156,8 +158,29 @@ describe('security adapter', () => {
         readonly toolConfirmationRequired: boolean;
       };
     };
-    expect(body.status).toBe('allowed');
+    expect(body.status).toBe('held');
+    expect(body).toMatchObject({ preflight: { approvedWithoutMoreInput: false, permissionOutcome: 'unknown', permissionEvaluated: false } });
     expect(body.preflight.toolConfirmationRequired).toBe(false);
+  });
+
+  test('satisfying typed confirmation does not imply live permission approval', async () => {
+    const registry = new ToolRegistry();
+    registerSettingsTool(registry);
+    const calls: Record<string, unknown>[] = [];
+    const tool = makeTool(calls, registry);
+    const result = await tool.execute({
+      action: 'explain', toolName: 'settings',
+      toolArgs: { action: 'set', key: 'notifications.webhookUrls', value: [], confirm: true, explicitUserRequest: 'Clear notification webhooks' },
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error(result.error);
+    const body = JSON.parse(result.output!);
+    expect(body.status).toBe('held');
+    expect(body.preflight).toMatchObject({
+      approvedWithoutMoreInput: false, permissionOutcome: 'unknown', permissionEvaluated: false,
+      toolConfirmationRequired: true, toolConfirmationSatisfied: true,
+    });
+    expect(calls).toHaveLength(0);
   });
 
   test('registers the direct security adapter once', () => {

@@ -4,7 +4,15 @@
  * shared helper (src/permissions/approval-posture.ts), not re-derived
  * locally. This is one of the four surfaces named in the A2 brief.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { PermissionManager, createPermissionConfigReader, forgetReadSecrets } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import { forgetCatastrophicReadings } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { PolicyRuntimeState } from '../../runtime/index.ts';
+import { approvalPostureReadings, POSTURE_CALLS } from '../helpers/approval-posture-readings.ts';
+import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { resetSettingsControlPlaneStore } from '../helpers/settings-control-plane.ts';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../../input/command-registry.ts';
 import { explainAgentPolicyDecision } from '../../tools/agent-policy-explanation.ts';
@@ -57,14 +65,14 @@ describe('agent-policy-explanation: approval posture agreement', () => {
     const expected = computeApprovalPosture({ autoApprove: true, mode: 'prompt' });
     expect(posture.label).toBe(expected.label);
 
-    // The tool-level prediction agrees: write is allowed without a prompt.
+    // A configured allowance cannot certify a particular call before its gate runs.
     const permissionLayer = (resolved.explanation.policyLayers as readonly { layer: string; outcome: string }[])
       .find((layer) => layer.layer === 'Permission mode');
-    expect(permissionLayer?.outcome).toBe('allowed');
-    expect(resolved.explanation.status).toBe('allowed');
+    expect(permissionLayer?.outcome).toBe('unknown');
+    expect(resolved.explanation.status).toBe('held');
   });
 
-  test('default posture: autoApprove=false, mode=prompt: write requires confirmation and posture says Ask before powerful actions', () => {
+  test('default posture: a write is unevaluated while posture says Ask before powerful actions', () => {
     const context = fakeContext({ 'behavior.autoApprove': false, 'permissions.mode': 'prompt' });
     const resolved = explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
 
@@ -73,7 +81,7 @@ describe('agent-policy-explanation: approval posture agreement', () => {
     const posture = resolved.explanation.posture as { label: string; bypassesPrompts: boolean };
     expect(posture.bypassesPrompts).toBe(false);
     expect(posture.label).toBe('Ask before powerful actions');
-    expect(resolved.explanation.status).toBe('confirmation_required');
+    expect(resolved.explanation.status).toBe('held');
   });
 
   test('allow-all mode, autoApprove=false: posture exposes automatic approvals and the critical-stakes exception', () => {
@@ -91,7 +99,7 @@ describe('agent-policy-explanation: approval posture agreement', () => {
     expect(posture.detail).toContain('critical calls still ask');
   });
 
-  test('plan mode: write is predicted denied outright (plan_mode), never "prompt"', () => {
+  test('plan mode: configuration is observable without predicting an unexamined write', () => {
     const context = fakeContext({ 'behavior.autoApprove': false, 'permissions.mode': 'plan' });
     const resolved = explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
 
@@ -104,11 +112,11 @@ describe('agent-policy-explanation: approval posture agreement', () => {
 
     const permissionLayer = (resolved.explanation.policyLayers as readonly { layer: string; outcome: string; reason?: string }[])
       .find((layer) => layer.layer === 'Permission mode');
-    expect(permissionLayer?.outcome).toBe('denied');
-    expect(resolved.explanation.status).toBe('denied');
+    expect(permissionLayer?.outcome).toBe('unknown');
+    expect(resolved.explanation.status).toBe('held');
   });
 
-  test('accept-edits mode: write is predicted allowed (auto-approves), matching the shared helper', () => {
+  test('accept-edits mode: scoped allowance does not predict approval of an unexamined write', () => {
     const context = fakeContext({ 'behavior.autoApprove': false, 'permissions.mode': 'accept-edits' });
     const resolved = explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
 
@@ -121,7 +129,104 @@ describe('agent-policy-explanation: approval posture agreement', () => {
 
     const permissionLayer = (resolved.explanation.policyLayers as readonly { layer: string; outcome: string }[])
       .find((layer) => layer.layer === 'Permission mode');
-    expect(permissionLayer?.outcome).toBe('allowed');
-    expect(resolved.explanation.status).toBe('allowed');
+    expect(permissionLayer?.outcome).toBe('unknown');
+    expect(resolved.explanation.status).toBe('held');
   });
+});
+
+
+describe('policy explain never substitutes configuration for a live gate decision', () => {
+  let config: ConfigManager;
+  let fixture: ReturnType<typeof approvalPostureReadings>;
+  let previousPort: ReturnType<typeof installJudgmentPort>;
+  let prompts: string[];
+  let executions: string[];
+  let manager: PermissionManager;
+  const toolKeys = ['read', 'write', 'edit', 'exec', 'find', 'fetch', 'analyze', 'inspect', 'agent', 'state', 'workflow', 'registry', 'delegate', 'mcp'] as const;
+  const allAllow = Object.fromEntries(toolKeys.map((tool) => [tool, 'allow'])) as Record<string, 'allow'>;
+
+  beforeEach(() => {
+    forgetReadSecrets();
+    forgetCatastrophicReadings();
+    fixture = approvalPostureReadings();
+    previousPort = installJudgmentPort(fixture.port);
+    config = new ConfigManager({ surfaceRoot: 'tui', configDir: makeProjectTempDir('gv-explain-gate-') });
+    resetSettingsControlPlaneStore(config);
+    prompts = [];
+    executions = [];
+    manager = new PermissionManager(async (request) => {
+      prompts.push(request.tool);
+      return { approved: false, remember: false };
+    }, createPermissionConfigReader(config), new PolicyRuntimeState());
+  });
+  afterEach(() => {
+    installJudgmentPort(previousPort);
+    forgetReadSecrets();
+    forgetCatastrophicReadings();
+    resetSettingsControlPlaneStore(config);
+  });
+
+  const cases: readonly {
+    name: string;
+    mode: 'prompt' | 'allow-all' | 'custom' | 'plan' | 'accept-edits';
+    autoApprove?: boolean;
+    tools?: Record<string, 'allow' | 'deny' | 'prompt'>;
+    call: keyof typeof POSTURE_CALLS;
+    approved: boolean;
+    reason: string;
+  }[] = [
+    { name: 'critical shell in allow-all', mode: 'allow-all', call: 'critical', approved: false, reason: 'user_denied' },
+    { name: 'catastrophic shell with autoApprove', mode: 'prompt', autoApprove: true, call: 'catastrophic', approved: false, reason: 'boundary_catastrophic' },
+    { name: 'catastrophic shell in allow-all', mode: 'allow-all', call: 'catastrophic', approved: false, reason: 'boundary_catastrophic' },
+    { name: 'catastrophic shell with all custom rules allowing', mode: 'custom', tools: allAllow, call: 'catastrophic', approved: false, reason: 'boundary_catastrophic' },
+    { name: 'secret read in prompt mode', mode: 'prompt', call: 'secretRead', approved: false, reason: 'user_denied' },
+    { name: 'secret read in plan mode', mode: 'plan', call: 'secretRead', approved: false, reason: 'user_denied' },
+    { name: 'critical file action in accept-edits', mode: 'accept-edits', call: 'criticalEdit', approved: false, reason: 'user_denied' },
+    { name: 'ordinary write with autoApprove', mode: 'prompt', autoApprove: true, call: 'write', approved: true, reason: 'config_allow' },
+    { name: 'ordinary read in prompt mode', mode: 'prompt', call: 'read', approved: true, reason: 'config_allow' },
+    { name: 'ordinary write in prompt mode', mode: 'prompt', call: 'write', approved: false, reason: 'user_denied' },
+    { name: 'file edit in accept-edits', mode: 'accept-edits', call: 'write', approved: true, reason: 'preset_allow' },
+    { name: 'read-only shell in plan mode', mode: 'plan', call: 'readOnlyExec', approved: true, reason: 'preset_allow' },
+    { name: 'read-only shell in prompt mode', mode: 'prompt', call: 'readOnlyExec', approved: true, reason: 'preset_allow' },
+    { name: 'unknown read-only tool in custom mode', mode: 'custom', call: 'unknownRead', approved: true, reason: 'preset_allow' },
+    { name: 'read with explicit custom allow', mode: 'custom', tools: { read: 'allow' }, call: 'secretRead', approved: true, reason: 'config_allow' },
+    { name: 'read with explicit custom deny', mode: 'custom', tools: { read: 'deny' }, call: 'read', approved: false, reason: 'config_deny' },
+    { name: 'read with explicit custom prompt', mode: 'custom', tools: { read: 'prompt' }, call: 'read', approved: false, reason: 'user_denied' },
+  ];
+
+  for (const scenario of cases) {
+    test(`${scenario.name}: JSON remains held until the real gate evaluates`, async () => {
+      const values: Record<string, unknown> = { 'permissions.mode': scenario.mode, 'behavior.autoApprove': scenario.autoApprove === true };
+      for (const [key, action] of Object.entries(scenario.tools ?? {})) values[`permissions.tools.${key}`] = action;
+      for (const [key, value] of Object.entries(values)) config.set(key as 'permissions.mode', value as never);
+      const call = POSTURE_CALLS[scenario.call];
+      const registry = new ToolRegistry();
+      registry.register({
+        definition: { name: call.tool, description: 'Synthetic gate fixture', parameters: { type: 'object', additionalProperties: true } },
+        execute: async () => { executions.push(call.tool); return { success: true, output: '' }; },
+      });
+      const result = explainAgentPolicyDecision(fakeContext(values), registry, { toolName: call.tool, toolArgs: call.args });
+      expect(result.status).toBe('found');
+      if (result.status !== 'found') throw new Error('Expected an explanation');
+      // Serialization is part of the consumer-facing contract, not just prose.
+      const body = JSON.parse(JSON.stringify(result.explanation));
+      expect(fixture.requests).toHaveLength(0);
+      expect(prompts).toHaveLength(0);
+      expect(executions).toHaveLength(0);
+      const actual = await manager.checkDetailed(call.tool, call.args);
+      expect(actual.approved).toBe(scenario.approved);
+      expect(actual.reasonCode).toBe(scenario.reason);
+      expect(fixture.requests.length).toBeGreaterThan(0);
+      expect(executions).toHaveLength(0);
+      expect(body.status).toBe('held');
+      expect(body.preflight).toMatchObject({ approvedWithoutMoreInput: false, permissionOutcome: 'unknown', permissionEvaluated: false });
+      expect(body.policyLayers.find((layer: { layer: string }) => layer.layer === 'Permission mode')).toMatchObject({
+        outcome: 'unknown', sourceLayer: 'not_evaluated', reasonCode: 'live_check_required', mode: scenario.mode,
+      });
+      expect(body.requiredActions.join(' ')).not.toContain('Answer the');
+      if (scenario.tools?.[call.tool]) {
+        expect(body.policyLayers.find((layer: { layer: string }) => layer.layer === 'Permission mode').configuredAction).toBe(scenario.tools[call.tool]);
+      }
+    });
+  }
 });

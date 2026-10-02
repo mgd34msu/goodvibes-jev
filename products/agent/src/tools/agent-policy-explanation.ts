@@ -1,4 +1,4 @@
-import type { PermissionCategory, PermissionDecisionReasonCode, PermissionDecisionSource } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import type { PermissionCategory } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { analyzePermissionRequest } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import type { ToolDefinition } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -8,8 +8,8 @@ import { HARNESS_MODE_DESCRIPTORS } from './agent-harness-mode-catalog.ts';
 import { explainAgentToolPolicyInvocation } from './agent-tool-policy-guard.ts';
 import { computeApprovalPosture, type ApprovalPosture } from '../permissions/approval-posture.ts';
 
-type PolicyExplanationStatus = 'allowed' | 'confirmation_required' | 'denied';
-type PermissionPredictionOutcome = 'allowed' | 'prompt' | 'denied';
+type PolicyExplanationStatus = 'held' | 'confirmation_required' | 'denied';
+type PermissionPredictionOutcome = 'unknown';
 type PermissionToolKey =
   | 'read'
   | 'write'
@@ -43,8 +43,8 @@ export type AgentPolicyExplanationResolution =
 
 interface PermissionPrediction {
   readonly outcome: PermissionPredictionOutcome;
-  readonly sourceLayer: PermissionDecisionSource | 'user_prompt_pending';
-  readonly reasonCode: PermissionDecisionReasonCode | 'prompt_required';
+  readonly sourceLayer: 'not_evaluated';
+  readonly reasonCode: 'live_check_required';
   readonly mode: string;
   readonly reason: string;
   readonly configuredAction?: string;
@@ -209,128 +209,28 @@ function readEffectivePosture(context: CommandContext): ApprovalPosture {
   });
 }
 
-function predictPermission(context: CommandContext, toolName: string, category: PermissionCategory): PermissionPrediction {
+/**
+ * A read-only explanation has no authoritative argument reading, boundary
+ * result, session decision or runtime-policy result. A configured allowance
+ * is therefore not an approval, and a category cannot predict the stakes.
+ * Retain configured intent without running judgment I/O or asking the owner.
+ */
+function predictPermission(context: CommandContext, toolName: string): PermissionPrediction {
   const posture = readEffectivePosture(context);
-
-  if (posture.autoApprove) {
-    return {
-      outcome: 'allowed',
-      sourceLayer: 'config_policy',
-      reasonCode: 'config_allow',
-      mode: posture.mode,
-      reason: posture.detail,
-    };
-  }
-
-  const mode = posture.mode;
-  if (mode === 'allow-all') {
-    return {
-      outcome: 'allowed',
-      sourceLayer: 'runtime_mode',
-      reasonCode: 'mode_allow_all',
-      mode,
-      reason: posture.detail,
-    };
-  }
-
-  if (mode === 'plan') {
-    if (category === 'read') {
-      return {
-        outcome: 'allowed',
-        sourceLayer: 'runtime_mode',
-        reasonCode: 'mode_allow_all',
-        mode,
-        reason: 'Plan mode auto-allows read-only actions.',
-      };
-    }
-    return {
-      outcome: 'denied',
-      sourceLayer: 'runtime_mode',
-      reasonCode: 'plan_mode',
-      mode,
-      reason: `Plan mode refuses ${category} actions outright, it never asks; the model presents a plan instead of acting.`,
-    };
-  }
-
-  if (mode === 'accept-edits') {
-    if (category === 'read' || category === 'write') {
-      return {
-        outcome: 'allowed',
-        sourceLayer: 'runtime_mode',
-        reasonCode: category === 'write' ? 'mode_accept_edits' : 'mode_allow_all',
-        mode,
-        reason: category === 'write'
-          ? 'Accept-edits mode auto-approves file write/edit actions.'
-          : 'Accept-edits mode auto-allows read-only actions.',
-      };
-    }
-    return {
-      outcome: 'prompt',
-      sourceLayer: 'user_prompt_pending',
-      reasonCode: 'prompt_required',
-      mode,
-      reason: `Accept-edits mode still asks before ${category} actions.`,
-    };
-  }
-
-  if (mode === 'custom') {
-    const toolConfigKey = TOOL_CONFIG_KEYS[toolName];
-    if (!toolConfigKey) {
-      return {
-        outcome: 'prompt',
-        sourceLayer: 'user_prompt_pending',
-        reasonCode: 'prompt_required',
-        mode,
-        reason: 'Custom permission mode has no per-tool rule for this tool.',
-      };
-    }
-    const configuredAction = readPermissionToolAction(context, toolConfigKey) ?? 'prompt';
-    if (configuredAction === 'allow') {
-      return {
-        outcome: 'allowed',
-        sourceLayer: 'config_policy',
-        reasonCode: 'config_allow',
-        mode,
-        configuredAction,
-        reason: `Custom permission rule permissions.tools.${toolConfigKey} is allow.`,
-      };
-    }
-    if (configuredAction === 'deny') {
-      return {
-        outcome: 'denied',
-        sourceLayer: 'config_policy',
-        reasonCode: 'config_deny',
-        mode,
-        configuredAction,
-        reason: `Custom permission rule permissions.tools.${toolConfigKey} is deny.`,
-      };
-    }
-    return {
-      outcome: 'prompt',
-      sourceLayer: 'user_prompt_pending',
-      reasonCode: 'prompt_required',
-      mode,
-      configuredAction,
-      reason: `Custom permission rule permissions.tools.${toolConfigKey} is prompt.`,
-    };
-  }
-
-  if (category === 'read') {
-    return {
-      outcome: 'allowed',
-      sourceLayer: 'config_policy',
-      reasonCode: 'config_allow',
-      mode,
-      reason: 'Prompt mode auto-allows read-only actions.',
-    };
-  }
-
+  const toolConfigKey = TOOL_CONFIG_KEYS[toolName];
+  const configuredAction = posture.mode === 'custom' && toolConfigKey
+    ? readPermissionToolAction(context, toolConfigKey) ?? 'prompt'
+    : undefined;
+  const configuredRule = configuredAction === undefined
+    ? ''
+    : ` Configured rule permissions.tools.${toolConfigKey} is ${configuredAction}; this is configuration, not an evaluated decision.`;
   return {
-    outcome: 'prompt',
-    sourceLayer: 'user_prompt_pending',
-    reasonCode: 'prompt_required',
-    mode,
-    reason: `Prompt mode asks before ${category} actions.`,
+    outcome: 'unknown',
+    sourceLayer: 'not_evaluated',
+    reasonCode: 'live_check_required',
+    mode: posture.mode,
+    reason: `${posture.detail}${configuredRule} The live permission gate must evaluate this exact call before execution.`,
+    ...(configuredAction === undefined ? {} : { configuredAction }),
   };
 }
 
@@ -353,7 +253,7 @@ function confirmationState(toolName: string, toolArgs: Record<string, unknown>, 
     return {
       required: false,
       confirmed: true,
-      reason: 'The tool contract does not require typed confirmation for this read-only route.',
+      reason: 'The tool contract does not declare typed confirmation for this route.',
     };
   }
   const confirmed = readBoolean(toolArgs.confirm) && readString(toolArgs.explicitUserRequest).length > 0;
@@ -368,18 +268,17 @@ function confirmationState(toolName: string, toolArgs: Record<string, unknown>, 
 
 function statusFor(
   guard: ReturnType<typeof explainAgentToolPolicyInvocation>,
-  permission: PermissionPrediction,
   confirmation: ReturnType<typeof confirmationState>,
 ): PolicyExplanationStatus {
-  if (guard.status === 'denied' || permission.outcome === 'denied') return 'denied';
-  if (permission.outcome === 'prompt' || (confirmation.required && !confirmation.confirmed)) return 'confirmation_required';
-  return 'allowed';
+  if (guard.status === 'denied') return 'denied';
+  if (confirmation.required && !confirmation.confirmed) return 'confirmation_required';
+  return 'held';
 }
 
 function userExplanation(status: PolicyExplanationStatus, category: PermissionCategory): string {
   if (status === 'denied') return 'This action is denied before execution. Use the recommended safer route or change policy explicitly.';
-  if (status === 'confirmation_required') return `This ${category} action is available only after the user-visible confirmation or permission prompt is satisfied.`;
-  return `This ${category} action is allowed by the current Agent and permission policy.`;
+  if (status === 'confirmation_required') return `This ${category} action requires the declared typed confirmation. The live permission gate must still evaluate the call.`;
+  return `This ${category} action is held pending live permission evaluation. Configuration alone cannot establish approval; argument readings and boundary checks are still required.`;
 }
 
 export function explainAgentPolicyDecision(
@@ -408,11 +307,11 @@ export function explainAgentPolicyDecision(
   const category = fallbackPermissionCategoryForArgs(toolName, toolArgs);
   const analysis = analyzePermissionRequest(toolName, toolArgs, category);
   const guard = explainAgentToolPolicyInvocation(toolName, toolArgs);
-  const permission = predictPermission(context, toolName, category);
+  const permission = predictPermission(context, toolName);
   const confirmation = confirmationState(toolName, toolArgs, definition, category);
-  const status = statusFor(guard, permission, confirmation);
+  const status = statusFor(guard, confirmation);
   const requiredActions = [
-    ...(permission.outcome === 'prompt' ? [`Answer the ${category} permission prompt for ${toolName}.`] : []),
+    ...(status !== 'denied' ? ['The live permission gate must evaluate this exact call before execution.'] : []),
     ...(confirmation.required && !confirmation.confirmed ? ['Call the route with confirm:true and explicitUserRequest.'] : []),
   ];
   // The overall approval posture, computed by the SAME shared helper that
@@ -461,7 +360,8 @@ export function explainAgentPolicyDecision(
       requiredActions,
       analysis,
       preflight: {
-        approvedWithoutMoreInput: status === 'allowed',
+        approvedWithoutMoreInput: false,
+        permissionEvaluated: false,
         permissionOutcome: permission.outcome,
         toolConfirmationRequired: confirmation.required,
         toolConfirmationSatisfied: confirmation.confirmed,
@@ -474,7 +374,7 @@ export function explainAgentPolicyDecision(
         securityPosture: 'security action:"status" includeParameters:true',
       },
       notes: [
-        'This is a read-only preflight; final execution still uses the live safety guard.',
+        'This is a read-only explanation: no live permission evaluation, owner prompt, or tool execution was performed.',
         'Secret-looking argument values are redacted in this explanation.',
       ],
       ...(args.includeParameters === true && definition ? {
