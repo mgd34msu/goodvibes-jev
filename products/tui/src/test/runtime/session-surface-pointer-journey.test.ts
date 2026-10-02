@@ -48,7 +48,7 @@ function makeTurnFeed(): { events: WireTurnEventHandlersOptions['events']; emitT
     },
   };
   return {
-    events: { turns: channel, tools: channel, agents: channel, workflows: channel } as unknown as WireTurnEventHandlersOptions['events'],
+    events: { turns: channel, tools: channel, agents: channel, contracts: channel } as unknown as WireTurnEventHandlersOptions['events'],
     emitTurn: (type, payload) => { for (const fn of handlers.get(type) ?? []) fn(payload); },
   };
 }
@@ -121,7 +121,7 @@ describe('the last-session pointer survives the process boundary', () => {
       surface: relaunchSurface,
       sessionManager: new SessionManager(tmpDir, { surface: relaunchSurface }),
       checkpointManager: undefined,
-      chainHistory: [],
+      contractHistory: [],
       memoryAvailable: false,
       router: { high: (m) => receipts.push(m) },
     });
