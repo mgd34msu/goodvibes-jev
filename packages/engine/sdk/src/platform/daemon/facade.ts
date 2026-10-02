@@ -81,6 +81,26 @@ interface ControlPlaneWebSocketPeer { data: ControlPlaneWebSocketData; send(mess
 
 // --- DaemonServer ---
 
+type StartupOwner = 'session broker' | 'approval broker' | 'channel policy' | 'automation manager' | 'distributed runtime' | 'cluster rollback';
+interface StartupDrain { readonly pending: Set<Promise<void>>; readonly failures: Set<StartupOwner>; }
+// Per-facade ownership without widening the public declaration surface. A
+// fail-fast join cannot retire sibling acquisitions or the first rollback stop.
+const startupDrains = new WeakMap<object, StartupDrain>();
+function ownStartup(owner: object, label: StartupOwner, action: () => Promise<void>): Promise<void> {
+  let drain = startupDrains.get(owner);
+  if (!drain) { drain = { pending: new Set(), failures: new Set() }; startupDrains.set(owner, drain); }
+  const state = drain;
+  // Defer invocation until ownership is recorded, including synchronous throws.
+  const result = Promise.resolve().then(action).catch(() => {
+    state.failures.add(label);
+    throw new Error(`Daemon ${label} startup operation failed`);
+  });
+  const settled = result.then(() => {}, () => {});
+  state.pending.add(settled);
+  void settled.then(() => { state.pending.delete(settled); });
+  return result;
+}
+
 /**
  * DaemonServer, HTTP task server. Enabled by default via `daemon.enabled`
  * (loopback-bound), resolved via resolveDaemonEnabled.
@@ -467,11 +487,11 @@ export class DaemonServer {
       // Boot precondition: fold legacy session stores into the store the broker serves, then sweep the pre-split one aside. See daemon-session-store-boot.ts.
       await runDaemonSessionStoreBoot({ sessionBroker: this.sessionBroker, shellPaths: this.runtimeServices.shellPaths, surfaceRoot: this.runtimeServices.surfaceRoot, recordReceipt: (text) => this.lifecycle?.receiptStore().record(text) });
       await Promise.all([
-        this.sessionBroker.start(),
-        this.approvalBroker.start(),
-        this.channelPolicy.start(),
-        this.automationManager.start(),
-        this.distributedRuntime.start(),
+        ownStartup(this, 'session broker', () => this.sessionBroker.start()),
+        ownStartup(this, 'approval broker', () => this.approvalBroker.start()),
+        ownStartup(this, 'channel policy', () => this.channelPolicy.start()),
+        ownStartup(this, 'automation manager', () => this.automationManager.start()),
+        ownStartup(this, 'distributed runtime', () => this.distributedRuntime.start()),
       ]);
       await this.clusterCoordinator.start();
       this.channelHealth.start(); // after the coordinator, so the first sweep sees the ingress this node actually won rather than calling every surface dead mid-election
@@ -536,7 +556,9 @@ export class DaemonServer {
       this.pendingSurfaceReplies.clear();
       this.channelHealth.stop();
       this.automationManager.stop();
-      void this.clusterCoordinator.stop('daemon start failed');
+      // Retain the FIRST stop: the coordinator fences synchronously and later
+      // stop calls may return before this admitted consumer drain finishes.
+      void ownStartup(this, 'cluster rollback', () => this.clusterCoordinator.stop('daemon start failed')).catch(() => {});
       try {
         this.watcherRegistry.stopWatcher('daemon-heartbeat', 'daemon-start-failed');
       } catch (cleanupError) {
@@ -560,13 +582,25 @@ export class DaemonServer {
   }
 
   /**
-   * Wait for any in-progress config-driven restart to settle.
-   * Callers that change config mid-flight and need to know when the server
-   * has rebounded should await this before inspecting state.
+   * Wait for admitted startup, rollback and config-driven restart work.
+   * Failed startup remains fail-fast; owners await this barrier before stopping
+   * borrowed dependencies. Rejected operations retain fixed diagnostic labels.
    */
   async waitForRestart(): Promise<void> {
-    // Loop to handle dirty-flag chained restarts: each cycle may spawn another.
-    while (this._restartingPromise) await this._restartingPromise;
+    // Loop also includes work admitted by a failed/chained restart or rollback.
+    let restartFailed = false;
+    while (this._restartingPromise || startupDrains.get(this)?.pending.size) {
+      const pending = [...(startupDrains.get(this)?.pending ?? [])];
+      const restart = this._restartingPromise;
+      // Pending startup observations never reject; their fixed failures are
+      // retained separately. A restart failure must not bypass their drain.
+      if (restart) pending.push(restart.catch(() => { restartFailed = true; }));
+      await Promise.all(pending);
+    }
+    const failures = [...(startupDrains.get(this)?.failures ?? [])]
+      .map((label) => new Error(`Daemon ${label} startup operation failed`));
+    if (restartFailed) failures.push(new Error('Daemon config restart failed'));
+    if (failures.length) throw new AggregateError(failures, 'Daemon startup drain failed');
   }
 
   async stop(): Promise<void> {
