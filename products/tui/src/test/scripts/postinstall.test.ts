@@ -143,7 +143,15 @@ describe('the wake-word model install step in postinstall', () => {
     // This repository IS a source checkout, so the step must decline rather than
     // pull 6 MB into the developer's home on every `bun install`, the same rule
     // the release-binary install already follows.
-    await expect(postinstall.installWakeWordModel()).resolves.toBeUndefined();
+    const messages: string[] = [];
+    const originalLog = console.log;
+    try {
+      console.log = (value?: unknown) => { messages.push(String(value)); };
+      await expect(postinstall.installWakeWordModel()).resolves.toBeUndefined();
+    } finally { console.log = originalLog; }
+    expect(messages).toContain('postinstall: source checkout detected; skipping the wake-word model install');
+    // The shared network guard remains active; an attempted provision is a failure.
+
   });
 
   test('it calls the SDK policy, derives the managed root from the SDK, and cannot throw out of main()', () => {
