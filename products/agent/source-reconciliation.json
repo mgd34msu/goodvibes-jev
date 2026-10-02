@@ -9334,7 +9334,7 @@
       "target": "products/agent/src/test/config/service-registry.test.ts",
       "upstreamBlob": "f8cf6ff80cda19a9f50653ab7fa801b39139d195",
       "present": true,
-      "recoveredBlob": "3514cded2ce19da53d5fb05cefa269b241a57568",
+      "recoveredBlob": "33853bd21d2f62a3c091cf5fc231d19b6916b695",
       "materialization": "workspace-adapted"
     },
     {
@@ -9910,8 +9910,8 @@
       "target": "products/agent/src/test/helpers/preload.ts",
       "upstreamBlob": "140b3deafe9e71d767b684325226144a48f053bd",
       "present": true,
-      "recoveredBlob": "140b3deafe9e71d767b684325226144a48f053bd",
-      "materialization": "byte-identical"
+      "recoveredBlob": "9afd89f1f1b92b4b12dd55bf84f5c583df5618da",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/helpers/project-temp.ts",
@@ -16227,8 +16227,8 @@
     }
   ],
   "materializationSummary": {
-    "byte-identical": 825,
-    "workspace-adapted": 825
+    "byte-identical": 824,
+    "workspace-adapted": 826
   },
   "limits": [
     "Materialization hashes account for source retention, not semantic disposition completion.",
