@@ -46,8 +46,10 @@ import {
   buildSubscriptionEntries,
   buildNetworkFilteredItems,
   refreshEntryValues,
+  refreshHostSettingEntry,
   searchSettingEntries,
 } from './settings-modal-data.ts';
+import { TUI_NOTIFICATIONS_METADATA_ONLY_KEY } from '../config/host-settings.ts';
 import { getSettingLabel } from '../renderer/settings-modal-helpers.ts';
 import {
   applySettingValue,
@@ -208,6 +210,7 @@ export class SettingsModal {
   public lastSettingEffectMessage: string | null = null;
 
   private configManager: ConfigManager | null = null;
+  private unsubscribeHostSetting: (() => void) | null = null;
   private secretsManager: SettingsSecretsManager | null = null;
   private daemonCredentials: SettingsDaemonCredentialWriter | null = null;
   private daemonConfig: DaemonOwnedConfigWriter | null = null;
@@ -233,6 +236,8 @@ export class SettingsModal {
     secretsManager?: SettingsSecretsManager,
     options?: SettingsModalOpenOptions,
   ): void {
+    this.unsubscribeHostSetting?.();
+    this.unsubscribeHostSetting = null;
     this.configManager = configManager;
     this.secretsManager = secretsManager ?? null;
     this.daemonCredentials = options?.daemonCredentials ?? null;
@@ -266,6 +271,14 @@ export class SettingsModal {
     this.searchFocused = false;
     this.contextScroll = 0;
     this.active = true;
+    if (configManager.getSchema().some(setting => setting.key === TUI_NOTIFICATIONS_METADATA_ONLY_KEY)) {
+      this.unsubscribeHostSetting = configManager.subscribe(TUI_NOTIFICATIONS_METADATA_ONLY_KEY, () => {
+        for (const entries of this.groups.values()) {
+          for (const entry of entries) refreshHostSettingEntry(entry, configManager);
+        }
+        this.requestRender?.();
+      });
+    }
   }
 
   /** Scroll the documentation region by `delta` wrapped lines (renderer clamps the top end). */
@@ -274,6 +287,8 @@ export class SettingsModal {
   }
 
   close(): void {
+    this.unsubscribeHostSetting?.();
+    this.unsubscribeHostSetting = null;
     this.active = false;
     this.editingMode = false;
     this.editBuffer = '';

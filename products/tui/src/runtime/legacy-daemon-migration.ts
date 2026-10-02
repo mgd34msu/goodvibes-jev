@@ -47,7 +47,8 @@ import { spawnSync } from 'node:child_process';
 import net from 'node:net';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { TuiConfigManager } from '../config/host-settings.ts';
 import { PlatformServiceManager, type ManagedServiceStatus } from '@goodvibes-jev/engine/sdk/platform/daemon';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { runDaemonConfigMigration } from '../config/run-daemon-config-migration.ts';
@@ -116,7 +117,7 @@ export interface BuildManagedDaemonServiceManagerParams {
 export function buildManagedDaemonServiceManager(params: BuildManagedDaemonServiceManagerParams): PlatformServiceManager {
   const workingDirectory = params.workingDirectory ?? params.homeDir;
   if (!params.configManager) runDaemonConfigMigration(params.homeDir);
-  const configManager = params.configManager ?? new ConfigManager({
+  const configManager = params.configManager ?? new TuiConfigManager({
     workingDir: workingDirectory,
     homeDir: params.homeDir,
     surfaceRoot: 'tui',

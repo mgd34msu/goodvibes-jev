@@ -6,7 +6,7 @@
  * to these during open() and tab-switch operations.
  */
 
-import { CONFIG_SCHEMA, type ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
+import { type ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ConfigManager, ConfigSetting } from '@goodvibes-jev/engine/sdk/platform/config';
 import { getResolvedSettingLookup } from '@/runtime/index.ts';
 import type { FeatureFlagManager } from '@/runtime/index.ts';
@@ -89,19 +89,35 @@ export function deepEqual(a: unknown, b: unknown): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// buildSettingGroups, loads CONFIG_SCHEMA into per-category SettingEntry maps
+// buildSettingGroups, loads the instance schema into per-category SettingEntry maps
 // ---------------------------------------------------------------------------
+
+/** Refresh the registered host row from the same public value/source/lock authority. */
+export function refreshHostSettingEntry(entry: SettingEntry, configManager: ConfigManager): void {
+  if (entry.setting.key !== (NOTIFICATIONS_METADATA_ONLY_KEY as ConfigKey)) return;
+  const lookup = getResolvedSettingLookup(configManager, entry.setting.key);
+  const resolved = lookup?.entry;
+  entry.currentValue = configManager.get(entry.setting.key);
+  entry.isDefault = deepEqual(entry.currentValue, entry.setting.default);
+  Object.assign(entry, {
+    effectiveSource: resolved?.effectiveSource,
+    locked: resolved?.locked,
+    conflict: resolved?.conflict,
+    sourceLabel: resolved?.sourceLabel,
+    lockReason: resolved?.lockReason ?? (lookup?.lock ? `${lookup.lock.source}: ${lookup.lock.reason}` : undefined),
+  });
+}
 
 export function buildSettingGroups(
   configManager: ConfigManager,
   featureFlagManager?: FeatureFlagManager | null,
 ): Map<SettingsCategory, SettingEntry[]> {
   const groups = new Map<SettingsCategory, SettingEntry[]>();
-  // Every category starts empty and is filled from CONFIG_SCHEMA below; the
+  // Every category starts empty and is filled from the instance schema below; the
   // feature-unit layout pass then folds each capability's rows into one unit.
   for (const cat of SETTINGS_CATEGORIES) groups.set(cat, []);
 
-  for (const setting of CONFIG_SCHEMA) {
+  for (const setting of configManager.getSchema()) {
     const rawCat = setting.key.split('.')[0] as string;
     const cat = rawCat as SettingsCategory;
     const currentValue = configManager.get(setting.key as ConfigKey);
@@ -116,6 +132,7 @@ export function buildSettingGroups(
       sourceLabel: resolved?.sourceLabel,
       lockReason: resolved?.lockReason,
     };
+    refreshHostSettingEntry(entry, configManager);
     if (groups.has(cat)) groups.get(cat)!.push(entry);
     if ((rawCat === 'controlPlane' || rawCat === 'httpListener' || rawCat === 'web') && groups.has('network')) {
       groups.get('network')!.push(entry);
@@ -190,9 +207,8 @@ export function buildSettingGroups(
         behaviorEntries.push(entry);
       }
     }
-    // behavior.notificationsMetadataOnly is a real SDK schema key (the loop
-    // above already added it); it governs the text of every notification row
-    // above (desktop, in-terminal, webhook), so it is listed right after them.
+    // The TUI registers behavior.notificationsMetadataOnly on its manager.
+    // Keep the host-owned privacy control next to the notification toggles.
     const privacyIndex = behaviorEntries.findIndex((e) => e.setting.key === (NOTIFICATIONS_METADATA_ONLY_KEY as ConfigKey));
     if (privacyIndex >= 0) behaviorEntries.push(...behaviorEntries.splice(privacyIndex, 1));
   }
@@ -591,6 +607,7 @@ export function refreshEntryValues(
       // their own read paths, so the raw value is used as-is here.
       entry.currentValue = raw;
       entry.isDefault = deepEqual(entry.currentValue, entry.setting.default);
+      refreshHostSettingEntry(entry, configManager);
     }
   }
 }
@@ -634,6 +651,7 @@ export function updateEntryForKey(
       const raw = configManager.get(key);
       entry.currentValue = raw;
       entry.isDefault = deepEqual(entry.currentValue, entry.setting.default);
+      refreshHostSettingEntry(entry, configManager);
     }
   }
 }

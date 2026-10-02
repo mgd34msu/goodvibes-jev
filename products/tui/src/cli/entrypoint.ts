@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { TuiConfigManager } from '../config/host-settings.ts';
 import { formatProviderModel, getModelIdFromProviderModel, getProviderIdFromModel } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { readOnboardingCheckMarkers } from '../runtime/onboarding/index.ts';
 import { GlobalNetworkTransportInstaller } from '@/runtime/index.ts';
@@ -120,7 +121,7 @@ export async function prepareShellCliRuntime(
   if (daemonConfigMigration?.migrated && (daemonConfigMigration.marker.moved.length + daemonConfigMigration.marker.discarded.length) > 0) {
     console.log(`[goodvibes] ${describeDaemonConfigMigration(daemonConfigMigration.marker)}`);
   }
-  const configManager = new ConfigManager({
+  const configManager = new TuiConfigManager({
     workingDir: bootstrapWorkingDir,
     homeDir: bootstrapHomeDirectory,
     surfaceRoot: 'tui',

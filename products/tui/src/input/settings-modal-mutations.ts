@@ -14,7 +14,7 @@ import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { logger, summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import type { FeatureFlagManager } from '@/runtime/index.ts';
 import type { FlagEntry, SettingEntry } from './settings-modal-types.ts';
-import { deepEqual } from './settings-modal-data.ts';
+import { deepEqual, refreshHostSettingEntry } from './settings-modal-data.ts';
 
 // ---------------------------------------------------------------------------
 // ApplyValueResult, returned by applySettingValue so the caller can react
@@ -110,6 +110,7 @@ export function applySettingValue({
     configManager.setDynamic(key, value);
   } catch (e) {
     logger.error('SettingsModal: failed to set config value', { key, error: summarizeError(e) });
+    for (const entries of groups.values()) for (const entry of entries) refreshHostSettingEntry(entry, configManager);
     return {
       restartDomain: null,
       effectMessage: `Save failed: ${summarizeError(e)}`,
@@ -125,6 +126,7 @@ export function applySettingValue({
       if (entry.setting.key !== key) continue;
       entry.currentValue = configManager.get(key);
       entry.isDefault = deepEqual(entry.currentValue, entry.setting.default);
+      refreshHostSettingEntry(entry, configManager);
     }
   }
 

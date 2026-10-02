@@ -15,6 +15,7 @@ import { buildConnectionContext } from './settings-modal-connections.ts';
 import { isSecretConfigKey } from '../config/secret-config.ts';
 import { maskConcealedText } from '../input/concealed-input.ts';
 import { CVV_PROMPT_TRADEOFF_WARNING } from '@goodvibes-jev/engine/sdk/platform/payments';
+import { NOTIFICATIONS_METADATA_ONLY_KEY } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { GLYPHS } from './ui-primitives.ts';
 
 const ENUM_VALUE_DESCRIPTIONS: Record<string, Record<string, string>> = {
@@ -154,8 +155,13 @@ function buildSettingContext(modal: SettingsModal, entry: SettingEntry): string[
   if (entry.setting.type === 'boolean') {
     lines.push('');
     lines.push('Possible values:');
-    lines.push('true: enabled or allowed for this setting.');
-    lines.push('false: disabled or not allowed for this setting.');
+    if (String(entry.setting.key) === NOTIFICATIONS_METADATA_ONLY_KEY) {
+      lines.push('true: Keep notifications metadata-only (restrictive default).');
+      lines.push('false: Explicitly permit notification details on supported paths.');
+    } else {
+      lines.push('true: enabled or allowed for this setting.');
+      lines.push('false: disabled or not allowed for this setting.');
+    }
   }
 
   if (entry.setting.type === 'enum' && entry.setting.enumValues) {
