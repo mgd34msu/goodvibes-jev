@@ -7231,6 +7231,591 @@
         "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
         "verification": "Exact pinned bytes retained at upstream-renamed path; inventory purpose and relative imports preserved."
       }
+    },
+    {
+      "source": "src/panels/builtin-modals.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/builtin-modals.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "05f3c8606f6cb41a3e4cf6f598a3dcb9b65a48a2",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "4dfc2b5a62db807bbf021a7dfafd8cabe52c79b5",
+        "currentBlob": "ef7e0b8e8f1e5972b512e2ec8ac665848cb1078d",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/confirm-state.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/confirm-state.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "4841f16c9ffa61d0bbf56197a5f1b3d17c531ac2",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "d41a14282d4f434d86c9c601cf192dd4e85dc91b",
+        "currentBlob": "ddd9e90f6e3fb854c2d74782f37806a100c01859",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/diff-review-model.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/diff-review-model.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "13af8999249cc26c9cbb6597bfc1fd12ed93f3ba",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "acae828372f8910a980475bdcf10886528806e2a",
+        "currentBlob": "acae828372f8910a980475bdcf10886528806e2a",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/hosted-session-feed.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/hosted-session-feed.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "cc1f3a4a3f9e82f2b47706b19060219873e1e0d1",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "b2f33933e795e8269d5049e57f6a4cb164b9c903",
+        "currentBlob": "61925b769de7fd79cb888ba5111c54afefd31af6",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/modals/devices-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/devices-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "d4a032e3e21bed1a99adf5712642eaa9d92a97e1",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "919d6847685cbe661b016d7d69a11cd5cff5129f",
+        "currentBlob": "5b89e42f2d6ffe22b55317c894a260ad2864408a",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/modals/hooks-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/hooks-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "86e0ff6979de718792751bcdfe4c781d423767e5",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "45702e53e5e27304fc3f31f9b125d8cd51611ab6",
+        "currentBlob": "a269925c94b795e85158c35058970fc2a8202057",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/modals/keybindings-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/keybindings-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "bcd2ea8dc6a335fb0b55f5d21fae49c39cd4a0f4",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "d8953f3c13becd9a1c32890aff2172e8321ad310",
+        "currentBlob": "d8953f3c13becd9a1c32890aff2172e8321ad310",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/modals/knowledge-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/knowledge-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "3c92b1630d4a94c6e94a4b11f9822610c43ce2d7",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "6a139afe2403d2d96f510ae9e78d80301bf3a4e7",
+        "currentBlob": "81c24e199fbd95e73253b47acddf714a5222e9ec",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/modals/local-auth-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/local-auth-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "d3225dd1a89dd57d9aa6e7d273d735d5b8f554a9",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "5659feed6380ae5f955a284ab4c564fb637391ff",
+        "currentBlob": "3a1d1f560ce852b461cc77b3e3063382d68eccc4",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/modals/modal-surface-helpers.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/modal-surface-helpers.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "314fae68fa3eb27f8e68475738932ace7a17ad7d",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "0b1b209905918000ee49a9c016d190680123e796",
+        "currentBlob": "0b1b209905918000ee49a9c016d190680123e796",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/modals/pairing-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/pairing-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "8d71b555754f42a65791ed80adf66efec2c527f5",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "83ce6b2a8567da4afbd39bb19ecc2341354b46d0",
+        "currentBlob": "be7970e9031ac10524a1bb51a2c13facc1694bb1",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/modals/plugins-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/plugins-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "7f79314cd11641a9af3e41de719ea16dc0ebc16b",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "13218d90df1a8e38716f60eecf0330824e81fd31",
+        "currentBlob": "c3972c85cb8375c46f8223d910dd6bd8c864b904",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/modals/policy-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/policy-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "bb72a02a26b2c84d7f6cdeb36b9a063f9f553ed2",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "f9244afa2814284a4d34681290e54f03d3e9019f",
+        "currentBlob": "f9244afa2814284a4d34681290e54f03d3e9019f",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/modals/provider-health-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/provider-health-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "37dc9fd37695979c67c9de918406d8021d73e492",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "252c0049caa45a4dfe2d226fe5dada807b842ed6",
+        "currentBlob": "8f7879d60c8bcb9a7bd857ddde045903fc5e9083",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/modals/remote-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/remote-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "d459744888a77b7293c0763076e3d1a8009f6496",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "2cd10ca25de31246516839591db059dd28e897e5",
+        "currentBlob": "2cd10ca25de31246516839591db059dd28e897e5",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/modals/services-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/services-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "800fc4304a80bd8c217f07fd3ec42348a604dabc",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "f977b0e6eb46c9737d2b334692ba9a8901dc4c6c",
+        "currentBlob": "30342cef7b655b2d73699d6882aca4d72a6c6c36",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/modals/settings-sync-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/settings-sync-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "18f3556dba8856098568013a78e9cd8817b8606e",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "0d036e5504327a9d511a68a295cdcce7ca122920",
+        "currentBlob": "8d933ba3dd85ce95987e86cedc3c39dc60eb1e84",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/modals/skills-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/skills-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "0c1c0bc01305f98c0776c4882edf8f229ccb91d7",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "9ffd9e051a5ecd87c5f9f44d918ce4980ffd513c",
+        "currentBlob": "9ffd9e051a5ecd87c5f9f44d918ce4980ffd513c",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/modals/subscription-modal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/modals/subscription-modal.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "e6927658f5816e46c1d0530610713d5c22f8e0fb",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "ba37f36e6bd2d82aa6e1c8717d6fcb2a596f5ddd",
+        "currentBlob": "5e0ef6ef22a46965c9c0dfc89d08ee7de67795fc",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/polish-core.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/polish-core.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "caea92c1b95f9a6f5680b44ccfcd98fd084cc45b",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "8259d1df0bca43a4fb0ebdafe670ad274e03a4ae",
+        "currentBlob": "e525c40ee837c807e7cb46e975a11ff2845494e1",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/polish-tables.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/polish-tables.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "feccc9e022680a74a13903bf87c7d4e5193830e4",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "2f4e5728c37c44ffc2ffdf8db1d063d58f88d2ac",
+        "currentBlob": "1f48f4a6ed15f08bb49c4adec9fd46de2773a78b",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/polish.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/polish.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "b3837b439ae1857ea313a103debed0727143dab0",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "10b2b3b04aa2fb483027747db5f31e41884c8bf3",
+        "currentBlob": "60198d872c38731cffb6c31f16aa3c83c8223070",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/search-focus.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/search-focus.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "529091b8fa9909dbd4e368d6887bbaaa1c59d77f",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "3dfad76c849e9ab70f06519b708dc286d8f73ddf",
+        "currentBlob": "3dfad76c849e9ab70f06519b708dc286d8f73ddf",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/panels/session-maintenance.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/views/session-maintenance.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "efb94d5628cfe5bbecd029f07aabea2b080e284a",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "b18a4ac508cfdd17ce3757ab8c0d47f7f44bc68a",
+        "currentBlob": "936e7b67995054914439f5362df85000f92588ef",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/test/panels/batch-refutation-fixes.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/batch-refutation-fixes.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "32ee1d09bedea530802b93ccc86d4f073442a45a",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "b620d09f56c193583ecd1aa3dc2e401c3365f6e1",
+        "currentBlob": "b620d09f56c193583ecd1aa3dc2e401c3365f6e1",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/test/panels/config-modal-surfaces-a.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/config-modal-surfaces-a.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "460e3c6ddc25254cfa2e2a1c0179c547a7d90e54",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "f5a631bfa2669d3624fce4e713ffb63ca6aa4a6c",
+        "currentBlob": "f5a631bfa2669d3624fce4e713ffb63ca6aa4a6c",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/test/panels/config-modal-surfaces-authbox.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/config-modal-surfaces-authbox.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "3bfadf811928ac932d86e9d4630435947084837f",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "48cd475f5dd7bc7da47b99ac0e272b60386c5d88",
+        "currentBlob": "3a7baf72dbf333c74106e76eb85a53c53fe6af93",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/test/panels/config-modal-surfaces-settings-providers.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/config-modal-surfaces-settings-providers.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "42462f5d1851ea229a05adcd497320c9c04aa8c7",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "46866c1c170a6670f5dde48688aaa7146cf5049a",
+        "currentBlob": "2f1006e377010b35a58aa5fe663ce121bd06a509",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/test/panels/confirm-state.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/confirm-state.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "0bf1f6d35387c501cd61d9506bff55dfe91354b6",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "0d5302886d4046dedff35e71d34ea6cbac78740e",
+        "currentBlob": "f33bbd1c223807213b144f9556d9b1ebbde4a382",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/test/panels/modals/devices-modal.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/modals/devices-modal.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "cc7a8c71bd04fe2a333dffff8fbfd12b869cdea3",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "3195cd10160ca04bfd384f9dd50f9b736aa1dc5d",
+        "currentBlob": "c0c5d16a5236065aa66227cf033fc9b34b5dc1a0",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/test/panels/modals/keybindings-modal.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/modals/keybindings-modal.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "b2c448212a3440e158cf2e6cfa711737e6fdedf8",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "770093d2af0e5d071906d46dfaba30272c416dff",
+        "currentBlob": "770093d2af0e5d071906d46dfaba30272c416dff",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/test/panels/modals/knowledge-modal.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/modals/knowledge-modal.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "81f0b9018266ac635625a1badebebc8cc310f111",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "d65b5da6e2cd93b5618ee3442d6a0a4606997573",
+        "currentBlob": "d65b5da6e2cd93b5618ee3442d6a0a4606997573",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/test/panels/modals/pairing-modal.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/modals/pairing-modal.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "4b60f6b9f384d2112587ed2587ffecdcd3dddc5c",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "165f4c0f3fbbf43496f16f1c1c5954f4db46cc12",
+        "currentBlob": "93eada6f6dc97da7fa37bebf924d5eeb41ce468d",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/test/panels/modals/plugins-modal.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/modals/plugins-modal.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "cd37f08efdbdc7b4d056ced9abd3d1542bba6ca5",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "5e05263cc893802fa7bbcb29bb499ea58868dde7",
+        "currentBlob": "c00912c037e60b3f8f08ec786e390ba0e87983ee",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/test/panels/modals/policy-modal.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/modals/policy-modal.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "362c862d0d1bb60d48dd3890eda92acb8a44252a",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "791044076ff37b42f4e1eeb713cb52fd4f205fb7",
+        "currentBlob": "791044076ff37b42f4e1eeb713cb52fd4f205fb7",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/test/panels/modals/security-modal.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/modals/security-modal.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "6484889a424204d0b97640ef46b1d20834ab5e10",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "20b3273bf9f25df069f3a81103c764f7f52aa30e",
+        "currentBlob": "20b3273bf9f25df069f3a81103c764f7f52aa30e",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/test/panels/modals/skills-modal.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/modals/skills-modal.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "21574465d8fbafa3f88e3b24c3aef74f903646d5",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "1968505d54d7b495a4460be00a38cd7071767a92",
+        "currentBlob": "1968505d54d7b495a4460be00a38cd7071767a92",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/test/panels/polish-primitives.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/polish-primitives.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "fd8dce4f7292ae3830448afe9c177c9134c1d3ed",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "b35c9407b72ef0d75d62986b1e9ee9d8c9d5ede6",
+        "currentBlob": "b35c9407b72ef0d75d62986b1e9ee9d8c9d5ede6",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
+    },
+    {
+      "source": "src/test/runtime/panel-resume-liveness-confirm.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/runtime/session-browser-resume-liveness-confirm.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "459eebb5f4cfa220954c7d3f566f5ac5bd400252",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "e0f1ffac67c3f7f4a814ad12b32f07250fae30f2",
+        "currentBlob": "8244f7ec7ad6b3640d8b4cb8289cd2d4da7ccd42",
+        "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
+        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+      }
     }
   ],
   "verification": {
@@ -7239,9 +7824,10 @@
   "accounting": {
     "inventoryRows": 1618,
     "samePathMappings": 1027,
-    "unresolved": 588,
+    "unresolved": 549,
     "unresolvedManifest": "products/tui/migration-unresolved.json",
     "semantics": "Same-path mappings identify current locations, not evidence of completed JEV/HOIST decisions or feature parity.",
-    "verifiedRenameMappings": 3
+    "verifiedRenameMappings": 42,
+    "renameReview": "docs/audit/tui-rename-reconciliation-2026-10-02.json"
   }
 }

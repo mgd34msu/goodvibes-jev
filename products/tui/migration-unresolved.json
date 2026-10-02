@@ -360,10 +360,6 @@
     "disposition": "PORT"
   },
   {
-    "source": "src/panels/builtin-modals.ts",
-    "disposition": "PORT"
-  },
-  {
     "source": "src/panels/builtin-panels.ts",
     "disposition": "PORT"
   },
@@ -392,19 +388,11 @@
     "disposition": "PORT"
   },
   {
-    "source": "src/panels/confirm-state.ts",
-    "disposition": "PORT"
-  },
-  {
     "source": "src/panels/cost-tracker-panel.ts",
     "disposition": "PORT"
   },
   {
     "source": "src/panels/diff-panel.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/diff-review-model.ts",
     "disposition": "PORT"
   },
   {
@@ -476,10 +464,6 @@
     "disposition": "PORT"
   },
   {
-    "source": "src/panels/hosted-session-feed.ts",
-    "disposition": "PORT"
-  },
-  {
     "source": "src/panels/hosted-session-panel.ts",
     "disposition": "PORT"
   },
@@ -496,26 +480,6 @@
     "disposition": "HOIST"
   },
   {
-    "source": "src/panels/modals/devices-modal.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/modals/hooks-modal.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/modals/keybindings-modal.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/modals/knowledge-modal.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/modals/local-auth-modal.ts",
-    "disposition": "PORT"
-  },
-  {
     "source": "src/panels/modals/marketplace-modal.ts",
     "disposition": "PORT"
   },
@@ -524,32 +488,8 @@
     "disposition": "JEV"
   },
   {
-    "source": "src/panels/modals/modal-surface-helpers.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/modals/pairing-modal.ts",
-    "disposition": "PORT"
-  },
-  {
     "source": "src/panels/modals/planning-modal.ts",
     "disposition": "JEV"
-  },
-  {
-    "source": "src/panels/modals/plugins-modal.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/modals/policy-modal.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/modals/provider-health-modal.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/modals/remote-modal.ts",
-    "disposition": "PORT"
   },
   {
     "source": "src/panels/modals/sandbox-modal.ts",
@@ -557,22 +497,6 @@
   },
   {
     "source": "src/panels/modals/security-modal.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/modals/services-modal.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/modals/settings-sync-modal.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/modals/skills-modal.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/modals/subscription-modal.ts",
     "disposition": "PORT"
   },
   {
@@ -600,18 +524,6 @@
     "disposition": "PORT"
   },
   {
-    "source": "src/panels/polish-core.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/polish-tables.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/polish.ts",
-    "disposition": "PORT"
-  },
-  {
     "source": "src/panels/project-planning-answer-actions.ts",
     "disposition": "HOIST"
   },
@@ -625,14 +537,6 @@
   },
   {
     "source": "src/panels/scrollable-list-panel.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/search-focus.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/session-maintenance.ts",
     "disposition": "PORT"
   },
   {
@@ -657,26 +561,6 @@
   },
   {
     "source": "src/test/panels/base-panel-ux.test.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/test/panels/batch-refutation-fixes.test.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/test/panels/config-modal-surfaces-a.test.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/test/panels/config-modal-surfaces-authbox.test.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/test/panels/config-modal-surfaces-settings-providers.test.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/test/panels/confirm-state.test.ts",
     "disposition": "PORT"
   },
   {
@@ -804,23 +688,11 @@
     "disposition": "PORT"
   },
   {
-    "source": "src/test/panels/modals/devices-modal.test.ts",
-    "disposition": "PORT"
-  },
-  {
     "source": "src/test/panels/modals/ecosystem-modals-registration.test.ts",
     "disposition": "PORT"
   },
   {
     "source": "src/test/panels/modals/hooks-modal.test.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/test/panels/modals/keybindings-modal.test.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/test/panels/modals/knowledge-modal.test.ts",
     "disposition": "PORT"
   },
   {
@@ -832,28 +704,8 @@
     "disposition": "JEV"
   },
   {
-    "source": "src/test/panels/modals/pairing-modal.test.ts",
-    "disposition": "PORT"
-  },
-  {
     "source": "src/test/panels/modals/planning-modal.test.ts",
     "disposition": "JEV"
-  },
-  {
-    "source": "src/test/panels/modals/plugins-modal.test.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/test/panels/modals/policy-modal.test.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/test/panels/modals/security-modal.test.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/test/panels/modals/skills-modal.test.ts",
-    "disposition": "PORT"
   },
   {
     "source": "src/test/panels/modals/work-plan-modal.test.ts",
@@ -881,10 +733,6 @@
   },
   {
     "source": "src/test/panels/plugins-panel.test.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/test/panels/polish-primitives.test.ts",
     "disposition": "PORT"
   },
   {
@@ -1337,10 +1185,6 @@
   },
   {
     "source": "src/test/runtime/orchestration/spawn-policy.test.ts",
-    "disposition": "PORT"
-  },
-  {
-    "source": "src/test/runtime/panel-resume-liveness-confirm.test.ts",
     "disposition": "PORT"
   },
   {
