@@ -3150,8 +3150,8 @@
       "target": "products/agent/README.md",
       "upstreamBlob": "0b73668fe9020f057d76a9349411ffd198a30c28",
       "present": true,
-      "recoveredBlob": "0b73668fe9020f057d76a9349411ffd198a30c28",
-      "materialization": "byte-identical"
+      "recoveredBlob": "bf319ae0ce724573a27db956163696edf0ba5064",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "bin/goodvibes-agent.ts",
@@ -3278,8 +3278,8 @@
       "target": "products/agent/docs/testing-and-validation.md",
       "upstreamBlob": "30d0a0b8402cbf11c5a59122fe99b863d6e4eb97",
       "present": true,
-      "recoveredBlob": "30d0a0b8402cbf11c5a59122fe99b863d6e4eb97",
-      "materialization": "byte-identical"
+      "recoveredBlob": "aba51fd17f60a47b6a6e931671033f15579e625d",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "docs/tools-and-commands.md",
@@ -3302,7 +3302,7 @@
       "target": "products/agent/package.json",
       "upstreamBlob": "dbb3e818e7dc728b28b880d433b932f7b04dc1c3",
       "present": true,
-      "recoveredBlob": "a40d64ca8b4c7ab6a0b19d6a4d1e5c64f0807a66",
+      "recoveredBlob": "8a54ad17f2ac3b9d65d113c84d6f081c41976b6f",
       "materialization": "workspace-adapted"
     },
     {
@@ -3350,8 +3350,8 @@
       "target": "products/agent/scripts/build-package-runtime.ts",
       "upstreamBlob": "b384d6963ce9551587e2b275606e77fe0ea03315",
       "present": true,
-      "recoveredBlob": "b384d6963ce9551587e2b275606e77fe0ea03315",
-      "materialization": "byte-identical"
+      "recoveredBlob": "bbdbcd0b030b2a4f0f8575e558ba222fe9d9202f",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "scripts/build.ts",
@@ -3366,8 +3366,8 @@
       "target": "products/agent/scripts/bun-compile-compat.ts",
       "upstreamBlob": "f16c770c51b7f9f34681f577e76715ed291a6055",
       "present": true,
-      "recoveredBlob": "f16c770c51b7f9f34681f577e76715ed291a6055",
-      "materialization": "byte-identical"
+      "recoveredBlob": "15cf96394915e2b4df55198e61ebe41d8e7de603",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "scripts/check-architecture.ts",
@@ -3446,8 +3446,8 @@
       "target": "products/agent/scripts/prebuild.ts",
       "upstreamBlob": "acc7e39a0b47741db7c07834188fd40035acb7a5",
       "present": true,
-      "recoveredBlob": "acc7e39a0b47741db7c07834188fd40035acb7a5",
-      "materialization": "byte-identical"
+      "recoveredBlob": "0812ad06cfc626e2398d110c343520283b8ea3fb",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "scripts/project-surfaces.ts",
@@ -7822,8 +7822,8 @@
       "target": "products/agent/src/runtime/bootstrap-shutdown.ts",
       "upstreamBlob": "d6c9663b7cd5ec8756cf3016c613d13b631a4949",
       "present": true,
-      "recoveredBlob": "d6c9663b7cd5ec8756cf3016c613d13b631a4949",
-      "materialization": "byte-identical"
+      "recoveredBlob": "5960345a13d18ce7653eb208ddcc21c5f5f39408",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/runtime/bootstrap.ts",
@@ -7894,7 +7894,7 @@
       "target": "products/agent/src/runtime/client/hosted-handoff.ts",
       "upstreamBlob": "1bb56f3c806450ead176b2b9e42721879519a0e4",
       "present": true,
-      "recoveredBlob": "a6357bd12565c707830dc8bed817c2625931a029",
+      "recoveredBlob": "732671c3a58e30a932227a672c3da8479ff0c971",
       "materialization": "workspace-adapted"
     },
     {
@@ -7926,7 +7926,7 @@
       "target": "products/agent/src/runtime/client/remote-conversation.ts",
       "upstreamBlob": "b8ea98dc4f099f48e22599f7e2f372b1a5047a0f",
       "present": true,
-      "recoveredBlob": "9986101352876a871c02f728b6b1441f2fa6eccb",
+      "recoveredBlob": "390f40918afec4606cf575580be66694c09f75f4",
       "materialization": "workspace-adapted"
     },
     {
@@ -9718,24 +9718,24 @@
       "target": "products/agent/src/test/e2e/first-start-workspace.e2e.test.ts",
       "upstreamBlob": "2b856dbb5cac98ef5ee2d77d032f9330c90037d0",
       "present": true,
-      "recoveredBlob": "2b856dbb5cac98ef5ee2d77d032f9330c90037d0",
-      "materialization": "byte-identical"
+      "recoveredBlob": "45f94b1b46401efdd200c55561d7dce9366ef4d1",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/e2e/harness.ts",
       "target": "products/agent/src/test/e2e/harness.ts",
       "upstreamBlob": "98e1b5df3f313f66682b8e1bb0ed43d99ab0803c",
       "present": true,
-      "recoveredBlob": "98e1b5df3f313f66682b8e1bb0ed43d99ab0803c",
-      "materialization": "byte-identical"
+      "recoveredBlob": "66c0b22c1a71bc9bf6d888770136c611e2117aef",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/e2e/startup-first-turn.e2e.test.ts",
       "target": "products/agent/src/test/e2e/startup-first-turn.e2e.test.ts",
       "upstreamBlob": "5e24ef5be0237187f709906d33c7fd44f4c8bbf1",
       "present": true,
-      "recoveredBlob": "5e24ef5be0237187f709906d33c7fd44f4c8bbf1",
-      "materialization": "byte-identical"
+      "recoveredBlob": "2bd20a693d69c7fdea7f2711f21da3a81ba7c757",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/features/config-and-preview-behavior.test.ts",
@@ -12966,8 +12966,8 @@
       "target": "products/agent/src/test/runtime/bootstrap-shutdown-graph-disposal.test.ts",
       "upstreamBlob": "78db8c6625b3a4e163b2c66ecadc293d95e9348b",
       "present": true,
-      "recoveredBlob": "78db8c6625b3a4e163b2c66ecadc293d95e9348b",
-      "materialization": "byte-identical"
+      "recoveredBlob": "b942096d3e6f94c80e72f6c64041a3d33909c474",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/runtime/bootstrap-webhook-lifecycle.test.ts",
@@ -13110,7 +13110,7 @@
       "target": "products/agent/src/test/runtime/fatal-boot-disclosure.test.ts",
       "upstreamBlob": "7cde939edc023279d600b0a7e3f2056409fd5eb6",
       "present": true,
-      "recoveredBlob": "83d084e47d8bc41c574c5f377506b4af5cd33cb6",
+      "recoveredBlob": "d642bd76ca7f8ad05dae88f2cd785dab754d4004",
       "materialization": "workspace-adapted"
     },
     {
@@ -16206,7 +16206,7 @@
       "target": "products/agent/toolchain.config.json",
       "upstreamBlob": "f590b681ca4682f0222d256198f210dd933fca48",
       "present": true,
-      "recoveredBlob": "1df06d19c7cca650d7d0adc49fbfddf2d199f21b",
+      "recoveredBlob": "9fbac933199fdd93ffdde5c744cc56b17afd1678",
       "materialization": "workspace-adapted"
     },
     {
@@ -16227,8 +16227,8 @@
     }
   ],
   "materializationSummary": {
-    "byte-identical": 835,
-    "workspace-adapted": 815
+    "byte-identical": 825,
+    "workspace-adapted": 825
   },
   "limits": [
     "Materialization hashes account for source retention, not semantic disposition completion.",
