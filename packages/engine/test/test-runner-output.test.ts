@@ -203,6 +203,8 @@ test('per-call sinks and ceilings remain independent and preserve SIGTERM handle
       expect(captures[i]!.stdout.text()).toContain(`${label}-shutdown-out`);
       expect(captures[i]!.stderr.text()).toContain(`${label}-shutdown-err`);
       expect(captures[i]!.stderr.text()).toContain('past its ceiling');
+      expect(captures[i]!.stderr.text()).toContain('per-call file ceiling');
+      expect(captures[i]!.stdout.text()).not.toContain(`${i === 0 ? 'second' : 'first'}-shutdown-out`);
       expect(captures[i]!.stdout.sink.writableEnded).toBe(false);
       expect(captures[i]!.stderr.sink.listenerCount('error')).toBe(0);
     }
@@ -257,7 +259,7 @@ test('a per-call ceiling cannot disable or extend an enabled enclosing ceiling',
     const result = await runOwnedTestChild({ argv: ['./fixture.test.ts'], cwd: root, env: { ...process.env },
       ceilingMs: 60_000, killGraceMs: 100, outputDrainGraceMs: 100, stdout: stdout.sink, stderr: stderr.sink });
     expect(result.stopped).toBe('ceiling');
-    expect(stderr.text()).toContain('past its ceiling of 0s');
+    expect(stderr.text()).toContain('past its ceiling of 100ms (GOODVIBES_TEST_CEILING_MS)');
   } finally {
     if (saved === undefined) delete process.env.GOODVIBES_TEST_CEILING_MS; else process.env.GOODVIBES_TEST_CEILING_MS = saved;
     rmSync(root, { recursive: true, force: true });
@@ -429,4 +431,25 @@ test('a real cancellation signal escalates and stops the owned descendant group'
     try { process.kill(Number(readFileSync(join(root, 'descendant.pid'), 'utf8')), 'SIGKILL'); } catch { /* fixture gone */ }
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+
+test('an abort cannot wait forever for the underlying source cancel hook', async () => {
+  const reason = new Error('fixture output deadline');
+  const control = new AbortController();
+  let cancelled = false;
+  const source = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1])); }, cancel() { cancelled = true; return new Promise(() => {}); } });
+  const sink = new Writable({ write() {} });
+  const run = pumpTestOutput(source, sink, {lastLine:null,lastFile:null}, control.signal);
+  setImmediate(() => control.abort(reason));
+  const result = await Promise.race([run.then(()=>'resolved',error=>error), Bun.sleep(50).then(()=>'still-pending')]);
+  expect(cancelled).toBe(true);
+  expect(result).toBe(reason);
+  expect(source.locked).toBe(false);
+  expect(sink.listenerCount('error')).toBe(0);
+});
+
+
+test.each(['killGraceMs', 'outputDrainGraceMs'] as const)('timer-overflow %s is refused before spawning', async (name) => {
+  await expect(runOwnedTestChild({ argv: [], cwd: tmpdir(), env: {}, [name]: 2_147_483_648 })).rejects.toThrow(`${name} must not exceed 2147483647ms`);
 });

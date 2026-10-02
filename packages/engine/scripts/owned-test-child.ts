@@ -173,7 +173,7 @@ function readHeartbeat(path: string): { at: number; started: number } | null {
 }
 
 function describeSeconds(ms: number): string {
-  return `${Math.round(ms / 1000)}s`;
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${Math.round(ms / 1000)}s`;
 }
 
 /**
@@ -190,6 +190,7 @@ export async function pumpTestOutput(
   const decoder = new TextDecoder();
   const reader = stream.getReader();
   let pending = '';
+  let sourceEnded = false;
   let onSinkError!: (error: Error) => void;
   const sinkFailed = new Promise<never>((_resolve, reject) => { onSinkError = reject; });
   const onAbort = (): void => onSinkError(signal?.reason instanceof Error ? signal.reason : new Error('test output drain aborted'));
@@ -201,7 +202,7 @@ export async function pumpTestOutput(
       // An error can arrive while either the source or the sink is idle. Race
       // both waits so a destroyed sink cannot leave the runner parked forever.
       const { done, value: chunk } = await Promise.race([reader.read(), sinkFailed]);
-      if (done) break;
+      if (done) { sourceEnded = true; break; }
       // Pipe exhaustion is not downstream delivery: throwing on a failed child
       // can otherwise discard the final buffered diagnostics in this process.
       await Promise.race([
@@ -224,7 +225,11 @@ export async function pumpTestOutput(
       }
     }
   } finally {
-    await reader.cancel().catch(() => undefined);
+    const cancellation = reader.cancel().catch(() => undefined);
+    // An abort/failure must not wait forever for an underlying cancel hook.
+    // Request cancellation and release the lock; the owning runner still stops
+    // and reaps its child. A normally exhausted source has already reached EOF.
+    if (sourceEnded) await cancellation;
     reader.releaseLock();
     sink.off('error', onSinkError);
     signal?.removeEventListener('abort', onAbort);
@@ -263,8 +268,17 @@ export async function runOwnedTestChild(options: {
   const enclosingCeilingMs = positiveEnvMs('GOODVIBES_TEST_CEILING_MS', DEFAULT_CEILING_MS);
   const requestedCeilingMs = perCallMs('ceilingMs', options.ceilingMs, enclosingCeilingMs);
   const ceilingMs = enclosingCeilingMs > 0 ? Math.min(requestedCeilingMs, enclosingCeilingMs) : requestedCeilingMs;
+  const ceilingSource = options.ceilingMs !== undefined && (enclosingCeilingMs <= 0 || requestedCeilingMs < enclosingCeilingMs)
+    ? 'per-call file ceiling'
+    : process.env.GOODVIBES_TEST_CEILING_MS ? 'GOODVIBES_TEST_CEILING_MS' : 'default overall ceiling';
+  const stallSource = hasExplicitStall && enclosingStallMs > 0 && enclosingStallMs <= requestedStallMs
+    ? 'GOODVIBES_TEST_STALL_MS'
+    : options.stallMs !== undefined ? 'per-call declared-test stall allowance' : 'default stall ceiling';
   const killGraceMs = perCallMs('killGraceMs', options.killGraceMs, KILL_GRACE_MS);
   const outputDrainGraceMs = perCallMs('outputDrainGraceMs', options.outputDrainGraceMs, OUTPUT_DRAIN_GRACE_MS);
+  for (const [name, value] of [['killGraceMs', killGraceMs], ['outputDrainGraceMs', outputDrainGraceMs]] as const) {
+    if (value > 2_147_483_647) throw new Error(`${name} must not exceed 2147483647ms`);
+  }
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   sweepStaleTmpDirs(tmpdir(), HEARTBEAT_PREFIX, STALE_HEARTBEAT_MS);
@@ -437,7 +451,7 @@ export async function runOwnedTestChild(options: {
       stop(
         'stalled',
         `no test has started for ${describeSeconds(now - idleSince)} `
-        + `(ceiling ${describeSeconds(stallMs)}, GOODVIBES_TEST_STALL_MS), ${progress}; ${where}. `
+        + `(ceiling ${describeSeconds(stallMs)}, ${stallSource}), ${progress}; ${where}. `
         + `A suite that stops starting tests is stuck, not slow; ending it here so the reason is `
         + `on the record instead of a job timeout fifteen minutes from now.`,
       );
@@ -447,7 +461,7 @@ export async function runOwnedTestChild(options: {
       stop(
         'ceiling',
         `the suite has run for ${describeSeconds(now - startedAt)}, past its ceiling of `
-        + `${describeSeconds(ceilingMs)} (GOODVIBES_TEST_CEILING_MS), ${progress}; ${where}`,
+        + `${describeSeconds(ceilingMs)} (${ceilingSource}), ${progress}; ${where}`,
       );
     }
   }, POLL_MS);
