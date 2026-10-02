@@ -18,7 +18,7 @@ import { DaemonServer } from '@goodvibes-jev/engine/sdk/platform/daemon';
 import { createRuntimeStore } from '@goodvibes-jev/engine/sdk/platform/runtime/store';
 import { UserAuthManager } from '@goodvibes-jev/engine/sdk/platform/security';
 import { createFeatureFlagManager, deriveFeatureStates, RuntimeEventBus } from '../runtime/index.js';
-import { createRuntimeServices, type RuntimeServices } from '../runtime/services.js';
+import { createRuntimeServices, type RuntimeServices, type RuntimeServicesOptions } from '../runtime/services.js';
 import { createHostedSessionOptions } from '../runtime/hosted-session-composition.js';
 import { createDisposalScope } from '../runtime/disposal-wiring.js';
 import type { DaemonInboxFactory } from '../runtime/daemon-handler-composition.js';
@@ -47,6 +47,8 @@ const DAEMON_CAPABILITY_FLAGS: readonly string[] = [
 ];
 
 export interface DaemonFixtureOptions {
+  /** Explicit owned boot operations; omitted fixtures do not start boot tasks. */
+  readonly createBootOperations?: RuntimeServicesOptions['createBootOperations'];
   /** Explicit fixture composition; there is no unimplemented production default. */
   readonly inboxFactory: DaemonInboxFactory;
   /**
@@ -153,6 +155,7 @@ export async function startDaemonFixture(options: DaemonFixtureOptions): Promise
     featureFlags.loadFromConfig({ flags });
 
     const services = await createRuntimeServices({
+      createBootOperations: options.createBootOperations,
       inboxFactory: options.inboxFactory,
       runtimeStore: createRuntimeStore(),
       runtimeBus: new RuntimeEventBus(),
