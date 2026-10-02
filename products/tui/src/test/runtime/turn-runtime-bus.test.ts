@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { conversationReadingsPort } from '../helpers/conversation-readings.ts';
+import { beforeEach, afterEach, describe, expect, mock, test } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ConversationManager } from '../../core/conversation.ts';
@@ -14,6 +16,10 @@ import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { AgentManager } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { createPermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { createTestManagers } from '../helpers/test-managers.ts';
+
+let previousPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousPort = installJudgmentPort(conversationReadingsPort().port); });
+afterEach(() => { installJudgmentPort(previousPort); });
 
 const configManager = new ConfigManager({ surfaceRoot: 'tui',
   configDir: join(tmpdir(), `gv-turn-runtime-${Date.now()}-${Math.random().toString(36).slice(2)}`),
@@ -69,9 +75,11 @@ describe('runtime turn substrate', () => {
     const policyRuntimeState = new PolicyRuntimeState();
     const permissions = new PermissionManager(async () => ({ approved: true }), createPermissionConfigReader(configManager), policyRuntimeState);
     const seen: string[] = [];
+    const errors: unknown[] = [];
 
     runtimeBus.onDomain('turn', (env) => {
       seen.push(env.type);
+      if (env.type === 'TURN_ERROR') errors.push(env.payload);
       dispatch.dispatchTurnEvent(env.payload);
     });
 
@@ -97,7 +105,8 @@ describe('runtime turn substrate', () => {
       runtimeBus,
       services: {
         agentManager: new AgentManager({ configManager }),
-        wrfcController: { listChains: () => [] },
+        contractRunner: { list: () => [] },
+        contractIntake: { intake: async () => ({ kind: 'turn' }) },
       },
     });
     orchestrator.setCoreServices({
@@ -107,6 +116,7 @@ describe('runtime turn substrate', () => {
 
     await withMockProvider(providerRegistry, provider, () => orchestrator.handleUserInput('hello'));
 
+    expect(errors).toEqual([]);
     expect(seen).toContain('TURN_SUBMITTED');
     expect(seen).toContain('LLM_RESPONSE_RECEIVED');
     expect(seen).toContain('TURN_COMPLETED');

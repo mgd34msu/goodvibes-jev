@@ -1,3 +1,4 @@
+import { conversationReadingsPort } from '../helpers/conversation-readings.ts';
 /**
  * Main-session passive-injection WIRING tests, the regression
  * class the stubbed /recall tests could not catch.
@@ -29,15 +30,35 @@
  *     exercises the whole chain the blocker broke: builder -> setCoreServices
  *     -> coreServices.memoryRegistry -> turn-loop injection -> accessor ring.
  */
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, afterEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { RuntimeEventBus } from '@/runtime/index.ts';
 import { Orchestrator } from '@goodvibes-jev/engine/sdk/platform/core';
 import { ConversationManager } from '../../core/conversation.ts';
 import { buildSharedOrchestratorCoreServices, type OrchestratorCoreServicesSource } from '../../runtime/orchestrator-core-services.ts';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { PermissionManager } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { UNKNOWN_MODEL_PRICING } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { ChatResponse, LLMProvider, ModelDefinition, ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { MemoryRecord } from '@goodvibes-jev/engine/sdk/platform/state';
+
+let previousPort: ReturnType<typeof installJudgmentPort>;
+let memoryFixture: ReturnType<typeof fakePort>;
+beforeEach(() => {
+  memoryFixture = fakePort((name, _question, state) => {
+    if (!['relevant', 'task_match', 'scope_match'].includes(name)) throw new Error(`Unexpected memory fixture question: ${name}`);
+    const record = (state as { record?: { summary?: string } }).record;
+    if (record?.summary !== 'rate limiting: token bucket, 100 requests per minute') throw new Error('Unexpected memory fixture record');
+    return noulAnswer(0.99);
+  });
+  const core = conversationReadingsPort();
+  previousPort = installJudgmentPort({ ...core.port, ask: request =>
+    request.context?.battery === 'engine.state.knowledge-relevance' ? memoryFixture.port.ask(request) : core.port.ask(request),
+  });
+});
+afterEach(() => { installJudgmentPort(previousPort); });
 
 /** A minimal fake memory spine exposing just `recallSnapshot()`, the only method `buildSharedOrchestratorCoreServices` reads. */
 function makeFakeMemorySpine(records: readonly MemoryRecord[]): { recallSnapshot: () => { records: readonly MemoryRecord[] } } {
@@ -111,6 +132,8 @@ function makeCapturingProviderRegistry(): { providerRegistry: ProviderRegistry; 
     require: () => provider,
     getForModel: () => provider,
     getCurrentModel: () => FAKE_MODEL,
+    reconcileObservedContextWindow: () => {},
+    resolveModelPricing: () => UNKNOWN_MODEL_PRICING,
     getContextWindowForModel: () => 0,
     getKnownContextWindowForModel: () => null,
     getTokenLimitsForModel: () => ({
@@ -155,19 +178,25 @@ describe('main-session per-turn passive injection through the REAL wiring (full 
   async function runOneTurn(memorySpine: unknown): Promise<{ orchestrator: Orchestrator; capturedSystemPrompts: string[] }> {
     const conversation = new ConversationManager(() => 80);
     const { providerRegistry, capturedSystemPrompts } = makeCapturingProviderRegistry();
+    const runtimeBus = new RuntimeEventBus();
+    const errors: unknown[] = [];
+    runtimeBus.onDomain('turn', envelope => { if (envelope.type === 'TURN_ERROR') errors.push(envelope.payload); });
 
     const orchestrator = new Orchestrator({
       conversation,
       getViewportHeight: () => 20,
       scrollToEnd: () => {},
       toolRegistry: new ToolRegistry(),
-      permissionManager: {} as unknown as PermissionManager,
+      permissionManager: { getMode: () => 'prompt' } as unknown as PermissionManager,
       getSystemPrompt: () => 'You are the goodvibes assistant.',
       requestRender: () => {},
       sessionId: 'wiring-test-session',
+      runtimeBus,
       services: {
         agentManager: { list: () => [], spawn: async () => 'noop-agent-id' } as never,
-        wrfcController: { listChains: () => [] } as never,
+        contractRunner: { list: () => [] },
+        // Intake behavior has dedicated contract tests; this fixture stays a conversation turn.
+        contractIntake: { intake: async () => ({ kind: 'turn' }) },
       },
     });
 
@@ -180,7 +209,11 @@ describe('main-session per-turn passive injection through the REAL wiring (full 
       }),
     );
 
-    await orchestrator.handleUserInput('how do I configure rate limiting for the API');
+    try {
+      await orchestrator.handleUserInput('how do I configure rate limiting for the API');
+    } finally {
+      expect(errors).toEqual([]);
+    }
     return { orchestrator, capturedSystemPrompts };
   }
 
@@ -195,6 +228,9 @@ describe('main-session per-turn passive injection through the REAL wiring (full 
     expect(ring.length).toBe(1);
     expect(ring[0]!.injectedIds).toEqual(['mem_ratelimit']);
     expect(ring[0]!.tokenCost).toBeGreaterThan(0);
+    expect(memoryFixture.requests).toHaveLength(1);
+    expect(memoryFixture.requests[0]?.context?.site).toBe('state.knowledge-injection');
+    expect(memoryFixture.requests[0]?.context?.battery).toBe('engine.state.knowledge-relevance');
   });
 
   test('control: with an empty recall snapshot (never refreshed, or no matching records) the same turn injects nothing', async () => {
@@ -211,5 +247,6 @@ describe('main-session per-turn passive injection through the REAL wiring (full 
     const ring = orchestrator.getTurnInjections();
     expect(ring.length).toBe(1);
     expect(ring[0]!.injectedIds).toEqual([]);
+    expect(memoryFixture.requests).toHaveLength(0);
   });
 });
