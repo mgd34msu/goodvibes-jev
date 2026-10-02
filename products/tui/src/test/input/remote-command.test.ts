@@ -224,7 +224,7 @@ describe('remote command', () => {
       task: 'Export remote review artifact',
       template: 'engineer',
       tools: ['read'],
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
     });
     agent.status = 'completed';
     agent.fullOutput = 'Artifact generated.';
