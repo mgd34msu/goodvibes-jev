@@ -1,7 +1,13 @@
-import { describe, test, expect, beforeEach, mock, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import { SystemMessageRouter, createSystemMessageRouter, type SystemMessageKind, type SystemMessageTarget } from '../../core/system-message-router.ts';
 import type { ConversationManager } from '../../core/conversation';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
+
+let previousPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousPort = installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, 'low')).port); });
+afterEach(() => { installJudgmentPort(previousPort); });
 
 // ---------------------------------------------------------------------------
 // Minimal stubs
@@ -40,14 +46,14 @@ function makeConversation(): {
 function makeTargetResolver(
   overrides: Partial<Record<SystemMessageKind, SystemMessageTarget>> = {},
 ): (kind: SystemMessageKind) => SystemMessageTarget {
-  return (kind) => overrides[kind] ?? (kind === 'wrfc' ? 'both' : 'panel');
+  return (kind) => overrides[kind] ?? (kind === 'contract' ? 'both' : 'panel');
 }
 
 // ---------------------------------------------------------------------------
 // classifyPriority, tested indirectly through routeAuto
 // ---------------------------------------------------------------------------
 
-describe('classifyPriority (via routeAuto)', () => {
+describe('async priority reader delivery', () => {
   let conv: ReturnType<typeof makeConversation>;
   let router: SystemMessageRouter;
 
@@ -59,52 +65,74 @@ describe('classifyPriority (via routeAuto)', () => {
     );
   });
 
-  test('messages with [Model] prefix classify as high and reach conversation', () => {
-    router.routeAuto('[Model] Switched to gpt-5 (openai)');
+  test('waits for the real priority reader before routing its result', async () => {
+    let release!: () => void;
+    let began!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { began = resolve; });
+    const base = fakePort((_name, question) => choiceAnswer(question, 'high')).port;
+    installJudgmentPort({ ...base, ask: async request => { began(); await waiting; return base.ask(request); } });
+    const routed = spyOn(router, 'routeTypedSystemMessage');
+    const result = router.routeAuto('A fixture message with no priority keyword');
+    await started;
+    expect(routed).not.toHaveBeenCalled();
+    release();
+    await result;
+    expect(routed).toHaveBeenCalledWith('A fixture message with no priority keyword', 'high', 'system');
+  });
+
+  test('surfaces a failed reader without emitting an unclassified message', async () => {
+    installJudgmentPort(fakePort(() => { throw new Error('fixture reader unavailable'); }).port);
+    await expect(router.routeAuto('Pending fixture notice')).rejects.toThrow('fixture reader unavailable');
+    expect(conv.addTypedSystemMessage).not.toHaveBeenCalled();
+  });
+
+  test('messages with [Model] prefix reach conversation after the reading', async () => {
+    await router.routeAuto('[Model] Switched to gpt-5 (openai)');
     expect(conv.addTypedSystemMessage).toHaveBeenCalledWith('[Model] Switched to gpt-5 (openai)', 'system');
   });
 
-  test('messages with [Session] saved classify as high and reach conversation', () => {
-    router.routeAuto('[Session] saved abc123');
+  test('messages with [Session] saved reach conversation after the reading', async () => {
+    await router.routeAuto('[Session] saved abc123');
     expect(conv.addTypedSystemMessage).toHaveBeenCalledWith('[Session] saved abc123', 'system');
   });
 
-  test('messages with [Recovery] Failed classify as high and reach conversation', () => {
-    router.routeAuto('[Recovery] Failed to restore: disk error');
+  test('messages with [Recovery] Failed reach conversation after the reading', async () => {
+    await router.routeAuto('[Recovery] Failed to restore: disk error');
     expect(conv.addTypedSystemMessage).toHaveBeenCalledWith('[Recovery] Failed to restore: disk error', 'system');
   });
 
-  test('messages with fatal classify as high and reach conversation', () => {
-    router.routeAuto('A fatal error occurred');
+  test('messages with fatal reach conversation after the reading', async () => {
+    await router.routeAuto('A fatal error occurred');
     expect(conv.addTypedSystemMessage).toHaveBeenCalledWith('A fatal error occurred', 'system');
   });
 
-  test('[Scan] messages classify as low but still reach conversation (no side surface to absorb them)', () => {
-    router.routeAuto('[Scan] Found ollama at localhost:11434');
+  test('[Scan] messages still reach conversation (no side surface to absorb them)', async () => {
+    await router.routeAuto('[Scan] Found ollama at localhost:11434');
     expect(conv.addTypedSystemMessage).toHaveBeenCalledWith('[Scan] Found ollama at localhost:11434', 'operational');
   });
 
-  test('[Agents] periodic "N running" snapshots are suppressed; lifecycle lines still reach conversation (1d)', () => {
+  test('[Agents] periodic "N running" snapshots are suppressed; lifecycle lines still reach conversation (1d)', async () => {
     // The 30s "N running:" snapshot is transcript churn, dropped; the same live
     // detail is shown in the Agents modal and the footer count.
-    router.routeAuto('[Agents] 3 running:\n  abc12345: working');
+    await router.routeAuto('[Agents] 3 running:\n  abc12345: working');
     expect(conv.addTypedSystemMessage).not.toHaveBeenCalled();
     // A meaningful lifecycle line is not a snapshot and still routes.
-    router.routeAuto('[Agents] ✓ abc12345 completed');
+    await router.routeAuto('[Agents] ✓ abc12345 completed');
     expect(conv.addTypedSystemMessage).toHaveBeenCalledWith('[Agents] ✓ abc12345 completed', 'operational');
   });
 
-  test('[Tool] activity messages classify as operational and can route separately', () => {
+  test('[Tool] activity messages classify as operational and can route separately', async () => {
     const opsRouter = createSystemMessageRouter(
       conv as unknown as ConversationManager,
       makeTargetResolver({ operational: 'conversation' }),
     );
-    opsRouter.routeAuto('[Tool] edit applied to src/main.ts');
+    await opsRouter.routeAuto('[Tool] edit applied to src/main.ts');
     expect(conv.addTypedSystemMessage).toHaveBeenCalledWith('[Tool] edit applied to src/main.ts', 'operational');
   });
 
-  test('[MCP] discovery messages classify as low and still reach conversation', () => {
-    router.routeAuto('[MCP] Discovered server myserver (npx myserver-mcp).');
+  test('[MCP] discovery messages still reach conversation', async () => {
+    await router.routeAuto('[MCP] Discovered server myserver (npx myserver-mcp).');
     expect(conv.addTypedSystemMessage).toHaveBeenCalledWith('[MCP] Discovered server myserver (npx myserver-mcp).', 'operational');
   });
 });
@@ -140,9 +168,9 @@ describe('routeSystemMessage', () => {
     expect(conv.addTypedSystemMessage).toHaveBeenCalledWith('important!', 'system');
   });
 
-  test('wrfc convenience method routes to conversation under the wrfc kind', () => {
-    router.wrfc('[WRFC] Chain abc started');
-    expect(conv.addTypedSystemMessage).toHaveBeenCalledWith('[WRFC] Chain abc started', 'wrfc');
+  test('contract convenience method routes to conversation under the contract kind', () => {
+    router.contract('[Contract] Work abc started');
+    expect(conv.addTypedSystemMessage).toHaveBeenCalledWith('[Contract] Work abc started', 'contract');
   });
 
   test('low convenience method routes to conversation', () => {
@@ -183,7 +211,7 @@ describe('routeSystemMessage', () => {
 // routeAuto, classification
 // ---------------------------------------------------------------------------
 
-describe('routeAuto classification', () => {
+describe('routeAuto kind routing', () => {
   let conv: ReturnType<typeof makeConversation>;
   let router: SystemMessageRouter;
 
@@ -216,24 +244,24 @@ describe('routeAuto classification', () => {
   ];
 
   for (const msg of highCases) {
-    test(`classifies as high: "${msg.slice(0, 40)}"`, () => {
-      router.routeAuto(msg);
-      // High-priority system messages use kind='system' and route to conversation
+    test(`routes system kind: "${msg.slice(0, 40)}"`, async () => {
+      await router.routeAuto(msg);
+      // The synthetic priority is low; explicit message tags still determine kind.
       expect(conv.addTypedSystemMessage).toHaveBeenCalledWith(msg, 'system');
     });
   }
 
   for (const msg of lowCases) {
-    test(`classifies as low: "${msg.slice(0, 40)}"`, () => {
-      router.routeAuto(msg);
-      // Low cases are 'operational' kind; without a side surface they fall back to conversation
+    test(`routes operational kind: "${msg.slice(0, 40)}"`, async () => {
+      await router.routeAuto(msg);
+      // These cases have an operational tag; without a side surface they fall back to conversation
       expect(conv.addTypedSystemMessage).toHaveBeenCalledWith(msg, 'operational');
     });
   }
 
-  test('WRFC messages classify as wrfc and follow WRFC target policy', () => {
-    router.routeAuto('[WRFC] Chain abc123 started');
-    expect(conv.addTypedSystemMessage).toHaveBeenCalledWith('[WRFC] Chain abc123 started', 'wrfc');
+  test('Contract messages follow the contract target policy', async () => {
+    await router.routeAuto('[Contract] Work abc123 started');
+    expect(conv.addTypedSystemMessage).toHaveBeenCalledWith('[Contract] Work abc123 started', 'contract');
   });
 });
 

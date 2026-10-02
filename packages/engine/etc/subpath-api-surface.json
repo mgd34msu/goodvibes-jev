@@ -56397,6 +56397,15 @@
   ],
   "./platform/runtime/permissions/sandbox-policy": [
     {
+      "name": "CommandNeeds",
+      "kind": "interface",
+      "required": [
+        "needsNetwork",
+        "needsPrivilege"
+      ],
+      "text": "export interface CommandNeeds { readonly needsNetwork: boolean; readonly needsPrivilege: boolean; }"
+    },
+    {
       "name": "SandboxPolicyDecision",
       "kind": "interface",
       "required": [
@@ -56422,12 +56431,17 @@
         "needs",
         "sandboxActive"
       ],
-      "text": "export interface SandboxPolicyInput { readonly command: string; readonly sandboxActive: boolean; readonly egressAllowlist: readonly string[]; readonly baseEffectWhenNotSandboxed: SandboxPolicyEffect; readonly needs: CommandNeeds; } ;; via CommandNeeds = export interface CommandNeeds { readonly needsNetwork: boolean; readonly needsPrivilege: boolean; }"
+      "text": "export interface SandboxPolicyInput { readonly command: string; readonly sandboxActive: boolean; readonly egressAllowlist: readonly string[]; readonly baseEffectWhenNotSandboxed: SandboxPolicyEffect; readonly needs: CommandNeeds; }"
     },
     {
       "name": "decideSandboxedExec",
       "kind": "function",
       "text": "export declare function decideSandboxedExec(input: SandboxPolicyInput): SandboxPolicyDecision;"
+    },
+    {
+      "name": "readCommandNeeds",
+      "kind": "function",
+      "text": "export declare function readCommandNeeds(command: string, workspace?: string): Promise<CommandNeeds>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     }
   ],
   "./platform/runtime/sandbox": [

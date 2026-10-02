@@ -1,9 +1,10 @@
+import { makeTestWebhookNotifier } from '../helpers/notification-transport.ts';
 /**
  * Notifications name the work (owner ruling 2026-09-29).
  *
  * "notifications need to be a bit better. they work but don't convey any
  * useful information ... it should provide a summarized name for the turn"
- * and, on webhooks, "default the privacy setting to off".
+ * Privacy admission follows the current public SDK helper: explicit false only.
  *
  * Every channel the TUI sends on is driven here through the real wiring and
  * read back: the desktop popup (the injected notifyDesktop), the in-terminal
@@ -13,17 +14,11 @@
  * behavior.notificationsMetadataOnly on, where every channel carries metadata
  * only.
  */
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { describe, expect, mock, test } from 'bun:test';
 import { wireTurnEventHandlers, type WireTurnEventHandlersOptions } from '../../core/turn-event-wiring.ts';
 import { wrapRequestPermissionWithAlert } from '../../core/approval-alert.ts';
-import type { WebhookNotifier } from '@goodvibes-jev/engine/sdk/platform/integrations';
 import type { PermissionPromptRequest } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { FocusTracker } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
-import { ConfigManager, type ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
-import { buildSettingGroups } from '../../input/settings-modal-data.ts';
 import { makeTestSurface } from '../helpers/session-surface.ts';
 
 const ASK = 'Refactor the authentication middleware so expired sessions redirect to the login page instead of throwing a 500 error';
@@ -55,18 +50,15 @@ interface Captured {
 
 function harness(config: Record<string, unknown> = {}, conversationTitle = '', titleSource = 'system') {
   const captured: Captured = { desktop: [], terminal: [], webhook: [] };
-  const turns = bus(); const tools = bus(); const agents = bus(); const workflows = bus();
+  const turns = bus(); const tools = bus(); const agents = bus(); const contracts = bus();
   let now = 1_000;
   const tracker = new FocusTracker();
   tracker.setFocused(false);
-  const webhookNotifier = {
-    getUrls: () => ['https://example.invalid/hook'],
-    send: mock(async (text: string) => { captured.webhook.push(text); return {}; }),
-  } as unknown as WebhookNotifier;
-  const settings: Record<string, unknown> = { 'behavior.notifyAfterSeconds': 1, ...config };
+  const webhookNotifier = makeTestWebhookNotifier(undefined, { sent: captured.webhook });
+  const settings: Record<string, unknown> = { 'behavior.notifyAfterSeconds': 1, 'behavior.notificationsMetadataOnly': false, ...config };
   const options: WireTurnEventHandlersOptions = {
     // @ts-expect-error, duck-typed minimal fake for UiRuntimeEvents
-    events: { turns, tools, agents, workflows },
+    events: { turns, tools, agents, contracts },
     conversation: {
       toJSON: () => { throw new Error('stub: no persistence in this test'); },
       getTitleSource: () => titleSource,
@@ -101,7 +93,7 @@ function harness(config: Record<string, unknown> = {}, conversationTitle = '', t
     turn: (type: string, payload: Record<string, unknown>) => turns.emit(type, { type, ...payload }),
     tool: (type: string, payload: Record<string, unknown>) => tools.emit(type, { type, ...payload }),
     agent: (type: string, payload: Record<string, unknown>) => agents.emit(type, { type, ...payload }),
-    workflow: (type: string, payload: Record<string, unknown>) => workflows.emit(type, { type, ...payload }),
+    contract: (type: string, payload: Record<string, unknown>) => contracts.emit(type, { type, ...payload }),
   };
 }
 
@@ -111,7 +103,6 @@ function runTurn(h: ReturnType<typeof harness>, end: () => void): void {
   h.tool('TOOL_RECEIVED', { callId: 'c1', turnId: 't1', tool: 'write', args: { files: [{ path: 'src/a.ts' }, { path: 'src/b.ts' }] } });
   h.tool('TOOL_SUCCEEDED', { callId: 'c1', turnId: 't1', tool: 'write', durationMs: 5 });
   h.agent('AGENT_SPAWNING', { agentId: 'agent-1', task: 'Review the middleware change' });
-  h.workflow('WORKFLOW_REVIEW_COMPLETED', { chainId: 'chain-1', score: 9, passed: true });
   h.advance(83_000);
   end();
 }
@@ -129,12 +120,12 @@ const ENDINGS = {
 } as const;
 
 const EXPECTED_BODY = {
-  completed: 'Done in 1m 23s, 2 files changed, 1 tool call, 1 agent started, review 9/10',
-  failed: 'Failed after 1m 23s, 2 files changed, 1 tool call, 1 agent started, review 9/10: Provider returned HTTP 502: upstream timed out',
-  cancelled: 'Cancelled after 1m 23s, 2 files changed, 1 tool call, 1 agent started, review 9/10',
+  completed: 'Done in 1m 23s, 2 files changed, 1 tool call, 1 agent started',
+  failed: 'Failed after 1m 23s, 2 files changed, 1 tool call, 1 agent started: Provider returned HTTP 502: upstream timed out',
+  cancelled: 'Cancelled after 1m 23s, 2 files changed, 1 tool call, 1 agent started: cancelled',
 } as const;
 
-describe('a finished turn is named on every channel (privacy setting off, the default)', () => {
+describe('a finished turn is named on every channel (privacy explicitly off)', () => {
   for (const outcome of ['completed', 'failed', 'cancelled'] as const) {
     describe(`${outcome} turn`, () => {
       test('desktop: title is the turn name trimmed at a word, body is the outcome', async () => {
@@ -197,7 +188,7 @@ describe('behavior.notificationsMetadataOnly on: every channel is metadata only'
       await settled();
       const word = outcome === 'completed' ? 'done' : outcome;
       const lead = outcome === 'completed' ? 'Done in 1m 23s' : `${outcome === 'failed' ? 'Failed' : 'Cancelled'} after 1m 23s`;
-      const body = `${lead}, 2 files changed, 1 tool call, 1 agent started, review 9/10, session test-ses`;
+      const body = `${lead}, 2 files changed, 1 tool call, 1 agent started`;
       expect(h.captured.desktop).toEqual([{ title: `GoodVibes: turn ${word}`, body }]);
       expect(h.captured.terminal.map((c) => c.message)).toEqual([`GoodVibes: turn ${word}: ${body}`]);
       expect(h.captured.webhook).toEqual([`GoodVibes: turn ${word}\n${body}`]);
@@ -223,10 +214,7 @@ describe('approval notices name the command and the turn', () => {
     const wrapped = wrapRequestPermissionWithAlert(async () => ({ approved: true, remember: false }), {
       focusTracker: tracker,
       configGet: (key) => config[key],
-      webhookNotifier: {
-        getUrls: () => ['https://example.invalid/hook'],
-        send: mock(async (text: string) => { captured.webhook.push(text); return {}; }),
-      } as unknown as WebhookNotifier,
+      webhookNotifier: makeTestWebhookNotifier(undefined, { sent: captured.webhook }),
       terminalNotifier: { notify: (signal, message) => { captured.terminal.push({ signal, message }); } },
       conversation: { title: 'first message', getTitleSource: () => 'system', getLastUserMessage: () => ASK },
       notifyDesktop: (title, body) => { captured.desktop.push({ title, body }); },
@@ -235,7 +223,7 @@ describe('approval notices name the command and the turn', () => {
   }
 
   test('privacy off: desktop, OSC 9 and webhook carry the command and the turn name', async () => {
-    const captured = await run({});
+    const captured = await run({ 'behavior.notificationsMetadataOnly': false });
     const title = captured.desktop[0]!.title;
     expect(title.startsWith('Approval needed: ')).toBe(true);
     expect(title.length).toBeLessThanOrEqual(60);
@@ -266,7 +254,7 @@ describe('budget, agent and workstream notices name the work', () => {
   test('budget: names the budget that tripped and the turn it tripped in', () => {
     // A separate harness: the budget needs a priced model and a real cost.
     const captured: Captured = { desktop: [], terminal: [], webhook: [] };
-    const turns = bus(); const tools = bus(); const agents = bus(); const workflows = bus();
+    const turns = bus(); const tools = bus(); const agents = bus(); const contracts = bus();
     const tracker = new FocusTracker();
     tracker.setFocused(false);
     for (const metadataOnly of [false, true]) {
@@ -274,7 +262,7 @@ describe('budget, agent and workstream notices name the work', () => {
       const settings: Record<string, unknown> = { 'behavior.notifyAfterSeconds': 0, 'behavior.budgetAlertUsd': 1, 'behavior.notificationsMetadataOnly': metadataOnly };
       const unsub = wireTurnEventHandlers({
         // @ts-expect-error, duck-typed minimal fake for UiRuntimeEvents
-        events: { turns, tools, agents, workflows },
+        events: { turns, tools, agents, contracts },
         conversation: { toJSON: () => { throw new Error('stub'); }, getTitleSource: () => 'system', title: '', getLastUserMessage: () => null, getMessageCount: () => 0 } as unknown as WireTurnEventHandlersOptions['conversation'],
         runtime: { sessionId: 'budget-sess-01', model: 'm', provider: 'p' },
         orchestrator: { lastInputTokens: 0, usage: { input: 10_000_000, output: 0, cacheRead: 0, cacheWrite: 0 } },
@@ -287,7 +275,7 @@ describe('budget, agent and workstream notices name the work', () => {
         lastGitInfoRef: { value: null },
         buildSessionContinuityHints: () => ({}),
         render: () => {},
-        webhookNotifier: { getUrls: () => ['https://example.invalid/hook'], send: mock(async (t: string) => { captured.webhook.push(t); return {}; }) } as unknown as WebhookNotifier,
+        webhookNotifier: makeTestWebhookNotifier(undefined, { sent: captured.webhook, metadataOnly: () => metadataOnly }),
         focusTracker: tracker,
         notifyDesktop: (title, body) => { captured.desktop.push({ title, body }); },
         _clock: () => 0,
@@ -302,13 +290,13 @@ describe('budget, agent and workstream notices name the work', () => {
         expect(captured.desktop[0]!.body).toBe('Session cost $30.00 passed the $1.00 session budget during this turn');
         expect(captured.webhook[0]).toBe(`${captured.desktop[0]!.title}\n${captured.desktop[0]!.body}`);
       } else {
-        expect(captured.desktop).toEqual([{ title: 'GoodVibes: budget passed', body: 'Session cost $30.00 passed the $1.00 budget, session budget-s' }]);
-        expect(captured.webhook).toEqual(['GoodVibes: budget passed\nSession cost $30.00 passed the $1.00 budget, session budget-s']);
+        expect(captured.desktop).toEqual([{ title: 'GoodVibes: budget passed', body: 'Session cost $30.00 passed the $1.00 budget' }]);
+        expect(captured.webhook).toEqual(['GoodVibes: budget passed\nSession cost $30.00 passed the $1.00 budget']);
       }
     }
   });
 
-  test('agent failure and agent-blocked name the agent task; privacy on falls back to the id', () => {
+  test('agent failure and agent-blocked name the agent task; privacy on omits arbitrary identifiers', () => {
     for (const metadataOnly of [false, true]) {
       const { h } = budgetHarness({ 'behavior.notificationsMetadataOnly': metadataOnly });
       h.agent('AGENT_SPAWNING', { agentId: 'agent-12345678', task: 'Audit the retry backoff in the HTTP client' });
@@ -316,67 +304,28 @@ describe('budget, agent and workstream notices name the work', () => {
       h.agent('AGENT_FAILED', { agentId: 'agent-12345678', error: 'ran out of turns', durationMs: 5 });
       if (!metadataOnly) {
         expect(h.captured.terminal.map((c) => c.message)).toEqual(['Agent waiting for your input: Audit the retry backoff in the HTTP client']);
-        expect(h.captured.desktop).toEqual([{ title: 'Agent failed: Audit the retry backoff in the HTTP client', body: 'agent agent-12 failed: ran out of turns' }]);
+        expect(h.captured.desktop).toEqual([{ title: 'Agent failed: Audit the retry backoff in the HTTP client', body: 'Agent failed: ran out of turns' }]);
       } else {
-        expect(h.captured.terminal.map((c) => c.message)).toEqual(['agent agent-12 is waiting for your input']);
-        expect(h.captured.desktop).toEqual([{ title: 'GoodVibes: agent failed', body: 'agent agent-12 failed' }]);
+        expect(h.captured.terminal.map((c) => c.message)).toEqual(['An agent is waiting for your input']);
+        expect(h.captured.desktop).toEqual([{ title: 'GoodVibes: agent failed', body: 'An agent failed' }]);
       }
     }
   });
 
-  test('workstream failure names the task and the last review score; privacy on drops both', () => {
+  test('contract failure names the task; privacy on drops it', () => {
     for (const metadataOnly of [false, true]) {
       const { h } = budgetHarness({ 'behavior.notificationsMetadataOnly': metadataOnly });
-      h.workflow('WORKFLOW_CHAIN_CREATED', { chainId: 'chain-abc', task: 'Rewrite the retry backoff so it honors Retry-After headers from every provider' });
-      h.workflow('WORKFLOW_REVIEW_COMPLETED', { chainId: 'chain-abc', score: 4, passed: false });
-      h.workflow('WORKFLOW_CHAIN_FAILED', { chainId: 'chain-abc', reason: 'review scored 4/10 after 3 fix attempts', failureKind: 'other' });
+      h.contract('CONTRACT_CREATED', { contractId: 'contract-abc', ask: 'Rewrite the retry backoff so it honors Retry-After headers from every provider' });
+      h.contract('CONTRACT_FAILED', { contractId: 'contract-abc', reason: 'review scored 4/10 after 3 fix attempts', failureKind: 'other' });
       if (!metadataOnly) {
         const [{ title, body }] = h.captured.desktop as [{ title: string; body: string }];
         expect(title.startsWith('Workstream failed: Rewrite the retry backoff')).toBe(true);
         expect(title.length).toBeLessThanOrEqual(60);
         expect(isWordPrefix(title.slice('Workstream failed: '.length), 'Rewrite the retry backoff so it honors Retry-After headers from every provider')).toBe(true);
-        expect(body).toBe('Failed: review scored 4/10 after 3 fix attempts (last review 4/10)');
+        expect(body).toBe('Failed: review scored 4/10 after 3 fix attempts');
       } else {
         expect(h.captured.desktop).toEqual([{ title: 'GoodVibes: workstream failed', body: 'Failed' }]);
       }
     }
-  });
-});
-
-describe('the privacy setting in the settings modal', () => {
-  const originalCwd = process.cwd();
-  const originalHome = process.env.HOME;
-  let dir: string;
-  let cm: ConfigManager;
-  beforeEach(() => {
-    dir = join(tmpdir(), `gv-notif-privacy-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-    mkdirSync(dir, { recursive: true });
-    process.env.HOME = dir;
-    process.chdir(dir);
-    cm = new ConfigManager({ surfaceRoot: 'tui', workingDir: dir, homeDir: dir, configDir: join(dir, '.goodvibes', 'global-tui') });
-  });
-  afterEach(() => {
-    process.chdir(originalCwd);
-    if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome;
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
-  });
-
-  test('behavior lists behavior.notificationsMetadataOnly once, boolean, default off, right after the notification rows', () => {
-    const rows = buildSettingGroups(cm).get('behavior') ?? [];
-    const keys = rows.map((row) => row.setting.key as string);
-    expect(keys.filter((key) => key === 'behavior.notificationsMetadataOnly')).toHaveLength(1);
-    const row = rows.find((r) => (r.setting.key as string) === 'behavior.notificationsMetadataOnly')!;
-    expect(row.setting.type).toBe('boolean');
-    expect(row.setting.default).toBe(false);
-    expect(row.currentValue).toBe(false);
-    expect(row.setting.description).toContain('metadata only');
-    expect(keys.indexOf('behavior.notificationsMetadataOnly')).toBe(keys.indexOf('behavior.terminalBell') + 1);
-  });
-
-  test('turning it on is a real, persisted config value', () => {
-    cm.set('behavior.notificationsMetadataOnly' as ConfigKey, true as never);
-    const row = (buildSettingGroups(cm).get('behavior') ?? []).find((r) => (r.setting.key as string) === 'behavior.notificationsMetadataOnly')!;
-    expect(row.currentValue).toBe(true);
-    expect(row.isDefault).toBe(false);
   });
 });

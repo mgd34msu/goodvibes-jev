@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { CommandContext } from '../../input/command-registry.ts';
 import { recallCommand } from '../../input/commands/memory.ts';
-import { MemoryRegistry } from '@goodvibes-jev/engine/sdk/platform/state';
+import { MemoryRegistry, MemoryStore, MemoryEmbeddingProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/state';
+import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { CommandRegistry } from '../../input/command-registry.ts';
+import { registerControlRoomRuntimeCommands } from '../../input/commands/control-room-runtime.ts';
 import type { MemoryAddOptions, MemoryBundle } from '@goodvibes-jev/engine/sdk/platform/state';
 import { createMemoryApi } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { MemorySpineClient, createLocalMemoryAccess, type LocalMemoryStore } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
@@ -260,6 +265,7 @@ describe('recallCommand', () => {
       turnId: 'turn-1',
       taskId: 'task-1',
       phaseTimings: [],
+      slowPhases: [],
       phaseLedger: [],
       causalChain: [],
       cascadeEvents: [],
@@ -356,28 +362,52 @@ describe('recallCommand', () => {
   });
 
   test('explains reviewed knowledge injection for a task and supports stale shortcuts', async () => {
-    const registry = makeRegistry();
-    await registry.add({
-      cls: 'runbook',
-      summary: 'Deploy tasks should quarantine risky MCP schemas first.',
-      tags: ['deploy', 'mcp'],
-      review: { state: 'reviewed', confidence: 92 },
+    const dir = makeProjectTempDir('gv-recall-explain');
+    const configManager = new ConfigManager({ surfaceRoot: 'tui', configDir: dir, workingDir: dir });
+    const store = new MemoryStore(join(dir, 'memory.sqlite'), {
+      embeddingRegistry: new MemoryEmbeddingProviderRegistry({ configManager }),
+      enableVectorIndex: false,
     });
-    await recallCommand.handler(['explain', 'deploy', 'the', 'release'], makeRecallCommandContext(printed, {
-      memoryRegistry: registry,
-      forensicsRegistry,
-    }));
+    await store.init();
+    const registry = new MemoryRegistry(store);
+    const previousPort = installJudgmentPort(fakePort(() => noulAnswer(0.95)).port);
+    try {
+      const record = await registry.add({
+        cls: 'runbook',
+        summary: 'Deploy tasks should quarantine risky MCP schemas first.',
+        tags: ['deploy', 'mcp'],
+        review: { state: 'reviewed', confidence: 92 },
+      });
+      await recallCommand.handler(['explain', 'deploy', 'the', 'release'], makeRecallCommandContext(printed, {
+        memoryRegistry: registry,
+        forensicsRegistry,
+      }));
 
-    expect(printed.join('\n')).toContain('Injected Project Knowledge');
-    expect(printed.join('\n')).toContain('matched task token "deploy"');
+      expect(printed.join('\n')).toContain('Injected Project Knowledge');
+      expect(printed.join('\n')).toContain('matched task');
+      expect(printed.join('\n')).toContain('Deploy tasks should quarantine risky MCP schemas first.');
 
-    printed.length = 0;
-    await recallCommand.handler(['stale', 'mem-1', 'operator', 'revalidation', 'needed'], makeRecallCommandContext(printed, {
-      memoryRegistry: registry,
-      forensicsRegistry,
-    }));
+      printed.length = 0;
+      const commands = new CommandRegistry();
+      registerControlRoomRuntimeCommands(commands);
+      await commands.get('project-memory')!.handler(['explain', 'deploy', 'the', 'release'], makeRecallCommandContext(printed, {
+        memoryRegistry: registry,
+        forensicsRegistry,
+      }));
+      expect(printed.join('\n')).toContain('Injected Project Knowledge');
+      expect(printed.join('\n')).toContain('Deploy tasks should quarantine risky MCP schemas first.');
 
-    expect(printed.some((line) => line.includes('Reviewed mem-1: stale'))).toBe(true);
+      printed.length = 0;
+      await recallCommand.handler(['stale', record.id, 'operator', 'revalidation', 'needed'], makeRecallCommandContext(printed, {
+        memoryRegistry: registry,
+        forensicsRegistry,
+      }));
+
+      expect(printed.some((line) => line.includes(`Reviewed ${record.id}: stale`))).toBe(true);
+    } finally {
+      installJudgmentPort(previousPort);
+      store.close();
+    }
   });
 
   // ── item 3: report-vs-modal front door ─────────────────────────────

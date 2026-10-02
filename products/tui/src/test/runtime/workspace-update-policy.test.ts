@@ -4,6 +4,7 @@ import { registerUpdateCommand } from '../../input/commands/update-runtime.ts';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { fallbackUpdateCommand } from '../../runtime/update-check.ts';
 import { IS_WORKSPACE_DISTRIBUTION, WORKSPACE_REBUILD_COMMAND, WORKSPACE_UPDATE_GUIDANCE } from '../../runtime/workspace-update-policy.ts';
+import { announceInstallReachability } from '../../runtime/path-shadow-startup.ts';
 
 describe('private workspace distribution', () => {
   test('launch returns guidance before touching host/configuration inputs', async () => {
@@ -25,5 +26,15 @@ describe('private workspace distribution', () => {
   test('all install-kind guidance names this workspace rebuild', () => {
     expect(fallbackUpdateCommand('source')).toBe(WORKSPACE_REBUILD_COMMAND);
     expect(fallbackUpdateCommand('bun-global-package')).toBe(WORKSPACE_REBUILD_COMMAND);
+  });
+  test('private compiled startup does not query releases or advertise a package upgrade', async () => {
+    const router = new Proxy({}, { get() { throw new Error('private reachability must not emit release guidance'); } });
+    const original = globalThis.fetch;
+    let requests = 0;
+    globalThis.fetch = Object.assign(async () => { requests++; throw new Error('release request'); }, { preconnect: original.preconnect });
+    try {
+      await announceInstallReachability(router as Parameters<typeof announceInstallReachability>[0]);
+      expect(requests).toBe(0);
+    } finally { globalThis.fetch = original; }
   });
 });

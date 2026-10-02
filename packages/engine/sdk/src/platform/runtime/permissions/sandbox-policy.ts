@@ -20,6 +20,9 @@
 
 import { normalizeCommand, type CommandNeeds } from './normalization/index.js';
 
+// Public clients must obtain the same reading that this policy consumes.
+export { readCommandNeeds, type CommandNeeds } from './normalization/index.js';
+
 export type SandboxPolicyEffect = 'allow' | 'ask';
 
 export interface SandboxPolicyDecision {

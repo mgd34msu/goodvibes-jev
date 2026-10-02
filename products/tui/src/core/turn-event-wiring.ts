@@ -242,7 +242,7 @@ export function wireTurnEventHandlers(
   } = options;
 
   const unsubs: Array<() => void> = [];
-  const configGet = (k: string): unknown => configManager.get(k as Parameters<typeof configManager.get>[0]);
+  const configGet = (key: string): unknown => configManager.get(key);
 
   // ONE POPUP PER TURN. The long-task notice below owns the turn's desktop
   // popup: it names the turn, counts what it did, honors
@@ -275,20 +275,20 @@ export function wireTurnEventHandlers(
   // What names the turn and what it did, for the end-of-turn notices
   // (SDK runtime/turn-notification.ts): the submitted text, and a tally of
   // tool calls, changed files, agents started and the latest review score.
-  let turnText: string | null = null;
+  let readTurnText: (() => string | null) | null = null;
   let lastTurnName: string | null = null;
   let lastEndedTurnId: string | null = null;
   const tally = new TurnActivityTally();
   const nameCurrentTurn = (): string | null => resolveTurnName({
     title: conversation.title,
     titleSource: normalizeTitleSource(conversation.getTitleSource()),
-    turnText,
+    turnText: readTurnText?.(),
   });
 
   // Task text for agents and workstreams, from their opening events; the
   // terminal events carry only the id. Bounded, dropped at the terminal event.
-  const agentTasks = new Map<string, string>();
-  const workstreams = new Map<string, { task: string; reviewScore: number | null }>();
+  const agentTasks = new Map<string, () => string>();
+  const workstreams = new Map<string, () => string>();
 
   // Budget-breach edge-trigger checker, one instance per session,
   // piggybacking on the same TURN_COMPLETED handler as the long-task
@@ -326,10 +326,10 @@ export function wireTurnEventHandlers(
     failoverRetryPending = false;
     const turnElapsedMs = turnStartTime !== null ? _clock() - turnStartTime : 0;
     turnStartTime = null;
-    const name = nameCurrentTurn();
+    const metadataOnly = readNotificationsMetadataOnly(configGet);
+    const name = metadataOnly ? null : nameCurrentTurn();
     lastTurnName = name;
     const activity = tally.snapshot();
-    const metadataOnly = readNotificationsMetadataOnly(configGet);
     terminalNotifier?.notify('turn-end', buildTurnNotificationLine({
       outcome, elapsedMs: turnElapsedMs, name, reason, sessionId: runtime.sessionId, ...activity,
     }, { metadataOnly }, NOTIFICATION_TEXT_LIMITS.terminal));
@@ -400,7 +400,7 @@ export function wireTurnEventHandlers(
       clearWithheldFailure();
       failoverRetryPending = false;
       turnStartTime = _clock();
-      turnText = typeof evt?.prompt === 'string' ? evt.prompt : null;
+      readTurnText = () => typeof evt.prompt === 'string' ? evt.prompt : null;
       tally.reset();
     }
     try {
@@ -412,13 +412,13 @@ export function wireTurnEventHandlers(
   // A turn that failed or was cancelled ends without TURN_COMPLETED; it is
   // named and told the same way.
   unsubs.push(events.turns.on('TURN_ERROR', (evt) => {
-    onTurnError(evt.turnId, evt.error);
+    onTurnError(evt.turnId, readNotificationsMetadataOnly(configGet) ? null : evt.error);
   }));
   unsubs.push(events.turns.on('PREFLIGHT_FAIL', (evt) => {
-    notifyTurnEnd(evt.turnId, 'failed', evt.reason);
+    notifyTurnEnd(evt.turnId, 'failed', readNotificationsMetadataOnly(configGet) ? null : evt.reason);
   }));
   unsubs.push(events.turns.on('TURN_CANCEL', (evt) => {
-    notifyTurnEnd(evt.turnId, 'cancelled', evt.reason ?? null);
+    notifyTurnEnd(evt.turnId, 'cancelled', readNotificationsMetadataOnly(configGet) ? null : evt.reason ?? null);
   }));
 
   unsubs.push(events.turns.on('TURN_COMPLETED', (evt) => {
@@ -495,19 +495,16 @@ export function wireTurnEventHandlers(
   }));
   unsubs.push(events.agents.on('AGENT_SPAWNING', (payload) => {
     if (turnStartTime !== null) tally.noteAgentStarted();
-    rememberBounded(agentTasks, payload.agentId, payload.task);
+    rememberBounded(agentTasks, payload.agentId, () => payload.task);
   }));
   unsubs.push(events.agents.on('AGENT_COMPLETED', (payload) => { agentTasks.delete(payload.agentId); }));
   unsubs.push(events.agents.on('AGENT_CANCELLED', (payload) => { agentTasks.delete(payload.agentId); }));
-  unsubs.push(events.workflows.on('WORKFLOW_CHAIN_CREATED', (payload) => {
-    rememberBounded(workstreams, payload.chainId, { task: payload.task, reviewScore: null });
+  unsubs.push(events.contracts.on('CONTRACT_CREATED', (payload) => {
+    rememberBounded(workstreams, payload.contractId, () => payload.ask);
   }));
-  unsubs.push(events.workflows.on('WORKFLOW_REVIEW_COMPLETED', (payload) => {
-    if (turnStartTime !== null) tally.noteReviewScore(payload.score);
-    const entry = workstreams.get(payload.chainId);
-    if (entry) entry.reviewScore = payload.score;
-  }));
-  unsubs.push(events.workflows.on('WORKFLOW_CHAIN_PASSED', (payload) => { workstreams.delete(payload.chainId); }));
+  // Contract checks expose criterion verdicts, not a numeric review score.
+  // Do not manufacture an old workflow score from those verdicts.
+  unsubs.push(events.contracts.on('CONTRACT_PASSED', (payload) => { workstreams.delete(payload.contractId); }));
 
   // In-terminal (OSC 9) agent-blocked notification: a delegated agent parked
   // waiting for a human message (AGENT_AWAITING_MESSAGE) is "blocked on you".
@@ -515,10 +512,10 @@ export function wireTurnEventHandlers(
   // agent's task unless behavior.notificationsMetadataOnly is on.
   if (terminalNotifier) {
     unsubs.push(events.agents.on('AGENT_AWAITING_MESSAGE', (payload) => {
-      const task = readNotificationsMetadataOnly(configGet) ? null : agentTasks.get(payload.agentId);
+      const task = readNotificationsMetadataOnly(configGet) ? null : agentTasks.get(payload.agentId)?.();
       terminalNotifier.notify('agent-blocked', task
         ? trimAtWordBoundary(`Agent waiting for your input: ${task}`, NOTIFICATION_TEXT_LIMITS.terminal)
-        : `agent ${payload.agentId.slice(0, 8)} is waiting for your input`);
+        : 'An agent is waiting for your input');
     }));
   }
 
@@ -531,14 +528,9 @@ export function wireTurnEventHandlers(
     refreshGit();
   }));
 
-  // Agent/chain-failure desktop alerts. The SDK's WebhookNotifier and
-  // Notifier already fire webhook/Slack/Discord notifications for these two
-  // events unconditionally (attachToRuntimeBus in the SDK's
-  // platform/integrations, pre-existing, not focus-gated: an out-of-band
-  // push to another device is useful regardless of terminal focus). What was
-  // missing was a desktop notification, gated by focus like the other three
-  // alert classes, that's the only thing added here, to avoid double-firing
-  // a webhook that's already covered.
+  // Desktop-only agent/contract alerts. Bootstrap owns typed webhook and
+  // Slack/Discord delivery for these events, independently of terminal focus.
+  // Keeping outbound delivery there avoids a duplicate from this local notice.
   if (focusTracker) {
     unsubs.push(events.agents.on('AGENT_FAILED', (payload) => {
       const task = agentTasks.get(payload.agentId);
@@ -546,37 +538,34 @@ export function wireTurnEventHandlers(
       if (!shouldFireAlert(focusTracker, configGet, 'behavior.notifyOnAgentFailure')) return;
       try {
         const metadataOnly = readNotificationsMetadataOnly(configGet);
-        const name = metadataOnly ? '' : trimAtWordBoundary(task ?? '', NOTIFICATION_TEXT_LIMITS.desktopTitle - 'Agent failed: '.length);
+        const name = metadataOnly ? '' : trimAtWordBoundary(task?.() ?? '', NOTIFICATION_TEXT_LIMITS.desktopTitle - 'Agent failed: '.length);
         notifyDesktop(
           name ? `Agent failed: ${name}` : 'GoodVibes: agent failed',
           metadataOnly
-            ? `agent ${payload.agentId.slice(0, 8)} failed`
-            : trimAtWordBoundary(`agent ${payload.agentId.slice(0, 8)} failed: ${payload.error}`, NOTIFICATION_TEXT_LIMITS.desktopBody),
+            ? 'An agent failed'
+            : trimAtWordBoundary(`Agent failed: ${payload.error}`, NOTIFICATION_TEXT_LIMITS.desktopBody),
           FORCE_NOTIFY_DURATION_MS,
         );
       } catch (err) {
         logger.debug('turn-event-wiring: agent-failure notify error', { error: String(err) });
       }
     }));
-    unsubs.push(events.workflows.on('WORKFLOW_CHAIN_FAILED', (payload) => {
-      const workstream = workstreams.get(payload.chainId);
-      workstreams.delete(payload.chainId);
+    const notifyWorkstreamEnd = (payload: import('./workstream-notification.ts').WorkstreamFailureNarrationInput & { contractId: string }): void => {
+      const task = workstreams.get(payload.contractId);
+      workstreams.delete(payload.contractId);
       if (!shouldFireAlert(focusTracker, configGet, 'behavior.notifyOnChainFailure')) return;
       try {
-        // Title and body come from workstream-notification.ts, which is where
-        // the three branches (cancelled / turn budget / failed) are narrated and
-        // tested. A notification is a message to a person, so it carries neither
-        // the internal name for the machinery nor the chain id.
         const notice = workstreamFailureNotification(payload, {
-          task: workstream?.task,
-          reviewScore: workstream?.reviewScore,
+          get task() { return task?.(); },
           metadataOnly: readNotificationsMetadataOnly(configGet),
         });
         notifyDesktop(notice.title, notice.body, FORCE_NOTIFY_DURATION_MS);
       } catch (err) {
-        logger.debug('turn-event-wiring: chain-failure notify error', { error: String(err) });
+        logger.debug('turn-event-wiring: contract notification error', { error: String(err) });
       }
-    }));
+    };
+    unsubs.push(events.contracts.on('CONTRACT_FAILED', notifyWorkstreamEnd));
+    unsubs.push(events.contracts.on('CONTRACT_CANCELLED', notifyWorkstreamEnd));
   }
 
   // Live footer permission-mode pill: re-render whenever the SDK config
@@ -607,5 +596,6 @@ export function wireTurnEventHandlers(
     }));
   }
 
+  unsubs.push(() => { agentTasks.clear(); workstreams.clear(); readTurnText = null; });
   return { refreshGit, unsubs, transcriptJournal, continueTurnAfterFailover };
 }

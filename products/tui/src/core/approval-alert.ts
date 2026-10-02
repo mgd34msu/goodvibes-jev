@@ -17,7 +17,7 @@
  * Text (owner ruling 2026-09-29, SDK runtime/turn-notification.ts): the
  * notice names what is waiting, the command for exec, the file for write and
  * edit, the URL for fetch, and the turn that asked for it. When
- * behavior.notificationsMetadataOnly is on (default off) every channel here
+ * behavior.notificationsMetadataOnly is not explicitly false every channel here
  * (OSC 9, desktop, webhook) sends the tool name and permission category only,
  * never a command, a path or the turn's name.
  */
@@ -32,11 +32,11 @@ import {
   NOTIFICATION_TEXT_LIMITS,
   buildApprovalNotification,
   describeToolTarget,
-  formatWebhookText,
   joinNotificationLine,
   readNotificationsMetadataOnly,
   resolveTurnName,
   type ConfigGet,
+  type ApprovalNotificationFacts,
 } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import type { TerminalNotifier } from './terminal-notifier.ts';
 
@@ -79,25 +79,33 @@ export function wrapRequestPermissionWithAlert(
   deps: ApprovalAlertDeps,
 ): PermissionRequestHandler {
   return (request: PermissionPromptRequest) => {
-    fireApprovalAlert(request, deps);
+    try { fireApprovalAlert(request, deps); }
+    catch { logger.debug('approval-alert: notification could not be prepared'); }
     return original(request);
   };
 }
 
 function fireApprovalAlert(request: PermissionPromptRequest, deps: ApprovalAlertDeps): void {
   const metadataOnly = readNotificationsMetadataOnly(deps.configGet);
-  const conversation = deps.conversation;
-  const titleSource = conversation?.getTitleSource();
-  const notice = buildApprovalNotification({
+  // Private fields stay lazy until the local builder or SDK delivery owner
+  // admits content. Restricted admission never inspects args or conversation.
+  const facts: ApprovalNotificationFacts = {
     tool: request.tool,
     category: request.category,
-    target: metadataOnly ? null : describeToolTarget(request.args, request.analysis?.target),
-    turnName: metadataOnly || !conversation ? null : resolveTurnName({
-      title: conversation.title,
-      titleSource: titleSource === 'user' || titleSource === 'system' ? titleSource : null,
-      turnText: conversation.getLastUserMessage(),
-    }),
-  }, { metadataOnly });
+    get target() { return metadataOnly ? null : describeToolTarget(request.args, request.analysis?.target); },
+    get turnName() {
+      if (metadataOnly) return null;
+      const conversation = deps.conversation;
+      if (!conversation) return null;
+      const titleSource = conversation.getTitleSource();
+      return resolveTurnName({
+        title: conversation.title,
+        titleSource: titleSource === 'user' || titleSource === 'system' ? titleSource : null,
+        turnText: conversation.getLastUserMessage(),
+      });
+    },
+  };
+  const notice = buildApprovalNotification(facts, { metadataOnly });
 
   // In-terminal (OSC 9) notification fires on its OWN gating (independent of the
   // desktop-alert gate below), so it is emitted before the early return.
@@ -115,7 +123,7 @@ function fireApprovalAlert(request: PermissionPromptRequest, deps: ApprovalAlert
   if (webhookNotifier) {
     const urls = webhookNotifier.getUrls();
     if (urls.length > 0) {
-      webhookNotifier.send(formatWebhookText(notice)).catch((err: unknown) => {
+      webhookNotifier.sendNotification({ kind: 'approval', facts }).catch((err: unknown) => {
         logger.debug('approval-alert: webhook send error', { error: String(err) });
       });
     }

@@ -22,44 +22,37 @@ export function registerControlRoomRuntimeCommands(registry: CommandRegistry): v
   registry.register({
     name: 'orchestration',
     aliases: ['orch'],
-    description: 'Inspect orchestration graphs and cancel active graphs or subtrees',
-    usage: '[show [graphId] | cancel graph <graphId> | cancel subtree <agentId>]',
+    description: 'Inspect contracts and cancel legacy agent graphs or subtrees',
+    usage: '[show [contractId] | cancel graph <graphId> | cancel subtree <agentId>]',
     handler(args, ctx) {
-      const graphs = [...requireReadModels(ctx).orchestration.getSnapshot().graphs];
       if (args.length === 0) {
         if (ctx.openOrchestrationView) {
           ctx.openOrchestrationView();
-          return;
-        }
-        if (graphs.length === 0) {
-          ctx.print('The Agents view is not available in this runtime.');
           return;
         }
       }
       const subcommand = args[0]?.toLowerCase() ?? 'show';
 
       if (subcommand === 'show') {
-        const graphId = args[1];
-        const graph = graphId ? graphs.find((entry) => entry.id === graphId) : graphs[0];
-        if (!graph) {
-          ctx.print(graphId ? `Unknown orchestration graph: ${graphId}` : 'No orchestration graphs recorded yet.');
+        const contracts = requireReadModels(ctx).contracts.getSnapshot().contracts;
+        const contractId = args[1];
+        const contract = contractId ? contracts.find((entry) => entry.id === contractId) : contracts[0];
+        if (!contract) {
+          ctx.print(contractId ? `Unknown contract: ${contractId}` : 'No contracts recorded yet.');
           return;
         }
         const lines = [
-          `Graph ${graph.id}`,
-          `  title: ${graph.title}`,
-          `  status: ${graph.status}`,
-          `  mode: ${graph.mode}`,
-          `  nodes: ${graph.nodeOrder.length}`,
+          `Contract ${contract.id}`,
+          `  request: ${contract.ask}`,
+          `  status: ${contract.status}`,
+          `  groups: ${contract.groups.size}`,
+          `  units: ${contract.units.size}`,
         ];
-        if (graph.lastRecursionGuard) {
-          lines.push(`  last guard: depth ${graph.lastRecursionGuard.depth}, active ${graph.lastRecursionGuard.activeAgents}, ${graph.lastRecursionGuard.reason}`);
+        for (const unit of [...contract.units.values()].slice(0, 12)) {
+          lines.push(`  - ${unit.id} ${unit.role ?? 'unit'} ${unit.status}${unit.title ? ` ${unit.title}` : ''}`);
         }
-        for (const nodeId of graph.nodeOrder.slice(0, 12)) {
-          const node = graph.nodes.get(nodeId);
-          if (!node) continue;
-          lines.push(`  - ${node.id} ${node.role} ${node.status} ${node.title}`);
-        }
+        if (contract.reason) lines.push(`  reason: ${contract.reason}`);
+        lines.push(`  manage: /workstream status ${contract.id}`);
         ctx.print(lines.join('\n'));
         return;
       }
@@ -245,7 +238,7 @@ export function registerControlRoomRuntimeCommands(registry: CommandRegistry): v
           ctx.print('Usage: /project-memory explain <task...> [--scope <path> ...]');
           return;
         }
-        const injections = selectKnowledgeForTask(memory, task, scopeValues);
+        const injections = await selectKnowledgeForTask(memory, task, scopeValues);
         const prompt = buildKnowledgeInjectionPrompt(injections);
         ctx.print(prompt ?? 'No reviewed project knowledge matched that task.');
         return;

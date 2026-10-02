@@ -14,9 +14,10 @@ import type { UpdateFetchLike } from './update-check.ts';
 import { checkForUpdate } from '../input/commands/update-runtime.ts';
 import { VERSION } from '../version.ts';
 import type { SystemMessageRouter } from '../core/system-message-router.ts';
+import { IS_WORKSPACE_DISTRIBUTION } from './workspace-update-policy.ts';
 
 /** The package a package-managed install of this terminal is upgraded through. */
-const TERMINAL_PACKAGE_NAME = '@pellux/goodvibes-tui';
+const TERMINAL_PACKAGE_NAME = '@goodvibes-jev/tui';
 
 /** The command name the shell resolves this terminal by. */
 const TERMINAL_COMMAND_NAME = 'goodvibes';
@@ -35,6 +36,9 @@ function resolveLatestRelease(): Promise<string | undefined> {
  * everything, a reachability check must never block or crash boot.
  */
 export async function announceInstallReachability(router: SystemMessageRouter): Promise<void> {
+  // A private workspace has no binary release channel or package upgrade route.
+  // Local install completeness is still checked by announceInstallSelfCheck.
+  if (IS_WORKSPACE_DISTRIBUTION) return;
   await announceReachability(
     {
       execPath: process.execPath,

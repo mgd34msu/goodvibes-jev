@@ -1,3 +1,4 @@
+import { makeTestWebhookNotifier } from '../helpers/notification-transport.ts';
 /**
  * Tests for src/core/budget-breach-notifier.ts
  *
@@ -18,14 +19,7 @@ import { FocusTracker } from '@goodvibes-jev/engine/sdk/platform/runtime/operati
 // A model with a known, real price so calcSessionCost produces a real breach.
 const PRICED_MODEL = 'claude-sonnet-4-6'; // present in cost-utils.ts STATIC_FALLBACK_PRICING
 
-function makeSpyNotifier(urls: string[] = ['https://ntfy.sh/topic']) {
-  const sent: string[] = [];
-  return {
-    getUrls: () => [...urls],
-    send: mock(async (text: string) => { sent.push(text); return {}; }),
-    _sent: sent,
-  } as unknown as import('@goodvibes-jev/engine/sdk/platform/integrations').WebhookNotifier & { _sent: string[] };
-}
+const makeSpyNotifier = makeTestWebhookNotifier;
 
 function makeConfigGet(overrides: Record<string, unknown> = {}) {
   return (key: string): unknown => overrides[key];
@@ -54,11 +48,11 @@ describe('budget-breach-notifier', () => {
     // Cross into breach.
     const over = { input: 10_000_000, output: 0, cacheRead: 0, cacheWrite: 0 };
     expect(checker.check(over, PRICED_MODEL, 1)).toBe(true);
-    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
 
     // Still over budget on the next check, must not re-fire.
     expect(checker.check(over, PRICED_MODEL, 1)).toBe(false);
-    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
   });
 
   test('re-arms after dropping back under budget, fires again on a second crossing', () => {
@@ -78,7 +72,7 @@ describe('budget-breach-notifier', () => {
     expect(checker.check(over, PRICED_MODEL, 1)).toBe(true);
     expect(checker.check(under, PRICED_MODEL, 1)).toBe(false); // dropped back under (re-arms)
     expect(checker.check(over, PRICED_MODEL, 1)).toBe(true); // breaches again, fires again
-    expect(notifier.send).toHaveBeenCalledTimes(2);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(2);
   });
 
   test('re-arms when the threshold changes, even while still over the old one', () => {
@@ -101,7 +95,7 @@ describe('budget-breach-notifier', () => {
     // the new, higher threshold. The latch re-arms on the threshold change
     // and fires once more even though it was already breached before.
     expect(checker.check(usage, PRICED_MODEL, 20)).toBe(true);
-    expect(notifier.send).toHaveBeenCalledTimes(2);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(2);
   });
 
   test('never fires when the threshold is disabled (<= 0)', () => {
@@ -117,7 +111,7 @@ describe('budget-breach-notifier', () => {
     const usage = { input: 10_000_000, output: 0, cacheRead: 0, cacheWrite: 0 };
     expect(checker.check(usage, PRICED_MODEL, 0)).toBe(false);
     expect(checker.check(usage, PRICED_MODEL, -5)).toBe(false);
-    expect(notifier.send).not.toHaveBeenCalled();
+    expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 
   test('never fires for an unpriced model, even with huge usage', () => {
@@ -132,7 +126,7 @@ describe('budget-breach-notifier', () => {
     });
     const usage = { input: 10_000_000_000, output: 0, cacheRead: 0, cacheWrite: 0 };
     expect(checker.check(usage, 'totally-unknown-model-xyz', 1)).toBe(false);
-    expect(notifier.send).not.toHaveBeenCalled();
+    expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 
   test('suppressed when the terminal is focused (default gating)', () => {
@@ -149,7 +143,18 @@ describe('budget-breach-notifier', () => {
     // check() itself still returns true (a breach occurred and the latch
     // fires), the gate lives inside fireBudgetBreachAlert's delivery path.
     expect(checker.check(usage, PRICED_MODEL, 1)).toBe(true);
-    expect(notifier.send).not.toHaveBeenCalled();
+    expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 
+});
+
+test('unknown usage does not re-arm a known breach or invent a zero cost', () => {
+  const notifier = makeSpyNotifier();
+  const checker = createBudgetBreachNotifier({ focusTracker: new FocusTracker(), configGet: () => undefined, webhookNotifier: notifier, sessionId: 'fixture' });
+  const over = { input: 10_000_000, output: 0, cacheRead: 0, cacheWrite: 0 };
+  expect(checker.check(over, PRICED_MODEL, 1)).toBe(true);
+  expect(checker.check({ ...over, input: undefined } as never, PRICED_MODEL, 1)).toBe(false);
+  expect(checker.check(over, PRICED_MODEL, NaN)).toBe(false);
+  expect(checker.check(over, PRICED_MODEL, 1)).toBe(false);
+  expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
 });

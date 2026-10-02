@@ -20,7 +20,7 @@ import {
   realFsReader,
   runSdkPinGate,
   runPackageInstallCheck,
-} from '@pellux/goodvibes-toolchain';
+} from '@goodvibes-jev/engine/toolchain';
 
 const root = process.cwd();
 const config = loadToolchainConfig(root);

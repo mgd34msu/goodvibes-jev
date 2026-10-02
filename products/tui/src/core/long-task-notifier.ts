@@ -10,9 +10,10 @@
  * the reason. Text comes from the SDK's runtime/turn-notification.ts so every
  * channel and host words it the same way.
  *
- * PRIVACY RULE: behavior.notificationsMetadataOnly (default off). When on,
+ * PRIVACY RULE: Only explicit false from behavior.notificationsMetadataOnly
+ * permits content. Otherwise,
  * every channel this module sends on (desktop and webhook) carries metadata
- * only: the outcome, elapsed time, counts and the session id prefix, never the
+ * only: the outcome, elapsed time and counts, never the
  * turn's name or a failure reason. When off, both channels, the webhook
  * included, carry the name and the outcome.
  *
@@ -21,7 +22,7 @@
  *      notifyCompletion, detected and dispatched by the SDK; silently
  *      no-ops when the platform does not support it.
  *   2. Configured outbound webhook channel (ntfy topic / webhook URL) via
- *      WebhookNotifier.send(), only fires when the user has URLs configured.
+ *      WebhookNotifier.sendNotification(), only fires when the user has URLs configured.
  *
  * When neither target is available the function is an honest no-op (debug log
  * only; no user-facing error spam).
@@ -43,11 +44,11 @@ import type { FocusTracker } from '@goodvibes-jev/engine/sdk/platform/runtime/op
 import {
   FORCE_NOTIFY_DURATION_MS,
   buildTurnNotification,
-  formatWebhookText,
   readNotificationsMetadataOnly,
   readNotifyOnlyWhenUnfocused,
   type ConfigGet,
   type TurnOutcome,
+  type TurnNotificationFacts,
 } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 
 /** Default threshold in seconds. Turns shorter than this do not notify. */
@@ -104,7 +105,8 @@ export interface MaybeNotifyLongTaskOptions {
 
   /**
    * behavior.notificationsMetadataOnly. When omitted it is read through
-   * `configGet`; with neither, it is the default (off).
+   * `configGet`; with neither, delivery is restricted. An explicit false cannot
+   * override a restrictive live config reader.
    */
   readonly metadataOnly?: boolean | undefined;
 
@@ -185,16 +187,22 @@ export function maybeNotifyLongTask(opts: MaybeNotifyLongTaskOptions): boolean {
     return false;
   }
 
-  const metadataOnly = opts.metadataOnly ?? (configGet ? readNotificationsMetadataOnly(configGet) : false);
-  const notice = buildTurnNotification({
+  const explicitRestriction = opts.metadataOnly !== undefined && readNotificationsMetadataOnly(() => opts.metadataOnly);
+  const metadataOnly = explicitRestriction || (configGet
+    ? readNotificationsMetadataOnly(configGet)
+    : readNotificationsMetadataOnly(() => opts.metadataOnly));
+  const facts: TurnNotificationFacts = {
     outcome: opts.outcome ?? (status === 'ok' ? 'completed' : 'failed'),
     elapsedMs,
-    name: opts.name,
-    reason: opts.reason,
+    get name() { return metadataOnly ? null : opts.name; },
+    get reason() { return metadataOnly ? null : opts.reason; },
     sessionId,
     subject: kind,
-    ...opts.activity,
-  }, { metadataOnly });
+    toolCalls: opts.activity?.toolCalls,
+    filesChanged: opts.activity?.filesChanged,
+    agentsStarted: opts.activity?.agentsStarted,
+    reviewScore: opts.activity?.reviewScore,
+  };
 
   // Delivery 1: desktop notification (notify-send on linux, osascript on mac).
   // notifyCompletion is non-throwing; SDK handles platform absence silently.
@@ -205,6 +213,7 @@ export function maybeNotifyLongTask(opts: MaybeNotifyLongTaskOptions): boolean {
   if (desktopDue) {
     delivered = true;
     try {
+      const notice = buildTurnNotification(facts, { metadataOnly });
       notifyDesktop(notice.title, notice.body, Math.max(elapsedMs, FORCE_NOTIFY_DURATION_MS));
     } catch (err) {
       logger.debug('long-task-notifier: desktop notify error', { error: String(err) });
@@ -216,7 +225,7 @@ export function maybeNotifyLongTask(opts: MaybeNotifyLongTaskOptions): boolean {
     const urls = webhookNotifier.getUrls();
     if (urls.length > 0) {
       delivered = true;
-      webhookNotifier.send(formatWebhookText(notice)).catch((err: unknown) => {
+      webhookNotifier.sendNotification({ kind: 'turn', facts }).catch((err: unknown) => {
         logger.debug('long-task-notifier: webhook send error', { error: String(err) });
       });
     } else {

@@ -1,3 +1,4 @@
+import { makeTestWebhookNotifier } from '../helpers/notification-transport.ts';
 /**
  * Tests for src/core/turn-event-wiring.ts
  *
@@ -8,7 +9,7 @@
  * - No double-fire across the persist/rotate branches (notification fires
  *   before the auto-save block, not again in the catch/journal path).
  * - budget-breach edge-trigger fires once per crossing on TURN_COMPLETED.
- * - AGENT_FAILED / WORKFLOW_CHAIN_FAILED fire a desktop alert gated by
+ * - AGENT_FAILED / CONTRACT_FAILED fire a desktop alert gated by
  *   focus + the per-class config keys.
  */
 
@@ -55,17 +56,17 @@ function makeFakeEvents() {
   const turns = makeFakeTurnEventBus();
   const tools = makeFakeTurnEventBus();
   const agents = makeFakeTurnEventBus();
-  const workflows = makeFakeTurnEventBus();
-  // UiRuntimeEvents shape: { turns, tools, agents, workflows, ... }, these
-  // four are what wireTurnEventHandlers reads (added agents/workflows
+  const contracts = makeFakeTurnEventBus();
+  // UiRuntimeEvents shape: { turns, tools, agents, contracts, ... }, these
+  // four are what wireTurnEventHandlers reads (added agents/contracts
   // for the agent/chain-failure desktop alerts).
   return {
     // @ts-expect-error, duck-typed minimal fake for UiRuntimeEvents
-    events: { turns, tools, agents, workflows } as WireTurnEventHandlersOptions['events'],
+    events: { turns, tools, agents, contracts } as WireTurnEventHandlersOptions['events'],
     emitTurn: (type: string, payload: unknown) => turns.emit(type, payload),
     emitTool: (type: string, payload: unknown) => tools.emit(type, payload),
     emitAgent: (type: string, payload: unknown) => agents.emit(type, payload),
-    emitWorkflow: (type: string, payload: unknown) => workflows.emit(type, payload),
+    emitContract: (type: string, payload: unknown) => contracts.emit(type, payload),
   };
 }
 
@@ -73,21 +74,9 @@ function makeFakeEvents() {
 // Minimal spy webhook notifier
 // ---------------------------------------------------------------------------
 
-function makeSpyNotifier(urls: string[] = ['https://ntfy.sh/test-topic']) {
-  const sentMessages: string[] = [];
-  // WebhookNotifier is a real class with private fields, so a duck-typed
-  // fake can never satisfy it structurally, the same `as unknown as
-  // WebhookNotifier` cast already used by long-task-notifier.test.ts,
-  // approval-alert.test.ts, and budget-breach-notifier.test.ts for this
-  // exact class.
-  const notifier = {
-    getUrls: () => [...urls],
-    send: mock(async (text: string) => {
-      sentMessages.push(text);
-      return {};
-    }),
-  } as unknown as WebhookNotifier;
-  return { notifier, sentMessages };
+function makeSpyNotifier(urls: string[] = ['https://example.com/tui-turn']) {
+  const notifier = makeTestWebhookNotifier(urls);
+  return { notifier, sentMessages: notifier._sent };
 }
 
 // ---------------------------------------------------------------------------
@@ -99,9 +88,9 @@ function makeMinimalOptions(
 ): WireTurnEventHandlersOptions & {
   emitTurn: (type: string, payload: unknown) => void;
   emitAgent: (type: string, payload: unknown) => void;
-  emitWorkflow: (type: string, payload: unknown) => void;
+  emitContract: (type: string, payload: unknown) => void;
 } {
-  const { events, emitTurn, emitAgent, emitWorkflow } = makeFakeEvents();
+  const { events, emitTurn, emitAgent, emitContract } = makeFakeEvents();
 
   const defaults: WireTurnEventHandlersOptions = {
     events,
@@ -118,7 +107,7 @@ function makeMinimalOptions(
     orchestrator: { lastInputTokens: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
     configManager: {
       // Return 60s threshold so notifications fire when elapsedMs >= 60_000
-      get: (key: string): unknown => (key === 'behavior.notifyAfterSeconds' ? 60 : undefined),
+      get: (key: string): unknown => (key === 'behavior.notifyAfterSeconds' ? 60 : key === 'behavior.notificationsMetadataOnly' ? false : undefined),
     },
     providerRegistry: {
       getCurrentModel: () => ({ contextWindow: 200_000, id: 'test-model' }),
@@ -141,7 +130,7 @@ function makeMinimalOptions(
     _clock: () => 0,
   };
 
-  return { ...defaults, ...overrides, emitTurn, emitAgent, emitWorkflow };
+  return { ...defaults, ...overrides, emitTurn, emitAgent, emitContract };
 }
 
 // ---------------------------------------------------------------------------
@@ -172,7 +161,7 @@ describe('wireTurnEventHandlers: TURN_COMPLETED notification integration', () =>
     opts.emitTurn('TURN_COMPLETED', { type: 'TURN_COMPLETED', turnId: 'turn-test-1', response: 'hi', stopReason: 'completed' });
 
     // Notification fires exactly once (fire-and-forget send call)
-    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
     // Sent message names the turn (its prompt) and says it finished in 61s
     const sentText = sentMessages[0] ?? '';
     expect(sentText).toBe('hello\nDone in 1m 1s');
@@ -195,7 +184,7 @@ describe('wireTurnEventHandlers: TURN_COMPLETED notification integration', () =>
     // stopReason 'empty_response' → fail
     opts.emitTurn('TURN_COMPLETED', { type: 'TURN_COMPLETED', turnId: 'turn-fail-1', response: '', stopReason: 'empty_response' });
 
-    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
     const sentText = sentMessages[0] ?? '';
     expect(sentText).toBe('test\nFailed after 1m 30s: The model returned an empty response');
   });
@@ -217,7 +206,7 @@ describe('wireTurnEventHandlers: TURN_COMPLETED notification integration', () =>
     opts.emitTurn('TURN_COMPLETED', { type: 'TURN_COMPLETED', turnId: 'turn-short-1', response: 'done', stopReason: 'completed' });
 
     // No notification sent
-    expect(notifier.send).not.toHaveBeenCalled();
+    expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 
   test('no double-fire across persist/rotate branches: exactly one notification per TURN_COMPLETED', () => {
@@ -246,7 +235,7 @@ describe('wireTurnEventHandlers: TURN_COMPLETED notification integration', () =>
     opts.emitTurn('TURN_COMPLETED', { type: 'TURN_COMPLETED', turnId: 'turn-ndf-1', response: 'hi', stopReason: 'completed' });
 
     // Notification fires exactly once even though persist branch threw
-    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
   });
 
   test('no notification when TURN_COMPLETED fires without prior TURN_SUBMITTED (elapsed=0)', () => {
@@ -264,7 +253,7 @@ describe('wireTurnEventHandlers: TURN_COMPLETED notification integration', () =>
     opts.emitTurn('TURN_COMPLETED', { type: 'TURN_COMPLETED', turnId: 'turn-no-start', response: 'hi', stopReason: 'completed' });
 
     // elapsedMs == 0 < threshold (60s) → no notification
-    expect(notifier.send).not.toHaveBeenCalled();
+    expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 });
 
@@ -305,7 +294,7 @@ describe('wireTurnEventHandlers: budget-breach alert', () => {
     });
     wireTurnEventHandlers(opts);
     opts.emitTurn('TURN_COMPLETED', { type: 'TURN_COMPLETED', turnId: 't1', response: 'hi', stopReason: 'completed' });
-    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
     expect(sentMessages[0]).toContain('budget');
   });
 
@@ -318,7 +307,7 @@ describe('wireTurnEventHandlers: budget-breach alert', () => {
     wireTurnEventHandlers(opts);
     opts.emitTurn('TURN_COMPLETED', { type: 'TURN_COMPLETED', turnId: 't1', response: 'hi', stopReason: 'completed' });
     opts.emitTurn('TURN_COMPLETED', { type: 'TURN_COMPLETED', turnId: 't2', response: 'hi', stopReason: 'completed' });
-    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
   });
 
   test('does not fire when under budget', () => {
@@ -329,7 +318,7 @@ describe('wireTurnEventHandlers: budget-breach alert', () => {
     });
     wireTurnEventHandlers(opts);
     opts.emitTurn('TURN_COMPLETED', { type: 'TURN_COMPLETED', turnId: 't1', response: 'hi', stopReason: 'completed' });
-    expect(notifier.send).not.toHaveBeenCalled();
+    expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 
   test('does not fire when no focusTracker is supplied (feature inert without one)', () => {
@@ -341,7 +330,7 @@ describe('wireTurnEventHandlers: budget-breach alert', () => {
     });
     wireTurnEventHandlers(opts);
     opts.emitTurn('TURN_COMPLETED', { type: 'TURN_COMPLETED', turnId: 't1', response: 'hi', stopReason: 'completed' });
-    expect(notifier.send).not.toHaveBeenCalled();
+    expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 });
 
@@ -407,7 +396,7 @@ describe('wireTurnEventHandlers: agent/chain-failure alerts', () => {
     spy.mockRestore();
   });
 
-  test('WORKFLOW_CHAIN_FAILED (failure state) rings the bell when unfocused', () => {
+  test('CONTRACT_FAILED (failure state) rings the bell when unfocused', () => {
     const spy = spyOnStdoutWrite();
     const tracker = new FocusTracker();
     tracker.setFocused(false);
@@ -416,12 +405,12 @@ describe('wireTurnEventHandlers: agent/chain-failure alerts', () => {
       configManager: { get: () => undefined },
     });
     wireTurnEventHandlers(opts);
-    opts.emitWorkflow('WORKFLOW_CHAIN_FAILED', { type: 'WORKFLOW_CHAIN_FAILED', chainId: 'chain-abcdef123456', reason: 'review rejected', failureKind: 'other' });
+    opts.emitContract('CONTRACT_FAILED', { type: 'CONTRACT_FAILED', contractId: 'chain-abcdef123456', reason: 'review rejected', failureKind: 'other' });
     expect(spy).toHaveBeenCalledWith('\x07');
     spy.mockRestore();
   });
 
-  test('WORKFLOW_CHAIN_FAILED with failureKind=cancelled still alerts (operator-cancel branch, WO item 2)', () => {
+  test('CONTRACT_CANCELLED still alerts (operator-cancel branch, WO item 2)', () => {
     // The cancelled branch narrates a cancellation rather than a failure but must
     // still ring the bell when unfocused, the operator asked to stop and wants to
     // know it stopped. (The distinct title is asserted at the SDK narration level;
@@ -431,12 +420,12 @@ describe('wireTurnEventHandlers: agent/chain-failure alerts', () => {
     tracker.setFocused(false);
     const opts = makeMinimalOptions({ focusTracker: tracker, configManager: { get: () => undefined } });
     wireTurnEventHandlers(opts);
-    opts.emitWorkflow('WORKFLOW_CHAIN_FAILED', { type: 'WORKFLOW_CHAIN_FAILED', chainId: 'chain-abcdef123456', reason: 'operator cancellation: 2 files already modified on disk', failureKind: 'cancelled' });
+    opts.emitContract('CONTRACT_CANCELLED', { type: 'CONTRACT_CANCELLED', contractId: 'chain-abcdef123456', reason: 'operator cancellation: 2 files already modified on disk', filesModified: 2 });
     expect(spy).toHaveBeenCalledWith('\x07');
     spy.mockRestore();
   });
 
-  test('WORKFLOW_CHAIN_FAILED never fires when notifyOnChainFailure is off', () => {
+  test('CONTRACT_FAILED never fires when notifyOnChainFailure is off', () => {
     const spy = spyOnStdoutWrite();
     const tracker = new FocusTracker();
     tracker.setFocused(false);
@@ -445,12 +434,12 @@ describe('wireTurnEventHandlers: agent/chain-failure alerts', () => {
       configManager: { get: (k: string) => (k === 'behavior.notifyOnChainFailure' ? false : undefined) },
     });
     wireTurnEventHandlers(opts);
-    opts.emitWorkflow('WORKFLOW_CHAIN_FAILED', { type: 'WORKFLOW_CHAIN_FAILED', chainId: 'chain-abcdef123456', reason: 'transient transport error', failureKind: 'transport' });
+    opts.emitContract('CONTRACT_FAILED', { type: 'CONTRACT_FAILED', contractId: 'chain-abcdef123456', reason: 'transient transport error', failureKind: 'transport' });
     expect(spy).not.toHaveBeenCalledWith('\x07');
     spy.mockRestore();
   });
 
-  test('WORKFLOW_CHAIN_FAILED with failureKind=max_turns alerts via the budget branch (limit + source from the event)', () => {
+  test('CONTRACT_FAILED with failureKind=max_turns alerts via the budget branch (limit + source from the event)', () => {
     const spy = spyOnStdoutWrite();
     const tracker = new FocusTracker();
     tracker.setFocused(false);
@@ -461,9 +450,9 @@ describe('wireTurnEventHandlers: agent/chain-failure alerts', () => {
     wireTurnEventHandlers(opts);
     // The typed budget branch reads turnLimit/turnLimitSource off the event; it
     // must alert without throwing and without regex-matching the prose reason.
-    expect(() => opts.emitWorkflow('WORKFLOW_CHAIN_FAILED', {
-      type: 'WORKFLOW_CHAIN_FAILED',
-      chainId: 'chain-abcdef123456',
+    expect(() => opts.emitContract('CONTRACT_FAILED', {
+      type: 'CONTRACT_FAILED',
+      contractId: 'chain-abcdef123456',
       reason: 'agent reached the turn limit of 50',
       failureKind: 'max_turns',
       turnLimit: 50,

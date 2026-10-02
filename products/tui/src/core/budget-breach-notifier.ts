@@ -19,8 +19,8 @@
  * Text (owner ruling 2026-09-29, SDK runtime/turn-notification.ts): the
  * notice names the budget that tripped (cost against the configured
  * threshold) and the turn during which it tripped. When
- * behavior.notificationsMetadataOnly is on (default off) the desktop and
- * webhook text carries the numbers and the session id prefix only.
+ * behavior.notificationsMetadataOnly is not explicitly false the desktop and
+ * webhook text carries the numbers only.
  */
 import { notifyCompletion } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
@@ -31,9 +31,9 @@ import {
   shouldFireAlert,
   FORCE_NOTIFY_DURATION_MS,
   buildBudgetNotification,
-  formatWebhookText,
   readNotificationsMetadataOnly,
   type ConfigGet,
+  type BudgetNotificationFacts,
 } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 
 export interface BudgetBreachUsageSnapshot {
@@ -70,6 +70,7 @@ export function createBudgetBreachNotifier(deps: BudgetBreachNotifierDeps): Budg
 
   return {
     check(usage, sessionModel, budgetThresholdUsd) {
+      if (!Number.isFinite(budgetThresholdUsd)) return false;
       if (budgetThresholdUsd !== lastThreshold) {
         // Threshold raised, lowered, or cleared since the last check, re-arm
         // the latch so a breach against the new threshold can fire again.
@@ -77,7 +78,10 @@ export function createBudgetBreachNotifier(deps: BudgetBreachNotifierDeps): Budg
         notified = false;
       }
 
-      if (budgetThresholdUsd <= 0) return false; // disabled
+      if (budgetThresholdUsd <= 0) return false; // disabled/unknown
+      // Unknown usage is not zero and cannot prove a crossing or re-arm a latch.
+      if (![usage.input, usage.output, usage.cacheRead, usage.cacheWrite]
+        .every((value) => typeof value === 'number' && Number.isFinite(value) && value >= 0)) return false;
       if (!isModelPriced(sessionModel)) return false; // cost would be a placeholder, not real
 
       const sessionCost = calcSessionCost(usage.input, usage.output, usage.cacheRead, usage.cacheWrite, sessionModel);
@@ -100,12 +104,13 @@ function fireBudgetBreachAlert(deps: BudgetBreachNotifierDeps, sessionCost: numb
   if (!shouldFireAlert(deps.focusTracker, deps.configGet, 'behavior.notifyOnBudgetBreach')) return;
 
   const metadataOnly = readNotificationsMetadataOnly(deps.configGet);
-  const notice = buildBudgetNotification({
+  const facts: BudgetNotificationFacts = {
     sessionCostUsd: sessionCost,
     budgetUsd: budgetThresholdUsd,
     sessionId: deps.sessionId,
-    turnName: metadataOnly ? null : deps.getTurnName?.() ?? null,
-  }, { metadataOnly });
+    get turnName() { return metadataOnly ? null : deps.getTurnName?.() ?? null; },
+  };
+  const notice = buildBudgetNotification(facts, { metadataOnly });
 
   try {
     (deps.notifyDesktop ?? notifyCompletion)(notice.title, notice.body, FORCE_NOTIFY_DURATION_MS);
@@ -117,7 +122,7 @@ function fireBudgetBreachAlert(deps: BudgetBreachNotifierDeps, sessionCost: numb
   if (webhookNotifier) {
     const urls = webhookNotifier.getUrls();
     if (urls.length > 0) {
-      webhookNotifier.send(formatWebhookText(notice)).catch((err: unknown) => {
+      webhookNotifier.sendNotification({ kind: 'budget', facts }).catch((err: unknown) => {
         logger.debug('budget-breach-notifier: webhook send error', { error: String(err) });
       });
     }

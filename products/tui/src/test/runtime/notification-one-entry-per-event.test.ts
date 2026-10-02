@@ -1,119 +1,119 @@
-/**
- * ui-live-run-9 item 2: /notifications showed each chain or agent event twice,
- * once under its plain title (the runtime-bus bridge) and once as the
- * "[WRFC] …" / "[Agents] …" line the SDK writes for the same event. Every
- * event is one entry, under its plain title, whichever arrives first.
- */
+/** Occurrence identity comes only from a proven shared key, never correlation metadata. */
 import { describe, expect, test } from 'bun:test';
-import { RuntimeEventBus, createEventEnvelope, registerHostRuntimeEvents } from '@/runtime/index.ts';
-import { ConversationManager } from '../../core/conversation.ts';
-import { createSystemMessageRouter } from '../../core/system-message-router.ts';
-import { createNotificationDispatcher, createShellNoticeSink, wireRuntimeNotificationBridge } from '../../runtime/notification-dispatch.ts';
+import { RuntimeEventBus, createEventEnvelope } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
+import { runtimeEventKey, registerHostRuntimeEvents } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
+import { createNotificationDispatcher, createShellNoticeSink, wireRuntimeNotificationBridge, wireMemoryPressureNotice } from '../../runtime/notification-dispatch.ts';
 import { NotificationFeed } from '../../views/notifications-feed.ts';
-import { bridgeNotificationFeedToToasts, ToastCenter } from '../../renderer/toast-center.ts';
 import { configGetStub } from '../helpers/config-manager-stub.ts';
+import { SAMPLES } from '../../../../../packages/engine/test/contract/event-samples.ts';
 
-const ctx = { sessionId: 's', traceId: 't', source: 'test' };
+const config = { get: configGetStub() };
+const context = { sessionId: 'fixture-session', traceId: 'shared-trace', source: 'notification-identity-test' };
 
-function shell(options: { bridgeFirst: boolean; verbosity?: 'minimal' | 'normal' }) {
-  const bus = new RuntimeEventBus();
+for (const traceId of ['shared-trace', undefined]) {
+  test(`two keyless occurrences at the same timestamp survive (traceId=${traceId})`, async () => {
+    const feed = new NotificationFeed();
+    const dispatcher = createNotificationDispatcher(config, feed);
+    const bus = new RuntimeEventBus();
+    const stop = wireRuntimeNotificationBridge(bus, dispatcher);
+    try {
+      for (let occurrence = 0; occurrence < 2; occurrence++) {
+        // Reset batching through its actual API, so this checks identity rather
+        // than a batch group accidentally masking an overwritten singleton.
+        dispatcher.router.setBatchWindowMs(1);
+        const payload = { type: 'AGENT_COMPLETED' as const, agentId: 'reused-agent', durationMs: 1000 };
+        expect(runtimeEventKey(payload.type, payload)).toBeUndefined();
+        bus.emit('agents', { ...createEventEnvelope(payload.type, payload, { ...context, traceId }), ts: 1000 });
+        await Promise.resolve();
+      }
+      const entries = feed.list();
+      expect(entries).toHaveLength(2);
+      expect(new Set(entries.map((entry) => entry.key)).size).toBe(2);
+      expect(entries.every((entry) => entry.timestamp === 1000 && entry.collapsedCount === 1)).toBe(true);
+    } finally { stop(); }
+  });
+}
+
+test('different domains can share one trace and timestamp without overwriting each other', async () => {
   const feed = new NotificationFeed();
-  const toasts = new ToastCenter(() => 0, () => {});
-  bridgeNotificationFeedToToasts(feed, toasts);
-  const conversation = new ConversationManager(() => 100);
-  conversation.setNoticeSink(createShellNoticeSink(feed));
-  const router = createSystemMessageRouter(conversation);
-  const dispatcher = createNotificationDispatcher({ get: configGetStub() }, feed);
-  if (options.verbosity) for (const domain of ['agents', 'workflows']) dispatcher.router.setDomainVerbosity(domain, options.verbosity);
-  const records: Record<string, unknown> = {
-    'agent-aaaa1111': { id: 'agent-aaaa1111', template: 'engineer', task: 'Cap the retry delay', status: 'completed', startedAt: 0, completedAt: 12_000, toolCallCount: 4 },
-    'agent-bbbb2222': { id: 'agent-bbbb2222', template: 'reviewer', task: 'Review the retry change', status: 'failed', startedAt: 0, completedAt: 9_000, toolCallCount: 2 },
-  };
-  const registerSdkLines = () => registerHostRuntimeEvents({
-    runtimeBus: bus,
-    domainDispatch: new Proxy({}, { get: () => () => {} }) as never,
-    getSystemMessageRouter: () => router,
-    requestRender: () => {},
-    configManager: { get: () => 9 } as never,
-    agentManager: { getStatus: (id: string) => records[id], listByCohort: () => [], list: () => [] } as never,
-    wrfcController: { getChain: () => null, listChains: () => [] } as never,
-  });
-  // Both listener orders happen in the app (registration order differs by composition).
-  if (options.bridgeFirst) { wireRuntimeNotificationBridge(bus, dispatcher); registerSdkLines(); }
-  else { registerSdkLines(); wireRuntimeNotificationBridge(bus, dispatcher); }
-  return { bus, feed, toasts, conversation };
-}
+  const dispatcher = createNotificationDispatcher(config, feed);
+  const bus = new RuntimeEventBus();
+  const stop = wireRuntimeNotificationBridge(bus, dispatcher);
+  try {
+    bus.emit('agents', { ...createEventEnvelope('AGENT_COMPLETED', { type: 'AGENT_COMPLETED', agentId: 'fixture-agent', durationMs: 1000 }, context), ts: 1000 });
+    bus.emit('contracts', { ...createEventEnvelope('CONTRACT_PASSED', SAMPLES.CONTRACT_PASSED, context), ts: 1000 });
+    await Promise.resolve();
+    expect(feed.list().map((entry) => entry.title).sort()).toEqual(['Agent finished', 'Workstream passed']);
+  } finally { stop(); }
+});
 
-async function emitRun(bus: RuntimeEventBus): Promise<void> {
-  bus.emit('workflows', createEventEnvelope('WORKFLOW_CHAIN_CREATED', { type: 'WORKFLOW_CHAIN_CREATED', chainId: 'wrfc-1234567890ab', task: 'Cap the retry delay' } as never, { ...ctx, traceId: 't0' }));
-  bus.emit('workflows', createEventEnvelope('WORKFLOW_REVIEW_COMPLETED', { type: 'WORKFLOW_REVIEW_COMPLETED', chainId: 'wrfc-1234567890ab', score: 10, passed: true } as never, { ...ctx, traceId: 't0r' }));
-  bus.emit('workflows', createEventEnvelope('WORKFLOW_GATE_RESULT', { type: 'WORKFLOW_GATE_RESULT', chainId: 'wrfc-1234567890ab', gate: 'typecheck', passed: true } as never, { ...ctx, traceId: 't0g' }));
-  bus.emit('agents', createEventEnvelope('AGENT_COMPLETED', { type: 'AGENT_COMPLETED', agentId: 'agent-aaaa1111', durationMs: 12_000 } as never, { ...ctx, traceId: 't1' }));
-  bus.emit('agents', createEventEnvelope('AGENT_FAILED', { type: 'AGENT_FAILED', agentId: 'agent-bbbb2222', error: 'the provider refused the request', durationMs: 9_000 } as never, { ...ctx, traceId: 't2' }));
-  bus.emit('workflows', createEventEnvelope('WORKFLOW_CHAIN_PASSED', { type: 'WORKFLOW_CHAIN_PASSED', chainId: 'wrfc-1234567890ab' } as never, { ...ctx, traceId: 't3' }));
-  bus.emit('workflows', createEventEnvelope('WORKFLOW_AUTO_COMMITTED', { type: 'WORKFLOW_AUTO_COMMITTED', chainId: 'wrfc-1234567890ab', commitHash: 'abcdef0123456789' } as never, { ...ctx, traceId: 't4' }));
-  bus.emit('workflows', createEventEnvelope('WORKFLOW_CHAIN_FAILED', { type: 'WORKFLOW_CHAIN_FAILED', chainId: 'wrfc-ffff00001111', reason: 'a hook refused the commit' } as never, { ...ctx, traceId: 't5' }));
-  for (let i = 0; i < 4; i++) await Promise.resolve();
-}
-
-const EXPECTED_TITLES = ['Review chain started', 'Review passed', 'Quality check passed', 'Agent finished', 'Agent failed', 'Review chain passed', 'Reviewed changes committed', 'Review chain failed'];
-
-describe('one notification-history entry per chain or agent event', () => {
-  for (const bridgeFirst of [true, false]) {
-    for (const verbosity of ['minimal', 'normal'] as const) {
-      test(`eight events are eight entries under plain titles (${bridgeFirst ? 'bridge' : 'line'} first, ${verbosity} verbosity)`, async () => {
-        const { bus, feed, toasts } = shell({ bridgeFirst, verbosity });
-        await emitRun(bus);
-        const entries = [...feed.list()].reverse();
-        expect(entries.map((entry) => entry.title)).toEqual(EXPECTED_TITLES);
-        for (const entry of entries) expect(entry.title.startsWith('[')).toBe(false);
-        // The detail is kept: which agent and what it did, the failure reason, the commit.
-        expect(entries[3]!.body).toContain('engineer aaaa1111: "Cap the retry delay"');
-        expect(entries[4]!.body).toContain('the provider refused the request');
-        expect(entries[6]!.body).toContain('abcdef0');
-        expect(entries[7]!.body).toContain('a hook refused the commit');
-        // Each event toasts once.
-        expect(toasts.visible().length).toBeLessThanOrEqual(3);
-        const titles = toasts.visible().map((toast) => toast.title);
-        expect(new Set(titles).size).toBe(titles.length);
-      });
-    }
-  }
-
-  test('a restored session shows its agent and chain lines under their plain titles, one each', () => {
+for (const lineFirst of [true, false]) {
+  test(`a caller with a proven occurrence key deduplicates repeated delivery (${lineFirst ? 'notice' : 'routed'} first)`, () => {
     const feed = new NotificationFeed();
-    const conversation = new ConversationManager(() => 100);
-    conversation.setNoticeSink(createShellNoticeSink(feed));
-    conversation.fromJSON({ messages: [
-      { role: 'user', content: 'hi' },
-      { role: 'system', content: '[WRFC] ✓ Chain wrfc-1234567890ab PASSED — all gates clear' },
-      { role: 'system', content: '[Agents] ✓ engineer aaaa1111: "Cap the retry delay" — completed in 12s (4 tool calls)' },
-    ] });
-    expect(feed.list().map((entry) => entry.title).sort()).toEqual(['Agent finished', 'Review chain passed']);
-    expect(feed.unreadCount()).toBe(0);
-  });
-
-  test('a folded quiet entry toasts once when the conversation line arrives', () => {
-    const feed = new NotificationFeed();
-    const toasts = new ToastCenter(() => 0, () => {});
-    bridgeNotificationFeedToToasts(feed, toasts);
-    feed.record({ id: 'n1', domain: 'workflows', level: 'info', title: 'Review chain passed', timestamp: 1 }, { target: 'panel_only', reasonCode: 'allowed' }, 'WORKFLOW_CHAIN_PASSED:wrfc-1234567');
-    expect(toasts.visible()).toHaveLength(0);
-    feed.recordNotice({ domain: 'wrfc', level: 'info', title: 'Review chain passed', body: 'Chain wrfc-1234567 PASSED', timestamp: 2, eventKey: 'WORKFLOW_CHAIN_PASSED:wrfc-1234567' });
-    feed.recordNotice({ domain: 'wrfc', level: 'info', title: 'Review chain passed', body: 'Chain wrfc-1234567 PASSED', timestamp: 3, eventKey: 'WORKFLOW_CHAIN_PASSED:wrfc-1234567' });
+    const dispatcher = createNotificationDispatcher(config, feed);
+    // This is the existing explicit dispatcher/feed seam. The current SDK
+    // runtimeEventKey does not supply such a key, so this test does not invent one there.
+    const occurrenceKey = 'fixture-authoritative-occurrence-1';
+    const notice = () => feed.recordNotice({ domain: 'agents', level: 'info', title: 'Agent finished', body: 'Complete detail', timestamp: 1000, eventKey: occurrenceKey });
+    const routed = (id: string) => dispatcher.dispatch({ id, domain: 'agents', level: 'info', title: 'Agent finished', timestamp: 1000 }, occurrenceKey);
+    if (lineFirst) notice();
+    routed('delivery-1');
+    routed('delivery-2');
+    notice();
     expect(feed.list()).toHaveLength(1);
-    expect(toasts.visible().map((toast) => toast.title)).toEqual(['Review chain passed']);
+    expect(feed.list()[0]).toMatchObject({ collapsedCount: 1, body: 'Complete detail' });
   });
+}
 
-  test('a passed chain whose commit hook refused shows the refusal in its one entry, in the hook\'s words', async () => {
-    const { bus, feed, toasts } = shell({ bridgeFirst: true, verbosity: 'minimal' });
-    const note = "your repository's commit hooks refused the chain's commit, so nothing was committed and your files were not changed; the chain's work is kept on branch wrfc/1234567890ab. git commit said: lint: name the cap first";
-    bus.emit('workflows', createEventEnvelope('WORKFLOW_CHAIN_PASSED', { type: 'WORKFLOW_CHAIN_PASSED', chainId: 'wrfc-1234567890ab', note } as never, { ...ctx, traceId: 'tn' }));
-    for (let i = 0; i < 4; i++) await Promise.resolve();
-    const entries = feed.list();
-    expect(entries).toHaveLength(1);
-    expect(entries[0]!.title).toBe('Review chain passed');
-    expect(entries[0]!.body).toContain('git commit said: lint: name the cap first');
-    expect(toasts.visible().map((toast) => toast.body ?? '').join('\n')).toContain('lint: name the cap first');
+for (const bridgeFirst of [true, false]) {
+  test(`actual SDK operator lines and bus events stay keyless (${bridgeFirst ? 'bridge' : 'line'} first)`, async () => {
+    const feed = new NotificationFeed();
+    const dispatcher = createNotificationDispatcher(config, feed);
+    const bus = new RuntimeEventBus();
+    const sink = createShellNoticeSink(feed);
+    const stopBridge = bridgeFirst ? wireRuntimeNotificationBridge(bus, dispatcher) : undefined;
+    const host = registerHostRuntimeEvents({
+      runtimeBus: bus,
+      domainDispatch: new Proxy({}, { get: () => () => {} }) as never,
+      getSystemMessageRouter: () => ({ low: (line) => sink(line, { restored: false }), high: (line) => sink(line, { restored: false }), contract: (line) => sink(line, { restored: false }) }),
+      requestRender: () => {},
+      agentManager: { getStatus: () => undefined, list: () => [], listByCohort: () => [] } as never,
+      contractRunner: { get: () => null, list: () => [] },
+    });
+    const stopAfter = bridgeFirst ? undefined : wireRuntimeNotificationBridge(bus, dispatcher);
+    try {
+      bus.emit('contracts', createEventEnvelope('CONTRACT_PASSED', SAMPLES.CONTRACT_PASSED, context));
+      await Promise.resolve();
+      expect(feed.list()).toHaveLength(2);
+      expect(feed.list().every((entry) => entry.title === 'Workstream passed')).toBe(true);
+    } finally {
+      stopBridge?.(); stopAfter?.();
+      for (const unsubscribe of host.unsubs) unsubscribe();
+      if (host.agentStatusIntervalRef.value) clearInterval(host.agentStatusIntervalRef.value);
+    }
   });
+}
+
+test('unknown legacy operator lines retain their original text as independent notices', () => {
+  const feed = new NotificationFeed();
+  const sink = createShellNoticeSink(feed);
+  const text = '[Legacy] synthetic unrecognized lifecycle text';
+  sink(text, { restored: true });
+  sink(text, { restored: true });
+  expect(feed.list().map((entry) => entry.title)).toEqual([text, text]);
+  expect(feed.unreadCount()).toBe(0);
+});
+
+test('keyless memory-pressure deliveries also receive unique notification identities', async () => {
+  const received: string[] = [];
+  const bus = new RuntimeEventBus();
+  const stop = wireMemoryPressureNotice(bus, { dispatch: (notice) => { received.push(notice.id); return { target: 'status_bar', reasonCode: 'allowed' }; } });
+  try {
+    const payload = { type: 'OPS_MEMORY_PRESSURE' as const, tier: 'high' as const, previousTier: 'elevated' as const, rssMb: 90, heapMb: 50, budgetMb: 100, usedPct: 90 };
+    const event = { ...createEventEnvelope(payload.type, payload, context), ts: 1000 };
+    bus.emit('ops', event); bus.emit('ops', event);
+    await Promise.resolve();
+    expect(received).toHaveLength(2);
+    expect(new Set(received).size).toBe(2);
+  } finally { stop(); }
 });

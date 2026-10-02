@@ -173,7 +173,7 @@ export function registerCodebaseRuntimeCommands(registry: CommandRegistry): void
     description: 'Repo source-tree code index: build, inspect, and search',
     usage: 'build | status | search <query...> [--limit n]',
     argsHint: 'build | status | search <query>',
-    handler(args: string[], ctx: CommandContext) {
+    async handler(args: string[], ctx: CommandContext) {
       const store = ctx.session.codeIndexStore;
       if (!store) {
         ctx.print('The code index is not available in this session.');
@@ -212,7 +212,7 @@ export function registerCodebaseRuntimeCommands(registry: CommandRegistry): void
           ctx.print('Usage: /codebase search <query...> [--limit n]');
           return;
         }
-        const results = store.search(query, limit !== undefined ? { limit } : undefined);
+        const results = await store.search(query, limit !== undefined ? { limit } : undefined);
         if (results.length === 0) {
           const stats = store.stats();
           ctx.print(

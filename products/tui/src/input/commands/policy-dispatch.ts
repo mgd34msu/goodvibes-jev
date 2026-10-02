@@ -11,6 +11,7 @@ import { createUnsignedBundle } from '@/runtime/index.ts';
 import type { PolicyBundlePayload } from '@/runtime/index.ts';
 import type { PolicyRule, PermissionsConfig, DivergenceStats } from '@/runtime/index.ts';
 import { requireShellPaths } from './runtime-services.ts';
+import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 
 function getPolicyState(ctx?: CommandContext): PolicyRuntimeState {
   const policyRuntimeState = ctx?.extensions.policyRuntimeState;
@@ -22,6 +23,14 @@ function getPolicyState(ctx?: CommandContext): PolicyRuntimeState {
 
 function getRegistry(ctx?: CommandContext) {
   return ctx?.extensions.policyRegistry ?? getPolicyState(ctx).getRegistry();
+}
+
+async function refreshLintAfterPolicyChange(context: CommandContext): Promise<void> {
+  try {
+    await getPolicyState(context).refreshLint(getRegistry(context));
+  } catch (error) {
+    context.print(`[policy] Policy change applied, but lint findings could not be refreshed: ${summarizeError(error)}`);
+  }
 }
 
 function fmtRate(rate: number): string {
@@ -70,6 +79,7 @@ async function handleLoad(args: string[], context: CommandContext): Promise<void
     policyState.notify();
     context.print(bundleSummary('[policy] Candidate loaded', candidate));
     context.print('[policy] Next: run `/policy simulate` to collect divergence evidence before promoting.');
+    await refreshLintAfterPolicyChange(context);
   }
 }
 
@@ -112,7 +122,11 @@ async function handleSimulate(args: string[], context: CommandContext): Promise<
   context.print('[policy] Use `/policy diff` to compare rules. When ready, run `/policy promote` to enforce (requires gate passing).');
   const report = simulator.getDivergenceReport();
   const gateResult = dashboard.checkEnforceGate();
-  const scenarioSummary = runPolicySimulationScenarios(simulator);
+  const scenarioSummary = await runPolicySimulationScenarios(simulator);
+  if (registry.getCandidate() !== candidateForSim || registry.getCurrent() !== current || policyState.getDashboard() !== dashboard) {
+    context.print('[policy] Simulation finished after the active policy changed; its results were not applied.');
+    return;
+  }
   registry.attachSimulationReport(report, gateResult);
   policyState.recordSimulationSummary(scenarioSummary);
   const candidate2 = registry.getCandidate();
@@ -181,9 +195,13 @@ async function handleLint(_args: string[], context: CommandContext): Promise<voi
     return;
   }
   const findings = [
-    ...(current ? lintPolicyConfig({ mode: 'custom', rules: current.rules }).map((finding) => ({ scope: 'current', ...finding })) : []),
-    ...(candidate ? lintPolicyConfig({ mode: 'custom', rules: candidate.rules }).map((finding) => ({ scope: 'candidate', ...finding })) : []),
+    ...(current ? (await lintPolicyConfig({ mode: 'custom', rules: current.rules })).map((finding) => ({ scope: 'current', ...finding })) : []),
+    ...(candidate ? (await lintPolicyConfig({ mode: 'custom', rules: candidate.rules })).map((finding) => ({ scope: 'candidate', ...finding })) : []),
   ];
+  if (registry.getCurrent() !== current || registry.getCandidate() !== candidate) {
+    context.print('[policy] Policy bundles changed while lint was running. Run `/policy lint` again.');
+    return;
+  }
   if (findings.length === 0) {
     context.print('[policy] No lint findings for the active or candidate bundles.');
     return;
@@ -200,9 +218,13 @@ async function handlePreflight(_args: string[], context: CommandContext): Promis
   const current = registry.getCurrent();
   const candidate = registry.getCandidate();
   const lintFindings = [
-    ...(current ? lintPolicyConfig({ mode: 'custom', rules: current.rules }) : []),
-    ...(candidate ? lintPolicyConfig({ mode: 'custom', rules: candidate.rules }) : []),
+    ...(current ? await lintPolicyConfig({ mode: 'custom', rules: current.rules }) : []),
+    ...(candidate ? await lintPolicyConfig({ mode: 'custom', rules: candidate.rules }) : []),
   ];
+  if (registry.getCurrent() !== current || registry.getCandidate() !== candidate) {
+    context.print('[policy] Policy bundles changed while preflight was running. Run `/policy preflight` again.');
+    return;
+  }
   const review = buildPolicyPreflightReview({
     config: context.platform.config,
     lintFindings,
@@ -246,6 +268,7 @@ async function handlePromote(args: string[], context: CommandContext): Promise<v
   }
   if (current) context.print(bundleSummary('[policy] Active bundle', current));
   policyState.notify();
+  await refreshLintAfterPolicyChange(context);
 }
 
 async function handleRollback(_args: string[], context: CommandContext): Promise<void> {
@@ -262,6 +285,7 @@ async function handleRollback(_args: string[], context: CommandContext): Promise
   policyState.setDashboard(null);
   policyState.notify();
   context.print('[policy] Simulation dashboard cleared. Run `/policy simulate` for the restored bundle.');
+  await refreshLintAfterPolicyChange(context);
 }
 
 async function handleStatus(_args: string[], context: CommandContext): Promise<void> {

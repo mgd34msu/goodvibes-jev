@@ -78,7 +78,7 @@ export async function handleRecallReview(args: string[], context: CommandContext
   context.print(`[recall] Reviewed ${record.id}: ${record.reviewState} ${record.confidence}%`);
 }
 
-export function handleRecallExplain(args: string[], context: CommandContext): void {
+export async function handleRecallExplain(args: string[], context: CommandContext): Promise<void> {
   const memory = getMemoryApi(context);
   if (!memory) {
     return;
@@ -95,7 +95,7 @@ export function handleRecallExplain(args: string[], context: CommandContext): vo
     context.print('[recall] Usage: /recall explain <task description...> [--scope <write-scope> ...]');
     return;
   }
-  const explanation = memory.explain(task, scopeValues);
+  const explanation = await memory.explain(task, scopeValues);
   if (explanation.injections.length === 0) {
     context.print('[recall] No reviewed project knowledge was selected for that task.');
     return;

@@ -1,95 +1,84 @@
 import { describe, expect, test } from 'bun:test';
-import { RuntimeEventBus, createEventEnvelope } from '@/runtime/index.ts';
+import { RuntimeEventBus, createEventEnvelope } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
 import {
-  createNotificationDispatcher,
-  wireRuntimeNotificationBridge,
-  personFacingEvent,
+  createNotificationDispatcher, wireRuntimeNotificationBridge,
+  personFacingEvent, NOTIFICATION_BRIDGE_DOMAINS,
 } from '../../runtime/notification-dispatch.ts';
 import { NotificationFeed } from '../../views/notifications-feed.ts';
 import { configGetStub } from '../helpers/config-manager-stub.ts';
+import { SAMPLES } from '../../../../../packages/engine/test/contract/event-samples.ts';
 
-// Nothing persisted: every key reads back undefined, so the dispatcher falls
-// through to its own defaults.
 const fakeConfig = { get: configGetStub() };
+const context = { sessionId: 'fixture-session', source: 'notification-dispatch-test' };
 
-describe('notification dispatch: the panel_only producer', () => {
-  test('a panel_only decision lands in the feed as a live item', () => {
+describe('notification dispatch: canonical runtime facts', () => {
+  test('a panel-only decision lands in the actual feed', () => {
     const feed = new NotificationFeed();
     const dispatcher = createNotificationDispatcher(fakeConfig, feed);
-    // Minimal verbosity keeps info notifications at the panel_only target.
     dispatcher.router.setDomainVerbosity('agents', 'minimal');
-
-    const decision = dispatcher.dispatch({
-      id: 'n1',
-      domain: 'agents',
-      level: 'info',
-      title: 'Agent completed',
-      timestamp: 1_000,
-    });
-
+    const decision = dispatcher.dispatch({ id: 'fixture-notification', domain: 'agents', level: 'info', title: 'Agent finished', timestamp: 1000 });
     expect(decision.target).toBe('panel_only');
-    const items = feed.list();
-    expect(items).toHaveLength(1);
-    expect(items[0]!.title).toBe('Agent completed');
-    expect(items[0]!.domain).toBe('agents');
+    expect(feed.list()).toMatchObject([{ title: 'Agent finished', domain: 'agents' }]);
   });
 
-  test('a real runtime event flows through the bus bridge into the notification feed', async () => {
+  test('canonical contract terminal events flow through the actual bus into the feed', async () => {
     const feed = new NotificationFeed();
     const dispatcher = createNotificationDispatcher(fakeConfig, feed);
-    dispatcher.router.setDomainVerbosity('agents', 'minimal');
     const bus = new RuntimeEventBus();
-    const unsubscribe = wireRuntimeNotificationBridge(bus, dispatcher, ['agents']);
-
-    bus.emit(
-      'agents',
-      createEventEnvelope('AGENT_COMPLETED', { type: 'AGENT_COMPLETED' } as never, { sessionId: 's', traceId: 't1', source: 'test' }),
-    );
-    // emit() defers each listener to a microtask.
-    await Promise.resolve();
-    await Promise.resolve();
-
-    const items = feed.list();
-    expect(items).toHaveLength(1);
-    expect(items[0]!.title).toBe('Agent finished');
-
-    unsubscribe();
+    const stop = wireRuntimeNotificationBridge(bus, dispatcher);
+    try {
+      for (const event of [SAMPLES.CONTRACT_PASSED, SAMPLES.CONTRACT_CANCELLED]) {
+        // Isolate occurrences from optional batch collapsing, using its public API.
+        dispatcher.router.setBatchWindowMs(1);
+        bus.emit('contracts', createEventEnvelope(event.type, event, context));
+        await Promise.resolve();
+      }
+      expect(feed.list().map((entry) => entry.title)).toEqual(['Workstream cancelled', 'Workstream passed']);
+      expect(feed.list().every((entry) => entry.domain === 'contracts' && entry.subject === 'agents')).toBe(true);
+      expect(feed.list()[0]?.level).toBe('info');
+    } finally { stop(); }
   });
 
-  test('internal events never enter the history; the person-facing ones keep plain names', async () => {
+  test('internal events and retired workflow types stay outside the bridge allowlist', async () => {
     const feed = new NotificationFeed();
     const dispatcher = createNotificationDispatcher(fakeConfig, feed);
-    dispatcher.router.setDomainVerbosity('agents', 'minimal');
-    dispatcher.router.setDomainVerbosity('workflows', 'minimal');
     const bus = new RuntimeEventBus();
-    const unsubscribe = wireRuntimeNotificationBridge(bus, dispatcher, ['agents', 'workflows']);
-    const emit = (domain: 'agents' | 'workflows', type: string, payload: Record<string, unknown> = {}, i = 0): void => {
-      bus.emit(domain, createEventEnvelope(type as never, { type, ...payload } as never, { sessionId: 's', traceId: `${type}-${i}`, source: 'test' }));
-    };
-
-    for (let i = 0; i < 40; i += 1) emit('agents', 'AGENT_STREAM_DELTA', {}, i);
-    emit('agents', 'AGENT_PROGRESS');
-    emit('agents', 'AGENT_RUNNING');
-    emit('workflows', 'WORKFLOW_GATE_RESULT');
-    emit('workflows', 'WORKFLOW_STATE_CHANGED');
-    emit('agents', 'AGENT_CANCELLED', { reason: 'stopped from the Agents view' });
-    for (let i = 0; i < 6; i += 1) await Promise.resolve();
-
-    const items = feed.list();
-    const text = items.map((item) => `${item.title} ${item.body ?? ''}`).join('\n');
-    expect(text).not.toMatch(/stream delta|gate result|progress|state changed|running/i);
-    expect(items).toHaveLength(1);
-    expect(items[0]!.title).toBe('Agent cancelled');
-    expect(items[0]!.body).toBe('stopped from the Agents view');
-
-    unsubscribe();
+    const stop = wireRuntimeNotificationBridge(bus, dispatcher);
+    try {
+      bus.emit('agents', createEventEnvelope('AGENT_PROGRESS', { type: 'AGENT_PROGRESS', agentId: 'agent-1', progress: 'Synthetic progress' }, context));
+      bus.emit('contracts', createEventEnvelope('CONTRACT_GATE_RESULT', SAMPLES.CONTRACT_GATE_RESULT, context));
+      bus.emit('contracts', createEventEnvelope('CONTRACT_STATUS_CHANGED', SAMPLES.CONTRACT_STATUS_CHANGED, context));
+      await Promise.resolve();
+      expect(feed.list()).toEqual([]);
+      expect(NOTIFICATION_BRIDGE_DOMAINS).toContain('contracts');
+      expect(NOTIFICATION_BRIDGE_DOMAINS).not.toContain('workflows');
+      for (const type of ['WORKFLOW_CHAIN_PASSED', 'WORKFLOW_CHAIN_FAILED', 'WORKFLOW_GATE_RESULT', 'CONTRACT_GATE_RESULT', 'UNKNOWN_EVENT', 'toString']) {
+        expect(personFacingEvent(type)).toBeUndefined();
+      }
+      expect(personFacingEvent('CONTRACT_FAILED')).toEqual({ title: 'Workstream failed', level: 'warning' });
+      expect(personFacingEvent('CONTRACT_CANCELLED')).toEqual({ title: 'Workstream cancelled', level: 'info' });
+    } finally { stop(); }
   });
 
-  test('the person-facing table is an allowlist with plain titles', () => {
-    expect(personFacingEvent('AGENT_STREAM_DELTA')).toBeUndefined();
-    expect(personFacingEvent('WORKFLOW_GATE_RESULT')).toBeUndefined();
-    expect(personFacingEvent('toString')).toBeUndefined();
-    expect(personFacingEvent('WORKFLOW_CHAIN_PASSED')).toEqual({ title: 'Review chain passed', level: 'info' });
-    expect(personFacingEvent('TASK_FAILED')?.level).toBe('warning');
+  for (const [status, title, level] of [
+    ['committed', 'Changes committed', 'info'], ['applied', 'Changes applied', 'info'],
+    ['skipped', 'Commit skipped', 'info'], ['failed', 'Commit failed', 'warning'],
+  ] as const) {
+    test(`commit ${status} uses the typed status despite contradictory note wording`, async () => {
+      const dispatched: Array<{ title: string; level: string; body?: string }> = [];
+      const bus = new RuntimeEventBus();
+      const stop = wireRuntimeNotificationBridge(bus, { dispatch: (notice) => { dispatched.push(notice); return { target: 'panel_only', reasonCode: 'allowed' }; } });
+      try {
+        bus.emit('contracts', createEventEnvelope('CONTRACT_COMMITTED', {
+          ...SAMPLES.CONTRACT_COMMITTED, status, note: 'Failed cancelled committed: synthetic prose with no semantic authority',
+        }, context));
+        await Promise.resolve();
+        expect(dispatched).toMatchObject([{ title, level, body: 'Failed cancelled committed: synthetic prose with no semantic authority' }]);
+      } finally { stop(); }
+    });
+  }
+
+  test('an unsupported commit status is not presented as a successful commit', () => {
+    expect(personFacingEvent('CONTRACT_COMMITTED', { status: 'unrecognized', note: 'Committed' })).toBeUndefined();
   });
 });

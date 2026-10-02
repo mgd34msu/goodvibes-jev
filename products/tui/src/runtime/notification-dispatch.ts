@@ -11,6 +11,7 @@
  * runtime event bus so real domain events become notifications.
  */
 
+import { randomUUID } from 'node:crypto';
 import { createNotificationRouter, type NotificationRouter } from '@goodvibes-jev/engine/sdk/platform/runtime/ui';
 import type { Notification, RoutingDecision, RuntimeEventBus, RuntimeEventDomain } from '@/runtime/index.ts';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -42,7 +43,7 @@ export interface NotificationDispatcher {
 export const NOTIFICATION_BRIDGE_DOMAINS: readonly RuntimeEventDomain[] = [
   'agents',
   'tasks',
-  'workflows',
+  'contracts',
   'automation',
   'deliveries',
   'security',
@@ -72,12 +73,12 @@ export const PERSON_FACING_EVENTS: Readonly<Record<string, PersonFacingEvent>> =
   TASK_FAILED: { title: 'Task failed', level: 'warning' },
   TASK_BLOCKED: { title: 'Task blocked', level: 'warning' },
   TASK_CANCELLED: { title: 'Task cancelled', level: 'info' },
-  // workflows (review chains)
-  WORKFLOW_CHAIN_PASSED: { title: 'Review chain passed', level: 'info' },
-  WORKFLOW_CHAIN_FAILED: { title: 'Review chain failed', level: 'warning' },
-  WORKFLOW_CASCADE_ABORTED: { title: 'Review chain stopped', level: 'warning' },
-  WORKFLOW_AUTO_COMMITTED: { title: 'Reviewed changes committed', level: 'info' },
-  WORKFLOW_SCORE_REGRESSION: { title: 'Review score dropped', level: 'warning' },
+  // contracts: cancellation and commit outcomes are distinct lifecycle facts.
+  CONTRACT_PASSED: { title: 'Workstream passed', level: 'info' },
+  CONTRACT_FAILED: { title: 'Workstream failed', level: 'warning' },
+  CONTRACT_CANCELLED: { title: 'Workstream cancelled', level: 'info' },
+  CONTRACT_COMMITTED: { title: 'Workstream commit updated', level: 'info' },
+  CONTRACT_CRITERION_REGRESSED: { title: 'Requirement regressed', level: 'warning' },
   // automation (scheduled jobs)
   AUTOMATION_RUN_COMPLETED: { title: 'Scheduled job finished', level: 'info' },
   AUTOMATION_RUN_FAILED: { title: 'Scheduled job failed', level: 'warning' },
@@ -98,7 +99,18 @@ export const PERSON_FACING_EVENTS: Readonly<Record<string, PersonFacingEvent>> =
 };
 
 /** The history entry an event type makes, or undefined for internal traffic that is not recorded. */
-export function personFacingEvent(type: string): PersonFacingEvent | undefined {
+export function personFacingEvent(type: string, payload?: unknown): PersonFacingEvent | undefined {
+  if (type === 'CONTRACT_COMMITTED' && payload && typeof payload === 'object') {
+    // This event reports all four commit results. Prose such as "committed"
+    // in a note cannot turn a skipped or failed result into a success.
+    switch ('status' in payload ? payload.status : undefined) {
+      case 'committed': return { title: 'Changes committed', level: 'info' };
+      case 'applied': return { title: 'Changes applied', level: 'info' };
+      case 'skipped': return { title: 'Commit skipped', level: 'info' };
+      case 'failed': return { title: 'Commit failed', level: 'warning' };
+      default: return undefined;
+    }
+  }
   return Object.prototype.hasOwnProperty.call(PERSON_FACING_EVENTS, type) ? PERSON_FACING_EVENTS[type] : undefined;
 }
 
@@ -111,7 +123,7 @@ export function eventDetail(payload: unknown): string | undefined {
     const value = record[field];
     if (typeof value === 'string' && value.trim()) return value.trim();
   }
-  const commit = record['commitHash'];
+  const commit = record['hash'] ?? record['commitHash'];
   if (typeof commit === 'string' && commit.trim()) return `commit ${commit.trim().slice(0, 7)}`;
   return undefined;
 }
@@ -167,12 +179,12 @@ export function wireMemoryPressureNotice(
     if (envelope.type !== 'OPS_MEMORY_PRESSURE') return;
     const payload = envelope.payload as MemoryPressurePayload;
     dispatcher.dispatch({
-      id: envelope.traceId ?? `ops-OPS_MEMORY_PRESSURE-${envelope.ts}`,
+      id: randomUUID(),
       domain: 'ops',
       level: memoryPressureLevel(payload),
       title: memoryPressureLine(payload),
       timestamp: envelope.ts,
-    });
+    }, runtimeEventKey(envelope.type, payload));
   });
 }
 
@@ -189,12 +201,17 @@ export function wireRuntimeNotificationBridge(
 ): () => void {
   const unsubscribes = domains.map((domain) =>
     runtimeBus.onDomain(domain, (envelope) => {
-      const event = personFacingEvent(envelope.type);
+      const event = personFacingEvent(envelope.type, envelope.payload);
       if (!event) return;
       const body = eventDetail(envelope.payload);
+      // Notification.id identifies this delivery only. A trace and timestamp
+      // can be shared by distinct outcomes; only runtimeEventKey is a proven
+      // cross-path occurrence key, and the current SDK deliberately leaves it
+      // undefined for these events. Keyless deliveries must all remain visible.
       dispatcher.dispatch({
-        id: envelope.traceId ?? `${domain}-${envelope.type}-${envelope.ts}`,
+        id: randomUUID(),
         domain,
+        ...(domain === 'contracts' ? { panelId: 'agents' } : {}),
         level: event.level,
         title: event.title,
         ...(body ? { body } : {}),

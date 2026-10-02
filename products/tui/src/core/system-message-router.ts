@@ -28,7 +28,7 @@
  * router.routeSystemMessage('[Session] Saved session abc123', 'high');
  * ```
  *
- * routeAuto() can be used as a drop-in replacement for
+ * await routeAuto() can be used in place of
  * conversation.addSystemMessage(): it classifies the message kind and priority
  * automatically before routing.
  *
@@ -199,8 +199,8 @@ export class SystemMessageRouter {
    *
    * @param message - Message text.
    */
-  routeAuto(message: string): void {
-    const priority: SystemMessagePriority = classifySystemMessagePriority(message);
+  async routeAuto(message: string): Promise<void> {
+    const priority = await classifySystemMessagePriority(message);
     this.routeTypedSystemMessage(message, priority, classifySystemMessageKind(message));
   }
 

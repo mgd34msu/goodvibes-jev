@@ -36,7 +36,7 @@ import type { SystemMessagePriority } from '../core/system-message-router.ts';
 import { SessionSpineClient, SessionUnionCache, TUI_SPINE_PARTICIPANT } from '@goodvibes-jev/engine/sdk/platform/runtime/session-spine';
 import { SessionInboundInputPoller, createBootstrapInboundInputPoller } from './session-inbound-inputs.ts';
 import { trustGatedAsk, type WorkspaceTrustLevel } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
-import { createRuntimeNotifier, syncNotifierQueueIntegrations } from './bootstrap-notifier-sync.ts';
+import { attachTypedRuntimeNotifications, createRuntimeNotifier, syncNotifierQueueIntegrations } from './bootstrap-notifier-sync.ts';
 
 // --- Pre-router buffer ---
 
@@ -587,12 +587,12 @@ export async function initializeBootstrapCore(
   // constructing a second, boot-time-only instance here. Before this fix, a
   // webhook URL added mid-session reached long-task notifications (which read
   // ctx.services.webhookNotifier directly) but never reached this instance's
-  // AGENT_FAILED/WORKFLOW_CHAIN_FAILED/WORKFLOW_CHAIN_PASSED runtime-bus
+  // AGENT_FAILED/CONTRACT_FAILED/CONTRACT_PASSED runtime-bus
   // listeners until restart, and if the session started with zero URLs
-  // configured, attachToRuntimeBus was never even called, so those listeners
+  // configured, no event adapter was ever attached, so those listeners
   // never existed at all for the rest of the session. Always attaching
   // (regardless of initial URL count) and seeding the shared instance fixes
-  // both: `send()` is already a safe no-op with zero URLs configured.
+  // both: `sendNotification()` is already a safe no-op with zero URLs configured.
   const webhookUrls = (configManager.getCategory('notifications') as { webhookUrls?: string[] }).webhookUrls ?? [];
   if (webhookUrls.length > 0) {
     services.webhookNotifier.setUrls(webhookUrls);
@@ -607,10 +607,14 @@ export async function initializeBootstrapCore(
       meta: { urlCount: webhookUrls.length },
     }, 'bootstrap.webhooks');
   }
-  services.webhookNotifier.attachToRuntimeBus(runtimeBus);
+  runtimeUnsubs.push(attachTypedRuntimeNotifications(services.webhookNotifier, runtimeBus));
 
-  const notifier = await createRuntimeNotifier(services.serviceRegistry, (key) => configManager.get(key as Parameters<typeof configManager.get>[0]));
-  syncNotifierQueueIntegrations(notifier, runtimeBus, domainDispatch);
+  const notifier = await createRuntimeNotifier(services.serviceRegistry, () => {
+    const behavior: unknown = configManager.getCategory('behavior');
+    return behavior && typeof behavior === 'object' && 'notificationsMetadataOnly' in behavior
+      ? behavior.notificationsMetadataOnly : undefined;
+  });
+  runtimeUnsubs.push(syncNotifierQueueIntegrations(notifier, runtimeBus, domainDispatch));
 
   await syncConfiguredServices(domainDispatch.syncIntegration, services.serviceRegistry);
 

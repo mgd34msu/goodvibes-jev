@@ -23,7 +23,7 @@
  * base policy already resolved to "ask", it can never turn a deny into an allow,
  * and the frozen catastrophic block is untouched.
  */
-import { decideSandboxedExec } from '@goodvibes-jev/engine/sdk/platform/runtime/permissions/sandbox-policy';
+import { decideSandboxedExec, readCommandNeeds } from '@goodvibes-jev/engine/sdk/platform/runtime/permissions/sandbox-policy';
 import { detectSandboxAvailability, probeSandboxHost, type SandboxAvailability } from '@goodvibes-jev/engine/sdk/platform/tools/exec/sandbox';
 import type {
   PermissionPromptRequest,
@@ -114,7 +114,7 @@ export function createSandboxExecAsk(deps: SandboxExecAskDeps, ask: AskCallback)
     return cachedAvailability;
   };
 
-  return (request) => {
+  return async (request) => {
     if (!isExecRequest(request)) return ask(request);
     const commands = extractExecCommands(request);
     if (commands.length === 0) return ask(request);
@@ -126,9 +126,9 @@ export function createSandboxExecAsk(deps: SandboxExecAskDeps, ask: AskCallback)
     if (!sandboxActive) return ask(request);
 
     const egressAllowlist = deps.readEgressAllowlist();
-    const decisions = commands.map((command) =>
-      decideSandboxedExec({ command, sandboxActive: true, egressAllowlist, baseEffectWhenNotSandboxed: 'ask' }),
-    );
+    const decisions = await Promise.all(commands.map(async (command) =>
+      decideSandboxedExec({ command, needs: await readCommandNeeds(command), sandboxActive: true, egressAllowlist, baseEffectWhenNotSandboxed: 'ask' }),
+    ));
 
     // A batch auto-allows only when EVERY command is boundary-safe. If any needs
     // host access, the whole ask surfaces with the union of named escalations.

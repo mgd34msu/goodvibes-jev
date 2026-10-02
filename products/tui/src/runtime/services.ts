@@ -37,7 +37,7 @@
  * two disagree the daemon's record is the truth, and the client seams in
  * runtime/client/ are what keep them in step.
  */
-import { FocusTracker } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
+import { FocusTracker, readNotificationsMetadataOnly } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { AutomationDeliveryManager, AutomationManager } from '@goodvibes-jev/engine/sdk/platform/automation';
 import { ChannelPolicyManager } from '@goodvibes-jev/engine/sdk/platform/channels';
 import { ApprovalBroker, GatewayMethodCatalog, SharedSessionBroker } from '@goodvibes-jev/engine/sdk/platform/control-plane';
@@ -413,7 +413,13 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   const tokenAuditor = new ApiTokenAuditor({ managed: false, featureFlags });
   const componentHealthMonitor = new ComponentHealthMonitor();
   const worktreeRegistry = new WorktreeRegistry(workingDirectory);
-  const webhookNotifier = new WebhookNotifier();
+  const webhookNotifier = new WebhookNotifier([], {
+    metadataOnly: () => readNotificationsMetadataOnly(() => {
+      const behavior: unknown = configManager.getCategory('behavior');
+      return behavior && typeof behavior === 'object' && 'notificationsMetadataOnly' in behavior
+        ? behavior.notificationsMetadataOnly : undefined;
+    }),
+  });
   const focusTracker = new FocusTracker();
   const replayEngine = new DeterministicReplayEngine(workingDirectory);
   const providerOptimizer = client.providerOptimizer;

@@ -1,77 +1,44 @@
-/**
- * A workstream's desktop notification names the outcome, not the chain.
- *
- * These three notifications used to read `GoodVibes, WRFC chain failed` /
- * `chain 7f3a91c02b4e failed: review rejected`. A notification is a message to
- * a person, so it carries neither the internal name for the machinery nor a
- * register id, plain language only.
- */
 import { describe, expect, test } from 'bun:test';
 import { workstreamFailureNotification } from '@/core/workstream-notification.ts';
 
-const CHAIN_ID = 'chain-abcdef123456';
-
-describe('a workstream notification carries no identifier', () => {
-  const cases = [
-    { name: 'an ordinary failure', payload: { reason: 'review rejected', failureKind: 'other' as const } },
-    { name: 'a transport failure', payload: { reason: 'ECONNRESET', failureKind: 'transport' as const } },
-    { name: 'an operator cancellation', payload: { reason: 'operator cancellation: 2 files already modified on disk', failureKind: 'cancelled' as const } },
-    { name: 'a spent turn budget', payload: { reason: 'agent reached the turn limit of 50', failureKind: 'max_turns' as const, turnLimit: 50, turnLimitSource: 'default' as const } },
-    { name: 'an unclassified failure', payload: { reason: 'the gates never went green' } },
-  ];
-
-  for (const { name, payload } of cases) {
-    test(`${name} names neither the machinery nor a chain id`, () => {
-      const { title, body } = workstreamFailureNotification(payload);
-      const text = `${title}\n${body}`;
-      expect(text).not.toContain('WRFC');
-      expect(text).not.toContain(CHAIN_ID);
-      expect(text).not.toContain(CHAIN_ID.slice(0, 12));
-      // "chain" as a word for the work is internal vocabulary too.
-      expect(text.toLowerCase()).not.toContain('chain');
-      expect(title).toContain('workstream');
-      expect(body.trim().length).toBeGreaterThan(0);
-    });
-  }
-});
-
-describe('the notification still says what happened', () => {
-  test('an operator cancellation is narrated as cancelled, not as a failure', () => {
-    const { title, body } = workstreamFailureNotification({
-      reason: 'operator cancellation: 2 files already modified on disk',
-      failureKind: 'cancelled',
-    });
-    expect(title).toContain('cancelled');
-    expect(title).not.toContain('failed');
-    expect(body).toContain('2 files already modified on disk');
+const rich = { metadataOnly: false };
+describe('contract desktop notification facts', () => {
+  test('the cancellation event is distinct from failure even when its reason sounds like a failure', () => {
+    const notice = workstreamFailureNotification({ type: 'CONTRACT_CANCELLED', reason: 'failed checks; the owner stopped work', filesModified: 2 }, rich);
+    expect(notice.title).toBe('GoodVibes: workstream cancelled');
+    expect(notice.body).toBe('Cancelled: failed checks; the owner stopped work');
   });
-
-  test('a spent turn budget reports the limit and where it came from', () => {
-    const { title, body } = workstreamFailureNotification({
-      reason: 'agent reached the turn limit of 50',
-      failureKind: 'max_turns',
-      turnLimit: 50,
-      turnLimitSource: 'default',
-    });
-    expect(title).toContain('turn budget');
-    expect(body).toContain('50');
+  test('a failure reason that starts with cancellation stays a failure', () => {
+    const notice = workstreamFailureNotification({ type: 'CONTRACT_FAILED', reason: 'Cancelled upstream operation', failureKind: 'other' }, rich);
+    expect(notice.title).toBe('GoodVibes: workstream failed');
+    expect(notice.body).toBe('Failed: Cancelled upstream operation');
   });
-
-  test('a transport failure is named as transient rather than quoting the raw error', () => {
-    const { body } = workstreamFailureNotification({ reason: 'ECONNRESET', failureKind: 'transport' });
-    expect(body).toContain('transient transport error');
-    expect(body).not.toContain('ECONNRESET');
+  test('turn budget reads the actual typed limit and source, with no reason parsing', () => {
+    const notice = workstreamFailureNotification({ type: 'CONTRACT_FAILED', reason: 'unrelated prose', failureKind: 'max_turns', turnLimit: 50, turnLimitSource: 'policy-bound' }, rich);
+    expect(notice.title).toContain('turn budget');
+    expect(notice.body).toContain('50 turns');
+    expect(notice.body).toContain('policy cap');
+    expect(notice.body).not.toContain('unrelated prose');
   });
-
-  test('an ordinary failure carries the reason the reader can act on', () => {
-    const { title, body } = workstreamFailureNotification({ reason: 'review rejected', failureKind: 'other' });
-    expect(title).toContain('failed');
-    expect(body).toContain('review rejected');
+  test('transport classification uses a static reason', () => {
+    expect(workstreamFailureNotification({ type: 'CONTRACT_FAILED', reason: 'private raw error', failureKind: 'transport' }, rich).body).toBe('Failed: transient transport error');
   });
-
-  test('two workstreams ending at once are told apart by their reasons', () => {
-    const one = workstreamFailureNotification({ reason: 'the typecheck gate failed', failureKind: 'other' });
-    const two = workstreamFailureNotification({ reason: 'review scored 4 out of 10', failureKind: 'other' });
-    expect(one.body).not.toBe(two.body);
+  test('the public failure kinds are accepted without inventing a review score', () => {
+    for (const failureKind of ['planning', 'budget', 'owner-rejected', 'judgment-unavailable', 'zombie', 'other'] as const) {
+      const notice = workstreamFailureNotification({ type: 'CONTRACT_FAILED', reason: 'A requirement was not met', failureKind }, { ...rich, task: 'Repair notification delivery' });
+      expect(notice.title).toBe('Workstream failed: Repair notification delivery');
+      expect(notice.body).toBe('Failed: A requirement was not met');
+      expect(JSON.stringify(notice)).not.toMatch(/chain|WRFC|last review/);
+    }
+  });
+  test('missing or restricted privacy never reads the task or reason getters', () => {
+    for (const metadataOnly of [undefined, true]) {
+      let privateReads = 0;
+      const notice = workstreamFailureNotification({ type: 'CONTRACT_FAILED', failureKind: 'other', get reason() { privateReads++; throw new Error('private'); } }, {
+        metadataOnly, get task() { privateReads++; throw new Error('private'); },
+      });
+      expect(privateReads).toBe(0);
+      expect(notice).toEqual({ title: 'GoodVibes: workstream failed', body: 'Failed' });
+    }
   });
 });

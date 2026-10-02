@@ -1,3 +1,4 @@
+import { makeTestWebhookNotifier } from '../helpers/notification-transport.ts';
 /**
  * Tests for src/core/long-task-notifier.ts
  *
@@ -6,7 +7,7 @@
  * - Off-state (thresholdSeconds === 0)
  * - Content privacy pin: message never includes conversation text
  * - Platform-absent fallback (notifyCompletion throws, must not propagate)
- * - Delivery-router path: webhookNotifier.send() called when URLs configured
+ * - Delivery-router path: webhookNotifier.sendNotification() called when URLs configured
  * - No notification when webhookNotifier has no URLs
  */
 
@@ -23,19 +24,8 @@ import { FocusTracker } from '@goodvibes-jev/engine/sdk/platform/runtime/operati
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Minimal fake WebhookNotifier that captures send() calls and exposes getUrls(). */
-function makeFakeNotifier(urls: string[] = []) {
-  const sentMessages: string[] = [];
-  const notifier = {
-    getUrls: () => [...urls],
-    send: mock(async (text: string) => {
-      sentMessages.push(text);
-      return {};
-    }),
-    _sentMessages: sentMessages,
-  };
-  return notifier;
-}
+/** Real WebhookNotifier with a synthetic HTTP transport and exposes getUrls(). */
+const makeFakeNotifier = makeTestWebhookNotifier;
 
 /** A stub configGet that returns value for a given key, undefined otherwise. */
 function makeConfigGet(overrides: Record<string, unknown> = {}) {
@@ -113,7 +103,7 @@ describe('maybeNotifyLongTask: off-state', () => {
       webhookNotifier: notifier as unknown as import('@goodvibes-jev/engine/sdk/platform/integrations').WebhookNotifier,
     });
     expect(result).toBe(false);
-    expect(notifier.send).not.toHaveBeenCalled();
+    expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 
 });
@@ -146,7 +136,7 @@ describe('maybeNotifyLongTask: content privacy pin', () => {
     expect(sentText).toContain('turn');
     expect(sentText).toContain('2m');
     // sessionId is truncated to first 8 chars for brevity
-    expect(sentText).toContain('sess-caf');
+    expect(sentText).not.toContain('sess-caf');
     // Must NOT be empty (it carried a real message)
     expect(sentText.length).toBeGreaterThan(10);
     // Negative assertion: the sentinel text must never appear.
@@ -196,7 +186,7 @@ describe('maybeNotifyLongTask: platform-absent fallback', () => {
 // ---------------------------------------------------------------------------
 
 describe('maybeNotifyLongTask: webhook delivery', () => {
-  test('calls webhookNotifier.send() when URLs are configured and threshold exceeded', async () => {
+  test('calls webhookNotifier.sendNotification() when URLs are configured and threshold exceeded', async () => {
     const notifier = makeFakeNotifier(['https://ntfy.sh/my-topic']);
     maybeNotifyLongTask({
       elapsedMs: 120_000,
@@ -207,10 +197,10 @@ describe('maybeNotifyLongTask: webhook delivery', () => {
       webhookNotifier: notifier as unknown as import('@goodvibes-jev/engine/sdk/platform/integrations').WebhookNotifier,
     });
     // send() is called synchronously (fire-and-forget promise); verify call count
-    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
   });
 
-  test('does NOT call webhookNotifier.send() when below threshold', () => {
+  test('does NOT call webhookNotifier.sendNotification() when below threshold', () => {
     const notifier = makeFakeNotifier(['https://ntfy.sh/my-topic']);
     maybeNotifyLongTask({
       elapsedMs: 30_000,
@@ -220,10 +210,10 @@ describe('maybeNotifyLongTask: webhook delivery', () => {
       thresholdSeconds: 60,
       webhookNotifier: notifier as unknown as import('@goodvibes-jev/engine/sdk/platform/integrations').WebhookNotifier,
     });
-    expect(notifier.send).not.toHaveBeenCalled();
+    expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 
-  test('does NOT call webhookNotifier.send() when notifier has no URLs', () => {
+  test('does NOT call webhookNotifier.sendNotification() when notifier has no URLs', () => {
     const notifier = makeFakeNotifier([]); // no URLs configured
     maybeNotifyLongTask({
       elapsedMs: 120_000,
@@ -233,12 +223,11 @@ describe('maybeNotifyLongTask: webhook delivery', () => {
       thresholdSeconds: 60,
       webhookNotifier: notifier as unknown as import('@goodvibes-jev/engine/sdk/platform/integrations').WebhookNotifier,
     });
-    expect(notifier.send).not.toHaveBeenCalled();
+    expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 
-  test('does NOT throw when webhookNotifier.send() rejects', async () => {
-    const notifier = makeFakeNotifier(['https://ntfy.sh/topic']);
-    notifier.send = mock(async () => { throw new Error('network error'); });
+  test('does NOT throw when webhookNotifier.sendNotification() rejects', async () => {
+    const notifier = makeFakeNotifier(['https://example.com/failed-notification'], { failure: new Error('synthetic transport failure') });
     expect(() =>
       maybeNotifyLongTask({
         elapsedMs: 120_000,
@@ -286,7 +275,7 @@ describe('maybeNotifyLongTask: focus gating', () => {
       configGet: makeConfigGet({}),
     });
     expect(result).toBe(true);
-    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
   });
 
   test('fires when focus was never observed (unknown)', () => {
@@ -320,7 +309,7 @@ describe('maybeNotifyLongTask: focus gating', () => {
       configGet: makeConfigGet({}),
     });
     expect(result).toBe(false);
-    expect(notifier.send).not.toHaveBeenCalled();
+    expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 
   test('fires even when focused, when notifyOnlyWhenUnfocused is off', () => {
@@ -338,7 +327,7 @@ describe('maybeNotifyLongTask: focus gating', () => {
       configGet: makeConfigGet({ 'behavior.notifyOnlyWhenUnfocused': false }),
     });
     expect(result).toBe(true);
-    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
   });
 
   test('behavior before focus gating existed is preserved: always fires when focusTracker/configGet are both omitted', () => {
@@ -352,7 +341,7 @@ describe('maybeNotifyLongTask: focus gating', () => {
       webhookNotifier: notifier as unknown as import('@goodvibes-jev/engine/sdk/platform/integrations').WebhookNotifier,
     });
     expect(result).toBe(true);
-    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
   });
 });
 

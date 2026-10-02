@@ -1,3 +1,4 @@
+import { makeTestWebhookNotifier } from '../helpers/notification-transport.ts';
 /**
  * Tests for src/core/approval-alert.ts
  *
@@ -17,22 +18,15 @@ import type { PermissionPromptRequest } from '@goodvibes-jev/engine/sdk/platform
 function makeRequest(overrides: Partial<PermissionPromptRequest> = {}): PermissionPromptRequest {
   return {
     callId: 'call-1',
-    tool: 'bash',
+    tool: 'exec',
     args: { command: 'rm -rf /SECRET_PATH_xyzzy' },
-    category: 'shell' as PermissionPromptRequest['category'],
+    category: 'execute' as PermissionPromptRequest['category'],
     analysis: {} as PermissionPromptRequest['analysis'],
     ...overrides,
   };
 }
 
-function makeSpyNotifier(urls: string[] = ['https://ntfy.sh/topic']) {
-  const sent: string[] = [];
-  return {
-    getUrls: () => [...urls],
-    send: mock(async (text: string) => { sent.push(text); return {}; }),
-    _sent: sent,
-  } as unknown as import('@goodvibes-jev/engine/sdk/platform/integrations').WebhookNotifier & { _sent: string[] };
-}
+const makeSpyNotifier = makeTestWebhookNotifier;
 
 function makeConfigGet(overrides: Record<string, unknown> = {}) {
   return (key: string): unknown => overrides[key];
@@ -62,7 +56,7 @@ describe('wrapRequestPermissionWithAlert', () => {
       webhookNotifier: notifier,
     });
     await wrapped(makeRequest());
-    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
   });
 
   test('fires when focus was never observed (unknown)', async () => {
@@ -74,7 +68,7 @@ describe('wrapRequestPermissionWithAlert', () => {
       webhookNotifier: notifier,
     });
     await wrapped(makeRequest());
-    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
   });
 
   test('suppressed when focused and notifyOnlyWhenUnfocused is true (default)', async () => {
@@ -87,7 +81,7 @@ describe('wrapRequestPermissionWithAlert', () => {
       webhookNotifier: notifier,
     });
     await wrapped(makeRequest());
-    expect(notifier.send).not.toHaveBeenCalled();
+    expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 
   test('fires even when focused, when the master gate is off', async () => {
@@ -100,7 +94,7 @@ describe('wrapRequestPermissionWithAlert', () => {
       webhookNotifier: notifier,
     });
     await wrapped(makeRequest());
-    expect(notifier.send).toHaveBeenCalledTimes(1);
+    expect(notifier.sendNotification).toHaveBeenCalledTimes(1);
   });
 
   test('never fires when notifyOnApprovalPending is off, regardless of focus', async () => {
@@ -113,7 +107,7 @@ describe('wrapRequestPermissionWithAlert', () => {
       webhookNotifier: notifier,
     });
     await wrapped(makeRequest());
-    expect(notifier.send).not.toHaveBeenCalled();
+    expect(notifier.sendNotification).not.toHaveBeenCalled();
   });
 
   test('with behavior.notificationsMetadataOnly on, message is tool name and category only, never raw args content', async () => {
@@ -125,10 +119,10 @@ describe('wrapRequestPermissionWithAlert', () => {
       configGet: makeConfigGet({ 'behavior.notificationsMetadataOnly': true }),
       webhookNotifier: notifier,
     });
-    await wrapped(makeRequest({ tool: 'edit', category: 'file-write' as PermissionPromptRequest['category'] }));
+    await wrapped(makeRequest({ tool: 'edit', category: 'write' as PermissionPromptRequest['category'] }));
     const sent = notifier._sent[0] ?? '';
     expect(sent).toContain('edit');
-    expect(sent).toContain('file-write');
+    expect(sent).toContain('write');
     expect(sent).not.toContain('SECRET_PATH_xyzzy');
   });
 
@@ -153,11 +147,11 @@ describe('wrapRequestPermissionWithAlert', () => {
       webhookNotifier: null,
       terminalNotifier: { notify: (signal, message) => { calls.push({ signal, message }); } },
     });
-    await wrapped(makeRequest({ tool: 'edit', category: 'file-write' as PermissionPromptRequest['category'] }));
+    await wrapped(makeRequest({ tool: 'edit', category: 'write' as PermissionPromptRequest['category'] }));
     expect(calls).toHaveLength(1);
     expect(calls[0]!.signal).toBe('approval-wait');
     expect(calls[0]!.message).toContain('edit');
-    expect(calls[0]!.message).toContain('file-write');
+    expect(calls[0]!.message).toContain('write');
     expect(calls[0]!.message).not.toContain('SECRET_PATH_xyzzy');
   });
 });

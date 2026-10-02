@@ -1,341 +1,165 @@
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createAgentTool, AgentManager } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { AgentMessageBus, WrfcController } from '@goodvibes-jev/engine/sdk/platform/agents';
-import { RuntimeEventBus } from '@/runtime/index.ts';
-import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { normalizeWrfcAgentToolInvocation, wrapWrfcAgentTool } from '../../tools/wrfc-agent-guard.ts';
+import { AgentMessageBus, ArchetypeLoader } from '@goodvibes-jev/engine/sdk/platform/agents';
+import { ContractStore, createContractRunner } from '@goodvibes-jev/engine/sdk/platform/contract';
+import { RuntimeEventBus } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
+import type { AgentEvent } from '@goodvibes-jev/engine/sdk/events';
+import { configGetStub, configGetCategoryStub } from '../helpers/config-manager-stub.ts';
+import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
-// Drain queued microtasks so bus.emit() listeners (OBS-14 async dispatch) run before assertions.
-const flushMicrotasks = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
+/** Actual public tool/manager/buses/store/runner; only execution is synthetic. */
 function makeAgentHarness() {
-  const configDir = join(tmpdir(), `gv-agent-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  const configManager = new ConfigManager({ surfaceRoot: 'tui',  configDir });
+  const projectRoot = makeProjectTempDir('gv-agent-public-lifecycle');
+  const configManager = {
+    get: configGetStub({ 'fleet.maxSize': 8, 'agents.maxActive': 8, 'orchestration.maxDepth': 1, 'orchestration.recursionEnabled': true }),
+    getCategory: configGetCategoryStub({ contract: { isolation: 'shared', gates: [] } }),
+  };
   const runtimeBus = new RuntimeEventBus();
   const messageBus = new AgentMessageBus();
+  messageBus.setRuntimeBus(runtimeBus);
+  const archetypeLoader = new ArchetypeLoader();
+  const releases = new Map<string, () => void>();
+  const running: Promise<void>[] = [];
   const manager = new AgentManager({
-    messageBus,
-    configManager,
+    messageBus, configManager, archetypeLoader,
+    executor: {
+      runAgent(record) {
+        record.status = 'running';
+        const pending = new Promise<void>((resolve) => { releases.set(record.id, resolve); });
+        running.push(pending);
+        return pending;
+      },
+    },
   });
   manager.setRuntimeBus(runtimeBus);
-  const wrfcController = new WrfcController(runtimeBus, messageBus, {
-    agentManager: manager,
-    configManager,
-    projectRoot: configDir,
-    fixWorkstreamRunner: { run: async () => ({ status: 'failed', reason: 'agent tool tests run no fix cycles', structured: 'tasks-failed' }) },
+  const store = new ContractStore({ projectRoot, sweepIntervalMs: 0 });
+  const unexpectedPlanning = (): never => { throw new Error('This ordinary-agent fixture must not execute contract planning'); };
+  const contractRunner = createContractRunner({
+    agentManager: manager, messageBus, runtimeBus, configManager, projectRoot, store,
+    routeSelector: async () => unexpectedPlanning(),
+    decompositionRunner: { run: async () => unexpectedPlanning() },
+    createEngine: unexpectedPlanning,
+    fleetCapacity: () => ({ active: manager.list().filter((agent) => agent.status === 'running').length, maxSize: 8, capKey: 'fleet.maxSize' }),
+    priceUsage: () => null, priceProvenance: () => null,
   });
-  manager.setWrfcController(wrfcController);
-  const agentTool = createAgentTool({
-    manager,
-    messageBus,
-    configManager,
-  });
-  wrapWrfcAgentTool(agentTool);
-  return { agentTool, manager, messageBus, configManager };
+  manager.setContractRunner(contractRunner);
+  const agentTool = createAgentTool({ manager, messageBus, configManager, archetypeLoader, contractRunner, projectRoot, resolveSessionId: () => 'synthetic-session' });
+  return { agentTool, manager, messageBus, runtimeBus, contractRunner, async dispose() {
+    for (const record of manager.list()) manager.cancel(record.id);
+    for (const release of releases.values()) release();
+    await Promise.all(running);
+    contractRunner.dispose();
+    store.dispose();
+  } };
 }
 
-let harness = makeAgentHarness();
+let harness: ReturnType<typeof makeAgentHarness>;
+beforeEach(() => { harness = makeAgentHarness(); });
+afterEach(async () => { await harness.dispose(); });
 
 async function runAgent(args: Record<string, unknown>) {
   const result = await harness.agentTool.execute(args);
-  if (!result.success) throw new Error(result.error ?? 'agent tool failed');
-  return JSON.parse(result.output!) as Record<string, unknown>;
+  expect(result.success).toBe(true);
+  if (!result.success || !result.output) throw new Error(result.error ?? 'Agent tool produced no result');
+  return JSON.parse(result.output) as Record<string, unknown>;
+}
+function spawn(task: string, extra: Record<string, unknown> = {}) {
+  // The public API now requires this explicit flag for ordinary direct agents;
+  // default spawn goes through the contract runner and is covered in the SDK.
+  return runAgent({ mode: 'spawn', task, outsideContract: true, ...extra });
 }
 
-// ---------------------------------------------------------------------------
-// Setup: reset shared test helper state between tests
-// ---------------------------------------------------------------------------
+describe('ordinary agent lifecycle through the public tool', () => {
+  test('spawn and get preserve the task, template, and direct execution state', async () => {
+    const started = await spawn('Inspect package metadata', { template: 'researcher' });
+    const record = await runAgent({ mode: 'get', agentId: started.agentId });
+    expect(record).toMatchObject({ id: started.agentId, task: 'Inspect package metadata', template: 'researcher', reviewMode: 'none', status: 'running', contractId: null });
+    expect(harness.contractRunner.list({ includeTerminal: true })).toEqual([]);
+  });
 
-beforeEach(() => {
-  harness = makeAgentHarness();
-  harness.configManager.set('fleet.maxSize', 8);
-  harness.configManager.set('orchestration.maxDepth', 1);
-  harness.configManager.set('orchestration.recursionEnabled', true);
-});
-
-// ---------------------------------------------------------------------------
-// spawn
-// ---------------------------------------------------------------------------
-
-describe('spawn mode', () => {
-
-  test('plain spawn does not implicitly start WRFC', async () => {
-    const result = await runAgent({ mode: 'spawn', task: 'Inspect one thing with a normal agent' });
-    const record = await runAgent({ mode: 'get', agentId: result.agentId as string });
+  test('a direct reviewer remains a reviewer instead of being rewritten into a removed owner role', async () => {
+    const started = await spawn('Review a synthetic change', { template: 'reviewer' });
+    const record = await runAgent({ mode: 'get', agentId: started.agentId });
+    expect(record.template).toBe('reviewer');
     expect(record.reviewMode).toBe('none');
+    expect(record.contractId).toBeNull();
   });
 
-  test('spawn with reviewer template normalizes into a WRFC owner chain', async () => {
-    const result = await runAgent({ mode: 'spawn', task: 'Review code', template: 'reviewer' });
-    expect(result.template).toBe('engineer');
-    expect(result.reviewMode).toBe('wrfc');
-    expect(result.task).toBe('Review code');
-    expect(result.authoritativeWrfcChain).toBe(true);
-    expect(result.continueRootSpawning).toBe(false);
-    expect(result.orchestrationStopSignal).toBe('wrfc_owner_chain_started');
-    expect(result.wrfcRole).toBe('owner');
-    expect(result.wrfcRouteReason).toBe('root-review-role-normalized');
-    expect(result.successCriteria).toContain('Keep the work as one WRFC owner chain; review, test, verification, and fix phases must remain lifecycle children.');
+  test('batch spawn preserves each requested tool restriction', async () => {
+    const result = await runAgent({ mode: 'batch-spawn', outsideContract: true, tasks: [
+      { task: 'Inspect package metadata', template: 'engineer', tools: ['read', 'find'], restrictTools: true },
+      { task: 'Inspect tests', template: 'engineer', tools: ['read'], restrictTools: true },
+    ] });
+    const agents = result.agents as Array<{ id: string }>;
+    expect(agents).toHaveLength(2);
+    expect((await runAgent({ mode: 'get', agentId: agents[0]!.id })).tools).toEqual(['read', 'find']);
+    expect((await runAgent({ mode: 'get', agentId: agents[1]!.id })).tools).toEqual(['read']);
+    expect(harness.contractRunner.list({ includeTerminal: true })).toEqual([]);
   });
 
-  test('exact WRFC review root request from live repro normalizes into owner chain', async () => {
-    const result = await runAgent({
-      mode: 'spawn',
-      task: 'WRFC review for a token bucket rate limiter',
-      template: 'reviewer',
-      reviewMode: 'wrfc',
-      tools: ['read', 'find'],
-      restrictTools: true,
+  test('a child inherits the parent capability ceiling and keeps its execution requirements', async () => {
+    const parent = await spawn('Inspect the project', { tools: ['read', 'find'], restrictTools: true });
+    const child = await spawn('Inspect a subdirectory', {
+      parentAgentId: parent.agentId, tools: ['read', 'exec', 'find'], restrictTools: true,
+      successCriteria: ['answer the question'], requiredEvidence: ['file list'], writeScope: ['src/runtime'],
+      executionProtocol: 'gather-plan-apply', communicationLane: 'parent-only',
     });
-
-    expect(result.template).toBe('engineer');
-    expect(result.reviewMode).toBe('wrfc');
-    expect(result.task).toBe('WRFC review for a token bucket rate limiter');
-    expect(result.authoritativeWrfcChain).toBe(true);
-    expect(result.continueRootSpawning).toBe(false);
-    expect(result.orchestrationStopSignal).toBe('wrfc_owner_chain_started');
-    expect(result.wrfcRole).toBe('owner');
-    expect(result.wrfcRouteReason).toBe('root-review-role-normalized');
-    expect(result.successCriteria).toContain('Keep the work as one WRFC owner chain; review, test, verification, and fix phases must remain lifecycle children.');
-    expect(harness.manager.list().filter((record) => record.parentAgentId == null)).toHaveLength(1);
+    expect(child).toMatchObject({ tools: ['read', 'find'], capabilityCeilingTools: ['read', 'find'], parentAgentId: parent.agentId,
+      successCriteria: ['answer the question'], requiredEvidence: ['file list'], writeScope: ['src/runtime'],
+      executionProtocol: 'gather-plan-apply', reviewMode: 'none', communicationLane: 'parent-only' });
   });
 
-  test('batch-spawn with restrictTools propagates to each agent', async () => {
-    const result = await runAgent({
-      mode: 'batch-spawn',
-      tasks: [
-        { task: 'Batch task A', template: 'engineer', tools: ['read', 'find'], restrictTools: true },
-        { task: 'Batch task B', template: 'engineer', tools: ['read'], restrictTools: true },
-      ],
-    });
-    const agents = result.agents as Array<{ id: string; task: string }>;
-    expect(agents.length).toBe(2);
-
-    // Verify each spawned agent has only the restricted tools
-    const statusA = await runAgent({ mode: 'get', agentId: agents[0].id });
-    const statusB = await runAgent({ mode: 'get', agentId: agents[1].id });
-
-    expect(statusA.reviewMode).toBe('none');
-    expect(statusA.tools).toEqual(['read', 'find']);
-    expect((statusA.tools as string[])).not.toContain('write');
-
-    expect(statusB.reviewMode).toBe('none');
-    expect(statusB.tools).toEqual(['read']);
-    expect((statusB.tools as string[])).not.toContain('write');
+  test('the actual AGENT_SPAWNING event carries the execution contract', async () => {
+    const events: Array<Extract<AgentEvent, { type: 'AGENT_SPAWNING' }>> = [];
+    const unsubscribe = harness.runtimeBus.on<Extract<AgentEvent, { type: 'AGENT_SPAWNING' }>>('AGENT_SPAWNING', ({ payload }) => { events.push(payload); });
+    try {
+      const started = await spawn('Inspect the target', { cohort: 'alpha', tools: ['read', 'find'], restrictTools: true,
+        successCriteria: ['answer the question'], requiredEvidence: ['file list'], writeScope: ['src/core'], communicationLane: 'parent-only' });
+      await Promise.resolve();
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ agentId: started.agentId, task: 'Inspect the target', taskContract: {
+        allowedTools: ['read', 'find'], capabilityCeiling: ['read', 'find'], successCriteria: ['answer the question'],
+        requiredEvidence: ['file list'], writeScope: ['src/core'], executionProtocol: 'gather-plan-apply', reviewMode: 'none',
+        inheritsParentConstraints: false, communicationLane: 'parent-only',
+      } });
+    } finally { unsubscribe(); }
   });
 
-  test('collapses batch-spawn WRFC decomposition into one owner root chain', async () => {
-    const result = await runAgent({
-      mode: 'batch-spawn',
-      cohort: 'bad-wrfc-fanout',
-      reviewMode: 'wrfc',
-      tasks: [
-        {
-          task: 'Implement the feature as WRFC owner.',
-          template: 'engineer',
-          tools: ['read', 'find'],
-          restrictTools: true,
-        },
-        {
-          task: 'Review the feature at the same time.',
-          template: 'reviewer',
-          tools: ['read', 'find'],
-          restrictTools: true,
-        },
-      ],
-    });
-    const agents = result.agents as Array<{ id: string; task: string; template: string; cohort: string }>;
-
-    expect(agents).toHaveLength(1);
-    expect(agents[0]?.template).toBe('engineer');
-    expect(agents[0]?.cohort).toBe('bad-wrfc-fanout');
-    const record = await runAgent({ mode: 'get', agentId: agents[0]!.id });
-    expect(record.reviewMode).toBe('wrfc');
-    expect(record.wrfcRole).toBe('owner');
-    expect(record.task).toBe('Implement the feature as WRFC owner.');
-    expect(result.authoritativeWrfcChain).toBe(true);
-    expect(result.continueRootSpawning).toBe(false);
-    expect(result.orchestrationStopSignal).toBe('wrfc_owner_chain_started');
-    expect(harness.manager.list().filter((agent) => agent.parentAgentId == null)).toHaveLength(1);
+  test('list reads actual manager records and filters cohorts', async () => {
+    const first = await spawn('Inspect A', { cohort: 'alpha' });
+    await spawn('Inspect B', { cohort: 'beta' });
+    expect((await runAgent({ mode: 'list' })).count).toBe(2);
+    const filtered = await runAgent({ mode: 'list', cohort: 'alpha' });
+    expect(filtered.count).toBe(1);
+    expect(filtered.agents).toMatchObject([{ id: first.agentId, task: 'Inspect A', cohort: 'alpha' }]);
   });
 
-  test('allows exactly one WRFC owner task to start one chain', async () => {
-    const result = await runAgent({
-      mode: 'batch-spawn',
-      cohort: 'single-wrfc-owner',
-      tasks: [
-        {
-          task: 'Implement the feature as the WRFC owner.',
-          template: 'engineer',
-          reviewMode: 'wrfc',
-          tools: ['read', 'find'],
-          restrictTools: true,
-        },
-      ],
-    });
-    const agents = result.agents as Array<{ id: string; template: string; cohort: string }>;
-
-    expect(agents).toHaveLength(1);
-    expect(agents[0]?.template).toBe('engineer');
-    expect(agents[0]?.cohort).toBe('single-wrfc-owner');
+  test('cancel aborts a running agent and status reports cancellation', async () => {
+    const started = await spawn('Wait for a synthetic result');
+    const signal = harness.manager.getCancellationSignal(started.agentId as string)!;
+    expect(signal.aborted).toBe(false);
+    expect(await runAgent({ mode: 'cancel', agentId: started.agentId })).toMatchObject({ status: 'cancelled' });
+    expect(signal.aborted).toBe(true);
+    expect(await runAgent({ mode: 'status', agentId: started.agentId })).toMatchObject({ status: 'cancelled' });
+    expect(await runAgent({ mode: 'wait', agentId: started.agentId })).toMatchObject({ status: 'cancelled', timedOut: false });
   });
 
-  test('normalizes explicit reviewer WRFC root owners instead of blocking', async () => {
-    const result = await runAgent({
-      mode: 'spawn',
-      task: 'Review the feature through WRFC.',
-      template: 'reviewer',
-      reviewMode: 'wrfc',
-      tools: ['read', 'find'],
-      restrictTools: true,
-    });
-
-    expect(result.template).toBe('engineer');
-    expect(result.reviewMode).toBe('wrfc');
-    expect(result.task).toBe('Review the feature through WRFC.');
-    expect(result.authoritativeWrfcChain).toBe(true);
-    expect(result.continueRootSpawning).toBe(false);
-    expect(result.orchestrationStopSignal).toBe('wrfc_owner_chain_started');
-    expect(result.wrfcRole).toBe('owner');
-    expect(result.wrfcRouteReason).toBe('root-review-role-normalized');
-    expect(harness.manager.list().filter((agent) => agent.parentAgentId == null)).toHaveLength(1);
+  test('message reaches the actual message bus and is visible through get', async () => {
+    const started = await spawn('Wait for a question');
+    const reply = await runAgent({ mode: 'message', agentId: started.agentId, message: 'Inspect the second fixture', kind: 'directive' });
+    expect(reply).toMatchObject({ sent: true, content: 'Inspect the second fixture', kind: 'directive' });
+    expect(harness.messageBus.getMessages(started.agentId as string)).toMatchObject([{ from: 'orchestrator', content: 'Inspect the second fixture' }]);
+    expect((await runAgent({ mode: 'get', agentId: started.agentId, detail: 'messages' })).recentMessages).toMatchObject([{ from: 'orchestrator', content: 'Inspect the second fixture' }]);
   });
 
-  test('collapses narrowed rate limiter WRFC role batch to the authoritative user request', () => {
-    const normalized = normalizeWrfcAgentToolInvocation({
-      mode: 'batch-spawn',
-      cohort: 'rate-limiter-wrfc',
-      tasks: [
-        {
-          task: 'Independently design a minimal token bucket rate limiter API for an empty repository. Do not write files.',
-          template: 'engineer',
-          tools: ['find', 'inspect'],
-          restrictTools: true,
-          dangerously_disable_wrfc: true,
-        },
-        {
-          task: 'Review expected correctness properties for the rate limiter. Do not write files.',
-          template: 'reviewer',
-          tools: ['find', 'inspect'],
-          restrictTools: true,
-          dangerously_disable_wrfc: true,
-        },
-      ],
-    }, {
-      getLastUserMessage: () => 'make a token bucket rate limiter',
-    });
-
-    expect(normalized.mode).toBe('spawn');
-    expect(normalized.task).toBe('make a token bucket rate limiter');
-    expect(normalized.template).toBe('engineer');
-    expect(normalized.reviewMode).toBe('wrfc');
-    expect(normalized.dangerously_disable_wrfc).toBe(false);
-    expect(normalized.tools).toBeUndefined();
-    expect(normalized.restrictTools).toBeUndefined();
-    const context = String(normalized.context);
-    expect(context).toContain('Authoritative user request');
-    expect(context).toContain('Proposed child tasks');
-    expect(context).toContain('Do not write files');
-  });
-
-  test('normalizes plain batch-spawn to disable WRFC on every root agent', () => {
-    const normalized = normalizeWrfcAgentToolInvocation({
-      mode: 'batch-spawn',
-      cohort: 'plain-batch',
-      tasks: [
-        { task: 'Inspect package metadata', template: 'engineer' },
-        { task: 'Inspect tests', template: 'engineer', reviewMode: 'none' },
-      ],
-    });
-
-    expect(normalized.reviewMode).toBe('none');
-    expect(normalized.dangerously_disable_wrfc).toBe(true);
-    const tasks = normalized.tasks as Array<Record<string, unknown>>;
-    expect(tasks).toHaveLength(2);
-    expect(tasks.every((task) => task.reviewMode === 'none')).toBe(true);
-    expect(tasks.every((task) => task.dangerously_disable_wrfc === true)).toBe(true);
-  });
-
-  test('child spawn inherits and enforces the parent capability ceiling', async () => {
-    const parent = await runAgent({
-      mode: 'spawn',
-      task: 'Parent engineer',
-      template: 'engineer',
-      tools: ['read', 'find'],
-      restrictTools: true,
-    });
-
-    const child = await runAgent({
-      mode: 'spawn',
-      task: 'Child researcher',
-      template: 'general',
-      tools: ['read', 'exec', 'find'],
-      restrictTools: true,
-      parentAgentId: parent.agentId as string,
-      successCriteria: ['answer the question'],
-      requiredEvidence: ['file list'],
-      writeScope: ['src/runtime'],
-      executionProtocol: 'gather-plan-apply',
-      reviewMode: 'wrfc',
-      communicationLane: 'parent-only',
-    });
-
-    expect(child.tools).toEqual(['read', 'find']);
-    expect(child.capabilityCeilingTools).toEqual(['read', 'find']);
-    expect(child.parentAgentId).toBe(parent.agentId);
-    expect(child.successCriteria).toEqual(['answer the question']);
-    expect(child.requiredEvidence).toEqual(['file list']);
-    expect(child.writeScope).toEqual(['src/runtime']);
-    expect(child.executionProtocol).toBe('gather-plan-apply');
-    expect(child.reviewMode).toBe('wrfc');
-    expect(child.communicationLane).toBe('parent-only');
-  });
-
-  test('cohort spawn emits orchestration node contracts on the runtime bus', async () => {
-    const bus = new RuntimeEventBus();
-    const manager = harness.manager;
-    manager.setRuntimeBus(bus);
-    const payloads: Array<Record<string, unknown>> = [];
-
-    const unsub = bus.on('ORCHESTRATION_NODE_ADDED', ({ payload }) => {
-      payloads.push(payload as unknown as Record<string, unknown>);
-    });
-
-    manager.spawn({
-      mode: 'spawn',
-      task: 'Stuck task',
-      cohort: 'alpha',
-      template: 'engineer',
-      tools: ['read', 'edit'],
-      restrictTools: true,
-      successCriteria: ['edit target file'],
-      requiredEvidence: ['changed lines'],
-      writeScope: ['src/core'],
-      executionProtocol: 'gather-plan-apply',
-      reviewMode: 'wrfc',
-      communicationLane: 'parent-only',
-    });
-
-    await flushMicrotasks();
-    unsub();
-    const node = payloads[0];
-    expect(node).toBeDefined();
-    expect(node?.contract).toEqual({
-      allowedTools: ['read', 'edit'],
-      capabilityCeiling: ['read', 'edit'],
-      successCriteria: ['edit target file'],
-      requiredEvidence: ['changed lines'],
-      writeScope: ['src/core'],
-      executionProtocol: 'gather-plan-apply',
-      reviewMode: 'wrfc',
-      inheritsParentConstraints: false,
-      communicationLane: 'parent-only',
-    });
+  test('invalid requests fail without creating agents', async () => {
+    for (const request of [
+      { mode: 'spawn', task: ' ', outsideContract: true }, { mode: 'get', agentId: 'unknown' },
+      { mode: 'cancel', agentId: 'unknown' }, { mode: 'message', agentId: 'unknown', message: 'hello' },
+      { mode: 'invalid' },
+    ]) {
+      expect((await harness.agentTool.execute(request)).success).toBe(false);
+    }
+    expect(harness.manager.list()).toEqual([]);
   });
 });

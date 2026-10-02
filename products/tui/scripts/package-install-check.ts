@@ -12,7 +12,7 @@
 import {
   loadToolchainConfig,
   runPackageInstallCheck,
-} from '@pellux/goodvibes-toolchain';
+} from '@goodvibes-jev/engine/toolchain';
 import { verifyPackageCliInstall } from '../src/cli/package-verification.ts';
 
 const root = process.cwd();

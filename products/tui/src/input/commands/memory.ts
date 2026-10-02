@@ -157,7 +157,7 @@ export const recallCommand: SlashCommand = {
         break;
 
       case 'explain':
-        handleRecallExplain(rest, context);
+        await handleRecallExplain(rest, context);
         break;
 
       case 'injections':
