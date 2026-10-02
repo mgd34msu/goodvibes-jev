@@ -114,6 +114,10 @@ describe('core-verbs conformance', () => {
     expect(classifyVerb('workLedger.history')).toEqual({
       kind: 'exempt', verb: 'history', category: 'work-ledger-event-history',
     });
+    expect(OPERATOR_METHOD_IDS.filter((id) => {
+      const classification = classifyVerb(id);
+      return classification.kind === 'exempt' && classification.category === 'work-ledger-event-history';
+    })).toEqual(['workLedger.history']);
     expect(classifyVerb('workLedgerExtra.history').kind).toBe('unclassified');
     expect(classifyVerb('sessions.history').kind).toBe('unclassified');
   });
