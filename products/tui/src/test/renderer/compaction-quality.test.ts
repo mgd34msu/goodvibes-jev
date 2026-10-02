@@ -9,12 +9,16 @@
  * isolation from the live /compact command.
  */
 import { describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import {
   formatQualityScoreLine,
   getCompactionQualityScore,
   recordCompactionQualityScore,
   scoreCompactionRun,
 } from '../../renderer/compaction-quality.ts';
+import { compactionQualityPort, useCompactionQualityPort } from '../helpers/compaction-quality-port.ts';
+
+useCompactionQualityPort();
 import type { ProviderMessage } from '@goodvibes-jev/engine/sdk/platform/providers';
 
 function makeMsg(role: 'user' | 'assistant', content: string): ProviderMessage {
@@ -28,14 +32,46 @@ function makeMsg(role: 'user' | 'assistant', content: string): ProviderMessage {
 // to stay correct regardless of test execution order.
 
 describe('scoreCompactionRun', () => {
-  test('high compression + a handoff-shaped summary scores well (grade A/B)', () => {
+  test('waits for semantic readings before returning a score', async () => {
+    let release!: () => void;
+    let began!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { began = resolve; });
+    const fixture = compactionQualityPort();
+    installJudgmentPort({ ...fixture.port, ask: async request => { began(); await waiting; return fixture.port.ask(request); } });
+    let settled = false;
+    const pending = scoreCompactionRun({
+      sessionId: 'delayed-fixture', contextWindow: 1000,
+      messagesBefore: [makeMsg('user', 'Keep the validated result')],
+      messagesAfter: [makeMsg('user', 'Validated result retained')],
+      tokensBefore: 100, tokensAfter: 10,
+    }).then(score => { settled = true; return score; });
+    await started;
+    expect(settled).toBe(false);
+    release();
+    const score = await pending;
+    expect(score.grade).toBe('A');
+    expect(fixture.requests).toHaveLength(2);
+  });
+
+  test('propagates failed readings instead of inventing a score', async () => {
+    const fixture = compactionQualityPort();
+    installJudgmentPort({ ...fixture.port, ask: async () => { throw new Error('fixture semantic reader unavailable'); } });
+    await expect(scoreCompactionRun({
+      sessionId: 'failed-fixture', contextWindow: 1000,
+      messagesBefore: [makeMsg('user', 'A task')], messagesAfter: [makeMsg('user', 'A summary')],
+      tokensBefore: 100, tokensAfter: 10,
+    })).rejects.toThrow('fixture semantic reader unavailable');
+  });
+
+  test('high compression + explicit supported-retention readings scores well (grade A/B)', async () => {
     const messagesBefore: ProviderMessage[] = Array.from({ length: 20 }, (_, i) => makeMsg('user', `message number ${i} `.repeat(20)));
     const tokensBefore = 50_000;
     const tokensAfter = 6_500; // ~87% compression
     const messagesAfter: ProviderMessage[] = [
       makeMsg('user', '[Session compacted] This is a condensed handoff summarizing the prior conversation context window in detail.'),
     ];
-    const score = scoreCompactionRun({
+    const score = await scoreCompactionRun({
       sessionId: 'session-1',
       contextWindow: 200_000,
       messagesBefore,
@@ -49,10 +85,10 @@ describe('scoreCompactionRun', () => {
     expect(score.isLowQuality).toBe(false);
   });
 
-  test('near-zero compression and no handoff signal scores poorly (isLowQuality)', () => {
+  test('near-zero compression and no handoff signal scores poorly (isLowQuality)', async () => {
     const messagesBefore: ProviderMessage[] = [makeMsg('user', 'hi')];
     const messagesAfter: ProviderMessage[] = [makeMsg('user', 'x')];
-    const score = scoreCompactionRun({
+    const score = await scoreCompactionRun({
       sessionId: 'session-1',
       contextWindow: 200_000,
       messagesBefore,
@@ -65,8 +101,8 @@ describe('scoreCompactionRun', () => {
     expect(score.grade).toBe('F');
   });
 
-  test('does not throw or claim a real strategy escalation ran', () => {
-    const score = scoreCompactionRun({
+  test('does not throw or claim a real strategy escalation ran', async () => {
+    const score = await scoreCompactionRun({
       sessionId: 's',
       contextWindow: 0,
       messagesBefore: [],
@@ -82,8 +118,8 @@ describe('scoreCompactionRun', () => {
 });
 
 describe('formatQualityScoreLine', () => {
-  test('includes the grade and score from describeScore()', () => {
-    const score = scoreCompactionRun({
+  test('includes the grade and score from describeScore()', async () => {
+    const score = await scoreCompactionRun({
       sessionId: 's',
       contextWindow: 200_000,
       messagesBefore: [makeMsg('user', 'a'.repeat(4000))],
@@ -98,8 +134,8 @@ describe('formatQualityScoreLine', () => {
 });
 
 describe('recordCompactionQualityScore / getCompactionQualityScore', () => {
-  test('scores are retrievable by the exact timestamp key they were recorded under', () => {
-    const score = scoreCompactionRun({
+  test('scores are retrievable by the exact timestamp key they were recorded under', async () => {
+    const score = await scoreCompactionRun({
       sessionId: 's',
       contextWindow: 200_000,
       messagesBefore: [makeMsg('user', 'a'.repeat(400))],
@@ -115,8 +151,8 @@ describe('recordCompactionQualityScore / getCompactionQualityScore', () => {
     expect(getCompactionQualityScore(-1_000_002)).toBeUndefined();
   });
 
-  test('bounds the store the same way the SDK bounds its own compaction event log (evicts oldest)', () => {
-    const score = scoreCompactionRun({
+  test('bounds the store the same way the SDK bounds its own compaction event log (evicts oldest)', async () => {
+    const score = await scoreCompactionRun({
       sessionId: 's',
       contextWindow: 0,
       messagesBefore: [],

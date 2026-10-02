@@ -13,6 +13,9 @@ import {
   formatCompactionEvent,
 } from '../../renderer/compaction-history-modal.ts';
 import { scoreCompactionRun } from '../../renderer/compaction-quality.ts';
+import { useCompactionQualityPort } from '../helpers/compaction-quality-port.ts';
+
+useCompactionQualityPort();
 import type { CompactionEvent } from '@goodvibes-jev/engine/sdk/platform/core';
 
 // ---------------------------------------------------------------------------
@@ -65,8 +68,8 @@ describe('formatCompactionEvent', () => {
     expect(line).not.toContain('quality=');
   });
 
-  test('renders the grade and numeric score when a quality score is supplied', () => {
-    const score = scoreCompactionRun({
+  test('renders the grade and numeric score when a quality score is supplied', async () => {
+    const score = await scoreCompactionRun({
       sessionId: 's',
       contextWindow: 200_000,
       messagesBefore: [{ role: 'user', content: 'a'.repeat(50_000) }],

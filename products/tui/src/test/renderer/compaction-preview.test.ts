@@ -15,6 +15,9 @@ import {
   buildCompactionAfterNotice,
 } from '../../renderer/compaction-preview.ts';
 import { scoreCompactionRun } from '../../renderer/compaction-quality.ts';
+import { useCompactionQualityPort } from '../helpers/compaction-quality-port.ts';
+
+useCompactionQualityPort();
 import type { CompactionEvent } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { ProviderMessage } from '@goodvibes-jev/engine/sdk/platform/providers';
 
@@ -194,9 +197,9 @@ describe('buildCompactionAfterNotice', () => {
     expect(result).not.toContain('Quality:');
   });
 
-  test('renders a grade line when a qualityScore is provided, honestly labelled as an out-of-band rubric', () => {
+  test('renders a grade line when a qualityScore is provided, honestly labelled as an out-of-band rubric', async () => {
     const event = makeEvent({ tokensBeforeEstimate: 50_000, tokensAfterEstimate: 6_500 });
-    const qualityScore = scoreCompactionRun({
+    const qualityScore = await scoreCompactionRun({
       sessionId: 's',
       contextWindow: 200_000,
       messagesBefore: [makeMsg('user', 'a'.repeat(50_000))],
