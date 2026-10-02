@@ -10,7 +10,7 @@
 |     ▏Filter    2 items     |
 |                            |
 |     hooks 2  chains 0      |
-|     contracts 29           |
+|     contracts 28           |
 |     denials 0  errors      |
 |     0                      |
 |                            |

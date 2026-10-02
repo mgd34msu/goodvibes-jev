@@ -9,7 +9,7 @@
 |                                                                                                    |
 |           ▏Filter hooks                                                          2 items           |
 |                                                                                                    |
-|           hooks 2  chains 0  contracts 29  denials 0  errors 0                                     |
+|           hooks 2  chains 0  contracts 28  denials 0  errors 0                                     |
 |                                                                                                    |
 |           pre-tool-guard       Pre:tool:*                   ENABLED  command ·                     |
 |           intercept/blocking deny=y mut=y inj=y                                                    |

@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { createHooksModalSurface, type HooksModalActivityTracker, type HooksModalDispatcher, type HooksModalWorkbench } from '../../../views/modals/hooks-modal.ts';
+import { listHookPointContracts } from '@goodvibes-jev/engine/sdk/platform/hooks';
 import type { HookActivityRecord, HookAuthoringAction, HookChain, HookDefinition } from '@goodvibes-jev/engine/sdk/platform/hooks';
 import { actionCtx, captureCommands, open, tabText } from './modal-surface-test-helpers.ts';
 
@@ -23,6 +24,7 @@ describe('hooks modal surface', () => {
   test('empty registry renders next-step guidance', () => {
     const text = tabText(open(createHooksModalSurface(fixedDeps())), 'hooks');
     expect(text).toContain('No hooks are currently registered.');
+    expect(text).toContain(`contracts ${listHookPointContracts().length}`);
     expect(text).toContain('/hooks');
     expect(text).toContain('/settings');
   });
@@ -32,6 +34,7 @@ describe('hooks modal surface', () => {
     expect(view.tabs.map((t) => t.id)).toEqual(['hooks', 'activity']);
     const text = tabText(view, 'hooks');
     expect(text).toContain('hooks 2');
+    expect(view.tabs[0]!.header).toContain(`hooks 2  chains 0  contracts ${listHookPointContracts().length}  denials 0  errors 0`);
     expect(text).toContain('pre-guard');
     expect(text).toContain('ENABLED');
     expect(text).toContain('DISABLED');
