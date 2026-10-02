@@ -138,7 +138,7 @@ describe('native ledger reader lifecycle', () => {
     let finish!: (value: unknown) => void; let signal: AbortSignal | undefined;
     const invoke: OperatorRemoteClient['invoke'] = async <T>(_method: string, _input?: Record<string, unknown>, options?: { signal?: AbortSignal }) => {
       signal = options?.signal;
-      return await new Promise(resolve => { finish = resolve; }) as T;
+      return await new Promise<unknown>(resolve => { finish = resolve; }) as T;
     };
     const reader = createOperatorWorkLedgerReadClient({ invoke }, 'fixture-project');
     const pending = reader.readSnapshot(); reader.dispose(); reader.dispose();
@@ -151,7 +151,7 @@ describe('native ledger reader lifecycle', () => {
     let finish!: (value: unknown) => void; let signal: AbortSignal | undefined; let calls = 0; const observed: number[] = [];
     const invoke: OperatorRemoteClient['invoke'] = async <T>(_method: string, _input?: Record<string, unknown>, options?: { signal?: AbortSignal }) => {
       calls += 1; signal = options?.signal;
-      if (calls === 1) return await new Promise(resolve => { finish = resolve; }) as T;
+      if (calls === 1) return await new Promise<unknown>(resolve => { finish = resolve; }) as T;
       return { projectId: 'fixture-project', cursor: 0, revision: 0, works: [] } as T;
     };
     const reader = createOperatorWorkLedgerReadClient({ invoke }, 'fixture-project', { pollIntervalMs: 100 });
