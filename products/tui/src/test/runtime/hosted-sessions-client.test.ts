@@ -45,6 +45,7 @@ function makeRecord(overrides: Partial<HostedSessionRecord> = {}): HostedSession
     turnCount: 0,
     messageCount: 0,
     restoredFromDisk: false,
+    contractIds: [],
     ...overrides,
   };
 }
