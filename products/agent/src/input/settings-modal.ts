@@ -120,6 +120,8 @@ export class SettingsModal {
   scrollContext(delta: number): void { this.contextScroll = Math.max(0, this.contextScroll + delta); }
 
   private configManager: ConfigManager | null = null;
+  private unsubscribeHostSetting: (() => void) | null = null;
+  private requestHostSettingRender: (() => void) | null = null;
   private secretsManager: SettingsSecretsManager | null = null;
   private featureFlagManager: FeatureFlagManager | null = null;
   private mcpRegistry: McpRegistry | null = null;
@@ -142,6 +144,9 @@ export class SettingsModal {
     secretsManager?: SettingsSecretsManager,
     options?: SettingsModalOpenOptions,
   ): void {
+    this.unsubscribeHostSetting?.();
+    this.unsubscribeHostSetting = null;
+    this.requestHostSettingRender = options?.requestRender ?? null;
     this.configManager = configManager;
     this.secretsManager = secretsManager ?? null;
     this.featureFlagManager = featureFlagManager;
@@ -166,6 +171,15 @@ export class SettingsModal {
     this.lastSettingEffectMessage = null;
     this.clearSearch();
     this.active = true;
+    if (configManager.getSchema().some((setting) => setting.key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY)) {
+      this.unsubscribeHostSetting = configManager.subscribe(AGENT_NOTIFICATIONS_METADATA_ONLY_KEY, () => {
+        if (!this.active || this.configManager !== configManager) return;
+        for (const entries of this.groups.values()) {
+          for (const entry of entries) this._refreshHostEntry(entry);
+        }
+        this.requestHostSettingRender?.();
+      });
+    }
   }
 
   /** Replace the search query and recompute the ranked results (an empty query clears the search). */
@@ -183,6 +197,9 @@ export class SettingsModal {
 
   close(): void {
     this.active = false;
+    this.unsubscribeHostSetting?.();
+    this.unsubscribeHostSetting = null;
+    this.requestHostSettingRender = null;
     this.editingMode = false;
     this.editBuffer = '';
     this.pendingModelPickerTarget = null;

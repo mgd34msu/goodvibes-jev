@@ -17,6 +17,8 @@ export type SettingsModalChangeHandler = (change: SettingsModalChange) => Settin
 
 export interface SettingsModalOpenOptions {
   readonly onSettingApplied?: SettingsModalChangeHandler;
+  /** Repaint after a registered host preference changes outside this modal. */
+  readonly requestRender?: () => void;
 }
 
 export type SettingsCategory =

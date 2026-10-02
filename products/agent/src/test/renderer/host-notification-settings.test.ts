@@ -2,7 +2,7 @@ import { test, expect } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AgentConfigManager, AGENT_NOTIFICATIONS_METADATA_ONLY_KEY as KEY } from '../../config/host-settings.ts';
-import { SubscriptionManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { SubscriptionManager, type ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
 import { createFeatureFlagManager } from '../../runtime/index.ts';
 import { SettingsModal } from '../../input/settings-modal.ts';
 import { settingContextLines } from '../../renderer/settings-modal-context.ts';
@@ -48,3 +48,45 @@ for (const [width, height] of [[80,24],[120,40]] as const) {
   });
 }
 
+
+test('an open host row observes external revocation and releases subscriptions on close/reopen', () => {
+  const root=makeProjectTempDir('host-live-render'); const configDir=join(root,'config');
+  const config=new AgentConfigManager({configDir});
+  config.set(KEY,false);
+  const modal=new SettingsModal(); let renders=0; let activeListeners=0;
+  const subscribe=config.subscribe as unknown as (key: ConfigKey, callback: (value: unknown, previous: unknown) => void) => () => void;
+  Object.defineProperty(config,'subscribe',{configurable:true,value:(key: ConfigKey, callback: (value: unknown, previous: unknown) => void) => {
+    const stop=subscribe.call(config,key,callback); activeListeners++;
+    return ()=>{activeListeners--;stop();};
+  }});
+  const open=()=> {
+    modal.open(config,createFeatureFlagManager(),new SubscriptionManager(join(root,'subscriptions.json')),{getAll:()=>({})},undefined,undefined,{requestRender:()=>{renders++;}});
+    modal.selectTarget(KEY);
+  };
+  open();
+  expect(activeListeners).toBe(1);
+  expect(modal.getSelected()?.currentValue).toBe(false);
+  // Reopening replaces the listener; one transition must request one repaint.
+  open();
+  expect(activeListeners).toBe(1);
+  writeFileSync(join(configDir,'settings.json'),JSON.stringify({behavior:{notificationsMetadataOnly:true}}));
+  config.load();
+  expect(config.get(KEY)).toBe(true);
+  expect(modal.getSelected()?.currentValue).toBe(true);
+  expect(modal.getSelected()?.effectiveSource).toBe('default');
+  expect(renders).toBe(1);
+  modal.close();
+  modal.close();
+  expect(activeListeners).toBe(0);
+  config.set(KEY,false);
+  expect(renders).toBe(1);
+  open();
+  expect(activeListeners).toBe(1);
+  expect(modal.getSelected()?.currentValue).toBe(false);
+  config.reset(KEY);
+  expect(modal.getSelected()?.currentValue).toBe(true);
+  expect(renders).toBe(2);
+  modal.close();
+  expect(activeListeners).toBe(0);
+  Reflect.deleteProperty(config,'subscribe');
+});
