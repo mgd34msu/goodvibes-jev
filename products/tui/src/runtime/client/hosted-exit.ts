@@ -25,6 +25,7 @@
 import { logger, summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { createDaemonVerbCaller } from './operator-endpoint.ts';
+import { closeHostedAttachments } from './hosted-attachments.ts';
 import { createHostedSessionsClient } from './hosted-sessions.ts';
 import { getSharedHostedSessionFeed, type HostedSessionFeed } from '../../views/hosted-session-feed.ts';
 
@@ -52,35 +53,34 @@ export async function leaveHostedSessionOnExit(
 ): Promise<'none' | 'detached' | 'failed'> {
   const feed = options.feed ?? getSharedHostedSessionFeed();
   const record = feed.getState().record;
-  // Closing the socket is this process's own business and is done either way,
-  // an already-terminated session has nothing to detach from, but the stream
-  // watching it is still open.
-  feed.closeStream();
-  if (!record || record.status === 'terminated') return 'none';
-
+  // The coordinator closes local streaming immediately and drains every owned
+  // receipt, including a replacement whose attach/create is still in flight.
   const client = createHostedSessionsClient(createDaemonVerbCaller({
     configManager: options.configManager,
     homeDirectory: options.homeDirectory,
   }));
   const timeoutMs = options.timeoutMs ?? HOSTED_DETACH_ON_EXIT_TIMEOUT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const outcome = await Promise.race([
-      client.detach(record.id).then(() => 'detached' as const),
+      closeHostedAttachments(feed, client).then(detached => detached ? 'detached' as const : 'none' as const),
       new Promise<'failed'>((resolve) => {
-        const timer = setTimeout(() => resolve('failed'), timeoutMs);
+        timer = setTimeout(() => resolve('failed'), timeoutMs);
         timer.unref?.();
       }),
     ]);
     if (outcome === 'failed') {
       logger.debug('[hosted-sessions] the detach-on-exit did not complete in time', {
-        sessionId: record.id, timeoutMs,
+        sessionId: record?.id, timeoutMs,
       });
     }
     return outcome;
   } catch (error) {
     logger.debug('[hosted-sessions] the detach-on-exit was refused', {
-      sessionId: record.id, error: summarizeError(error),
+      sessionId: record?.id, error: summarizeError(error),
     });
     return 'failed';
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }

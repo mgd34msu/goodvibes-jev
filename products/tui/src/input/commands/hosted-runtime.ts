@@ -27,6 +27,7 @@
  * command spells each one once.
  */
 import type { CommandContext, CommandRegistry } from '../command-registry.ts';
+import { replaceHostedAttachment, detachHostedAttachments, forgetHostedAttachment, hasHostedAttachments } from '../../runtime/client/hosted-attachments.ts';
 import { describeOperatorRpcError } from './operator-rpc.ts';
 import { requireShellPaths } from './runtime-services.ts';
 import {
@@ -150,6 +151,7 @@ async function openStream(
   seams: HostedCommandSeams,
   sessionId: string,
   feed: HostedSessionFeed,
+  signal: AbortSignal,
 ): Promise<void> {
   // The feed owns the subscription handle: the exit path has to be able to
   // close it too, and it has no way to reach a variable in this module.
@@ -167,12 +169,14 @@ async function openStream(
     baseUrl: seams.baseUrl,
     sessionId,
     getAuthToken: () => token,
-    onEvent: (event) => feed.apply(event),
-    onLifecycle: (update) => feed.applyLifecycle(update),
+    signal,
+    onEvent: (event) => { if (!signal.aborted) feed.apply(event); },
+    onLifecycle: (update) => { if (!signal.aborted) feed.applyLifecycle(update); },
     onTerminate: (error) => {
-      feed.setStreaming(false, `the event stream ended: ${describeOperatorRpcError(error)}`);
+      if (!signal.aborted) feed.setStreaming(false, `the event stream ended: ${describeOperatorRpcError(error)}`);
     },
   });
+  if (signal.aborted) { subscription?.close(); return; }
   feed.bindStream(subscription ? () => subscription.close() : null);
   feed.setStreaming(
     subscription !== null,
@@ -183,13 +187,12 @@ async function openStream(
 /** Attach to a session by id, backfill it, and start watching it. */
 async function attachSession(
   seams: HostedCommandSeams,
-  sessionId: string,
+  sessionId: string | (() => Promise<HostedSessionRecord>),
   feed: HostedSessionFeed,
   context: CommandContext,
 ): Promise<void> {
-  const attachment = await seams.client.attach(sessionId);
-  feed.attach(attachment.session, attachment.history);
-  await openStream(seams, attachment.session.id, feed);
+  const attachment = await replaceHostedAttachment(feed, seams.client, sessionId,
+    (result, signal) => openStream(seams, result.session.id, feed, signal));
   context.print([
     `[hosted] attached to ${hostedSessionLabel(attachment.session)} (${attachment.history.length} message(s) backfilled)`,
     `  ${describeDetachEffect(attachment.session)}`,
@@ -231,17 +234,19 @@ export function registerHostedRuntimeCommands(registry: CommandRegistry): void {
             const { policy, rest } = readDetachOverride(args.slice(1));
             const workspaceRoot = requireShellPaths(ctx).workingDirectory;
             const prompt = rest.join(' ').trim();
-            const record = await seams.client.create({
-              workspaceRoot,
-              originSurface: 'tui',
-              ...(prompt ? { initialPrompt: prompt } : {}),
-              ...(policy ? { detachPolicy: policy } : {}),
-            });
-            ctx.print([
-              `[hosted] created ${hostedSessionLabel(record)} in ${record.workspaceRoot}`,
-              `  ${describeDetachEffect(record)}`,
-            ].join('\n'));
-            await attachSession(seams, record.id, feed, ctx);
+            await attachSession(seams, async () => {
+              const record = await seams.client.create({
+                workspaceRoot,
+                originSurface: 'tui',
+                ...(prompt ? { initialPrompt: prompt } : {}),
+                ...(policy ? { detachPolicy: policy } : {}),
+              });
+              ctx.print([
+                `[hosted] created ${hostedSessionLabel(record)} in ${record.workspaceRoot}`,
+                `  ${describeDetachEffect(record)}`,
+              ].join('\n'));
+              return record;
+            }, feed, ctx);
             return;
           }
           case 'list': {
@@ -295,9 +300,9 @@ export function registerHostedRuntimeCommands(registry: CommandRegistry): void {
             return;
           }
           case 'detach': {
-            if (!attachedId) { ctx.print('[hosted] no hosted session is attached.'); return; }
-            const record = await seams.client.detach(attachedId);
-            feed.clear();
+            if (!hasHostedAttachments(feed)) { ctx.print('[hosted] no hosted session is attached.'); return; }
+            const record = await detachHostedAttachments(feed, seams.client);
+            if (!record) { ctx.print('[hosted] no hosted session is attached.'); return; }
             ctx.print(record.status === 'terminated'
               ? `[hosted] detached: the session ended (${record.terminatedReason ?? 'no reason recorded'}), which is what its detach policy said would happen.`
               : '[hosted] detached: the session is still running in the daemon and can be reattached.');
@@ -307,6 +312,7 @@ export function registerHostedRuntimeCommands(registry: CommandRegistry): void {
             const target = args[1] ? resolveIdArgument(args[1]) : attachedId;
             if (!target) { ctx.print('Usage: /hosted kill <id> (or attach one first)'); return; }
             const record = await seams.client.kill(target);
+            forgetHostedAttachment(feed, target);
             if (target === attachedId) feed.clear();
             ctx.print(`[hosted] ended ${hostedSessionLabel(record)}: ${record.terminatedReason ?? 'no reason recorded'}.`);
             return;
