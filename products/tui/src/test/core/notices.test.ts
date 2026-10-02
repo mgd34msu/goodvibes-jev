@@ -34,24 +34,24 @@ describe('system notices become toasts and history entries', () => {
     conversation.addUserMessage('review the retry logic');
     conversation.addAssistantMessage('Starting a reviewer.');
     conversation.addTypedSystemMessage(FAILED, 'system');
-    conversation.addTypedSystemMessage('[WRFC] ✗ Chain wrfc-e9823b8 FAILED: planned-fix execution is not wired in this composition (setFixWorkstreamRunner was never called)', 'wrfc');
+    conversation.addTypedSystemMessage('[Contract] contract-e9823b8 failed\nThe recorded repair did not pass its checks (owner decision required)', 'contract');
 
     const entries = feed.list();
     expect(entries).toHaveLength(2);
-    // An agent or chain event line is kept under the event's plain title, its full text in the body.
+    // Known agent event lines retain their title; structured contract notices preserve their full title and body.
     expect(entries[1]!.title).toBe('Agent failed');
     expect(entries[1]!.body).toBe(FAILED.replace('[Agents] ✗ ', ''));
     expect(entries[1]!.level).toBe('warning');
     expect(entries[1]!.subject).toBe('agents');
-    expect(entries[0]!.title).toBe('Review chain failed');
-    expect(entries[0]!.body).toContain('(setFixWorkstreamRunner was never called)');
-    expect(toasts.visible().map((t) => t.title)).toEqual(['Review chain failed', 'Agent failed']);
+    expect(entries[0]!.title).toBe('[Contract] contract-e9823b8 failed');
+    expect(entries[0]!.body).toBe('The recorded repair did not pass its checks (owner decision required)');
+    expect(toasts.visible().map((t) => t.title)).toEqual(['[Contract] contract-e9823b8 failed', 'Agent failed']);
     expect(toasts.visible()[1]!.tone).toBe('warning');
 
     const frame = text(conversation.getDisplayBlocks());
     expect(frame).toContain('Starting a reviewer.');
     expect(frame).not.toContain('[Agents]');
-    expect(frame).not.toContain('[WRFC]');
+    expect(frame).not.toContain('[Contract]');
   });
 
   test('a restored session puts its notices back in the history, seen and not toasted', () => {
@@ -101,11 +101,11 @@ describe('notices show their full text, wrapped', () => {
 describe('a multi-line body in the history', () => {
   test('its lines stay apart in the row, never run together', () => {
     const feed = new NotificationFeed();
-    publishNotice(feed, "[WRFC] \u2713 Chain wrfc-4e27484 PASSED \u2014 all gates clear\nyour repository's commit hooks refused the chain's commit", { now: () => Date.now() });
+    publishNotice(feed, "[Contract] contract-4e27484 passed\nall checks passed\nyour repository's commit hooks refused the contract's commit", { now: () => Date.now() });
     const layer = renderNotificationsModal({ entries: feed.list(), selectedIndex: 0, unread: 1, isUnread: () => true, status: null, now: Date.now() }, 160, 40);
     const shown = flat(text(layer.lines));
-    expect(shown).toContain('all gates clear \u00b7 your repository');
-    expect(shown).not.toContain('clearyour');
+    expect(shown).toContain('all checks passed \u00b7 your repository');
+    expect(shown).not.toContain('passedyour');
   });
 });
 
