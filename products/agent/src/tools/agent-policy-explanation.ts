@@ -229,7 +229,7 @@ function predictPermission(context: CommandContext, toolName: string, category: 
       sourceLayer: 'runtime_mode',
       reasonCode: 'mode_allow_all',
       mode,
-      reason: 'Permission mode is allow-all, so the permission layer will not prompt.',
+      reason: posture.detail,
     };
   }
 
@@ -432,7 +432,9 @@ export function explainAgentPolicyDecision(
         label: posture.label,
         autoApprove: posture.autoApprove,
         mode: posture.mode,
+        automaticApprovals: posture.automaticApprovals,
         bypassesPrompts: posture.bypassesPrompts,
+        detail: posture.detail,
       },
       policyLayers: [
         {

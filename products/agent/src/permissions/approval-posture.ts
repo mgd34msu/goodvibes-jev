@@ -1,45 +1,17 @@
 import { isAutoApproveEnabled } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { presetForMode } from '@goodvibes-jev/engine/sdk/platform/gate';
 
 /**
- * ApprovalPosture, the single source of truth for "what will happen when a
- * tool runs right now", displayed identically everywhere the Agent surfaces
- * approval posture (cli status, cli doctor, the security policy-explain tool,
- * and the footer's danger indicator).
+ * The configured approval posture shared by status, doctor, policy-explain and
+ * the footer. This is configuration observability, not a per-call decision:
+ * PermissionManager reads each call and enforces the boundary before applying
+ * autoApprove, explicit rules or the selected stakes preset.
  *
- * Mirrors PermissionManager.checkDetailed()'s exact precedence (SDK
- * dist/platform/permissions/manager.js:103-138), which this module does not
- * modify, the gate is correct; the historical bug was surfaces disagreeing
- * about what the gate does:
- *   1. behavior.autoApprove === true -> every tool call is approved
- *      automatically, before permissions.mode is even read.
- *   2. permissions.mode === 'allow-all' -> every tool call is approved
- *      automatically.
- *   2a. permissions.mode === 'plan' -> read-only tools are allowed; every
- *       write, execute, or delegate tool call is REFUSED outright (not
- *       asked) with a structured plan-mode denial, steering the model to
- *       present a plan instead of acting.
- *   2b. permissions.mode === 'accept-edits' -> read and file write/edit
- *       tool calls are approved automatically; execute and every other
- *       risky class still fall through to the prompt/cache path below.
- *   3. permissions.mode === 'custom' -> each tool category is allowed,
- *      prompted, or denied per its own configured rule; bypassesPrompts is
- *      true only when EVERY configured tool category resolves to 'allow'
- *      (the only custom configuration where nothing ever prompts).
- *   4. permissions.mode === 'prompt' (the default) -> read-only actions are
- *      auto-allowed; write, execute, and delegate actions prompt.
- *
- * Any surface that wants to say "will this prompt me?" must call
- * computeApprovalPosture (or the config-reading convenience below) rather
- * than re-deriving the precedence locally, that re-derivation is exactly
- * how cli/status.ts drifted from the gate (it read permissions.mode alone
- * and never looked at behavior.autoApprove). It is also how 'plan' and
- * 'accept-edits' modes previously drifted: normalizeMode used to fold any
- * mode it did not recognize into 'prompt', so a surface reading the posture
- * label for those two modes silently mislabeled them as "Ask before
- * powerful actions", wrong for plan mode (which never asks; it refuses)
- * and wrong for accept-edits mode (which auto-approves file writes without
- * asking).
+ * automaticApprovals preserves the broad-autonomy warning for autoApprove,
+ * allow-all and custom-all-allow. None guarantees that every call avoids a
+ * prompt: critical stakes still ask in allow-all, unknown tools need readings,
+ * and boundary approval can be required before any configured allowance.
  */
 
 export type ApprovalPostureKind = 'auto-approve' | 'allow-all' | 'custom' | 'prompt' | 'plan' | 'accept-edits';
@@ -52,7 +24,7 @@ export interface ApprovalPostureInput {
   /**
    * permissions.tools, only consulted when mode === 'custom'. Values are the
    * per-tool-category actions ('allow' | 'prompt' | 'deny'); anything else
-   * (missing/unrecognized) counts as NOT allow for the bypass computation.
+   * (missing/unrecognized) counts as NOT allow for the autonomy warning.
    */
   readonly customTools?: Readonly<Record<string, unknown>>;
 }
@@ -65,14 +37,16 @@ export interface ApprovalPosture {
   /** The raw behavior.autoApprove value that drove this posture. */
   readonly autoApprove: boolean;
   /**
-   * True when NO tool call will ever hit a Human-in-the-Loop prompt under the
-   * current configuration, mirrors the gate's "auto-approve everything"
-   * branches (autoApprove, allow-all, and custom-all-allow).
+   * Broad automatic approvals are configured (autoApprove, allow-all, or every
+   * configured custom category allows). Drives the footer's autonomy warning;
+   * does not describe the ordinary read or scoped accept-edits allowances.
    */
-  readonly bypassesPrompts: boolean;
+  readonly automaticApprovals: boolean;
+  /** No configuration guarantees a universal prompt bypass; boundaries still apply. */
+  readonly bypassesPrompts: false;
   /** A short, honest, human-facing label, always names auto-approve explicitly when it is what is actually gating tool calls. */
   readonly label: string;
-  /** A one-sentence explanation of the mechanism, suitable for a doctor/status detail line. */
+  /** An explanation of the preset and boundary, suitable for a doctor/status detail line. */
   readonly detail: string;
 }
 
@@ -88,15 +62,18 @@ function normalizeMode(mode: unknown): 'prompt' | 'allow-all' | 'custom' | 'plan
  */
 export function computeApprovalPosture(input: ApprovalPostureInput): ApprovalPosture {
   const mode = normalizeMode(input.mode);
+  const preset = presetForMode(mode);
+  const boundaryCaveat = 'Boundary checks still apply and can refuse a call or require approval.';
 
   if (input.autoApprove) {
     return {
       kind: 'auto-approve',
       mode,
       autoApprove: true,
-      bypassesPrompts: true,
-      label: 'Auto-approve ON, powerful actions run without asking',
-      detail: 'behavior.autoApprove is enabled: every tool call is approved automatically, regardless of permissions.mode or any custom per-tool rule.',
+      automaticApprovals: true,
+      bypassesPrompts: false,
+      label: 'Auto-approve ON, boundary checks still apply',
+      detail: `behavior.autoApprove is enabled: calls that pass the boundary are approved automatically, regardless of permissions.mode or custom per-tool rules. ${boundaryCaveat}`,
     };
   }
 
@@ -105,9 +82,10 @@ export function computeApprovalPosture(input: ApprovalPostureInput): ApprovalPos
       kind: 'allow-all',
       mode,
       autoApprove: false,
-      bypassesPrompts: true,
-      label: 'Allow everything',
-      detail: 'permissions.mode is allow-all: every tool call is approved automatically.',
+      automaticApprovals: true,
+      bypassesPrompts: false,
+      label: 'Automatic below critical stakes',
+      detail: `permissions.mode is allow-all (${preset.name}): ${preset.summary} ${boundaryCaveat}`,
     };
   }
 
@@ -117,8 +95,9 @@ export function computeApprovalPosture(input: ApprovalPostureInput): ApprovalPos
       mode,
       autoApprove: false,
       bypassesPrompts: false,
-      label: 'Plan mode, read-only, nothing prompts because nothing mutates',
-      detail: 'permissions.mode is plan: read-only tool calls are approved automatically; every write, execute, or delegate tool call is refused outright (never asked) so the model presents a plan instead of acting.',
+      automaticApprovals: false,
+      label: 'Plan mode, read-only',
+      detail: `permissions.mode is plan: ${preset.summary} ${boundaryCaveat}`,
     };
   }
 
@@ -128,8 +107,9 @@ export function computeApprovalPosture(input: ApprovalPostureInput): ApprovalPos
       mode,
       autoApprove: false,
       bypassesPrompts: false,
-      label: 'Accept edits, file writes auto-approve, execute/delegate still ask',
-      detail: 'permissions.mode is accept-edits: read and file write/edit tool calls are approved automatically without asking; execute and every other risky class still prompt for approval.',
+      automaticApprovals: false,
+      label: 'Accept edits, other actions follow stakes',
+      detail: `permissions.mode is accept-edits: ${preset.summary} ${boundaryCaveat}`,
     };
   }
 
@@ -140,11 +120,12 @@ export function computeApprovalPosture(input: ApprovalPostureInput): ApprovalPos
       kind: 'custom',
       mode,
       autoApprove: false,
-      bypassesPrompts: allAllow,
-      label: allAllow ? 'Custom rules (every category allows, no prompts)' : 'Custom rules',
+      automaticApprovals: allAllow,
+      bypassesPrompts: false,
+      label: allAllow ? 'Custom rules (all configured categories allow)' : 'Custom rules',
       detail: allAllow
-        ? 'permissions.mode is custom and every configured tool category is set to allow: no tool call prompts.'
-        : 'permissions.mode is custom: each tool category is allowed, prompted, or denied per its own configured rule.',
+        ? `permissions.mode is custom and every configured tool category is set to allow. ${preset.summary} ${boundaryCaveat}`
+        : `permissions.mode is custom: ${preset.summary} ${boundaryCaveat}`,
     };
   }
 
@@ -152,9 +133,10 @@ export function computeApprovalPosture(input: ApprovalPostureInput): ApprovalPos
     kind: 'prompt',
     mode: 'prompt',
     autoApprove: false,
+    automaticApprovals: false,
     bypassesPrompts: false,
     label: 'Ask before powerful actions',
-    detail: 'permissions.mode is prompt (default): read-only actions are auto-allowed; write, execute, and delegate actions prompt for approval.',
+    detail: `permissions.mode is prompt (${preset.name}): ${preset.summary} ${boundaryCaveat}`,
   };
 }
 

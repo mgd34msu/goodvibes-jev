@@ -68,7 +68,9 @@ export interface CliStatusSnapshot {
     readonly permissionMode: unknown;
     readonly permissionLabel: string;
     readonly autoApprove: boolean;
+    readonly automaticApprovals: boolean;
     readonly bypassesPrompts: boolean;
+    readonly permissionDetail: string;
     readonly secretPolicy: unknown;
     readonly secretPolicyLabel: string;
     readonly runtimeAuthSignal: CliAuthStatus | null;
@@ -168,11 +170,9 @@ const PERMISSION_TOOL_KEYS = [
 ] as const;
 
 /**
- * Reads the effective approval posture the SAME way the permission gate
- * decides it (behavior.autoApprove first, then permissions.mode), so the
- * displayed label can never disagree with what actually happens when a tool
- * runs. Do not compute a posture label from permissions.mode alone here,
- * that was the original bug (this surface ignored behavior.autoApprove).
+ * Reads the configured posture, including behavior.autoApprove rather than
+ * permissions.mode alone (the original display bug). Per-call readings and
+ * boundary checks still decide whether any individual action can run.
  */
 function readApprovalPosture(config: Pick<ConfigManager, 'get'>): ApprovalPosture {
   const customTools: Record<string, unknown> = {};
@@ -295,9 +295,9 @@ export function buildCliDoctorFindings(options: CliStatusOptions): readonly CliD
       id: 'auto-approve-enabled',
       area: 'security',
       severity: 'risk',
-      summary: 'Auto-approve is on: tool calls never prompt.',
+      summary: 'Auto-approve is on; boundary checks still apply.',
       cause: 'behavior.autoApprove is true.',
-      impact: 'Every tool call, including powerful write, edit, network, and execution actions, runs without a Human-in-the-Loop (HITL) approval prompt, regardless of permissions.mode or any custom per-tool rule.',
+      impact: 'Calls that pass the boundary, including powerful write, edit, network, and execution actions, are approved automatically regardless of permissions.mode or custom per-tool rules. Boundary checks can still refuse a call or require approval.',
       action: 'Disable behavior.autoApprove unless this is an intentionally trusted environment.',
     });
   }
@@ -307,7 +307,7 @@ export function buildCliDoctorFindings(options: CliStatusOptions): readonly CliD
       id: 'allow-all-permissions',
       area: 'security',
       severity: 'risk',
-      summary: 'Allow everything permission mode is active.',
+      summary: 'Automatic permission mode is active; critical calls still ask.',
       cause: 'permissions.mode is allow-all.',
       impact: 'Powerful write, edit, network, and execution tools can run without a Human-in-the-Loop (HITL) approval prompt.',
       action: 'Use Ask before powerful actions or Custom rules unless this is an intentionally trusted environment.',
@@ -350,7 +350,9 @@ export function buildCliStatusSnapshot(options: CliStatusOptions): CliStatusSnap
       permissionMode: config.get('permissions.mode'),
       permissionLabel: posture.label,
       autoApprove: posture.autoApprove,
+      automaticApprovals: posture.automaticApprovals,
       bypassesPrompts: posture.bypassesPrompts,
+      permissionDetail: posture.detail,
       secretPolicy: config.get('storage.secretPolicy'),
       secretPolicyLabel: secretPolicyLabel(config.get('storage.secretPolicy')),
       runtimeAuthSignal: options.auth ?? null,
@@ -413,6 +415,7 @@ export function renderCliStatus(options: CliStatusOptions): string {
     'Auth',
     `  permissions: ${snapshot.auth.permissionLabel} (${String(config.get('permissions.mode'))})`,
     `  autoApprove: ${yesNo(snapshot.auth.autoApprove)} (behavior.autoApprove)`,
+    `  approval checks: ${snapshot.auth.permissionDetail}`,
     `  secretPolicy: ${secretPolicyLabel(config.get('storage.secretPolicy'))} (${String(config.get('storage.secretPolicy'))})`,
     options.auth
       ? `  local auth store ${options.auth.userStorePresent ? 'present' : 'missing'} (${options.auth.userStorePath})`

@@ -578,10 +578,9 @@ async function main() {
       workingDir, homeDirectory, view: viewFrame?.footer ?? null,
       contextWindow: providerRegistry.getKnownContextWindowForModel(currentModel), // null: unknown, the meter says so
       compactThreshold: configManager.get('behavior.autoCompactThreshold') as number,
-      // Single source of truth for "will this bypass the approval prompt?", computed
-      // the same way cli/status.ts and the policy-explain tool compute it (behavior.autoApprove
-      // first, then permissions.mode), so the footer can never disagree with them.
-      dangerMode: readApprovalPostureFromConfig(configManager).bypassesPrompts,
+      // Warn about broad automatic approvals even though boundaries or critical
+      // stakes can still ask. The shared posture also drives status and explain.
+      dangerMode: readApprovalPostureFromConfig(configManager).automaticApprovals,
       powerNote: describePowerStatus(ctx.services.powerManager.getState()) ?? undefined, // see power-status.ts
       lastInputTokens: orchestrator.lastInputTokens,
       commandArgsHint,

@@ -118,7 +118,7 @@ describe('CLI status and doctor output', () => {
       'storage.secretPolicy': 'require_secure',
     }));
 
-    expect(text).toContain('permissions: Allow everything (allow-all)');
+    expect(text).toContain('permissions: Automatic below critical stakes (allow-all)');
     expect(text).toContain('secretPolicy: Require secure storage (require_secure)');
   });
 
@@ -131,10 +131,28 @@ describe('CLI status and doctor output', () => {
     // The historical bug: this surface derived its label from
     // permissions.mode alone and would have printed "Ask before powerful
     // actions" here, disagreeing with the gate (which checks autoApprove
-    // first and bypasses everything). It must now say auto-approve is on.
+    // before presets, after boundary checks). It must now say auto-approve is on.
     expect(text).toContain('Auto-approve ON');
     expect(text).toContain('autoApprove: yes (behavior.autoApprove)');
     expect(text).not.toContain('permissions: Ask before powerful actions');
+  });
+
+  test('status JSON separates configured automatic approvals from a universal prompt bypass', () => {
+    for (const [settings, automaticApprovals] of [
+      [{ 'permissions.mode': 'prompt' }, false],
+      [{ 'permissions.mode': 'prompt', 'behavior.autoApprove': true }, true],
+      [{ 'permissions.mode': 'allow-all' }, true],
+    ] as const) {
+      const snapshot = JSON.parse(renderCliStatus({ ...makeOptions(settings), outputFormat: 'json' }));
+      expect(snapshot.auth.automaticApprovals).toBe(automaticApprovals);
+      expect(snapshot.auth.bypassesPrompts).toBe(false);
+      expect(snapshot.auth.permissionMode).toBe(settings['permissions.mode']);
+      expect(snapshot.auth.permissionDetail).toContain('Boundary checks still apply');
+    }
+    const text = renderCliStatus(makeOptions({ 'permissions.mode': 'allow-all' }));
+    expect(text).toContain('critical calls still ask');
+    expect(text).toContain('Boundary checks still apply');
+    expect(text).not.toContain('Allow everything');
   });
 
   test('doctor flags auto-approve as a distinct risk finding, independent of permissions.mode', () => {
@@ -149,6 +167,8 @@ describe('CLI status and doctor output', () => {
     expect(text).toContain('[risk:security:auto-approve-enabled]');
     expect(text).toContain('cause: behavior.autoApprove is true.');
     expect(text).not.toContain('[risk:security:allow-all-permissions]');
+    expect(text).toContain('Boundary checks can still refuse a call or require approval.');
+    expect(text).not.toContain('tool calls never prompt');
   });
 
   test('default posture (autoApprove=false, mode=prompt) still reads "prompt" everywhere', () => {
@@ -171,6 +191,8 @@ describe('CLI status and doctor output', () => {
     });
 
     expect(text).toContain('[risk:security:allow-all-permissions]');
+    expect(text).toContain('critical calls still ask');
+    expect(text).not.toContain('Allow everything');
     expect(text).toContain('cause: permissions.mode is allow-all.');
     expect(text).toContain('impact: Powerful write, edit, network, and execution tools can run without a Human-in-the-Loop (HITL) approval prompt.');
     expect(text).toContain('action: Use Ask before powerful actions or Custom rules unless this is an intentionally trusted environment.');

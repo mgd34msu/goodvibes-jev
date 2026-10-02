@@ -7,11 +7,26 @@
 import { describe, test, expect } from 'bun:test';
 import { PermissionPromptUI } from '../../permissions/prompt.ts';
 import { activeTokens } from '../../renderer/theme.ts';
-import { analyzePermissionRequest } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import { analyzePermissionRequest, type PermissionRequestAnalysis } from '@goodvibes-jev/engine/sdk/platform/permissions';
 
 // ---------------------------------------------------------------------------
 // 5. PermissionPromptUI, renders correct category label per category
 // ---------------------------------------------------------------------------
+
+/**
+ * Rendering consumes the gate's explicit reading. analyzePermissionRequest
+ * supplies only structural facts now; it no longer guesses a risk family from
+ * a command or path. Keep those readings fixture data, not a replacement gate.
+ */
+function readAnalysis(
+  tool: string,
+  args: Record<string, unknown>,
+  category: Parameters<typeof analyzePermissionRequest>[2],
+  riskFamily: NonNullable<PermissionRequestAnalysis['riskFamily']>,
+  facts: Pick<PermissionRequestAnalysis, 'riskLevel' | 'blastRadius' | 'sideEffects'>,
+): PermissionRequestAnalysis {
+  return { ...analyzePermissionRequest(tool, args, category), riskFamily, ...facts };
+}
 
 /** The permission dialog's text (a kit layer), one row per line. */
 function promptText(width: number, request: Parameters<typeof PermissionPromptUI.createPromptLayer>[2]): string {
@@ -58,7 +73,7 @@ describe('PermissionPromptUI: renders correctly per category', () => {
       tool: 'write',
       args: { path: 'src/output.ts' },
       category: 'write' as const,
-      analysis: analyzePermissionRequest('write', { path: 'src/output.ts' }, 'write'),
+      analysis: readAnalysis('write', { path: 'src/output.ts' }, 'write', 'file-mutation', { riskLevel: 'medium' }),
       resolve: (_approved: boolean) => {},
     };
     const layer = PermissionPromptUI.createPromptLayer(WIDTH, 24, request);
@@ -118,9 +133,9 @@ describe('PermissionPromptUI: renders correctly per category', () => {
     const request = {
       callId: 'test-call-6',
       tool: 'exec',
-      args: { command: 'ls' },
+      args: { command: 'bun run build' },
       category: 'execute' as const,
-      analysis: analyzePermissionRequest('exec', { command: 'ls' }, 'execute'),
+      analysis: readAnalysis('exec', { command: 'bun run build' }, 'execute', 'shell-mutation', { riskLevel: 'medium', blastRadius: 'project', sideEffects: ['changes state'] }),
       resolve: (_approved: boolean) => {},
     };
     const text = promptText(WIDTH, request);
@@ -128,7 +143,7 @@ describe('PermissionPromptUI: renders correctly per category', () => {
     expect(text).toContain('Command');
     expect(text).toContain(fact('Decision', 'shell-execution'));
     expect(text).toContain(fact('Surface', 'shell  radius=project'));
-    expect(text).toContain(fact('Effects', 'process execution'));
+    expect(text).toContain(fact('Effects', 'changes state'));
     expect(text).toContain(fact('Checklist', 'Confirm shell side effects'));
   });
 
@@ -140,6 +155,7 @@ describe('PermissionPromptUI: renders correctly per category', () => {
       category: 'execute' as const,
       analysis: {
         classification: 'network',
+        riskFamily: 'network-egress' as const,
         riskLevel: 'medium' as const,
         summary: 'Outbound network request',
         reasons: ['Review external host access before approval.'],
@@ -166,7 +182,7 @@ describe('PermissionPromptUI: renders correctly per category', () => {
       tool: 'write',
       args: { path: 'src/output.ts' },
       category: 'write' as const,
-      analysis: analyzePermissionRequest('write', { path: 'src/output.ts' }, 'write'),
+      analysis: readAnalysis('write', { path: 'src/output.ts' }, 'write', 'file-mutation', { riskLevel: 'medium' }),
       resolve: (_approved: boolean) => {},
     };
     const text = promptText(WIDTH, request);
@@ -181,7 +197,7 @@ describe('PermissionPromptUI: renders correctly per category', () => {
       tool: 'edit',
       args: { path: 'notebooks/analysis.ipynb' },
       category: 'write' as const,
-      analysis: analyzePermissionRequest('edit', { path: 'notebooks/analysis.ipynb' }, 'write'),
+      analysis: readAnalysis('edit', { path: 'notebooks/analysis.ipynb' }, 'write', 'notebook-edit', { riskLevel: 'medium' }),
       resolve: (_approved: boolean) => {},
     };
     const text = promptText(WIDTH, request);
@@ -196,7 +212,7 @@ describe('PermissionPromptUI: renders correctly per category', () => {
       tool: 'write',
       args: { path: '.env.production' },
       category: 'write' as const,
-      analysis: analyzePermissionRequest('write', { path: '.env.production' }, 'write'),
+      analysis: readAnalysis('write', { path: '.env.production' }, 'write', 'config-mutation', { riskLevel: 'high' }),
       resolve: (_approved: boolean) => {},
     };
     const text = promptText(WIDTH, request);
@@ -211,7 +227,7 @@ describe('PermissionPromptUI: renders correctly per category', () => {
       tool: 'exec',
       args: { command: 'bun install' },
       category: 'execute' as const,
-      analysis: analyzePermissionRequest('exec', { command: 'bun install' }, 'execute'),
+      analysis: readAnalysis('exec', { command: 'bun install' }, 'execute', 'dependency-install', { riskLevel: 'high' }),
       resolve: (_approved: boolean) => {},
     };
     const text = promptText(WIDTH, request);
@@ -226,7 +242,7 @@ describe('PermissionPromptUI: renders correctly per category', () => {
       tool: 'agent',
       args: { task: 'delegate release verification' },
       category: 'delegate' as const,
-      analysis: analyzePermissionRequest('agent', { task: 'delegate release verification' }, 'delegate'),
+      analysis: readAnalysis('agent', { task: 'delegate release verification' }, 'delegate', 'delegation', { riskLevel: 'high', blastRadius: 'delegated' }),
       resolve: (_approved: boolean) => {},
     };
     const text = promptText(WIDTH, request);
@@ -242,7 +258,7 @@ describe('PermissionPromptUI: renders correctly per category', () => {
       tool: 'agent',
       args: { mode: 'spawn', task: 'delegate release verification' },
       category: 'delegate' as const,
-      analysis: analyzePermissionRequest('agent', { task: 'delegate release verification' }, 'delegate'),
+      analysis: readAnalysis('agent', { mode: 'spawn', task: 'delegate release verification' }, 'delegate', 'agent-spawn', { riskLevel: 'high', blastRadius: 'delegated' }),
       resolve: (_approved: boolean) => {},
     };
     const text = promptText(WIDTH, request);
@@ -257,7 +273,7 @@ describe('PermissionPromptUI: renders correctly per category', () => {
       tool: 'remote_trigger',
       args: { mode: 'dispatch', task: 'run remote verification' },
       category: 'delegate' as const,
-      analysis: analyzePermissionRequest('remote_trigger', { mode: 'dispatch', task: 'run remote verification' }, 'delegate'),
+      analysis: readAnalysis('remote_trigger', { mode: 'dispatch', task: 'run remote verification' }, 'delegate', 'remote-dispatch', { riskLevel: 'high' }),
       resolve: (_approved: boolean) => {},
     };
     const text = promptText(WIDTH, request);
@@ -272,7 +288,7 @@ describe('PermissionPromptUI: renders correctly per category', () => {
       tool: 'mcp',
       args: { mode: 'set-trust', serverName: 'docs', trustMode: 'allow-all' },
       category: 'delegate' as const,
-      analysis: analyzePermissionRequest('mcp', { mode: 'set-trust', serverName: 'docs', trustMode: 'allow-all' }, 'delegate'),
+      analysis: readAnalysis('mcp', { mode: 'set-trust', serverName: 'docs', trustMode: 'allow-all' }, 'delegate', 'mcp-escalation', { riskLevel: 'critical' }),
       resolve: (_approved: boolean) => {},
     };
     const text = promptText(WIDTH, request);
@@ -287,7 +303,7 @@ describe('PermissionPromptUI: renders correctly per category', () => {
       tool: 'workflow',
       args: { eventPath: 'Pre:tool:edit', hookName: 'guard-edit' },
       category: 'delegate' as const,
-      analysis: analyzePermissionRequest('workflow', { eventPath: 'Pre:tool:edit', hookName: 'guard-edit' }, 'delegate'),
+      analysis: readAnalysis('workflow', { eventPath: 'Pre:tool:edit', hookName: 'guard-edit' }, 'delegate', 'hook-execution', { riskLevel: 'high' }),
       resolve: (_approved: boolean) => {},
     };
     const text = promptText(WIDTH, request);
@@ -302,7 +318,7 @@ describe('PermissionPromptUI: renders correctly per category', () => {
       tool: 'write',
       args: { path: '.goodvibes/plugins/deploy-audit/manifest.json' },
       category: 'write' as const,
-      analysis: analyzePermissionRequest('write', { path: '.goodvibes/plugins/deploy-audit/manifest.json' }, 'write'),
+      analysis: readAnalysis('write', { path: '.goodvibes/plugins/deploy-audit/manifest.json' }, 'write', 'plugin-lifecycle', { riskLevel: 'high' }),
       resolve: (_approved: boolean) => {},
     };
     const text = promptText(WIDTH, request);
@@ -317,13 +333,28 @@ describe('PermissionPromptUI: renders correctly per category', () => {
       tool: 'write',
       args: { path: 'sandbox.vmBackend' },
       category: 'write' as const,
-      analysis: analyzePermissionRequest('write', { path: 'sandbox.vmBackend' }, 'write'),
+      analysis: readAnalysis('write', { path: 'sandbox.vmBackend' }, 'write', 'sandbox-policy-change', { riskLevel: 'critical' }),
       resolve: (_approved: boolean) => {},
     };
     const text = promptText(WIDTH, request);
     expect(text).toContain('Sandbox Policy Change Approval');
     expect(text).toContain(fact('Decision', 'sandbox-policy-change'));
     expect(text).toContain(fact('Checklist', 'Confirm isolation-mode impact'));
+  });
+
+  test('an unread request stays generic instead of guessing its risk family from a path', () => {
+    const request = {
+      callId: 'test-call-unread',
+      tool: 'write',
+      args: { path: '.env.production' },
+      category: 'write' as const,
+      analysis: analyzePermissionRequest('write', { path: '.env.production' }, 'write'),
+      resolve: (_approved: boolean) => {},
+    };
+    const text = promptText(WIDTH, request);
+    expect(text).toContain('Generic Approval');
+    expect(text).toContain(fact('Decision', 'generic'));
+    expect(text).not.toContain('Configuration Mutation Approval');
   });
 
   test('getDisplayArg returns path when args has path', () => {

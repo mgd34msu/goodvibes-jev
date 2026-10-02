@@ -46,9 +46,11 @@ describe('agent-policy-explanation: approval posture agreement', () => {
 
     expect(resolved.status).toBe('found');
     if (resolved.status !== 'found') return;
-    const posture = resolved.explanation.posture as { label: string; autoApprove: boolean; bypassesPrompts: boolean; mode: string };
+    const posture = resolved.explanation.posture as { label: string; autoApprove: boolean; automaticApprovals: boolean; bypassesPrompts: boolean; detail: string; mode: string };
     expect(posture.autoApprove).toBe(true);
-    expect(posture.bypassesPrompts).toBe(true);
+    expect(posture.automaticApprovals).toBe(true);
+    expect(posture.bypassesPrompts).toBe(false);
+    expect(posture.detail).toContain('Boundary checks still apply');
     expect(posture.label.toLowerCase()).toContain('auto-approve');
 
     // Must match the shared helper's output exactly, not a locally-worded approximation.
@@ -74,16 +76,19 @@ describe('agent-policy-explanation: approval posture agreement', () => {
     expect(resolved.explanation.status).toBe('confirmation_required');
   });
 
-  test('allow-all mode, autoApprove=false: posture says Allow everything, matching the shared helper', () => {
+  test('allow-all mode, autoApprove=false: posture exposes automatic approvals and the critical-stakes exception', () => {
     const context = fakeContext({ 'behavior.autoApprove': false, 'permissions.mode': 'allow-all' });
     const resolved = explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
 
     expect(resolved.status).toBe('found');
     if (resolved.status !== 'found') return;
-    const posture = resolved.explanation.posture as { label: string; bypassesPrompts: boolean; autoApprove: boolean };
+    const posture = resolved.explanation.posture as { label: string; automaticApprovals: boolean; bypassesPrompts: boolean; detail: string; autoApprove: boolean };
     expect(posture.autoApprove).toBe(false);
-    expect(posture.bypassesPrompts).toBe(true);
-    expect(posture.label).toBe('Allow everything');
+    expect(posture.automaticApprovals).toBe(true);
+    expect(posture.bypassesPrompts).toBe(false);
+    expect(posture.detail).toContain('Boundary checks still apply');
+    expect(posture.label).toBe('Automatic below critical stakes');
+    expect(posture.detail).toContain('critical calls still ask');
   });
 
   test('plan mode: write is predicted denied outright (plan_mode), never "prompt"', () => {
@@ -92,7 +97,7 @@ describe('agent-policy-explanation: approval posture agreement', () => {
 
     expect(resolved.status).toBe('found');
     if (resolved.status !== 'found') return;
-    const posture = resolved.explanation.posture as { label: string; bypassesPrompts: boolean; mode: string };
+    const posture = resolved.explanation.posture as { label: string; automaticApprovals: boolean; bypassesPrompts: boolean; detail: string; mode: string };
     expect(posture.mode).toBe('plan');
     expect(posture.bypassesPrompts).toBe(false);
     expect(posture.label.toLowerCase()).toContain('plan');
@@ -109,7 +114,7 @@ describe('agent-policy-explanation: approval posture agreement', () => {
 
     expect(resolved.status).toBe('found');
     if (resolved.status !== 'found') return;
-    const posture = resolved.explanation.posture as { label: string; bypassesPrompts: boolean; mode: string };
+    const posture = resolved.explanation.posture as { label: string; automaticApprovals: boolean; bypassesPrompts: boolean; detail: string; mode: string };
     expect(posture.mode).toBe('accept-edits');
     expect(posture.bypassesPrompts).toBe(false);
     expect(posture.label.toLowerCase()).toContain('accept edits');
