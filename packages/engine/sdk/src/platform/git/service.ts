@@ -1,3 +1,5 @@
+import { realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { SimpleGit } from 'simple-git';
 import { createSimpleGit } from './optional-simple-git.js';
 import { parseUnifiedDiff, type StructuredDiff } from './structured-diff.js';
@@ -58,6 +60,28 @@ export function conflictPathsFromMergeOutput(message: string): string[] {
   }
   return paths;
 }
+
+// Separate GitService instances still mutate the same Git administrative tree.
+// Git creates commondir with an open/write window that another `worktree add`
+// can observe as an empty file. Serialize managed metadata mutations within this
+// process, keyed by the canonical common directory (also shared by linked trees).
+// External Git processes are not participants in this in-process queue.
+const worktreeMutationTails = new Map<string, Promise<void>>();
+
+async function mutateWorktree(git: SimpleGit, cwd: string, args: string[]): Promise<void> {
+  const commonDir = realpathSync(resolve(cwd, (await git.raw(['rev-parse', '--git-common-dir'])).trim()));
+  const previous = worktreeMutationTails.get(commonDir) ?? Promise.resolve();
+  const operation = previous.then(async () => { await git.raw(args); });
+  // A failed Git operation must not poison the next item's preparation.
+  const tail = operation.then(() => undefined, () => undefined);
+  worktreeMutationTails.set(commonDir, tail);
+  try {
+    await operation;
+  } finally {
+    if (worktreeMutationTails.get(commonDir) === tail) worktreeMutationTails.delete(commonDir);
+  }
+}
+
 
 /**
  * GitService, Wraps simple-git with hook emission on all mutating operations.
@@ -460,7 +484,7 @@ export class GitService {
   async worktreeAdd(path: string, branch: string): Promise<void> {
     await this.firePre('worktreeAdd', { path, branch });
     try {
-      await (await this.git()).raw(['worktree', 'add', path, '-b', branch]);
+      await mutateWorktree(await this.git(), this.cwd, ['worktree', 'add', path, '-b', branch]);
       await this.firePost('worktreeAdd', { path, branch });
     } catch (err) {
       await this.fireFail('worktreeAdd', { path, branch, error: summarizeError(err) });
@@ -471,7 +495,7 @@ export class GitService {
   async worktreeRemove(path: string): Promise<void> {
     await this.firePre('worktreeRemove', { path });
     try {
-      await (await this.git()).raw(['worktree', 'remove', path]);
+      await mutateWorktree(await this.git(), this.cwd, ['worktree', 'remove', path]);
       await this.firePost('worktreeRemove', { path });
     } catch (err) {
       await this.fireFail('worktreeRemove', { path, error: summarizeError(err) });
