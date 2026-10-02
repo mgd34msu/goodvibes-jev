@@ -328,13 +328,11 @@ describe('the other places a workstream line reaches a person', () => {
     // channel, a phone. Outward-facing text, same rule.
     const sent: string[] = [];
     const bus = new RuntimeEventBus();
-    const notifier = new WebhookNotifier(['https://example.com/webhook']);
-    const sendSpy = spyOn(notifier, 'send').mockImplementation(async (text: string) => {
-      sent.push(text);
-      // WebhookNotifierSendResult also declares `attempted`; omitting it made
-      // this mock a different shape from the method it replaces.
-      return { attempted: 1, delivered: 1, failed: 0, results: [] };
-    });
+    const notifier = new WebhookNotifier(['https://example.com/webhook'], { force: true, metadataOnly: () => false });
+    const sendSpy = spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      sent.push(String(init?.body));
+      return new Response('ok');
+    }, { preconnect() {} }));
     try {
       notifier.attachToRuntimeBus(bus);
       rememberWorkstreamLabel(CONTRACT_ID, TASK);
