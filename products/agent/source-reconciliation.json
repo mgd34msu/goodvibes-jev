@@ -3478,7 +3478,7 @@
       "target": "products/agent/scripts/release-prepare.ts",
       "upstreamBlob": "8f8637e8658193770c94be01eae521fafa87a6fe",
       "present": true,
-      "recoveredBlob": "5d302295ae7e4eb4be622848714ede388882e2a4",
+      "recoveredBlob": "4e3d2e23ad472990f1712710e4ea884d5fec284d",
       "materialization": "workspace-adapted"
     },
     {
@@ -3510,7 +3510,7 @@
       "target": "products/agent/scripts/sdk-release-gates.ts",
       "upstreamBlob": "78bfcab60ec393fc0dd1a7d8f39551db1f005639",
       "present": true,
-      "recoveredBlob": "347a2f4c491e6d20920edad74c831bba6c2bb17b",
+      "recoveredBlob": "51446b44eb653d83427dd2e1943c99ce2fff6cb0",
       "materialization": "workspace-adapted"
     },
     {
@@ -3710,7 +3710,7 @@
       "target": "products/agent/src/agent/harness-control.ts",
       "upstreamBlob": "6e8f6c1254541fdc2d76af4225533071c42099b1",
       "present": true,
-      "recoveredBlob": "2361e7a0767c57aa71cb0a690b0fac1a24ededb3",
+      "recoveredBlob": "299f02e4a10c23615134deb487b9a27a5527646e",
       "materialization": "workspace-adapted"
     },
     {
@@ -4422,7 +4422,7 @@
       "target": "products/agent/src/cli/entrypoint.ts",
       "upstreamBlob": "fd457eafca1bbc0d9b886579b2661c78d30e175d",
       "present": true,
-      "recoveredBlob": "322108dee76c3d19793dd21f4822a771e6584591",
+      "recoveredBlob": "8b3c17905adf86e609ef66d08fe7327a46630fc2",
       "materialization": "workspace-adapted"
     },
     {
@@ -4542,8 +4542,8 @@
       "target": "products/agent/src/cli/package-verification.ts",
       "upstreamBlob": "1c7c730be402afdb48e50c8a6726bf7805407fde",
       "present": true,
-      "recoveredBlob": "1c7c730be402afdb48e50c8a6726bf7805407fde",
-      "materialization": "byte-identical"
+      "recoveredBlob": "a071b837da0535f970b4225f4f5c4b0d362d2446",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/cli/parser.ts",
@@ -4662,7 +4662,7 @@
       "target": "products/agent/src/cli/status.ts",
       "upstreamBlob": "21cf7c6d7a9b37d37b2fa09a10a904306bba091a",
       "present": true,
-      "recoveredBlob": "cd26588b19feff3f67ab349836fb26c8c51fbd64",
+      "recoveredBlob": "7f368f8932d4908c97c319c8d5bb8dd0fc6173a8",
       "materialization": "workspace-adapted"
     },
     {
@@ -4774,7 +4774,7 @@
       "target": "products/agent/src/config/index.ts",
       "upstreamBlob": "a6eef3a34a57768d75fee91eb3715e03f64d3c0a",
       "present": true,
-      "recoveredBlob": "97307d3db6507dee2f0018404b604795457ec216",
+      "recoveredBlob": "6906138ba4f56dcf3adef02bf62a8904abbe1ec4",
       "materialization": "workspace-adapted"
     },
     {
@@ -5222,7 +5222,7 @@
       "target": "products/agent/src/input/agent-workspace-categories.ts",
       "upstreamBlob": "049741e4d1f7251c132188268bf90a742fec8a7a",
       "present": true,
-      "recoveredBlob": "73de1aaea927e084fb54f224f306968563e12c48",
+      "recoveredBlob": "e993cab0ea3f7519f2ddd261d8d3ff10d997e1f6",
       "materialization": "workspace-adapted"
     },
     {
@@ -5774,7 +5774,7 @@
       "target": "products/agent/src/input/agent-workspace-settings.ts",
       "upstreamBlob": "8992a0b3c226150b69543db9c4c318274b6f7fa5",
       "present": true,
-      "recoveredBlob": "c1c214a6b5b9f81fd94085c034eb2f243bcede8a",
+      "recoveredBlob": "b46acfad7d789ce508e903c25f3abfd3d5c6edbb",
       "materialization": "workspace-adapted"
     },
     {
@@ -5910,7 +5910,7 @@
       "target": "products/agent/src/input/agent-workspace.ts",
       "upstreamBlob": "702ef19c1d63e2e7b87052c73b15bc80f6bc25e9",
       "present": true,
-      "recoveredBlob": "94ba95030e9c7f44162cafc4b8d2752ecf58d797",
+      "recoveredBlob": "26118452982656559a8e711178c1ca6e605ebae1",
       "materialization": "workspace-adapted"
     },
     {
@@ -6254,7 +6254,7 @@
       "target": "products/agent/src/input/commands/operator-runtime.ts",
       "upstreamBlob": "3f702a8b7a45914954226e58810843a21d1d77d7",
       "present": true,
-      "recoveredBlob": "3da1af1ab167623ee6b5ae198d68309ab2939205",
+      "recoveredBlob": "d818c7608f2c74b7e2d241ab59473942b4fb8c59",
       "materialization": "workspace-adapted"
     },
     {
@@ -6846,7 +6846,7 @@
       "target": "products/agent/src/input/settings-modal-types.ts",
       "upstreamBlob": "2a204e3ad293d7cd4e486b49fd6c6562669f32b7",
       "present": true,
-      "recoveredBlob": "10d6465e755e1e833a573c7e559c8569fdf3b402",
+      "recoveredBlob": "d8d97654803c55f3db538669e17db8cf7ac88fc4",
       "materialization": "workspace-adapted"
     },
     {
@@ -6854,7 +6854,7 @@
       "target": "products/agent/src/input/settings-modal.ts",
       "upstreamBlob": "ff0b86892cc63a696d98f0665860ff5f2bd64173",
       "present": true,
-      "recoveredBlob": "4714cf06e6f2ca091e62b41a961c3f317cac7bc9",
+      "recoveredBlob": "67e780666f8c72c2ccf7131a043a9473429070b7",
       "materialization": "workspace-adapted"
     },
     {
@@ -6934,7 +6934,7 @@
       "target": "products/agent/src/permissions/approval-posture.ts",
       "upstreamBlob": "f52ced054887333b4de5f539191df81e2fcc55d5",
       "present": true,
-      "recoveredBlob": "f49ac438a902e72177dbce5edbf0f15047b66d36",
+      "recoveredBlob": "1c0d839b04bd566c2cd9ba8533d56d5e9b348159",
       "materialization": "workspace-adapted"
     },
     {
@@ -7422,7 +7422,7 @@
       "target": "products/agent/src/renderer/settings-modal-context.ts",
       "upstreamBlob": "cc295cec417fcfc364988be3a880828dd600d88b",
       "present": true,
-      "recoveredBlob": "48f36aff21f7e7948573bf1b5044d3ec1b62738e",
+      "recoveredBlob": "0bdf28174e7b79d73327be88bf520c27095a1443",
       "materialization": "workspace-adapted"
     },
     {
@@ -7774,7 +7774,7 @@
       "target": "products/agent/src/runtime/bootstrap-core.ts",
       "upstreamBlob": "7bcc573118672d150ffc8b39ac0fb1f710fe1abd",
       "present": true,
-      "recoveredBlob": "53e253c4885e9d953ba10052834f5844778e31e4",
+      "recoveredBlob": "f2b1ab1cff4e58ddea501b89192e3f8427aecdac",
       "materialization": "workspace-adapted"
     },
     {
@@ -7806,7 +7806,7 @@
       "target": "products/agent/src/runtime/bootstrap-notifier.ts",
       "upstreamBlob": "2a2bb668086bc70ab2ddd8c4b04ca049d0234f99",
       "present": true,
-      "recoveredBlob": "2cf24e1e035ce76d1df57376fe8c972e3ac0cdaa",
+      "recoveredBlob": "1f5bd04958f7d9ad0fe5e6760ea3fd20257487a0",
       "materialization": "workspace-adapted"
     },
     {
@@ -8470,7 +8470,7 @@
       "target": "products/agent/src/shell/terminal-focus-mode.ts",
       "upstreamBlob": "d060a507ae165a1dc6fdf801006a4c76cc0948bf",
       "present": true,
-      "recoveredBlob": "75e43ad2c6f3118cbf2cbdc91b2fa1d4c579d131",
+      "recoveredBlob": "23fb3489b17775972b663267b5cfc2163cc8afe8",
       "materialization": "workspace-adapted"
     },
     {
@@ -8510,7 +8510,7 @@
       "target": "products/agent/src/shell/ui-openers.ts",
       "upstreamBlob": "bb390c47b604590b3bb01c47ad8939719a00824e",
       "present": true,
-      "recoveredBlob": "2a597730dbc66092eed389ddf0a72093d5dc5e13",
+      "recoveredBlob": "6ba0f36f62db75f202f9bbd6bcbf92a419487629",
       "materialization": "workspace-adapted"
     },
     {
@@ -8886,7 +8886,7 @@
       "target": "products/agent/src/test/agent/vibe-projection-migration.test.ts",
       "upstreamBlob": "7c31dfbaade7209a7cbba357d8f91ae747135ca4",
       "present": true,
-      "recoveredBlob": "a796bb16ef2cd1423e10f02d070e60fb84027e9f",
+      "recoveredBlob": "c6f5940bdb4662ff2fd6c7aeecad1f50a75c217f",
       "materialization": "workspace-adapted"
     },
     {
@@ -8998,8 +8998,8 @@
       "target": "products/agent/src/test/cli-flags.test.ts",
       "upstreamBlob": "46a81fd2529e301d97d83c230e14763995166078",
       "present": true,
-      "recoveredBlob": "46a81fd2529e301d97d83c230e14763995166078",
-      "materialization": "byte-identical"
+      "recoveredBlob": "5241a761391a2178450ddb30200f1e1575346054",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/cli/agent-knowledge-command.test.ts",
@@ -9094,7 +9094,7 @@
       "target": "products/agent/src/test/cli/memory-command-wire.test.ts",
       "upstreamBlob": "43e733a430e5605439c93d50697e4ac9dec21aea",
       "present": true,
-      "recoveredBlob": "323aef4e766a9b3a9debcd232c86de6662ec09e5",
+      "recoveredBlob": "820d0ae637ae72d1f4d48a343edc7b5456979939",
       "materialization": "workspace-adapted"
     },
     {
@@ -9118,7 +9118,7 @@
       "target": "products/agent/src/test/cli/package-verification.test.ts",
       "upstreamBlob": "b3713ca6d2eb83bc23a460d3a68199cc63fb9f24",
       "present": true,
-      "recoveredBlob": "6f8254a5106aed34ed03e6aeaea1bf62fa7b8b67",
+      "recoveredBlob": "ef7d4a9474ae9709f2522fd0523d51a4ecee1252",
       "materialization": "workspace-adapted"
     },
     {
@@ -9214,8 +9214,8 @@
       "target": "products/agent/src/test/cli/status.test.ts",
       "upstreamBlob": "3f630a0a191e82049b0ab81eaa4c23a5f410ce53",
       "present": true,
-      "recoveredBlob": "3f630a0a191e82049b0ab81eaa4c23a5f410ce53",
-      "materialization": "byte-identical"
+      "recoveredBlob": "90ce35c58ceb8dcbf669a20bb7f2fb3f09f80fe3",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/cli/tui-startup.test.ts",
@@ -9430,8 +9430,8 @@
       "target": "products/agent/src/test/core/conversation-assistant-turn-rendering.test.ts",
       "upstreamBlob": "15141a844096af707e0b3e9be866484e0c9cd49c",
       "present": true,
-      "recoveredBlob": "15141a844096af707e0b3e9be866484e0c9cd49c",
-      "materialization": "byte-identical"
+      "recoveredBlob": "468f5f41177e681ef8f1337af29970ab627d9826",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/core/conversation-display-features.test.ts",
@@ -9446,7 +9446,7 @@
       "target": "products/agent/src/test/core/conversation-line-cache.test.ts",
       "upstreamBlob": "a0b7cb31c1ce76bfc63ea9923929c93127b30e6e",
       "present": true,
-      "recoveredBlob": "1fa550a950ab3e848fdef11799638bd1c2236147",
+      "recoveredBlob": "f78ed8a9a397909d873c696709f43f5f2f1579d6",
       "materialization": "workspace-adapted"
     },
     {
@@ -9462,8 +9462,8 @@
       "target": "products/agent/src/test/core/conversation-rendering.test.ts",
       "upstreamBlob": "622605f404a6e624cb4048369e64ebfb3006d070",
       "present": true,
-      "recoveredBlob": "622605f404a6e624cb4048369e64ebfb3006d070",
-      "materialization": "byte-identical"
+      "recoveredBlob": "74c2d6b98e308944c98311778995c3dc2a355a2b",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/core/conversation-theme-rebuild.test.ts",
@@ -9510,7 +9510,7 @@
       "target": "products/agent/src/test/core/notices.test.ts",
       "upstreamBlob": "18d84da6d2e8e05ed02ef2d20bcb64030d724b64",
       "present": true,
-      "recoveredBlob": "350d4a8289d496acc51879bab7940157b5031b13",
+      "recoveredBlob": "443617cdd05d0550da5860e35232358f5be0ec30",
       "materialization": "workspace-adapted"
     },
     {
@@ -9622,7 +9622,7 @@
       "target": "products/agent/src/test/core/tool-result-summaries-replay.test.ts",
       "upstreamBlob": "4f28e045a187775a3f4e54313779f8b023916586",
       "present": true,
-      "recoveredBlob": "2d713534730b2404e714322d6337389cfe952214",
+      "recoveredBlob": "71e771a1c915b6ac96ee7252d31c936c4171009e",
       "materialization": "workspace-adapted"
     },
     {
@@ -9654,7 +9654,7 @@
       "target": "products/agent/src/test/core/work-tree-model.test.ts",
       "upstreamBlob": "217eb6a3a2a40eb6eec000ef6728aeea8e706224",
       "present": true,
-      "recoveredBlob": "1d89bacdbd33fe0aaebed960b3a9df74cc5ddb3f",
+      "recoveredBlob": "bf23884a07e48120823113439e1ea04d4cab57d9",
       "materialization": "workspace-adapted"
     },
     {
@@ -9702,7 +9702,7 @@
       "target": "products/agent/src/test/deps/dependency-check.test.ts",
       "upstreamBlob": "117d902776e3f69bc40330284d495501f1071c6a",
       "present": true,
-      "recoveredBlob": "b668529f8bae6ddeab0316b05be8434c28ea702f",
+      "recoveredBlob": "b31960fc4525e8dd6cb3c6316b27a8641736185e",
       "materialization": "workspace-adapted"
     },
     {
@@ -9710,7 +9710,7 @@
       "target": "products/agent/src/test/e2e/daemon-readoption.e2e.test.ts",
       "upstreamBlob": "f6335ddf11b2ae2158f656bc060f635363869694",
       "present": true,
-      "recoveredBlob": "48efabea629bd0a30462c90bf5384cb7f89fb592",
+      "recoveredBlob": "945648cab2807d76451d64f6878a9a49f07a0258",
       "materialization": "workspace-adapted"
     },
     {
@@ -9926,7 +9926,7 @@
       "target": "products/agent/src/test/helpers/runtime-services.ts",
       "upstreamBlob": "b4a540179fa488b4d04eb3f853f734e1c2ce7ea7",
       "present": true,
-      "recoveredBlob": "7d69dd0e61974f5fd8fc6c9707be245e811d4885",
+      "recoveredBlob": "c47e39fb6e3de1daeeae9adaebf23c034faa13a1",
       "materialization": "workspace-adapted"
     },
     {
@@ -9934,7 +9934,7 @@
       "target": "products/agent/src/test/helpers/session-view-scenes.ts",
       "upstreamBlob": "10daa422ae0bdb6372e0b385371a30fc4e2580a0",
       "present": true,
-      "recoveredBlob": "6d20ffb3fd0d010ae8690dc32526a8deede7bb8c",
+      "recoveredBlob": "fd47b13532526f9d462758d58c9a896d1504ffdf",
       "materialization": "workspace-adapted"
     },
     {
@@ -9982,7 +9982,7 @@
       "target": "products/agent/src/test/helpers/test-managers.ts",
       "upstreamBlob": "8655e45988ef101ac79af11c127e59e849ae9414",
       "present": true,
-      "recoveredBlob": "e012ba0364eefe72321bcb78bc2e9238497fd67d",
+      "recoveredBlob": "4d9c5c71a8ca73a2f913c1377a593ceae093ba83",
       "materialization": "workspace-adapted"
     },
     {
@@ -10158,7 +10158,7 @@
       "target": "products/agent/src/test/input/agent-workspace-editor-routing.test.ts",
       "upstreamBlob": "6dd8c2b8098ddaa458d20e4447a159095397a449",
       "present": true,
-      "recoveredBlob": "a57a73424d80d7360cdc8e1c4383972505a367de",
+      "recoveredBlob": "2fb6da1919a2f8703869801ebc589dab50eeabee",
       "materialization": "workspace-adapted"
     },
     {
@@ -10310,7 +10310,7 @@
       "target": "products/agent/src/test/input/context-window-command.test.ts",
       "upstreamBlob": "7ee24f17f1ffbd16dd759f8c0006dde54866adaf",
       "present": true,
-      "recoveredBlob": "0a2653a8b2be47eda9e2b13f81c623ae8262085e",
+      "recoveredBlob": "eea8c9b510615450167f6bfdc5766fa6a32dbdee",
       "materialization": "workspace-adapted"
     },
     {
@@ -10518,7 +10518,7 @@
       "target": "products/agent/src/test/input/knowledge-command.test.ts",
       "upstreamBlob": "8ddacf1e5701f4e29e0747394e4c093909d6b4dc",
       "present": true,
-      "recoveredBlob": "29693987b9a65d7f8e04d168e2fa9c092b4a714f",
+      "recoveredBlob": "258bfec84a934ed56452bb1db54145f348728ffb",
       "materialization": "workspace-adapted"
     },
     {
@@ -10750,7 +10750,7 @@
       "target": "products/agent/src/test/input/recall-breadth.test.ts",
       "upstreamBlob": "b49afe7c7d816ce1178a44b76295c1548327a90b",
       "present": true,
-      "recoveredBlob": "8a50af9dbc3c88a2af523dd86053252b4d463194",
+      "recoveredBlob": "2c119da6efa8bbaf5450d4eba5378c7ba012b1ec",
       "materialization": "workspace-adapted"
     },
     {
@@ -10766,8 +10766,8 @@
       "target": "products/agent/src/test/input/recall-review-queue.test.ts",
       "upstreamBlob": "60b1ee0cd74883b8b03cca929e7cc4796eb165d8",
       "present": true,
-      "recoveredBlob": "60b1ee0cd74883b8b03cca929e7cc4796eb165d8",
-      "materialization": "byte-identical"
+      "recoveredBlob": "97e5a1a036ad039173cf678e632c7373ad9c84b7",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/input/remote-command.test.ts",
@@ -10990,7 +10990,7 @@
       "target": "products/agent/src/test/permissions/approval-posture.test.ts",
       "upstreamBlob": "8ca89e9f6bda20e64a724effe0352eb0602edd5d",
       "present": true,
-      "recoveredBlob": "d176b0566ac06982ea0208e9673bf88d7d869247",
+      "recoveredBlob": "4fa355133a6f052796d9afc82b71b4fbb77caa42",
       "materialization": "workspace-adapted"
     },
     {
@@ -11022,7 +11022,7 @@
       "target": "products/agent/src/test/providers/context-window-catalog-source.test.ts",
       "upstreamBlob": "f093a82d61debee48649e9ac8ab7900173a6de0a",
       "present": true,
-      "recoveredBlob": "7237e8c1806eb5403c758bf2130db198d465a89a",
+      "recoveredBlob": "71e8f164dcbfd70ab02442b613cf20eb0f0fd553",
       "materialization": "workspace-adapted"
     },
     {
@@ -11062,7 +11062,7 @@
       "target": "products/agent/src/test/release-gates/foundation-surface-stability-gate.test.ts",
       "upstreamBlob": "124959859c87b102a75e45e440c533e9897d59b0",
       "present": true,
-      "recoveredBlob": "a0efa3516e8bd572bc093a9ef98538622737bef1",
+      "recoveredBlob": "116c8b4f96ec1b74c13753b96cccf76f2efa85f7",
       "materialization": "workspace-adapted"
     },
     {
@@ -11094,7 +11094,7 @@
       "target": "products/agent/src/test/release-gates/transport-parity-gate.test.ts",
       "upstreamBlob": "e0695b3f2ac1f8efeb68428ec29de41ce2c0076e",
       "present": true,
-      "recoveredBlob": "6c020aa2f13f5ba454200746b84e44d63ead1506",
+      "recoveredBlob": "d443387fd20206715cfad1fffff6b8cbbb35452f",
       "materialization": "workspace-adapted"
     },
     {
@@ -11662,24 +11662,24 @@
       "target": "products/agent/src/test/renderer/golden-frames-goodvibes-neon/settings-120x40.txt",
       "upstreamBlob": "c75f2b3061772e2055b3eec1a31df7fd62242891",
       "present": true,
-      "recoveredBlob": "c75f2b3061772e2055b3eec1a31df7fd62242891",
-      "materialization": "byte-identical"
+      "recoveredBlob": "b2a8a34cf173e1946d47f620be28393ab323f2ca",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/renderer/golden-frames-goodvibes-neon/settings-80x24.txt",
       "target": "products/agent/src/test/renderer/golden-frames-goodvibes-neon/settings-80x24.txt",
       "upstreamBlob": "fa98d01074f05467ba9cb7d6b95282dc02a5ba72",
       "present": true,
-      "recoveredBlob": "fa98d01074f05467ba9cb7d6b95282dc02a5ba72",
-      "materialization": "byte-identical"
+      "recoveredBlob": "2a0d59b5c8a28287f09a9e0e9e52bb53e631615e",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/renderer/golden-frames-goodvibes-neon/settings-search-120x40.txt",
       "target": "products/agent/src/test/renderer/golden-frames-goodvibes-neon/settings-search-120x40.txt",
       "upstreamBlob": "07abed56e5c8c4ea6b9e050ab01791f098014b00",
       "present": true,
-      "recoveredBlob": "07abed56e5c8c4ea6b9e050ab01791f098014b00",
-      "materialization": "byte-identical"
+      "recoveredBlob": "b3764412c071b0e41b0f3e35cd5decafe4367058",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/renderer/golden-frames-goodvibes-neon/shortcuts-120x40.txt",
@@ -12246,24 +12246,24 @@
       "target": "products/agent/src/test/renderer/golden-frames/settings-120x40.txt",
       "upstreamBlob": "9ec2928ac29e1366f50a97f50f4b720d2b50c12b",
       "present": true,
-      "recoveredBlob": "9ec2928ac29e1366f50a97f50f4b720d2b50c12b",
-      "materialization": "byte-identical"
+      "recoveredBlob": "af4e09317d8eaa6ce16c6b711d480cd3d0631e98",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/renderer/golden-frames/settings-80x24.txt",
       "target": "products/agent/src/test/renderer/golden-frames/settings-80x24.txt",
       "upstreamBlob": "bf44600b860a39332e4521318e99b4f1c04449e6",
       "present": true,
-      "recoveredBlob": "bf44600b860a39332e4521318e99b4f1c04449e6",
-      "materialization": "byte-identical"
+      "recoveredBlob": "0a8ee44590e5887b1cab2c329cc6ba71977aa4b8",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/renderer/golden-frames/settings-search-120x40.txt",
       "target": "products/agent/src/test/renderer/golden-frames/settings-search-120x40.txt",
       "upstreamBlob": "fb971a20c87d7aeecfee0849eb533ed5022fafe0",
       "present": true,
-      "recoveredBlob": "fb971a20c87d7aeecfee0849eb533ed5022fafe0",
-      "materialization": "byte-identical"
+      "recoveredBlob": "d7c949b70997587abcf2e3b49264c80fa3ffe561",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/renderer/golden-frames/shortcuts-120x40.txt",
@@ -12558,8 +12558,8 @@
       "target": "products/agent/src/test/renderer/live-tail-modal.test.ts",
       "upstreamBlob": "a0e3f0badee2c8383a29cd7dbc8e5858760cd2f8",
       "present": true,
-      "recoveredBlob": "a0e3f0badee2c8383a29cd7dbc8e5858760cd2f8",
-      "materialization": "byte-identical"
+      "recoveredBlob": "a6afeba7bce251e68c3cda57cac28c618d042dc7",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/renderer/markdown-dedupe.test.ts",
@@ -12678,7 +12678,7 @@
       "target": "products/agent/src/test/renderer/settings-modal.test.ts",
       "upstreamBlob": "a9bd5f5eb3ee4f4d8e602ffbb0db2ad267cf1eab",
       "present": true,
-      "recoveredBlob": "dff95c4cc809bad64488742086db64f18e2239b6",
+      "recoveredBlob": "b37894afca8f068d2d596c58b3caccf4823106e4",
       "materialization": "workspace-adapted"
     },
     {
@@ -13014,7 +13014,7 @@
       "target": "products/agent/src/test/runtime/composition-parity.test.ts",
       "upstreamBlob": "8ef70de69e64e245ede382d73bfba15aa37041d2",
       "present": true,
-      "recoveredBlob": "3aa07acf28b93b4072da4894a7b78720e9a7a782",
+      "recoveredBlob": "c5af0c7430e3a580166b6fb617822566592e08f9",
       "materialization": "workspace-adapted"
     },
     {
@@ -13038,7 +13038,7 @@
       "target": "products/agent/src/test/runtime/conversational-capture-contract.test.ts",
       "upstreamBlob": "f184e47a58afc8ad8f670b3cf2c7a5bfc8263f9a",
       "present": true,
-      "recoveredBlob": "8a1bc829d4a1c8d4172a6b56bac999812f5b33a0",
+      "recoveredBlob": "cf64a4202596d9bd0854fe9b565ea7e618600944",
       "materialization": "workspace-adapted"
     },
     {
@@ -13182,7 +13182,7 @@
       "target": "products/agent/src/test/runtime/http-transport.test.ts",
       "upstreamBlob": "62b7d82c10e2cb423f0e075e4dc89018fdb36604",
       "present": true,
-      "recoveredBlob": "65d44a987ca2c3d90e54eaad6072746b51f3f83d",
+      "recoveredBlob": "54a8b9981644667a05c83effe7f4774bc7c9aa07",
       "materialization": "workspace-adapted"
     },
     {
@@ -13190,7 +13190,7 @@
       "target": "products/agent/src/test/runtime/knowledge-store-isolation.test.ts",
       "upstreamBlob": "4ad6da17928e1eb446277c3db4cc8de7af2809c5",
       "present": true,
-      "recoveredBlob": "ce777a207e56abc2bd11c53bbf6c523143b60194",
+      "recoveredBlob": "c37889a2de7dfcb19ba0ca0272491536bf3014b9",
       "materialization": "workspace-adapted"
     },
     {
@@ -13230,7 +13230,7 @@
       "target": "products/agent/src/test/runtime/memory-spine-rest-transport.test.ts",
       "upstreamBlob": "4fd7887d54218ef2154dfdae4ff588ad05b68a29",
       "present": true,
-      "recoveredBlob": "720d52cad5ac4d40d2c54715d9a5d3e23242c1a1",
+      "recoveredBlob": "5f2de36e93057a022d2c39d214a45ca74eef0102",
       "materialization": "workspace-adapted"
     },
     {
@@ -13406,7 +13406,7 @@
       "target": "products/agent/src/test/runtime/realtime-transport.test.ts",
       "upstreamBlob": "eba11db6dc7bce596741c628ddbca2c66b4bc6f8",
       "present": true,
-      "recoveredBlob": "4df831b83d1f151b4bce3f7cc50b8b9c4542f6f1",
+      "recoveredBlob": "b9d839ebfd154e65f7cab55f04e7dd993e4fb093",
       "materialization": "workspace-adapted"
     },
     {
@@ -13478,8 +13478,8 @@
       "target": "products/agent/src/test/runtime/telemetry-api.test.ts",
       "upstreamBlob": "25bc206c87c357c06e1b9672e087e3987802f610",
       "present": true,
-      "recoveredBlob": "25bc206c87c357c06e1b9672e087e3987802f610",
-      "materialization": "byte-identical"
+      "recoveredBlob": "b08e9b34908df8c08996e6b12727bd88e6961651",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/test/runtime/tool-permission-safety.test.ts",
@@ -13542,7 +13542,7 @@
       "target": "products/agent/src/test/scripts/release-prepare.test.ts",
       "upstreamBlob": "beaf9312190c22fb8895737134ec6a291a1b2d62",
       "present": true,
-      "recoveredBlob": "1fdb1fe48c306e2b26ae1f9fad3635b3c01629e4",
+      "recoveredBlob": "fa85e5d144ca2f86017e02a0645d0024e54bb268",
       "materialization": "workspace-adapted"
     },
     {
@@ -13558,7 +13558,7 @@
       "target": "products/agent/src/test/scripts/sdk-release-gates.test.ts",
       "upstreamBlob": "f5b9c4eb3c65a2d2a9883830b3a8996d896f4a4a",
       "present": true,
-      "recoveredBlob": "631f3cd01bc3278a94b481b936ef5687471f2de1",
+      "recoveredBlob": "d1b96aec0ce271b3ef490e39d08910ac8a756b55",
       "materialization": "workspace-adapted"
     },
     {
@@ -13582,7 +13582,7 @@
       "target": "products/agent/src/test/security/permission-audit.test.ts",
       "upstreamBlob": "12775e9e26c16f3452b2cbb3e55c7ea766878701",
       "present": true,
-      "recoveredBlob": "5d99d52954f46557ead686ef37a54ad3dc7382c7",
+      "recoveredBlob": "b87dab9f354aa60a6bae493346839807b4f917d1",
       "materialization": "workspace-adapted"
     },
     {
@@ -13630,7 +13630,7 @@
       "target": "products/agent/src/test/shell/notifications-name-the-work.test.ts",
       "upstreamBlob": "6a3b248580aa9acdd299f4b49049bdf212179e3d",
       "present": true,
-      "recoveredBlob": "3a94eb44f6c3ac815885e4176597ab4651623a6a",
+      "recoveredBlob": "fb9d61d4a484af004148828bbc3f9175e3563262",
       "materialization": "workspace-adapted"
     },
     {
@@ -13662,7 +13662,7 @@
       "target": "products/agent/src/test/shell/terminal-focus-mode.test.ts",
       "upstreamBlob": "9fbfe1b2e6c48a2e531a2e6b03bb7746e7298635",
       "present": true,
-      "recoveredBlob": "8ee799779ab4e1762f41fc5301d486fa7c704efe",
+      "recoveredBlob": "4b64afe624fb6d97e75b7f7fc25c5baaf463e185",
       "materialization": "workspace-adapted"
     },
     {
@@ -13894,7 +13894,7 @@
       "target": "products/agent/src/test/tools/agent-harness-tool.test.ts",
       "upstreamBlob": "d18f1683cb26729b3fcdc055288e25159f3b4cfd",
       "present": true,
-      "recoveredBlob": "9a94ad924eaa82713bc16dda386d79874719c2a7",
+      "recoveredBlob": "33cd931fc43826ec98b6c985b339ca4254f9be17",
       "materialization": "workspace-adapted"
     },
     {
@@ -14038,7 +14038,7 @@
       "target": "products/agent/src/test/tools/agent-policy-explanation-posture.test.ts",
       "upstreamBlob": "713f033febb8826f6f2ed37f44bf688555e0f71e",
       "present": true,
-      "recoveredBlob": "1f812e9104ebb6a2979f96e29707b5220278c0ec",
+      "recoveredBlob": "2603d31c228b43329815b6fa4cd60fb60a9e5603",
       "materialization": "workspace-adapted"
     },
     {
@@ -14046,7 +14046,7 @@
       "target": "products/agent/src/test/tools/agent-profile-forget-live.test.ts",
       "upstreamBlob": "3d88b0800e3eb3a47f05f17f7780169c270a6ece",
       "present": true,
-      "recoveredBlob": "78bd7bdf56e462e47ea72ec689e5af84385bc4a6",
+      "recoveredBlob": "a5abc989e6617caba4ce60c4121b6604f0586cd3",
       "materialization": "workspace-adapted"
     },
     {
@@ -14126,7 +14126,7 @@
       "target": "products/agent/src/test/tools/agent-review-packet-share-tool.test.ts",
       "upstreamBlob": "8de64e600cca3cfd905af86754f0bb28149e66f2",
       "present": true,
-      "recoveredBlob": "17ac77b3d409dcec7d0a9af4d9860a9cbb52e528",
+      "recoveredBlob": "c8641731e6be5d19021abe89b8476286844db355",
       "materialization": "workspace-adapted"
     },
     {
@@ -14158,7 +14158,7 @@
       "target": "products/agent/src/test/tools/agent-security-tool.test.ts",
       "upstreamBlob": "fbb2b68f93747130bc5bc8c07406902ec0dfeaac",
       "present": true,
-      "recoveredBlob": "50955103681f5f5429e7f4bec9e5932b09601847",
+      "recoveredBlob": "fc3fa79828ba5f61d3db1db62bd41c190d545a9c",
       "materialization": "workspace-adapted"
     },
     {
@@ -15470,7 +15470,7 @@
       "target": "products/agent/src/tools/agent-harness-tool.ts",
       "upstreamBlob": "23a50c3fb1af70c0357b1899301fcb0bb01ed4b2",
       "present": true,
-      "recoveredBlob": "2e15ccf5eb037a63c457b53a122417da0709471c",
+      "recoveredBlob": "89e646016f57bab690f5b59e6b4b8467d3064c20",
       "materialization": "workspace-adapted"
     },
     {
@@ -15766,7 +15766,7 @@
       "target": "products/agent/src/tools/agent-platform-boundary-policy.ts",
       "upstreamBlob": "1dbf98406716660ea56b286898efb2ce7060f9f0",
       "present": true,
-      "recoveredBlob": "cf9e2be1f52654f39054d915af79fcb58402bfa3",
+      "recoveredBlob": "126a6f82a780e3037857d60ce00d2956334e8077",
       "materialization": "workspace-adapted"
     },
     {
@@ -15774,7 +15774,7 @@
       "target": "products/agent/src/tools/agent-policy-explanation.ts",
       "upstreamBlob": "d8747f1c0f6f66b63a2f7b9a61c8eb9af2dbd28e",
       "present": true,
-      "recoveredBlob": "d3aeca7eee0b12d39326a5df493337db58beda95",
+      "recoveredBlob": "e25d0d593b7a2883a60b25187f99d14b45088c1a",
       "materialization": "workspace-adapted"
     },
     {
@@ -16227,14 +16227,15 @@
     }
   ],
   "materializationSummary": {
-    "byte-identical": 849,
-    "workspace-adapted": 801
+    "byte-identical": 835,
+    "workspace-adapted": 815
   },
   "limits": [
     "Materialization hashes account for source retention, not semantic disposition completion.",
     "Historical CI/release/standalone lockfiles are retained source artifacts; root workspace build and lock govern execution.",
     "Baseline deleted paths are not silently restored or marked DROP.",
-    "New source disposition review and all remaining JEV/HOIST decisions are still open."
+    "New source disposition review and all remaining JEV/HOIST decisions are still open.",
+    "Recovered blob hashes were refreshed after the reviewed typed-host consumer checkpoint; retention still does not prove semantic disposition completion."
   ],
   "unmappedBaseline": [
     {
