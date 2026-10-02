@@ -539,6 +539,10 @@ export class SyntaxHighlighter {
       let landed = false;
       let parsed = false;
       try {
+        // Join background initialization before loading a grammar or parsing.
+        // Otherwise a cold parser's transient null poisons this key as failed,
+        // and settle() can finish while initialization is still in flight.
+        await this.service.initialize();
         // Ensure the grammar is loaded
         const language = await this.service.loadLanguage(langId);
         if (!language) {
