@@ -34,8 +34,8 @@ describe('contract desktop notification facts', () => {
   test('missing or restricted privacy never reads the task or reason getters', () => {
     for (const metadataOnly of [undefined, true]) {
       let privateReads = 0;
-      const notice = workstreamFailureNotification({ type: 'CONTRACT_FAILED', failureKind: 'other', get reason() { privateReads++; throw new Error('private'); } }, {
-        metadataOnly, get task() { privateReads++; throw new Error('private'); },
+      const notice = workstreamFailureNotification({ type: 'CONTRACT_FAILED', failureKind: 'other', get reason(): string { privateReads++; throw new Error('private'); } }, {
+        metadataOnly, get task(): string { privateReads++; throw new Error('private'); },
       });
       expect(privateReads).toBe(0);
       expect(notice).toEqual({ title: 'GoodVibes: workstream failed', body: 'Failed' });

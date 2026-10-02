@@ -35,7 +35,7 @@ async function produce(kind: typeof producers[number], webhookNotifier: WebhookN
   if (kind === 'turn') {
     maybeNotifyLongTask({ elapsedMs: 62_000, status: 'fail', outcome: 'cancelled', kind: 'turn', sessionId: PRIVATE,
       thresholdSeconds: 1, configGet, webhookNotifier, notifyDesktop,
-      get name() { return privateRead(); }, get reason() { return privateRead(); }, activity: { toolCalls: 2 } });
+      get name(): string { return privateRead(); }, get reason(): string { return privateRead(); }, activity: { toolCalls: 2 } });
   } else if (kind === 'approval') {
     const request: PermissionPromptRequest = {
       callId: 'fixture-call', tool: 'exec', category: 'execute',
@@ -105,7 +105,7 @@ describe('TUI contract and agent subscriptions use typed Notifier facts', () => 
       expect(sent[0]).toBe(`${PRIVATE}\nCancelled after 2s, 2 files changed: failed checks; owner cancelled`);
       privacy = true;
       let reads = 0;
-      bus.emit('agents', createEventEnvelope('AGENT_COMPLETED', { type: 'AGENT_COMPLETED', agentId: 'agent-1', durationMs: 42_000, toolCallsMade: 3, get output() { reads++; throw new Error(PRIVATE); } }, ctx));
+      bus.emit('agents', createEventEnvelope('AGENT_COMPLETED', { type: 'AGENT_COMPLETED', agentId: 'agent-1', durationMs: 42_000, toolCallsMade: 3, get output(): string { reads++; throw new Error(PRIVATE); } }, ctx));
       await waitFor(() => sent.length === 2);
       expect(reads).toBe(0);
       expect(sent[1]).toBe('GoodVibes: agent done\nDone in 42s, 3 tool calls');
@@ -174,7 +174,7 @@ test('a cached explicit false cannot override the current restrictive privacy re
     metadataOnly: false, configGet: (key) => key === 'behavior.notificationsMetadataOnly' ? true : undefined,
     webhookNotifier: new WebhookNotifier([URL_A], { force: true, metadataOnly: () => true }),
     notifyDesktop: (title, body) => { expect(`${title} ${body}`).not.toContain(PRIVATE); },
-    get name() { reads++; throw new Error(PRIVATE); }, get reason() { reads++; throw new Error(PRIVATE); },
+    get name(): string { reads++; throw new Error(PRIVATE); }, get reason(): string { reads++; throw new Error(PRIVATE); },
   });
   expect(reads).toBe(0);
   expect(sent).toEqual(['GoodVibes: turn failed\nFailed after 1m']);

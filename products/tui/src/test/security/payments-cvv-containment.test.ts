@@ -22,6 +22,8 @@
  */
 import { frameFromLayer } from '../helpers/surface-frame.ts';
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { mkdirSync, rmSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -552,17 +554,40 @@ describe('payments CVV containment', () => {
   //    handleBundleCommand's `export` subcommand in src/cli/bundle-command.ts)
   // -------------------------------------------------------------------------
   describe('support-bundle redaction (src/cli/redaction.ts)', () => {
+    // These are only the synthetic tree below, never a permissive general reader.
+    const fixtureReadings = new Map<string, boolean>([
+      ['payments', false], ['payments.billingAddress', false],
+      ['payments.billingAddress.line1', false], ['payments.cardNumber', true],
+      ['payments.cardExpiry', true], ['payments.cardCvv', true],
+      ['payments.cardholderName', true],
+    ]);
+    function readingFor(name: string, state: unknown) {
+      const key = typeof state === 'object' && state !== null && 'key' in state ? state.key : undefined;
+      if (name !== 'credential' || typeof key !== 'string' || !fixtureReadings.has(key)) {
+        throw new Error(`Unexpected synthetic payment redaction reading: ${name} / ${String(key)}`);
+      }
+      return noulAnswer(fixtureReadings.get(key) ? 0.99 : 0.01);
+    }
+    let previousJudgment: ReturnType<typeof installJudgmentPort>;
+    beforeEach(() => { previousJudgment = installJudgmentPort(fakePort((name, _question, state) => readingFor(name, state)).port); });
+    afterEach(() => { installJudgmentPort(previousJudgment); });
+    test('synthetic reader rejects unrelated keys and questions', () => {
+      expect(() => readingFor('credential', { key: 'payments.unlisted' })).toThrow();
+      expect(() => readingFor('unrelated', { key: 'payments' })).toThrow();
+      expect(() => readingFor('credential', {})).toThrow();
+    });
+
     test('the real storage path never leaves plaintext for redaction to catch in the first place', async () => {
       await persistSecretBackedConfigValue(cm, secrets, PAYMENTS_CARD_CVV_CONFIG_KEY, FAKE_CVV, { scope: 'daemon' });
       const rawConfig = { payments: { cardCvv: cm.get(PAYMENTS_CARD_CVV_CONFIG_KEY) } };
-      const redacted = redactConfig(rawConfig);
+      const redacted = await redactConfig(rawConfig);
       // Not redacted (a goodvibes:// reference is intentionally left visible,
       // see shouldRedactValue in redaction.ts), but it is also not the CVV.
       expect(JSON.stringify(redacted.value)).not.toContain(FAKE_CVV);
       expect(String((redacted.value as { payments: { cardCvv: unknown } }).payments.cardCvv)).toMatch(/^goodvibes:\/\/secrets\//);
     });
 
-    test('DEFECT FOUND AND FIXED: a raw literal under payments.card* is redacted by name, not just by suffix', () => {
+    test('DEFECT FOUND AND FIXED: a raw literal under payments.card* is redacted by name, not just by suffix', async () => {
       // Before this session's fix, isSensitiveConfigPath's suffix pattern
       // (…secret|password|token|keyFile$) did not match "cardNumber",
       // "cardExpiry" or "cardholderName", so if a raw value were EVER stored
@@ -582,7 +607,7 @@ describe('payments CVV containment', () => {
           billingAddress: { line1: '123 Fake St' },
         },
       };
-      const redacted = redactConfig(rawConfig);
+      const redacted = await redactConfig(rawConfig);
       const serialized = JSON.stringify(redacted.value);
       expect(serialized).not.toContain(FAKE_CVV);
       expect(serialized).not.toContain(FAKE_CARD_NUMBER);
@@ -594,7 +619,7 @@ describe('payments CVV containment', () => {
       expect(redacted.redactedPaths).toContain('payments.cardNumber');
       expect(redacted.redactedPaths).toContain('payments.cardCvv');
 
-      const collected = collectSensitiveConfigValues(rawConfig);
+      const collected = await collectSensitiveConfigValues(rawConfig);
       expect(collected).toContain(FAKE_CVV);
       const serializedBundle = redactSerializedSecrets(JSON.stringify(rawConfig), collected);
       expect(serializedBundle).not.toContain(FAKE_CVV);
