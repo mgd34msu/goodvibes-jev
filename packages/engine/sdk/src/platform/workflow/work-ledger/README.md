@@ -3,8 +3,9 @@
 This is an additive, provisional engine seam. It does not wire a runner, create
 another executor, persist a second database, or replace the old planning UX.
 THE-104 remains open until production persistence, runner and product integration
-are exercised end to end. Import the local `index.ts`; it is not yet exported by
-the published SDK root or declared as a package subpath.
+are exercised end to end. Import the supported narrow
+`@goodvibes-jev/engine/sdk/platform/workflow/work-ledger` subpath. The SDK root
+and broad workflow barrel deliberately do not re-export this authority seam.
 
 ## Trusted composition and consumers
 
@@ -113,3 +114,70 @@ The store must preserve history and receipts atomically. Reads fail closed on
 invalid state/receipt/event relationships; they never reset corrupt state. This
 foundation does not silently prune history, receipts, evidence or live work.
 A production retention/migration policy is separate integration work.
+
+
+## Production persistence and shutdown
+
+The regular KnowledgeStore owns the only database. Trusted composition calls
+`await knowledgeStore.openWorkLedgerStorage(projectId)` then supplies that
+storage to `createWorkLedger`. The daemon runtime composes one native authority
+owner and exposes only its service. Independent processes may coordinate file
+writes, but authentication and revocation remain routed through the authority
+owner; this does not implement distributed revocation epochs.
+
+Schema v2 adds only `work_ledgers(project_id, format_version, revision,
+state_json)`. Each project row contains its state, immutable history and exact
+request receipts in one atomic SQLite image. Legacy source metadata remains
+unchanged and is never converted into authority or verification. Old binaries
+refuse schema v2. No automatic WorkPlanStore import or duplicate editable mirror
+is created.
+
+All KnowledgeStore initialization, ordinary saves, batches and ledger writes
+share the canonical database `.knowledge-lock`. The existing pending save queue
+runs in admission order. A ledger transaction blocked by unsaved local changes
+or an active batch fails admission before invoking its decision callback; dirty
+local edits are never discarded. Stale ordinary saves fail instead of replacing
+newer ledger state. Coordination is for cooperating processes on one local host
+and PID namespace, not rogue writers or distributed filesystems. Hardlinked
+file aliases and malformed/live strict lock ownership are refused.
+
+Publication writes a same-directory temporary file, fsyncs it, renames it, then
+fsyncs the complete canonical directory ancestry through the root. Acquisition
+also reestablishes the full ancestry even when directories already exist: they
+may be remnants of a failed mkdir/fsync attempt. Symlink aliases additionally
+establish the canonical target ancestry. Existence is never a durability receipt.
+Failure before rename leaves the old file; failure after rename and before
+parent sync is indeterminate and never restores old bytes. Exact no-op retries
+read authoritative disk and synchronize both the observed file and its full ancestry
+before returning a durable receipt. Cleanup and observer failures after durable
+publication cannot turn success into rollback; failed mirror refresh fences
+ordinary cache operations. Corrupt or truncated existing images and missing
+current-version ledger tables are refused before schema repair or ordinary saves.
+An owner that has observed its database also refuses subsequent disappearance.
+IMPORTANT: a newly constructed owner has no external existence manifest. If the
+entire database was deleted before process startup, this owner cannot distinguish
+that loss from first creation and may initialize a new store. This slice does not
+claim cross-restart deletion detection; hosts need independent established-store
+knowledge to enforce an explicit open-existing policy in a follow-on contract.
+
+Notifications use local wakeups and an owned, unreferenced polling fallback for
+cross-process changes. They may coalesce; snapshots and history cursors are the
+catch-up authority, not notification counts. Storage close removes observers and
+drains admitted work. Backing-store close also drains active ordinary batches
+and their deferred saves. Native runtime close immediately fences service admission,
+then awaits ledger/storage shutdown before its backing KnowledgeStore closes.
+
+This slice does not launch agents, grant cancellation/execution approval, or
+execute verifiers. Future runtime/source projection needs an atomic outbox and
+downstream deduplication; a postcommit observer is not an outbox. Process-kill
+checks establish old-or-new whole-file recovery only, not power-loss durability.
+
+## Service graph versus process host
+
+The durable adapter and daemon service-graph composition build directly on the
+merged native core. They do not depend on the separate owned daemon process-host
+change (PR71), and this slice does not introduce its listener/signal lifecycle
+files or facade restart fence. The drain contract here is exercised through
+`RuntimeServices.close()` and the existing acquisition/disposal scopes. A process
+host must await that close before process teardown. Combined process-host proofs
+are separate evidence and are not claimed as main-only integration acceptance.

@@ -1139,6 +1139,11 @@
       "types": "./sdk/dist/platform/workflow/index.d.ts",
       "import": "./sdk/dist/platform/workflow/index.js"
     },
+    "./sdk/platform/workflow/work-ledger": {
+      "bun": "./sdk/src/platform/workflow/work-ledger/index.ts",
+      "types": "./sdk/dist/platform/workflow/work-ledger/index.d.ts",
+      "import": "./sdk/dist/platform/workflow/work-ledger/index.js"
+    },
     "./sdk/platform/workspace": {
       "bun": "./sdk/src/platform/workspace/index.ts",
       "types": "./sdk/dist/platform/workspace/index.d.ts",

@@ -47,7 +47,7 @@ async function fixture() {
 }
 /** Simulate records already on disk before the serving gate, not new automatic approvals. */
 async function loadLegacyFacts(store: KnowledgeStore, facts: readonly KnowledgeNodeRecord[]): Promise<KnowledgeStore> {
-  const sqlite = new SQLiteStore(store.storagePath); await sqlite.init(createSchema);
+  const sqlite = new SQLiteStore(store.storagePath); await sqlite.init(createSchema, { schemaVersion: 2 });
   for (const fact of facts) writeKnowledgeNodeRow(sqlite, fact);
   await sqlite.save();
   const reloaded = new KnowledgeStore({ dbPath: store.storagePath }); await reloaded.init(); return reloaded;

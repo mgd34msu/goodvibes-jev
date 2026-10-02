@@ -55,6 +55,7 @@ import type { BenchmarkStore, CacheHitTracker, FavoritesStore, ModelLimitsServic
 import type { AdaptivePlanner, DeterministicReplayEngine, ExecutionPlanManager, SessionLineageTracker, SessionMemoryStore } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { ArchivableProcessRegistry } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
 import type { WorkPlanStore } from '@goodvibes-jev/engine/sdk/platform/workflow';
+import type { WorkLedgerService } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
 import type { DaemonHandlerSurfaces } from '../daemon/handlers/index.js';
 import type { ClusterGroupComposition } from './cluster-group-composition.js';
 import type { ClusterCoordinator } from '@goodvibes-jev/engine/sdk/platform/cluster';
@@ -161,6 +162,8 @@ export interface RuntimeServices {
   readonly projectPlanningService: ProjectPlanningService;
   readonly projectPlanningProjectId: string;
   readonly workPlanStore: WorkPlanStore;
+  /** Native project ledger; actor issuance stays in trusted host composition. */
+  readonly workLedger: WorkLedgerService;
   readonly memoryStore: MemoryStore;
   readonly memoryRegistry: MemoryRegistry;
   /** Host-vs-client memory access: local until bootstrap.ts activates it for an adopted 'external' daemon (mirrors sessionSpine). */
