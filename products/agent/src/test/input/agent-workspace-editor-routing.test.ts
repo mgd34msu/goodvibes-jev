@@ -7,11 +7,11 @@
  *     `local-model-benchmark` bug fixed in agent-workspace-command-editor.ts).
  *  2. An unhandled kind in submitAgentWorkspaceLocalRegistryEditor silently
  *     writing a routine record instead of surfacing an error.
- *  3. A settingKey used in category actions that is absent from CONFIG_SCHEMA.
+ *  3. A settingKey used in category actions that is absent from the live schema.
  */
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync } from 'node:fs';
-import { CONFIG_SCHEMA } from '@goodvibes-jev/engine/sdk/platform/config';
+import { AgentConfigManager } from '../../config/host-settings.ts';
 import type { InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
 import { AgentRoutineRegistry } from '../../agent/routine-registry.ts';
 import { AGENT_WORKSPACE_CATEGORIES } from '../../input/agent-workspace-categories.ts';
@@ -392,27 +392,10 @@ describe('editor routing exhaustiveness: no kind reaches routine fallback unexpe
 
 // ---------------------------------------------------------------------------
 // Fix 5: settingKey exhaustiveness, every settingKey used in workspace
-// categories must resolve against CONFIG_SCHEMA.
+// categories must resolve against the actual Agent instance schema.
 // ---------------------------------------------------------------------------
 
-describe('settingKey exhaustiveness against CONFIG_SCHEMA', () => {
-  /**
-   * Allowlist for keys that are runtime-extended and not in CONFIG_SCHEMA at
-   * build time. Entries here must be explicitly documented.
-   *
-   * email.* keys: injected by ensureEmailConfigDefaults() at runtime into a
-   * live ConfigManager, not part of the static CONFIG_SCHEMA. They are not
-   * used as settingActions in workspace categories today. If that changes,
-   * document each key with its source module
-   * (@goodvibes-jev/engine/sdk/platform/email).
-   *
-   * display.themeMode is a real CONFIG_SCHEMA entry (SDK 2.0.0+), it
-   * resolves via the ordinary schema lookup now (agent-workspace-settings.ts's
-   * agentWorkspaceSettingSchema), so it no longer needs an allowlist entry
-   * here.
-   */
-  const RUNTIME_EXTENDED_ALLOWLIST = new Set<string>([]);
-
+describe('settingKey exhaustiveness against the Agent instance schema', () => {
   function collectSettingKeys(
     categories: readonly { readonly actions: readonly { readonly settingKey?: string }[] }[],
   ): string[] {
@@ -426,24 +409,26 @@ describe('settingKey exhaustiveness against CONFIG_SCHEMA', () => {
   }
 
   test(
-    'every settingKey in AGENT_WORKSPACE_CATEGORIES resolves in CONFIG_SCHEMA or allowlist',
+    'every settingKey in AGENT_WORKSPACE_CATEGORIES resolves in the real Agent instance schema',
     () => {
-      const schemaKeys = new Set<string>(CONFIG_SCHEMA.map((s) => s.key));
+      const config = new AgentConfigManager({ configDir: makeProjectTempDir('agent-settings-schema'), readOnly: true });
+      const schemaKeys = new Set<string>(config.getSchema().map((s) => s.key));
       const keys = collectSettingKeys(AGENT_WORKSPACE_CATEGORIES);
       const failures = keys.filter(
-        (k) => !schemaKeys.has(k) && !RUNTIME_EXTENDED_ALLOWLIST.has(k),
+        (k) => !schemaKeys.has(k),
       );
       expect(failures).toEqual([]);
     },
   );
 
   test(
-    'every settingKey in AGENT_WORKSPACE_ONBOARDING_DETAIL_CATEGORIES resolves in CONFIG_SCHEMA or allowlist',
+    'every settingKey in AGENT_WORKSPACE_ONBOARDING_DETAIL_CATEGORIES resolves in the real Agent instance schema',
     () => {
-      const schemaKeys = new Set<string>(CONFIG_SCHEMA.map((s) => s.key));
+      const config = new AgentConfigManager({ configDir: makeProjectTempDir('agent-settings-schema'), readOnly: true });
+      const schemaKeys = new Set<string>(config.getSchema().map((s) => s.key));
       const keys = collectSettingKeys(AGENT_WORKSPACE_ONBOARDING_DETAIL_CATEGORIES);
       const failures = keys.filter(
-        (k) => !schemaKeys.has(k) && !RUNTIME_EXTENDED_ALLOWLIST.has(k),
+        (k) => !schemaKeys.has(k),
       );
       expect(failures).toEqual([]);
     },

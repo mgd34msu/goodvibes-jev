@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { ConfigManager } from '../config/index.ts';
+import { AgentConfigManager, type ConfigManager } from '../config/index.ts';
 import { ensureDaemonConfigMigrated } from '../config/ensure-daemon-config-migrated.ts';
 import { ensureDaemonEnabledMigrated } from '../config/ensure-daemon-enabled-migrated.ts';
 import { formatProviderModel, getModelIdFromProviderModel, getProviderIdFromModel } from '../config/provider-model.ts';
@@ -146,7 +146,7 @@ export async function prepareShellCliRuntime(
     workingDir: bootstrapWorkingDir,
   });
   if (daemonEnabledNotice) console.log(`[goodvibes] ${daemonEnabledNotice}`);
-  const configManager = new ConfigManager({
+  const configManager = new AgentConfigManager({
     workingDir: bootstrapWorkingDir,
     homeDir: bootstrapHomeDirectory,
     surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT,

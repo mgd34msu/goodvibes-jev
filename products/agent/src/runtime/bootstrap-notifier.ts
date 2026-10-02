@@ -8,9 +8,10 @@ import { readNotificationsMetadataOnly } from '@goodvibes-jev/engine/sdk/platfor
 
 /**
  * The Slack and Discord notifier, built from the configured services. Its
- * runtime-bus notices use the public legacy-envelope adapter, which stays
- * metadata-only even when the live setting permits detail. The setting is read
- * at send time; authenticated canonical content-envelope adoption is separate.
+ * runtime-bus notices use the public legacy-envelope adapter. The current SDK
+ * permits captured event details only when the live setting is literal false;
+ * absent, malformed, or revoked preferences keep subsequent deliveries
+ * metadata-only. The SDK owns admission and delivery-time privacy checks.
  */
 export function createRuntimeNotifier(
   serviceRegistry: Parameters<typeof Notifier.fromConfig>[0],

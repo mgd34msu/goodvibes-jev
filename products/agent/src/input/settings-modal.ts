@@ -1,9 +1,10 @@
 /** SettingsModal state for the /settings and /config fullscreen workspace. */
 
-import { CONFIG_SCHEMA, type ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
+import type { ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ModelPickerTarget } from './model-picker.ts';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { SubscriptionManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { AGENT_NOTIFICATIONS_METADATA_ONLY_KEY } from '../config/host-settings.ts';
 import { getResolvedSettingLookup } from '@/runtime/index.ts';
 import type { ServiceInspectionQuery } from '@/runtime/index.ts';
 import { buildGoodVibesSecretKey, defaultSecretBackedScope, isSecretConfigKey } from '../config/secret-config.ts';
@@ -651,7 +652,7 @@ export class SettingsModal {
       this.groups.set(cat, []);
     }
 
-    for (const setting of CONFIG_SCHEMA) {
+    for (const setting of configManager.getSchema()) {
       if (isAgentHiddenSettingKey(setting.key)) continue;
       const rawCat = setting.key.split('.')[0] as string;
       const cat = rawCat as SettingsCategory;
@@ -670,6 +671,7 @@ export class SettingsModal {
         sourceLabel: resolved?.sourceLabel,
         lockReason: resolved?.lockReason,
       };
+      this._refreshHostEntry(entry);
       if (this.groups.has(cat)) this.groups.get(cat)!.push(entry);
       // A root with no category of its own is listed where it belongs instead
       // of being dropped, see CROSS_LISTED_SETTING_ROOTS.
@@ -736,8 +738,25 @@ export class SettingsModal {
       for (const entry of entries) {
         entry.currentValue = this.configManager.get(entry.setting.key as ConfigKey);
         entry.isDefault = entry.currentValue === entry.setting.default;
+        this._refreshHostEntry(entry);
       }
     }
+  }
+
+  /** Keep the registered host row's canonical source/lock metadata live too. */
+  private _refreshHostEntry(entry: SettingEntry): void {
+    if (!this.configManager || entry.setting.key !== AGENT_NOTIFICATIONS_METADATA_ONLY_KEY) return;
+    entry.currentValue = this.configManager.get(entry.setting.key);
+    entry.isDefault = entry.currentValue === entry.setting.default;
+    const lookup = getResolvedSettingLookup(this.configManager, entry.setting.key);
+    const resolved = lookup?.entry;
+    Object.assign(entry, {
+      effectiveSource: resolved?.effectiveSource,
+      locked: resolved?.locked,
+      conflict: resolved?.conflict,
+      sourceLabel: resolved?.sourceLabel,
+      lockReason: resolved?.lockReason ?? (lookup?.lock ? `${lookup.lock.source}: ${lookup.lock.reason}` : undefined),
+    });
   }
 
   private _setValue(key: ConfigKey, value: unknown): void {
@@ -764,6 +783,7 @@ export class SettingsModal {
         if (entry) {
           entry.currentValue = this.configManager!.get(key);
           entry.isDefault = entry.currentValue === entry.setting.default;
+          this._refreshHostEntry(entry);
         }
       }
       if (previousValue !== value && this.onSettingApplied) {
@@ -781,6 +801,9 @@ export class SettingsModal {
     } catch (e) {
       logger.error('SettingsModal: failed to set config value', { key, error: summarizeError(e) });
       this.lastSettingEffectMessage = `Save failed: ${summarizeError(e)}`;
+      if (key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY) {
+        for (const entries of this.groups.values()) for (const entry of entries) this._refreshHostEntry(entry);
+      }
     }
   }
 

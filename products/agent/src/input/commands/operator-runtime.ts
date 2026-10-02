@@ -3,6 +3,7 @@ import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { requireYesFlag, stripYesFlag } from './confirmation.ts';
 import { handleContextWindowSubcommand } from './context-window.ts';
+import { AGENT_NOTIFICATIONS_METADATA_ONLY_KEY } from '../../config/host-settings.ts';
 import {
   countHarnessSettings,
   formatHarnessError,
@@ -117,7 +118,12 @@ export function registerOperatorRuntimeCommands(registry: CommandRegistry): void
           return;
         }
         try {
-          const result = await setHarnessSetting(ctx.platform.configManager, ctx.platform.secretsManager, key, rawValue);
+          // Text commands supply tokens; only the exact host boolean literals
+          // become booleans. JSON-string values and friendly aliases are not
+          // permission to include private notification details.
+          const value = key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY
+            && (rawValue === 'true' || rawValue === 'false') ? rawValue === 'true' : rawValue;
+          const result = await setHarnessSetting(ctx.platform.configManager, ctx.platform.secretsManager, key, value);
           ctx.print(formatHarnessMutation(result));
           ctx.renderRequest();
         } catch (error) {

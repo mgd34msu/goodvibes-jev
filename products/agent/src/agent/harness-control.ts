@@ -1,5 +1,5 @@
 import type { ConfigKey, ConfigManager, ConfigSetting } from '@goodvibes-jev/engine/sdk/platform/config';
-import { isValidConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
+import { AGENT_NOTIFICATIONS_METADATA_ONLY_KEY } from '../config/host-settings.ts';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { applyWakeEnablementCompanion, type WakeCompanionWrite } from '../config/wake-enablement-companion.ts';
 import type { SecretsManager } from '../config/secrets.ts';
@@ -203,7 +203,7 @@ function clampLimit(value: unknown, fallback = DEFAULT_SETTING_LIMIT): number {
 }
 
 function findSetting(configManager: Pick<ConfigManager, 'getSchema'>, rawKey: string): ConfigSetting | null {
-  if (!rawKey || !isValidConfigKey(rawKey)) return null;
+  if (!rawKey) return null;
   return configManager.getSchema().find((setting) => setting.key === rawKey) ?? null;
 }
 
@@ -616,6 +616,10 @@ function coerceBoolean(value: unknown): boolean {
 }
 
 export function coerceHarnessSettingValue(setting: ConfigSetting, value: unknown): unknown {
+  if (String(setting.key) === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY) {
+    if (typeof value !== 'boolean') throw new Error(`${AGENT_NOTIFICATIONS_METADATA_ONLY_KEY} requires a literal boolean.`);
+    return value;
+  }
   if (setting.type === 'boolean') return coerceBoolean(value);
   if (setting.type === 'number') {
     const parsed = typeof value === 'number' ? value : Number(String(value).trim());
@@ -688,7 +692,10 @@ export async function setHarnessSetting(
     current: redactHarnessSettingValue(setting.key, outcome.value),
     scope: outcome.scope,
     appliedBy: outcome.appliedBy,
-    persistedTo: outcome.persistedTo,
+    persistedTo: String(setting.key) === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY
+      && configManager.describeConfigKeySource(setting.key).tier === 'project'
+      ? configManager.getProjectConfigPath()
+      : outcome.persistedTo,
     ...(companion ? { alsoSet: companion } : {}),
   };
 }

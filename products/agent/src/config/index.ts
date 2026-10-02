@@ -7,6 +7,7 @@
  */
 
 export { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+export { AgentConfigManager, AGENT_NOTIFICATIONS_METADATA_ONLY_KEY } from './host-settings.ts';
 export type { DeepReadonly } from '@goodvibes-jev/engine/sdk/platform/config';
 export type { GoodVibesConfig, ConfigKey, ConfigValue, ConfigSetting, PermissionMode, PermissionAction, PermissionsToolConfig, NotificationsConfig } from '@goodvibes-jev/engine/sdk/platform/config';
 export { DEFAULT_CONFIG, CONFIG_SCHEMA } from '@goodvibes-jev/engine/sdk/platform/config';
