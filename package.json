@@ -49,7 +49,7 @@
     "sweep:wake-race": "bun packages/engine/scripts/sweep-wake-race.ts",
     "any:check": "bun packages/engine/scripts/no-any-types.ts",
     "architecture:check": "bun packages/engine/scripts/test-tmp-architecture-check.ts",
-    "api:check": "bun run api:extract && git diff --quiet -- packages/engine/etc/goodvibes-sdk.api.md packages/engine/etc/goodvibes-sdk-embed.api.md packages/engine/etc/goodvibes-terminal-shell.api.md && bun run api:subpath:check",
+    "api:check": "bun run api:extract && git diff --exit-code -- packages/engine/etc/goodvibes-sdk.api.md packages/engine/etc/goodvibes-sdk-embed.api.md packages/engine/etc/goodvibes-terminal-shell.api.md && bun run api:subpath:check",
     "subpath:declared:check": "bun packages/engine/scripts/check-subpath-declared.ts",
     "bundle:check": "bun packages/engine/scripts/bundle-budget.ts",
     "bundle:init": "bun packages/engine/scripts/plugin-bundle.ts init",
