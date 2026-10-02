@@ -98,3 +98,28 @@ provider execution, and historical WRFC-format migration are not claimed
 verified by the ordinary-agent fixture. No compiler, source-authority/security
 work, engine/service changes, dependency changes, commits, or publication are
 part of this retirement. The earlier frozen notification patches are unchanged.
+
+## Retired private WRFC fix-runner assertion
+
+The old `src/test/runtime/wrfc-fix-runner-wiring.test.ts` asserted a private
+`wrfcController.fixWorkstreamRunner` property and passed it a WRFC review with
+no issues, expecting the legacy `nothing-to-fix` response. That controller and
+review protocol no longer belong to this product, so retaining the private
+property would restore a removed API rather than check current wiring.
+
+The relevant composition boundary now lives in the shared client floor:
+`services.ts` obtains `contractRunner` directly from `createClientRuntimeServices`
+and passes that same runner to the public operator and intake services.
+`client-services.ts` returns `contracts.runner`; `contract-composition.ts`
+constructs it through `createContractRunner` with the real agent manager, bus,
+store and orchestration engine. There is no separate TUI planned-fix callback
+to attach or forget.
+
+Behavioral successor verification is `packages/engine/test/contract/correction.test.ts`,
+which runs the real contract runner with scripted external boundaries. It
+asserts planned-fix creation, fix-group execution, completion re-check and a
+passing result for units, groups and the deliverable; it also checks exhausted
+fix budgets, rejected fix plans and owner escalation. The guarded local run
+passed 14 tests / 83 assertions. This verifies the current shared runner
+boundary, not a live provider or full TUI session. Existing TUI runtime and
+compiled acceptance remain separately scoped evidence.
