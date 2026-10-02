@@ -131,3 +131,30 @@ unpublished toolchain overlay was added to hide that remaining packaging failure
 The expanded ordinary regression set passes 345 tests and 2,949 assertions across
 31 files. This is focused Agent recovery coverage, not the full repository
 validation or the original tmux end-to-end harness.
+
+## Dependency-owner packaging checkpoint
+
+The local packaging composition resolves native addons from the installed
+sqlite-vec dependency owner, validates the requested package/version/payload,
+and stages the exact host addon beside the executable. It also resolves an SDK
+export subpath to its enclosing engine manifest. No flat installation symlink is
+required. The Agent binary launcher invokes the CLI declared by its installed
+workspace engine and fails clearly if the engine has not been built, without a
+registry fallback through bunx.
+
+The generated toolchain CLI and standard `build:binary --target linux-x64` now
+pass; the packaged executable passes its version/artifact smoke and the bounded
+first-frame/help/clean-exit terminal proof with explicit synthetic metadata and
+zero guard violations. A separately compiled native-loader probe uses the staged
+addon and returns sqlite-vec v0.1.9 and the expected vector distance. Shared
+packaging tests pass 36 tests/86 assertions; Agent launcher tests pass 2 tests/3
+assertions. Cross-platform package downloads are exercised only by fake execution
+fixtures, not live network calls or foreign-platform execution.
+
+The inherited Google refusal assertion is aligned with the current public
+engine's quoted-evidence label, while retaining the field/evidence checks and
+adding explicit refusal/zero-send assertions. No security wording or semantics
+changed. The outward-adapter suite now passes all 32 tests and 106 assertions.
+The final combined Agent regression passes 379 tests and 3,058 assertions across
+37 files. Quote-evidence tests account for the existing display ellipsis on long
+excerpts while checking nonempty evidence, source-text membership and zero sends.

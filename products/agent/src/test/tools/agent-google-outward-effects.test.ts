@@ -368,7 +368,8 @@ describe('what stays refused', () => {
     expect(send.success).toBe(false);
     expect(sent).toHaveLength(0);
     expect(quoted.length).toBeGreaterThan(0);
-    expect(STRANGER_BODY.toLowerCase()).toContain(quoted.toLowerCase());
+    // The evidence renderer caps long excerpts with a display ellipsis.
+    expect(STRANGER_BODY.toLowerCase()).toContain(quoted.replace(/…$/, '').toLowerCase());
   });
 
   test('a recipient lifted from a just-read message is refused even though it is short', async () => {

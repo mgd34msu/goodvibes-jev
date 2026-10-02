@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { loadToolchainConfig } from '../lib/load-config.js';
-import { realExec, realFsReader, consoleLogger } from '../lib/effects.js';
+import { realFsReader, consoleLogger } from '../lib/effects.js';
 import { resolveTargets, runBuildBinaries } from '../lib/build-binaries.js';
 import { readDependencyManifest, type DependencyManifest } from '../lib/optional-externals.js';
-import { DEFAULT_SDK_PACKAGE, type BinaryTarget, type BuildConfig } from '../config.js';
+import { DEFAULT_SDK_PACKAGE, type BuildConfig } from '../config.js';
+
+import { provideNativeAddon, resolveOwnedPackageManifest } from '../lib/binary-dependency-resolution.js';
 
 const root = process.cwd();
 const config = loadToolchainConfig(root);
@@ -18,41 +18,6 @@ if (!config.build) {
 const build: BuildConfig = config.build;
 
 const nativeKey = `${process.platform === 'darwin' ? 'darwin' : process.platform}-${process.arch}`;
-
-/** Copy the native addon beside the binary; same-host miss is fatal, cross-target miss fetches via npm pack + tar. */
-function provideAddon(target: BinaryTarget, sameHost: boolean): boolean {
-  if (!target.nativeAddonPackage || !target.nativeAddonFile) return true;
-  const destDir = resolve(root, build.addonOutDir, target.nativeAddonPackage);
-  const dest = join(destDir, target.nativeAddonFile);
-  const source = resolve(root, 'node_modules', target.nativeAddonPackage, target.nativeAddonFile);
-  mkdirSync(destDir, { recursive: true });
-  if (existsSync(source)) {
-    copyFileSync(source, dest);
-    return true;
-  }
-  if (sameHost) {
-    consoleLogger.error(`[build-binaries] native addon missing for host target ${target.key}; run install`);
-    return false;
-  }
-  const versionPkg = resolve(root, 'node_modules', 'sqlite-vec', 'package.json');
-  if (!existsSync(versionPkg)) return false;
-  const version = (JSON.parse(readFileSync(versionPkg, 'utf8')) as { version: string }).version;
-  const tmp = mkdtempSync(join(tmpdir(), 'gv-addon-'));
-  try {
-    const pack = realExec('npm', ['pack', `${target.nativeAddonPackage}@${version}`, '--pack-destination', tmp]);
-    if (pack.status !== 0) return false;
-    const tarball = pack.stdout.trim().split('\n').pop();
-    if (!tarball) return false;
-    const untar = realExec('tar', ['-xzf', join(tmp, tarball), '-C', tmp]);
-    if (untar.status !== 0) return false;
-    const extracted = join(tmp, 'package', target.nativeAddonFile);
-    if (!existsSync(extracted)) return false;
-    copyFileSync(extracted, dest);
-    return true;
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
-}
 
 /**
  * The manifests whose optionalDependencies may be externalised: this repo's
@@ -66,7 +31,8 @@ function dependencyManifests(): DependencyManifest[] {
   const own = readDependencyManifest(fs, 'package.json', 'this package');
   if (own) found.push(own);
   const sdkPackage = config.sdkPin?.sdkPackage ?? DEFAULT_SDK_PACKAGE;
-  const sdk = readDependencyManifest(fs, join('node_modules', sdkPackage, 'package.json'), sdkPackage);
+  const sdkPath = resolveOwnedPackageManifest(join(root, 'package.json'), sdkPackage);
+  const sdk = sdkPath === null ? null : readDependencyManifest(fs, sdkPath, sdkPackage);
   if (sdk) found.push(sdk);
   return found;
 }
@@ -77,29 +43,22 @@ function dependencyManifests(): DependencyManifest[] {
  * no importable entry too, so a half-installed package is treated as present
  * exactly as bun would treat it.
  */
-const requireFromRoot = createRequire(join(root, 'package.json'));
+const manifests = dependencyManifests();
 function isPackageInstalled(packageName: string): boolean {
-  try {
-    requireFromRoot.resolve(packageName);
-    return true;
-  } catch {
-    // A package whose main entry does not resolve may still resolve a subpath
-    // (several optional packages are reached only through one). Its manifest
-    // being present is what "installed" means here.
-    try {
-      requireFromRoot.resolve(`${packageName}/package.json`);
-      return true;
-    } catch {
-      return false;
+  const owners = manifests.filter(manifest => manifest.required.includes(packageName) || manifest.optional.includes(packageName));
+  return owners.every(owner => {
+    const require = createRequire(resolve(root, owner.path));
+    try { require.resolve(packageName); return true; } catch {
+      return resolveOwnedPackageManifest(resolve(root, owner.path), packageName) !== null;
     }
-  }
+  });
 }
 
 try {
   const selection = resolveTargets(process.argv.slice(2), build, nativeKey);
   const outcomes = runBuildBinaries({
-    cwd: root, config: build, selection, nativeKey, provideAddon, logger: consoleLogger,
-    dependencyManifests: dependencyManifests(),
+    cwd: root, config: build, selection, nativeKey, provideAddon: (target, sameHost) => provideNativeAddon({ root, addonOutDir: build.addonOutDir, target, sameHost }), logger: consoleLogger,
+    dependencyManifests: manifests,
     isPackageInstalled,
   });
   const failed = outcomes.filter((o) => !o.ok);
