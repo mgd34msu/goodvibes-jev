@@ -41,7 +41,7 @@ describe('the agent approval alert names the work', () => {
   test('privacy setting explicitly false: names the command and the turn, trimmed at a word boundary', async () => {
     const [notice] = await alertText({ 'behavior.notificationsMetadataOnly': false });
     expect(notice).toEqual({
-      title: 'Approval needed: Refactor the authentication middleware…',
+      title: 'Approval needed: Refactor the authentication middleware so…',
       body: 'exec is waiting for approval: bun test src/auth/middleware.test.ts',
     });
     expect(notice!.title.length).toBeLessThanOrEqual(60);
