@@ -344,27 +344,26 @@ export async function executeToolCalls(
     if (deps.hookDispatcher && (call.name === 'write' || call.name === 'edit')) {
       const filePath = typeof call.arguments['path'] === 'string' ? call.arguments['path'] :
         (Array.isArray(call.arguments['files']) ? JSON.stringify(call.arguments['files']) : '');
-      if (result.success) {
-        deps.hookDispatcher.fire({
-          path: `Post:file:${call.name}` as HookEventPath,
-          phase: 'Post',
+      const phase = result.success ? 'Post' : 'Fail';
+      try {
+        // This admitted file-hook dispatch belongs to the turn, exactly like
+        // the tool hooks above. Await its existing bounded dispatcher promise;
+        // do not manufacture settlement while it is still doing work.
+        await deps.hookDispatcher.fire({
+          path: `${phase}:file:${call.name}` as HookEventPath,
+          phase,
           category: 'file',
           specific: call.name,
           sessionId: deps.sessionId,
           timestamp: Date.now(),
-          payload: { tool: call.name, path: filePath, callId: call.id },
-        }).catch((err: unknown) => { logger.warn(`Post:file:${call.name} hook error`, { error: summarizeError(err) }); });
-      } else {
-        deps.hookDispatcher.fire({
-          path: `Fail:file:${call.name}` as HookEventPath,
-          phase: 'Fail',
-          category: 'file',
-          specific: call.name,
-          sessionId: deps.sessionId,
-          timestamp: Date.now(),
-          payload: { tool: call.name, path: filePath, callId: call.id, error: result.error },
-        }).catch((err: unknown) => { logger.warn(`Fail:file:${call.name} hook error`, { error: summarizeError(err) }); });
+          payload: { tool: call.name, path: filePath, callId: call.id, ...(result.success ? {} : { error: result.error }) },
+        });
+      } catch (err) {
+        logger.warn(`${phase}:file:${call.name} hook error`, { error: summarizeError(err) });
       }
+      // A cancellation during dispatch cannot admit another tool or continue
+      // the turn, including when the hook rejected and was logged above.
+      assertTurnActive();
     }
 
     if (result.success && result.output && call.name === 'read') {

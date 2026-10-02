@@ -1,5 +1,23 @@
 # Cancel one hosted turn without ending its session
 
+## Known open async-hook ownership gap: draft remains held
+
+This is a partial implementation update, not full cancellation settlement
+clearance. Ordinary admitted file-hook dispatch is now awaited, including
+rejection paths. Configured `async: true` hooks remain detached inside the
+shared dispatcher, with no turn-linked running-handle registry or drain.
+A real command-hook probe demonstrated a file mutation **after `TURN_CANCEL`**.
+Agent consumers therefore cannot yet interpret that event as all admitted work
+having stopped. The intended ownership/settlement requirement remains open;
+[PR #75](https://github.com/mgd34msu/goodvibes-jev/pull/75) is held and must not
+merge on the strength of ordinary-hook tests or green CI alone. This limitation
+also applies to claims based solely on `HookDispatcher.fire()` resolving.
+
+The repair preserves existing hook timeouts and explicit async configuration;
+it does not silently disable async hooks or hide the unresolved behavior.
+
+## Native request
+
 Use the native operator method `sessions.turns.cancel` (REST `POST
 /api/sessions/{sessionId}/turns/cancel`) with `{ "expectedTurnId": "..." }`.
 The public typed client exposes `operator.sessions.turns.cancel({ sessionId,
@@ -16,7 +34,10 @@ also gates every tool admission: before each serial call, after permission and
 pre/post-hook waits, and after reentrant tool-event callbacks. Each admitted tool
 receives the combined whole-turn and per-call signal. A cancelled turn cannot
 open an un-aborted signal for a later tool; per-call cancellation alone still
-allows other calls in the same turn.
+allows other calls in the same turn. Admitted `Post:file:write/edit` and
+`Fail:file:write/edit` dispatches are also awaited before terminal settlement,
+including rejection paths. This retains the dispatcher's existing timeout and
+explicit async-hook policy; it does not wait on arbitrary event observers.
 
 ## Responses
 

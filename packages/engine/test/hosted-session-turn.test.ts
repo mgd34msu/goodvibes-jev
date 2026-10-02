@@ -513,3 +513,58 @@ for (const eventType of ['TOOL_RECEIVED', 'TOOL_PERMISSIONED', 'TOOL_EXECUTING',
     } finally { session.dispose(); }
   });
 }
+
+for (const toolName of ['write', 'edit'] as const) {
+  for (const success of [true, false]) {
+    for (const hookRejects of [false, true]) {
+    test(`cancellation drains admitted ${success ? 'Post' : 'Fail'}:file:${toolName} before ${hookRejects ? 'rejecting' : 'resolving'} settlement`, async () => {
+      const session = cancellationSession();
+      const phase = success ? 'Post' : 'Fail';
+      const hookPath = `${phase}:file:${toolName}`;
+      let enter!: () => void;
+      const entered = new Promise<void>((resolve) => { enter = resolve; });
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const originalCheck = services.permissionManager.checkDetailed;
+      // This fixture grants write/edit admission explicitly; production hosted
+      // service-surface permission policy is exercised by its own gate tests.
+      services.permissionManager.checkDetailed = async () => ({ approved: true, persisted: false, sourceLayer: 'config_policy', reasonCode: 'config_allow', analysis: { classification: 'generic', riskLevel: 'medium', summary: 'Fixture approval', reasons: [] } });
+      const originalHook = services.hookDispatcher.fire.bind(services.hookDispatcher);
+      services.hookDispatcher.fire = async (event) => {
+        if (event.path === hookPath) { enter(); await held; if (hookRejects) throw new Error('File hook rejected after release'); }
+        return originalHook(event);
+      };
+      let turnId = '';
+      const terminal: string[] = [];
+      const executed: string[] = [];
+      runtimeBus.on('TURN_SUBMITTED', (event) => { if (event.payload.type === 'TURN_SUBMITTED') turnId = event.payload.turnId; });
+      runtimeBus.on('TURN_CANCEL', () => { terminal.push('cancel'); });
+      runtimeBus.on('TURN_COMPLETED', () => { terminal.push('completed'); });
+      runtimeBus.on('TOOL_EXECUTING', (event) => { if (event.payload.type === 'TOOL_EXECUTING') executed.push(event.payload.callId); });
+      // Keep the real hosted loop, permission gate, registry and file-hook
+      // dispatch. A deterministic executor selects each success/failure arm.
+      session.toolRegistry.unregister(toolName);
+      session.toolRegistry.register({ definition: { name: toolName, description: 'Fixture file operation.', parameters: { type: 'object', properties: {} } }, execute: async () => ({ success, output: success ? 'file changed' : undefined, error: success ? undefined : 'file operation failed' }) });
+      const args = toolName === 'write'
+        ? { files: [{ path: success ? 'written.txt' : 'note.txt', content: 'a file', mode: 'fail_if_exists' }] }
+        : { edits: [{ path: success ? 'note.txt' : 'missing.txt', find: 'the file', replace: 'edited file' }] };
+      answers.push({ content: '', toolCalls: [{ id: 'file-call', name: toolName, arguments: args }, { id: 'later-read', name: 'read', arguments: { files: [{ path: 'note.txt' }] } }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse);
+      let settled = false;
+      const turn = session.submit(`please ${toolName} the file`).then(() => { settled = true; });
+      try {
+        await Promise.race([entered, turn.then(() => { throw new Error('Turn ended without reaching the expected file hook'); })]);
+        expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('cancellation-requested');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(terminal).toEqual([]);
+        expect(settled).toBe(false);
+        expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('cancellation-requested');
+        release();
+        await turn;
+        expect(terminal).toEqual(['cancel']);
+        expect(executed).toEqual(['file-call']);
+        expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('already-ended');
+      } finally { release(); await turn; services.hookDispatcher.fire = originalHook; services.permissionManager.checkDetailed = originalCheck; session.dispose(); }
+    });
+    }
+  }
+}
