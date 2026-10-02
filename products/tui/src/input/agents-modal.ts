@@ -131,6 +131,7 @@ export class AgentsModal implements SurfaceModal {
   }
 
   onClose(): void {
+    this.deps.spawn?.cancel();
     for (const unsub of this.unsubs) unsub();
     this.unsubs.length = 0;
     if (this.tickTimer !== null) clearInterval(this.tickTimer);
@@ -453,7 +454,7 @@ export class AgentsModal implements SurfaceModal {
         if (node) toggleFleetPause(node, { interrupt: (id) => this.deps.actions.interrupt(id), resume: (id) => this.deps.actions.resume(id), setError: (m) => this.say(m, 'faint'), markDirty: () => {}, tracker: this.stopTracker });
         break;
       case 'n':
-        if (this.deps.spawn) void this.deps.spawn.begin().then(() => this.deps.requestRender());
+        if (this.deps.spawn) void this.deps.spawn.begin();
         else this.say('Hosting a third-party agent needs the daemon, which is not connected.', 'faint');
         break;
       case 'D':

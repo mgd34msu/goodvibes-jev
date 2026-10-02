@@ -117,6 +117,8 @@ export class FleetSpawn {
   private mode: SpawnMode = null;
   /** True while a create round-trip is in flight (absorb keys, show a spinner line). */
   private creating = false;
+  private generation = 0;
+  private reading = false;
 
   public constructor(private readonly deps: FleetSpawnDeps) {}
 
@@ -130,28 +132,39 @@ export class FleetSpawn {
    * daemon reports none (no mode entered) rather than an empty picker.
    */
   public async begin(): Promise<void> {
-    if (this.mode !== null || this.creating) return;
+    if (this.mode !== null || this.creating || this.reading) return;
+    const generation = ++this.generation;
     const gateway = this.requireGateway();
     if (!gateway) return;
-    let agents: readonly AcpDiscoveredAgent[];
+    this.reading = true;
     try {
-      agents = await gateway.listAgents();
+      const agents = await gateway.listAgents();
+      if (generation !== this.generation) return;
+      if (agents.length === 0) {
+        this.deps.notify('No third-party ACP agents discovered (Claude Code, Codex, opencode). Install one on PATH to host it here.');
+        return;
+      }
+      this.mode = { step: 'agent', agents, index: 0 };
+      this.deps.markDirty();
     } catch (err) {
-      this.deps.notify(`Could not list ACP agents: ${summarizeError(err)}`);
-      return;
+      if (generation === this.generation) this.deps.notify(`Could not list ACP agents: ${summarizeError(err)}`);
+    } finally {
+      if (generation === this.generation) this.reading = false;
     }
-    if (agents.length === 0) {
-      this.deps.notify('No third-party ACP agents discovered (Claude Code, Codex, opencode). Install one on PATH to host it here.');
-      return;
-    }
-    this.mode = { step: 'agent', agents, index: 0 };
-    this.deps.markDirty();
+  }
+
+  /** Release UI ownership; pending reads may settle but cannot reopen this flow. */
+  public cancel(): void {
+    this.generation++;
+    this.reading = false;
+    this.mode = null;
   }
 
   /** Input while the spawn picker is active. Absorbs every key it owns. */
   public handleSpawnInput(key: string): boolean {
     if (!this.mode || this.creating) return true;
-    if (key === 'escape' || key === 'esc') { this.mode = null; this.deps.markDirty(); return true; }
+    if (key === 'escape' || key === 'esc') { this.cancel(); this.deps.markDirty(); return true; }
+    if (this.reading) return true;
     const list = this.mode.step === 'agent' ? this.mode.agents : this.mode.candidates;
     if (key === 'up' || key === 'k') { this.mode.index = (this.mode.index - 1 + list.length) % list.length; this.deps.markDirty(); return true; }
     if (key === 'down' || key === 'j') { this.mode.index = (this.mode.index + 1) % list.length; this.deps.markDirty(); return true; }
@@ -161,13 +174,20 @@ export class FleetSpawn {
 
   /** Enter on the current step: agent → dir picker; dir → create the session. */
   private async advance(): Promise<void> {
-    if (!this.mode) return;
+    if (!this.mode || this.reading) return;
     if (this.mode.step === 'agent') {
       const agent = this.mode.agents[this.mode.index];
       if (!agent) return;
-      const candidates = await this.resolveDirCandidates();
-      this.mode = { step: 'dir', agent, candidates, index: 0 };
-      this.deps.markDirty();
+      const generation = this.generation;
+      this.reading = true;
+      try {
+        const candidates = await this.resolveDirCandidates();
+        if (generation !== this.generation) return;
+        this.mode = { step: 'dir', agent, candidates, index: 0 };
+        this.deps.markDirty();
+      } finally {
+        if (generation === this.generation) this.reading = false;
+      }
       return;
     }
     const cwd = this.mode.candidates[this.mode.index]?.path;
@@ -198,6 +218,7 @@ export class FleetSpawn {
   private async createSession(agentId: string, cwd: string): Promise<void> {
     const gateway = this.requireGateway();
     if (!gateway) { this.mode = null; this.deps.markDirty(); return; }
+    const generation = this.generation;
     this.creating = true;
     this.deps.markDirty();
     try {
@@ -213,8 +234,10 @@ export class FleetSpawn {
       this.deps.notify(`ACP session create failed: ${summarizeError(err)}`);
     } finally {
       this.creating = false;
-      this.mode = null;
-      this.deps.markDirty();
+      if (generation === this.generation) {
+        this.mode = null;
+        this.deps.markDirty();
+      }
     }
   }
 
