@@ -10,7 +10,7 @@ import type { OperatorMethodId } from './operator-method-ids.js';
  * call sites) hand-written on top of these generated primitives.
  *
  * Contract product version: 2.0.23
- * Methods: 513 total, 441 REST-routed, 72 ws-only invoke.
+ * Methods: 515 total, 443 REST-routed, 72 ws-only invoke.
  */
 
 export type WebuiHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -1780,6 +1780,14 @@ export const WEBUI_METHOD_ROUTES: Readonly<Record<string, WebuiRouteDefinition>>
     "method": "POST",
     "path": "/api/web-search/query"
   },
+  "workLedger.history": {
+    "method": "GET",
+    "path": "/api/work-ledger/history"
+  },
+  "workLedger.snapshot": {
+    "method": "GET",
+    "path": "/api/work-ledger/snapshot"
+  },
   "workspaces.registrations.add": {
     "method": "POST",
     "path": "/api/workspaces/registrations"
@@ -2390,6 +2398,8 @@ export const WEBUI_METHOD_DISPOSITION: Readonly<Record<string, WebuiMethodDispos
   "watchers.update": "rest",
   "web_search.providers.list": "rest",
   "web_search.query": "rest",
+  "workLedger.history": "rest",
+  "workLedger.snapshot": "rest",
   "workspaces.registrations.add": "rest",
   "workspaces.registrations.list": "rest",
   "workspaces.registrations.remove": "rest",
@@ -24643,6 +24653,172 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "metadata": {}
       },
       "metadata": {}
+    }
+  },
+  "workLedger.history": {
+    "input": {
+      "projectId": "sample",
+      "afterSequence": 0,
+      "throughSequence": 0
+    },
+    "output": {
+      "projectId": "sample",
+      "afterSequence": 0,
+      "cursor": 0,
+      "throughSequence": 0,
+      "hasMore": false,
+      "events": [
+        {
+          "sequence": 0,
+          "type": "create",
+          "actorId": "sample",
+          "requestId": "sample",
+          "workId": "sample",
+          "attemptId": "sample",
+          "at": 0,
+          "work": {
+            "id": "sample",
+            "title": "sample",
+            "goal": "sample",
+            "criteria": [
+              "sample"
+            ],
+            "revision": 0,
+            "criteriaRevision": 0,
+            "reportedState": "pending",
+            "currentAttemptId": "sample",
+            "createdAt": 0,
+            "updatedAt": 0
+          },
+          "attempts": [
+            {
+              "id": "sample",
+              "workId": "sample",
+              "predecessorId": "sample",
+              "ownerId": "sample",
+              "revision": 0,
+              "state": "active",
+              "report": "sample",
+              "blocker": "sample",
+              "createdAt": 0,
+              "updatedAt": 0
+            }
+          ],
+          "evidence": {
+            "id": "sample",
+            "target": {
+              "workId": "sample",
+              "workRevision": 0,
+              "criteriaRevision": 0,
+              "attemptId": "sample",
+              "attemptRevision": 0
+            },
+            "outcome": "verified",
+            "reason": "sample",
+            "references": [
+              {
+                "kind": "decision",
+                "ref": "sample",
+                "digest": "sample"
+              }
+            ],
+            "source": "host_check",
+            "criteriaResults": [
+              {
+                "criterionIndex": 0,
+                "status": "satisfied",
+                "references": [
+                  "sample"
+                ]
+              }
+            ],
+            "actorId": "sample",
+            "at": 0
+          },
+          "reason": "sample"
+        }
+      ]
+    }
+  },
+  "workLedger.snapshot": {
+    "input": {
+      "projectId": "sample"
+    },
+    "output": {
+      "projectId": "sample",
+      "revision": 0,
+      "cursor": 0,
+      "works": [
+        {
+          "work": {
+            "id": "sample",
+            "title": "sample",
+            "goal": "sample",
+            "criteria": [
+              "sample"
+            ],
+            "revision": 0,
+            "criteriaRevision": 0,
+            "reportedState": "pending",
+            "currentAttemptId": "sample",
+            "createdAt": 0,
+            "updatedAt": 0
+          },
+          "attempt": {
+            "id": "sample",
+            "workId": "sample",
+            "predecessorId": "sample",
+            "ownerId": "sample",
+            "revision": 0,
+            "state": "active",
+            "report": "sample",
+            "blocker": "sample",
+            "createdAt": 0,
+            "updatedAt": 0
+          },
+          "verification": {
+            "state": "unverified",
+            "reason": "sample",
+            "evidence": {
+              "id": "sample",
+              "target": {
+                "workId": "sample",
+                "workRevision": 0,
+                "criteriaRevision": 0,
+                "attemptId": "sample",
+                "attemptRevision": 0
+              },
+              "outcome": "verified",
+              "reason": "sample",
+              "references": [
+                {
+                  "kind": "decision",
+                  "ref": "sample",
+                  "digest": "sample"
+                }
+              ],
+              "source": "host_check",
+              "criteriaResults": [
+                {
+                  "criterionIndex": 0,
+                  "status": "satisfied",
+                  "references": [
+                    "sample"
+                  ]
+                }
+              ],
+              "actorId": "sample",
+              "at": 0
+            }
+          },
+          "attention": [
+            {
+              "kind": "blocked",
+              "reason": "sample"
+            }
+          ]
+        }
+      ]
     }
   },
   "workspaces.registrations.add": {
