@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -38,10 +38,45 @@ function cleanup(root: string): void {
   // A broken runner must not make the regression fixture itself leak a child.
   for (const file of readdirSync(root).filter((name) => name.endsWith('.pid'))) {
     const pid = Number(readFileSync(join(root, file), 'utf8'));
-    if (Number.isInteger(pid) && pid > 0 && alive(pid)) process.kill(pid, 'SIGKILL');
+    if (Number.isInteger(pid) && pid > 0 && alive(pid)) {
+      try { process.kill(pid, 'SIGKILL'); } catch (error) {
+        // The owned child can exit after the probe. Other cleanup failures
+        // remain errors; only an already-absent process needs no more action.
+        if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ESRCH')) throw error;
+      }
+    }
   }
   rmSync(root, { recursive: true, force: true });
 }
+
+describe('owned fixture cleanup races', () => {
+  for (const code of ['ESRCH', 'EPERM'] as const) {
+    test(`cleanup handles only an already-exited owned PID (${code})`, () => {
+      const root = fixture({});
+      const pid = 2147483000;
+      writeFileSync(join(root, 'owned.pid'), String(pid));
+      const failure = Object.assign(new Error(`Synthetic ${code}`), { code });
+      const signals: Array<NodeJS.Signals | number | undefined> = [];
+      const originalKill = process.kill;
+      const kill = spyOn(process, 'kill').mockImplementation((target, signal) => {
+        if (target !== pid) return originalKill(target, signal);
+        signals.push(signal);
+        if (signal === 0) return true;
+        throw failure;
+      });
+      try {
+        if (code === 'ESRCH') {
+          expect(() => cleanup(root)).not.toThrow();
+          expect(existsSync(root)).toBe(false);
+        } else {
+          expect(() => cleanup(root)).toThrow(failure);
+          expect(existsSync(root)).toBe(true);
+        }
+        expect(signals).toEqual([0, 'SIGKILL']);
+      } finally { kill.mockRestore(); rmSync(root, { recursive: true, force: true }); }
+    });
+  }
+});
 
 describe('the product test runner owns every file through teardown', () => {
   test.each([false, true])('ends a hung module, drains its termination output, and runs the next file (exit zero: %s)', (exitZero) => {
