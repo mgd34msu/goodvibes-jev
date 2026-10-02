@@ -1,5 +1,27 @@
 # Agent source recovery
 
+## Latest recovery-only snapshot
+
+The integration now preserves reviewed Agent source history plus current main
+`b6cd286c1cf7c1328844fb680d4582cbde538e59`, including the error-reference wire
+contract and authoritative process completion. The process-view fixture follows
+the public `done` field, and proves descriptive status text does not determine
+whether a process is alive. No publication, deployment or release is implied.
+
+The first full guarded Agent run on the current-main composition ran 5,834 tests
+across 562 files: 5,717 passed, 115 failed and two were skipped. This is a recovery
+checkpoint, not a green product. Failures span permission presentation and
+approval fixtures, explicit tool outcomes, memory/knowledge judgments, harness
+behavior, packaging/release assumptions, environment-dependent sandboxing and
+tmux, and remaining metadata test isolation. These are diagnosis categories,
+not declarations that all failures are harmless fixtures. The runner blocked
+unexpected external requests; none are allowed as a way to make tests pass.
+
+The complete inventory/disposition work, connected/live first-turn proof,
+authorized detailed notifications and final whole-repository parity gates
+remain open. Existing security tests remain in the suite; no broad security
+exclusion is part of this checkpoint.
+
 ## Current-main integration checkpoint (2026-10-02)
 
 The sections below this checkpoint are chronological recovery notes, not the

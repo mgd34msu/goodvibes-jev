@@ -164,16 +164,19 @@ describe('renderProcessModal', () => {
 test('process summaries use current typed records and omit entries removed during refresh', () => {
   const active = seedProcess('synthetic active command');
   const completed = seedProcess('synthetic completed command', 'timed out');
-  const listed = [...processes.values()].map(({ id, cmd, status }) => ({ id, pid: 0, cmd, status }));
-  listed.push({ id: 'already-pruned', pid: 0, cmd: 'missing record', status: 'running' });
+  const activeWithTerminalText = seedProcess('still active despite descriptive status', 'timed out');
+  processes.get(activeWithTerminalText)!.done = false;
+  const listed = [...processes.values()].map(({ id, cmd, status, done }) => ({ id, pid: 0, cmd, status, done }));
+  listed.push({ id: 'already-pruned', pid: 0, cmd: 'missing record', status: 'running', done: false });
   const modal = new ProcessModal({ processManager: {
     list: () => listed,
     getStatus: id => processes.get(id),
     stop: () => false,
   } });
-  expect(listed.every(row => !Object.hasOwn(row, 'done'))).toBe(true);
+  expect(listed.find(row => row.id === completed)?.done).toBe(true);
+  expect(listed.find(row => row.id === activeWithTerminalText)?.done).toBe(false);
   expect(processes.get(completed)?.done).toBe(true);
   modal.refresh();
-  expect(modal.entries.map(row => row.id)).toEqual([active]);
+  expect(modal.entries.map(row => row.id)).toEqual([active, activeWithTerminalText]);
   expect(modal.entries[0]!.elapsedMs).toBeGreaterThanOrEqual(1200);
 });
