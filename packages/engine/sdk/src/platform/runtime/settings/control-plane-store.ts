@@ -1,12 +1,13 @@
 import { readJsonFileOrQuarantine, writeJsonFileAtomic } from '../../utils/atomic-json-store.js';
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
 import { ConfigManager } from '../../config/manager.js';
 import { CONFIG_SCHEMA } from '../../config/index.js';
 import type { ConfigKey } from '../../config/index.js';
 import type { JsonValue } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { settingsRisk, type SettingsRisk } from './batteries/settings-risk.js';
+import { defaultStore, getSettingsControlPath, migrateStore } from './host-setting-policy-read.js';
+export { defaultStore } from './host-setting-policy-read.js';
 
 export type SyncSurface = 'profiles' | 'managed' | 'settings-sync';
 export type SyncDirection = 'export' | 'import' | 'apply' | 'pull' | 'push' | 'rollback';
@@ -142,47 +143,6 @@ export interface SettingsSyncBundle {
 
 export function getConfigControlPlaneDir(configManager: ConfigManager): string {
   return configManager.getControlPlaneConfigDir();
-}
-
-function getSettingsControlPath(configDir: string): string {
-  return join(configDir, 'settings-sync.json');
-}
-
-export function defaultStore(): SettingsControlPlaneStore {
-  return {
-    version: 2,
-    events: [],
-    managedLocks: [],
-    failures: [],
-    syncedSettings: [],
-    managedSettings: [],
-    conflicts: [],
-    rollbackHistory: [],
-  };
-}
-
-function migrateStore(raw: unknown): SettingsControlPlaneStore {
-  if (!raw || typeof raw !== 'object') return defaultStore();
-  const store = raw as Partial<SettingsControlPlaneStore> & { version?: number };
-  if (store.version === 2) {
-    return {
-      ...defaultStore(),
-      ...store,
-      events: Array.isArray(store.events) ? store.events : [],
-      managedLocks: Array.isArray(store.managedLocks) ? store.managedLocks : [],
-      failures: Array.isArray(store.failures) ? store.failures : [],
-      syncedSettings: Array.isArray(store.syncedSettings) ? store.syncedSettings : [],
-      managedSettings: Array.isArray(store.managedSettings) ? store.managedSettings : [],
-      conflicts: Array.isArray(store.conflicts) ? store.conflicts : [],
-      rollbackHistory: Array.isArray(store.rollbackHistory) ? store.rollbackHistory : [],
-    };
-  }
-  return {
-    ...defaultStore(),
-    events: Array.isArray(store.events) ? store.events : [],
-    managedLocks: Array.isArray(store.managedLocks) ? store.managedLocks : [],
-    failures: Array.isArray(store.failures) ? store.failures : [],
-  };
 }
 
 export function readStore(configDir: string): SettingsControlPlaneStore {

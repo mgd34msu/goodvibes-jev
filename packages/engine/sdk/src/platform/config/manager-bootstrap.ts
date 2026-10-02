@@ -86,7 +86,7 @@ export function ensureSharedConfig(sharedPath: string): void {
  * The refusal is raised as a ConfigError so it reads like every other rejected
  * setting rather than surfacing as an unhandled parser error.
  */
-export function coerceSchemaValue(key: string, schema: ConfigSetting | undefined, value: unknown): unknown {
+export function coerceSchemaValue(key: string, schema: Pick<ConfigSetting, 'unit'> | undefined, value: unknown): unknown {
   if (schema?.unit !== 'money') return value;
   try {
     return coerceMoneyAmount(key, value);
