@@ -358,7 +358,7 @@ export function rollbackManagedApply(configManager: ConfigManager, token: string
 
 function buildResolvedEntries(configManager: ConfigManager, store: SettingsControlPlaneStore): ResolvedSettingEntry[] {
   const conflictKeys = new Set(store.conflicts.map((entry) => entry.key));
-  return CONFIG_SCHEMA.map((setting) => {
+  return configManager.getSchema().map((setting) => {
     const localValue = structuredClone(configManager.get(setting.key));
     const syncedEntry = store.syncedSettings.find((entry) => entry.key === setting.key);
     const managedEntry = store.managedSettings.find((entry) => entry.key === setting.key);
@@ -418,7 +418,7 @@ export function getSettingsControlPlaneSnapshot(configManager: ConfigManager): S
   };
   for (const entry of resolvedEntries) resolvedCounts[entry.effectiveSource]++;
   return {
-    liveKeyCount: CONFIG_SCHEMA.length,
+    liveKeyCount: configManager.getSchema().length,
     profileCount: profileManager.list().length,
     managedLockCount: store.managedLocks.length,
     resolvedCounts,
