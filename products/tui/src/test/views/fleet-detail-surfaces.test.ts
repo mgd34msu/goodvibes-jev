@@ -9,6 +9,7 @@ import { renderFleetDetailLines, renderGraphPostureLines } from '../../views/fle
 import type { WorkstreamGraphSnapshot } from '../../views/workstream-graph-render.ts';
 import { FleetActs, type FleetDiffSurface } from '../../views/fleet-acts.ts';
 import type { FleetGateway, FleetGraphSnapshot } from '../../views/fleet-gateway.ts';
+import { contractFixture } from '../helpers/contract-work-tree-fixtures.ts';
 import { lineToString } from '../setup.ts';
 
 const text = (lines: ReturnType<typeof renderGraphPostureLines>): string => lines.map(lineToString).join('\n');
@@ -51,7 +52,8 @@ describe('fleet-acts graph fetch/cache (7c wiring)', () => {
     });
     return acts;
   }
-  const wsNode = { id: 'workstream:ws-1', kind: 'workstream' } as ProcessNode;
+  const contract = contractFixture({ id: 'ctr' });
+  const wsNode: ProcessNode = { id: 'group:ctr:g1', kind: 'contract-group', label: 'group', state: 'done', elapsedMs: 0, costState: 'unpriced', capabilities: { interruptible: false, killable: false, resumable: false, pausable: false, steerable: false }, raw: { contract, group: contract.groups[0] } };
 
   test('ensureGraphFor fetches once and caches; graphFor returns the snapshot', async () => {
     let calls = 0;

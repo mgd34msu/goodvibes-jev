@@ -1,3 +1,4 @@
+import { contractFixture } from '../helpers/contract-work-tree-fixtures.ts';
 /**
  * d1/d2, fleet-stop.ts: the 'stopping…' write-window overlay tracker and
  * the state-dependent pause<->resume toggle + tree hints, split out of
@@ -190,16 +191,16 @@ describe('buildFleetTreeHints (d2)', () => {
   });
 
   test('Enter is context-sensitive: pick / resolve conflict / attach by the row', () => {
-    const pickRow = makeNode({ id: 'workstream:ws1', kind: 'workstream', state: 'awaiting-approval', needsAttention: { reason: 'pick' } });
+    const pickRow = makeNode({ id: 'unit:ctr:u1', kind: 'contract-unit', state: 'awaiting-approval', needsAttention: { reason: 'pick' } });
     expect(buildFleetTreeHints(pickRow, false, false)).toContainEqual({ keys: 'Enter', label: 'pick' });
-    const conflictRow = makeNode({ id: 'work-item:it1', kind: 'work-item', state: 'stalled', needsAttention: { reason: 'conflict' } });
+    const conflictRow = makeNode({ id: 'unit:ctr:it1', kind: 'contract-unit', state: 'stalled', needsAttention: { reason: 'conflict' } });
     expect(buildFleetTreeHints(conflictRow, false, false)).toContainEqual({ keys: 'Enter', label: 'resolve conflict' });
     const agentRow = makeNode({ id: 'a1', kind: 'agent', state: 'executing-tool' });
     expect(buildFleetTreeHints(agentRow, false, false)).toContainEqual({ keys: 'Enter', label: 'attach' });
   });
 
   test('a worktree-owning row surfaces the D discard chip; others do not', () => {
-    const worktreeRow = makeNode({ id: 'work-item:it1', kind: 'work-item', state: 'done', raw: { item: { worktreePath: '/wt/it1' } } });
+    const worktreeRow = makeNode({ id: 'contract:ctr', kind: 'contract', state: 'done', raw: contractFixture({ id: 'ctr', status: 'passed', worktreePath: '/wt/it1' }) });
     expect(buildFleetTreeHints(worktreeRow, false, false)).toContainEqual({ keys: 'D', label: 'discard worktree' });
     const plainRow = makeNode({ id: 'a1', kind: 'agent', state: 'executing-tool' });
     expect(buildFleetTreeHints(plainRow, false, false).some((h) => h.keys === 'D')).toBe(false);

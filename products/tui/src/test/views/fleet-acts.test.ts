@@ -12,13 +12,13 @@
 //     and renders the honest receipt (branch kept, preservation commit).
 // ---------------------------------------------------------------------------
 
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import type { ProcessNode } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
-import type { WorkItem } from '@goodvibes-jev/engine/sdk/platform/orchestration';
+import { contractFixture, contractUnit } from '../helpers/contract-work-tree-fixtures.ts';
+import { discardableContractWorktree } from '../../views/fleet-contract-targets.ts';
 import {
   FleetActs,
   heldCandidates,
-  workItemFromNode,
   type FleetDiffSurface,
 } from '../../views/fleet-acts.ts';
 import {
@@ -48,12 +48,13 @@ function candidate(overrides: Partial<FleetAttemptCandidate> & { itemId: string;
     },
     diff: { files: [`file-${overrides.itemId}.ts`], unifiedDiff: `--- a\n+++ b\n@@ -1 +1 @@\n-old ${overrides.itemId}\n+new ${overrides.itemId}`, stat: '1 file' },
     ...overrides,
+    itemId: `ctr:${overrides.itemId}`,
   };
 }
 
 function group(overrides: Partial<FleetHeldMergeGroup> & { groupId: string }): FleetHeldMergeGroup {
   return {
-    workstreamId: 'ws-1',
+    workstreamId: 'ctr:ws-1',
     sourceTitle: 'implement the parser',
     ready: true,
     autoAccept: false,
@@ -63,37 +64,38 @@ function group(overrides: Partial<FleetHeldMergeGroup> & { groupId: string }): F
       candidate({ itemId: 'it-b', attemptIndex: 1 }),
     ],
     ...overrides,
+    groupId: `ctr:${overrides.groupId}`,
   };
 }
 
-function workstreamNode(id: string): ProcessNode {
-  return {
-    id: `workstream:${id}`, kind: 'workstream', label: 'stream', state: 'awaiting-approval',
-    elapsedMs: 0, costState: 'unpriced',
-    capabilities: { interruptible: false, killable: true, pausable: false, steerable: false, resumable: false },
-    needsAttention: { reason: 'pick' },
-  };
+const currentNodes = new Map<string, ProcessNode>();
+beforeEach(() => currentNodes.clear());
+function recordedNode(node: ProcessNode): ProcessNode { currentNodes.set(node.id, node); return node; }
+
+function pickUnitNode(groupId: string): ProcessNode {
+  const unit = contractUnit({ id: 'u1', groupId, status: 'awaiting-owner', attempts: 2,
+    attemptSelection: { engineGroupId: 'g-1', candidateIds: ['it-a', 'it-b'], outcome: 'confirm', reasons: 'Owner chooses' } });
+  const contract = contractFixture({ id: 'ctr', status: 'awaiting-owner', units: [unit] });
+  return recordedNode({ id: 'unit:ctr:u1', kind: 'contract-unit', label: 'unit', state: 'idle',
+    elapsedMs: 0, costState: 'unpriced', capabilities: { interruptible: false, killable: false, pausable: false, steerable: false, resumable: false },
+    needsAttention: { reason: 'pick' }, raw: { contract, unit },
+  });
 }
 
-function conflictNode(itemId: string, files: readonly string[]): ProcessNode {
-  const item = { id: itemId, title: 'conflicted item', mergeState: 'conflict', conflictFiles: files, worktreePath: `/wt/${itemId}`, worktreeBranch: `gv/${itemId}` } as unknown as WorkItem;
-  return {
-    id: `work-item:${itemId}`, kind: 'work-item', label: 'item', state: 'stalled',
-    elapsedMs: 0, costState: 'unpriced',
-    capabilities: { interruptible: false, killable: true, pausable: false, steerable: false, resumable: false },
-    needsAttention: { reason: 'conflict' },
-    raw: { item, workstreamId: 'ws-1' },
-  };
+function conflictNode(itemId: string, _files: readonly string[]): ProcessNode {
+  const unit = contractUnit({ id: itemId, status: 'held-merge' });
+  const contract = contractFixture({ id: 'ctr', status: 'running', units: [unit] });
+  return recordedNode({ id: `unit:ctr:${itemId}`, kind: 'contract-unit', label: 'unit', state: 'stalled',
+    elapsedMs: 0, costState: 'unpriced', capabilities: { interruptible: false, killable: false, pausable: false, steerable: false, resumable: false },
+    needsAttention: { reason: 'conflict' }, raw: { contract, unit },
+  });
 }
 
-function worktreeNode(itemId: string, worktreePath: string): ProcessNode {
-  const item = { id: itemId, title: 'item', worktreePath, worktreeBranch: `gv/${itemId}` } as unknown as WorkItem;
-  return {
-    id: `work-item:${itemId}`, kind: 'work-item', label: 'item', state: 'done',
-    elapsedMs: 0, costState: 'unpriced',
-    capabilities: { interruptible: false, killable: false, pausable: false, steerable: false, resumable: false },
-    raw: { item, workstreamId: 'ws-1' },
-  };
+function worktreeNode(id: string, worktreePath: string): ProcessNode {
+  const contract = contractFixture({ id: `ctr-${id}`, status: 'passed', worktreePath });
+  return recordedNode({ id: `contract:${contract.id}`, kind: 'contract', label: 'contract', state: 'done',
+    elapsedMs: 0, costState: 'unpriced', capabilities: { interruptible: false, killable: false, pausable: false, steerable: false, resumable: false }, raw: contract,
+  });
 }
 
 interface GatewayLog {
@@ -153,7 +155,7 @@ function makeActs(gateway: FleetGateway, surface: FleetDiffSurface) {
     diffSurface: surface,
     notify: (m) => notes.push(m),
     markDirty: () => {},
-    findNode: () => null,
+    findNode: id => currentNodes.get(id) ?? null,
   });
   return { acts, notes };
 }
@@ -161,10 +163,10 @@ function makeActs(gateway: FleetGateway, surface: FleetDiffSurface) {
 // ── pure helpers ──────────────────────────────────────────────────────────
 
 describe('fleet-gateway id extraction (no id ever typed)', () => {
-  test('workstream / work-item node ids strip to their raw ids', () => {
-    expect(workstreamIdFromNodeId('workstream:ws-42')).toBe('ws-42');
-    expect(workstreamIdFromNodeId('work-item:it-1')).toBeNull();
-    expect(workItemIdFromNodeId('work-item:it-1')).toBe('it-1');
+  test('current group and unit IDs retain contract qualification', () => {
+    expect(workstreamIdFromNodeId('group:ctr:ws-42')).toBe('ctr:ws-42');
+    expect(workstreamIdFromNodeId('unit:ctr:it-1')).toBeNull();
+    expect(workItemIdFromNodeId('unit:ctr:it-1')).toBe('ctr:it-1');
     expect(workItemIdFromNodeId('agent:a1')).toBeNull();
   });
 
@@ -174,12 +176,12 @@ describe('fleet-gateway id extraction (no id ever typed)', () => {
       candidate({ itemId: 'a', attemptIndex: 0, state: 'failed', failureReason: 'boom' }),
       candidate({ itemId: 'b', attemptIndex: 1 }),
     ] });
-    expect(heldCandidates(g).map((c) => c.itemId)).toEqual(['b', 'c']);
+    expect(heldCandidates(g).map((c) => c.itemId)).toEqual(['ctr:b', 'ctr:c']);
   });
 
-  test('workItemFromNode narrows raw.item', () => {
-    expect(workItemFromNode(worktreeNode('it-a', '/wt/it-a'))?.worktreePath).toBe('/wt/it-a');
-    expect(workItemFromNode(workstreamNode('ws-1'))).toBeNull();
+  test('only a terminal contract root exposes a discardable path', () => {
+    expect(discardableContractWorktree(worktreeNode('it-a', '/wt/it-a'))).toBe('/wt/it-a');
+    expect(discardableContractWorktree(pickUnitNode('ws-1'))).toBeNull();
   });
 });
 
@@ -190,9 +192,9 @@ describe('pick act: preview -> confirm through fleet.attempts.pick, no id typed'
     const { gateway, log } = makeGateway({ groups: [group({ groupId: 'g-1' })] });
     const { surface, log: diff } = makeDiffSurface();
     const { acts } = makeActs(gateway, surface);
-    expect(acts.handleTreeKey('enter', workstreamNode('ws-1'))).toBe(true);
+    expect(acts.handleTreeKey('enter', pickUnitNode('ws-1'))).toBe(true);
     await Promise.resolve(); await Promise.resolve();
-    expect(log.listAttempts).toEqual(['ws-1']);
+    expect(log.listAttempts).toEqual(['ctr:ws-1']);
     expect(acts.pickModeActive()).toBe(true);
     const view = acts.pickView()!;
     expect(view.candidates.map((c) => c.selected)).toEqual([true, false]);
@@ -205,22 +207,22 @@ describe('pick act: preview -> confirm through fleet.attempts.pick, no id typed'
     const { gateway, log } = makeGateway({ groups: [group({ groupId: 'g-1' })] });
     const { surface, log: diff } = makeDiffSurface();
     const { acts, notes } = makeActs(gateway, surface);
-    await acts.beginPick(workstreamNode('ws-1'));
+    await acts.beginPick(pickUnitNode('ws-1'));
     // Move to the second held candidate (it-b) and confirm.
     expect(acts.handlePickInput('down')).toBe(true);
     expect(acts.pickView()!.diff).toContain('new it-b');
     expect(acts.handlePickInput('enter')).toBe(true);
     await Promise.resolve(); await Promise.resolve();
     // The PREVIEW call fired (confirm:false) for the chosen winner, no confirm yet.
-    expect(log.pick).toEqual([{ groupId: 'g-1', winnerItemId: 'it-b', confirm: false }]);
+    expect(log.pick).toEqual([{ groupId: 'ctr:g-1', winnerItemId: 'ctr:it-b', confirm: false }]);
     // The chosen candidate's diff opens in the Changes preview with the question over it.
     expect(diff.shown.at(-1)?.diff).toContain('new it-b');
     expect(diff.confirms).toHaveLength(1);
     // The operator answers yes on the preview -> the confirm(true) call applies.
     await diff.confirms[0]!.onConfirm();
     expect(log.pick).toEqual([
-      { groupId: 'g-1', winnerItemId: 'it-b', confirm: false },
-      { groupId: 'g-1', winnerItemId: 'it-b', confirm: true },
+      { groupId: 'ctr:g-1', winnerItemId: 'ctr:it-b', confirm: false },
+      { groupId: 'ctr:g-1', winnerItemId: 'ctr:it-b', confirm: true },
     ]);
     expect(diff.closed).toBe(1);
     expect(acts.pickModeActive()).toBe(false);
@@ -231,7 +233,7 @@ describe('pick act: preview -> confirm through fleet.attempts.pick, no id typed'
     const { gateway, log } = makeGateway({ groups: [group({ groupId: 'g-1' })] });
     const { surface, log: diff } = makeDiffSurface();
     const { acts, notes } = makeActs(gateway, surface);
-    await acts.beginPick(workstreamNode('ws-1'));
+    await acts.beginPick(pickUnitNode('ws-1'));
     acts.handlePickInput('enter');
     await Promise.resolve();
     diff.confirms[0]!.onCancel?.();
@@ -244,7 +246,7 @@ describe('pick act: preview -> confirm through fleet.attempts.pick, no id typed'
     const { gateway } = makeGateway({ groups: [group({ groupId: 'g-1', ready: false })] });
     const { surface } = makeDiffSurface();
     const { acts, notes } = makeActs(gateway, surface);
-    await acts.beginPick(workstreamNode('ws-1'));
+    await acts.beginPick(pickUnitNode('ws-1'));
     expect(acts.pickModeActive()).toBe(false);
     expect(notes.some((n) => n.includes('No ready best-of-N group'))).toBe(true);
   });
@@ -259,8 +261,8 @@ describe('conflict act: resolve -> stamped session -> jump', () => {
     const { acts, notes } = makeActs(gateway, surface);
     expect(acts.handleTreeKey('enter', conflictNode('it-a', ['a.ts', 'b.ts']))).toBe(true);
     await Promise.resolve(); await Promise.resolve();
-    expect(log.resolveConflict).toEqual(['it-a']);
-    expect(log.armed).toEqual(['sess-it-a']); // the STAMPED id, routed to the shared jump affordance
+    expect(log.resolveConflict).toEqual(['ctr:it-a']);
+    expect(log.armed).toEqual(['sess-ctr:it-a']); // the STAMPED id, routed to the shared jump affordance
     expect(notes.some((n) => n.includes('press j to jump'))).toBe(true);
   });
 
@@ -293,7 +295,7 @@ describe('discard act: worktrees.discard behind a confirm, honest receipt', () =
     const { gateway } = makeGateway();
     const { surface, log: diff } = makeDiffSurface();
     const { acts } = makeActs(gateway, surface);
-    expect(acts.handleTreeKey('D', workstreamNode('ws-1'))).toBe(false);
+    expect(acts.handleTreeKey('D', pickUnitNode('ws-1'))).toBe(false);
     expect(diff.confirms).toHaveLength(0);
   });
 
@@ -319,9 +321,9 @@ describe('acts degrade honestly when no daemon gateway is reachable', () => {
       diffSurface: surface,
       notify: (m) => notes.push(m),
       markDirty: () => {},
-      findNode: () => null,
+      findNode: id => currentNodes.get(id) ?? null,
     });
-    await acts.beginPick(workstreamNode('ws-1'));
+    await acts.beginPick(pickUnitNode('ws-1'));
     expect(acts.pickModeActive()).toBe(false);
     expect(notes.some((n) => n.includes('daemon is disabled'))).toBe(true);
   });
