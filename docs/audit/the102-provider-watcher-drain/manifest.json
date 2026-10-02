@@ -1,0 +1,98 @@
+{
+  "issue": "THE-102",
+  "repository": "mgd34msu/goodvibes-jev",
+  "base_commit": "b6cd286c1cf7c1328844fb680d4582cbde538e59",
+  "base_tree": "d428ef7156c8b9bdbe538efb08a216b6fc33c740",
+  "candidate_tree": "d836764c759a9c208a6922c6ed4fe282d6c9c8b6",
+  "scope": "Add terminal ProviderRegistry.closeWatching and low-level closeAndDrain; preserve synchronous restartable stopWatching/startWatching. No THE18 production adoption.",
+  "created_at": "2026-10-02T06:54:32.681048+00:00",
+  "files": [
+    {
+      "path": "packages/engine/etc/subpath-api-surface.json",
+      "bytes": 8576254,
+      "sha256": "bf7163c665bc6b8c6050bd9f5a206a5dd190aac97eb6aa7cd60acea8c44edec9",
+      "git_blob": "a4ef6f65502de0fbcef14f2bbc78773f1d375fe3"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/providers/custom-loader.ts",
+      "bytes": 18445,
+      "sha256": "89bb80627a81462498a5aded8684ae52ae974605dd52534cf763a58b5fcab0fa",
+      "git_blob": "34a5973f68f0f559aa18fa11c6e55309303b73dc"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/providers/registry.ts",
+      "bytes": 44152,
+      "sha256": "329b740e2fa8fa33c7327abe779f78dbacd64135f65e38fa5275e9645d81ab2a",
+      "git_blob": "f9ea785d891763d0c3cbf987faa4f018fd1002fe"
+    },
+    {
+      "path": "packages/engine/test/provider-watcher-drain.test.ts",
+      "bytes": 15122,
+      "sha256": "2f9fe587a5fc0ae6e38186fea0118b6ea6aae6b2615dacccd727286b67632cfe",
+      "git_blob": "6ebdba202e04be7c68d07ba0c4386b3399111fa4"
+    }
+  ],
+  "patches": [
+    {
+      "name": "source.patch",
+      "bytes": 24148,
+      "sha256": "681feb5fe4948587a68158f219be8b086ce0c58c0bc63293b5c7e5a514b63834"
+    },
+    {
+      "name": "api-snapshot.patch",
+      "bytes": 18245,
+      "sha256": "11ce8e448e97287fa9118a39032e440e338e986e947013e79eeff8a38ffffef2"
+    }
+  ],
+  "verification": {
+    "focused_final": {
+      "command": "bun packages/engine/scripts/test.ts test/provider-watcher-drain.test.ts test/provider-registry-canonical-api.test.ts test/provider-registry-live-model-discovery.test.ts test/providers-local-context-ingestion.test.ts test/boot-daemon-factory.test.ts test/runtime-shutdown-lifecycle.test.ts",
+      "tests_passed": 73,
+      "tests_failed": 0,
+      "assertions": 269,
+      "files": 6
+    },
+    "focused_drain": {
+      "tests_passed": 12,
+      "tests_failed": 0,
+      "assertions": 41
+    },
+    "gates": {
+      "build": 0,
+      "typecheck-final": 0,
+      "focused-final": 0,
+      "api-subpath": 0,
+      "api-extract": 0,
+      "api-subpath-check": 0,
+      "api-check-final": 0,
+      "types-check": 0,
+      "any-check": 0,
+      "architecture-check": 0,
+      "docs-check": 0
+    },
+    "negative_controls": {
+      "original_source_base": "1a83f420fe33345931b1357c6da0c942d352d4c0",
+      "original_source_and_each_mutant_exit": {
+        "before": 1,
+        "no-pending": 1,
+        "no-retired": 1,
+        "no-timer-fence": 1
+      },
+      "description": "Original source fails after native admission because the seam is missing; independent API-preserving mutations fail assertions for pending callbacks, retired generations, and stale debounce admission."
+    },
+    "independent_review": "Seven isolated copied-source probes passed: terminal close reentry, recursive start via config and close, config stop/close, all-settlement with rejection, and cleanup of 1000 settled generations. No remaining reviewer blocker.",
+    "limitations": [
+      "The full CI matrix has not run on a published production candidate yet.",
+      "Full aggregate validate and whole-repository test suite not run locally.",
+      "API extractor emitted existing third-party declaration warnings but completed successfully."
+    ]
+  },
+  "reconstruct": [
+    "Create a clean branch/worktree at base_commit.",
+    "Retrieve source.patch and api-snapshot.patch from this transfer branch. Verify their SHA-256 values.",
+    "git apply --index source.patch; git apply --index api-snapshot.patch",
+    "Verify git write-tree equals candidate_tree and every file SHA-256/git blob matches this manifest.",
+    "Publish the exact four-file tree as a draft PR from the authenticated environment. Do not merge this evidence-only branch.",
+    "If rebasing to a newer main, regenerate API snapshot and rerun applicable checks; do not claim the old tree proof covers a changed candidate."
+  ]
+}
