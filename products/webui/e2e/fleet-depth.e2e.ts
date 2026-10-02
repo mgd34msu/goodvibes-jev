@@ -83,10 +83,11 @@ test.describe('desktop: the detail folds the sidebar to its rail', () => {
   test.beforeEach(async ({ page: _page }, testInfo) => only(testInfo, DESKTOP));
 
   test('opening a detail shows the rail; closing it brings the sidebar back', async ({ page }) => {
-    // The first item that needs you opens by itself.
+    // The first available needs-you item opens by itself. Fleet and approval
+    // queries resolve independently, so either detail can win the initial load.
     await expect(detailPane(page)).toBeVisible();
     await expect(page.locator('.app-shell')).toHaveAttribute('data-sidebar', 'rail');
-    await detailPane(page).getByRole('button', { name: 'Close approval' }).click();
+    await detailPane(page).getByRole('button', { name: /^Close (approval|process)$/ }).click();
     await expect(detailPane(page)).toBeHidden();
     await expect(page.locator('.app-shell')).toHaveAttribute('data-sidebar', 'expanded');
   });
