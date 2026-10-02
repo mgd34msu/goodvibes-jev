@@ -430,6 +430,15 @@ export interface ScopedVerbExemption {
 }
 
 export const SCOPED_EXEMPT_VERB_CATEGORIES: Readonly<Record<string, ScopedVerbExemption>> = {
+  'work-ledger-event-history': {
+    namespaces: ['workLedger'],
+    verbs: ['history'],
+    // `workLedger.history` continues the durable, ordered event log after a
+    // sequence cursor through one pinned watermark. It does not list current
+    // work records: multiple historical events can describe the same work,
+    // and clients use them to catch up after missed snapshot notifications.
+    // The wire mirrors the scoped reader's history(afterSequence) operation.
+  },
   'mcp-server-registry-alias': {
     namespaces: ['mcp.servers'],
     verbs: ['remove'],

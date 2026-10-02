@@ -110,6 +110,14 @@ describe('core-verbs conformance', () => {
     expect(classifyVerb('workspaces.registrationsExtra.remove').kind).toBe('unclassified');
   });
 
+  test('durable event history vocabulary is scoped to the work ledger', () => {
+    expect(classifyVerb('workLedger.history')).toEqual({
+      kind: 'exempt', verb: 'history', category: 'work-ledger-event-history',
+    });
+    expect(classifyVerb('workLedgerExtra.history').kind).toBe('unclassified');
+    expect(classifyVerb('sessions.history').kind).toBe('unclassified');
+  });
+
   test('every scoped exemption names at least one live method id', () => {
     const stale: string[] = [];
     for (const [category, exemption] of Object.entries(SCOPED_EXEMPT_VERB_CATEGORIES)) {
