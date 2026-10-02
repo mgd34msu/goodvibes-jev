@@ -23,6 +23,7 @@ export type SettingsCategory =
   | 'display'
   | 'ui'
   | 'provider'
+  | 'judgment'
   | 'subscriptions'
   | 'behavior'
   | 'profile'
@@ -52,7 +53,7 @@ export type SettingsCategory =
   | 'sandbox'
   | 'batch'
   | 'cloudflare'
-  | 'wrfc'
+  | 'contract'
   | 'telemetry'
   | 'cache'
   | 'mcp'
@@ -150,7 +151,7 @@ export const SETTINGS_CATEGORY_GROUPS: ReadonlyArray<{
   // `profile` and `payments`, which is a routing fact about where the write
   // lands rather than a reason to file it away from the settings he weighs.
   { label: 'Agent Experience', categories: ['display', 'ui', 'behavior', 'profile', 'occasions', 'agents', 'notifications', 'permissions', 'policy', 'fetch', 'diagnostics', 'power', 'payments'] },
-  { label: 'Models and Providers', categories: ['provider', 'subscriptions', 'helper', 'tools', 'tts', 'voice', 'pricing'] },
+  { label: 'Models and Providers', categories: ['provider', 'judgment', 'subscriptions', 'helper', 'tools', 'tts', 'voice', 'pricing'] },
   { label: 'Agent-local state', categories: ['storage', 'cache', 'telemetry', 'atRest', 'security', 'learning'] },
   // `email`, `calendar` and `google` sit beside `surfaces` for the reason
   // `surfaces` is here at all: they configure where the daemon's services reach
@@ -173,7 +174,7 @@ export const SETTINGS_CATEGORY_GROUPS: ReadonlyArray<{
   // the inbox from the surface he actually uses, which is the same mistake the
   // retired host-owned lock made.
   { label: 'Daemon Runtime', categories: ['daemon', 'service', 'controlPlane', 'httpListener', 'danger', 'web', 'watchers', 'network', 'relay', 'cluster', 'update'] },
-  { label: 'Advanced Runtime', categories: ['orchestration', 'fleet', 'planner', 'runtime', 'sandbox', 'batch', 'cloudflare', 'wrfc', 'memory'] },
+  { label: 'Advanced Runtime', categories: ['orchestration', 'fleet', 'planner', 'runtime', 'sandbox', 'batch', 'cloudflare', 'contract', 'memory'] },
   { label: 'Advanced', categories: ['flags', 'release'] },
 ];
 

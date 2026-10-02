@@ -130,8 +130,8 @@ describe('renderSettingsModal', () => {
 
   test('category list shows each category with its count', () => {
     const text = render();
-    // The SDK's 10 display.* CONFIG_SCHEMA keys (display.themeMode and display.treeGlyphs included).
-    expect(text).toMatch(/Display\s+10/);
+    // Assert the current public schema's count instead of a retired display setting.
+    expect(text).toMatch(new RegExp(`Display\\s+${modal.groups.get('display')?.length}`));
   });
 
   test('category list is grouped and opens with category focus', () => {
@@ -161,11 +161,11 @@ describe('renderSettingsModal', () => {
     expect(text).toContain('HTTP Listener');
     expect(text).toContain('Service');
     expect(text).toContain('advanced runtime');
-    expect(text).toContain('WRFC');
+    expect(text).toContain('Contracts');
     expect(text).toContain('controlPlane.');
     expect(text).toContain('httpListener.');
     expect(text).toContain('service.');
-    expect(text).toContain('wrfc.');
+    expect(text).toContain('contract.');
     expect(text).toContain('orchestration.');
     // Rendered, not hidden. The owner can see whether an inbound listener is on;
     // the confirmation gate is what stands between the Agent and turning it on.
@@ -224,7 +224,7 @@ describe('renderSettingsModal', () => {
     modal.nextCategory();
     const text = render();
     expect(text).toContain('› UI');
-    expect(text).toMatch(/UI\s+3/);
+    expect(text).toMatch(new RegExp(`UI\\s+${modal.groups.get('ui')?.length}`));
   });
 
   test('mcp category renders server trust editing surface', () => {

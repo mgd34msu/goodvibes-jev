@@ -97,7 +97,7 @@ describe('SettingsModal: Agent service-hosting boundaries', () => {
     // meant danger.httpListener was dropped on the floor by open() even once the
     // hidden-prefix was lifted, the modal buckets by the key's first segment.
     expect(SETTINGS_CATEGORIES).toContain('danger');
-    expect(SETTINGS_CATEGORIES).toContain('wrfc');
+    expect(SETTINGS_CATEGORIES).toContain('contract');
     expect(SETTINGS_CATEGORIES).toContain('orchestration');
   });
 
@@ -119,7 +119,7 @@ describe('SettingsModal: Agent service-hosting boundaries', () => {
       'network.outboundTls.mode',
       'runtime.eventBus.maxListeners',
       'orchestration.recursionEnabled',
-      'wrfc.scoreThreshold',
+      'contract.gateTimeoutMs',
     ]) {
       expect(isAgentHiddenSettingKey(key)).toBe(false);
     }
@@ -137,7 +137,7 @@ describe('SettingsModal: Agent service-hosting boundaries', () => {
       'network.outboundTls.mode',
       'runtime.eventBus.maxListeners',
       'orchestration.recursionEnabled',
-      'wrfc.scoreThreshold',
+      'contract.gateTimeoutMs',
     ]) {
       expect(keys.has(key)).toBe(true);
     }

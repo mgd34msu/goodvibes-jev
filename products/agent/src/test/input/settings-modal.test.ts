@@ -28,7 +28,7 @@ import { makeProjectTempDir } from '../helpers/project-temp.ts';
 function selectPlainStringSetting(modal: SettingsModal): boolean {
   const plain = (key: string, type: string): boolean =>
     type === 'string' && !isSecretConfigKey(key) && !key.startsWith('tts.') && key !== 'daemon.timezone'
-    && modelPickerLaunchForKey(key) === null;
+    && key !== 'display.theme' && modelPickerLaunchForKey(key) === null;
   for (let pass = 0; pass < SETTINGS_CATEGORIES.length; pass++) {
     const index = modal.currentItems.findIndex((entry) =>
       plain(String(entry.setting.key), entry.setting.type)
@@ -215,7 +215,7 @@ describe('SettingsModal', () => {
       'runtime.eventBus.maxListeners',
       'network.remoteFetch.allowPrivateHosts',
       'orchestration.recursionEnabled',
-      'wrfc.scoreThreshold',
+      'contract.gateTimeoutMs',
     ]) {
       expect(isAgentHiddenSettingKey(key)).toBe(false);
       expect(visibleKeys.has(key)).toBe(true);
