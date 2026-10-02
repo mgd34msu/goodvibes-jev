@@ -27,12 +27,14 @@
  *     200 through the shipped mock-daemon fixture generator.
  *   - REST parity: every REST-bound method resolves by HTTP method+path to the
  *     same method id it answers by invoke.
+ *   - work-ledger composition: the narrow public subpath constructs a service,
+ *     returns replayable receipts and enforces actor revocation under Node ESM.
  *
  * Usage:
  *   bun run release:artifact-lane          # pack + install + conformance
  */
 
-import { rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { retryTransientInstall } from './install-retry.ts';
@@ -167,6 +169,11 @@ function writeConsumerFiles(projectDir: string): void {
     `${JSON.stringify({ name: 'goodvibes-sdk-artifact-lane', private: true, type: 'module' }, null, 2)}\n`,
   );
   writeFileSync(resolve(projectDir, 'conformance.mjs'), `${CONFORMANCE_SCRIPT.trim()}\n`);
+  // Run the same consumer fixture against the installed tarball, whose source
+  // condition is stripped. A workspace-only pass cannot prove this export.
+  writeFileSync(resolve(projectDir, 'work-ledger-consumer.mjs'), readFileSync(
+    new URL('../test/fixtures/work-ledger-consumer.mjs', import.meta.url), 'utf8',
+  ));
 }
 
 async function main(): Promise<void> {
@@ -190,6 +197,7 @@ async function main(): Promise<void> {
 
     console.log('[artifact-lane] running shipped conformance kit against the packed artifacts...');
     run('node', ['conformance.mjs'], projectDir, { stdio: 'inherit' });
+    run('node', ['work-ledger-consumer.mjs'], projectDir, { stdio: 'inherit' });
     console.log('[artifact-lane] artifact lane passed, packed artifacts are internally coherent');
   } finally {
     rmSync(projectDir, { recursive: true, force: true });

@@ -280,6 +280,20 @@ describe('the committed report', () => {
     }
   });
 
+  test('the narrow work-ledger subpath records its consumer and trusted-host contracts', () => {
+    const ledger = committed['./platform/workflow/work-ledger'] ?? [];
+    for (const name of [
+      'createWorkLedger', 'createEmptyWorkLedgerState', 'WorkLedgerAccessError',
+      'WorkLedgerService', 'WorkLedgerAuthority', 'WorkLedgerActor',
+      'WorkLedgerStorage', 'WorkLedgerDecision', 'WorkLedgerResult',
+      'WorkLedgerCommand', 'WorkLedgerState', 'WorkLedgerSnapshot',
+    ]) {
+      const entry = ledger.find((candidate) => candidate.name === name);
+      expect(entry, `${name} missing from ./platform/workflow/work-ledger`).toBeDefined();
+      expect(entry?.text.length ?? 0).toBeGreaterThan(name.length);
+    }
+  });
+
   test('a non-exported type an export references is recorded beside it', () => {
     // The gap that let PermissionConfigReader.getSnapshot() narrow from the
     // whole GoodVibesConfig to one key with no report diff: the alias name in

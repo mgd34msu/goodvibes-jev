@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { knowledgeSpaceMetadata, normalizeProjectId } from '../spaces.js';
-import type { KnowledgeSourceRecord } from '../types.js';
+import type { KnowledgeSourceRecord, KnowledgeSourceUpsertInput } from '../types.js';
+import type { KnowledgeSourceSnapshot } from '../store-source-generation.js';
 import { KnowledgeStore } from '../store.js';
 import type { RuntimeEventBus } from '../../runtime/events/index.js';
 import {
@@ -39,6 +40,9 @@ import type {
   ProjectPlanningSpaceInput,
   ProjectPlanningState,
   ProjectPlanningStateResult,
+  ProjectPlanningStateActionInput,
+  ProjectPlanningStateActionResult,
+  ProjectPlanningRevision,
   ProjectPlanningStateUpsertInput,
   ProjectPlanningStatus,
   ProjectPlanningTask,
@@ -126,15 +130,93 @@ export class ProjectPlanningService {
     await this.store.init();
     const space = this.resolveSpace(input);
     const planningId = normalizePlanningId(input.planningId);
-    const source = this.getArtifactSource(space.knowledgeSpaceId, 'state', planningId);
+    const snapshot = this.getArtifactSnapshot(space.knowledgeSpaceId, 'state', planningId);
+    const source = snapshot.source;
     const state = source ? readState(source) : null;
     return {
       ok: true,
       projectId: space.projectId,
       knowledgeSpaceId: space.knowledgeSpaceId,
       state,
-      ...(source ? { source } : {}),
+      ...(source ? { source, revision: this.planningRevision(snapshot)! } : {}),
     };
+  }
+
+  /** Explicit operator action, bound to one captured source generation. */
+  async applyStateAction(input: ProjectPlanningStateActionInput): Promise<ProjectPlanningStateActionResult> {
+    // Capture before the first await. Later caller mutations cannot change the
+    // selected source, expected generation, or requested operator action.
+    let captured: ProjectPlanningStateActionInput;
+    try { captured = structuredClone(input); } catch { throw new TypeError('Planning action input must be structured data'); }
+    if (captured.expected?.kind !== 'current' && captured.expected?.kind !== 'revision') throw new TypeError('Invalid planning state expectation');
+    if (captured.expected.kind === 'revision') {
+      const revision = captured.expected.revision;
+      if (!revision || typeof revision.sourceId !== 'string' || !revision.sourceId || typeof revision.generation !== 'string' || !/^[a-f0-9]{64}$/.test(revision.generation)) {
+        throw new TypeError('Invalid planning revision');
+      }
+      Object.freeze(revision);
+    }
+    Object.freeze(captured.expected);
+    if (captured.action?.kind !== 'approve' && captured.action?.kind !== 'answer') throw new TypeError('Invalid planning state action');
+    if (captured.action.kind === 'answer' && typeof captured.action.answer !== 'string') throw new TypeError('Invalid planning answer');
+    Object.freeze(captured.action);
+    await this.store.init();
+    const space = this.resolveSpace(captured);
+    const snapshot = this.getArtifactSnapshot(space.knowledgeSpaceId, 'state', normalizePlanningId(captured.planningId));
+    const current = snapshot.source ? readState(snapshot.source) : null;
+    const revision = this.planningRevision(snapshot);
+    const hold = (reason: Extract<ProjectPlanningStateActionResult, { applied: false }>['reason']): ProjectPlanningStateActionResult => ({
+      ok: true, applied: false, reason, state: current, ...(revision ? { revision } : {}),
+    });
+    if (!current || !snapshot.source || !revision) return hold('no-state');
+    if (captured.expected.kind === 'revision' && (captured.expected.revision.sourceId !== revision.sourceId || captured.expected.revision.generation !== revision.generation)) return hold('state-changed');
+    // Current-mode captures once here, then uses the same compare-and-write as
+    // view-selected actions. It never silently retargets a later state.
+    let question: ProjectPlanningQuestion | undefined;
+    let changed: ProjectPlanningState;
+    if (captured.action.kind === 'approve') {
+      changed = { ...current, executionApproved: true,
+        metadata: { ...(current.metadata ?? {}), approvedFrom: 'plan-command', approvedAt: Date.now() },
+      };
+    } else {
+      const answer = captured.action.answer.trim();
+      if (!answer) return hold('empty-answer');
+      const { questionId, questionIndex } = captured.action;
+      if (questionId === undefined && questionIndex === undefined) return hold('missing-selector');
+      const index = questionId !== undefined
+        ? current.openQuestions.findIndex((entry) => entry.id === questionId)
+        : Number.isInteger(questionIndex) && questionIndex! >= 0 && questionIndex! < current.openQuestions.length ? questionIndex! : -1;
+      if (index < 0) return hold('question-not-found');
+      question = { ...current.openQuestions[index]!, status: 'answered', answer, answeredAt: Date.now() };
+      changed = { ...current,
+        openQuestions: current.openQuestions.filter((_, at) => at !== index),
+        answeredQuestions: [...current.answeredQuestions.filter((entry) => entry.id !== question!.id), question],
+      };
+    }
+    const normalized = evaluateProjectPlanningReadiness(normalizeState(changed, space.projectId, space.knowledgeSpaceId)).state;
+    const sourceInput = this.artifactSourceInput(space, 'state', normalized.id, normalized);
+    // Preserve a legacy canonical-URI source's actual identity too.
+    const written = await this.store.upsertSourceIfCurrent({ ...sourceInput, id: revision.sourceId }, revision.generation);
+    if (written.kind === 'held') {
+      const heldRevision = written.current && written.generation ? { sourceId: written.current.id, generation: written.generation } : undefined;
+      return { ok: true, applied: false, reason: written.reason === 'pending-local-changes' ? 'pending-local-changes' : 'state-changed', state: written.current ? readState(written.current) : null,
+        ...(heldRevision ? { revision: Object.freeze(heldRevision) } : {}) };
+    }
+    // Stale actions returned above before any task or work-plan mutation.
+    await this.syncPlanningStateTasksToWorkPlan(space, normalized);
+    return { ok: true, applied: true, state: normalized,
+      revision: Object.freeze({ sourceId: written.source.id, generation: written.generation }),
+      evaluation: evaluateProjectPlanningReadiness(normalized), ...(question ? { question } : {}) };
+  }
+
+  private planningRevision(snapshot: KnowledgeSourceSnapshot): ProjectPlanningRevision | undefined {
+    return snapshot.source && snapshot.generation
+      ? Object.freeze({ sourceId: snapshot.source.id, generation: snapshot.generation }) : undefined;
+  }
+
+  private getArtifactSnapshot(spaceId: string, kind: ProjectPlanningArtifactKind, id: string): KnowledgeSourceSnapshot {
+    const direct = this.store.getSourceSnapshot({ id: projectPlanningSourceId(spaceId, kind, id) });
+    return direct.source ? direct : this.store.getSourceSnapshot({ canonicalUri: projectPlanningCanonicalUri(spaceId, kind, id) });
   }
 
   async upsertState(input: ProjectPlanningStateUpsertInput): Promise<ProjectPlanningStateResult> {
@@ -165,83 +247,31 @@ export class ProjectPlanningService {
     return evaluateProjectPlanningReadiness(state);
   }
 
-  /**
-   * Record a user answer to an open planning question. The target question is
-   * identified by `questionId` (preferred) or a zero-based `questionIndex` into
-   * the current `openQuestions`. On success the question is moved to
-   * `answeredQuestions` with the answer text and `answeredAt`, the state is
-   * persisted, and readiness is re-evaluated (the open-question gap clears).
-   *
-   * Never throws: a missing state, empty answer, missing selector, or unknown
-   * question all return `answered: false` with an honest `reason` and the
-   * current (unmodified) readiness, so a caller can report exactly what
-   * happened rather than guessing.
+  /** Record a current-mode answer using the same persisted guard as selected actions.
+   * Validation and conflict holds return answered:false; storage failures still
+   * reject. A successful source write can precede a downstream sync failure.
    */
   async answerQuestion(input: ProjectPlanningAnswerInput): Promise<ProjectPlanningAnswerResult> {
-    await this.store.init();
+    // Capture identity before awaiting; the action captures its own structured input.
     const space = this.resolveSpace(input);
-    const stateResult = await this.getState({ ...space, planningId: input.planningId });
-    const current = stateResult.state;
-
-    const fail = async (
-      reason: ProjectPlanningAnswerResult['reason'],
-      state: ProjectPlanningState | null,
-    ): Promise<ProjectPlanningAnswerResult> => ({
-      ok: true,
-      projectId: space.projectId,
-      knowledgeSpaceId: space.knowledgeSpaceId,
-      answered: false,
-      reason,
-      openQuestions: state?.openQuestions ?? [],
-      state,
-      evaluation: await this.evaluate({ ...space, ...(input.planningId ? { planningId: input.planningId } : {}) }),
+    const result = await this.applyStateAction({
+      projectId: input.projectId,
+      knowledgeSpaceId: input.knowledgeSpaceId,
+      planningId: input.planningId,
+      expected: { kind: 'current' },
+      action: { kind: 'answer', questionId: input.questionId, questionIndex: input.questionIndex, answer: input.answer },
     });
-
-    if (!current) return fail('no-state', null);
-    const answer = input.answer.trim();
-    if (!answer) return fail('empty-answer', current);
-
-    const hasSelector = input.questionId !== undefined || input.questionIndex !== undefined;
-    if (!hasSelector) return fail('missing-selector', current);
-
-    const openQuestions = current.openQuestions;
-    let targetIndex = -1;
-    if (input.questionId !== undefined) {
-      targetIndex = openQuestions.findIndex((question) => question.id === input.questionId);
-    } else if (input.questionIndex !== undefined) {
-      const idx = input.questionIndex;
-      if (Number.isInteger(idx) && idx >= 0 && idx < openQuestions.length) targetIndex = idx;
-    }
-    if (targetIndex < 0) return fail('question-not-found', current);
-
-    const target = openQuestions[targetIndex]!;
-    const answeredQuestion: ProjectPlanningQuestion = {
-      ...target,
-      status: 'answered',
-      answer,
-      answeredAt: Date.now(),
-    };
-    const nextOpen = openQuestions.filter((_, index) => index !== targetIndex);
-    // De-dup: an already-answered entry with the same id is replaced, not doubled.
-    const nextAnswered = [
-      ...current.answeredQuestions.filter((question) => question.id !== answeredQuestion.id),
-      answeredQuestion,
-    ];
-
-    const saved = await this.upsertState({
-      ...space,
-      state: { ...current, openQuestions: nextOpen, answeredQuestions: nextAnswered },
-    });
-    const nextState = saved.state ?? current;
-    const evaluation = await this.evaluate({ ...space, state: nextState });
+    const state = result.state;
+    const evaluation = result.applied ? result.evaluation
+      : evaluateProjectPlanningReadiness(state ?? normalizeState({}, space.projectId, space.knowledgeSpaceId));
     return {
       ok: true,
       projectId: space.projectId,
       knowledgeSpaceId: space.knowledgeSpaceId,
-      answered: true,
-      question: answeredQuestion,
-      openQuestions: nextState.openQuestions,
-      state: nextState,
+      answered: result.applied,
+      ...(result.applied ? { question: result.question } : { reason: result.reason }),
+      openQuestions: state?.openQuestions ?? [],
+      state,
       evaluation,
     };
   }
@@ -638,8 +668,17 @@ export class ProjectPlanningService {
     id: string,
     value: ProjectPlanningState | ProjectPlanningDecision | ProjectPlanningLanguageArtifact | ProjectWorkPlanArtifact,
   ): Promise<KnowledgeSourceRecord> {
+    return this.store.upsertSource(this.artifactSourceInput(space, kind, id, value));
+  }
+
+  private artifactSourceInput(
+    space: { readonly projectId: string; readonly knowledgeSpaceId: string },
+    kind: ProjectPlanningArtifactKind,
+    id: string,
+    value: ProjectPlanningState | ProjectPlanningDecision | ProjectPlanningLanguageArtifact | ProjectWorkPlanArtifact,
+  ): KnowledgeSourceUpsertInput {
     const spaceId = space.knowledgeSpaceId;
-    return this.store.upsertSource({
+    return {
       id: projectPlanningSourceId(spaceId, kind, id),
       connectorId: PROJECT_PLANNING_CONNECTOR_ID,
       sourceType: 'dataset',
@@ -655,7 +694,7 @@ export class ProjectPlanningService {
         projectId: space.projectId,
         value,
       }),
-    });
+    };
   }
 
   private emitWorkPlanTaskCreated(snapshot: ProjectWorkPlanSnapshot, task: ProjectWorkPlanTask): void {

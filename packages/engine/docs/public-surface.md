@@ -364,6 +364,7 @@ Importing any path not in this table will produce an `ERR_PACKAGE_PATH_NOT_EXPOR
 | `platform/watchers` | Watcher registry | beta |
 | `platform/web-search` | Web search provider registry, service, and providers | beta |
 | `platform/workflow` | Workflow trigger executor | beta |
+| `platform/workflow/work-ledger` | Host-owned work ledger: revisioned records, opaque actor authority, service and storage contracts | beta |
 | `platform/workspace` | Daemon home and workspace swap manager | beta |
 
 Subsystems without public subpaths are package implementation. They are consumed by exported domain seams rather than through a catch-all platform import.
