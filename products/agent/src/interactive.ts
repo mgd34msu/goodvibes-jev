@@ -70,7 +70,7 @@ import { bindApprovals } from './shell/approvals-binding.ts';
 import { buildListAutomationRunsSince } from './agent/automation-runs-source.ts';
 import { startHardwareProbe } from './core/hardware-profile.ts';
 import { readApprovalPostureFromConfig } from './permissions/approval-posture.ts';
-import { installRemoteConversationRouting } from './shell/remote-conversation-wiring.ts';
+import { cancelConversationGeneration, installRemoteConversationRouting } from './shell/remote-conversation-wiring.ts';
 import { applyAtModelSwitches } from './input/at-model-switch.ts';
 import { createCommandContextUi } from './shell/command-context-ui.ts';
 import { createTerminalPaintWindow } from './shell/terminal-paint-window.ts';
@@ -405,10 +405,7 @@ async function main() {
     spokenTurns.stop('Spoken output stopped.');
     // A hosted turn sets the same isThinking the local path does, but its
     // waiting state is owned here, not by orchestrator.abort().
-    remoteConversation.cancelHostedTurn();
-    if (orchestrator.isThinking) {
-      orchestrator.abort();
-    }
+    cancelConversationGeneration(orchestrator, remoteConversation);
   };
 
   const { jumpToBookmark, scrollToLine } = createTranscriptNavigators({

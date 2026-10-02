@@ -114,7 +114,7 @@ function routedHarness(input: {
         if (!outcome.chosen) input.notify?.(`[Turn] ${outcome.reason}`);
         return null;
       },
-      cancelHostedTurn: () => {},
+      cancelHostedTurn: () => false,
       hostedToolPreview: () => undefined,
       dispose: () => router.dispose(),
     };

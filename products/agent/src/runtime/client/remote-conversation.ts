@@ -69,6 +69,8 @@
  *     reads as "not a turn frame", which is accepted.
  */
 
+import { createOperatorSdk, type OperatorSdk } from '@goodvibes-jev/engine/operator-sdk';
+import type { OperatorMethodOutput } from '@goodvibes-jev/engine/contracts';
 import { transport } from '@goodvibes-jev/engine/sdk/platform/runtime';
 import { createTurnLifecycleGate, readTurnLifecycleFrame } from '@goodvibes-jev/engine/sdk/transport-realtime';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -115,6 +117,8 @@ export type RemoteTurnOutcome =
     readonly reason: string;
     /** True when the person chose local, so nothing is wrong and nothing warns. */
     readonly chosen: boolean;
+    /** Stop won before submission; the caller must not fall back locally. */
+    readonly cancelled?: boolean;
   };
 
 /** The connected host's address and token, or the honest reason there is none. */
@@ -146,6 +150,7 @@ export interface RemoteConversationRouterOptions {
    * way the local path counts turn events. Rendering does not depend on it.
    */
   readonly onFrame?: ((frame: HostedSessionFrame) => void) | undefined;
+  readonly onCancellationNotice?: ((message: string) => void) | undefined;
   /**
    * Reconnect policy for the hosted event stream. Defaults to the SDK's, which
    * retries with backoff, the right behaviour, because the turn is still
@@ -183,6 +188,8 @@ export interface RemoteConversationRouter {
   submit(text: string, context?: RemoteTurnContext): Promise<RemoteTurnOutcome>;
   /** The hosted session this conversation is bound to, if any. */
   hostedSessionId(): string | null;
+  /** Request Stop for this submission only; true means the hosted path owns it. */
+  cancelTurn(): boolean;
   /** Stop watching. Leaves the hosted session alone, detaching is separate. */
   dispose(): void;
 }
@@ -211,269 +218,281 @@ export function hostedSessionEventStreamUrl(baseUrl: string, hostedSessionId: st
 export function createRemoteConversationRouter(
   options: RemoteConversationRouterOptions,
 ): RemoteConversationRouter {
+  interface WatchedTurn {
+    readonly operator: OperatorSdk;
+    sessionId: string | null;
+    turnId: string | null;
+    renderer: HostedFrameRenderer | null;
+    closeStream: (() => void) | null;
+    finished: boolean;
+    submissionPending: boolean;
+    settledByHost: boolean;
+    steerAttempted: boolean;
+    cancelRequested: boolean;
+    cancelQueued: boolean;
+    cancellationAcknowledged: boolean;
+    cancelRequest: Promise<void> | null;
+    cancelController: AbortController | null;
+  }
   let hostedId: string | null = null;
-  let closeStream: (() => void) | null = null;
-  let renderer: ReturnType<typeof createHostedFrameRenderer> | null = null;
-  /**
-   * The `id:` of the last frame this router was given, per stream URL, across
-   * every stream it has opened. Held here rather than inside `watch` because
-   * that is the whole point: the next turn's stream resumes where the closed
-   * one stopped. Keyed by URL, the same key the SDK's connector uses, so a
-   * router rebound to a different hosted session starts that session's stream
-   * from nothing rather than from another session's position.
-   */
+  let active: WatchedTurn | null = null;
+  let disposed = false;
   const streamPositions = new Map<string, string>();
-
-  const refuse = (reason: string, chosen = false): RemoteTurnOutcome => ({
-    routed: false,
-    reason,
-    chosen,
+  const refuse = (reason: string, chosen = false): RemoteTurnOutcome => ({ routed: false, reason, chosen });
+  const stopped = (): RemoteTurnOutcome => ({
+    routed: false, chosen: true, cancelled: true,
+    reason: 'Stopped before this message was submitted; it was not run locally.',
   });
-
-  const stopWatching = (): void => {
-    if (!closeStream) return;
-    try {
-      closeStream();
-    } catch (error) {
+  const notice = (turn: WatchedTurn, message: string): void => {
+    if (active !== turn || turn.finished || disposed) return;
+    try { options.onCancellationNotice?.(message); } catch (error) {
+      logger.debug('[remote-conversation] cancellation observer threw', { error: String(error) });
+    }
+  };
+  const release = (turn: WatchedTurn): void => {
+    if (turn.finished) return;
+    turn.finished = true;
+    if (active === turn) active = null;
+    turn.cancelController?.abort();
+    const close = turn.closeStream;
+    turn.closeStream = null;
+    try { close?.(); } catch (error) {
       logger.debug('[remote-conversation] closing the hosted event stream raised', { error: String(error) });
     }
-    closeStream = null;
+    turn.operator.dispose();
+  };
+  const abandon = (turn: WatchedTurn, reason: string): void => {
+    turn.renderer?.abandon(reason);
+    if (!turn.submissionPending) release(turn);
+  };
+  const isCurrent = (turn: WatchedTurn): boolean => active === turn && !turn.finished && !disposed;
+
+  const sendCancellation = (turn: WatchedTurn): void => {
+    if (!isCurrent(turn) || !turn.cancelQueued || turn.cancelRequest || turn.cancellationAcknowledged
+      || !turn.sessionId || !turn.turnId) return;
+    const sessionId = turn.sessionId;
+    const expectedTurnId = turn.turnId;
+    const controller = new AbortController();
+    turn.cancelController = controller;
+    turn.cancelQueued = false;
+    // Set ownership before invoking the client, including an observer that
+    // re-enters Stop synchronously. POST retries remain explicit and same-ID.
+    turn.cancelRequest = Promise.resolve().then(async () => {
+      if (!isCurrent(turn)) return;
+      notice(turn, '[Stop] Requesting cancellation of the hosted turn; waiting for the host.');
+      if (!isCurrent(turn)) return;
+      try {
+        const receipt: OperatorMethodOutput<'sessions.turns.cancel'> = await turn.operator.sessions.turns.cancel(
+          { sessionId, expectedTurnId }, { signal: controller.signal },
+        );
+        if (!isCurrent(turn) || turn.turnId !== expectedTurnId) return;
+        if (receipt.sessionId !== sessionId || receipt.expectedTurnId !== expectedTurnId) {
+          throw new Error('The cancellation response did not match the requested hosted turn.');
+        }
+        switch (receipt.status) {
+          case 'cancellation-requested':
+            turn.cancellationAcknowledged = true;
+            notice(turn, '[Stop] The host accepted cancellation; waiting for this turn to finish.');
+            break;
+          case 'already-ended':
+            notice(turn, '[Stop] The host reports this turn already ended; waiting for its terminal event.');
+            break;
+          case 'stale-turn':
+            notice(turn, '[Stop] This request refers to an older turn. No different turn was cancelled; watching for the original outcome.');
+            break;
+          case 'turn-not-found':
+            notice(turn, '[Stop] The host could not find this turn. Cancellation is unconfirmed; the stream remains attached.');
+            break;
+        }
+      } catch (error) {
+        if (isCurrent(turn) && turn.turnId === expectedTurnId) {
+          notice(turn, `[Stop] Cancellation could not be confirmed: ${describeConnectedHostVerbError(error)} `
+            + 'The stream remains attached. Press Stop again to retry this same turn.');
+        }
+      } finally {
+        turn.cancelController = null;
+        turn.cancelRequest = null;
+      }
+    });
   };
 
-  /**
-   * A stream that stopped delivering frames before the turn ended.
-   *
-   * Not necessarily a failure of the turn: the daemon may still be running it.
-   * What is certain is that no further frame reaches THIS process, so the
-   * renderer is closed out with what it has and the reason is stated.
-   */
-  const endWatch = (turnRenderer: HostedFrameRenderer, error: unknown): void => {
-    if (turnRenderer.isTurnFinished()) return;
-    turnRenderer.abandon(
-      'The connection to the hosting daemon ended before this turn finished'
-      + `${error ? `: ${String(error)}` : '.'} `
-      + 'Anything above this line is what the daemon had already sent. The turn may still be '
-      + 'running there, reopen this conversation to see how it ended.',
-    );
-  };
-
-  /**
-   * Open the hosted session's event stream and point a fresh renderer at it.
-   *
-   * A NEW renderer per turn: its state is the turn's, and a frame arriving late
-   * from a finished turn must not land in the next one's message.
-   */
-  const watch = async (baseUrl: string, token: string, sessionId: string): Promise<HostedFrameRenderer> => {
-    stopWatching();
-    const turnRenderer = createHostedFrameRenderer(options.conversation, options.requestRender);
-    renderer = turnRenderer;
-    // A gate per RENDERER, not per router.
-    //
-    // The SDK's connector keeps one gate for its whole life, which is right for
-    // its consumer: a long-lived store that renders every turn in turn. This
-    // router's consumer is a new renderer per turn, and a gate carried across
-    // turns would still be bound to the PREVIOUS one, so a replayed terminal
-    // frame for that turn would match the binding and finish a renderer that
-    // has not yet seen its own turn start. Starting unbound is what puts the
-    // replayed tail under the gate's third rule: a terminal frame for a turn
-    // this renderer never saw run is refused outright rather than allowed to
-    // bind.
+  const watch = async (turn: WatchedTurn, baseUrl: string, token: string, sessionId: string): Promise<HostedFrameRenderer> => {
+    turn.sessionId = sessionId;
+    const renderer = createHostedFrameRenderer(options.conversation, options.requestRender);
+    turn.renderer = renderer;
+    const isCurrentWatch = (): boolean => isCurrent(turn) && turn.renderer === renderer;
     const gate = createTurnLifecycleGate();
-    const fetchImpl = options.fetchImpl ?? globalThis.fetch;
     const streamUrl = hostedSessionEventStreamUrl(baseUrl, sessionId);
-    closeStream = await transport.openServerSentEventStream(
-      fetchImpl,
-      streamUrl,
-      {
-        // Every id, as it is read. This is what the NEXT stream presents.
-        onEventId: (id: string) => { streamPositions.set(streamUrl, id); },
-        onEvent: (_domain: string, payload: unknown) => {
-          if (!payload || typeof payload !== 'object') return;
-          const frame = payload as HostedSessionFrame;
-          if (typeof frame.type !== 'string') return;
-          // The route scopes delivery to this session already; this is the
-          // client half of the same guarantee, so a daemon that has not been
-          // updated yet cannot bleed another session into this transcript.
-          if (frame.sessionId !== undefined && frame.sessionId !== sessionId) return;
-          // The turn identity lives on the envelope's payload, the same place
-          // the SDK's own connector reads it, and a frame carrying none is
-          // never withheld.
-          const lifecycle = readTurnLifecycleFrame(frame.sessionId, frame.payload);
-          if (lifecycle && !gate.accepts(lifecycle)) {
-            logger.debug('[remote-conversation] a frame for another turn was not applied', {
-              type: frame.type,
-              turnId: lifecycle.turnId ?? '(none)',
-              rendering: gate.boundTurnId(frame.sessionId) ?? '(unbound)',
-            });
-            return;
-          }
-          try {
-            options.onFrame?.(frame);
-          } catch (error) {
-            // An observer that throws is the observer's problem, not the
-            // stream's: the turn is still arriving and still worth rendering.
-            logger.debug('[remote-conversation] a hosted-frame observer threw', {
-              type: frame.type,
-              error: String(error),
-            });
-          }
-          try {
-            turnRenderer.apply(frame);
-          } catch (error) {
-            // A mapping failure must not tear down the stream: the rest of the
-            // turn is still coming and is still worth rendering.
-            logger.debug('[remote-conversation] rendering a hosted frame raised', {
-              type: frame.type,
-              error: String(error),
-            });
-          }
-        },
-        // BOTH endings, deliberately. `onTerminate` fires when reconnection has
-        // given up; `onClose` fires when the stream closed cleanly and no
-        // reconnect was attempted. Either way the turn has no more frames
-        // coming here, and a caller awaiting its completion, a headless run
-        // choosing an exit code, would otherwise wait forever.
-        onTerminate: ({ error }: { readonly error: unknown }) => endWatch(turnRenderer, error),
-        onClose: () => endWatch(turnRenderer, null),
+    const terminalTypes = new Set(['TURN_CANCEL', 'TURN_COMPLETED', 'TURN_ERROR', 'PREFLIGHT_FAIL']);
+    const close = await transport.openServerSentEventStream(options.fetchImpl ?? globalThis.fetch, streamUrl, {
+      // The SDK parses id: before dispatching its event. After terminal release
+      // or replacement, buffered frames no longer advance this watch's cursor.
+      onEventId: (id: string) => { if (isCurrentWatch()) streamPositions.set(streamUrl, id); },
+      onEvent: (_domain: string, payload: unknown) => {
+        if (!isCurrentWatch() || !payload || typeof payload !== 'object') return;
+        const frame = payload as HostedSessionFrame;
+        if (typeof frame.type !== 'string') return;
+        if (frame.sessionId !== undefined && frame.sessionId !== sessionId) return;
+        const frameTurnId = frame.payload?.['turnId'];
+        // Only an authoritative start identifies a cancellation target. A tool
+        // event, replayed terminal, or unscoped frame must not select one.
+        if (frame.type === 'TURN_SUBMITTED' && frame.sessionId === sessionId
+          && typeof frameTurnId === 'string' && frameTurnId.length > 0) {
+          if (turn.turnId !== null && turn.turnId !== frameTurnId) return;
+          turn.turnId = frameTurnId;
+        }
+        if (turn.turnId !== null && typeof frameTurnId === 'string' && frameTurnId !== turn.turnId) return;
+        if (turn.cancelRequested && turn.turnId === null && terminalTypes.has(frame.type)) return;
+        if (turn.cancelRequested && turn.turnId !== null && terminalTypes.has(frame.type)
+          && (frame.sessionId !== sessionId || frameTurnId !== turn.turnId)) return;
+        // Keep legacy rendering compatibility while applying the public gate.
+        const lifecycle = readTurnLifecycleFrame(frame.sessionId, frame.payload);
+        if (lifecycle && !gate.accepts(lifecycle)) return;
+        try { options.onFrame?.(frame); } catch (error) {
+          logger.debug('[remote-conversation] a hosted-frame observer threw', { error: String(error) });
+        }
+        if (!isCurrentWatch()) return;
+        try { renderer.apply(frame); } catch (error) {
+          logger.debug('[remote-conversation] rendering a hosted frame raised', { error: String(error) });
+        }
+        if (renderer.isTurnFinished()) { turn.settledByHost = true; release(turn); }
+        else sendCancellation(turn);
       },
-      {
-        getAuthToken: () => token,
-        // Null on the first stream of a session, there is nothing to resume
-        // past, and the daemon's catch-up window is what a client attaching to
-        // a session already in flight legitimately wants.
-        lastEventId: streamPositions.get(streamUrl) ?? null,
-        ...(options.reconnect ? { reconnect: options.reconnect } : {}),
+      onTerminate: ({ error }: { readonly error: unknown }) => {
+        if (isCurrentWatch()) abandon(turn, 'The connection to the hosting daemon ended before this turn finished. '
+          + `Cancellation and completion are unconfirmed${error ? `: ${String(error)}` : '.'} `
+          + 'The turn may still be running there; reopen this conversation to see how it ended.');
       },
-    );
-    return turnRenderer;
-  };
-
-  const createHosted = async (
-    text: string,
-    baseUrl: string,
-    token: string,
-    action: 'created' | 'recreated',
-  ): Promise<RemoteTurnOutcome> => {
-    // Create WITHOUT `initialPrompt`, then open the stream, then steer the
-    // message in.
-    //
-    // `initialPrompt` starts the turn inside the create call, and the session
-    // id it returns is the only way to address the stream, so a create that
-    // carries the prompt necessarily emits the start of the turn (and, for a
-    // fast one, all of it) before anything is listening. Those frames are gone:
-    // the stream is live traffic, not a replayable log. That is one round trip
-    // traded for never losing the beginning of an answer, and it makes the
-    // first message take the same create-then-steer path every later one does.
-    let reply: HostedCreateReply;
-    try {
-      reply = await options.verbs.invoke<HostedCreateReply>('sessions.hosted.create', {
-        originSurface: 'agent',
-        workspaceRoot: options.workspaceRoot,
-        clientId: options.clientId,
-      });
-    } catch (error) {
-      return refuse(
-        `the connected host could not open a hosted conversation, so this turn ran here, ${describeConnectedHostVerbError(error)}`,
-      );
-    }
-    const id = reply.session?.id;
-    if (typeof id !== 'string' || id.length === 0) {
-      return refuse(
-        'the connected host accepted the request to open a hosted conversation but returned no session id '
-        + 'this build could read, so this turn ran here.',
-      );
-    }
-    hostedId = id;
-    let turnRenderer: HostedFrameRenderer;
-    try {
-      turnRenderer = await watch(baseUrl, token, id);
-    } catch (error) {
-      // The session EXISTS and its turn is running on the daemon. Refusing here
-      // and re-running locally would run the same message twice, on two
-      // machines. Report honestly instead and keep the binding.
-      return refuse(
-        `the hosted conversation opened on the connected host, but this surface could not watch its output, `
-        + `${String(error)}. The turn is running there; reopen this conversation to see it.`,
-      );
-    }
-    // The stream is open now, so the turn's first frame has somewhere to land.
-    try {
-      await options.verbs.invoke<unknown>('sessions.steer', { sessionId: id, body: text });
-    } catch (error) {
-      stopWatching();
-      hostedId = null;
-      return refuse(
-        `the connected host opened a hosted conversation but would not take the message into it, `
-        + `so this turn ran here, ${describeConnectedHostVerbError(error)}`,
-      );
-    }
-    return { routed: true, hostedSessionId: id, action, completion: turnRenderer.completion() };
+      onClose: () => {
+        if (isCurrentWatch()) abandon(turn, 'The connection to the hosting daemon ended before this turn finished. '
+          + 'The turn may still be running there; reopen this conversation to see how it ended.');
+      },
+    }, {
+      getAuthToken: () => token,
+      lastEventId: streamPositions.get(streamUrl) ?? null,
+      ...(options.reconnect ? { reconnect: options.reconnect } : {}),
+    });
+    if (!isCurrentWatch()) close();
+    else turn.closeStream = close;
+    return renderer;
   };
 
   const submit = async (text: string, context?: RemoteTurnContext): Promise<RemoteTurnOutcome> => {
-    if (options.configManager.get('hostedSessions.routeConversationTurns') === false) {
-      return refuse(ROUTING_DISABLED_REASON, true);
-    }
-    if (context?.hasAttachments) {
-      return refuse(
-        'this turn ran in this process because it carries attachments, and a daemon-hosted '
-        + 'conversation takes text only, routing it would have dropped them.',
-      );
-    }
+    if (disposed) return stopped();
+    if (active) { active.submissionPending = false; abandon(active, 'This surface switched to a newer submission before the previous turn settled. '
+      + 'Its remote outcome is unconfirmed; switching did not cancel it.'); }
+    if (options.configManager.get('hostedSessions.routeConversationTurns') === false) return refuse(ROUTING_DISABLED_REASON, true);
+    if (context?.hasAttachments) return refuse('this turn ran in this process because it carries attachments, and a daemon-hosted '
+      + 'conversation takes text only, routing it would have dropped them.');
     const connection = options.resolveConnection();
-    if ('reason' in connection) {
-      return refuse(`this turn ran in this process because ${connection.reason}`);
-    }
-    if (!options.workspaceRoot.startsWith('/')) {
-      return refuse(
-        'a hosted conversation needs an absolute workspace path and this process resolved '
-        + `'${options.workspaceRoot}', so this turn ran here.`,
-      );
-    }
-
-    if (!hostedId) {
-      return createHosted(text, connection.baseUrl, connection.token, 'created');
-    }
-
-    const existing = hostedId;
+    if ('reason' in connection) return refuse(`this turn ran in this process because ${connection.reason}`);
+    if (!options.workspaceRoot.startsWith('/')) return refuse('a hosted conversation needs an absolute workspace path and this process resolved '
+      + `'${options.workspaceRoot}', so this turn ran here.`);
+    let operator: OperatorSdk;
     try {
-      // The stream is re-opened per turn with a fresh renderer before the steer
-      // lands, so the first delta has somewhere to go.
-      const turnRenderer = await watch(connection.baseUrl, connection.token, existing);
-      await options.verbs.invoke<unknown>('sessions.steer', {
-        sessionId: existing,
-        body: text,
-      });
-      return {
-        routed: true,
-        hostedSessionId: existing,
-        action: 'steered',
-        completion: turnRenderer.completion(),
-      };
+      operator = createOperatorSdk({ baseUrl: connection.baseUrl, authToken: connection.token, fetchImpl: options.fetchImpl ?? globalThis.fetch });
     } catch (error) {
-      if (!isStaleHostedSession(error)) {
-        stopWatching();
-        return refuse(
-          `the connected host would not take this message into the hosted conversation, so it ran here, ${describeConnectedHostVerbError(error)}`,
-        );
-      }
-      // The remembered session is gone. Open a fresh one and carry the message
-      // into it, rather than reporting a failure for a recoverable state.
-      logger.info('[remote-conversation] the hosted conversation was gone; opening a new one', {
-        previous: existing,
+      return refuse(`the connected host client could not be opened, so this turn ran here, ${describeConnectedHostVerbError(error)}`);
+    }
+    const turn: WatchedTurn = {
+      operator,
+      sessionId: null, turnId: null, renderer: null, closeStream: null, finished: false, submissionPending: true, settledByHost: false, steerAttempted: false,
+      cancelRequested: false, cancelQueued: false, cancellationAcknowledged: false, cancelRequest: null, cancelController: null,
+    };
+    active = turn;
+    let action: 'created' | 'steered' | 'recreated' = hostedId ? 'steered' : 'created';
+    const create = async (): Promise<string> => {
+      const reply = await options.verbs.invoke<HostedCreateReply>('sessions.hosted.create', {
+        originSurface: 'agent', workspaceRoot: options.workspaceRoot, clientId: options.clientId,
       });
-      hostedId = null;
-      stopWatching();
-      return createHosted(text, connection.baseUrl, connection.token, 'recreated');
+      const id = reply.session?.id;
+      if (typeof id !== 'string' || id.length === 0) throw new Error('the connected host returned no session id this build could read');
+      if (isCurrent(turn)) hostedId = id;
+      return id;
+    };
+    const stopBeforeSteer = (): RemoteTurnOutcome | null => {
+      // A synchronous catch-up may have rendered its terminal frame while the
+      // stream was opening. Preserve submission unless Stop/dispose/replacement won.
+      if (turn.settledByHost && !turn.cancelRequested && !disposed && active === null) return null;
+      if (turn.cancelRequested || !isCurrent(turn)) { turn.submissionPending = false; release(turn); return stopped(); }
+      return null;
+    };
+    try {
+      let id = hostedId ?? await create();
+      let cancelled = stopBeforeSteer();
+      if (cancelled) return cancelled;
+      let renderer = await watch(turn, connection.baseUrl, connection.token, id);
+      cancelled = stopBeforeSteer();
+      if (cancelled) return cancelled;
+      try {
+        turn.steerAttempted = true;
+        await options.verbs.invoke<unknown>('sessions.steer', { sessionId: id, body: text });
+      } catch (error) {
+        if (turn.cancelRequested) {
+          turn.submissionPending = false;
+          abandon(turn, 'Stop was requested while submission was awaiting the host. The submission response failed; '
+            + 'whether the host admitted or cancelled this turn is unconfirmed. It was not run locally.');
+          return { routed: true, hostedSessionId: id, action, completion: renderer.completion() };
+        }
+        if (action !== 'steered' || !isStaleHostedSession(error) || !isCurrent(turn)) throw error;
+        // Only a stale existing session can recreate. Stop arriving during any
+        // of these waits still prevents the next admission/fallback.
+        const close = turn.closeStream;
+        turn.closeStream = null;
+        turn.renderer = null;
+        turn.turnId = null;
+        turn.steerAttempted = false;
+        close?.();
+        if (!isCurrent(turn)) return stopped();
+        hostedId = null;
+        id = await create();
+        action = 'recreated';
+        cancelled = stopBeforeSteer();
+        if (cancelled) return cancelled;
+        renderer = await watch(turn, connection.baseUrl, connection.token, id);
+        cancelled = stopBeforeSteer();
+        if (cancelled) return cancelled;
+        turn.steerAttempted = true;
+        await options.verbs.invoke<unknown>('sessions.steer', { sessionId: id, body: text });
+      }
+      turn.submissionPending = false;
+      if (renderer.isTurnFinished()) release(turn);
+      return { routed: true, hostedSessionId: id, action, completion: renderer.completion() };
+    } catch (error) {
+      turn.submissionPending = false;
+      if (turn.cancelRequested && turn.steerAttempted && turn.sessionId && turn.renderer && !turn.settledByHost) {
+        abandon(turn, 'The submission response failed after Stop; remote admission and cancellation are unconfirmed. The message was not run locally.');
+        return { routed: true, hostedSessionId: turn.sessionId, action, completion: turn.renderer.completion() };
+      }
+      if (turn.sessionId && turn.settledByHost && turn.renderer) {
+        return { routed: true, hostedSessionId: turn.sessionId, action, completion: turn.renderer.completion() };
+      }
+      if (turn.cancelRequested || !isCurrent(turn)) {
+        release(turn);
+        return stopped();
+      }
+      release(turn);
+      return refuse(`the connected host would not take this message into the hosted conversation, so it ran here, ${describeConnectedHostVerbError(error)}`);
     }
   };
 
   return {
     submit,
     hostedSessionId: () => hostedId,
-    dispose: (): void => {
-      stopWatching();
-      renderer = null;
+    cancelTurn: () => {
+      const turn = active;
+      if (!turn || !isCurrent(turn) || (!turn.submissionPending && turn.renderer?.isTurnFinished())) return false;
+      if (!turn.cancelRequested) {
+        turn.cancelRequested = true;
+        if (!turn.turnId) notice(turn, '[Stop] Waiting for hosted submission identity; cancellation is pending.');
+      }
+      if (!turn.cancelRequest && !turn.cancellationAcknowledged) turn.cancelQueued = true;
+      sendCancellation(turn);
+      return true;
+    },
+    dispose: () => {
+      disposed = true;
+      if (active) { active.submissionPending = false; abandon(active, 'This surface detached before the hosted turn settled. Detaching does not cancel the remote turn.'); }
     },
   };
 }

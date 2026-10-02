@@ -310,10 +310,11 @@ export function createHostedFrameRenderer(
         });
         return;
       }
+      case 'PREFLIGHT_FAIL':
       case 'TURN_ERROR': {
         flush(accumulated, { final: true });
         closeStream();
-        const reason = readString(payload, 'error') ?? 'no reason was given';
+        const reason = readString(payload, 'error') ?? readString(payload, 'reason') ?? 'no reason was given';
         conversation.addSystemMessage(`The hosting daemon reported this turn failed: ${reason}`);
         requestRender();
         finish({

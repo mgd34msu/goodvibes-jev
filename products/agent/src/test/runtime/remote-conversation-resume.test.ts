@@ -189,4 +189,31 @@ describe('a second turn on a hosted conversation', () => {
     expect(completion?.response).toBe('plain text');
     remote.dispose();
   });
+  test('a released watch does not advance its resume cursor through buffered later frames', async () => {
+    const { fetchImpl, positions } = scriptedDaemon([
+      [
+        { id: 'evt-1', type: 'TURN_SUBMITTED', turnId: 'turn-1' },
+        { id: 'evt-2', type: 'TURN_COMPLETED', turnId: 'turn-1', fields: { response: 'first' } },
+        { id: 'evt-3', type: 'TURN_SUBMITTED', turnId: 'unobserved-later-turn' },
+      ],
+      [
+        { id: 'evt-4', type: 'TURN_SUBMITTED', turnId: 'turn-2' },
+        { id: 'evt-5', type: 'TURN_COMPLETED', turnId: 'turn-2', fields: { response: 'second' } },
+      ],
+    ]);
+    const remote = router(fetchImpl, recordingConversation({ assistant: [], streamed: [] }));
+    try {
+      const first = await remote.submit('one');
+      expect(first.routed).toBe(true);
+      if (first.routed) await first.completion;
+      // Allow the already-buffered source to drain after the terminal released
+      // ownership. Its later frame must remain available for a future watcher.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      const second = await remote.submit('two');
+      expect(second.routed).toBe(true);
+      if (second.routed) await second.completion;
+      expect(positions).toEqual([null, 'evt-2']);
+    } finally { remote.dispose(); }
+  });
+
 });

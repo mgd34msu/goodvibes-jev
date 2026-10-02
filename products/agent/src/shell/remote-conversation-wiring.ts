@@ -45,17 +45,8 @@ export interface RemoteConversationWiring {
    * reads the same as it did when this returned a boolean.
    */
   routeOrExplain(text: string, hasAttachments: boolean): Promise<RoutedTurnHandle | null>;
-  /**
-   * Stop showing a hosted turn's waiting state.
-   *
-   * The shell's interrupt keys off the same `isThinking` a hosted turn now
-   * sets, and the orchestrator's own `abort()` clears the LOCAL animation
-   * timer, not this one, so without this an interrupt would leave a spinner
-   * turning forever over a turn nobody is watching. It stops the local waiting
-   * state only; the turn itself continues on the daemon, which is what
-   * interrupting a conversation this process does not own can honestly do.
-   */
-  cancelHostedTurn(): void;
+  /** Request cancellation while retaining observation until terminal settlement. */
+  cancelHostedTurn(): boolean;
   /**
    * The tool a hosted turn is running right now, for the shell's tool preview
    * and Activity modal, both of which otherwise read a local snapshot that
@@ -67,7 +58,7 @@ export interface RemoteConversationWiring {
 
 /** A turn the daemon accepted, and the way to wait for how it ended. */
 export interface RoutedTurnHandle {
-  readonly hostedSessionId: string;
+  readonly hostedSessionId: string | null;
   readonly completion: Promise<HostedTurnCompletion>;
 }
 
@@ -76,6 +67,8 @@ export function installRemoteConversationRouting(
   options: RemoteConversationWiringOptions,
 ): RemoteConversationWiring {
   const conversation = ctx.conversation;
+  let routeSequence = 0;
+  let disposed = false;
   // The waiting state a hosted turn shows is the orchestrator's own, driven on
   // the orchestrator's own cadence, see hosted-turn-activity.ts. Nothing in
   // the render loop has to know that hosted turns exist.
@@ -143,6 +136,7 @@ export function installRemoteConversationRouting(
     // The hosted session's tools operate where this surface is working.
     workspaceRoot: ctx.services.workingDirectory,
     clientId,
+    onCancellationNotice: (message) => { options.notify(message); options.render(); },
     onFrame: (frame: HostedSessionFrame) => {
       // Real counts only, and only once the daemon has sent any.
       if (frame.type === 'LLM_RESPONSE_RECEIVED') {
@@ -173,32 +167,53 @@ export function installRemoteConversationRouting(
     },
   });
 
+  const detachedHandle = (): RoutedTurnHandle => ({
+    hostedSessionId: router.hostedSessionId(),
+    completion: Promise.resolve({ status: 'abandoned', response: '',
+      error: 'This surface stopped observing the submission; its remote outcome is unconfirmed.', stopReason: 'observer_detached' }),
+  });
+
   return {
     routeOrExplain: async (text: string, hasAttachments: boolean): Promise<RoutedTurnHandle | null> => {
       // Before the round trip, not after: the waiting state has to appear on
       // the keystroke. Opening or steering a hosted session is a network call,
       // and a shell that shows nothing until it returns reads as frozen.
+      if (disposed) return detachedHandle();
+      const sequence = ++routeSequence;
       activity.begin();
       const outcome = await router.submit(text, { hasAttachments });
       if (outcome.routed) {
+        // Keep the original terminal mirror for superseded replies while the
+        // surface is alive. Only the current generation may end its indicator.
+        if (!disposed) {
+          const finish = (): void => {
+            if (disposed) return;
+            if (sequence === routeSequence) activity.end();
+            void mirrorHostedSession(outcome.hostedSessionId);
+          };
+          void outcome.completion.then(finish, finish);
+        }
+        if (disposed || sequence !== routeSequence) {
+          return { hostedSessionId: outcome.hostedSessionId, completion: outcome.completion };
+        }
         // The daemon's transcript is authoritative; this is the local mirror,
         // and the user's own message is the one part of it the stream does not
         // send back (the daemon received it directly).
         conversation.addUserMessage(text);
         options.render();
-        // The waiting state ends when the TURN ends, however it ends.
-        // The MIRROR runs on every terminal status, including 'abandoned',
-        // that is the stream dropping before an end frame, i.e. the closest
-        // signal this surface gets to "the conversation went on without me",
-        // and precisely the case that previously left nothing in sessions/.
-        void outcome.completion.then(
-          () => { activity.end(); void mirrorHostedSession(outcome.hostedSessionId); },
-          () => { activity.end(); void mirrorHostedSession(outcome.hostedSessionId); },
-        );
         return { hostedSessionId: outcome.hostedSessionId, completion: outcome.completion };
       }
+      if (disposed || sequence !== routeSequence) return detachedHandle();
       // Not routed: the local turn owns the indicator from here.
-      activity.end();
+      if (sequence === routeSequence) activity.end();
+      if (outcome.cancelled) {
+        options.notify(`[Stop] ${outcome.reason}`);
+        options.render();
+        return {
+          hostedSessionId: router.hostedSessionId(),
+          completion: Promise.resolve({ status: 'cancelled', response: '', error: outcome.reason, stopReason: 'cancelled_before_submission' }),
+        };
+      }
       // Never silent. A turn that ran somewhere other than where the settings
       // say it should is exactly what the person needs told, unless running
       // here is what they asked for, in which case there is nothing to report.
@@ -208,11 +223,26 @@ export function installRemoteConversationRouting(
       }
       return null;
     },
-    cancelHostedTurn: () => activity.end(),
+    // A terminal can arrive before the submission HTTP reply. The router has
+    // settled observation, but this controller still owns the shared indicator
+    // until routeOrExplain receives that reply. Never abort the local runtime
+    // merely because the hosted observer has already reached its terminal.
+    cancelHostedTurn: () => router.cancelTurn() || activity.isActive(),
     hostedToolPreview: () => activity.toolPreview(),
     dispose: () => {
+      disposed = true;
+      routeSequence += 1;
       activity.dispose();
       router.dispose();
     },
   };
+}
+
+/** Stop belongs to the hosted owner while it is admitting or observing a turn. */
+export function cancelConversationGeneration(
+  local: { readonly isThinking: boolean; abort(): void },
+  remote: Pick<RemoteConversationWiring, 'cancelHostedTurn'>,
+): void {
+  if (remote.cancelHostedTurn()) return;
+  if (local.isThinking) local.abort();
 }
