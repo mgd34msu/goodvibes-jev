@@ -1,6 +1,40 @@
 # Current-main TUI recovery: incomplete draft
 
-## Latest actual product-runner qualification (2026-10-02)
+## Latest public runner boundary qualification (2026-10-02)
+
+The independently accepted source is `43e5d4efdecc25eb2200d0ff41ead2718b1cbd47`.
+The TUI now imports `@goodvibes-jev/engine/toolchain/test-runner`; its single owned
+child implementation and complete preload/runtime closure ship under toolchain
+source/dist, with compatibility shims at the old private script paths. No lifecycle
+body or network guard was duplicated or weakened. The earlier cross-workspace
+architecture blocker below is resolved through the public boundary.
+
+A real offline normalized tarball proves Node import safety, complete declarations,
+Bun invocation and guard activation, including a caught forbidden-I/O attempt that
+still fails the owned child. Author checks passed 102 focused tests /402 assertions;
+independent packed runtime review passed five tests /34 assertions. Toolchain build
+and narrow types passed at 2,048 MiB, as did product and temporary-file architecture
+checks. Source/export/validation evidence is recorded in
+[`tui-public-test-runner-boundary-2026-10-02.json`](../../docs/audit/tui-public-test-runner-boundary-2026-10-02.json).
+
+The final actual public-import product command ran all **519 source files** in
+5m52s: **518 passed /1 failed**, exit 1, no filters or timeout overrides. Completed
+summaries contain **6,249 passing tests, five existing skips and 29,213 assertions**,
+with zero network-violation reports. The retained planning test failed its existing
+60-second timeout; the 120-second file watchdog ended/reaped it and printed the
+final aggregate summary. The final 2,560 MiB full type pass completed in 43.55s
+with exactly the same **15 legacy planning diagnostics**, no new errors. Earlier
+heap exhaustion, original failed aggregates and pre-correction architecture
+failure remain in the historical evidence.
+
+Two ordinary product-command tests still leave synthetic fixture trees outside the
+runner-owned scratch; they were preserved intact outside source before the final
+product architecture check passed. No scanner exception was added. Windows
+child-tree cleanup and native ledger product integration remain incomplete. PR76's
+published work-ledger export and this tooling export are distinct additive keys;
+only metadata compatibility has been checked, not an unreviewed source union.
+
+## Historical private-import runner qualification (2026-10-02)
 
 Reviewed source `f276eaf460287b22653d0276aa98f8efae91b3f9` adds owned per-file
 POSIX teardown, bounded output drain and accurate timeout diagnostics to the actual
