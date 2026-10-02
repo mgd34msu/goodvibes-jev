@@ -13,6 +13,11 @@ import { join } from 'node:path';
 import { sweepCreatedProjectTempDirs } from './project-temp.ts';
 import { sweepTrackedTempDirs } from './temp-registry.ts';
 
+// Golden fixtures use UTC. Establish it before any test captures/restores TZ:
+// Bun 1.3.14 keeps the last zone after deleting process.env.TZ and ignores
+// subsequent assignments, so an initially absent TZ can leak a test's zone.
+process.env.TZ = 'UTC';
+
 // Ensure fetch is available as a global (bun provides it; this is a no-op in
 // most bun versions but guards against environments where it isn't set).
 if (typeof globalThis.fetch === 'undefined') {

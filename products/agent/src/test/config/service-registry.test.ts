@@ -117,8 +117,10 @@ describe('ServiceRegistry - resolveAuth bearer', () => {
   let encPath: string;
   let servicesPath: string;
   let subscriptionManager: SubscriptionManager;
+  let originalOpenAiKey: string | undefined;
 
   beforeEach(() => {
+    originalOpenAiKey = process.env['OPENAI_API_KEY'];
     dir = makeTmpDir();
     encPath = join(dir, 'secrets.enc');
     servicesPath = join(dir, 'services.json');
@@ -127,6 +129,9 @@ describe('ServiceRegistry - resolveAuth bearer', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    // A synthetic key left here enables live provider discovery in later suites.
+    if (originalOpenAiKey === undefined) delete process.env['OPENAI_API_KEY'];
+    else process.env['OPENAI_API_KEY'] = originalOpenAiKey;
     rmSync(dir, { recursive: true, force: true });
   });
 
