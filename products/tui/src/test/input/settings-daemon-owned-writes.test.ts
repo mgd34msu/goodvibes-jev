@@ -43,6 +43,8 @@ function stubConfigManager(): ConfigManager & { readonly writes: [string, unknow
   const values = new Map<string, unknown>();
   return {
     writes,
+    // This synthetic bare manager has no registered host-owned settings.
+    getHostSettingsSchema: () => [],
     get: (key: string) => values.get(key),
     setDynamic: (key: string, value: unknown) => { writes.push([key, value]); values.set(key, value); },
   } as unknown as ConfigManager & { readonly writes: [string, unknown][] };
