@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -11,14 +12,14 @@ const options = { strictOwnership: true, totalTimeoutMs: 40, initialBackoffMs: 5
 
 test('strict ownership never evicts a live process because its heartbeat is old', async () => {
   const file = lockPath();
-  const bytes = JSON.stringify({ pid: process.pid, token: '1234567890abcdef', acquiredAt: Date.now() - 120000 });
+  const bytes = JSON.stringify({ pid: process.pid, token: randomBytes(8).toString('hex'), acquiredAt: Date.now() - 120000 });
   writeFileSync(file, bytes);
   utimesSync(file, new Date(0), new Date(0));
   await expect(acquireCrossProcessLock(file, { ...options, staleMs: 1 }).then(release => { release(); return 'acquired'; })).rejects.toThrow('timed out');
   expect(readFileSync(file, 'utf8')).toBe(bytes);
 });
 
-test.each(['', 'not-json', '{"pid":0}', '{"pid":-7}', '{"pid":99999999,"token":""}', '{"pid":99999999,"token":"1234567890abcdef","acquiredAt":"bad"}'])(
+test.each(['', 'not-json', '{"pid":0}', '{"pid":-7}', '{"pid":99999999,"token":""}', JSON.stringify({ pid: 99999999, token: randomBytes(8).toString('hex'), acquiredAt: 'bad' })])(
   'strict ownership does not turn corrupt metadata into write authority: %j', async bytes => {
     const file = lockPath(); writeFileSync(file, bytes);
     await expect(acquireCrossProcessLock(file, options).then(release => { release(); return 'acquired'; })).rejects.toThrow('timed out');

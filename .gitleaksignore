@@ -22,3 +22,9 @@ bc7b1a33f8f3ead6757a434886d1e0eb990c12fb:products/daemon/src/test/daemon/daemon-
 # Public parent commit hash quoted in the nullable-window audit, not a credential.
 # Exact historical finding only; current wording avoids the misleading label.
 e054c80100249341c6eebc02d21ff64ebc94abc3:docs/audit/sdk-nullable-context-windows.md:generic-api-key:3
+
+# Synthetic local lock-owner identifiers in strict-ownership regression fixtures;
+# never authentication credentials. Exact historical commit/path/rule/lines only.
+# Current fixtures generate valid 16-hex lock identifiers at runtime.
+82458f6262384ef4b204b8543ed76bb266aa473c:packages/engine/test/knowledge-strict-lock.test.ts:generic-api-key:14
+82458f6262384ef4b204b8543ed76bb266aa473c:packages/engine/test/knowledge-strict-lock.test.ts:generic-api-key:21
