@@ -1,5 +1,5 @@
 import { describe, test, expect, mock } from 'bun:test';
-import { WrfcPreRouterBuffer } from '../../runtime/bootstrap-core.ts';
+import { StartupNoticeBuffer } from '../../runtime/bootstrap-core.ts';
 import type { SystemMessageRouter } from '../../core/system-message-router.ts';
 
 // ---------------------------------------------------------------------------
@@ -12,7 +12,7 @@ function makeRouterStub(): {
 } {
   const calls: Array<{ message: string; priority: string }> = [];
   const router = {
-    wrfc: (message: string, priority: string) => {
+    routeSystemMessage: (message: string, priority: string) => {
       calls.push({ message, priority });
     },
   } as unknown as SystemMessageRouter;
@@ -20,13 +20,13 @@ function makeRouterStub(): {
 }
 
 // ---------------------------------------------------------------------------
-// WrfcPreRouterBuffer
+// StartupNoticeBuffer
 // ---------------------------------------------------------------------------
 
-describe('WrfcPreRouterBuffer', () => {
+describe('StartupNoticeBuffer', () => {
   describe('basic push and flush', () => {
     test('flush delivers messages in push order', () => {
-      const buf = new WrfcPreRouterBuffer();
+      const buf = new StartupNoticeBuffer();
       const { router, calls } = makeRouterStub();
 
       buf.push('msg-1', 'low');
@@ -41,7 +41,7 @@ describe('WrfcPreRouterBuffer', () => {
     });
 
     test('flush preserves priority per message', () => {
-      const buf = new WrfcPreRouterBuffer();
+      const buf = new StartupNoticeBuffer();
       const { router, calls } = makeRouterStub();
 
       buf.push('low-msg', 'low');
@@ -53,7 +53,7 @@ describe('WrfcPreRouterBuffer', () => {
     });
 
     test('flush clears the buffer (second flush is a no-op)', () => {
-      const buf = new WrfcPreRouterBuffer();
+      const buf = new StartupNoticeBuffer();
       const { router, calls } = makeRouterStub();
 
       buf.push('once', 'low');
@@ -65,7 +65,7 @@ describe('WrfcPreRouterBuffer', () => {
     });
 
     test('size reflects current queue depth', () => {
-      const buf = new WrfcPreRouterBuffer();
+      const buf = new StartupNoticeBuffer();
       expect(buf.size).toBe(0);
       buf.push('a', 'low');
       buf.push('b', 'low');
@@ -73,7 +73,7 @@ describe('WrfcPreRouterBuffer', () => {
     });
 
     test('size is 0 after flush', () => {
-      const buf = new WrfcPreRouterBuffer();
+      const buf = new StartupNoticeBuffer();
       const { router } = makeRouterStub();
       buf.push('a', 'low');
       buf.flush(router);
@@ -81,7 +81,7 @@ describe('WrfcPreRouterBuffer', () => {
     });
 
     test('empty buffer flush is a no-op (calls nothing)', () => {
-      const buf = new WrfcPreRouterBuffer();
+      const buf = new StartupNoticeBuffer();
       const { router, calls } = makeRouterStub();
       buf.flush(router);
       expect(calls).toHaveLength(0);
@@ -90,7 +90,7 @@ describe('WrfcPreRouterBuffer', () => {
 
   describe('overflow behavior (cap = 100)', () => {
     test('accepts exactly 100 entries without dropping', () => {
-      const buf = new WrfcPreRouterBuffer();
+      const buf = new StartupNoticeBuffer();
       const { router, calls } = makeRouterStub();
 
       for (let i = 0; i < 100; i++) {
@@ -105,7 +105,7 @@ describe('WrfcPreRouterBuffer', () => {
     });
 
     test('101st entry evicts the oldest (msg-0 dropped)', () => {
-      const buf = new WrfcPreRouterBuffer();
+      const buf = new StartupNoticeBuffer();
       const { router, calls } = makeRouterStub();
 
       for (let i = 0; i < 101; i++) {
@@ -124,7 +124,7 @@ describe('WrfcPreRouterBuffer', () => {
     });
 
     test('overflow count accumulates across multiple evictions', () => {
-      const buf = new WrfcPreRouterBuffer();
+      const buf = new StartupNoticeBuffer();
       const { router, calls } = makeRouterStub();
 
       // Push 150: first 50 will be evicted
@@ -143,7 +143,7 @@ describe('WrfcPreRouterBuffer', () => {
     });
 
     test('overflow summary is low priority', () => {
-      const buf = new WrfcPreRouterBuffer();
+      const buf = new StartupNoticeBuffer();
       const { router, calls } = makeRouterStub();
 
       for (let i = 0; i < 101; i++) {
@@ -155,7 +155,7 @@ describe('WrfcPreRouterBuffer', () => {
     });
 
     test('overflow counter resets after flush (subsequent overflow independent)', () => {
-      const buf = new WrfcPreRouterBuffer();
+      const buf = new StartupNoticeBuffer();
       const { router, calls } = makeRouterStub();
 
       // First overflow batch
@@ -179,12 +179,12 @@ describe('WrfcPreRouterBuffer', () => {
   describe('smart ref flush-on-attach integration', () => {
     test('messages buffered before attach are flushed when .value is set', () => {
       // Simulate the smart ref pattern used in bootstrap-core
-      const buf = new WrfcPreRouterBuffer();
+      const buf = new StartupNoticeBuffer();
       const { router, calls } = makeRouterStub();
 
       // Buffer some messages before router is ready
-      buf.push('[WRFC] Guard: task judged implementation-like - task: "x" (spawn-forced-wrfc)', 'low');
-      buf.push('[WRFC] Engineer enumerated 2 constraints for chain abc123', 'low');
+      buf.push('[Startup] Runtime services are ready', 'low');
+      buf.push('[Startup] Two contract records restored', 'low');
 
       expect(buf.size).toBe(2);
 
@@ -193,12 +193,12 @@ describe('WrfcPreRouterBuffer', () => {
 
       expect(buf.size).toBe(0);
       expect(calls).toHaveLength(2);
-      expect(calls[0]!.message).toContain('spawn-forced-wrfc');
-      expect(calls[1]!.message).toContain('constraints');
+      expect(calls[0]!.message).toContain('Runtime services are ready');
+      expect(calls[1]!.message).toContain('contract records restored');
     });
 
     test('messages pushed after flush go directly to router (no re-buffer)', () => {
-      const buf = new WrfcPreRouterBuffer();
+      const buf = new StartupNoticeBuffer();
       const { router, calls } = makeRouterStub();
 
       buf.push('pre-attach', 'low');
