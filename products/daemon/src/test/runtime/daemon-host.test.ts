@@ -338,3 +338,65 @@ test('settled first rollback rejection remains visible to the barrier without ra
   ]);
   expect(touched).toBe(false);
 });
+
+
+test('close immediately fences both real config restart watchers while an admitted plugin call drains', async () => {
+  const fx = fixture(); const plugin = seedPlugin(fx);
+  const host = createDaemonHost({ ...fx.options, httpListener: { host: '127.0.0.1', port: 0 } }, fx.factories); hosts.push(host);
+  await host.start();
+  const module = await import(join(plugin.directory, 'index.js')) as { finish(): void }; releases.push(module.finish);
+  const runtime = host.services!;
+  const call = runtime.gatewayMethods.invoke('plugin.owned-host.held', { methodId: 'plugin.owned-host.held', body: {} } as never);
+  await tick();
+  const serverStart = keep(spyOn(host.daemon!, 'start'));
+  const listenerStart = keep(spyOn(host.httpListener!, 'start'));
+  const graphClose = keep(spyOn(runtime, 'close'));
+  const closing = host.close(); const done = settled(closing);
+  expect(host.close()).toBe(closing);
+  runtime.configManager.set('controlPlane.port', 43187);
+  runtime.configManager.set('httpListener.port', 43188);
+  await host.daemon!.waitForRestart(); await host.httpListener!.waitForRestart();
+  expect(serverStart).not.toHaveBeenCalled(); expect(listenerStart).not.toHaveBeenCalled();
+  expect(done()).toBe(false); expect(graphClose).not.toHaveBeenCalled();
+  module.finish(); await call; await closing;
+  expect(graphClose).toHaveBeenCalledTimes(1);
+});
+
+test('close fences the start and dirty cycle of a config restart already waiting in stop', async () => {
+  const fx = fixture(); await fx.host.start();
+  const daemon = fx.host.daemon!;
+  const entered = gate(); const release = gate();
+  const originalStop = daemon.stop.bind(daemon);
+  let first = true;
+  keep(spyOn(daemon, 'stop').mockImplementation(async () => {
+    if (first) { first = false; entered.resolve(); await release.promise; }
+    await originalStop();
+  }));
+  const start = keep(spyOn(daemon, 'start'));
+  const close = keep(spyOn(fx.host.services!, 'close'));
+  const config = fx.host.services!.configManager;
+  config.set('controlPlane.port', 43187); await entered.promise;
+  config.set('controlPlane.host', 'localhost'); // admitted dirty cycle
+  const closing = fx.host.close(); const done = settled(closing);
+  config.set('controlPlane.host', '127.0.0.1');
+  await tick(); expect(done()).toBe(false); expect(close).not.toHaveBeenCalled();
+  release.resolve(); await closing;
+  expect(start).not.toHaveBeenCalled(); expect(close).toHaveBeenCalledTimes(1);
+});
+
+test('one borrowed restart fence failure cannot skip the other fence or accepted owner drainage', async () => {
+  const fx = fixture();
+  const host = createDaemonHost({ ...fx.options, httpListener: { host: '127.0.0.1', port: 0 } }, fx.factories); hosts.push(host);
+  await host.start();
+  const raw = { get message(): never { throw new Error('untrusted rejection inspected'); } };
+  keep(spyOn(host.daemon!, 'fenceRestartAdmission').mockImplementation(() => { throw raw; }));
+  const listenerFence = keep(spyOn(host.httpListener!, 'fenceRestartAdmission'));
+  const bootClose = keep(spyOn(host.services!.bootTasks!, 'close'));
+  const graphClose = keep(spyOn(host.services!, 'close'));
+  const closing = host.close();
+  expect(host.close()).toBe(closing);
+  expect(listenerFence).toHaveBeenCalledTimes(1);
+  expect(bootClose).toHaveBeenCalledTimes(1);
+  await expect(closing).rejects.toThrow('Daemon host cleanup failed');
+  expect(graphClose).toHaveBeenCalledTimes(1);
+});

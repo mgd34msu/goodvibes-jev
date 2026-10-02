@@ -179,6 +179,7 @@ export class DaemonServer {
   private _restartingPromise: Promise<void> | null = null;
   /** True if a config change arrived while _restarting was set; triggers a second cycle. */
   private _restartDirty = false;
+  private _restartAdmissionClosed = false;
   private tornDown = false; // True once stop() tore this daemon down; cleared by a successful bind. Teardown was gated on `server === null`, which conflated "never bound a socket" with "has nothing to release". The CONSTRUCTOR starts the companion-chat GC sweep and the batch tick, so enable() plus a failed or never-called start() left both running with no reachable stop. What must not run twice is the teardown, so that is what this guards.
 
   constructor(private config: DaemonConfig = {}) {
@@ -582,6 +583,18 @@ export class DaemonServer {
   }
 
   /**
+   * Permanently fence config-driven restart admission without stopping owners.
+   * Already admitted work remains observable through waitForRestart(). Hosts
+   * call this synchronously before draining consumers, then await and stop.
+   */
+  fenceRestartAdmission(): void {
+    this._restartAdmissionClosed = true;
+    this._restartDirty = false;
+    this._configWatchUnsub?.();
+    this._configWatchUnsub = null;
+  }
+
+  /**
    * Wait for admitted startup, rollback and config-driven restart work.
    * Failed startup remains fail-fast; owners await this barrier before stopping
    * borrowed dependencies. Rejected operations retain fixed diagnostic labels.
@@ -676,9 +689,11 @@ export class DaemonServer {
    * Called once from start() after the server is up. Clears itself on stop().
    */
   private _attachControlPlaneConfigWatcher(): void {
+    if (this._restartAdmissionClosed) return;
     if (this._configWatchUnsub) return; // idempotent
 
     const restart = (): void => {
+      if (this._restartAdmissionClosed) return;
       if (this._restarting) {
         // Change arrived mid-restart, queue a second cycle (check _restarting
         // before isRunning: stop() runs synchronously inside the restart IIFE).
@@ -691,6 +706,7 @@ export class DaemonServer {
         try {
           logger.info('DaemonServer: controlPlane binding changed, restarting daemon server…');
           await this.stop();
+          if (this._restartAdmissionClosed) return;
           // Re-resolve host/port from updated config
           const newBinding = resolveHostBinding((this.configManager.get('controlPlane.hostMode') as 'local' | 'network' | 'custom' | undefined) ?? 'local', String(this.configManager.get('controlPlane.host') ?? '127.0.0.1'), Number(this.configManager.get('controlPlane.port') ?? 3421), 'controlPlane');
           this.host = newBinding.host;
@@ -702,7 +718,7 @@ export class DaemonServer {
           this._restarting = false;
           // If a config change arrived while we were restarting, kick off a second
           // cycle BEFORE nulling _restartingPromise so waitForRestart() chains correctly.
-          if (this._restartDirty) {
+          if (this._restartDirty && !this._restartAdmissionClosed) {
             this._restartDirty = false;
             restart(); // sets this._restartingPromise to the new cycle
           } else {

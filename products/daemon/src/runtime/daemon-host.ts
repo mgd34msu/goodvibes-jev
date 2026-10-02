@@ -22,8 +22,8 @@ export interface DaemonHostOptions {
   readonly httpListener?: DaemonHostBinding;
 }
 
-export type DaemonHostServer = Pick<DaemonServer, 'enable' | 'start' | 'stop' | 'waitForRestart' | 'isRunning'>;
-export type DaemonHostListener = Pick<HttpListener, 'enable' | 'start' | 'stop' | 'waitForRestart' | 'isRunning'>;
+export type DaemonHostServer = Pick<DaemonServer, 'enable' | 'start' | 'stop' | 'fenceRestartAdmission' | 'waitForRestart' | 'isRunning'>;
+export type DaemonHostListener = Pick<HttpListener, 'enable' | 'start' | 'stop' | 'fenceRestartAdmission' | 'waitForRestart' | 'isRunning'>;
 
 /** Narrow construction seams also permit held-acquisition lifecycle tests. */
 export interface DaemonHostFactories {
@@ -89,7 +89,12 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
     }
     return bootClosing;
   }
+  function fenceRestarts(label: string, owner: DaemonHostServer | DaemonHostListener): void {
+    try { owner.fenceRestartAdmission(); }
+    catch { cleanupFailures.push(new Error(`Daemon host ${label} restart fence failed`)); }
+  }
   function ownListener(label: string, owner: DaemonHostServer | DaemonHostListener): void {
+    if (closed) fenceRestarts(label, owner);
     scope.registry.add(label, async () => {
       const failures: Error[] = [];
       // An already-admitted config restart must finish before the final stop.
@@ -181,6 +186,9 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
     let reject!: (error: Error) => void;
     closing = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
     void closing.catch(() => {});
+    // Fence restart admission before a held boot drain can yield to config writes.
+    if (daemon) fenceRestarts('daemon server', daemon);
+    if (listener) fenceRestarts('HTTP listener', listener);
     // Boot's own close fences notification/provider/plugin admissions now,
     // even if an accepted factory or plugin is still holding startup open.
     closeBoot();
