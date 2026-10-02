@@ -1,5 +1,82 @@
 # Agent source recovery
 
+## Current-main integration checkpoint (2026-10-02)
+
+The sections below this checkpoint are chronological recovery notes, not the
+current gate status. The reviewed recovery commit
+`91aca44d27ef52184e493b21620608a4a53c1d5c` composes without conflicts with
+main `1a83f420fe33345931b1357c6da0c942d352d4c0`. The composition preserves both
+histories and all current upstream Agent files; it does not restore retired WRFC
+engine implementation or add the excluded captured-view authority work.
+
+Fresh current-main source types, engine build, public API check, 379 focused
+Agent tests (3,059 assertions), 38 startup/state-cancellation tests, and 16 shared
+packaging tests pass. The standard linux-x64 binary build passes. The rebuilt
+executable displays the initial workspace-registration modal, Escape declines,
+`/help` opens, and termination exits 0. This bounded PTY proof uses explicit
+synthetic metadata responses with zero external-network guard violations. The
+staged sqlite-vec addon loads as v0.1.9 and computes the expected zero distance.
+These statements do not substitute for full product or live-provider parity.
+
+`migration.json` is intentionally partial. Its original 1,602-file inventory
+revision remains authoritative for existing dispositions.
+`source-reconciliation.json` accounts for the refreshed 1,650-file tree, including
+248 baseline deletions and 296 additions, and identifies pending successor and
+disposition review without marking missing upstream tests as DROP. All 1,650
+refreshed source paths remain present. Retained JEV source is not claimed as
+completed judgment migration. Product-local synthetic reading fixtures replace
+private cross-workspace test-helper imports, using only published public APIs.
+
+The first full test TypeScript pass exposed 147 diagnostics across 41 files,
+primarily retired WRFC fixtures, asynchronous readers and normalization types.
+Those diagnostics were repaired against the current public contracts; a later
+full test typecheck passed without exclusions. Subsequent fixture and integration
+changes still require exact-head revalidation. This remains a partial product. THE-99/PR59 process-completion adoption, first-start
+complete-prompt interaction proof, source disposition review, full aggregate
+gates and connected/live acceptance remain independent requirements. A further
+compiled PTY attempt displayed the complete first prompt after Escape, but stopped
+with an invalid judgment request before reaching the local scripted provider.
+That isolated home has no configured judgment credential; this is a failed
+first-turn acceptance attempt, not proof of provider interaction. Its network
+guard recorded no violations. No fallback or authority bypass was added.
+
+## Integration repairs and retained limits
+
+Three independently reviewed product adapters now use the published platform:
+contract listing/history modes replace the retired WRFC vocabulary; permission
+safety preserves attribution and AbortSignal through both public check methods,
+without turning cancellation into read fallback approval; settings expose all
+public contract and judgment configuration keys. Ordinary permission fallback
+behavior remains unchanged.
+
+The contract rendering fixtures retain unmet checks, consumed finding nudges,
+explicit correction work and passing rechecks using consistent group/unit/check
+identities. Six work-tree goldens were independently inspected as before/current
+images after an initial semantically invalid translation was rejected.
+
+Real registry-to-exec cancellation, timeout distinction, same-registry reuse,
+held policy reads, held permission prompts, late remembered answers and zero
+post-cancel execution are covered by guarded tests and negative mutations. Four
+original full-composition scenarios still cannot launch their sandbox on this
+executor: bubblewrap cannot create its NETLINK_ROUTE socket. Those tests remain
+present and failing; containment is not disabled.
+
+A direct test invocation attempted external metadata access and was rejected.
+That result is not accepted. The canonical owned runner strips credentials,
+uses an isolated home, and blocks unexpected non-loopback requests. A guarded
+rerun localized the metadata attempts to the support-bundle containment test.
+That test now supplies only exact, synthetic catalog GET responses and explicit
+unavailable responses for three known localhost model probes; unknown requests
+still fail, even if production catches the fetch exception. Card containment
+assertions continue to inspect the actual exported bundle. No live-provider
+proof or genuine credentialed first turn is claimed.
+
+The legacy runtime-bus notifier remains metadata-only under the public privacy
+contract. Authenticated canonical detailed notification adoption is a remaining
+product task, not an excuse to restore legacy content leakage.
+
+## Historical recovery chronology
+
 This is an incomplete workspace reconstruction from goodvibes-agent
 `f05fe636c120baa469037efe7d7391c3d9503635` (tree
 `7f5575e17a8f52f638b145830f9a4fc4e4bf650f`, 1,650 tracked files).

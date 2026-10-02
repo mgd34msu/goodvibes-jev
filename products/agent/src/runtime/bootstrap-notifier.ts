@@ -8,9 +8,9 @@ import { readNotificationsMetadataOnly } from '@goodvibes-jev/engine/sdk/platfor
 
 /**
  * The Slack and Discord notifier, built from the configured services. Its
- * agent and workstream notices name the task unless
- * behavior.notificationsMetadataOnly is on; the setting is read at send time,
- * so a change applies without a restart.
+ * runtime-bus notices use the public legacy-envelope adapter, which stays
+ * metadata-only even when the live setting permits detail. The setting is read
+ * at send time; authenticated canonical content-envelope adoption is separate.
  */
 export function createRuntimeNotifier(
   serviceRegistry: Parameters<typeof Notifier.fromConfig>[0],
