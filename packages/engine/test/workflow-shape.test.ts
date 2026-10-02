@@ -256,6 +256,31 @@ describe('ci.yml: build once, restore everywhere', () => {
     expect(rootPackage.scripts.test).toContain('bun run products:test');
   });
 
+  test('the Agent lane verifies its exact native artifact and owns its terminal prerequisites', () => {
+    const build = ci.jobs!['build']!;
+    const product = ci.jobs!['product-tests']!;
+    expect(build['timeout-minutes']).toBe(15);
+    expect(runText(ci, 'build')).toContain('bun run --cwd products/agent build:binary --target linux-x64');
+    expect(runText(ci, 'build')).toContain('bun products/agent/scripts/ci-artifact.ts record "$GITHUB_SHA"');
+    for (const path of ['products/agent/dist/goodvibes-agent-linux-x64', 'products/agent/dist/lib', 'products/agent/dist/ci-artifact.json']) {
+      expect(runText(ci, 'build')).toContain(path);
+    }
+    const verify = steps(product).find((step) => step.name === 'Verify restored Agent native artifact');
+    const terminal = steps(product).find((step) => step.name === 'Install Agent terminal E2E prerequisite');
+    const run = steps(product).find((step) => step.name === 'Run complete declared product test suite');
+    const restore = steps(product).find((step) => step.name === 'Restore workspace package output');
+    expect(verify?.if).toBe("matrix.product == 'agent'");
+    expect(terminal?.if).toBe("matrix.product == 'agent'");
+    expect(verify?.run).toContain('bun products/agent/scripts/ci-artifact.ts verify "$GITHUB_SHA"');
+    expect(verify?.run).toContain('products/agent/dist/goodvibes-agent-linux-x64 --version');
+    expect(verify?.run).toContain('echo "GOODVIBES_E2E_BINARY=$GITHUB_WORKSPACE/products/agent/dist/goodvibes-agent-linux-x64" >> "$GITHUB_ENV"');
+    expect(terminal?.run).toContain('sudo apt-get install --no-install-recommends -y tmux');
+    expect(steps(product).indexOf(verify!)).toBeGreaterThan(steps(product).indexOf(restore!));
+    expect(steps(product).indexOf(run!)).toBeGreaterThan(steps(product).indexOf(verify!));
+    expect(steps(product).indexOf(run!)).toBeGreaterThan(steps(product).indexOf(terminal!));
+    expect(stepText(ci.jobs!['platform-matrix']!)).not.toMatch(/GOODVIBES_E2E_BINARY|ci-artifact\.ts verify|apt-get install.*tmux/);
+  });
+
   test('the Bun lane retains the deterministic fake-IMAP race sweep', () => {
     const sweep = steps(ci.jobs!['platform-matrix']!).find((step) => step.run === 'bun run sweep:wake-race');
     expect(sweep).toBeDefined();
