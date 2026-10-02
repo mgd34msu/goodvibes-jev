@@ -237,6 +237,7 @@ export function createRemoteConversationRouter(
   let hostedId: string | null = null;
   let active: WatchedTurn | null = null;
   let disposed = false;
+  let submissionGeneration = 0;
   const streamPositions = new Map<string, string>();
   const refuse = (reason: string, chosen = false): RemoteTurnOutcome => ({ routed: false, reason, chosen });
   const stopped = (): RemoteTurnOutcome => ({
@@ -379,6 +380,7 @@ export function createRemoteConversationRouter(
 
   const submit = async (text: string, context?: RemoteTurnContext): Promise<RemoteTurnOutcome> => {
     if (disposed) return stopped();
+    const generation = ++submissionGeneration;
     if (active) { active.submissionPending = false; abandon(active, 'This surface switched to a newer submission before the previous turn settled. '
       + 'Its remote outcome is unconfirmed; switching did not cancel it.'); }
     if (options.configManager.get('hostedSessions.routeConversationTurns') === false) return refuse(ROUTING_DISABLED_REASON, true);
@@ -413,7 +415,8 @@ export function createRemoteConversationRouter(
     const stopBeforeSteer = (): RemoteTurnOutcome | null => {
       // A synchronous catch-up may have rendered its terminal frame while the
       // stream was opening. Preserve submission unless Stop/dispose/replacement won.
-      if (turn.settledByHost && !turn.cancelRequested && !disposed && active === null) return null;
+      if (turn.settledByHost && !turn.cancelRequested && !disposed
+        && active === null && generation === submissionGeneration) return null;
       if (turn.cancelRequested || !isCurrent(turn)) { turn.submissionPending = false; release(turn); return stopped(); }
       return null;
     };

@@ -876,3 +876,26 @@ test('Stop during stream preparation never sends cancellation for a replayed pre
     expect(f.cancellations).toEqual([]);
   } finally { f.dispose(); }
 });
+
+
+test('a newer local generation prevents the prior catch-up watcher from submitting its message', async () => {
+  const f = fixture();
+  let replacement: Promise<RemoteTurnOutcome> | undefined;
+  f.behavior.stream = () => {
+    f.send('TURN_SUBMITTED', 'replayed-turn');
+    f.send('TURN_COMPLETED', 'replayed-turn', { response: 'previous answer' });
+  };
+  f.behavior.frame = (frame) => {
+    if (frame.type === 'TURN_COMPLETED') {
+      queueMicrotask(() => { replacement = f.router.submit('new local input', { hasAttachments: true }); });
+    }
+  };
+  try {
+    const first = await f.router.submit('older pending input');
+    await until(() => replacement !== undefined, 'new local generation');
+    expect(await replacement).toMatchObject({ routed: false });
+    expect(first).toMatchObject({ routed: false, chosen: true, cancelled: true });
+    expect(f.calls.filter((call) => call.method === 'sessions.steer')).toEqual([]);
+    expect(f.cancelAttempts).toEqual([]);
+  } finally { f.dispose(); }
+});
