@@ -38,6 +38,32 @@ Bun's default base. `--changed` and a positional path filter combine.
 `bun run test` runs every file under `src/` except `src/test/e2e`. It is what
 the CI `test` job runs; you rarely need it locally.
 
+Each source file runs under the shared engine child owner, with isolated home
+directories and the unchanged external-network guard. A caught guard violation
+still fails the file. The default per-test timeout stays at 60 seconds; a
+separate 120-second file-process ceiling also covers module loading and shutdown.
+`GOODVIBES_TEST_FILE_TIMEOUT_MS` selects an explicit file ceiling.
+
+Four files already declare longer tests. `scripts/test-file-ceiling.ts` records
+their sequential declared allowances plus setup/teardown time: launch updater
+780 seconds, session spine 540, memory spine 900, and compiled HTML extraction
+480. Their stall allowances also account for the longest declared test. These
+are file allowances, not extensions to the shared owner's existing 720-second
+overall ceiling or the CI job limit; the earlier limit wins and is named in the
+failure diagnostic. No test's own timeout changes.
+
+Timeouts stop and reap the owned process before scratch cleanup, then the runner
+continues remaining files and exits unsuccessfully. Cancellation or parent death
+ends the queue. Both output streams are drained before each file's report and
+the final summary; an undrainable pipe is explicitly reported as a failed,
+truncated drain by the shared owner.
+
+This runner currently requires POSIX process-group ownership so compiler
+descendants are stopped with their test process. Windows source-runner support
+remains an unresolved gate: no verified Windows child-tree cleanup adapter is
+available, and the runner fails explicitly there. Linux validation and Windows
+binary compilation targets do not establish Windows source-runner support.
+
 ## Test layers
 
 - **Unit.** One TUI module called directly with real inputs: a renderer, a

@@ -1,11 +1,15 @@
 import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
+import { Writable } from 'node:stream';
+import { runOwnedTestChild } from '../../../packages/engine/scripts/owned-test-child.ts';
+import { testFileCeilingMs, testFileStallMs } from './test-file-ceiling.ts';
 import { filterTestFilesByPattern, parseChangedBase, parseTestPattern } from './test-pattern-rule.ts';
 import { sweepStaleTestTmp, sweepStaleOsTmpEntries } from './stale-tmp-sweep.ts';
 import { TEST_TEMP_MANIFEST_ENV, removeManifestedTempDirs } from './test-temp-manifest.ts';
 
 const ROOT = process.cwd();
+const INITIAL_PARENT_PID = process.ppid;
 const SEARCH_ROOT = join(ROOT, 'src');
 const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx)$/;
 // Shared root for all test-tmp artifacts.
@@ -80,6 +84,12 @@ const TIMEOUT_MS = (() => {
   return 60_000;
 })();
 
+// Bun's per-test timeout cannot end a module-load or shutdown hang, where no
+// test is running. Bound the complete file process as well, using the shared
+// owner to terminate, reap and drain it before removing its scratch directory.
+// Explicit long-test declarations are accounted for in test-file-ceiling.ts;
+// GOODVIBES_TEST_FILE_TIMEOUT_MS can select a deliberate per-file cap.
+
 // Age-based sweep at startup (see scripts/stale-tmp-sweep.ts): remove stale
 // entries older than 1 h under .test-tmp, both leftover run-* runner subtrees
 // AND makeProjectTempDir leftovers (<prefix>-<random>) that a signal-killed test
@@ -126,12 +136,45 @@ mkdirSync(RUNNER_DIR, { recursive: true });
 
 if (testFiles.length === 0) {
   console.error(PATTERN ? `No test files matched pattern: ${PATTERN}` : 'No test files found under src/');
+  rmSync(RUNNER_DIR, { recursive: true, force: true });
   process.exit(1);
 }
 
 let passedFiles = 0;
 let failedFiles = 0;
 let unaffectedFiles = 0;
+let interruptedSignal: NodeJS.Signals | undefined;
+let parentDied = false;
+let outputError: Error | undefined;
+process.stdout.on('error', (error: Error) => {
+  outputError = error;
+  process.exitCode = 1;
+});
+
+function cancelled(): boolean {
+  // Keep the original parent across files. A newly started child owner would
+  // otherwise accept the orphan runner's new PPID as its own initial parent.
+  if (process.ppid !== INITIAL_PARENT_PID) parentDied = true;
+  return parentDied || interruptedSignal !== undefined;
+}
+
+/** Await delivery before returning or setting the runner's failing exit code. */
+async function writeOutput(output: string): Promise<void> {
+  if (outputError !== undefined) throw outputError;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      // The child owner has finished when we report a buffered file. Its
+      // watchdog cannot bound this final downstream write, so give the report
+      // the same five-second drain allowance rather than waiting indefinitely.
+      timer = setTimeout(() => {
+        outputError = new Error('TUI test report output did not drain within 5000ms; output may be truncated');
+        reject(outputError);
+      }, 5_000);
+      process.stdout.write(output, (error) => error ? reject(error) : resolve());
+    });
+  } finally { clearTimeout(timer); }
+}
 
 /** bun's --changed selection ran nothing in this file: none of its imports changed. */
 function isUnaffectedByChange(output: string): boolean {
@@ -146,6 +189,7 @@ function isUnaffectedByChange(output: string): boolean {
  */
 async function runFile(testFile: string): Promise<void> {
   const rel = relative(ROOT, testFile);
+  const stallMs = testFileStallMs(rel);
   // Unique per-file tmp subdir keeps TMPDIR-rooted artifacts isolated.
   // Scoped under RUNNER_DIR so concurrent runners never collide.
   const testTmpDir = join(
@@ -157,6 +201,11 @@ async function runFile(testFile: string): Promise<void> {
   // Sits OUTSIDE testTmpDir so it survives that directory's removal. The child's
   // teardown writes the directories it owned here; see the finally below.
   const manifestPath = `${testTmpDir}.temp-manifest.json`;
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  const capture = (chunks: Buffer[]): Writable => new Writable({
+    write(chunk: Buffer, _encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); },
+  });
   // try/finally so the per-file tmp dir is removed on EVERY exit path, not just
   // a clean run or a non-zero test exit (both of which reach the end normally),
   // but also an exception thrown by Bun.spawn or the stdout/stderr reads. Under
@@ -164,16 +213,25 @@ async function runFile(testFile: string): Promise<void> {
   // leaked /tmp inode subtree; the finally keeps the leak from surviving a
   // crash-mid-file until the 1 h stale sweep.
   try {
-    const bunArgs = ['bun', 'test', '--preload', TEMP_CLEANUP_PRELOAD, `--timeout=${TIMEOUT_MS}`];
+    const bunArgs = ['--preload', TEMP_CLEANUP_PRELOAD, `--timeout=${TIMEOUT_MS}`];
     if (CHANGED_BASE !== undefined) bunArgs.push(CHANGED_BASE === '' ? '--changed' : `--changed=${CHANGED_BASE}`);
     bunArgs.push(testFile);
-    const proc = Bun.spawn(bunArgs, {
+    const result = await runOwnedTestChild({
+      argv: bunArgs,
       cwd: ROOT,
+      expectedParentPid: INITIAL_PARENT_PID,
+      ownProcessGroup: true,
+      ceilingMs: testFileCeilingMs(rel, process.env.GOODVIBES_TEST_FILE_TIMEOUT_MS),
+      ...(stallMs === undefined ? {} : { stallMs }),
+      stdout: capture(stdout),
+      stderr: capture(stderr),
       env: {
         ...process.env,
         TMPDIR: testTmpDir,
         TMP: testTmpDir,
         TEMP: testTmpDir,
+      },
+      fixtureEnv: {
         // TMPDIR is redirected *inside* this project's own repo, so a bare temp dir
         // created by a test sits under the project `.git` and git discovery walks up
         // and finds it, breaking any test that needs a genuinely non-git directory.
@@ -192,26 +250,26 @@ async function runFile(testFile: string): Promise<void> {
         // this process can finish removing them after the child has exited.
         [TEST_TEMP_MANIFEST_ENV]: manifestPath,
       },
-      stdout: 'pipe',
-      stderr: 'pipe',
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
 
-    const ok = exitCode === 0;
-    const output = (stdout + stderr).trimEnd();
+    if (result.stopped === 'parent-died') parentDied = true;
+    const ok = !cancelled() && result.exitCode === 0 && result.stopped === null && !result.outputTruncated;
+    const output = Buffer.concat([...stdout, ...stderr]).toString('utf8');
     if (ok && isUnaffectedByChange(output)) {
       unaffectedFiles += 1;
       return;
     }
-    console.log(`\n==> ${rel}${ok ? '' : '  [FAIL]'}`);
-    if (output) console.log(output);
+    const failure = ok ? '' : `  [FAIL: ${result.stopReason ?? (result.outputTruncated ? 'output drain truncated' : result.signalCode ?? `exit ${result.exitCode}`)}]`;
+    await writeOutput(`\n==> ${rel}${failure}\n${output ? `${output}\n` : ''}`);
 
     if (ok) passedFiles += 1;
     else failedFiles += 1;
+  } catch (error) {
+    // One spawn/read failure must not abandon another worker's live process or
+    // stop the remaining files. The shared owner has already reaped this child.
+    failedFiles += 1;
+    const output = Buffer.concat([...stdout, ...stderr]).toString('utf8');
+    await writeOutput(`\n==> ${rel}  [FAIL]\n${output ? `${output}\n` : ''}${String(error)}\n`);
   } finally {
     // Order matters: the child is gone by now, so nothing can recreate what we
     // remove. In-process teardown cannot make that guarantee, a few suites are
@@ -227,6 +285,7 @@ async function runFile(testFile: string): Promise<void> {
 let nextFileIndex = 0;
 async function worker(): Promise<void> {
   while (true) {
+    if (cancelled()) return;
     const i = nextFileIndex++;
     if (i >= testFiles.length) return;
     await runFile(testFiles[i]!);
@@ -237,16 +296,29 @@ const selection = [
   PATTERN ? `pattern: ${PATTERN}` : '',
   CHANGED_BASE !== undefined ? `changed since ${CHANGED_BASE || 'the working tree base'}` : '',
 ].filter(Boolean).join(', ');
-console.log(`Running ${testFiles.length} test files with ${JOBS} parallel job${JOBS === 1 ? '' : 's'}${selection ? ` (${selection})` : ''}.`);
+const onInterrupt = (): void => { interruptedSignal = 'SIGINT'; };
+const onTerminate = (): void => { interruptedSignal = 'SIGTERM'; };
+const onHangup = (): void => { interruptedSignal = 'SIGHUP'; };
+process.on('SIGINT', onInterrupt);
+process.on('SIGTERM', onTerminate);
+process.on('SIGHUP', onHangup);
 try {
-  await Promise.all(Array.from({ length: Math.min(JOBS, testFiles.length) }, () => worker()));
+  await writeOutput(`Running ${testFiles.length} test files with ${JOBS} parallel job${JOBS === 1 ? '' : 's'}${selection ? ` (${selection})` : ''}.\n`);
+  // Even a failed output sink cannot release the run directory while another
+  // worker still owns a child. Await every worker before propagating errors.
+  const workers = await Promise.allSettled(Array.from({ length: Math.min(JOBS, testFiles.length) }, () => worker()));
+  for (const result of workers) if (result.status === 'rejected') throw result.reason;
 } finally {
   // Remove this runner's own subdir on every exit path (including a worker
   // exception), so a crashed run never leaks its whole run-<pid> subtree.
   // Sibling runners are untouched.
   rmSync(RUNNER_DIR, { recursive: true, force: true });
+  process.off('SIGINT', onInterrupt);
+  process.off('SIGTERM', onTerminate);
+  process.off('SIGHUP', onHangup);
 }
 
 const unaffectedNote = CHANGED_BASE !== undefined ? `, not affected by the change: ${unaffectedFiles}` : '';
-console.log(`\nTest files: ${testFiles.length}, passed: ${passedFiles}, failed: ${failedFiles}${unaffectedNote}`);
-process.exit(failedFiles === 0 ? 0 : 1);
+const interruption = parentDied ? 'parent-died' : interruptedSignal;
+await writeOutput(`\nTest files: ${testFiles.length}, passed: ${passedFiles}, failed: ${failedFiles}${unaffectedNote}${interruption ? `, interrupted: ${interruption}` : ''}\n`);
+process.exitCode = failedFiles === 0 && !cancelled() ? 0 : 1;
