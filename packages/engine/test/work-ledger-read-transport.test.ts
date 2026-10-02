@@ -60,6 +60,13 @@ function fixture(count = 0) {
     revoke() { revoked = true; }, close() { closed = true; }, onHistory(fn: () => void) { beforeHistory = fn; } };
 }
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(check: () => boolean): Promise<void> {
+  const until = Date.now() + 2_000;
+  while (!check()) {
+    if (Date.now() >= until) throw new Error('Synthetic observation did not settle');
+    await pause(10);
+  }
+}
 
 describe('native ledger authenticated read transport', () => {
   test('owner auth reaches matching host; read-only user and unrelated scopes cannot read', async () => {
@@ -218,4 +225,68 @@ test('two subscriptions using the same callback own independent leases', async (
   first(); await pause(30); expect(snapshots).toEqual([0]);
   second(); const calls = host.requests.length; await pause(120); expect(host.requests).toHaveLength(calls);
   reader.dispose();
+});
+
+
+test('a timed-out observation reports unavailable, backs off, and resumes from durable state', async () => {
+  const host = fixture(); const sdk = host.sdk();
+  let calls = 0; const failures: Error[] = []; const cursors: number[] = [];
+  const invoke: OperatorRemoteClient['invoke'] = async <T>(method: string, input?: Record<string, unknown>, options?: { signal?: AbortSignal }) => {
+    if (++calls === 1) return await new Promise(() => {}) as T;
+    return sdk.invoke<T>(method, input, options);
+  };
+  const reader = createOperatorWorkLedgerReadClient({ invoke }, 'fixture-project', {
+    requestTimeoutMs: 100, pollIntervalMs: 100, onUnavailable: error => failures.push(error),
+  });
+  const detach = reader.subscribe(snapshot => cursors.push(snapshot.cursor));
+  try {
+    await waitFor(() => failures.length > 0); expect(failures).toHaveLength(1); expect(failures[0]?.message).toContain('timed out');
+    expect(calls).toBe(1); expect(cursors).toEqual([]);
+    host.events.push(event(1), event(2));
+    await waitFor(() => cursors.length > 0); expect(calls).toBe(2); expect(cursors).toEqual([2]);
+    expect((await reader.history(0)).map(item => item.sequence)).toEqual([1, 2]);
+  } finally { detach(); reader.dispose(); }
+});
+
+
+test.each(['subscription', 'unavailable'] as const)('async %s observer rejection after disposal stays isolated', async kind => {
+  const host = fixture(); const sdk = host.sdk();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let observed = false;
+  const unhandled: unknown[] = [];
+  const record = (error: unknown) => { unhandled.push(error); };
+  process.on('unhandledRejection', record);
+  const callback = async () => { observed = true; await gate; throw new Error('synthetic observer rejection'); };
+  const invoke: OperatorRemoteClient['invoke'] = async <T>(method: string, input?: Record<string, unknown>, options?: { signal?: AbortSignal }) => {
+    if (kind === 'unavailable') throw new Error('synthetic offline');
+    return sdk.invoke<T>(method, input, options);
+  };
+  const reader = createOperatorWorkLedgerReadClient({ invoke }, 'fixture-project', {
+    pollIntervalMs: 100, ...(kind === 'unavailable' ? { onUnavailable: callback } : {}),
+  });
+  const detach = reader.subscribe(kind === 'subscription' ? callback : () => {});
+  try {
+    await waitFor(() => observed); detach(); reader.dispose(); release();
+    await pause(30); expect(unhandled).toEqual([]);
+  } finally { detach(); reader.dispose(); release(); process.off('unhandledRejection', record); }
+});
+
+test.each(['subscription', 'unavailable'] as const)('hostile %s thenable and reentrant disposal stay isolated', async kind => {
+  const host = fixture(); const sdk = host.sdk(); let called = 0; let thenRead = 0;
+  const invoke: OperatorRemoteClient['invoke'] = async <T>(method: string, input?: Record<string, unknown>, options?: { signal?: AbortSignal }) => {
+    if (kind === 'unavailable') throw new Error('synthetic offline');
+    return sdk.invoke<T>(method, input, options);
+  };
+  const callback = () => {
+    called += 1;
+    return { get then() { thenRead += 1; reader.dispose(); throw new Error('synthetic hostile thenable'); } };
+  };
+  const reader = createOperatorWorkLedgerReadClient({ invoke }, 'fixture-project', {
+    pollIntervalMs: 100, ...(kind === 'unavailable' ? { onUnavailable: callback } : {}),
+  });
+  reader.subscribe(kind === 'subscription' ? callback : () => {});
+  await waitFor(() => thenRead > 0); await pause(120);
+  expect(called).toBe(1); expect(thenRead).toBe(1);
+  await expect(reader.readSnapshot()).rejects.toThrow('disposed'); reader.dispose();
 });

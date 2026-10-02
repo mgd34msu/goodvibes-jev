@@ -26,6 +26,12 @@ export interface OperatorWorkLedgerReadOptions {
 }
 function error(message: string): Error { return new Error(`Native work ledger: ${message}`); }
 function validCursor(value: number): boolean { return Number.isSafeInteger(value) && value >= 0; }
+function notifyObserver(callback: () => unknown): void {
+  try {
+    const returned: unknown = callback();
+    void Promise.resolve(returned).catch(() => {});
+  } catch { /* Observers, including hostile thenables, cannot affect reads. */ }
+}
 function statusOf(value: unknown): number | undefined {
   return value !== null && typeof value === 'object' && 'status' in value && typeof value.status === 'number' ? value.status : undefined;
 }
@@ -106,12 +112,14 @@ export function createOperatorWorkLedgerReadClient(
         observedCursor = value.cursor;
         for (const listener of [...listeners.values()]) {
           if (disposed || epoch !== generation) break;
-          try { listener(structuredClone(value)); } catch { /* Observers cannot affect reads. */ }
+          notifyObserver(() => listener(structuredClone(value)));
         }
       }
     } catch (cause) {
-      if (disposed || epoch !== generation || controller.signal.aborted) return;
-      try { options.onUnavailable?.(cause instanceof Error ? cause : error('read unavailable')); } catch { /* Observer only. */ }
+      // Unsubscribe/dispose advance the observation epoch before aborting.
+      // A request timeout aborts only this request and must report/retry.
+      if (disposed || epoch !== generation) return;
+      notifyObserver(() => options.onUnavailable?.(cause instanceof Error ? cause : error('read unavailable')));
       const status = statusOf(cause);
       // Permanent admission failures need a new host/session binding; never keep an old grant alive.
       if (status === 401 || status === 403 || status === 404 || status === 410) { stopObservation(); return; }
