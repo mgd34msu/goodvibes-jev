@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { defaultTestArgs } from '../scripts/test-discovery.ts';
@@ -64,6 +64,7 @@ test('the actual runner executes nested fixture suites by default and preserves 
     'test-isolation.ts', 'test-network-guard.ts', 'test-network-preload.ts']) {
     copyFileSync(resolve(import.meta.dir, '../scripts', file), join(scripts, file));
   }
+  cpSync(resolve(import.meta.dir, '../toolchain/src/test-runner'), join(root, 'toolchain/src/test-runner'), { recursive: true });
   for (const path of ['root.test.ts', 'contract/runner.test.ts', 'routing/route.test.ts', 'new/deeper/extra.test.ts']) {
     writeFileSync(join(root, 'test', path), `import { test, expect } from 'bun:test'; test(${JSON.stringify(path)}, () => expect(true).toBe(true));`);
   }

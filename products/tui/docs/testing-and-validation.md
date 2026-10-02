@@ -38,7 +38,8 @@ Bun's default base. `--changed` and a positional path filter combine.
 `bun run test` runs every file under `src/` except `src/test/e2e`. It is what
 the CI `test` job runs; you rarely need it locally.
 
-Each source file runs under the shared engine child owner, with isolated home
+Each source file uses the public `@goodvibes-jev/engine/toolchain/test-runner`
+boundary and shared engine child owner, with isolated home
 directories and the unchanged external-network guard. A caught guard violation
 still fails the file. The default per-test timeout stays at 60 seconds; a
 separate 120-second file-process ceiling also covers module loading and shutdown.

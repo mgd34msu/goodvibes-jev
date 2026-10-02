@@ -2,7 +2,7 @@ import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { Writable } from 'node:stream';
-import { runOwnedTestChild } from '../../../packages/engine/scripts/owned-test-child.ts';
+import { runOwnedTestChild } from '@goodvibes-jev/engine/toolchain/test-runner';
 import { testFileCeilingMs, testFileStallMs } from './test-file-ceiling.ts';
 import { filterTestFilesByPattern, parseChangedBase, parseTestPattern } from './test-pattern-rule.ts';
 import { sweepStaleTestTmp, sweepStaleOsTmpEntries } from './stale-tmp-sweep.ts';

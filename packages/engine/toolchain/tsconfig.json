@@ -3,8 +3,14 @@
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist",
+    "lib": [
+      "ES2024",
+      "ESNext.Disposable",
+      "DOM"
+    ],
     "types": [
-      "node"
+      "node",
+      "bun"
     ]
   },
   "include": [
