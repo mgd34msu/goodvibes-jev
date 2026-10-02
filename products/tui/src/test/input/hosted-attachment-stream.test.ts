@@ -7,7 +7,7 @@ const guardedFetch=globalThis.fetch;
 const attached=new Set<string>();const calls:string[]=[];let failDetach=false;let aborted=0;let streams=0;let output:string[]=[];
 const record=(id:string)=>({id,workspaceRoot:'/synthetic/work',title:id,status:'idle',detachPolicy:'survive',effectiveDetachPolicy:'survive',attachedClients:attached.has(id)?['synthetic']:[],createdAt:1,updatedAt:1,turnCount:0,messageCount:0,restoredFromDisk:false,contractIds:[]});
 const verbs={probe:()=>({available:false,reason:'synthetic'}),async invoke(method:string,input:{sessionId:string}){const id=input.sessionId;calls.push(`${method}:${id}`);if(method==='sessions.hosted.attach'){attached.add(id);return {session:record(id),history:[]};}if(method==='sessions.hosted.detach'){if(failDetach) throw new Error('synthetic refusal');attached.delete(id);return {session:record(id)};}throw new Error(`unexpected ${method}`);}};
-mock.module('../../runtime/client/operator-endpoint.ts',()=>({...endpoint,createDaemonVerbCaller:()=>verbs,resolveControlPlaneBaseUrl:()=> 'http://synthetic.invalid'}));
+mock.module('../../runtime/client/operator-endpoint.ts',()=>({...endpoint,createDaemonVerbCaller:()=>verbs,resolveControlPlaneBaseUrl:()=> 'http://synthetic.invalid',resolveDaemonStateDirectory:()=>'/synthetic/daemon'}));
 mock.module('@goodvibes-jev/engine/sdk/platform/pairing',()=>({...pairing,getOrCreateCompanionToken:()=>({token:'synthetic-local-fixture'})}));
 const {registerHostedRuntimeCommands}=await import('../../input/commands/hosted-runtime.ts');
 let registry:CommandRegistry;

@@ -51,7 +51,7 @@ function makeHarness(options: {
   const clear = globalThis.clearInterval;
   const clearSpy = spyOn(globalThis, 'clearInterval').mockImplementation((timer) => {
     if (timer === interval) phase('clear interval');
-    return clear(timer);
+    return Reflect.apply(clear, globalThis, [timer]);
   });
   restorers.push(() => clearSpy.mockRestore());
   const exitSpy = spyOn(process, 'exit').mockImplementation((code) => { events.push(`exit ${code}`); return undefined as never; });

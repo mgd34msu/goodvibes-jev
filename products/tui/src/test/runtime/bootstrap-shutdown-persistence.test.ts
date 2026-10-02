@@ -51,7 +51,7 @@ function fixture(options: { fail?: string; failures?: Map<string, Error>; hold?:
     stopExternalServices: step('external stop'),
     agentStatusIntervalRef: { value: timer },
     scheduleManager: { destroy: step('schedule destroy') } as BootstrapShutdownDeps['scheduleManager'],
-    hookDispatcher: { fire: async () => { step('session hook')(); } } as BootstrapShutdownDeps['hookDispatcher'],
+    hookDispatcher: { fire: async () => { await step('session hook')(); return { ok: true }; } },
     providerRegistry: { stopWatching: step('provider stop') },
     sessionOrchestration: { dispose: step('orchestration dispose') },
     persistenceOptions: { workingDirectory: home, homeDirectory: home, sessionManager: manager },
@@ -136,7 +136,7 @@ describe('bootstrap shutdown preserves durable persistence after owner failures'
     const clear = globalThis.clearInterval;
     const clearSpy = spyOn(globalThis, 'clearInterval').mockImplementation((value) => {
       if (value === timer) throw failure;
-      clear(value);
+      Reflect.apply(clear, globalThis, [value]);
     });
     restores.push(() => clearSpy.mockRestore());
     await expect(h.shutdown(data)).rejects.toBe(failure);
