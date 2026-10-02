@@ -53,6 +53,10 @@ const PLATFORM_REPO_SEGMENT = /^goodvibes(?:-[a-z0-9.]+)*$/i;
 
 /** The published platform packages, as they appear inside a node_modules tree. */
 const PLATFORM_PACKAGE_SCOPE = '@pellux';
+// Closed identities of this workspace's installed packages, not arbitrary
+// names that happen to contain the word engine or the scope on its own.
+const WORKSPACE_PACKAGE_SCOPE = '@goodvibes-jev';
+const WORKSPACE_PLATFORM_PACKAGES = new Set(['engine', 'judgment', 'daemon', 'agent', 'tui', 'webui']);
 
 /** Tools whose arguments carry file paths, and the argument each one carries them in. */
 const PATH_BEARING_TOOLS: readonly { readonly name: string; readonly listKey: string }[] = [
@@ -106,8 +110,11 @@ export function isGoodVibesPlatformSourcePath(path: string): boolean {
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index] ?? '';
     if (PLATFORM_REPO_SEGMENT.test(segment)) return true;
-    // `@goodvibes-jev/engine/sdk` inside a node_modules tree: the scope alone is
-    // not enough, because the next segment is what says which package.
+    // Retain legacy standalone package identities while admitting only exact
+    // canonical workspace identities in an installed node_modules position.
+    if (segment.toLowerCase() === WORKSPACE_PACKAGE_SCOPE
+      && segments[index - 1]?.toLowerCase() === 'node_modules'
+      && WORKSPACE_PLATFORM_PACKAGES.has((segments[index + 1] ?? '').toLowerCase())) return true;
     if (segment.toLowerCase() === PLATFORM_PACKAGE_SCOPE) {
       const next = segments[index + 1] ?? '';
       if (PLATFORM_REPO_SEGMENT.test(next)) return true;

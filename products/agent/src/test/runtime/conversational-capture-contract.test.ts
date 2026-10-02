@@ -214,6 +214,19 @@ describe('platform source path detection', () => {
     expect(isGoodVibesPlatformSourcePath('node_modules/@goodvibes-jev/engine/sdk/dist/index.js')).toBe(true);
   });
 
+  test('canonical installed workspace packages are platform source, without matching lookalikes', () => {
+    for (const name of ['engine', 'judgment', 'daemon', 'agent', 'tui', 'webui']) {
+      expect(isGoodVibesPlatformSourcePath(`node_modules/@goodvibes-jev/${name}/src/index.ts`)).toBe(true);
+    }
+    expect(isGoodVibesPlatformSourcePath('C:\\project\\node_modules\\@goodvibes-jev\\engine\\sdk\\index.js')).toBe(true);
+    for (const path of [
+      'node_modules/@goodvibes-jev/engine-helper/index.js',
+      'node_modules/@someone/engine/index.js',
+      '/home/x/notes/@goodvibes-jev/engine/trip.md',
+      '/home/x/Projects/engine/src/index.ts',
+    ]) expect(isGoodVibesPlatformSourcePath(path)).toBe(false);
+  });
+
   test('the owner\'s own state directory is not platform source', () => {
     // `.goodvibes` is read constantly for entirely ordinary reasons. The
     // leading dot is the whole difference and it has to keep working.
@@ -278,6 +291,18 @@ describe('the boundary guard on a real tool', () => {
     expect(result.error).toBe(AGENT_PLATFORM_BOUNDARY_DENIAL);
     // And the underlying read never ran.
     expect(read.calls).toHaveLength(0);
+  });
+
+  test('canonical package reads are denied until the owner asks about that source', async () => {
+    const path = 'node_modules/@goodvibes-jev/engine/sdk/index.ts';
+    const unrequested = guardedRegistry('check my email');
+    const blocked = await unrequested.registry.execute('canonical-unrequested', 'read', { files: [{ path }] });
+    expect(blocked.success).toBe(false);
+    expect(blocked.error).toBe(AGENT_PLATFORM_BOUNDARY_DENIAL);
+    expect(unrequested.read.calls).toHaveLength(0);
+    const requested = guardedRegistry(`read ${path}`);
+    expect((await requested.registry.execute('canonical-requested', 'read', { files: [{ path }] })).success).toBe(true);
+    expect(requested.read.calls).toHaveLength(1);
   });
 
   test('the refusal tells it to propose in one line and get back to the real request', async () => {
