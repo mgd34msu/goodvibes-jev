@@ -84,10 +84,10 @@ describe('product breadth commands', () => {
   const originalHome = process.env.HOME;
   const originalPath = process.env.PATH;
   const originalFetch = globalThis.fetch;
-  // Service-registry token env vars that must not leak in from the ambient
+  // Service/provider fixture tokens that must not leak across tests or from the ambient
   // environment (e.g. GITHUB_TOKEN from gh auth), otherwise the `services
   // resolve github` assertion ("has no resolvable auth headers") flips.
-  const SERVICE_TOKEN_ENV_VARS = ['GITHUB_TOKEN', 'GH_TOKEN', 'SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN'];
+  const SERVICE_TOKEN_ENV_VARS = ['GITHUB_TOKEN', 'GH_TOKEN', 'SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'OPENAI_API_KEY'];
   const savedServiceTokens: Record<string, string | undefined> = {};
   let root = '';
 
@@ -183,6 +183,7 @@ describe('product breadth commands', () => {
       turnId: 'turn-1',
       agentId: 'agent-1',
       phaseTimings: [],
+      slowPhases: [],
       phaseLedger: [],
       causalChain: [{ seq: 1, ts: 1, description: 'tool failed', sourceEventType: 'TASK_FAILED', isRootCause: true }],
       cascadeEvents: [],
@@ -361,9 +362,9 @@ describe('product breadth commands', () => {
         };
         return record;
       },
-      search: () => [],
-      searchSemantic: () => [],
-      reviewQueue: (_limit?: number) => [],
+      search: async () => [],
+      searchSemantic: async () => [],
+      reviewQueue: async (_limit?: number) => [],
       exportBundle: (filter) => ({
         schemaVersion: 'v1',
         exportedAt: Date.now(),
@@ -1602,7 +1603,7 @@ describe('product breadth commands', () => {
         allowedTools: ['read', 'edit'],
         capabilityCeilingTools: ['read', 'edit'],
         executionProtocol: 'gather-plan-apply',
-        reviewMode: 'wrfc',
+        reviewMode: 'contract',
         communicationLane: 'parent-only',
         orchestrationDepth: 2,
         successCriteria: ['clean result'],
@@ -1878,36 +1879,21 @@ describe('product breadth commands', () => {
     expect(out.join('\n')).toContain('Install Bundle Review');
   });
 
-  test('update command reviews install-kind posture and exports update bundles', async () => {
-    // The real self-update mechanics (`/update check` and `/update apply`,
-    // which hit the network) are covered with a stubbed fetch in
-    // src/test/input/update-runtime.test.ts. This test only exercises the
-    // offline `review` and `bundle export|inspect` subcommands.
+  test('private update review and bundle commands give rebuild guidance without exporting', async () => {
     const registry = new CommandRegistry();
     registerBuiltinCommands(registry);
     const update = registry.get('update');
     expect(update).toBeDefined();
-
     const out: string[] = [];
     const ctx = makeContext(out);
-
-    await update!.handler(['review'], ctx);
-    expect(out.join('\n')).toContain('Update Review');
-    expect(out.join('\n')).toContain('install kind:');
-    // The decorative release.channel subcommand was removed, nothing
-    // downstream ever read the value it wrote, so /update review no longer
-    // mentions a channel at all.
-    expect(out.join('\n')).not.toContain('channel:');
-
     const bundlePath = join(root, 'artifacts', 'update.json');
-    out.length = 0;
-    await update!.handler(['bundle', 'export', bundlePath], ctx);
-    expect(out.join('\n')).toContain('Update bundle exported');
-
-    out.length = 0;
-    await update!.handler(['bundle', 'inspect', bundlePath], ctx);
-    expect(out.join('\n')).toContain('Update Bundle Review');
-    expect(out.join('\n')).toContain('installKind:');
+    for (const args of [['review'], ['bundle', 'export', bundlePath], ['bundle', 'inspect', bundlePath]]) {
+      out.length = 0;
+      await update!.handler(args, ctx);
+      expect(out.join('\n')).toContain('bun run --filter @goodvibes-jev/tui build');
+      expect(out.join('\n')).not.toContain('Update bundle exported');
+      expect(existsSync(bundlePath)).toBe(false);
+    }
   });
 
   test('auth command exports review bundles and exchanges session tokens with local services', async () => {
