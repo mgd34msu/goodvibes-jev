@@ -93,3 +93,21 @@ A fresh actual compiled-launcher PTY proof navigates the supported targeted `/co
 This closes the reviewed host-settings gap locally. Held planning source/types/test acceptance, original tmux E2E, incomplete source accounting and whole-product migration review remain open. Nothing here authorizes or claims publication of the separately frozen checkpoint or this follow-up.
 
 Final owned shared regression run (host settings, provider watcher drain, public command-needs reader and the entire toolchain suite) also passes: **289 tests / 645 assertions across 20 files**. API Extractor completes with its existing TypeScript-version, gaxios/Bun-fetch and duplicate ambient sql-js warnings retained in the log; the canonical committed API comparison succeeds.
+
+## Later accounting and Changes interaction follow-up
+
+The later PR69 peer findings place the historical 7f35938 host integration back on
+hold pending corrected canonical SDK source and revalidation; green local gates
+are not current dependency acceptance. No unreviewed SDK repair is adopted here.
+
+Documentation-only 1024e810 reconciles 39 exact forward PORT renames with per-row
+purpose, source hashes and passing behavior evidence, reducing unresolved rows
+to 549. The one blocked diff-review test row led to a real public ChangesModal
+bug: Enter restored the draft after attachment instead of exiting composition.
+Reviewed two-file fix 7065b310 now preserves the intended attach-then-send flow.
+Independent 176 pass / 1 existing skip / 427 assertions plus 8 adversarial tests / 61 assertions pass;
+exact pre-fix replay fails 10 of 12 tests. Types remain 15 held planning diagnostics.
+The separate successor-coverage mapping names both unchanged model tests and the
+new actual modal-host token tests, bringing unresolved accounting to 548. No new
+compiled-E2E/full-suite claim is made for this source fix. See the detailed audit
+and retirement proposal under docs/audit/tui-*-2026-10-02.*.

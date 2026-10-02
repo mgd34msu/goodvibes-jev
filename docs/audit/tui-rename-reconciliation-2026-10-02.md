@@ -87,3 +87,13 @@ commit message cannot discharge any individual inventory purpose.
 No accounting pin, original disposition, runtime behavior, stopped original-path
 pre-access authority/symlink-race implementation or held planning implementation
 is changed by this batch. No publication is included.
+
+## Reviewed follow-up to the initially blocked row
+
+The historical 39-row ruling above is preserved. Independent public-token testing
+proved that the Changes comment interaction still exists in the authoritative
+forward target and exposed an upstream-carried draft-restoration bug. The narrow
+reviewed fix `7065b310` and its current-boundary tests now close the remaining row
+with both model and interaction targets. See
+`tui-changes-comment-flow-2026-10-02.md`; accounting is now 1,070 mapped / 548 unresolved.
+Retirement proposals and other unproven obligations remain open.

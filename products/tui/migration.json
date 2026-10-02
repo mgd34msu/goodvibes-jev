@@ -7816,6 +7816,24 @@
         "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
         "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
       }
+    },
+    {
+      "source": "src/test/panels/diff-review.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/tui/src/test/views/diff-review.test.ts",
+        "products/tui/src/test/input/changes-comment-interaction.test.ts"
+      ],
+      "provenance": {
+        "pinnedSourceBlob": "822909a8b35981d34c562d348c35cfed6bef5e09",
+        "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+        "forwardSourceBlob": "8d19b1d945992a9d66b0c7b451f22d9faca96894",
+        "survivingModelTestBlob": "8d19b1d945992a9d66b0c7b451f22d9faca96894",
+        "successorInteractionTestBlob": "6f7bd435c8533a332e728d41cc1b1a1f0f2e4870",
+        "implementationFixRevision": "7065b310071b36194094bd634b14665dff2bc37b",
+        "review": "docs/audit/tui-changes-comment-flow-2026-10-02.md",
+        "verification": "Five model tests retained plus current public modal-host interaction regression for attach/send,batch dedupe and source labels. Old pane class/a binding retired by forward target; supported comment flow repaired and independently reviewed."
+      }
     }
   ],
   "verification": {
@@ -7824,10 +7842,10 @@
   "accounting": {
     "inventoryRows": 1618,
     "samePathMappings": 1027,
-    "unresolved": 549,
+    "unresolved": 548,
     "unresolvedManifest": "products/tui/migration-unresolved.json",
     "semantics": "Same-path mappings identify current locations, not evidence of completed JEV/HOIST decisions or feature parity.",
-    "verifiedRenameMappings": 42,
+    "verifiedRenameMappings": 43,
     "renameReview": "docs/audit/tui-rename-reconciliation-2026-10-02.json"
   }
 }

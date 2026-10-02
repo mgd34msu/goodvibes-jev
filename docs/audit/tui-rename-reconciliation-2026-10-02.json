@@ -4986,5 +4986,22 @@
     "Byte equality alone did not qualify the blocked diff-review test row.",
     "Four off-tree semantic probes pass31assertions; initial probe had one extra expected padding space, corrected without product source changes.",
     "No stopped captured-path authority/race implementation reviewed."
-  ]
+  ],
+  "followUp": {
+    "originalReviewPreserved": true,
+    "resolvedSource": "src/test/panels/diff-review.test.ts",
+    "targets": [
+      "products/tui/src/test/views/diff-review.test.ts",
+      "products/tui/src/test/input/changes-comment-interaction.test.ts"
+    ],
+    "implementationFixRevision": "7065b310071b36194094bd634b14665dff2bc37b",
+    "evidence": "docs/audit/tui-changes-comment-flow-2026-10-02.md",
+    "newTotals": {
+      "mapped": 1070,
+      "unresolved": 548,
+      "verifiedRenameMappings": 43,
+      "reviewed40CandidatesAllMapped": true
+    },
+    "meaning": "Blocked at original39-mapping checkpoint1024e810; closed only after current-boundary regression exposed and verified narrow production fix."
+  }
 }

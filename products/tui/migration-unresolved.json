@@ -600,10 +600,6 @@
     "disposition": "JEV"
   },
   {
-    "source": "src/test/panels/diff-review.test.ts",
-    "disposition": "PORT"
-  },
-  {
     "source": "src/test/panels/diff-structured-render.test.ts",
     "disposition": "PORT"
   },
