@@ -4,7 +4,8 @@ import type {
   ConfigModalSurface,
   ConfigModalView,
 } from '../../input/config-modal-types.ts';
-import type { WorkPlanItemStatus } from '@goodvibes-jev/engine/sdk/platform/workflow';
+import type { WorkPlan, WorkPlanItem, WorkPlanItemStatus, WorkPlanLinkTargets } from '@goodvibes-jev/engine/sdk/platform/workflow';
+import { contractNodeId } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
 
 // ---------------------------------------------------------------------------
 // Work Plan → config-modal surface (group-B port). Lists the active
@@ -29,9 +30,8 @@ const STATUS_COMMAND: Record<WorkPlanItemStatus, string> = {
 
 const STATUS_ORDER: readonly WorkPlanItemStatus[] = ['pending', 'in_progress', 'blocked', 'done', 'failed', 'cancelled'];
 
-interface WorkPlanLinkTargetsLike { readonly agentId?: string | undefined; readonly wrfcId?: string | undefined; readonly taskId?: string | undefined; readonly sessionId?: string | undefined; }
-interface WorkPlanItemLike { readonly id: string; readonly title: string; readonly status: WorkPlanItemStatus; readonly owner?: string | undefined; readonly source?: string | undefined; readonly notes?: string | undefined; readonly linked?: WorkPlanLinkTargetsLike | undefined; readonly updatedAt: number; }
-interface WorkPlanLike { readonly projectRoot: string; readonly items: readonly WorkPlanItemLike[]; }
+type WorkPlanItemLike = Pick<WorkPlanItem, 'id' | 'title' | 'status' | 'owner' | 'source' | 'notes' | 'linked' | 'updatedAt'>;
+type WorkPlanLike = Pick<WorkPlan, 'projectRoot'> & { readonly items: readonly WorkPlanItemLike[] };
 
 export interface WorkPlanModalDeps {
   readonly workPlanStore: { getActivePlan(): WorkPlanLike };
@@ -44,11 +44,11 @@ function progressBar(pct: number, width = 20): string {
   return `[${'#'.repeat(filled)}${'-'.repeat(width - filled)}] ${pct}%`;
 }
 
-function linkedSegments(linked: WorkPlanLinkTargetsLike | undefined): string {
+function linkedSegments(linked: WorkPlanLinkTargets | undefined): string {
   if (!linked) return '';
   return [
     linked.agentId ? `agent:${linked.agentId}` : null,
-    linked.wrfcId ? `wrfc:${linked.wrfcId}` : null,
+    linked.contractId ? `contract:${linked.contractId}` : null,
     linked.taskId ? `task:${linked.taskId}` : null,
     linked.sessionId ? `session:${linked.sessionId}` : null,
   ].filter((s): s is string => s !== null).join('  ');
@@ -65,11 +65,11 @@ class WorkPlanModalSurface implements ConfigModalSurface {
   private readonly hasRow = (row: ConfigModalRow | null): boolean => row !== null;
 
   /** 'i'/'w' open the Agents modal on the selected item's linked agent or
-   *  WRFC chain. Gated on the link actually being present. */
+   *  contract. Gated on the link actually being present. */
   private readonly hasAgentLink = (row: ConfigModalRow | null): boolean =>
     !!(row && this.itemFrom(row.id)?.linked?.agentId);
-  private readonly hasWrfcLink = (row: ConfigModalRow | null): boolean =>
-    !!(row && this.itemFrom(row.id)?.linked?.wrfcId);
+  private readonly hasContractLink = (row: ConfigModalRow | null): boolean =>
+    !!(row && this.itemFrom(row.id)?.linked?.contractId);
 
   readonly actions = [
     { key: 'enter', id: 'cycleStatus', label: 'cycle status', enabledFor: this.hasRow },
@@ -83,7 +83,7 @@ class WorkPlanModalSurface implements ConfigModalSurface {
     { key: 'c', id: 'clearCompleted', label: 'clear done' },
     { key: 'a', id: 'add', label: 'add' },
     { key: 'i', id: 'jumpAgent', label: 'jump agent', enabledFor: this.hasAgentLink },
-    { key: 'w', id: 'jumpWrfc', label: 'jump wrfc', enabledFor: this.hasWrfcLink },
+    { key: 'w', id: 'jumpContract', label: 'jump contract', enabledFor: this.hasContractLink },
     { key: 'r', id: 'refresh', label: 'refresh' },
   ];
 
@@ -140,11 +140,11 @@ class WorkPlanModalSurface implements ConfigModalSurface {
       ctx.setStatus(`Opened Agents on agent ${agentId}.`);
       return;
     }
-    if (id === 'jumpWrfc') {
-      const wrfcId = item.linked?.wrfcId;
-      if (!wrfcId) return;
-      void ctx.executeCommand?.('agents', ['--target', `${wrfcId}:wrfc-chain`]);
-      ctx.setStatus(`Opened Agents on WRFC chain ${wrfcId}.`);
+    if (id === 'jumpContract') {
+      const contractId = item.linked?.contractId;
+      if (!contractId) return;
+      void ctx.executeCommand?.('agents', ['--target', `${contractNodeId(contractId)}:contract`]);
+      ctx.setStatus(`Opened Agents on contract ${contractId}.`);
       return;
     }
     const status: WorkPlanItemStatus | null =

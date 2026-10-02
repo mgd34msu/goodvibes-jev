@@ -9,6 +9,8 @@
  * content now, so none of them dead-ends.
  */
 
+import type { ProcessKind } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
+
 /** A specific row to select when a view opens (a fleet process id, optionally its kind). */
 export interface ViewTarget {
   readonly id: string;
@@ -40,11 +42,24 @@ export const USAGE_VIEW_NAMES: readonly string[] = ['usage', 'tokens', 'context'
 /** Old names for the git, diff and review consoles. */
 export const CHANGES_VIEW_NAMES: readonly string[] = ['changes', 'git', 'diff', 'review'];
 
-/** Parse `<id>[:<kind>]` (the `--target` flag's value). */
+/** The public process kinds, plus the Tools tab's non-process target. */
+const VIEW_TARGET_KINDS = {
+  agent: true, contract: true, 'contract-group': true, 'contract-unit': true,
+  workflow: true, trigger: true, schedule: true, watcher: true,
+  'background-process': true, 'acp-agent': true, 'observed-external': true,
+  'code-index': true, tool: true,
+} satisfies Record<ProcessKind | 'tool', true>;
+
+/** Parse `<id>[:<kind>]`, preserving the SDK's namespaced process IDs. */
 export function parseViewTarget(raw: string | undefined): ViewTarget | undefined {
-  if (!raw) return undefined;
-  const sep = raw.indexOf(':');
-  return sep >= 0 ? { id: raw.slice(0, sep), kind: raw.slice(sep + 1) || undefined } : { id: raw };
+  if (!raw || raw.split(':').some((part) => part.trim().length === 0)) return undefined;
+  const sep = raw.lastIndexOf(':');
+  const kind = raw.slice(sep + 1);
+  // Only a supported final kind is syntax. Unknown suffixes remain part of
+  // the ID, so a raw contract:<id> is never truncated or assigned a fake kind.
+  return sep >= 0 && Object.hasOwn(VIEW_TARGET_KINDS, kind)
+    ? { id: raw.slice(0, sep), kind }
+    : { id: raw };
 }
 
 /**
