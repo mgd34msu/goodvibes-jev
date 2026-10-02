@@ -54,23 +54,23 @@ test('a partial workspace runs each compiler project once without repeating prod
   expect(inspectProductWorkspaces(root, [source], true).findings).toContain('products/daemon: source module not accounted for: src/main.ts');
 });
 
-test('the product command runner executes the declared build and propagates its failure', () => {
+test('the product command runner executes the declared build and propagates its failure', async () => {
   const root = fixture();
   const commands = productCheckCommands(root, inspectProductWorkspaces(root, [source]).products, 'build');
   write(root, 'products/daemon/scripts/build.ts', "import { writeFileSync } from 'node:fs'; writeFileSync('build-marker', 'built');");
-  executeProductCommands(root, commands, 'build');
+  await executeProductCommands(root, commands, 'build');
   expect(readFileSync(join(root, 'products/daemon/build-marker'), 'utf8')).toBe('built');
   write(root, 'products/daemon/scripts/build.ts', 'process.exit(7);');
-  expect(() => executeProductCommands(root, commands, 'build')).toThrow('daemon:build failed');
+  await expect(executeProductCommands(root, commands, 'build')).rejects.toThrow('daemon:build failed (exit code 7, signal none)');
 });
 
-test('a product typecheck printing errors cannot report success with exit zero', () => {
+test('a product typecheck printing errors cannot report success with exit zero', async () => {
   const root = fixture();
   const commands = productCheckCommands(root, inspectProductWorkspaces(root, [source]).products, 'typecheck');
-  expect(() => executeProductCommands(root, commands, 'typecheck', () => ({ status: 0, stdout: 'file.ts(1,1): error TS2322: incompatible type\n', stderr: '' }))).toThrow('failed');
+  await expect(executeProductCommands(root, commands, 'typecheck', () => ({ status: 0, stdout: 'file.ts(1,1): error TS2322: incompatible type\n', stderr: '' }))).rejects.toThrow('failed');
 });
 
-test('direct compilation still catches an error owned only by a secondary project', () => {
+test('direct compilation still catches an error owned only by a secondary project', async () => {
   const root = fixture();
   write(root, 'products/daemon/tsconfig.json', { compilerOptions: { types: [] }, include: ['src/main.ts', 'scripts'] });
   write(root, 'products/daemon/tsconfig.test.json', { compilerOptions: { types: [] }, files: ['src/main.test.ts'] });
@@ -79,10 +79,10 @@ test('direct compilation still catches an error owned only by a secondary projec
   expect(inspection.findings).toEqual([]);
   const compiler = resolve(import.meta.dir, '../../../node_modules/typescript/bin/tsc');
   const projects: string[] = [];
-  expect(() => executeProductCommands(root, productCheckCommands(root, inspection.products, 'typecheck'), 'typecheck', (executable, args, cwd) => {
+  await expect(executeProductCommands(root, productCheckCommands(root, inspection.products, 'typecheck'), 'typecheck', (executable, args, cwd) => {
     projects.push(args[2]!);
     return spawnSync(executable, [compiler, ...args.slice(1)], { cwd, encoding: 'utf8', timeout: 20_000 });
-  })).toThrow('daemon:tsconfig.test.json failed');
+  })).rejects.toThrow('daemon:tsconfig.test.json failed');
   expect(projects).toEqual([join(root, 'products/daemon/tsconfig.json'), join(root, 'products/daemon/tsconfig.test.json')]);
 });
 
@@ -132,7 +132,7 @@ test('selective TypeScript includes cannot hide source, tests or tooling from wh
   expect(findings).toContain('scripts/test.ts: source/test/tooling file is outside every TypeScript project');
 });
 
-test('inherited options are not compiled as projects and cannot hide unowned source files', () => {
+test('inherited options are not compiled as projects and cannot hide unowned source files', async () => {
   const root = fixture();
   write(root, 'products/daemon/tsconfig.base.json', { compilerOptions: { target: 'ES2022', types: [], noEmit: true } });
   write(root, 'products/daemon/tsconfig.json', { extends: './tsconfig.base.json', compilerOptions: { jsx: 'preserve' }, include: ['src', 'scripts'] });
@@ -143,7 +143,7 @@ test('inherited options are not compiled as projects and cannot hide unowned sou
   expect(inspection.findings).toEqual([]);
   const programs = productCheckCommands(root, inspection.products, 'typecheck').filter((command) => command.kind === 'tsconfig');
   const compiler = resolve(import.meta.dir, '../../../node_modules/typescript/bin/tsc');
-  executeProductCommands(root, programs, 'typecheck', (executable, args, cwd) =>
+  await executeProductCommands(root, programs, 'typecheck', (executable, args, cwd) =>
     spawnSync(executable, [compiler, ...args.slice(1)], { cwd, encoding: 'utf8', timeout: 20_000 }));
   write(root, 'products/daemon/unowned/missing.ts', 'export const missing = true;');
   expect(inspectProductWorkspaces(root, [source]).findings.join('\n')).toContain('unowned/missing.ts: source/test/tooling file is outside every TypeScript project');
@@ -170,4 +170,48 @@ test('checked-in sources match their inventories and present product workspaces'
   const sources = readProductSources(root);
   const result = inspectProductWorkspaces(root, sources);
   expect(result.findings).toEqual([]);
+});
+
+
+test.each([0, 23])('the product runner drains both piped output streams before ending with status %i', (status) => {
+  const root = fixture();
+  const runner = resolve(import.meta.dir, '../scripts/product-workspaces.ts');
+  const outputSize = 1024 * 1024;
+  write(root, 'output-fixture.ts', `
+    import { executeProductCommands } from ${JSON.stringify(runner)};
+    await executeProductCommands(${JSON.stringify(root)}, [
+      { kind: 'script', label: 'fixture:test', cwd: ${JSON.stringify(root)}, script: 'test' },
+    ], 'test', () => ({
+      status: ${status}, signal: null,
+      stdout: 'O'.repeat(${outputSize}) + '\\nSTDOUT-END\\n',
+      stderr: 'E'.repeat(${outputSize}) + '\\nSTDERR-END\\n',
+    }));
+  `);
+  const run = spawnSync('bun', [join(root, 'output-fixture.ts')], { cwd: root, encoding: 'utf8', maxBuffer: 4 * outputSize });
+  expect(run.error).toBeUndefined();
+  expect(run.status).toBe(status === 0 ? 0 : 1);
+  expect(run.stdout).toContain('O'.repeat(outputSize) + '\nSTDOUT-END\n');
+  expect(run.stderr).toContain('E'.repeat(outputSize) + '\nSTDERR-END\n');
+  expect(run.stdout).not.toContain('STDERR-END');
+  expect(run.stderr).not.toContain('STDOUT-END');
+  if (status !== 0) expect(run.stderr).toContain('fixture:test failed (exit code 23, signal none)');
+});
+
+test('product failures report a child signal and cannot run later commands', async () => {
+  const root = fixture();
+  const command = productCheckCommands(root, inspectProductWorkspaces(root, [source]).products, 'build')[0]!;
+  let calls = 0;
+  await expect(executeProductCommands(root, [command, command], 'build', () => {
+    calls += 1;
+    return { status: null, signal: 'SIGTERM', stdout: '', stderr: '' };
+  })).rejects.toThrow('daemon:build failed (exit code null, signal SIGTERM)');
+  expect(calls).toBe(1);
+});
+
+test('product failures retain spawn errors alongside missing exit status', async () => {
+  const root = fixture();
+  const commands = productCheckCommands(root, inspectProductWorkspaces(root, [source]).products, 'build');
+  await expect(executeProductCommands(root, commands, 'build', () => ({
+    status: null, signal: null, stdout: '', stderr: '', error: new Error('spawn bun ENOENT'),
+  }))).rejects.toThrow('daemon:build failed (exit code null, signal none): spawn bun ENOENT');
 });
