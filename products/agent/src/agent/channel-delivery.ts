@@ -170,7 +170,7 @@ export async function deliverAgentChannelMessage(
   // throws rather than returning a result, so no caller can treat a refusal as
   // a successful send. The thrown message is the SDK's refusal wording and
   // contains no part of what was refused, see agent/payments-channel-guard.ts.
-  const refusal = screenOutboundForCardMaterial({
+  const refusal = await screenOutboundForCardMaterial({
     surface: resolveDeliverySurfaceName(preview.target),
     message: preview.message,
     title: preview.title,

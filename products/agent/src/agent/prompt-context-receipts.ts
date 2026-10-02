@@ -15,7 +15,7 @@ import {
   selectReceiptJournalSurvivors,
   type ReceiptJournalSurvivors,
 } from './prompt-context-receipt-journal.ts';
-import { buildReviewedMemoryPrompt, describeMemoryPromptEligibility, isPromptActiveMemory, rankMemoryForTurn, relevanceBand } from './memory-prompt.ts';
+import { renderReviewedMemoryPrompt, type MemoryTurnRankingResult, describeMemoryPromptEligibility, isPromptActiveMemory, rankMemoryForTurn, relevanceBand } from './memory-prompt.ts';
 import { AgentPersonaRegistry, buildActivePersonaPrompt } from './persona-registry.ts';
 import { buildProjectContextPrompt, discoverProjectContextFiles } from './project-context-files.ts';
 import { AgentRoutineRegistry, buildEnabledRoutinesPrompt, evaluateAgentRoutineReadiness } from './routine-registry.ts';
@@ -234,24 +234,16 @@ function resolveMemoryRecords(input: RuntimePromptCompositionInput): readonly Me
   return input.memoryRecallSnapshot ? input.memoryRecallSnapshot.records : input.memoryRegistry.getAll();
 }
 
-function buildRuntimePromptReceiptSegments(input: RuntimePromptCompositionInput): readonly PromptContextReceiptSegment[] {
+function buildRuntimePromptReceiptSegments(input: RuntimePromptCompositionInput, memoryRecords: readonly MemoryRecord[], memoryRanking: MemoryTurnRankingResult, memoryPrompt: string): readonly PromptContextReceiptSegment[] {
   const vibe = discoverVibeFiles(input.shellPaths);
   // The VIBE prompt is a PROJECTION of persona/constraint records, not a
   // re-read of the files (discoverVibeFiles above stays for the file-discovery receipt).
   const vibePrompt = buildVibeProjectionPrompt(input.memoryRegistry) ?? '';
   const projectContext = discoverProjectContextFiles(input.shellPaths);
   const projectContextPrompt = buildProjectContextPrompt(input.shellPaths) ?? '';
-  const memoryRecords = resolveMemoryRecords(input);
-  // Bound to one arg: Array.filter passes (element, index, array), and
-  // isPromptActiveMemory's second param is `now`, passing the callback bare
-  // would leak the array index in as `now`, breaking the temporal-validity
-  // check for every record past index 0.
-  const eligibleMemory = memoryRecords.filter((record) => isPromptActiveMemory(record));
-  const memoryRanking = rankMemoryForTurn(input.memoryRegistry, eligibleMemory, input.turnText);
   const activeMemory = memoryRanking.records.slice(0, 10);
   const activeMemoryIds = new Set(activeMemory.map((record) => record.id));
   const suppressedMemory = memoryRecords.filter((record) => !activeMemoryIds.has(record.id));
-  const memoryPrompt = buildReviewedMemoryPrompt(input.memoryRegistry, { turnText: input.turnText, records: memoryRecords }) ?? '';
   const routineSnapshot = AgentRoutineRegistry.fromShellPaths(input.shellPaths).snapshot();
   const activeRoutines = routineSnapshot.enabledRoutines.filter((routine) => routine.reviewState === 'reviewed' && evaluateAgentRoutineReadiness(routine).ready);
   const suppressedRoutines = routineSnapshot.enabledRoutines.filter((routine) => !activeRoutines.some((active) => active.id === routine.id));
@@ -461,7 +453,15 @@ function buildRuntimePromptReceiptSegments(input: RuntimePromptCompositionInput)
   ];
 }
 
-export function composeRuntimePromptWithReceipt(input: RuntimePromptCompositionInput): { readonly prompt: string; readonly receipt: PromptContextReceiptDraft } {
+export async function composeRuntimePromptWithReceipt(input: RuntimePromptCompositionInput): Promise<{ readonly prompt: string; readonly receipt: PromptContextReceiptDraft }> {
+  const memoryRecords = resolveMemoryRecords(input);
+  // Bound to one arg: Array.filter passes (element, index, array), and
+  // isPromptActiveMemory's second param is `now`, passing the callback bare
+  // would leak the array index in as `now`, breaking the temporal-validity
+  // check for every record past index 0.
+  const eligibleMemory = memoryRecords.filter((record) => isPromptActiveMemory(record));
+  const memoryRanking = await rankMemoryForTurn(input.memoryRegistry, eligibleMemory, input.turnText);
+  const memoryPrompt = renderReviewedMemoryPrompt(memoryRanking) ?? '';
   const currentModel = modelLabel(input.model);
   const supplement = input.tierPrompt;
   const capabilitySummary = buildCapabilitySummaryPrompt(input.capabilityIndex ?? null);
@@ -471,13 +471,13 @@ export function composeRuntimePromptWithReceipt(input: RuntimePromptCompositionI
     buildVibeProjectionPrompt(input.memoryRegistry),
     buildProjectContextPrompt(input.shellPaths),
     input.operatorPolicy,
-    buildReviewedMemoryPrompt(input.memoryRegistry, { turnText: input.turnText, records: resolveMemoryRecords(input) }),
+    memoryPrompt,
     buildEnabledRoutinesPrompt(input.shellPaths),
     buildEnabledSkillsPrompt(input.shellPaths),
     buildActivePersonaPrompt(input.shellPaths),
     supplement,
   );
-  const segments = buildRuntimePromptReceiptSegments(input);
+  const segments = buildRuntimePromptReceiptSegments(input, memoryRecords, memoryRanking, memoryPrompt);
   const activeRecords = segments.reduce((total, segment) => total + segment.activeCount, 0);
   const suppressedRecords = segments.reduce((total, segment) => total + segment.suppressedCount, 0);
   return {

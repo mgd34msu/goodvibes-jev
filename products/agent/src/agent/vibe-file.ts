@@ -247,7 +247,7 @@ export async function importVibeFilesIntoMemory(
   for (const file of snapshot.files) {
     const scope: MemoryScope = file.scope === 'global' ? 'team' : 'project';
     const name = file.frontmatter.name?.trim();
-    const options = vibeBodyToConstraintOptions(file.body, {
+    const options = await vibeBodyToConstraintOptions(file.body, {
       scope,
       ...(name ? { name } : {}),
       sourceRef: file.path,
@@ -324,7 +324,7 @@ export async function importVibeFilesIntoMemoryOnce(
     if (marker.migrated[key] === hash) continue; // already migrated this exact content
     const scope: MemoryScope = file.scope === 'global' ? 'team' : 'project';
     const name = file.frontmatter.name?.trim();
-    const options = vibeBodyToConstraintOptions(file.body, {
+    const options = await vibeBodyToConstraintOptions(file.body, {
       scope,
       ...(name ? { name } : {}),
       sourceRef: file.path,

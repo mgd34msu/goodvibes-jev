@@ -1,3 +1,4 @@
+import { useMemoryReadings } from '../../../../../packages/engine/test/_helpers/memory-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -41,6 +42,8 @@ async function withReceiptFixture<T>(
   }
 }
 
+useMemoryReadings();
+
 describe('prompt context receipts', () => {
   test('composes the runtime prompt and records sanitized selected context', async () => {
     await withReceiptFixture(async ({ root, shellPaths, memoryRegistry }) => {
@@ -48,7 +51,7 @@ describe('prompt context receipts', () => {
         '---',
         'name: Project Vibe',
         '---',
-        'Be direct and make the next user action obvious.',
+        '- Be direct and make the next user action obvious.',
       ].join('\n'));
       writeFileSync(join(shellPaths.workingDirectory, 'AGENTS.md'), 'Prefer visible autonomous work and reviewable local records.');
 
@@ -74,13 +77,14 @@ describe('prompt context receipts', () => {
       memoryRegistry.review(reviewed.id, { state: 'reviewed', confidence: 94, reviewedBy: 'test' });
       memoryRegistry.review(lowConfidence.id, { state: 'reviewed', confidence: 25, reviewedBy: 'test' });
 
-      const composed = composeRuntimePromptWithReceipt({
+      const composed = await composeRuntimePromptWithReceipt({
         sessionId: 'session-receipts',
         turnId: 'turn-receipts',
         source: 'turn',
         provider: 'openai',
         model: { registryKey: 'openai:gpt-4.1', id: 'gpt-4.1' },
         contextWindow: 128_000,
+        tierPrompt: '',
         runtimePrompt: 'Base runtime prompt.',
         operatorPolicy: 'Operator policy prompt.',
         shellPaths,
@@ -145,13 +149,14 @@ describe('prompt context receipts', () => {
       memoryRegistry.review(onTopic.id, { state: 'reviewed', confidence: 61, reviewedBy: 'test' });
       memoryRegistry.review(offTopic.id, { state: 'reviewed', confidence: 95, reviewedBy: 'test' });
 
-      const composed = composeRuntimePromptWithReceipt({
+      const composed = await composeRuntimePromptWithReceipt({
         sessionId: 'session-relevance',
         turnId: 'turn-relevance',
         source: 'turn',
         provider: 'openai',
         model: { registryKey: 'openai:gpt-4.1', id: 'gpt-4.1' },
         contextWindow: 128_000,
+        tierPrompt: '',
         runtimePrompt: 'Base runtime prompt.',
         operatorPolicy: 'Operator policy prompt.',
         shellPaths,
@@ -187,13 +192,14 @@ describe('prompt context receipts', () => {
       });
       memoryRegistry.review(fact.id, { state: 'reviewed', confidence: 80, reviewedBy: 'test' });
 
-      const composed = composeRuntimePromptWithReceipt({
+      const composed = await composeRuntimePromptWithReceipt({
         sessionId: 'session-no-turn-text',
         turnId: null,
         source: 'follow_up',
         provider: 'openai',
         model: 'openai:gpt-4.1',
         contextWindow: 128_000,
+        tierPrompt: '',
         runtimePrompt: 'Base runtime prompt.',
         operatorPolicy: 'Operator policy prompt.',
         shellPaths,
@@ -245,18 +251,19 @@ describe('prompt context receipts', () => {
         // (recallSnapshotNote only surfaces the SDK note for 'client' or
         // stale snapshots, see memoryRecallSnapshotNote in
         // prompt-context-receipts.ts).
-        const browseSet = memoryRegistry.honestSearch({}, { recall: false });
+        const browseSet = await memoryRegistry.honestSearch({}, { recall: false });
         expect(browseSet.recallFiltered).toBe(false);
         const snapshot = buildRecallSnapshot(browseSet, 'client', Date.now(), 30_000);
 
-        const composed = composeRuntimePromptWithReceipt({
+        const composed = await composeRuntimePromptWithReceipt({
           sessionId: 'session-recall-snapshot-coherence',
           turnId: 'turn-recall-snapshot-coherence',
           source: 'turn',
           provider: 'openai',
           model: { registryKey: 'openai:gpt-4.1', id: 'gpt-4.1' },
           contextWindow: 128_000,
-          runtimePrompt: 'Base runtime prompt.',
+          tierPrompt: '',
+        runtimePrompt: 'Base runtime prompt.',
           operatorPolicy: 'Operator policy prompt.',
           shellPaths,
           memoryRegistry,
@@ -301,7 +308,7 @@ describe('prompt context receipts', () => {
         });
         memoryRegistry.review(reviewed.id, { state: 'reviewed', confidence: 92, reviewedBy: 'test' });
 
-        const recallFilteredResult = memoryRegistry.honestSearch({}, { recall: true });
+        const recallFilteredResult = await memoryRegistry.honestSearch({}, { recall: true });
         expect(recallFilteredResult.recallFiltered).toBe(true);
         const snapshot = buildRecallSnapshot(recallFilteredResult, 'client', Date.now(), 30_000);
 

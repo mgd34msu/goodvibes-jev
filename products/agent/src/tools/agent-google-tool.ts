@@ -218,13 +218,13 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
    * and the send he was proving it with was refused on the strength of the
    * listing.
    */
-  function outwardAllowed(
+  async function outwardAllowed(
     action: string,
     description: string,
     content: Readonly<Record<string, string | undefined>>,
     taintOptions?: TaintOptions,
-  ): ToolOutput | null {
-    const decision = evaluateOutwardEffect({
+  ): Promise<ToolOutput | null> {
+    const decision = await evaluateOutwardEffect({
       request: { toolName: 'google', action, description },
       ledger: getSessionUntrustedContentLedger(),
       content,
@@ -578,7 +578,7 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
         // exemption while this path did not, the same defect class on two
         // surfaces, behaving differently.
         if (!isSendToOwnerOnly(to, ownerAddresses())) {
-          const refused = outwardAllowed(
+          const refused = await outwardAllowed(
             'email.send',
             `sending mail to ${to}`,
             { to, subject, body },
@@ -623,7 +623,7 @@ export function createAgentGoogleTool(options: AgentGoogleToolOptions): Tool {
       // would have to reach in order to plant something on the owner's calendar
       //, an invite, a payment reminder, a link. They are enumerable, so they
       // are enumerated; the start and end times are not text and carry nothing.
-      const refusedEvent = outwardAllowed(
+      const refusedEvent = await outwardAllowed(
         'calendar.create',
         `creating the event "${summaryText}"`,
         {

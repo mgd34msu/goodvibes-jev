@@ -96,7 +96,9 @@ export function readLiveAgentMemoryCounters(context: CommandContext): AgentWorks
   }
   return {
     count: records.length,
-    reviewQueueCount: memory.reviewQueue(100).length,
+    // The public review queue ranks all retrieved records without filtering.
+    // Its capped cardinality is known locally; a repaint must not launch readings.
+    reviewQueueCount: Math.min(records.length, 100),
     // Bound to one arg, a bare `.filter(isPromptActiveMemory)` leaks the
     // array index in as Array.filter's second (index) argument, which lands
     // in isPromptActiveMemory's `now` param and silently breaks the

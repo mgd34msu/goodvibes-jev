@@ -12,7 +12,7 @@ import type { PromptContextReceiptDraft } from '../agent/prompt-context-receipts
 /**
  * Ties the two ends of a turn together for usage-outcome instrumentation:
  * records which memory ids were injected when a prompt is composed, then when the
- * turn completes runs heuristic reference detection over the model's output to
+ * turn completes runs reference detection over the model's output to
  * mark which of those injections were plausibly used. Aborted turns (error or
  * cancel) simply forget the injection, no reference credit is invented.
  */
@@ -44,7 +44,7 @@ export class MemoryUsageTracker {
   }
 
   /** At turn completion: detect which injected memories the output plausibly used. */
-  public onTurnCompleted(turnId: string, response: string): void {
+  public async onTurnCompleted(turnId: string, response: string): Promise<void> {
     const ids = this.injectedByTurn.get(turnId);
     this.injectedByTurn.delete(turnId);
     if (!ids || ids.length === 0) return;
@@ -54,7 +54,7 @@ export class MemoryUsageTracker {
       if (record) records.push({ id: record.id, summary: record.summary, detail: record.detail });
     }
     if (records.length === 0) return;
-    const result = detectReferencedMemoryIds(response, records);
+    const result = await detectReferencedMemoryIds(response, records);
     if (result.referenced.length > 0) this.store.recordReferenced(result.referenced);
   }
 

@@ -1,3 +1,4 @@
+import { useMemoryReadings } from '../../../../../packages/engine/test/_helpers/memory-readings.ts';
 import { describe, it, expect, afterEach } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore } from '@goodvibes-jev/engine/sdk/platform/state';
@@ -39,6 +40,8 @@ function draftWithMemory(ids: readonly string[]): PromptContextReceiptDraft {
   } as unknown as PromptContextReceiptDraft;
 }
 
+useMemoryReadings();
+
 describe('MemoryUsageTracker', () => {
   it('extracts injected memory ids from the memory receipt segment', () => {
     expect(extractInjectedMemoryIds(draftWithMemory(['m1', 'm2']))).toEqual(['m1', 'm2']);
@@ -52,7 +55,7 @@ describe('MemoryUsageTracker', () => {
     tracker.onComposed('turn-1', draftWithMemory([record.id]));
     expect(tracker.lookup(record.id)).toMatchObject({ injectedCount: 1, referencedCount: 0 });
 
-    tracker.onTurnCompleted('turn-1', 'I triggered the kubernetes rollout as planned.');
+    await tracker.onTurnCompleted('turn-1', 'I triggered the kubernetes rollout as planned.');
     expect(tracker.lookup(record.id)?.referencedCount).toBe(1);
   });
 
@@ -63,7 +66,7 @@ describe('MemoryUsageTracker', () => {
 
     tracker.onComposed('turn-2', draftWithMemory([record.id]));
     tracker.onTurnAborted('turn-2');
-    tracker.onTurnCompleted('turn-2', 'kubernetes rollout kubernetes rollout');
+    await tracker.onTurnCompleted('turn-2', 'kubernetes rollout kubernetes rollout');
     expect(tracker.lookup(record.id)?.referencedCount).toBe(0);
   });
 
@@ -73,7 +76,7 @@ describe('MemoryUsageTracker', () => {
     const tracker = createMemoryUsageTracker(paths, registry);
 
     tracker.onComposed('turn-3', draftWithMemory([record.id]));
-    tracker.onTurnCompleted('turn-3', 'Here is an unrelated answer about the weather.');
+    await tracker.onTurnCompleted('turn-3', 'Here is an unrelated answer about the weather.');
     expect(tracker.lookup(record.id)).toMatchObject({ injectedCount: 1, referencedCount: 0 });
   });
 });

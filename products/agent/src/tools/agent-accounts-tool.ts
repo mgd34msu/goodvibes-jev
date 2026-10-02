@@ -141,7 +141,7 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
           // Recording is the visible half of an outward effect that already
           // happened, so it is gated the same way the signup itself is: page
           // text cannot drive the agent into registering an account.
-          const decision = evaluateOutwardEffect({
+          const decision = await evaluateOutwardEffect({
             request: {
               toolName: 'accounts',
               action: 'accounts.record',

@@ -1,3 +1,4 @@
+import { useSecurityReadings } from '../../../../../packages/engine/test/helpers/security-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import type { ChannelDeliveryRequest } from '@goodvibes-jev/engine/sdk/platform/channels';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -18,6 +19,8 @@ function fakeRouter(requests: ChannelDeliveryRequest[]) {
     },
   };
 }
+
+useSecurityReadings();
 
 describe('agent_channel_send tool', () => {
   test('previews without sending when confirmation is missing', async () => {

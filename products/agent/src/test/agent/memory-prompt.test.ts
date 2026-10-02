@@ -1,3 +1,4 @@
+import { useMemoryReadings } from '../../../../../packages/engine/test/_helpers/memory-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -25,6 +26,8 @@ async function withMemoryRegistry<T>(fn: (registry: MemoryRegistry) => Promise<T
   }
 }
 
+useMemoryReadings();
+
 describe('buildReviewedMemoryPrompt', () => {
   test('renders reviewed Agent-local memory in confidence order', async () => {
     await withMemoryRegistry(async (registry) => {
@@ -44,7 +47,7 @@ describe('buildReviewedMemoryPrompt', () => {
       registry.review(low.id, { state: 'reviewed', confidence: 70, reviewedBy: 'test' });
       registry.review(high.id, { state: 'reviewed', confidence: 95, reviewedBy: 'test' });
 
-      const prompt = buildReviewedMemoryPrompt(registry);
+      const prompt = await buildReviewedMemoryPrompt(registry);
 
       expect(prompt).toContain('Reviewed GoodVibes Agent Memory');
       expect(prompt).toContain('[project/constraint 95% tags=knowledge source=event:test-high] Never use non-Agent knowledge routes.');
@@ -69,7 +72,7 @@ describe('buildReviewedMemoryPrompt', () => {
       expect(fact.reviewState).toBe('fresh');
       expect(fact.confidence).toBe(60);
 
-      const prompt = buildReviewedMemoryPrompt(registry);
+      const prompt = await buildReviewedMemoryPrompt(registry);
 
       expect(prompt).not.toBeNull();
       expect(prompt).toContain('User prefers dark mode in the editor.');
@@ -94,7 +97,7 @@ describe('buildReviewedMemoryPrompt', () => {
       registry.review(stale.id, { state: 'stale', staleReason: 'Outdated', confidence: 95 });
       registry.review(low.id, { state: 'reviewed', confidence: 40, reviewedBy: 'test' });
 
-      const prompt = buildReviewedMemoryPrompt(registry);
+      const prompt = await buildReviewedMemoryPrompt(registry);
 
       expect(prompt).toBeNull();
       const staleEligibility = describeMemoryPromptEligibility({ ...stale, reviewState: 'stale', confidence: 95 });
@@ -161,7 +164,7 @@ describe('rankMemoryForTurn (per-turn semantic scoring)', () => {
       registry.review(higherConfidenceOffTopic.id, { state: 'reviewed', confidence: 95, reviewedBy: 'test' });
 
       const eligible = registry.getAll().filter((record) => isPromptActiveMemory(record));
-      const ranking = rankMemoryForTurn(registry, eligible, 'what does the deploy pipeline require before merge');
+      const ranking = await rankMemoryForTurn(registry, eligible, 'what does the deploy pipeline require before merge');
 
       expect(ranking.scored).toBe(true);
       expect(ranking.degradedReason).toBeNull();
@@ -182,12 +185,12 @@ describe('rankMemoryForTurn (per-turn semantic scoring)', () => {
       });
       const eligible = registry.getAll().filter((record) => isPromptActiveMemory(record));
 
-      const noTurnText = rankMemoryForTurn(registry, eligible, undefined);
+      const noTurnText = await rankMemoryForTurn(registry, eligible, undefined);
       expect(noTurnText.scored).toBe(false);
       expect(noTurnText.degradedReason).toContain('no current-turn text');
       expect(noTurnText.records.map((record) => record.id)).toEqual([fact.id]);
 
-      const blankTurnText = rankMemoryForTurn(registry, eligible, '   ');
+      const blankTurnText = await rankMemoryForTurn(registry, eligible, '   ');
       expect(blankTurnText.scored).toBe(false);
       expect(blankTurnText.degradedReason).toContain('no current-turn text');
     });
@@ -213,7 +216,7 @@ describe('rankMemoryForTurn (per-turn semantic scoring)', () => {
       });
       const eligible = registry.getAll().filter((record) => isPromptActiveMemory(record));
 
-      const ranking = rankMemoryForTurn(registry, eligible, 'a real query about something');
+      const ranking = await rankMemoryForTurn(registry, eligible, 'a real query about something');
 
       expect(ranking.scored).toBe(false);
       expect(ranking.degradedReason).toContain('semantic index unavailable');
@@ -242,7 +245,7 @@ describe('rankMemoryForTurn (per-turn semantic scoring)', () => {
       registry.review(onTopic.id, { state: 'reviewed', confidence: 61, reviewedBy: 'test' });
       registry.review(offTopic.id, { state: 'reviewed', confidence: 95, reviewedBy: 'test' });
 
-      const prompt = buildReviewedMemoryPrompt(registry, {
+      const prompt = await buildReviewedMemoryPrompt(registry, {
         limit: 1,
         turnText: 'what does the deploy pipeline require before merge',
       });
@@ -262,7 +265,7 @@ describe('rankMemoryForTurn (per-turn semantic scoring)', () => {
       });
       registry.review(relevantButLowConfidence.id, { state: 'reviewed', confidence: 40, reviewedBy: 'test' });
 
-      const prompt = buildReviewedMemoryPrompt(registry, {
+      const prompt = await buildReviewedMemoryPrompt(registry, {
         turnText: 'what does the deploy pipeline require before merge',
       });
 

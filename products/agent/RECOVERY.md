@@ -105,3 +105,29 @@ reader callers. The focused startup/update adapter set passes 10 tests and 41
 assertions. The shared toolchain's flat native-addon path still misses the valid
 workspace dependency-owner installation; declared CLI generation and complete
 asset packaging remain pending.
+
+## Awaited source-reader checkpoint
+
+All 20 remaining Agent source diagnostics are resolved. The final source check
+passes with Node's bounded 3 GiB TypeScript heap; the preceding Bun checker was
+killed with exit 137 and is not a pass. Memory ranking, VIBE import, usage credit,
+card screening and outward-effect checks now await the published asynchronous
+readers. Prompt text and its receipt share one ranking. Passive workspace paints
+read only the capped queue cardinality, since the public queue ranks but does not
+filter records; they do not start ranking requests.
+
+The focused memory/prompt/delayed-reader suite passes 27 tests and 109 assertions.
+The separate outward-adapter suite passes 31 of 32 tests: one inherited assertion
+still expects a literal quoted overlap in the refusal wording. Account, mail and
+channel side-effect boundaries themselves pass their ordinary fixture cases.
+These are explicit synthetic judgment fixtures, not live-provider acceptance.
+
+The package JS bundle and direct native compilation pass. The rebuilt executable
+again displays the first frame, declines checkpoint registration, opens `/help`,
+and exits 0 with explicit synthetic metadata and no network-guard violations.
+The full shared native packaging command still fails at its flat sqlite-vec
+addon lookup despite a valid dependency-owner installation. No flat symlink or
+unpublished toolchain overlay was added to hide that remaining packaging failure.
+The expanded ordinary regression set passes 345 tests and 2,949 assertions across
+31 files. This is focused Agent recovery coverage, not the full repository
+validation or the original tmux end-to-end harness.

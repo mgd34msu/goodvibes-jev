@@ -1,3 +1,4 @@
+import { useSecurityReadings } from '../../../../../packages/engine/test/helpers/security-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import type { ChannelDeliveryRequest } from '@goodvibes-jev/engine/sdk/platform/channels';
 import {
@@ -5,6 +6,8 @@ import {
   deliverAgentChannelMessage,
   formatAgentChannelDeliveryResult,
 } from '../../agent/channel-delivery.ts';
+
+useSecurityReadings();
 
 describe('Agent channel delivery', () => {
   test('builds explicit surface delivery requests', () => {

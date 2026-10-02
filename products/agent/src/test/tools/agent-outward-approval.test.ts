@@ -1,3 +1,4 @@
+import { useSecurityReadings } from '../../../../../packages/engine/test/helpers/security-readings.ts';
 /**
  * agent-outward-approval.test.ts, the remedy is real, and only the owner has it.
  *
@@ -157,6 +158,8 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
+
+useSecurityReadings();
 
 describe('the remedy the refusal names', () => {
   test('the refusal names the gesture, and the gesture is not a phrase to reply with', async () => {

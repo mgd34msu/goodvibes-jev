@@ -108,11 +108,11 @@ export function resolveDeliverySurfaceName(target: {
  * Both the body and the title are scanned. A title is a message too, it is
  * rendered by every provider, and it would be an obvious hole to leave open.
  */
-export function screenOutboundForCardMaterial(input: {
+export async function screenOutboundForCardMaterial(input: {
   readonly surface: string;
   readonly message: string;
   readonly title?: string;
-}): CardMaterialRefusal | null {
+}): Promise<CardMaterialRefusal | null> {
   if (mayEnterCardDetails(input.surface)) return null;
 
   const parts = [input.message, input.title ?? ''];
@@ -130,7 +130,7 @@ export function screenOutboundForCardMaterial(input: {
     // is meaningless out of context, and refusing every "123" the agent ever
     // sends would make the channel unusable. A CVV typed as part of real card
     // entry arrives alongside a PAN or an expiry, which do match.
-    const decision = evaluateCardEntry({ surface: input.surface, text: part });
+    const decision = await evaluateCardEntry({ surface: input.surface, text: part });
     for (const shape of decision.matched) matched.add(shape);
     if (decision.reason !== null) reason = decision.reason;
   }

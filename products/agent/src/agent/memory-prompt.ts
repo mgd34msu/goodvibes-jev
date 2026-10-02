@@ -86,11 +86,11 @@ export function relevanceBand(percent: number): 'high match' | 'moderate match' 
   return 'low match';
 }
 
-export function rankMemoryForTurn(
+export async function rankMemoryForTurn(
   memoryRegistry: MemoryRegistry,
   eligible: readonly MemoryRecord[],
   turnText: string | null | undefined,
-): MemoryTurnRankingResult {
+): Promise<MemoryTurnRankingResult> {
   const fallbackOrder = (): readonly MemoryRecord[] => [...eligible].sort(sortMemoryForPrompt);
   if (eligible.length === 0) {
     return { records: [], relevanceById: new Map(), scored: false, degradedReason: null };
@@ -119,7 +119,7 @@ export function rankMemoryForTurn(
   // after scoring, not before), the SDK's vector store caps the underlying KNN search
   // at 500 candidates regardless, so there is no point asking for more than that.
   const requestLimit = Math.min(500, Math.max(eligible.length, 50));
-  const results = memoryRegistry.searchSemantic({ query: trimmedTurnText, limit: requestLimit });
+  const results = await memoryRegistry.searchSemantic({ query: trimmedTurnText, limit: requestLimit });
   const consultedSemanticIndex = results.some((entry) => entry.similarity > 0);
   if (!consultedSemanticIndex) {
     return {
@@ -162,12 +162,16 @@ export interface BuildReviewedMemoryPromptOptions {
   readonly records?: readonly MemoryRecord[];
 }
 
-export function buildReviewedMemoryPrompt(memoryRegistry: MemoryRegistry, options: BuildReviewedMemoryPromptOptions = {}): string | null {
+export async function buildReviewedMemoryPrompt(memoryRegistry: MemoryRegistry, options: BuildReviewedMemoryPromptOptions = {}): Promise<string | null> {
   const limit = options.limit ?? DEFAULT_LIMIT;
   // Bound to one arg, see prompt-context-receipts.ts's resolveMemoryRecords
   // filter for why a bare `.filter(isPromptActiveMemory)` is unsafe here.
   const eligible = (options.records ?? memoryRegistry.getAll()).filter((record) => isPromptActiveMemory(record));
-  const ranking = rankMemoryForTurn(memoryRegistry, eligible, options.turnText);
+  const ranking = await rankMemoryForTurn(memoryRegistry, eligible, options.turnText);
+  return renderReviewedMemoryPrompt(ranking, limit);
+}
+
+export function renderReviewedMemoryPrompt(ranking: MemoryTurnRankingResult, limit = DEFAULT_LIMIT): string | null {
   const records = ranking.records.slice(0, Math.max(0, limit));
 
   if (records.length === 0) return null;

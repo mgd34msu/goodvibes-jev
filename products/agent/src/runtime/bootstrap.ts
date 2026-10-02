@@ -273,7 +273,9 @@ export async function bootstrapRuntime(
         activePromptTurnId = null;
         activePromptTurnText = null;
       }
-      memoryUsageTracker.onTurnCompleted(event.payload.turnId, event.payload.response);
+      void memoryUsageTracker.onTurnCompleted(event.payload.turnId, event.payload.response).catch((error) => {
+        logger.debug('Memory usage reference reading failed', { error: summarizeError(error) });
+      });
       // Raise anything outstanding, now that the transcript is quiet. Appending
       // the agent's own line while a response was still streaming would
       // interleave two voices in one transcript, which is why this rides the
@@ -361,7 +363,7 @@ export async function bootstrapRuntime(
           'agent.conversation-system-prompt', { audience: 'conversation', signal },
         );
         signal?.throwIfAborted();
-        const composed = composeRuntimePromptWithReceipt({ ...captured, tierPrompt });
+        const composed = await composeRuntimePromptWithReceipt({ ...captured, tierPrompt });
         signal?.throwIfAborted();
         promptContextReceipts.record(composed.receipt);
         memoryUsageTracker.onComposed(turnId, composed.receipt);

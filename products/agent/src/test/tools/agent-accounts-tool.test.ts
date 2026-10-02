@@ -1,3 +1,4 @@
+import { useSecurityReadings } from '../../../../../packages/engine/test/helpers/security-readings.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -32,6 +33,8 @@ const VALID = {
   purpose: 'reading the docs behind a sign-in wall',
   credentialSecretKey: 'GOODVIBES_ACCOUNT_EXAMPLE_COM',
 };
+
+useSecurityReadings();
 
 describe('the account register', () => {
   beforeEach(() => {
