@@ -7321,6 +7321,72 @@
       "unresolved": 526,
       "remainingRetainedRenames": 26,
       "scope": "Only these four repaired source/test responsibilities close; original baseline30open rulings remain historical. Native planning replacement does not close any other row."
+    },
+    {
+      "validatedSourceRevision": "fd81eac57dd88adc26eeab8a19dee0e859c10a16",
+      "rows": [
+        {
+          "row": 9,
+          "source": "src/panels/fleet-steer.ts",
+          "disposition": "JEV",
+          "status": "proven-after-independent-source-repair",
+          "targets": [
+            "products/tui/src/views/fleet-steer.ts",
+            "products/tui/src/views/fleet-session-tabs.ts",
+            "products/tui/src/input/agents-modal.ts"
+          ],
+          "origin": "f3ccab8616c7b12c83b3e4b2d6e021e55a926446",
+          "review": "review_tui_steer_receipts",
+          "proof": "Actual public registry receipts distinguish host/wake acceptance from native bus tracking. Real runAgentTask counterexample proves timeout cannot imply undelivered; unknown retains one per-tab identity for late consumed. Actual modal renders current uncertainty without replacing newer errors.",
+          "postimageSha256": {
+            "products/tui/src/views/fleet-steer.ts": "912e455357b4ae6b9652f38b24754fc5a2458174aa8195a926371353257d4525",
+            "products/tui/src/views/fleet-session-tabs.ts": "dfb6a61e9787a2a1d19e0982fec419f9573bfb524ca2c5dbd496edb07da1319f",
+            "products/tui/src/input/agents-modal.ts": "8e4b51db89736f9e2d116825ebfe931f46ae8fc9a0d12a854a8feead0b612c67"
+          }
+        },
+        {
+          "row": 33,
+          "source": "src/test/panels/fleet-steer.test.ts",
+          "disposition": "JEV",
+          "status": "proven-after-independent-source-repair",
+          "targets": [
+            "products/tui/src/test/views/fleet-steer.test.ts",
+            "products/tui/src/test/input/steer-receipt-contract.test.ts",
+            "products/tui/src/test/input/steer-native-delivery.test.ts"
+          ],
+          "origin": "f3ccab8616c7b12c83b3e4b2d6e021e55a926446",
+          "review": "review_tui_steer_receipts",
+          "proof": "101 repository tests / 343 assertions; independent 104 / 379 plus 13 additional frame/refusal assertions. Exact public runtime event bus, registry, runner and modal token boundary; real local scripted provider. Red timing and rendered-status regressions retained.",
+          "postimageSha256": {
+            "products/tui/src/test/views/fleet-steer.test.ts": "9fa98e9350941efb95ceafa97954553c72c940e2afa7eb85491d488c662a539c",
+            "products/tui/src/test/input/steer-receipt-contract.test.ts": "3f6725395367c5a1b1556e7561bc68f85dc36ec0ca79d67f6335c1e7726e01da",
+            "products/tui/src/test/input/steer-native-delivery.test.ts": "9b5fbaf6d5d7931d6f52e996fbc19ab1e4b450987ac3ab501ff2cbf96d7a3311"
+          }
+        },
+        {
+          "row": 10,
+          "source": "src/panels/fleet-stop.ts",
+          "disposition": "JEV",
+          "status": "proven-after-independent-source-repair",
+          "targets": [
+            "products/tui/src/views/fleet-stop.ts",
+            "products/tui/src/input/agents-modal.ts",
+            "products/tui/src/test/input/agents-modal-fleet-footer.test.ts"
+          ],
+          "origin": "754da9d4938156e360d394605ce03ec14f8269d7",
+          "review": "review_fleet_footer_cost",
+          "proof": "Actual list/full modal hints use existing eligibility helper; observed/nonkillable/terminal rows cannot advertise stop, eligible terminal root worktree exposes D only with action controller. Actual public action/confirm controls preserved; stop/discard handlers unchanged.",
+          "postimageSha256": {
+            "products/tui/src/views/fleet-stop.ts": "afb8922e794fd73e1a7299343ec1b4058ed6d14ee1f61c837deab89e667c96ac",
+            "products/tui/src/input/agents-modal.ts": "8e4b51db89736f9e2d116825ebfe931f46ae8fc9a0d12a854a8feead0b612c67",
+            "products/tui/src/test/input/agents-modal-fleet-footer.test.ts": "16eaa4025c4cb897e499d9ea042c4b3094c94dad80fb63dc22e6da509ed391c1"
+          }
+        }
+      ],
+      "mapped": 1095,
+      "unresolved": 523,
+      "remainingRetainedRenames": 23,
+      "scope": "Only receipt source/test rows9/33 and stop-discoverability row10 close. Cost display repaired, but format row5 broader actual-list equivalence remains open. Original baseline rulings and failed proofs preserved."
     }
   ]
 }

@@ -8193,6 +8193,33 @@
         "reviewRow": 42,
         "verification": "Actual WorkPlanStore\u2192keyboard\u2192CommandRegistry\u2192public ProcessRegistry\u2192AgentsModal.reveal; contract/agent links, missing/stale links, parser negatives and unchanged goldens. Independent108tests359assertions plus6tests70assertions."
       }
+    },
+    {
+      "source": "src/panels/fleet-steer.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/views/fleet-steer.ts",
+        "products/tui/src/views/fleet-session-tabs.ts",
+        "products/tui/src/input/agents-modal.ts"
+      ]
+    },
+    {
+      "source": "src/test/panels/fleet-steer.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/test/views/fleet-steer.test.ts",
+        "products/tui/src/test/input/steer-receipt-contract.test.ts",
+        "products/tui/src/test/input/steer-native-delivery.test.ts"
+      ]
+    },
+    {
+      "source": "src/panels/fleet-stop.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/tui/src/views/fleet-stop.ts",
+        "products/tui/src/input/agents-modal.ts",
+        "products/tui/src/test/input/agents-modal-fleet-footer.test.ts"
+      ]
     }
   ],
   "verification": {
@@ -8201,10 +8228,10 @@
   "accounting": {
     "inventoryRows": 1618,
     "samePathMappings": 1027,
-    "unresolved": 526,
+    "unresolved": 523,
     "unresolvedManifest": "products/tui/migration-unresolved.json",
     "semantics": "Same-path mappings identify current locations, not evidence of completed JEV/HOIST decisions or feature parity.",
-    "verifiedRenameMappings": 65,
+    "verifiedRenameMappings": 68,
     "renameReview": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
     "retainedRenameReview": "docs/audit/tui-retained-rename-review-2026-10-02.json"
   }

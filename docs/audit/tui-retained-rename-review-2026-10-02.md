@@ -117,3 +117,11 @@ IDs and executionApproved metadata must remain readable without granting authori
 Buzz owns the new engine ledger/evidence contract; method names, revision scope,
 actor binding and typed receipts remain pending before product wiring. No plugin
 internals or invented SDK APIs are imported here.
+
+## Reviewed receipt and action-discoverability successors
+
+The local Fleet union closes rows 9, 10 and 33 through independently reviewed actual runtime/modal tests. Mapping is now 1,095 of 1,618; 523 obligations remain (23 retained renames, 437 deleted-path reconciliations, 63 other). Original baseline rulings remain historical evidence.
+
+ACP/wake acceptance remains delivery unknown. Native bus timeout/target end cannot prove non-delivery: a real runner regression already contains the steer before its late consumed acknowledgement. Exact identity survives as one receipt per tab until replacement/tab lifetime; the actual modal label follows unknown/consumed state while preserving later errors.
+
+The existing stop/discard eligibility helper now drives actual list/full-view hints, with unchanged execution and confirmation handlers. Known fleet subtotal rendering is also corrected, but format row 5 remains open for broader actual-list successor equivalence. No other migration retirement or completion is implied. See the final followUps entry in the JSON companion for exact source/test hashes and reviewed origins.

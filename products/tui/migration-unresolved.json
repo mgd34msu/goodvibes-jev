@@ -432,14 +432,6 @@
     "disposition": "JEV"
   },
   {
-    "source": "src/panels/fleet-steer.ts",
-    "disposition": "JEV"
-  },
-  {
-    "source": "src/panels/fleet-stop.ts",
-    "disposition": "JEV"
-  },
-  {
     "source": "src/panels/git-panel.ts",
     "disposition": "PORT"
   },
@@ -589,10 +581,6 @@
   },
   {
     "source": "src/test/panels/fleet-session-log-resolver.test.ts",
-    "disposition": "JEV"
-  },
-  {
-    "source": "src/test/panels/fleet-steer.test.ts",
     "disposition": "JEV"
   },
   {
