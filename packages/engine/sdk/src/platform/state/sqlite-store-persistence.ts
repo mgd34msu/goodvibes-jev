@@ -38,6 +38,9 @@ export class SQLiteStorePersistence {
     const absolute = resolve(path);
     ensureDurableDirectory(dirname(absolute));
     this.path = canonicalDatabasePath(absolute);
+    // A symlink alias can enter another directory tree. Its containing entries
+    // need their own proof; fsyncing the alias's ancestors does not cover them.
+    if (dirname(this.path) !== dirname(absolute)) syncDirectoryAncestry(dirname(this.path));
   }
 
   read(): Buffer | null {
@@ -77,7 +80,7 @@ export class SQLiteStorePersistence {
     if (!this.read()) return;
     const fd = this.io.openSync(this.path, 'r');
     try { this.io.fsyncSync(fd); } finally { this.safeClose(fd); }
-    this.syncParent();
+    this.syncAncestry();
   }
 
   /** Caller owns the lock and has constructed this image from the current file. */
@@ -100,7 +103,7 @@ export class SQLiteStorePersistence {
       this.established = true;
       // Rename visibility is not durable success. Never restore older bytes if
       // this sync fails: the exact receipt retry must reconcile the new image.
-      this.syncParent();
+      this.syncAncestry();
       this.acceptBaseline(data);
     } catch (cause) {
       throw new SQLitePublicationError(renamed ? 'indeterminate' : 'before-publication', cause);
@@ -111,9 +114,8 @@ export class SQLiteStorePersistence {
   }
 
   private safeClose(fd: number): void { try { this.io.closeSync(fd); } catch { /* Post-sync cleanup. */ } }
-  private syncParent(): void {
-    const fd = this.io.openSync(dirname(this.path), 'r');
-    try { this.io.fsyncSync(fd); } finally { this.safeClose(fd); }
+  private syncAncestry(): void {
+    syncDirectoryAncestry(dirname(this.path), this.io);
   }
 
 }
@@ -129,17 +131,26 @@ export class SQLitePublicationError extends Error {
   }
 }
 
-function safeClose(fd: number): void { try { closeSync(fd); } catch { /* Descriptor cleanup cannot undo fsync. */ } }
-function syncDirectory(path: string): void {
-  const fd = openSync(path, 'r');
-  try { fsyncSync(fd); } finally { safeClose(fd); }
+/**
+ * Existing directories may be remnants of an interrupted mkdir/fsync attempt.
+ * Existence never proves their parent entries durable. Reestablish every edge,
+ * leaf first, through the filesystem root on acquisition, commit and replay.
+ */
+function syncDirectoryAncestry(path: string, io: SQLitePublicationIO = nativePublicationIO): void {
+  let current = path;
+  for (;;) {
+    const fd = io.openSync(current, 'r');
+    try { io.fsyncSync(fd); }
+    finally { try { io.closeSync(fd); } catch { /* A post-sync close cannot undo durability. */ } }
+    const parent = dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
 }
+
 function ensureDurableDirectory(path: string): void {
-  try { if (statSync(path).isDirectory()) return; throw new Error('SQLiteStore: parent is not a directory'); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  const parent = dirname(path);
-  ensureDurableDirectory(parent);
-  try { mkdirSync(path); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-  syncDirectory(path);
-  syncDirectory(parent);
+  mkdirSync(path, { recursive: true });
+  // Always traverse existing ancestry too. An earlier attempt may have created
+  // these directories and failed before synchronizing an ancestor's new entry.
+  syncDirectoryAncestry(path);
 }

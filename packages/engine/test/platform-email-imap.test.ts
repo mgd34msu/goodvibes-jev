@@ -1513,9 +1513,12 @@ describe('ImapSession line retention', () => {
           else if (line.includes('EXAMINE')) serverWrite(sock, `${tag} OK [READ-ONLY] EXAMINE completed`);
           else if (line.includes('IDLE')) {
             idleTag = tag;
-            serverWrite(sock, '+ idling');
-            // The traffic a busy mailbox produces during one IDLE round.
-            for (let n = 1; n <= 200; n += 1) serverWrite(sock, `* ${n} EXISTS`);
+            // A server may send its continuation and the whole busy-mailbox
+            // burst together, before awaitContinuation resumes in the client.
+            serverWrite(sock, [
+              '+ idling',
+              ...Array.from({ length: 200 }, (_, index) => `* ${index + 1} EXISTS`),
+            ].join('\r\n'));
           } else if (line.trim() === 'DONE') {
             serverWrite(sock, `${idleTag} OK IDLE terminated`);
           }
@@ -1535,9 +1538,12 @@ describe('ImapSession line retention', () => {
     const seen: string[] = [];
     connection.onUntagged((line) => { seen.push(line); });
 
+    // Untagged waits observe future lines only. Subscribe before IDLE can
+    // produce the burst, including when it arrives with the continuation.
+    const burstReceived = connection.waitForUntagged((line) => line === '* 200 EXISTS', { timeoutMs: 2000 });
     const tag = await connection.sendCommand('IDLE', { retainUntagged: false });
     await connection.awaitContinuation(tag);
-    await connection.waitForUntagged((line) => line === '* 200 EXISTS', { timeoutMs: 2000 });
+    await burstReceived;
     await connection.sendRawLine('DONE');
     const lines = await connection.awaitTag(tag);
 

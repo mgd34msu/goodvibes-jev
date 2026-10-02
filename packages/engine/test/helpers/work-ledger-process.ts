@@ -28,6 +28,7 @@ if (input.hold) {
   const { mock } = await import('bun:test');
   const original = { ...fs };
   const hold = input.hold;
+  let targetPublished = false;
   function pauseAtPublication(from: fs.PathLike, to: fs.PathLike): void {
     original.writeFileSync(`${hold.markerPath}.tmp`, JSON.stringify({ pid: process.pid, phase: hold.phase, from: String(from), to: String(to) }));
     original.renameSync(`${hold.markerPath}.tmp`, hold.markerPath);
@@ -41,12 +42,13 @@ if (input.hold) {
     ...original,
     fsyncSync(fd: number): void {
       original.fsyncSync(fd);
-      if (hold.phase === 'after-directory-sync' && original.fstatSync(fd).isDirectory()) pauseAtPublication(input.dbPath, input.dbPath);
+      if (hold.phase === 'after-directory-sync' && targetPublished && original.fstatSync(fd).isDirectory()) pauseAtPublication(input.dbPath, input.dbPath);
     },
     renameSync(from: fs.PathLike, to: fs.PathLike): void {
       const targetWrite = String(to) === input.dbPath && String(from).startsWith(`${input.dbPath}.pending-`);
       if (targetWrite && hold.phase === 'before-rename') pauseAtPublication(from, to);
       original.renameSync(from, to);
+      if (targetWrite) targetPublished = true;
       if (targetWrite && hold.phase === 'after-rename') pauseAtPublication(from, to);
     },
   }));

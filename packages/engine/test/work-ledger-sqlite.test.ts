@@ -2,7 +2,7 @@ import * as nativeFs from 'node:fs';
 import type { SQLitePublicationIO } from '../sdk/src/platform/state/sqlite-store-persistence.js';
 import { afterEach, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
@@ -241,7 +241,12 @@ test('actual ledger directory-sync ambiguity returns indeterminate then exact re
   expect(await first.service.execute(command, first.actor)).toMatchObject({ kind: 'indeterminate', requestId: 'request' });
   const bytes = readFileSync(file); synced.length = 0;
   expect(await first.service.execute(command, first.actor)).toMatchObject({ kind: 'accepted', replayed: true });
-  expect(synced).toEqual(['file', 'directory']);
+  const expected = ['file'];
+  for (let path = dirname(file);; path = dirname(path)) {
+    expected.push('directory');
+    if (dirname(path) === path) break;
+  }
+  expect(synced).toEqual(expected);
   expect(readFileSync(file)).toEqual(bytes);
   expect((await first.service.history(0, first.actor))).toHaveLength(1);
 });

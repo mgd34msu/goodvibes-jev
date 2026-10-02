@@ -142,10 +142,13 @@ and PID namespace, not rogue writers or distributed filesystems. Hardlinked
 file aliases and malformed/live strict lock ownership are refused.
 
 Publication writes a same-directory temporary file, fsyncs it, renames it, then
-fsyncs the parent directory. Newly created directory ancestry is synchronized.
+fsyncs the complete canonical directory ancestry through the root. Acquisition
+also reestablishes the full ancestry even when directories already exist: they
+may be remnants of a failed mkdir/fsync attempt. Symlink aliases additionally
+establish the canonical target ancestry. Existence is never a durability receipt.
 Failure before rename leaves the old file; failure after rename and before
 parent sync is indeterminate and never restores old bytes. Exact no-op retries
-read authoritative disk and synchronize both the observed file and its parent
+read authoritative disk and synchronize both the observed file and its full ancestry
 before returning a durable receipt. Cleanup and observer failures after durable
 publication cannot turn success into rollback; failed mirror refresh fences
 ordinary cache operations. Corrupt or truncated existing images and missing

@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import * as fs from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SQLiteStorePersistence, SQLitePublicationError, type SQLitePublicationIO } from '../sdk/src/platform/state/sqlite-store-persistence.js';
 const roots: string[] = [];
@@ -48,6 +48,11 @@ test('directory-close failure after fsync does not masquerade as rollback', () =
   const { file, persistence } = setup('close:dir'); persistence.writeIfCurrent(next); expect(fs.readFileSync(file)).toEqual(next);
 });
 test('durable receipt reconciliation synchronizes current file and directory again', () => {
-  const { persistence, calls } = setup(null); persistence.confirmDurable();
-  expect(calls).toEqual(['open:file', 'sync:file', 'close:file', 'open:dir', 'sync:dir', 'close:dir']);
+  const { file, persistence, calls } = setup(null); persistence.confirmDurable();
+  const expected = ['open:file', 'sync:file', 'close:file'];
+  for (let path = dirname(file);; path = dirname(path)) {
+    expected.push('open:dir', 'sync:dir', 'close:dir');
+    if (dirname(path) === path) break;
+  }
+  expect(calls).toEqual(expected);
 });

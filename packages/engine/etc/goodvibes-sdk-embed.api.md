@@ -153,6 +153,7 @@ export class DaemonServer {
     // Warning: (ae-forgotten-export) The symbol "DaemonDangerConfig" needs to be exported by the entry point embed.d.ts
     enable(dangerConfig: DaemonDangerConfig, token?: string): boolean;
     get eventBus(): RuntimeEventBus;
+    fenceRestartAdmission(): void;
     // Warning: (ae-forgotten-export) The symbol "RelayReachability" needs to be exported by the entry point embed.d.ts
     getRelayReachability(): RelayReachability | null;
     get isRunning(): boolean;
