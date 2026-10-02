@@ -173,12 +173,14 @@ describe('Work Plan public store to Agents contract deep link', () => {
     expect(f.opened).toEqual([]);
   });
 
-  test('a disappeared contract reports the exact unavailable node rather than selecting another process', async () => {
+  test('a disappeared contract reports a missing-target warning without a successful reveal', async () => {
     const f = fixture({ contractId: 'contract-1' });
     f.removeContract();
     await f.text('w');
     expect(f.opened).toEqual([{ target: { id: 'contract:contract-1', kind: 'contract' }, revealed: false }]);
     expect(f.agents.selectedId).toBeNull();
+    // Existing list behavior: no explicit selection still displays the first agent.
+    expect(f.agents.selectedNode()?.id).toBe('agent-1');
     expect(f.agents.status?.text).toBe('contract:contract-1 is no longer running here.');
   });
 });
