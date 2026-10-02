@@ -1,0 +1,119 @@
+{
+  "issue": "THE-18 / THE-98",
+  "repository": "mgd34msu/goodvibes-jev",
+  "base_commit": "46a3201d54147f993eeda51eb7ab814f867c2f8e",
+  "base_tree": "d836764c759a9c208a6922c6ed4fe282d6c9c8b6",
+  "candidate_tree": "f1305d726f4d43365eeeb4c146a6eff7007920d2",
+  "scope": "Explicit opt-in daemon production boot factory; eager acquired-owner admission fencing and awaited actual drains. Six daemon files only; no engine/API snapshot or executable/default-inbox expansion.",
+  "upstream_boot_reference": "mgd34msu/goodvibes-daemon@254699bf5d834cdca41436211ada1ae32bf89258:src/runtime/boot-tasks.ts",
+  "files": [
+    {
+      "path": "products/daemon/src/runtime/boot-composition.ts",
+      "bytes": 6152,
+      "sha256": "b5c3045744e2053a0814990dcb60328ade4e566ac5576d4dac360ace63b517f0",
+      "git_blob": "e1c575d84be4e5adac24b1fbc174ef2fd63ae71d"
+    },
+    {
+      "path": "products/daemon/src/runtime/boot-tasks.ts",
+      "bytes": 8151,
+      "sha256": "d614f6c2ae25fb1be989ac3e400110fd6a93c6cd79fc064ee0b64689129253fd",
+      "git_blob": "99c591c3b4445722029c656c0ee46a66e35e4e96"
+    },
+    {
+      "path": "products/daemon/src/runtime/service-graph.ts",
+      "bytes": 49787,
+      "sha256": "32211df09e021f6ed7aac6027d76195a4f7e17cc1165ef922862b5861daea7a5",
+      "git_blob": "c30620ad6b219d963b18f2ef54293e432b874c25"
+    },
+    {
+      "path": "products/daemon/src/test/runtime/boot-composition.test.ts",
+      "bytes": 20170,
+      "sha256": "39b675b0852125b76dfb3288b1d2d970d6682ac64f1c06f4b1c2e62129e108c9",
+      "git_blob": "1a52267a23e7a325da299c7d13b0295a76e0632c"
+    },
+    {
+      "path": "products/daemon/src/test/runtime/boot-shutdown-admission.test.ts",
+      "bytes": 5464,
+      "sha256": "91a977832974b6aa63085c445457bf41d9235c8fd8639aef016b0fcf37990e0a",
+      "git_blob": "4312606158e6d587b54428b52e78253fdefcf53f"
+    },
+    {
+      "path": "products/daemon/src/test/runtime/boot-tasks.test.ts",
+      "bytes": 10584,
+      "sha256": "b82f7681e919bbfc9cfca6f01cea4063ec71bce01316e3535db9382553ba0c79",
+      "git_blob": "a2a96acb1e2c8780948e04f6a976b6ae0f3f6848"
+    }
+  ],
+  "patch": {
+    "path": "source.patch",
+    "bytes": 43779,
+    "sha256": "9f2f1f93b482be72739d66d161847af40e51615567838823b9f1cc4ef6189752",
+    "git_blob": "052a09d8ce8e5f8ee29623d8f9353ee08dba88cc"
+  },
+  "verification": {
+    "focused": {
+      "tests": 33,
+      "assertions": 208,
+      "files": 4
+    },
+    "daemon": {
+      "tests": 561,
+      "assertions": 3947,
+      "files": 50
+    },
+    "notification_and_lifecycle": {
+      "tests": 183,
+      "assertions": 766,
+      "files": 12
+    },
+    "gates": {
+      "focused-final": 0,
+      "daemon-all": 0,
+      "notifications": 0,
+      "build-final": 0,
+      "typecheck-final": 0,
+      "api-check": 0,
+      "types-check": 0,
+      "any-check": 0,
+      "architecture-check": 0,
+      "docs-check": 0,
+      "credential-scope": 0,
+      "diff-check": 0
+    },
+    "negative_controls": {
+      "amended-original-controller": {
+        "exit": 1,
+        "passed": 0,
+        "failed": 3,
+        "reason": "Acquired fences absent, late provider drain lost, rejected cleanup resolves"
+      },
+      "eager-fences-removed": {
+        "exit": 1,
+        "passed": 2,
+        "failed": 1,
+        "reason": "Held plugin blocks remaining admission fences"
+      },
+      "sibling-read-drain-removed": {
+        "exit": 1,
+        "passed": 0,
+        "failed": 2,
+        "reason": "Notifier and configured-services both report failed before admitted credential sibling settles"
+      },
+      "invalid_previous_control": "no-sibling-drain-unbound-reporter.log has a reporter this-binding setup error and is not used as notifier negative proof"
+    },
+    "independent_review": "Independent source-and-log reviewer cleared final tree f1305d726f4d43365eeeb4c146a6eff7007920d2, all six file hashes, owner lifecycle, concrete ServiceRegistry sibling-read drain, notification/service status merge, corrected negative controls, and exact final provider-event assertion delta. No remaining review finding; reviewer did not edit source or independently rerun tests.",
+    "limitations": [
+      "No exact published CI result yet.",
+      "Full aggregate validate and whole-repository test matrix were not run locally.",
+      "API Extractor retained pre-existing third-party declaration warnings; WebUI build retained chunk-size warning.",
+      "No executable/default inbox, host privacy-setting schema/default, operator notification URL handler, live provider/host service or full THE-18 completion claim."
+    ]
+  },
+  "reconstruct": [
+    "Create clean branch at base_commit.",
+    "Verify source.patch SHA-256 and git apply --index source.patch.",
+    "Verify git write-tree equals candidate_tree and every file hash/blob matches.",
+    "Publish the exact six-file source tree as a draft PR from the authorized environment; omit transfer docs.",
+    "If base changes, inspect conflicts and rerun applicable gates; old tree proof does not cover a new candidate."
+  ]
+}

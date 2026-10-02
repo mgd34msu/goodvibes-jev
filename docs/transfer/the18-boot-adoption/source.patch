@@ -1,0 +1,774 @@
+diff --git a/products/daemon/src/runtime/boot-composition.ts b/products/daemon/src/runtime/boot-composition.ts
+new file mode 100644
+index 0000000..e1c575d
+--- /dev/null
++++ b/products/daemon/src/runtime/boot-composition.ts
+@@ -0,0 +1,111 @@
++/** Explicit production boot operations. The executable opts in separately. */
++import type { ServiceRegistry } from '@goodvibes-jev/engine/sdk/platform/config';
++import { Notifier } from '@goodvibes-jev/engine/sdk/platform/integrations';
++import { synchronizeConfiguredServices } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
++import { foldLegacyProjectMemory, NOTIFICATIONS_METADATA_ONLY_KEY, readNotificationsMetadataOnly } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
++import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
++import type { DaemonBootOperations } from './boot-tasks.js';
++import { createDaemonPluginLoaderDeps } from './plugin-composition.js';
++import type { RuntimeServices } from './runtime-services-types.js';
++
++
++/**
++ * SDK factories use fail-fast joins. Keep every admitted credential/inspection
++ * read owned after a sibling rejects, without mutating the shared registry.
++ * The borrowed view delegates to the real methods and persisted configuration.
++ */
++async function withServiceReadDrain<T>(source: ServiceRegistry, action: (registry: ServiceRegistry) => Promise<T>): Promise<T> {
++  const pending = new Set<Promise<void>>();
++  const track = <R>(read: () => Promise<R>): Promise<R> => {
++    const result = Promise.resolve().then(read);
++    const settled = result.then(() => {}, () => {});
++    pending.add(settled);
++    void settled.then(() => { pending.delete(settled); });
++    return result;
++  };
++  const registry: ServiceRegistry = new Proxy(source, {
++    get(target, key, receiver): unknown {
++      if (key === 'resolveSecret') return (...args: Parameters<ServiceRegistry['resolveSecret']>) =>
++        track(() => target.resolveSecret.apply(registry, args));
++      if (key === 'inspect') return (...args: Parameters<ServiceRegistry['inspect']>) =>
++        track(() => target.inspect.apply(registry, args));
++      return Reflect.get(target, key, receiver);
++    },
++  });
++  try { return await action(registry); }
++  finally { while (pending.size > 0) await Promise.all([...pending]); }
++}
++
++/** Pass through RuntimeServicesOptions.createBootOperations; start after server init. */
++export function createDaemonBootOperations(runtime: RuntimeServices): DaemonBootOperations {
++  const notificationRows = new Set<string>();
++  const metadataOnly = (): boolean => readNotificationsMetadataOnly(
++    () => runtime.configManager.get(NOTIFICATIONS_METADATA_ONLY_KEY as never),
++  );
++  return {
++    async foldMemory() {
++      const report = await foldLegacyProjectMemory(runtime.memoryStore, runtime.memoryEmbeddingRegistry, runtime.workingDirectory);
++      if (report.failedSources.length > 0) throw new Error('Daemon legacy memory fold failed');
++    },
++    startProviderWatch: () => runtime.providerRegistry.startWatching(runtime.runtimeBus),
++    stopProviderWatch: () => runtime.providerRegistry.closeWatching(),
++    createWebhooks() {
++      // Boot uses the same graph owner as memory-pressure delivery, even with no URLs.
++      // Acquire before configuration/attachment so failures still retire it.
++      return {
++        attach() {
++          const urls = runtime.configManager.getCategory('notifications').webhookUrls;
++          if (urls.length > 0) {
++            runtime.webhookNotifier.setUrls(urls);
++            notificationRows.add('webhooks');
++            runtime.runtimeDispatch.syncIntegration({
++              id: 'webhooks', displayName: 'Webhooks', category: 'communication',
++              status: 'healthy', enabled: true, successCount: 0, errorCount: 0,
++              meta: { urlCount: urls.length },
++            }, 'boot.webhooks');
++          }
++          runtime.webhookNotifier.attachToRuntimeBus(runtime.runtimeBus);
++        },
++        close: () => runtime.webhookNotifier.close(),
++      };
++    },
++    async createNotifier() {
++      const notifier = await withServiceReadDrain(runtime.serviceRegistry, (registry) =>
++        Notifier.fromConfig(registry, { featureFlags: runtime.featureFlags, metadataOnly }));
++      return {
++        attach() {
++          const queues = notifier.getQueueStatus();
++          if (queues.length === 0) return;
++          notifier.attachToRuntimeBus(runtime.runtimeBus);
++          for (const queue of queues) {
++            notificationRows.add(queue.channel);
++            runtime.runtimeDispatch.syncIntegration({
++              id: queue.channel, displayName: queue.channel[0]!.toUpperCase() + queue.channel.slice(1),
++              category: 'communication', status: queue.metrics.deadLettered > 0 ? 'degraded' : 'healthy',
++              enabled: true, successCount: queue.metrics.delivered, errorCount: queue.metrics.deadLettered,
++              ...(queue.dlqEntries[0]?.deadAt ? { lastErrorAt: queue.dlqEntries[0].deadAt } : {}),
++              ...(queue.dlqEntries[0]?.finalError ? { lastError: queue.dlqEntries[0].finalError } : {}),
++              meta: { attempts: queue.metrics.totalAttempts, retrying: queue.metrics.retrying,
++                deadLetters: queue.metrics.deadLettered, dlqSize: queue.metrics.dlqSize, sloEnforced: queue.sloEnforced },
++            }, 'boot.notifier');
++          }
++        },
++        close: () => notifier.close(),
++      };
++    },
++    synchronizeServices: () => withServiceReadDrain(runtime.serviceRegistry, (registry) =>
++      synchronizeConfiguredServices((record, source) => {
++        // A webhook-only configured Slack/Discord service has no primary token.
++        // Preserve the real notification owner's health and queue facts while
++        // adding service inspection facts, rather than relabeling it unconfigured.
++        const notification = notificationRows.has(record.id)
++          ? runtime.runtimeStore.getState().integrations.integrations.get(record.id) : undefined;
++        runtime.runtimeDispatch.syncIntegration(notification
++          ? { ...record, ...notification, meta: { ...record.meta, ...notification.meta } }
++          : record, source);
++      }, registry)),
++    initializePlugins: () => runtime.pluginManager.init(createDaemonPluginLoaderDeps(runtime)),
++    closePlugins: () => runtime.pluginManager.close(),
++    reportFailure(step) { logger.warn('Daemon boot step failed', { step }); },
++  };
++}
+diff --git a/products/daemon/src/runtime/boot-tasks.ts b/products/daemon/src/runtime/boot-tasks.ts
+index d69e4dc..99c591c 100644
+--- a/products/daemon/src/runtime/boot-tasks.ts
++++ b/products/daemon/src/runtime/boot-tasks.ts
+@@ -18,7 +18,7 @@ export interface DaemonBootAttachment {
+ export interface DaemonBootOperations {
+   foldMemory(): Promise<void>;
+   startProviderWatch(): void;
+-  stopProviderWatch(): void;
++  stopProviderWatch(): void | Promise<void>;
+   createWebhooks(): DaemonBootAttachment | Promise<DaemonBootAttachment>;
+   createNotifier(): DaemonBootAttachment | Promise<DaemonBootAttachment>;
+   synchronizeServices(): Promise<void>;
+@@ -60,6 +60,7 @@ const BOOT_INTERRUPTED = Symbol('daemon boot interrupted');
+  */
+ export function createDaemonBootController(operations: DaemonBootOperations): DaemonBootController {
+   const scope = createDisposalScope('Daemon boot tasks');
++  const fences: Array<() => Promise<void>> = [];
+   const steps = new Map<DaemonBootStep, DaemonBootStepState>(STEPS.map((name) => [name, 'pending']));
+   let state: DaemonBootSnapshot['state'] = 'idle';
+   let closed = false;
+@@ -85,25 +86,39 @@ export function createDaemonBootController(operations: DaemonBootOperations): Da
+     }
+   }
+ 
+-  async function attach(name: 'webhooks' | 'notifier', acquire: () => DaemonBootAttachment | Promise<DaemonBootAttachment>): Promise<void> {
+-    const resource = await acquire();
++  function own(label: 'provider watch' | 'webhooks' | 'notifier' | 'plugins', action: () => void | Promise<void>): () => Promise<void> {
+     let cleanup: Promise<void> | undefined;
+     const closeResource = (): Promise<void> => {
+       if (cleanup) return cleanup;
+       let resolve!: () => void;
+-      let reject!: (error: unknown) => void;
++      let reject!: (error: Error) => void;
+       cleanup = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+-      // Own reentrant cleanup before calling the resource's synchronous fence.
+-      try { void Promise.resolve(resource.close()).then(resolve, reject); }
+-      catch (error) { reject(error); }
++      // Observe immediately: every owner's fence runs before any drain is awaited.
++      // Raw rejection values may carry secrets or hostile getters; never retain them.
++      void cleanup.catch(() => {});
++      const failed = (): void => reject(new Error(`${label} cleanup failed`));
++      try {
++        const result = action();
++        if (result !== undefined && (result === closing || result === cleanup)) failed();
++        else void Promise.resolve(result).then(resolve, failed);
++      }
++      catch { failed(); }
+       return cleanup;
+     };
+-    scope.registry.add(name, closeResource);
++    fences.push(closeResource);
++    scope.registry.add(label, closeResource);
++    if (closed) void closeResource();
++    return closeResource;
++  }
++
++  async function attach(name: 'webhooks' | 'notifier', acquire: () => DaemonBootAttachment | Promise<DaemonBootAttachment>): Promise<void> {
++    const resource = await acquire();
++    const closeResource = own(name, () => resource.close());
+     if (closed) throw BOOT_INTERRUPTED;
+     try { await resource.attach(); }
+     catch (error) {
+       try { await closeResource(); }
+-      catch (cleanupError) { throw new AggregateError([error, cleanupError], `${name} attachment and cleanup failed`); }
++      catch { /* The disposal scope owns the bounded cleanup failure. */ }
+       throw error;
+     }
+     // An attachment may synchronously reenter close or finish after it.
+@@ -113,15 +128,19 @@ export function createDaemonBootController(operations: DaemonBootOperations): Da
+   async function run(): Promise<DaemonBootSnapshot> {
+     await runStep('memory-fold', () => operations.foldMemory());
+     await runStep('provider-watch', async () => {
+-      scope.registry.add('provider watch', () => operations.stopProviderWatch());
++      own('provider watch', () => operations.stopProviderWatch());
+       try { operations.startProviderWatch(); }
+-      finally { if (closed) operations.stopProviderWatch(); }
++      finally {
++        // A synchronous start may request close before acquiring its watcher.
++        // The first stop cannot memoize away that post-start cleanup obligation.
++        if (closed) own('provider watch', () => operations.stopProviderWatch());
++      }
+     });
+     await runStep('webhooks', () => attach('webhooks', () => operations.createWebhooks()));
+     await runStep('notifier', () => attach('notifier', () => operations.createNotifier()));
+     await runStep('configured-services', () => operations.synchronizeServices());
+     await runStep('plugins', async () => {
+-      scope.registry.add('plugins', () => operations.closePlugins());
++      own('plugins', () => operations.closePlugins());
+       await operations.initializePlugins();
+     });
+     if (!closed) state = [...steps.values()].includes('failed') ? 'degraded' : 'ready';
+@@ -145,6 +164,10 @@ export function createDaemonBootController(operations: DaemonBootOperations): Da
+     let resolve!: () => void;
+     let reject!: (error: unknown) => void;
+     closing = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
++    // Notification and watcher owners have independent admission fences. Invoke
++    // every one now, before a held plugin drain can delay the remaining fences.
++    // Handler/base dependency teardown remains outside this controller's drain.
++    for (const fence of [...fences].reverse()) void fence();
+     const initial = scope.close();
+     // Observe the first drain while waiting for late acquisition. Its failures
+     // remain recorded by the scope and are returned by the final drain.
+diff --git a/products/daemon/src/runtime/service-graph.ts b/products/daemon/src/runtime/service-graph.ts
+index bb4e9d7..c30620a 100644
+--- a/products/daemon/src/runtime/service-graph.ts
++++ b/products/daemon/src/runtime/service-graph.ts
+@@ -48,6 +48,7 @@ import { BookmarkManager } from '@goodvibes-jev/engine/sdk/platform/bookmarks';
+ import { ProfileManager } from '@goodvibes-jev/engine/sdk/platform/profiles';
+ import { CrossSessionTaskRegistry, SessionChangeTracker } from '@goodvibes-jev/engine/sdk/platform/sessions';
+ import { ApiTokenAuditor, UserAuthManager } from '@goodvibes-jev/engine/sdk/platform/security';
++import { NOTIFICATIONS_METADATA_ONLY_KEY, readNotificationsMetadataOnly } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
+ import { WebhookNotifier } from '@goodvibes-jev/engine/sdk/platform/integrations';
+ import { BenchmarkStore, CacheHitTracker, FavoritesStore, ModelLimitsService, ProviderCapabilityRegistry, ProviderOptimizer, createLaunchTolerantProviderRegistry, ensureConfiguredModelIsRoutable } from '@goodvibes-jev/engine/sdk/platform/providers';
+ import { AdaptivePlanner, DeterministicReplayEngine, ExecutionPlanManager, SessionLineageTracker, SessionMemoryStore } from '@goodvibes-jev/engine/sdk/platform/core';
+@@ -404,7 +405,12 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
+     const tokenAuditor = new ApiTokenAuditor({ managed: false, featureFlags });
+     const componentHealthMonitor = new ComponentHealthMonitor();
+     const worktreeRegistry = new WorktreeRegistry(workingDirectory);
+-    const webhookNotifier = new WebhookNotifier();
++    const webhookNotifier = new WebhookNotifier([], {
++      metadataOnly: () => readNotificationsMetadataOnly(() => configManager.get(NOTIFICATIONS_METADATA_ONLY_KEY as never)),
++    });
++    // This shared owner can send memory-pressure notices before boot attachment.
++    // Own it immediately, including failed graph construction or omitted boot.
++    disposalScope.registry.add('shared webhook notifier', () => webhookNotifier.close());
+     const replayEngine = new DeterministicReplayEngine(workingDirectory);
+     const providerOptimizer = new ProviderOptimizer(providerRegistry, providerCapabilityRegistry, false); // dark until its gate flips it
+     disposalScope.registry.add('provider optimizer bridge', bindProviderOptimizerFeatureFlag(featureFlags, providerOptimizer));
+diff --git a/products/daemon/src/test/runtime/boot-composition.test.ts b/products/daemon/src/test/runtime/boot-composition.test.ts
+new file mode 100644
+index 0000000..1a52267
+--- /dev/null
++++ b/products/daemon/src/test/runtime/boot-composition.test.ts
+@@ -0,0 +1,330 @@
++/** Actual product factory, graph and loopback server; only external boundaries are replaced. */
++import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
++import * as fs from 'fs';
++import { join } from 'node:path';
++import { BenchmarkStore, ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
++import { Notifier } from '@goodvibes-jev/engine/sdk/platform/integrations';
++import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
++import { MemoryStore } from '@goodvibes-jev/engine/sdk/platform/state';
++import { registerInboxSurface } from '@goodvibes-jev/engine/sdk/platform/intake';
++import { NOTIFICATIONS_METADATA_ONLY_KEY, type NotificationDelivery } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
++import { emitContractPassed } from '@goodvibes-jev/engine/sdk/platform/runtime/emitters';
++import { startDaemonFixture, type DaemonFixture } from '../../testing/daemon-fixture.js';
++import { createDaemonBootOperations } from '../../runtime/boot-composition.js';
++import type { RuntimeServices } from '../../runtime/services.js';
++import { makeOwnedTempDir } from '../helpers/owned-temp.js';
++
++const URL = 'https://example.com/boot-notification';
++const PRIVATE = 'synthetic-private-boot-content';
++const turn: NotificationDelivery = { kind: 'turn', facts: { outcome: 'completed', elapsedMs: 1000, name: PRIVATE } };
++const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
++let fixtures: DaemonFixture[];
++let restores: Array<() => void>;
++let releases: Array<() => void>;
++let notifiers: Notifier[];
++function keep<T extends { mockRestore(): void }>(spy: T): T { restores.push(() => spy.mockRestore()); return spy; }
++function gate() {
++  let resolve!: () => void;
++  const promise = new Promise<void>((yes) => { resolve = yes; });
++  releases.push(resolve);
++  return { promise, resolve };
++}
++function observe(promise: Promise<unknown>) {
++  let settled = false;
++  void promise.then(() => { settled = true; }, () => { settled = true; });
++  return () => settled;
++}
++async function until(predicate: () => boolean, label: string) {
++  const end = Date.now() + 4000;
++  while (!predicate()) {
++    if (Date.now() > end) throw new Error(label);
++    await new Promise((resolve) => setTimeout(resolve, 5));
++  }
++}
++function mockFetch(implementation: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>) {
++  return keep(spyOn(globalThis, 'fetch').mockImplementation(Object.assign(implementation, { preconnect() {} })));
++}
++async function fixture(configure?: (runtime: RuntimeServices) => void, withBoot = true) {
++  const fx = await startDaemonFixture({ root: makeOwnedTempDir('daemon-production-boot'),
++    inboxFactory: (context, _routing, options) => registerInboxSurface(context, { ...options, adapters: new Map() }),
++    ...(withBoot ? { createBootOperations(runtime: RuntimeServices) {
++      // Explicit synthetic credential boundary prevents fallback to caller env.
++      keep(spyOn(runtime.serviceRegistry, 'resolveSecret').mockResolvedValue(''));
++      configure?.(runtime);
++      return createDaemonBootOperations(runtime);
++    } } : {}),
++  });
++  fixtures.push(fx);
++  return fx;
++}
++beforeEach(() => {
++  fixtures = []; restores = []; releases = []; notifiers = [];
++  keep(spyOn(ProviderRegistry.prototype, 'refreshLiveModelDiscovery').mockResolvedValue([]));
++  keep(spyOn(BenchmarkStore.prototype, 'refreshBenchmarks').mockResolvedValue());
++  const original = Notifier.fromConfig;
++  keep(spyOn(Notifier, 'fromConfig').mockImplementation(async (...args) => {
++    const notifier = await original(...args); notifiers.push(notifier); return notifier;
++  }));
++});
++afterEach(async () => {
++  for (const release of releases) release();
++  for (const fx of fixtures) await fx.stop();
++  for (const restore of restores.reverse()) restore();
++});
++
++async function plugin(fx: DaemonFixture) {
++  const directory = join(fx.workingDirectory, '.goodvibes', 'plugins', 'production-boot');
++  fs.mkdirSync(directory, { recursive: true });
++  fs.writeFileSync(join(directory, 'manifest.json'), JSON.stringify({ name: 'production-boot', version: '1.0.0', description: 'owned fixture' }));
++  fs.writeFileSync(join(directory, 'index.js'), `
++    let release; export const pending = new Promise(resolve => { release = resolve; });
++    export function finish() { release('finished'); }
++    export function init(api) {
++      api.registerGatewayMethod({ id: 'boot.fixture.held', title: 'Boot fixture', description: 'fixture', category: 'plugins', access: 'authenticated', transport: ['internal'], scopes: [], invokable: true }, () => pending);
++      api.registerChannelPlugin({ id: 'production-boot', surface: 'webhook', displayName: 'Fixture', capabilities: [], webhookPath: '/webhook/production-boot',
++        async handleInbound() { return new Response('production boot fixture', { status: 202 }); } });
++    }
++  `);
++  const module = await import(join(directory, 'index.js')) as { finish(): void };
++  releases.push(module.finish);
++  expect((await fx.services.pluginManager.enable('production-boot')).ok).toBe(true);
++  return module;
++}
++
++test('production boot folds real legacy memory, synchronizes configured service facts and serves an enabled plugin', async () => {
++  const fx = await fixture((runtime) => {
++    keep(spyOn(runtime.serviceRegistry, 'resolveSecret').mockImplementation(async (service, field) => service === 'boot-service' && field === 'primary' ? 'synthetic-service-key' : ''));
++  });
++  await plugin(fx);
++  fs.writeFileSync(join(fx.workingDirectory, '.goodvibes', fx.services.surfaceRoot, 'services.json'), JSON.stringify({
++    'missing-service': { name: 'Missing service', authType: 'bearer', tokenKey: 'missing-fixture-key' },
++    'boot-service': { name: 'Boot fixture service', authType: 'bearer', tokenKey: 'unused-synthetic-key', baseUrl: 'https://example.com/service' },
++  }));
++  const legacyPath = join(fx.workingDirectory, '.goodvibes', 'tui', 'memory.sqlite');
++  fs.mkdirSync(join(legacyPath, '..'), { recursive: true });
++  const source = new MemoryStore(legacyPath, { embeddingRegistry: fx.services.memoryEmbeddingRegistry, enableVectorIndex: false });
++  await source.init();
++  const record = await source.add({ scope: 'project', cls: 'fact', summary: 'synthetic boot migration fact' });
++  await source.save(); source.close();
++  expect(fx.services.memoryStore.get(record.id)).toBeNull();
++  const boot = fx.services.bootTasks!;
++  expect((await boot.start()).state).toBe('ready');
++  expect(fx.services.memoryStore.get(record.id)?.summary).toBe('synthetic boot migration fact');
++  expect(fs.existsSync(legacyPath)).toBe(true);
++  expect(fx.services.runtimeStore.getState().integrations.integrations.get('boot-service')).toMatchObject({
++    displayName: 'Boot fixture service', status: 'healthy', meta: { hasPrimaryCredential: true, hasWebhookUrl: false },
++  });
++  expect(fx.services.runtimeStore.getState().integrations.integrations.get('missing-service')?.status).toBe('unconfigured');
++  const response = await fx.fetch('/webhook/production-boot');
++  expect(response.status).toBe(202); expect(await response.text()).toBe('production boot fixture');
++  await fx.services.close();
++  expect(fx.services.channelPlugins.get('production-boot')).toBeNull();
++  expect(fx.services.pluginManager.isEnabled('production-boot')).toBe(true);
++});
++
++test.each(['provider', 'webhook'] as const)('real graph fences all owners while plugin, provider reload and webhook body drain; release %s first', async (first) => {
++  const reload = gate(); const loaded = gate(); const body = gate(); const cancelling = gate();
++  const nativeWatch = fs.watch;
++  let watching = false; let watchClosed = false;
++  keep(spyOn(fs, 'watch').mockImplementation(((dir: fs.PathLike, options: fs.WatchOptions, callback: fs.WatchListener<string>) => {
++    const watcher = nativeWatch(dir, options, callback);
++    if (String(dir).endsWith('/providers')) {
++      watching = true;
++      const close = watcher.close.bind(watcher);
++      keep(spyOn(watcher, 'close').mockImplementation(() => { watchClosed = true; close(); }));
++    }
++    return watcher;
++  }) as typeof fs.watch));
++  const fx = await fixture();
++  const module = await plugin(fx);
++  const runtime = fx.services;
++  expect((await runtime.bootTasks!.start()).state).toBe('ready');
++  const heldPlugin = fx.invoke('plugin.production-boot.boot.fixture.held');
++  const changes: unknown[] = [];
++  restores.push(runtime.runtimeBus.on('PROVIDERS_CHANGED', (event) => { changes.push(event.payload); }));
++  const load = runtime.providerRegistry.loadCustomProviders;
++  let loadCalls = 0;
++  keep(spyOn(runtime.providerRegistry, 'loadCustomProviders').mockImplementation(async function (this: ProviderRegistry) {
++    loadCalls++; loaded.resolve(); await reload.promise; return load.call(this);
++  }));
++  await until(() => watching, 'provider native watcher readiness');
++  const providers = join(runtime.configManager.getControlPlaneConfigDir(), 'providers');
++  fs.writeFileSync(join(providers, 'boot-provider.json'), JSON.stringify({ name: 'boot-provider', displayName: 'Boot provider', type: 'openai-compat', baseURL: 'http://127.0.0.1:1/v1',
++    models: [{ id: 'owned-model', displayName: 'Owned model', contextWindow: 8192, capabilities: { toolCalling: true, codeEditing: false, reasoning: false, multimodal: false } }] }));
++  await loaded.promise;
++  runtime.webhookNotifier.addUrl(URL);
++  // Only enable the explicit test force bit after replacing all fetch side effects.
++  mockFetch(async (input) => String(input) === URL
++    ? new Response(new ReadableStream({ cancel() { cancelling.resolve(); return body.promise; } }))
++    : new Response('{}', { headers: { 'content-type': 'application/json' } }));
++  Reflect.set(runtime.webhookNotifier, 'force', true);
++  const sending = runtime.webhookNotifier.sendNotification(turn);
++  await cancelling.promise;
++  const calls: string[] = [];
++  const notifier = notifiers[0]!;
++  const closePlugin = runtime.pluginManager.close.bind(runtime.pluginManager);
++  const closeNotifier = notifier.close.bind(notifier);
++  const closeWebhook = runtime.webhookNotifier.close.bind(runtime.webhookNotifier);
++  const closeProvider = runtime.providerRegistry.closeWatching.bind(runtime.providerRegistry);
++  keep(spyOn(runtime.pluginManager, 'close').mockImplementation(() => { calls.push('plugins'); return closePlugin(); }));
++  keep(spyOn(notifier, 'close').mockImplementation(() => { calls.push('notifier'); return closeNotifier(); }));
++  keep(spyOn(runtime.webhookNotifier, 'close').mockImplementation(() => { calls.push('webhook'); return closeWebhook(); }));
++  keep(spyOn(runtime.providerRegistry, 'closeWatching').mockImplementation(() => { calls.push('provider'); return closeProvider(); }));
++  const handlers = keep(spyOn(runtime.daemonHandlers.routing, 'close'));
++  const base = keep(spyOn(runtime.processManager, 'close'));
++  const closing = runtime.close(); const settled = observe(closing);
++  expect(runtime.close()).toBe(closing);
++  await flush();
++  expect(calls).toEqual(['plugins', 'notifier', 'webhook', 'provider']);
++  expect(watchClosed).toBe(true);
++  expect(() => runtime.providerRegistry.startWatching()).toThrow('closed');
++  await expect(notifier.notifyNotification(turn)).rejects.toThrow('closed');
++  expect((await runtime.webhookNotifier.sendNotification(turn)).results[0]?.error).toContain('closed');
++  await flush(); expect(settled()).toBe(false); expect(handlers).not.toHaveBeenCalled(); expect(base).not.toHaveBeenCalled();
++  module.finish(); await heldPlugin;
++  if (first === 'provider') { reload.resolve(); await until(() => runtime.providerRegistry.has('boot-provider'), 'real admitted provider result'); }
++  else { body.resolve(); await sending; }
++  await flush(); expect(settled()).toBe(false); expect(handlers).not.toHaveBeenCalled(); expect(base).not.toHaveBeenCalled();
++  reload.resolve(); body.resolve(); await sending; await closing;
++  expect(runtime.providerRegistry.require('boot-provider').models).toContain('owned-model');
++  expect(changes).toEqual([{ type: 'PROVIDERS_CHANGED', added: ['boot-provider:owned-model'], removed: [], updated: [] }]);
++  expect(loadCalls).toBe(1); expect(handlers).toHaveBeenCalledTimes(1); expect(base).toHaveBeenCalledTimes(1);
++});
++
++test('held real Notifier.fromConfig acquisition closes without attachment or later steps', async () => {
++  const acquired = gate(); const credential = gate(); const retiring = gate(); const retired = gate();
++  const fx = await fixture((runtime) => {
++    keep(spyOn(runtime.serviceRegistry, 'resolveSecret').mockImplementation(async () => { acquired.resolve(); await credential.promise; return ''; }));
++  });
++  const attach = keep(spyOn(Notifier.prototype, 'attachToRuntimeBus'));
++  const closeReal = Notifier.prototype.close;
++  const close = keep(spyOn(Notifier.prototype, 'close').mockImplementation(async function (this: Notifier) {
++    retiring.resolve(); await closeReal.call(this); await retired.promise;
++  }));
++  const sync = keep(spyOn(fx.services.serviceRegistry, 'getAll'));
++  const plugins = keep(spyOn(fx.services.pluginManager, 'init'));
++  const starting = fx.services.bootTasks!.start(); await acquired.promise;
++  sync.mockClear();
++  const closing = fx.services.close(); const settled = observe(closing);
++  credential.resolve(); await retiring.promise;
++  expect(attach).not.toHaveBeenCalled(); expect(close).toHaveBeenCalledTimes(1);
++  expect(fx.services.runtimeStore.getState().integrations.integrations.has('slack')).toBe(false);
++  expect(sync).not.toHaveBeenCalled(); expect(plugins).not.toHaveBeenCalled();
++  expect(settled()).toBe(false);
++  await expect(notifiers[0]!.notifyNotification(turn)).rejects.toThrow('closed');
++  retired.resolve(); await starting; await closing;
++  expect(close).toHaveBeenCalledTimes(1);
++});
++
++test('zero-URL boot attaches the shared webhook and both real owners read live fail-closed privacy', async () => {
++  let policy: unknown = false;
++  const fx = await fixture((runtime) => {
++    const get = runtime.configManager.get.bind(runtime.configManager);
++    keep(spyOn(runtime.configManager, 'get').mockImplementation(((key: string) => {
++      if (key !== NOTIFICATIONS_METADATA_ONLY_KEY) return get(key as never);
++      if (policy === 'throw') throw new Error(PRIVATE);
++      if (policy === 'async') return Promise.reject(new Error(PRIVATE));
++      return policy;
++    }) as never));
++    keep(spyOn(runtime.serviceRegistry, 'resolveSecret').mockImplementation(async (service, field) => service === 'slack' && field === 'webhookUrl' ? URL : ''));
++  });
++  fs.writeFileSync(join(fx.workingDirectory, '.goodvibes', fx.services.surfaceRoot, 'services.json'), JSON.stringify({
++    slack: { name: 'Slack webhook only', authType: 'bearer', tokenKey: '', webhookUrlKey: 'synthetic-only' },
++  }));
++  const runtime = fx.services;
++  const attach = keep(spyOn(runtime.webhookNotifier, 'attachToRuntimeBus'));
++  expect((await runtime.bootTasks!.start()).state).toBe('ready');
++  expect(runtime.webhookNotifier.getUrls()).toEqual([]); expect(attach).toHaveBeenCalledTimes(1);
++  expect(runtime.runtimeStore.getState().integrations.integrations.get('slack')).toMatchObject({
++    category: 'communication', status: 'healthy', successCount: 0, errorCount: 0,
++    meta: { attempts: 0, retrying: 0, deadLetters: 0, dlqSize: 0, hasPrimaryCredential: false, hasWebhookUrl: true },
++  });
++  expect(runtime.runtimeStore.getState().integrations.integrations.has('webhooks')).toBe(false);
++  const sent: string[] = [];
++  mockFetch(async (_input, init) => { sent.push(String(init?.body)); return new Response('ok'); });
++  Reflect.set(runtime.webhookNotifier, 'force', true);
++  runtime.webhookNotifier.addUrl(URL);
++  emitContractPassed(runtime.runtimeBus, { sessionId: 'synthetic-session', traceId: 'synthetic-trace', source: 'boot-fixture' }, { contractId: 'synthetic-contract', criteriaMet: 1, criteriaJudged: 1, excluded: 0, nudges: 0 });
++  await until(() => sent.length === 2, 'shared bus webhook and configured notifier delivery');
++  await flush(); expect(sent).toHaveLength(2);
++  for (const value of [false, true, undefined, 'unknown', 'throw', 'async', false]) {
++    policy = value; sent.length = 0;
++    await runtime.webhookNotifier.sendNotification(turn);
++    await notifiers[0]!.notifyNotification(turn);
++    expect(sent).toHaveLength(2);
++    for (const body of sent) {
++      if (value === false) expect(body).toContain(PRIVATE);
++      else expect(body).not.toContain(PRIVATE);
++    }
++  }
++});
++
++test('a shared webhook is owned even when no boot factory is supplied', async () => {
++  const fx = await fixture(undefined, false);
++  fx.services.webhookNotifier.addUrl(URL);
++  await fx.services.close();
++  expect((await fx.services.webhookNotifier.send('unused')).results[0]?.error).toContain('closed');
++});
++
++test('configured webhook facts reflect the actual shared owner at attachment', async () => {
++  const fx = await fixture((runtime) => runtime.configManager.mergeCategory('notifications', { webhookUrls: [URL] }));
++  expect((await fx.services.bootTasks!.start()).state).toBe('ready');
++  expect(fx.services.webhookNotifier.getUrls()).toEqual([URL]);
++  expect(fx.services.runtimeStore.getState().integrations.integrations.get('webhooks')).toMatchObject({
++    category: 'communication', status: 'healthy', meta: { urlCount: 1 },
++  });
++});
++
++test('a failed real memory fold is degraded rather than silently ready', async () => {
++  const fx = await fixture();
++  const directory = join(fx.workingDirectory, '.goodvibes', 'tui');
++  fs.mkdirSync(directory, { recursive: true });
++  fs.writeFileSync(join(directory, 'memory.sqlite'), 'synthetic invalid sqlite fixture');
++  const snapshot = await fx.services.bootTasks!.start();
++  expect(snapshot.state).toBe('degraded');
++  expect(snapshot.steps.find((step) => step.name === 'memory-fold')?.state).toBe('failed');
++  expect(snapshot.steps.find((step) => step.name === 'plugins')?.state).toBe('ready');
++});
++
++test('failed graph boot composition closes its already-acquired shared webhook', async () => {
++  let runtime: RuntimeServices | undefined;
++  const failure = new Error('synthetic composition failure');
++  await expect(fixture((services) => { runtime = services; throw failure; })).rejects.toBe(failure);
++  if (!runtime) throw new Error('graph never reached boot composition');
++  runtime.webhookNotifier.addUrl(URL);
++  expect((await runtime.webhookNotifier.send('unused')).results[0]?.error).toContain('closed');
++});
++
++test.each(['notifier', 'configured-services'] as const)('a rejected %s credential read cannot hide a held sibling from graph shutdown', async (step) => {
++  const entered = gate(); const held = gate();
++  const failures: unknown[] = [];
++  const warn = logger.warn.bind(logger);
++  keep(spyOn(logger, 'warn').mockImplementation((message, meta) => {
++    if (message === 'Daemon boot step failed') failures.push(meta);
++    warn(message, meta);
++  }));
++  let released = false;
++  const fx = await fixture((runtime) => {
++    keep(spyOn(runtime.serviceRegistry, 'resolveSecret').mockImplementation(async (service, field) => {
++      const selected = step === 'notifier' ? service === 'slack' : service === 'boot-service';
++      if (!selected) return '';
++      if (field === 'primary') { entered.resolve(); await held.promise; released = true; return ''; }
++      throw new Error(PRIVATE);
++    }));
++  });
++  if (step === 'configured-services') {
++    fs.writeFileSync(join(fx.workingDirectory, '.goodvibes', fx.services.surfaceRoot, 'services.json'), JSON.stringify({
++      'boot-service': { name: 'Boot service', authType: 'bearer', tokenKey: 'synthetic-only' },
++    }));
++  }
++  const starting = fx.services.bootTasks!.start(); await entered.promise;
++  await flush();
++  expect(failures).toEqual([]);
++  const base = keep(spyOn(fx.services.processManager, 'close'));
++  const closing = fx.services.close(); const settled = observe(closing);
++  await flush(); expect(settled()).toBe(false); expect(released).toBe(false); expect(base).not.toHaveBeenCalled();
++  held.resolve(); await starting; await closing;
++  expect(released).toBe(true); expect(base).toHaveBeenCalledTimes(1);
++  expect(failures).toEqual([{ step }]);
++  expect(fx.services.bootTasks!.snapshot().steps.find((value) => value.name === step)?.state).toBe('failed');
++});
+diff --git a/products/daemon/src/test/runtime/boot-shutdown-admission.test.ts b/products/daemon/src/test/runtime/boot-shutdown-admission.test.ts
+new file mode 100644
+index 0000000..4312606
+--- /dev/null
++++ b/products/daemon/src/test/runtime/boot-shutdown-admission.test.ts
+@@ -0,0 +1,146 @@
++import { expect, test } from 'bun:test';
++import { setImmediate } from 'node:timers/promises';
++import { createDaemonBootController, type DaemonBootAttachment, type DaemonBootOperations } from '../../runtime/boot-tasks.js';
++
++function gate() {
++  let resolve!: () => void;
++  let reject!: (error: unknown) => void;
++  const promise = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
++  return { promise, resolve, reject };
++}
++
++function fixture(overrides: Partial<DaemonBootOperations> = {}) {
++  const events: string[] = [];
++  const owner = (name: string): DaemonBootAttachment => ({
++    attach() { events.push(`attach:${name}`); },
++    close() { events.push(`close:${name}`); },
++  });
++  const operations: DaemonBootOperations = {
++    async foldMemory() {},
++    startProviderWatch() { events.push('watch'); },
++    stopProviderWatch() { events.push('close:provider'); },
++    createWebhooks() { return owner('webhooks'); },
++    createNotifier() { return owner('notifier'); },
++    async synchronizeServices() {},
++    async initializePlugins() {},
++    async closePlugins() { events.push('close:plugins'); },
++    reportFailure(step) { events.push(`failure:${step}`); },
++    ...overrides,
++  };
++  return { controller: createDaemonBootController(operations), events };
++}
++
++test('shutdown invokes every acquired admission fence before awaiting held plugin cleanup', async () => {
++  const pluginEntered = gate();
++  const pluginCleanup = gate();
++  const fx = fixture({
++    async closePlugins() {
++      fx.events.push('close:plugins');
++      pluginEntered.resolve();
++      await pluginCleanup.promise;
++      fx.events.push('drained:plugins');
++    },
++  });
++  await fx.controller.start();
++  let closed = false;
++  const closing = fx.controller.close().then(() => { closed = true; });
++  try {
++    await pluginEntered.promise;
++    // These are invocation assertions, not eventual drain assertions. A held
++    // plugin may still use its dependencies, but those owners must stop admitting
++    // fresh notifications and reloads as soon as graph shutdown starts.
++    expect(fx.events.filter((event) => event.startsWith('close:'))).toEqual([
++      'close:plugins', 'close:notifier', 'close:webhooks', 'close:provider',
++    ]);
++    expect(closed).toBe(false);
++    expect(fx.controller.snapshot().state).toBe('closing');
++  } finally {
++    pluginCleanup.resolve();
++    await closing;
++  }
++  expect(fx.controller.snapshot().state).toBe('closed');
++}, 1_000);
++
++function reentrantProviderFixture() {
++  const lateCleanup = gate();
++  const cleanupEntered = gate();
++  let watchAdmitted = false;
++  let lateDrainFinished = false;
++  let closing: Promise<void> | undefined;
++  const fx = fixture({
++    startProviderWatch() {
++      // The operation may synchronously reenter shutdown before finishing its
++      // own acquisition. The finally branch must own the cleanup after return.
++      closing = fx.controller.close();
++      watchAdmitted = true;
++    },
++    stopProviderWatch() {
++      if (!watchAdmitted) return Promise.resolve();
++      watchAdmitted = false;
++      cleanupEntered.resolve();
++      const cleanup = lateCleanup.promise.then(() => { lateDrainFinished = true; });
++      // Observe the fixture's rejection so the failure test can check the
++      // controller's own result instead of crashing on an unhandled rejection.
++      void cleanup.catch(() => {});
++      return cleanup;
++    },
++  });
++  const starting = fx.controller.start();
++  return {
++    ...fx,
++    starting,
++    lateCleanup,
++    cleanupEntered,
++    closing: () => {
++      if (!closing) throw new Error('Provider fixture has not entered shutdown');
++      return closing;
++    },
++    lateDrainFinished: () => lateDrainFinished,
++  };
++}
++
++test('shutdown owns async provider cleanup admitted during reentrant watcher startup', async () => {
++  const fx = reentrantProviderFixture();
++  await fx.cleanupEntered.promise;
++  let closed = false;
++  const closing = fx.closing().then(() => { closed = true; });
++  try {
++    // One event-loop turn lets every runnable continuation settle. The test
++    // does not wait for a wall-clock delay or release the only held drain.
++    await setImmediate();
++    expect(fx.lateDrainFinished()).toBe(false);
++    expect(closed).toBe(false);
++    expect(fx.controller.snapshot().state).toBe('closing');
++  } finally {
++    fx.lateCleanup.resolve();
++    await fx.starting;
++    await closing;
++  }
++  expect(fx.lateDrainFinished()).toBe(true);
++  expect(fx.controller.snapshot().state).toBe('closed');
++}, 1_000);
++
++test('reentrant provider cleanup rejection is returned by controller close', async () => {
++  const fx = reentrantProviderFixture();
++  const failure = new Error('owned provider cleanup rejected');
++  await fx.cleanupEntered.promise;
++  const closing = fx.closing();
++  // Install the rejection observation before releasing the cleanup gate.
++  const outcome = closing.then(
++    () => ({ state: 'resolved' as const }),
++    (error: unknown) => ({ state: 'rejected' as const, error }),
++  );
++  fx.lateCleanup.reject(failure);
++  try {
++    const result = await outcome;
++    expect(result.state).toBe('rejected');
++    if (result.state === 'rejected') {
++      expect(JSON.stringify(result.error)).not.toContain(failure.message);
++      expect(result.error).toMatchObject({ failures: [{ label: 'provider watch', error: new Error('provider watch cleanup failed') }] });
++    }
++    expect(fx.controller.snapshot().state).toBe('failed');
++  } finally {
++    await fx.starting;
++    await outcome;
++  }
++}, 1_000);
+diff --git a/products/daemon/src/test/runtime/boot-tasks.test.ts b/products/daemon/src/test/runtime/boot-tasks.test.ts
+index cfdfc26..a2a96ac 100644
+--- a/products/daemon/src/test/runtime/boot-tasks.test.ts
++++ b/products/daemon/src/test/runtime/boot-tasks.test.ts
+@@ -129,11 +129,11 @@ test('plugin shutdown begins while its admitted initialization is held', async (
+   expect(fx.controller.snapshot().state).toBe('closed');
+ });
+ 
+-test('cleanup failure preserves the failure while all remaining owners retire', async () => {
++test('cleanup failure is bounded while all remaining owners retire', async () => {
+   const failure = new Error('fixture cleanup failed');
+   const fx = fixture({ async closePlugins() { throw failure; } });
+   await fx.controller.start();
+-  await expect(fx.controller.close()).rejects.toMatchObject({ failures: [{ label: 'plugins', error: failure }] });
++  await expect(fx.controller.close()).rejects.toMatchObject({ failures: [{ label: 'plugins', error: new Error('plugins cleanup failed') }] });
+   expect(fx.events.slice(-3)).toEqual(['close:notifier', 'close:webhooks', 'stop-watch']);
+   expect(fx.controller.snapshot().state).toBe('failed');
+ });
+@@ -195,3 +195,21 @@ test('close owns a held reporting promise and fences subsequent boot steps', asy
+   expect(fx.events).toEqual([]);
+   expect(fx.controller.snapshot().state).toBe('closed');
+ });
++
++test('hostile cleanup rejections are neither inspected nor retained', async () => {
++  let reads = 0;
++  const failure = new Proxy({}, { get() { reads++; throw new Error('private property'); }, getPrototypeOf() { reads++; throw new Error('private prototype'); } });
++  const fx = fixture({ closePlugins() { return Promise.reject(failure); } });
++  await fx.controller.start();
++  const closing = fx.controller.close();
++  expect(fx.controller.close()).toBe(closing);
++  await expect(closing).rejects.toMatchObject({ failures: [{ label: 'plugins', error: new Error('plugins cleanup failed') }] });
++  expect(reads).toBe(0);
++});
++
++test('a cleanup directly returning the reentrant controller close rejects without a self-drain deadlock', async () => {
++  const fx = fixture({ closePlugins() { return fx.controller.close(); } });
++  await fx.controller.start();
++  await expect(fx.controller.close()).rejects.toMatchObject({ failures: [{ label: 'plugins', error: new Error('plugins cleanup failed') }] });
++  expect(fx.events.slice(-3)).toEqual(['close:notifier', 'close:webhooks', 'stop-watch']);
++}, 1000);
