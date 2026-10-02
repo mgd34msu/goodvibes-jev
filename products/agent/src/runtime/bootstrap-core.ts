@@ -11,6 +11,7 @@ import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { registerAllTools } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { PermissionManager } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { createRuntimeNotifier } from './bootstrap-notifier.ts';
+import { readAgentHostSetting } from '../config/host-settings.ts';
 
 import { Compositor } from '../renderer/compositor.ts';
 import type { PermissionRequestHandler } from '@goodvibes-jev/engine/sdk/platform/permissions';
@@ -443,7 +444,7 @@ export async function initializeBootstrapCore(
     }, 'bootstrap.webhooks');
   }
 
-  const notifier = await createRuntimeNotifier(services.serviceRegistry, (key) => configManager.get(key as Parameters<typeof configManager.get>[0]));
+  const notifier = await createRuntimeNotifier(services.serviceRegistry, (key) => readAgentHostSetting(configManager, key));
   const queueStatuses = notifier.getQueueStatus();
   if (queueStatuses.length > 0) {
     notifier.attachToRuntimeBus(runtimeBus);

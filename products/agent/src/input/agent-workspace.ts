@@ -1,6 +1,6 @@
 import type { MemoryApi } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import type { MemoryRecord } from '@goodvibes-jev/engine/sdk/platform/state';
-import type { ConfigSetting } from '@goodvibes-jev/engine/sdk/platform/config';
+import type { AgentConfigSetting } from '../config/settings-catalog.ts';
 import type { ShellPathService } from '@/runtime/index.ts';
 import type { CommandContext } from './command-registry.ts';
 import { AgentNoteRegistry } from '../agent/note-registry.ts';
@@ -481,7 +481,7 @@ export class AgentWorkspace {
     return this.selectedLocalLibraryItem('routine');
   }
 
-  private async applySettingValue(setting: ConfigSetting, value: unknown, requestRender?: () => void): Promise<void> {
+  private async applySettingValue(setting: AgentConfigSetting, value: unknown, requestRender?: () => void): Promise<void> {
     const outcome = await applyAgentWorkspaceSettingValue(this.context, setting, value);
     this.runtimeSnapshot = this.context ? buildAgentWorkspaceRuntimeSnapshot(this.context) : this.runtimeSnapshot;
     this.clampSelection();

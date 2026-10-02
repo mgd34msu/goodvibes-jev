@@ -1,4 +1,4 @@
-import type { ConfigSetting } from '@goodvibes-jev/engine/sdk/platform/config';
+import type { AgentConfigSetting } from '../config/settings-catalog.ts';
 import type { ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ProviderAuthFreshness, ProviderAuthRoute } from '@/runtime/index.ts';
 import type { FeatureSetting, FlagState } from '@/runtime/index.ts';
@@ -183,10 +183,11 @@ export const SETTINGS_CATEGORY_GROUPS: ReadonlyArray<{
 export const SETTINGS_CATEGORIES: SettingsCategory[] = SETTINGS_CATEGORY_GROUPS.flatMap(group => group.categories);
 
 export interface SettingEntry {
-  setting: ConfigSetting;
+  setting: AgentConfigSetting;
   currentValue: unknown;
   isDefault: boolean;
-  effectiveSource?: 'default' | 'local' | 'synced' | 'managed';
+  effectiveSource?: 'default' | 'local' | 'synced' | 'managed' | 'unavailable';
+  metadataUnavailable?: string;
   locked?: boolean;
   conflict?: boolean;
   sourceLabel?: string;

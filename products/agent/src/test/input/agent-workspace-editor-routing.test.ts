@@ -12,6 +12,7 @@
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync } from 'node:fs';
 import { AgentConfigManager } from '../../config/host-settings.ts';
+import { getAgentSettingsSchema } from '../../config/settings-catalog.ts';
 import type { InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
 import { AgentRoutineRegistry } from '../../agent/routine-registry.ts';
 import { AGENT_WORKSPACE_CATEGORIES } from '../../input/agent-workspace-categories.ts';
@@ -412,7 +413,7 @@ describe('settingKey exhaustiveness against the Agent instance schema', () => {
     'every settingKey in AGENT_WORKSPACE_CATEGORIES resolves in the real Agent instance schema',
     () => {
       const config = new AgentConfigManager({ configDir: makeProjectTempDir('agent-settings-schema'), readOnly: true });
-      const schemaKeys = new Set<string>(config.getSchema().map((s) => s.key));
+      const schemaKeys = new Set<string>(getAgentSettingsSchema(config).map((s) => s.key));
       const keys = collectSettingKeys(AGENT_WORKSPACE_CATEGORIES);
       const failures = keys.filter(
         (k) => !schemaKeys.has(k),
@@ -425,7 +426,7 @@ describe('settingKey exhaustiveness against the Agent instance schema', () => {
     'every settingKey in AGENT_WORKSPACE_ONBOARDING_DETAIL_CATEGORIES resolves in the real Agent instance schema',
     () => {
       const config = new AgentConfigManager({ configDir: makeProjectTempDir('agent-settings-schema'), readOnly: true });
-      const schemaKeys = new Set<string>(config.getSchema().map((s) => s.key));
+      const schemaKeys = new Set<string>(getAgentSettingsSchema(config).map((s) => s.key));
       const keys = collectSettingKeys(AGENT_WORKSPACE_ONBOARDING_DETAIL_CATEGORIES);
       const failures = keys.filter(
         (k) => !schemaKeys.has(k),

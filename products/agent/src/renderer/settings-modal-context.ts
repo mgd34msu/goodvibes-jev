@@ -168,7 +168,8 @@ function buildSettingContext(modal: SettingsModal, entry: SettingEntry): string[
     `Source: ${entry.effectiveSource ?? 'default'}${entry.sourceLabel ? ` from ${entry.sourceLabel}` : ''}`,
   ];
 
-  if (entry.locked) lines.push(`Locked: ${entry.lockReason ?? 'This setting is locked by a higher-priority layer.'}`);
+  if (entry.metadataUnavailable) lines.push(`Editing unavailable: ${entry.metadataUnavailable}`);
+  else if (entry.locked) lines.push(`Locked: ${entry.lockReason ?? 'This setting is locked by a higher-priority layer.'}`);
   if (entry.conflict) lines.push(`Conflict: inspect with /settings and resolve host-owned sync state in the owning host.`);
 
   lines.push('', entry.setting.description);
@@ -186,7 +187,7 @@ function buildSettingContext(modal: SettingsModal, entry: SettingEntry): string[
   if (entry.setting.type === 'boolean') {
     lines.push('');
     lines.push('Possible values:');
-    if (String(entry.setting.key) === NOTIFICATIONS_METADATA_ONLY_KEY) {
+    if (entry.setting.key === NOTIFICATIONS_METADATA_ONLY_KEY) {
       lines.push('true: Keep notifications metadata-only (restrictive default).');
       lines.push('false: Explicitly permit notification details on supported paths.');
     } else {

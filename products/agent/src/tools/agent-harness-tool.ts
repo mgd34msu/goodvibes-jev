@@ -55,7 +55,7 @@ import { describeHarnessMode, HARNESS_MODE_DESCRIPTORS, listHarnessModes, type A
 import { describeHarnessUiSurface, listHarnessUiSurfaces, openHarnessUiSurface, totalHarnessUiSurfaces } from './agent-harness-ui-surface-metadata.ts';
 import { AGENT_WORKSPACE_CATEGORIES, allWorkspaceActions, buildWorkspaceEditorContext, describeWorkspaceAction, describeWorkspaceCategory, listWorkspaceActions, resolveWorkspaceActionDetail } from './agent-harness-workspace-actions.ts';
 import { connectedHostSummary, describeConnectedHostCapability, settingsPolicySummary } from './agent-harness-metadata.ts';
-import { formatHarnessError, resetHarnessSetting, resolveEffectiveHarnessSetting, setHarnessSetting } from '../agent/harness-control.ts';
+import { countHarnessSettingCatalog, formatHarnessError, resetHarnessSetting, resolveEffectiveHarnessSetting, setHarnessSetting } from '../agent/harness-control.ts';
 import { harnessSettingsCatalog } from './agent-harness-settings-catalog.ts';
 import { buildAssistantCockpitFromSummaries } from '../agent/assistant-cockpit.ts';
 import { remoteCatalogStatus, remotePairApproveHandoff, remotePairRejectHandoff, remotePairRequestsSummary, remotePeersInvokeHandoff, remotePeersSummary, remoteSnapshotSummary, remoteWorkCancelHandoff, remoteWorkSummary } from './agent-harness-remote.ts';
@@ -259,7 +259,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
             supportBundles,
             mediaPosture,
             sessions,
-            settings: deps.commandContext.platform.configManager.getSchema().length,
+            settings: countHarnessSettingCatalog(deps.commandContext.platform.configManager, { includeHidden: true }),
             workspaceCategories: AGENT_WORKSPACE_CATEGORIES.length,
             workspaceActions: allWorkspaceActions().length,
             tools: deps.toolRegistry.getToolDefinitions().length,

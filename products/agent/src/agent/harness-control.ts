@@ -1,5 +1,6 @@
-import type { ConfigKey, ConfigManager, ConfigSetting } from '@goodvibes-jev/engine/sdk/platform/config';
+import type { ConfigManager, ConfigSetting } from '@goodvibes-jev/engine/sdk/platform/config';
 import { AGENT_NOTIFICATIONS_METADATA_ONLY_KEY } from '../config/host-settings.ts';
+import { getAgentSettingsSchema, type AgentConfigSetting, type AgentHostReader, type AgentSettingsCatalog } from '../config/settings-catalog.ts';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { applyWakeEnablementCompanion, type WakeCompanionWrite } from '../config/wake-enablement-companion.ts';
 import type { SecretsManager } from '../config/secrets.ts';
@@ -98,6 +99,8 @@ export interface HarnessSettingDescriptor {
    * as the setting's value, the default would read as the current setting.
    */
   readonly valueUnavailable?: boolean;
+  /** Host policy metadata could not be verified; editing is unavailable. */
+  readonly metadataUnavailable?: string;
 }
 
 export interface HarnessSettingSummary {
@@ -119,6 +122,7 @@ export interface HarnessSettingSummary {
   readonly valueStore?: string;
   /** True when the daemon owns this key and its current value is unknown. */
   readonly valueUnavailable?: boolean;
+  readonly metadataUnavailable?: string;
 }
 
 export interface HarnessSettingMutationResult {
@@ -202,9 +206,9 @@ function clampLimit(value: unknown, fallback = DEFAULT_SETTING_LIMIT): number {
   return Math.max(1, Math.min(MAX_SETTING_LIMIT, Math.trunc(value)));
 }
 
-function findSetting(configManager: Pick<ConfigManager, 'getSchema'>, rawKey: string): ConfigSetting | null {
+function findSetting(configManager: AgentSettingsCatalog, rawKey: string): AgentConfigSetting | null {
   if (!rawKey) return null;
-  return configManager.getSchema().find((setting) => setting.key === rawKey) ?? null;
+  return getAgentSettingsSchema(configManager).find((setting) => setting.key === rawKey) ?? null;
 }
 
 /**
@@ -225,7 +229,7 @@ function settingKeyWords(key: string): string {
  * The aliases are indexed, never displayed. A row's `description` is still the
  * schema's own sentence.
  */
-function settingLookupText(setting: ConfigSetting): string {
+function settingLookupText(setting: AgentConfigSetting): string {
   return [
     setting.key,
     settingKeyWords(setting.key),
@@ -248,7 +252,7 @@ function matchedTokenCount(tokens: readonly string[], text: string): number {
  * the row into the page at all, so it should not also push it to the top over a
  * key that literally says the word.
  */
-function settingRelevance(setting: ConfigSetting, query: string): number {
+function settingRelevance(setting: AgentConfigSetting, query: string): number {
   const tokens = catalogSearchTokens(query);
   if (tokens.length === 0) return 0;
   const keyText = `${setting.key}\n${settingKeyWords(setting.key)}`.toLowerCase();
@@ -262,7 +266,7 @@ function settingRelevance(setting: ConfigSetting, query: string): number {
   return score;
 }
 
-function settingCandidate(setting: ConfigSetting): HarnessSettingCandidate {
+function settingCandidate(setting: AgentConfigSetting): HarnessSettingCandidate {
   return {
     key: setting.key,
     category: setting.key.split('.')[0] ?? '',
@@ -298,7 +302,7 @@ export function redactHarnessSettingValue(key: string, value: unknown): unknown 
   return value;
 }
 
-function settingModelRoute(setting: ConfigSetting): string {
+function settingModelRoute(setting: AgentConfigSetting): string {
   // There is no read-only route any more. It existed solely for the retired
   // blanket host-owned lock, and no key resolved to it once that lock's lists
   // were emptied.
@@ -316,11 +320,22 @@ function settingModelRoute(setting: ConfigSetting): string {
  * not set when it was.
  */
 function resolveSettingValue(
-  configManager: Pick<ConfigManager, 'get'>,
-  setting: ConfigSetting,
+  configManager: Pick<ConfigManager, 'get'> & AgentHostReader,
+  setting: AgentConfigSetting,
   view: EffectiveConfigView | undefined,
-): { value: unknown; unavailable: boolean; source?: string; store?: string } {
-  if (!view) return { value: configManager.get(setting.key as ConfigKey), unavailable: false };
+): { value: unknown; unavailable: boolean; source?: string; store?: string; writable?: boolean; metadataUnavailable?: string } {
+  if (setting.kind === 'host') {
+    const handle = configManager.getHostBooleanSetting?.(setting.key);
+    if (!handle) return { value: undefined, unavailable: true, writable: false, metadataUnavailable: 'Host settings are unavailable.' };
+    const value = handle.get();
+    try {
+      const resolved = handle.getResolved();
+      return { value, unavailable: false, source: 'local', writable: resolved.managedLock === null };
+    } catch (error) {
+      return { value, unavailable: false, source: 'local', writable: false, metadataUnavailable: summarizeError(error) };
+    }
+  }
+  if (!view) return { value: configManager.get(setting.key), unavailable: false };
   const entry = view.describe(setting.key);
   if (entry.status === 'unavailable') {
     return { value: undefined, unavailable: true, source: entry.source, store: entry.store };
@@ -329,8 +344,8 @@ function resolveSettingValue(
 }
 
 export function describeHarnessSetting(
-  configManager: Pick<ConfigManager, 'get'>,
-  setting: ConfigSetting,
+  configManager: Pick<ConfigManager, 'get'> & AgentHostReader,
+  setting: AgentConfigSetting,
   options: { readonly lookup?: HarnessSettingLookup; readonly view?: EffectiveConfigView } = {},
 ): HarnessSettingDescriptor {
   const resolved = resolveSettingValue(configManager, setting, options.view);
@@ -341,7 +356,7 @@ export function describeHarnessSetting(
     value: redactHarnessSettingValue(setting.key, resolved.value),
     default: redactHarnessSettingValue(setting.key, setting.default),
     configured: !resolved.unavailable && !valuesEqual(resolved.value, setting.default),
-    writable: true,
+    writable: resolved.writable ?? true,
     visibleInWorkspace: !isAgentHiddenSettingKey(setting.key),
     modelRoute: settingModelRoute(setting),
     description: setting.description,
@@ -349,14 +364,15 @@ export function describeHarnessSetting(
     ...(resolved.source ? { valueSource: resolved.source } : {}),
     ...(resolved.store ? { valueStore: resolved.store } : {}),
     ...(resolved.unavailable ? { valueUnavailable: true } : {}),
+    ...(resolved.metadataUnavailable ? { metadataUnavailable: resolved.metadataUnavailable } : {}),
     ...(setting.enumValues ? { enumValues: setting.enumValues } : {}),
     ...(options.lookup ? { lookup: options.lookup } : {}),
   };
 }
 
 export function describeHarnessSettingSummary(
-  configManager: Pick<ConfigManager, 'get'>,
-  setting: ConfigSetting,
+  configManager: Pick<ConfigManager, 'get'> & AgentHostReader,
+  setting: AgentConfigSetting,
   options: { readonly view?: EffectiveConfigView } = {},
 ): HarnessSettingSummary {
   const resolved = resolveSettingValue(configManager, setting, options.view);
@@ -366,7 +382,7 @@ export function describeHarnessSettingSummary(
     type: setting.type,
     value: redactHarnessSettingValue(setting.key, resolved.value),
     configured: !resolved.unavailable && !valuesEqual(resolved.value, setting.default),
-    writable: true,
+    writable: resolved.writable ?? true,
     visibleInWorkspace: !isAgentHiddenSettingKey(setting.key),
     modelRoute: settingModelRoute(setting),
     summary: previewText(setting.description),
@@ -374,6 +390,7 @@ export function describeHarnessSettingSummary(
     ...(resolved.source ? { valueSource: resolved.source } : {}),
     ...(resolved.store ? { valueStore: resolved.store } : {}),
     ...(resolved.unavailable ? { valueUnavailable: true } : {}),
+    ...(resolved.metadataUnavailable ? { metadataUnavailable: resolved.metadataUnavailable } : {}),
     ...(setting.enumValues ? { enumValues: setting.enumValues } : {}),
   };
 }
@@ -384,14 +401,14 @@ export function describeHarnessSettingSummary(
  * page must report as its `total`.
  */
 function harnessSettingCatalog(
-  configManager: Pick<ConfigManager, 'getSchema'>,
+  configManager: AgentSettingsCatalog,
   filters: HarnessSettingFilters = {},
-): readonly ConfigSetting[] {
+): readonly AgentConfigSetting[] {
   const key = filters.key?.trim();
   const category = filters.category?.trim();
   const prefix = filters.prefix?.trim();
 
-  return configManager.getSchema()
+  return getAgentSettingsSchema(configManager)
     .filter((setting) => {
       if (key && setting.key !== key) return false;
       if (category && setting.key.split('.')[0] !== category) return false;
@@ -410,9 +427,9 @@ function harnessSettingCatalog(
  * key 400 rows down has not answered anything.
  */
 function searchHarnessSettingSchema(
-  configManager: Pick<ConfigManager, 'getSchema'>,
+  configManager: AgentSettingsCatalog,
   filters: HarnessSettingFilters = {},
-): CatalogSearchResult<ConfigSetting> {
+): CatalogSearchResult<AgentConfigSetting> {
   const narrowed = harnessSettingCatalog(configManager, filters);
   const query = filters.query?.trim() ?? '';
   if (!query) return { matches: narrowed, relaxed: false };
@@ -426,9 +443,9 @@ function searchHarnessSettingSchema(
 }
 
 function filterHarnessSettingSchema(
-  configManager: Pick<ConfigManager, 'getSchema'>,
+  configManager: AgentSettingsCatalog,
   filters: HarnessSettingFilters = {},
-): readonly ConfigSetting[] {
+): readonly AgentConfigSetting[] {
   return searchHarnessSettingSchema(configManager, filters).matches;
 }
 
@@ -444,7 +461,7 @@ function filterHarnessSettingSchema(
  * sentence, "no settings matched X; N exist", possible to write.
  */
 export function countHarnessSettingCatalog(
-  configManager: Pick<ConfigManager, 'getSchema'>,
+  configManager: AgentSettingsCatalog,
   filters: HarnessSettingFilters = {},
 ): number {
   return harnessSettingCatalog(configManager, filters).length;
@@ -452,14 +469,14 @@ export function countHarnessSettingCatalog(
 
 /** True when a page's rows matched single words rather than the whole query. */
 export function harnessSettingQueryRelaxed(
-  configManager: Pick<ConfigManager, 'getSchema'>,
+  configManager: AgentSettingsCatalog,
   filters: HarnessSettingFilters = {},
 ): boolean {
   return searchHarnessSettingSchema(configManager, filters).relaxed;
 }
 
 export function listHarnessSettings(
-  configManager: Pick<ConfigManager, 'get' | 'getSchema'>,
+  configManager: Pick<ConfigManager, 'get'> & AgentSettingsCatalog,
   filters: HarnessSettingFilters = {},
   options: { readonly includeParameters?: boolean; readonly view?: EffectiveConfigView } = {},
 ): readonly (HarnessSettingDescriptor | HarnessSettingSummary)[] {
@@ -498,14 +515,14 @@ export async function listEffectiveHarnessSettings(
 }
 
 export function countHarnessSettings(
-  configManager: Pick<ConfigManager, 'getSchema'>,
+  configManager: AgentSettingsCatalog,
   filters: HarnessSettingFilters = {},
 ): number {
   return filterHarnessSettingSchema(configManager, filters).length;
 }
 
 export function getHarnessSetting(
-  configManager: Pick<ConfigManager, 'get' | 'getSchema'>,
+  configManager: Pick<ConfigManager, 'get'> & AgentSettingsCatalog,
   key: string,
   lookup?: HarnessSettingLookup,
   view?: EffectiveConfigView,
@@ -534,7 +551,7 @@ export async function getEffectiveHarnessSetting(
 }
 
 export function resolveHarnessSetting(
-  configManager: Pick<ConfigManager, 'get' | 'getSchema'>,
+  configManager: Pick<ConfigManager, 'get'> & AgentSettingsCatalog,
   args: HarnessSettingLookupArgs,
   view?: EffectiveConfigView,
 ): HarnessSettingResolution | null {
@@ -552,7 +569,7 @@ export function resolveHarnessSetting(
   }
 
   const inputLower = lookup.input.toLowerCase();
-  const schema = configManager.getSchema();
+  const schema = getAgentSettingsSchema(configManager);
   const caseInsensitiveMatches = schema.filter((setting) => setting.key.toLowerCase() === inputLower);
   if (caseInsensitiveMatches.length === 1) {
     const resolvedLookup = { ...lookup, resolvedBy: 'case-insensitive-key' as const };
@@ -615,8 +632,8 @@ function coerceBoolean(value: unknown): boolean {
   throw new Error(`Expected boolean value, got ${String(value)}.`);
 }
 
-export function coerceHarnessSettingValue(setting: ConfigSetting, value: unknown): unknown {
-  if (String(setting.key) === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY) {
+export function coerceHarnessSettingValue(setting: AgentConfigSetting, value: unknown): unknown {
+  if (setting.kind === 'host') {
     if (typeof value !== 'boolean') throw new Error(`${AGENT_NOTIFICATIONS_METADATA_ONLY_KEY} requires a literal boolean.`);
     return value;
   }
@@ -645,7 +662,16 @@ export async function setHarnessSetting(
 ): Promise<HarnessSettingMutationResult> {
   const setting = findSetting(configManager, key);
   if (!setting) throw new Error(`Unknown setting ${key || '<missing>'}.`);
-  const previous = configManager.get(setting.key as ConfigKey);
+  if (setting.kind === 'host') {
+    const handle = configManager.getHostBooleanSetting(setting.key);
+    const previous = handle.get();
+    const coerced = coerceHarnessSettingValue(setting, value);
+    if (typeof coerced !== 'boolean') throw new Error(`${setting.key} requires a literal boolean.`);
+    handle.getResolved();
+    handle.set(coerced);
+    return { key: setting.key, action: 'set', previous, current: handle.get(), scope: 'client', appliedBy: 'local' };
+  }
+  const previous = configManager.get(setting.key);
   const coerced = coerceHarnessSettingValue(setting, value);
   if (setting.type === 'string' && isSecretConfigKey(setting.key)) {
     const secretValue = String(coerced);
@@ -662,7 +688,7 @@ export async function setHarnessSetting(
     const current = await persistSecretBackedConfigValue(
       configManager,
       secretsManager,
-      setting.key as ConfigKey,
+      setting.key,
       secretValue,
     );
     return {
@@ -692,10 +718,7 @@ export async function setHarnessSetting(
     current: redactHarnessSettingValue(setting.key, outcome.value),
     scope: outcome.scope,
     appliedBy: outcome.appliedBy,
-    persistedTo: String(setting.key) === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY
-      && configManager.describeConfigKeySource(setting.key).tier === 'project'
-      ? configManager.getProjectConfigPath()
-      : outcome.persistedTo,
+    persistedTo: outcome.persistedTo,
     ...(companion ? { alsoSet: companion } : {}),
   };
 }
@@ -707,7 +730,14 @@ export async function resetHarnessSetting(
 ): Promise<HarnessSettingMutationResult> {
   const setting = findSetting(configManager, key);
   if (!setting) throw new Error(`Unknown setting ${key || '<missing>'}.`);
-  const previous = configManager.get(setting.key as ConfigKey);
+  if (setting.kind === 'host') {
+    const handle = configManager.getHostBooleanSetting(setting.key);
+    const previous = handle.get();
+    handle.getResolved();
+    handle.reset();
+    return { key: setting.key, action: 'reset', previous, current: handle.get() };
+  }
+  const previous = configManager.get(setting.key);
   if (isSecretConfigKey(setting.key)) {
     if (typeof previous === 'string' && isSecretReferenceValue(previous) && !secretsManager?.delete) {
       throw new Error(`Cannot reset ${setting.key}: secrets manager is unavailable to delete the stored secret.`);
@@ -716,14 +746,14 @@ export async function resetHarnessSetting(
     // daemon-owned key's secret lives in the daemon tier, and deleting the
     // user-tier copy would report the setting reset while the live credential
     // stayed exactly where it was, a credential the operator believes is gone.
-    await secretsManager?.delete?.(buildGoodVibesSecretKey(setting.key), { scope: defaultSecretBackedScope(setting.key as ConfigKey) });
+    await secretsManager?.delete?.(buildGoodVibesSecretKey(setting.key), { scope: defaultSecretBackedScope(setting.key) });
   }
-  configManager.reset(setting.key as ConfigKey);
+  configManager.reset(setting.key);
   return {
     key: setting.key,
     action: 'reset',
     previous: redactHarnessSettingValue(setting.key, previous),
-    current: redactHarnessSettingValue(setting.key, configManager.get(setting.key as ConfigKey)),
+    current: redactHarnessSettingValue(setting.key, configManager.get(setting.key)),
   };
 }
 
@@ -750,7 +780,7 @@ export function formatHarnessSettingList(
     ...settings.map((setting) => {
       const status = setting.writable ? 'writable' : 'read-only';
       const visible = setting.visibleInWorkspace ? 'workspace' : 'scriptable';
-      return `  ${setting.key}  ${setting.type}  ${status}/${visible}  current=${String(setting.value)}`;
+      return `  ${setting.key}  ${setting.type}  ${status}/${visible}  current=${String(setting.value)}${setting.metadataUnavailable ? '  metadata unavailable; editing disabled' : ''}`;
     }),
   ].join('\n');
 }
@@ -771,6 +801,7 @@ export function formatHarnessSetting(setting: HarnessSettingDescriptor | null): 
     ...(setting.scope ? [`  owner ${setting.scope}`] : []),
     ...(setting.valueStore ? [`  store ${setting.valueStore}`] : []),
     `  writable ${setting.writable ? 'yes' : 'no'}`,
+    ...(setting.metadataUnavailable ? [`  metadata unavailable: ${setting.metadataUnavailable}`] : []),
     `  workspace visible ${setting.visibleInWorkspace ? 'yes' : 'no'}`,
     ...(setting.enumValues ? [`  values ${setting.enumValues.join(', ')}`] : []),
     `  ${setting.description}`,

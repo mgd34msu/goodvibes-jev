@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import type { ConfigKey, ConfigSetting } from '@goodvibes-jev/engine/sdk/platform/config';
+import { getAgentSettingsSchema, readAgentSettingValue, type AgentConfigSetting } from '../config/settings-catalog.ts';
 import type { PendingSubscriptionLogin, ProviderSubscription } from '@goodvibes-jev/engine/sdk/platform/config';
 import { setHarnessSetting } from '../agent/harness-control.ts';
 import { applyThemeModeSettingChange, applyThemeNameSettingChange, THEME_MODE_CONFIG_KEY, THEME_NAME_CONFIG_KEY } from '../renderer/theme-mode-config.ts';
@@ -38,7 +38,7 @@ type SettingActionEffect =
   }
   | {
     readonly kind: 'apply';
-    readonly setting: ConfigSetting;
+    readonly setting: AgentConfigSetting;
     readonly value: unknown;
   }
   | {
@@ -327,13 +327,9 @@ function applyTuiSubscriptions(context: CommandContext, parseErrors: string[]): 
   return result;
 }
 
-export function agentWorkspaceSettingSchema(context: CommandContext | null, key: string): ConfigSetting | null {
-  // display.themeMode is a real CONFIG_SCHEMA entry (SDK 2.0+), so it
-  // resolves through the same getSchema() lookup as every other key, no
-  // synthetic fallback needed here anymore.
-  return context?.platform?.configManager
-    ?.getSchema()
-    .find((setting) => setting.key === key) ?? null;
+export function agentWorkspaceSettingSchema(context: CommandContext | null, key: string): AgentConfigSetting | null {
+  const config = context?.platform?.configManager;
+  return config ? getAgentSettingsSchema(config).find(setting => setting.key === key) ?? null : null;
 }
 
 export function isAgentWorkspaceActionVisible(context: CommandContext | null, action: AgentWorkspaceAction): boolean {
@@ -341,7 +337,8 @@ export function isAgentWorkspaceActionVisible(context: CommandContext | null, ac
   if (!key) return true;
   const configManager = context?.platform?.configManager;
   if (!configManager) return false;
-  return configManager.get(key as ConfigKey) === action.visibleWhenSettingValue;
+  const setting = agentWorkspaceSettingSchema(context, key);
+  return setting !== null && readAgentSettingValue(configManager, setting) === action.visibleWhenSettingValue;
 }
 
 export function buildAgentWorkspaceSettingActionEffect(
@@ -380,7 +377,7 @@ export function buildAgentWorkspaceSettingActionEffect(
     return { kind: 'apply', setting, value: action.settingValueHint };
   }
 
-  const currentValue = configManager.get(setting.key as ConfigKey);
+  const currentValue = readAgentSettingValue(configManager, setting);
   // The theme cycles through the selectable themes ('system', then the
   // bundled catalog), not the raw schema enum, which also carries the legacy
   // 'vaporwave' alias of goodvibes-neon.
@@ -420,7 +417,7 @@ export function buildAgentWorkspaceSettingActionDisplay(
 
   const setting = agentWorkspaceSettingSchema(context, settingKey);
   if (!setting) return null;
-  const currentValue = configManager.get(settingKey as ConfigKey);
+  const currentValue = readAgentSettingValue(configManager, setting);
 
   return {
     setting: action.label || settingKey,
@@ -431,7 +428,7 @@ export function buildAgentWorkspaceSettingActionDisplay(
 
 export async function applyAgentWorkspaceSettingValue(
   context: CommandContext | null,
-  setting: ConfigSetting,
+  setting: AgentConfigSetting,
   value: unknown,
 ): Promise<SettingMutationOutcome> {
   const configManager = context?.platform?.configManager;
@@ -475,7 +472,7 @@ export async function applyAgentWorkspaceSettingValue(
       };
     }
   }
-  if (String(setting.key) === THEME_MODE_CONFIG_KEY) {
+  if (setting.key === THEME_MODE_CONFIG_KEY) {
     try {
       // display.themeMode is a real CONFIG_SCHEMA entry now (SDK 2.0+), so
       // this branch is no longer working around a missing schema key, the
@@ -489,7 +486,7 @@ export async function applyAgentWorkspaceSettingValue(
       // hook, so it runs the ONE shared apply hook directly, forced
       // dark/light flips the active mode now with a full repaint; auto only
       // re-probes at startup, stated honestly in the returned message.
-      configManager.setDynamic(setting.key as ConfigKey, value);
+      configManager.setDynamic(setting.key, value);
       const { message } = applyThemeModeSettingChange(value, () => context?.clearScreen?.());
       return {
         status: message,
@@ -600,8 +597,8 @@ function buildTuiSettingsImportPlan(context: CommandContext | null): TuiSettings
   const settings: TuiSettingImportPlanEntry[] = [];
   for (const [key, entry] of values) {
     const setting = agentWorkspaceSettingSchema(context, key);
-    if (!setting) continue;
-    const current = configManager.get(setting.key as ConfigKey);
+    if (!setting || setting.kind === 'host') continue;
+    const current = configManager.get(setting.key);
     const status: TuiImportStatus = valuesMatch(current, entry.value) ? 'unchanged' : 'would_import';
     settings.push({
       key: setting.key,
@@ -694,8 +691,8 @@ export async function importAgentWorkspaceTuiSettings(context: CommandContext | 
   const skipped: string[] = [];
   for (const entry of values) {
     const setting = agentWorkspaceSettingSchema(context, entry.key);
-    if (!setting) continue;
-    if (entry.status === 'unchanged' || valuesMatch(configManager.get(setting.key as ConfigKey), entry.value)) {
+    if (!setting || setting.kind === 'host') continue;
+    if (entry.status === 'unchanged' || valuesMatch(configManager.get(setting.key), entry.value)) {
       unchanged.push(setting.key);
       continue;
     }
@@ -729,7 +726,7 @@ export async function importAgentWorkspaceTuiSettings(context: CommandContext | 
   };
 }
 
-function createSettingEditor(setting: ConfigSetting, currentValue: string, action: AgentWorkspaceAction): AgentWorkspaceLocalEditor {
+function createSettingEditor(setting: AgentConfigSetting, currentValue: string, action: AgentWorkspaceAction): AgentWorkspaceLocalEditor {
   const valueHint = setting.type === 'number'
     ? 'Enter a number.'
     : setting.type === 'string'

@@ -30,6 +30,7 @@ import { buildActivityAgentRows, type ActivityView } from './renderer/activity-m
 import { ActivityModal } from './input/activity-modal.ts';
 import { logger, summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { bootstrapRuntime } from './runtime/bootstrap.ts';
+import { readAgentHostSetting } from './config/host-settings.ts';
 import type { BootstrapContext } from './runtime/bootstrap.ts';
 import type { HITLMode } from '@goodvibes-jev/engine/sdk/platform/state';
 import { startFirstRenderFollowups, type DaemonRepairPrompt } from './shell/first-render-followups.ts';
@@ -442,7 +443,7 @@ async function main() {
     render();
   };
   // see shell/terminal-focus-mode.ts
-  permissionPromptRef.requestPermission = wrapRequestPermissionWithApprovalAlert(commandUi.requestPermission as typeof permissionPromptRef.requestPermission, { focusTracker: ctx.services.focusTracker, configGet: (key) => configManager.get(key as Parameters<typeof configManager.get>[0]), conversation });
+  permissionPromptRef.requestPermission = wrapRequestPermissionWithApprovalAlert(commandUi.requestPermission as typeof permissionPromptRef.requestPermission, { focusTracker: ctx.services.focusTracker, configGet: (key) => readAgentHostSetting(configManager, key), conversation });
 
   const input: InputHandler = new InputHandler(
     () => render(),

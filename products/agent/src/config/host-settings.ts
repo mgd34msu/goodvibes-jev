@@ -1,10 +1,14 @@
-import { ConfigManager, type ConfigKey, type HostBooleanSetting } from '@goodvibes-jev/engine/sdk/platform/config';
+import { ConfigManager, type HostBooleanSetting } from '@goodvibes-jev/engine/sdk/platform/config';
 import { NOTIFICATIONS_METADATA_ONLY_KEY } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 
 // The host key is validated and registered on each Agent instance before load.
-// SDK ConfigKey remains the builtin-key union; schema-driven consumers use this
-// checked boundary without augmenting the SDK's global key/default declarations.
-export const AGENT_NOTIFICATIONS_METADATA_ONLY_KEY = NOTIFICATIONS_METADATA_ONLY_KEY as ConfigKey;
+// SDK ConfigKey remains the builtin-key union; Agent uses a validated host handle.
+export const AGENT_NOTIFICATIONS_METADATA_ONLY_KEY = NOTIFICATIONS_METADATA_ONLY_KEY;
+
+/** Narrow reader for the SDK's notification privacy callback. */
+export function readAgentHostSetting(config: Pick<ConfigManager, 'getHostBooleanSetting'>, key: string): boolean | undefined {
+  return key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY ? config.getHostBooleanSetting(key).get() : undefined;
+}
 
 const NOTIFICATION_PRIVACY_SETTING: HostBooleanSetting = Object.freeze({
   key: NOTIFICATIONS_METADATA_ONLY_KEY,

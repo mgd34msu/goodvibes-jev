@@ -1,10 +1,10 @@
 /** SettingsModal state for the /settings and /config fullscreen workspace. */
 
-import type { ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ModelPickerTarget } from './model-picker.ts';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { SubscriptionManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { AGENT_NOTIFICATIONS_METADATA_ONLY_KEY } from '../config/host-settings.ts';
+import { getAgentSettingsSchema, type AgentSettingKey } from '../config/settings-catalog.ts';
 import { getResolvedSettingLookup } from '@/runtime/index.ts';
 import type { ServiceInspectionQuery } from '@/runtime/index.ts';
 import { buildGoodVibesSecretKey, defaultSecretBackedScope, isSecretConfigKey } from '../config/secret-config.ts';
@@ -171,8 +171,8 @@ export class SettingsModal {
     this.lastSettingEffectMessage = null;
     this.clearSearch();
     this.active = true;
-    if (configManager.getSchema().some((setting) => setting.key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY)) {
-      this.unsubscribeHostSetting = configManager.subscribe(AGENT_NOTIFICATIONS_METADATA_ONLY_KEY, () => {
+    if (configManager.getHostSettingsSchema?.().some((setting) => setting.key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY)) {
+      this.unsubscribeHostSetting = configManager.getHostBooleanSetting(AGENT_NOTIFICATIONS_METADATA_ONLY_KEY).subscribe(() => {
         if (!this.active || this.configManager !== configManager) return;
         for (const entries of this.groups.values()) {
           for (const entry of entries) this._refreshHostEntry(entry);
@@ -395,6 +395,7 @@ export class SettingsModal {
       return;
     }
 
+    if (!this._canEditSettings()) return;
     const entry = this.getSelected();
     if (!entry || !this.configManager) return;
 
@@ -468,6 +469,7 @@ export class SettingsModal {
       return;
     }
 
+    if (!this._canEditSettings()) return;
     const entry = this.getSelected();
     if (!entry || !this.configManager) return;
     const { setting } = entry;
@@ -523,7 +525,7 @@ export class SettingsModal {
   }
 
   private _setSelectedFlagState(flagEntry: FlagEntry, newState: FlagState): void {
-    if (!this.configManager) return;
+    if (!this.configManager || !this._canEditSettings()) return;
     if (newState === 'killed') return;
     const feature = flagEntry.feature;
 
@@ -584,6 +586,7 @@ export class SettingsModal {
       return true;
     }
 
+    if (!this._canEditSettings()) return false;
     const entry = this.getSelected();
     if (!entry || !this.configManager) return false;
 
@@ -631,12 +634,14 @@ export class SettingsModal {
     this.mcpAllowAllConfirmationTarget = null;
   }
 
-  resetSelected(): { key: ConfigKey; value: unknown } | null {
+  resetSelected(): { key: AgentSettingKey; value: unknown } | null {
     if (this.editingMode || !this.configManager) return null;
+    if (!this._canEditSettings()) return null;
     const entry = this.getSelected();
     if (!entry) return null;
-    const key = entry.setting.key as ConfigKey;
-    this._setValue(key, entry.setting.default);
+    const key = entry.setting.key;
+    const applied = this._setValue(key, entry.setting.default);
+    if (key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY) return applied ? { key, value: entry.setting.default } : null;
     if (isSecretConfigKey(key) && this.secretsManager) {
       // Same scope the value was WRITTEN at (defaultSecretBackedScope), or the
       // reset clears nothing: an email.* / calendar.* / surfaces.* / payments.*
@@ -663,23 +668,27 @@ export class SettingsModal {
   // ── Private helpers ────────────────────────────────────────────
 
   private _loadGroups(configManager: ConfigManager): void {
+    // Pure host metadata must run before the legacy builtin lookup, whose
+    // malformed-policy recovery can otherwise erase evidence of unknown locks.
+    const policyError = this._hostPolicyMetadataError();
     this.groups.clear();
     for (const cat of SETTINGS_CATEGORIES) {
       if (cat === 'flags') continue; // flags tab handled separately
       this.groups.set(cat, []);
     }
 
-    for (const setting of configManager.getSchema()) {
+    for (const setting of getAgentSettingsSchema(configManager)) {
       if (isAgentHiddenSettingKey(setting.key)) continue;
       const rawCat = setting.key.split('.')[0] as string;
       const cat = rawCat as SettingsCategory;
-      const currentValue = configManager.get(setting.key as ConfigKey);
-      const resolved = getResolvedSettingLookup(configManager, setting.key as ConfigKey)?.entry;
+      const currentValue = setting.kind === 'host' ? configManager.getHostBooleanSetting(setting.key).get() : configManager.get(setting.key);
+      const resolved = setting.kind === 'host' || policyError ? undefined : getResolvedSettingLookup(configManager, setting.key)?.entry;
       const entry: SettingEntry = {
         setting,
         currentValue,
         isDefault: currentValue === setting.default,
-        effectiveSource: resolved?.effectiveSource,
+        effectiveSource: policyError ? 'unavailable' : resolved?.effectiveSource,
+        metadataUnavailable: policyError,
         // `locked`/`lockReason` now come only from a genuine higher-priority
         // config layer. The blanket host-owned lock that used to force them here
         // is gone, those keys route to the daemon that owns them.
@@ -713,6 +722,12 @@ export class SettingsModal {
         }
       }
     }
+    if (policyError) {
+      for (const entries of this.groups.values()) for (const entry of entries) {
+        Object.assign(entry, { effectiveSource: 'unavailable', metadataUnavailable: policyError,
+          locked: undefined, conflict: undefined, sourceLabel: undefined, lockReason: undefined });
+      }
+    }
 
     const uiEntries = this.groups.get('ui');
     if (uiEntries) {
@@ -723,6 +738,7 @@ export class SettingsModal {
       };
       uiEntries.sort((a, b) => (uiPriority[a.setting.key] ?? 99) - (uiPriority[b.setting.key] ?? 99));
     }
+    if (this.searchQuery) this.searchResults = searchSettingEntries(this.searchQuery, this.groups, getSettingLabel);
   }
 
   /**
@@ -753,7 +769,8 @@ export class SettingsModal {
     if (!this.configManager) return;
     for (const entries of this.groups.values()) {
       for (const entry of entries) {
-        entry.currentValue = this.configManager.get(entry.setting.key as ConfigKey);
+        if (entry.setting.kind === 'host') { this._refreshHostEntry(entry); continue; }
+        entry.currentValue = this.configManager.get(entry.setting.key);
         entry.isDefault = entry.currentValue === entry.setting.default;
         this._refreshHostEntry(entry);
       }
@@ -762,22 +779,41 @@ export class SettingsModal {
 
   /** Keep the registered host row's canonical source/lock metadata live too. */
   private _refreshHostEntry(entry: SettingEntry): void {
-    if (!this.configManager || entry.setting.key !== AGENT_NOTIFICATIONS_METADATA_ONLY_KEY) return;
-    entry.currentValue = this.configManager.get(entry.setting.key);
+    if (!this.configManager || entry.setting.kind !== 'host') return;
+    const handle = this.configManager.getHostBooleanSetting(entry.setting.key);
+    entry.currentValue = handle.get();
     entry.isDefault = entry.currentValue === entry.setting.default;
-    const lookup = getResolvedSettingLookup(this.configManager, entry.setting.key);
-    const resolved = lookup?.entry;
-    Object.assign(entry, {
-      effectiveSource: resolved?.effectiveSource,
-      locked: resolved?.locked,
-      conflict: resolved?.conflict,
-      sourceLabel: resolved?.sourceLabel,
-      lockReason: resolved?.lockReason ?? (lookup?.lock ? `${lookup.lock.source}: ${lookup.lock.reason}` : undefined),
-    });
+    try {
+      const resolved = handle.getResolved();
+      Object.assign(entry, {
+        effectiveSource: resolved.source, locked: resolved.managedLock !== null,
+        metadataUnavailable: undefined, conflict: undefined, sourceLabel: undefined,
+        lockReason: resolved.managedLock ? `${resolved.managedLock.source}: ${resolved.managedLock.reason}` : undefined,
+      });
+    } catch (error) {
+      Object.assign(entry, { effectiveSource: 'unavailable', metadataUnavailable: summarizeError(error),
+        locked: undefined, conflict: undefined, sourceLabel: undefined, lockReason: undefined });
+    }
   }
 
-  private _setValue(key: ConfigKey, value: unknown): void {
-    if (!this.configManager) return;
+  private _setValue(key: AgentSettingKey, value: unknown): boolean {
+    if (!this.configManager) return false;
+    if (!this._canEditSettings()) return false;
+    if (key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY) {
+      try {
+        const handle = this.configManager.getHostBooleanSetting(key);
+        handle.getResolved(); // Unknown policy metadata must never be presented as editable.
+        if (typeof value !== 'boolean') throw new Error(`${key} requires a literal boolean.`);
+        handle.set(value);
+        this.lastSettingEffectMessage = null;
+        this._refreshAllEntries();
+        return true;
+      } catch (error) {
+        this.lastSettingEffectMessage = `Save failed: ${summarizeError(error)}`;
+        for (const entries of this.groups.values()) for (const entry of entries) this._refreshHostEntry(entry);
+        return false;
+      }
+    }
     const previousValue = this.configManager.get(key);
     // A setting the DAEMON acts on is written where it is acted on. Writing it
     // into this process's own store is the defect this routing exists to end:
@@ -792,7 +828,7 @@ export class SettingsModal {
       this.lastSettingEffectMessage = update.message;
       if (update.ok) this._refreshAllEntries();
     });
-    if (routed) return;
+    if (routed) return true;
     try {
       this.configManager.setDynamic(key, value);
       for (const entries of this.groups.values()) {
@@ -815,13 +851,34 @@ export class SettingsModal {
       } else if (key === 'payments.cvvHandling' && this.lastSettingEffectMessage === CVV_PROMPT_TRADEOFF_WARNING) {
         this.lastSettingEffectMessage = null;
       }
+      return true;
     } catch (e) {
       logger.error('SettingsModal: failed to set config value', { key, error: summarizeError(e) });
       this.lastSettingEffectMessage = `Save failed: ${summarizeError(e)}`;
-      if (key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY) {
-        for (const entries of this.groups.values()) for (const entry of entries) this._refreshHostEntry(entry);
-      }
+      return false;
     }
+  }
+
+  private _hostPolicyMetadataError(): string | undefined {
+    const config = this.configManager;
+    if (!config?.getHostSettingsSchema?.().some(setting => setting.key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY)) return undefined;
+    try { config.getHostBooleanSetting(AGENT_NOTIFICATIONS_METADATA_ONLY_KEY).getResolved(); return undefined; }
+    catch (error) { return summarizeError(error); }
+  }
+
+  private _canEditSettings(): boolean {
+    if (!this.configManager) return false;
+    const error = this._hostPolicyMetadataError();
+    if (error) {
+      for (const entries of this.groups.values()) for (const entry of entries) {
+        Object.assign(entry, { effectiveSource: 'unavailable', metadataUnavailable: error,
+          locked: undefined, conflict: undefined, sourceLabel: undefined, lockReason: undefined });
+      }
+      this.lastSettingEffectMessage = `Editing unavailable: ${error}`;
+      return false;
+    }
+    if ([...this.groups.values()].some(entries => entries.some(entry => entry.metadataUnavailable))) this._loadGroups(this.configManager);
+    return true;
   }
 
 }
