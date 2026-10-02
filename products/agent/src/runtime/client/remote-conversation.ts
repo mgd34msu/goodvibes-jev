@@ -64,11 +64,15 @@
  *     replays position cannot prevent, a daemon that predates the resume, a
  *     position that has aged out of the ring, a frame that genuinely arrives
  *     twice. A terminal frame addressed to a turn this renderer is not
- *     rendering is refused instead of ending the turn that is. A daemon that
- *     sends no `turnId` yet makes the gate inert rather than wrong, no turn id
- *     reads as "not a turn frame", which is accepted.
+ *     rendering is refused instead of ending the turn that is.
+ *  3. SUBMISSION CORRELATION. The fresh correlation id sent with sessions.steer
+ *     must be echoed in TURN_SUBMITTED.origin.metadata. A replayed or queued
+ *     turn is not this submission merely because it is the first stream frame.
+ *     Older hosts without this echo remain unconfirmed rather than granting
+ *     this surface ownership of somebody else's execution.
  */
 
+import { randomUUID } from 'node:crypto';
 import { createOperatorSdk, type OperatorSdk } from '@goodvibes-jev/engine/operator-sdk';
 import type { OperatorMethodOutput } from '@goodvibes-jev/engine/contracts';
 import { transport } from '@goodvibes-jev/engine/sdk/platform/runtime';
@@ -220,6 +224,7 @@ export function createRemoteConversationRouter(
 ): RemoteConversationRouter {
   interface WatchedTurn {
     readonly operator: OperatorSdk;
+    readonly correlationId: string;
     sessionId: string | null;
     turnId: string | null;
     renderer: HostedFrameRenderer | null;
@@ -231,6 +236,7 @@ export function createRemoteConversationRouter(
     cancelRequested: boolean;
     cancelQueued: boolean;
     cancellationAcknowledged: boolean;
+    identityNoticeShown: boolean;
     cancelRequest: Promise<void> | null;
     cancelController: AbortController | null;
   }
@@ -335,18 +341,36 @@ export function createRemoteConversationRouter(
         if (typeof frame.type !== 'string') return;
         if (frame.sessionId !== undefined && frame.sessionId !== sessionId) return;
         const frameTurnId = frame.payload?.['turnId'];
-        // Only an authoritative start identifies a cancellation target. A tool
-        // event, replayed terminal, or unscoped frame must not select one.
-        if (frame.type === 'TURN_SUBMITTED' && frame.sessionId === sessionId
-          && typeof frameTurnId === 'string' && frameTurnId.length > 0) {
+        // A session stream may replay prior work or carry somebody else's
+        // queued turn. Only the server's echo of this submission can confer
+        // ownership. Prompt text, timing and first-frame order are not ids.
+        if (frame.type === 'TURN_SUBMITTED') {
+          const origin = frame.payload?.['origin'];
+          const metadata = origin && typeof origin === 'object' ? (origin as Record<string, unknown>)['metadata'] : undefined;
+          const correlationId = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>)['correlationId'] : undefined;
+          if (frame.sessionId !== sessionId || correlationId !== turn.correlationId
+            || typeof frameTurnId !== 'string' || frameTurnId.length === 0) {
+            if (correlationId === undefined && !turn.identityNoticeShown) {
+              turn.identityNoticeShown = true;
+              notice(turn, '[Turn] The host has not identified this submission. Waiting for its correlated start; Stop will not cancel an unidentified turn.');
+            }
+            return;
+          }
           if (turn.turnId !== null && turn.turnId !== frameTurnId) return;
           turn.turnId = frameTurnId;
         }
+        // Neither rendering nor terminal settlement can use unrelated work
+        // while this submission is still queued. Non-turn session notices may
+        // still reach observers, but have no rendering or lifecycle authority.
+        if (turn.turnId === null && (typeof frameTurnId === 'string'
+          || terminalTypes.has(frame.type) || frame.type.startsWith('STREAM_')
+          || frame.type.startsWith('TOOL_') || frame.type.startsWith('LLM_')
+          || frame.type.startsWith('PREFLIGHT_'))) return;
         if (turn.turnId !== null && typeof frameTurnId === 'string' && frameTurnId !== turn.turnId) return;
-        if (turn.cancelRequested && turn.turnId === null && terminalTypes.has(frame.type)) return;
-        if (turn.cancelRequested && turn.turnId !== null && terminalTypes.has(frame.type)
+        if (terminalTypes.has(frame.type)
           && (frame.sessionId !== sessionId || frameTurnId !== turn.turnId)) return;
-        // Keep legacy rendering compatibility while applying the public gate.
+        // The public gate retains duplicate/stale lifecycle protection within
+        // the positively correlated execution.
         const lifecycle = readTurnLifecycleFrame(frame.sessionId, frame.payload);
         if (lifecycle && !gate.accepts(lifecycle)) return;
         try { options.onFrame?.(frame); } catch (error) {
@@ -398,8 +422,9 @@ export function createRemoteConversationRouter(
     }
     const turn: WatchedTurn = {
       operator,
+      correlationId: randomUUID(),
       sessionId: null, turnId: null, renderer: null, closeStream: null, finished: false, submissionPending: true, settledByHost: false, steerAttempted: false,
-      cancelRequested: false, cancelQueued: false, cancellationAcknowledged: false, cancelRequest: null, cancelController: null,
+      cancelRequested: false, cancelQueued: false, cancellationAcknowledged: false, identityNoticeShown: false, cancelRequest: null, cancelController: null,
     };
     active = turn;
     let action: 'created' | 'steered' | 'recreated' = hostedId ? 'steered' : 'created';
@@ -429,7 +454,7 @@ export function createRemoteConversationRouter(
       if (cancelled) return cancelled;
       try {
         turn.steerAttempted = true;
-        await options.verbs.invoke<unknown>('sessions.steer', { sessionId: id, body: text });
+        await options.verbs.invoke<unknown>('sessions.steer', { sessionId: id, body: text, metadata: { correlationId: turn.correlationId } });
       } catch (error) {
         if (turn.cancelRequested) {
           turn.submissionPending = false;
@@ -456,7 +481,7 @@ export function createRemoteConversationRouter(
         cancelled = stopBeforeSteer();
         if (cancelled) return cancelled;
         turn.steerAttempted = true;
-        await options.verbs.invoke<unknown>('sessions.steer', { sessionId: id, body: text });
+        await options.verbs.invoke<unknown>('sessions.steer', { sessionId: id, body: text, metadata: { correlationId: turn.correlationId } });
       }
       turn.submissionPending = false;
       if (renderer.isTurnFinished()) release(turn);

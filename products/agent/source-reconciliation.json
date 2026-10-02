@@ -7926,7 +7926,7 @@
       "target": "products/agent/src/runtime/client/remote-conversation.ts",
       "upstreamBlob": "b8ea98dc4f099f48e22599f7e2f372b1a5047a0f",
       "present": true,
-      "recoveredBlob": "acb772c4cebeac405e292bba9aef6321b902126b",
+      "recoveredBlob": "f5629a9dcbc664f8d3ecb616491822b165a400d3",
       "materialization": "workspace-adapted"
     },
     {
@@ -9198,7 +9198,7 @@
       "target": "products/agent/src/test/cli/run-turn.test.ts",
       "upstreamBlob": "21bfd55539b90d0ee8728a2d527a150e0d70e134",
       "present": true,
-      "recoveredBlob": "15a2db53aa0b2b79b1b277cf4ed95ceff20addd5",
+      "recoveredBlob": "d32ce36c353a23866dd1b670c94997b1589956ba",
       "materialization": "workspace-adapted"
     },
     {
@@ -13422,7 +13422,7 @@
       "target": "products/agent/src/test/runtime/remote-conversation-resume.test.ts",
       "upstreamBlob": "dc27e5c53cd483c136702f1760b706e8b49841c2",
       "present": true,
-      "recoveredBlob": "7ea45f51d6dd0bbcfabaef49210c9b4b6d0e279a",
+      "recoveredBlob": "82f4f4783a8551917cc6a420900a24b6aef76dfa",
       "materialization": "workspace-adapted"
     },
     {

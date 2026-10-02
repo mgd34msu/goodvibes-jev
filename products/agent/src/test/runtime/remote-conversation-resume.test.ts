@@ -65,9 +65,11 @@ function recordingConversation(into: Recorded): HostedFrameConversation {
 function scriptedDaemon(streams: readonly (readonly Frame[])[]): {
   fetchImpl: typeof fetch;
   positions: (string | null)[];
+  steer: (correlationId: string) => void;
 } {
   const positions: (string | null)[] = [];
   let opened = 0;
+  let deliver: ((correlationId: string) => void) | undefined;
   const fetchImpl = (async (_url: string, init?: RequestInit) => {
     const headers = new Headers(init?.headers ?? {});
     positions.push(headers.get('Last-Event-ID'));
@@ -76,21 +78,28 @@ function scriptedDaemon(streams: readonly (readonly Frame[])[]): {
     return new Response(new ReadableStream<Uint8Array>({
       start: (controller) => {
         const encoder = new TextEncoder();
-        for (const frame of frames) controller.enqueue(encoder.encode(encodeFrame(frame)));
-        controller.close();
+        deliver = correlationId => {
+          for (const frame of frames) controller.enqueue(encoder.encode(encodeFrame({ ...frame,
+            ...(frame.type === 'TURN_SUBMITTED' && !frame.fields?.origin ? { fields: { ...frame.fields,
+              origin: { source: 'hosted-session', surface: 'service', metadata: { correlationId } },
+            } } : {}),
+          })));
+          controller.close();
+        };
       },
     }), { headers: { 'content-type': 'text/event-stream' } });
   }) as unknown as typeof fetch;
-  return { fetchImpl, positions };
+  return { fetchImpl, positions, steer: correlationId => { if (!deliver) throw new Error('stream not open'); deliver(correlationId); } };
 }
 
-function router(fetchImpl: typeof fetch, conversation: HostedFrameConversation) {
+function router(daemon: ReturnType<typeof scriptedDaemon>, conversation: HostedFrameConversation) {
   return createRemoteConversationRouter({
     verbs: {
       probe: () => ({ available: true }),
-      invoke: async <T,>(methodId: string): Promise<T> => (
-        (methodId === 'sessions.hosted.create' ? { session: { id: HOSTED_ID } } : {}) as T
-      ),
+      invoke: async <T,>(methodId: string, input?: unknown): Promise<T> => {
+        if (methodId === 'sessions.steer') daemon.steer((input as { metadata: { correlationId: string } }).metadata.correlationId);
+        return (methodId === 'sessions.hosted.create' ? { session: { id: HOSTED_ID } } : {}) as T;
+      },
     },
     configManager: { get: (() => undefined) as never },
     resolveConnection: () => LIVE_HOST,
@@ -98,7 +107,7 @@ function router(fetchImpl: typeof fetch, conversation: HostedFrameConversation) 
     requestRender: () => {},
     workspaceRoot: '/home/someone/project',
     clientId: 'goodvibes-agent:test',
-    fetchImpl,
+    fetchImpl: daemon.fetchImpl,
     // A closed stream must become a termination now rather than after ten
     // reconnect attempts; the position and the gate are what is under test.
     reconnect: { enabled: false },
@@ -107,7 +116,7 @@ function router(fetchImpl: typeof fetch, conversation: HostedFrameConversation) 
 
 describe('a second turn on a hosted conversation', () => {
   test('states the position the first turn\'s stream reached', async () => {
-    const { fetchImpl, positions } = scriptedDaemon([
+    const daemon = scriptedDaemon([
       [
         { id: 'evt-1', type: 'TURN_SUBMITTED', turnId: 'turn-1' },
         { id: 'evt-2', type: 'STREAM_DELTA', turnId: 'turn-1', fields: { accumulated: 'first' } },
@@ -119,7 +128,7 @@ describe('a second turn on a hosted conversation', () => {
       ],
     ]);
     const seen: Recorded = { assistant: [], streamed: [] };
-    const remote = router(fetchImpl, recordingConversation(seen));
+    const remote = router(daemon, recordingConversation(seen));
 
     const first = await remote.submit('one');
     expect(first.routed).toBe(true);
@@ -130,12 +139,12 @@ describe('a second turn on a hosted conversation', () => {
 
     // Nothing to resume past on the first open; the second resumes exactly
     // where the first stopped, so the daemon replays it nothing it already has.
-    expect(positions).toEqual([null, 'evt-3']);
+    expect(daemon.positions).toEqual([null, 'evt-3']);
     remote.dispose();
   });
 
   test('is not finished by a replayed TURN_COMPLETED from the turn before it', async () => {
-    const { fetchImpl } = scriptedDaemon([
+    const daemon = scriptedDaemon([
       [
         { id: 'evt-1', type: 'TURN_SUBMITTED', turnId: 'turn-1' },
         { id: 'evt-2', type: 'TURN_COMPLETED', turnId: 'turn-1', fields: { stopReason: 'completed' } },
@@ -151,7 +160,7 @@ describe('a second turn on a hosted conversation', () => {
       ],
     ]);
     const seen: Recorded = { assistant: [], streamed: [] };
-    const remote = router(fetchImpl, recordingConversation(seen));
+    const remote = router(daemon, recordingConversation(seen));
 
     const first = await remote.submit('one');
     if (first.routed) await first.completion;
@@ -170,27 +179,28 @@ describe('a second turn on a hosted conversation', () => {
     remote.dispose();
   });
 
-  test('a frame carrying no turn id is never withheld', async () => {
-    const { fetchImpl } = scriptedDaemon([
+  test('legacy uncorrelated frames cannot settle an unidentified submission', async () => {
+    const daemon = scriptedDaemon([
       [
         // No turnId anywhere: an older daemon, or a session-level frame. The
-        // gate must be inert rather than silently eating the turn.
+        // caller must not claim it as its own execution.
         { id: 'evt-1', type: 'STREAM_DELTA', fields: { accumulated: 'plain text' } },
         { id: 'evt-2', type: 'TURN_COMPLETED', fields: { stopReason: 'completed' } },
       ],
     ]);
     const seen: Recorded = { assistant: [], streamed: [] };
-    const remote = router(fetchImpl, recordingConversation(seen));
+    const remote = router(daemon, recordingConversation(seen));
 
     const outcome = await remote.submit('one');
     const completion = outcome.routed ? await outcome.completion : null;
 
-    expect(completion?.status).toBe('completed');
-    expect(completion?.response).toBe('plain text');
+    expect(completion?.status).toBe('abandoned');
+    expect(completion?.response).toBe('');
+    expect(seen.streamed).toEqual([]);
     remote.dispose();
   });
   test('a released watch does not advance its resume cursor through buffered later frames', async () => {
-    const { fetchImpl, positions } = scriptedDaemon([
+    const daemon = scriptedDaemon([
       [
         { id: 'evt-1', type: 'TURN_SUBMITTED', turnId: 'turn-1' },
         { id: 'evt-2', type: 'TURN_COMPLETED', turnId: 'turn-1', fields: { response: 'first' } },
@@ -201,7 +211,7 @@ describe('a second turn on a hosted conversation', () => {
         { id: 'evt-5', type: 'TURN_COMPLETED', turnId: 'turn-2', fields: { response: 'second' } },
       ],
     ]);
-    const remote = router(fetchImpl, recordingConversation({ assistant: [], streamed: [] }));
+    const remote = router(daemon, recordingConversation({ assistant: [], streamed: [] }));
     try {
       const first = await remote.submit('one');
       expect(first.routed).toBe(true);
@@ -212,7 +222,7 @@ describe('a second turn on a hosted conversation', () => {
       const second = await remote.submit('two');
       expect(second.routed).toBe(true);
       if (second.routed) await second.completion;
-      expect(positions).toEqual([null, 'evt-2']);
+      expect(daemon.positions).toEqual([null, 'evt-2']);
     } finally { remote.dispose(); }
   });
 

@@ -39,20 +39,24 @@ function envelope(type: string, payload: Record<string, unknown>): string {
  * serialized envelopes, so the SSE parsing and the frame mapping are both
  * genuinely exercised rather than stubbed past.
  */
-function fakeDaemonFetch(frames: readonly string[]): typeof fetch {
-  return (async () => new Response(
+function fakeDaemonFetch(frames: readonly string[]) {
+  let deliver: ((correlationId: string) => void) | undefined;
+  const fetchImpl = (async () => new Response(
     new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        const encoder = new TextEncoder();
-        for (const frame of frames) controller.enqueue(encoder.encode(frame));
-        controller.close();
+      start: controller => {
+        deliver = correlationId => {
+          const encoder = new TextEncoder();
+          controller.enqueue(encoder.encode(envelope('TURN_SUBMITTED', { turnId: 't1', origin: { source: 'hosted-session', surface: 'service', metadata: { correlationId } } })));
+          for (const frame of frames) controller.enqueue(encoder.encode(frame));
+          controller.close();
+        };
       },
     }),
     { headers: { 'content-type': 'text/event-stream' } },
   )) as unknown as typeof fetch;
+  return { fetchImpl, steer: (correlationId: string) => { if (!deliver) throw new Error('stream not open'); deliver(correlationId); } };
 }
 
-/** Records what the local mirror was told, so "with messages" can be asserted. */
 function recordingConversation(): { conversation: HostedFrameConversation; assistant: string[]; user: string[] } {
   const assistant: string[] = [];
   const user: string[] = [];
@@ -84,11 +88,13 @@ function routedHarness(input: {
   const calls: { methodId: string; input: Record<string, unknown> }[] = [];
   const { conversation, assistant, user } = recordingConversation();
   const createRouting = (onFrame: (frame: HostedSessionFrame) => void): RemoteConversationWiring => {
+    const daemon = fakeDaemonFetch(input.frames);
     const router = createRemoteConversationRouter({
       verbs: {
         probe: () => ({ available: true }),
         invoke: async <T,>(methodId: string, payload?: unknown): Promise<T> => {
           calls.push({ methodId, input: (payload ?? {}) as Record<string, unknown> });
+          if (methodId === 'sessions.steer') daemon.steer((payload as { metadata: { correlationId: string } }).metadata.correlationId);
           return { session: { id: HOSTED_ID } } as T;
         },
       },
@@ -98,7 +104,7 @@ function routedHarness(input: {
       requestRender: () => {},
       workspaceRoot: '/home/someone/project',
       clientId: 'goodvibes-agent:test',
-      fetchImpl: fakeDaemonFetch(input.frames),
+      fetchImpl: daemon.fetchImpl,
       // The fake daemon's stream closes for good; without this the client would
       // spend its whole backoff schedule retrying a close that cannot recover.
       reconnect: { enabled: false },
@@ -291,7 +297,7 @@ describe('a headless run whose turn the daemon ran', () => {
       .filter((frame) => frame.type === 'STREAM_DELTA');
     expect(deltas.map((frame) => frame.content)).toEqual(['a', 'b']);
     expect(deltas.map((frame) => frame.accumulated)).toEqual(['a', 'ab']);
-    expect(result.eventCount).toBe(3);
+    expect(result.eventCount).toBe(4);
   });
 });
 

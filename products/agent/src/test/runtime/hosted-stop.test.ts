@@ -202,7 +202,10 @@ function fixture(options: { readonly reconnect?: boolean; readonly routeTurns?: 
     const frame: HostedSessionFrame = {
       type,
       ...(sessionId === null ? {} : { sessionId }),
-      payload: { type, ...(turnId ? { turnId } : {}), ...fields },
+      payload: { type, ...(turnId ? { turnId } : {}),
+        ...(type === 'TURN_SUBMITTED' && !('origin' in fields) ? {
+          origin: { source: 'hosted-session', surface: 'service', metadata: calls.findLast(call => call.method === 'sessions.steer')?.input.metadata },
+        } : {}), ...fields },
     };
     stream.controller.enqueue(encoder.encode(`id: evt-${sequence}\nevent: turn\ndata: ${JSON.stringify(frame)}\n\n`));
     return `evt-${sequence}`;
@@ -241,6 +244,7 @@ function fixture(options: { readonly reconnect?: boolean; readonly routeTurns?: 
     router, wiring, calls, cancellations, cancelAttempts, unexpected, streams, frames, notices,
     users, assistant, system, behavior, receipt, send, barrier,
     changeConnection: (next: typeof connection) => { connection = next; },
+    correlationId: () => (calls.findLast(call => call.method === 'sessions.steer')?.input.metadata as { correlationId?: string } | undefined)?.correlationId,
     hold() {
       const gate = deferred<void>();
       gates.push(gate);
@@ -864,9 +868,9 @@ test('a superseded hosted reply still mirrors its terminal outcome without endin
 
 test('Stop during stream preparation never sends cancellation for a replayed pre-steer turn', async () => {
   const f = fixture();
-  f.behavior.stream = () => f.send('TURN_SUBMITTED', 'preexisting-replayed-turn');
-  f.behavior.frame = (frame) => {
-    if (frame.type === 'TURN_SUBMITTED') expect(f.router.cancelTurn()).toBe(true);
+  f.behavior.stream = () => {
+    f.send('TURN_SUBMITTED', 'preexisting-replayed-turn', { origin: undefined });
+    expect(f.router.cancelTurn()).toBe(true);
   };
   try {
     const outcome = await f.router.submit('do not submit this message');
@@ -882,13 +886,9 @@ test('a newer local generation prevents the prior catch-up watcher from submitti
   const f = fixture();
   let replacement: Promise<RemoteTurnOutcome> | undefined;
   f.behavior.stream = () => {
-    f.send('TURN_SUBMITTED', 'replayed-turn');
+    f.send('TURN_SUBMITTED', 'replayed-turn', { origin: undefined });
     f.send('TURN_COMPLETED', 'replayed-turn', { response: 'previous answer' });
-  };
-  f.behavior.frame = (frame) => {
-    if (frame.type === 'TURN_COMPLETED') {
-      queueMicrotask(() => { replacement = f.router.submit('new local input', { hasAttachments: true }); });
-    }
+    queueMicrotask(() => { replacement = f.router.submit('new local input', { hasAttachments: true }); });
   };
   try {
     const first = await f.router.submit('older pending input');
@@ -898,4 +898,97 @@ test('a newer local generation prevents the prior catch-up watcher from submitti
     expect(f.calls.filter((call) => call.method === 'sessions.steer')).toEqual([]);
     expect(f.cancelAttempts).toEqual([]);
   } finally { f.dispose(); }
+});
+
+describe('submission correlation is required before hosted ownership', () => {
+  for (const precedingTurns of [0, 1, 3]) {
+    test(`pending Stop ignores ${precedingTurns} unrelated queued starts and terminals, then cancels only its own execution`, async () => {
+      const f = fixture(); const wired = f.wiring();
+      try {
+        const handle = await wired.installed.routeOrExplain('identical input', false);
+        const completion = observe(handle!.completion);
+        const correlationId = f.correlationId();
+        expect(typeof correlationId).toBe('string'); expect(correlationId).not.toBe('');
+        cancelConversationGeneration(wired.state, wired.installed);
+        for (let i = 0; i < precedingTurns; i++) {
+          const id = `earlier-queued-${i}`;
+          f.send('TURN_SUBMITTED', id, { prompt: 'identical input', origin: { metadata: { correlationId: `another-submission-${i}` } } });
+          f.send('STREAM_DELTA', id, { accumulated: 'somebody else answered' });
+          f.send('TURN_COMPLETED', id, { response: 'somebody else answered' });
+        }
+        await f.barrier();
+        expect(f.cancellations).toEqual([]); expect(f.assistant).toEqual([]);
+        expect(completion.value).toBeUndefined(); expect(wired.state.isThinking).toBe(true); expect(wired.aborts()).toBe(0);
+        f.send('TURN_SUBMITTED', 'own-execution', { prompt: 'identical input' });
+        await until(() => f.cancellations.length === 1, 'positively correlated cancellation');
+        expect(f.cancellations[0]?.body.expectedTurnId).toBe('own-execution');
+        f.send('TURN_COMPLETED', 'earlier-queued-0', { response: 'late prior terminal' });
+        await f.barrier(); expect(completion.value).toBeUndefined(); expect(wired.state.isThinking).toBe(true);
+        f.send('TURN_CANCEL', 'own-execution');
+        expect((await handle!.completion).status).toBe('cancelled');
+      } finally { f.dispose(); }
+    });
+  }
+
+  test('legacy or malformed correlation never confers ownership or settles the pending submission', async () => {
+    const f = fixture();
+    try {
+      const outcome = routed(await f.router.submit('new work')); const completion = observe(outcome.completion);
+      f.router.cancelTurn();
+      for (const origin of [undefined, null, {}, { metadata: null }, { metadata: { correlationId: 7 } }, { metadata: { correlationId: 'old-submission' } }]) {
+        f.send('TURN_SUBMITTED', 'unowned-turn', { origin });
+        f.send('TURN_COMPLETED', 'unowned-turn', { response: 'not our answer' });
+      }
+      f.send('TURN_COMPLETED', undefined, { response: 'legacy terminal' });
+      await f.barrier();
+      expect(f.cancellations).toEqual([]); expect(completion.value).toBeUndefined(); expect(f.assistant).toEqual([]);
+      expect(f.notices.some(message => message.includes('has not identified this submission'))).toBe(true);
+      f.send('TURN_SUBMITTED', 'the-correlated-turn');
+      await until(() => f.cancellations.length === 1, 'owned start after unrelated replay');
+      expect(f.cancellations[0]?.body.expectedTurnId).toBe('the-correlated-turn');
+    } finally { f.dispose(); }
+  });
+
+  test('each submission has a fresh correlation while stale-session recreation retains its original correlation', async () => {
+    const f = fixture(); let steers = 0;
+    f.behavior.steer = async () => ++steers === 2 ? new Response('stale session', { status: 404 }) : Response.json({});
+    try {
+      const first = await f.start(); const firstCorrelation = f.correlationId();
+      f.send('TURN_COMPLETED', 'turn-1'); await first.outcome.completion;
+      const second = routed(await f.router.submit('identical input'));
+      expect(second.action).toBe('recreated');
+      const ids = f.calls.filter(call => call.method === 'sessions.steer').map(call => (call.input.metadata as { correlationId: string }).correlationId);
+      expect(ids).toHaveLength(3); expect(ids[0]).toBe(firstCorrelation); expect(ids[1]).not.toBe(ids[0]); expect(ids[2]).toBe(ids[1]);
+      f.router.cancelTurn();
+      f.send('TURN_SUBMITTED', 'old-turn-replayed', { origin: { metadata: { correlationId: firstCorrelation } } });
+      await f.barrier(); expect(f.cancellations).toEqual([]);
+      f.send('TURN_SUBMITTED', 'new-execution');
+      await until(() => f.cancellations.length === 1, 'recreated submission start');
+      expect(f.cancellations[0]?.body.expectedTurnId).toBe('new-execution');
+    } finally { f.dispose(); }
+  });
+
+  for (const action of ['replace', 'dispose'] as const) for (const microtask of [false, true]) {
+    test(`a correlated start observer that ${action}s ${microtask ? 'in a microtask' : 'synchronously'} cannot dispatch the superseded pending Stop`, async () => {
+      const f = fixture(); let ran = false; let replacement: Promise<RemoteTurnOutcome> | undefined;
+      try {
+        const outcome = routed(await f.router.submit('older submission'));
+        f.router.cancelTurn();
+        f.behavior.frame = frame => {
+          if (frame.type !== 'TURN_SUBMITTED') return;
+          const supersede = () => {
+            ran = true;
+            if (action === 'dispose') f.router.dispose();
+            else replacement = f.router.submit('new local submission', { hasAttachments: true });
+          };
+          if (microtask) queueMicrotask(supersede); else supersede();
+        };
+        f.send('TURN_SUBMITTED', 'positively-correlated-old-turn');
+        await until(() => ran, 'correlated observer replacement');
+        if (replacement) expect(await replacement).toMatchObject({ routed: false });
+        expect((await outcome.completion).status).toBe('abandoned');
+        expect(f.cancelAttempts).toEqual([]); expect(f.cancellations).toEqual([]);
+      } finally { f.dispose(); }
+    });
+  }
 });
