@@ -367,6 +367,7 @@ export function createRemoteConversationRouter(
     let reply: HostedCreateReply;
     try {
       reply = await options.verbs.invoke<HostedCreateReply>('sessions.hosted.create', {
+        originSurface: 'agent',
         workspaceRoot: options.workspaceRoot,
         clientId: options.clientId,
       });

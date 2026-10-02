@@ -171,6 +171,7 @@ export function createHostedConversationHandoff(
     action: 'created' | 'recreated',
   ): Promise<HostedHandoffOutcome> => {
     const reply = await options.verbs.invoke<HostedCreateReply>('sessions.hosted.create', {
+      originSurface: 'agent',
       workspaceRoot,
       title: hostedSessionTitle(request),
       // The owner's words open the conversation, not the broker's enriched
