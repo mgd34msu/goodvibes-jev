@@ -7,6 +7,7 @@
  * can still call resetAllTestServiceState() or individual reset functions
  * in their own beforeEach, bun:test runs all registered beforeEach hooks.
  */
+import { seedProviderMetadataCacheFixture } from './provider-metadata-cache-fixture.ts';
 import { beforeEach } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
@@ -171,14 +172,12 @@ export function resetTestRuntimeServices(): void {
 export function getTestRuntimeServices(): RuntimeServices {
   if (!runtimeServices) {
     const { workingDir, configDir } = nextRuntimeRoots();
+    const configManager = new ConfigManager({ surfaceRoot: 'agent', configDir, workingDir, homeDir: workingDir });
+    seedProviderMetadataCacheFixture({ configManager, workingDirectory: workingDir, homeDirectory: workingDir });
     runtimeServices = createRuntimeServices({
       // Opt out: this process does not outlive the unawaited sweep.
       modelDiscovery: 'skip',
-      configManager: new ConfigManager({ surfaceRoot: 'agent',
-        configDir,
-        workingDir,
-        homeDir: workingDir,
-      }),
+      configManager,
       runtimeBus: new RuntimeEventBus(),
       runtimeStore: createRuntimeStore(),
       workingDir,

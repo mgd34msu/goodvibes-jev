@@ -1,3 +1,4 @@
+import { seedProviderMetadataCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
 /**
  * composition-parity.test.ts
  *
@@ -34,6 +35,13 @@ import {
 } from '../../runtime/services.ts';
 import { ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+
+function metadataConfig(options: ConstructorParameters<typeof ConfigManager>[0]): ConfigManager {
+  const config = new ConfigManager(options);
+  if (!options?.homeDir || !options.workingDir) throw new Error('Fixture roots must be explicit');
+  seedProviderMetadataCacheFixture({ configManager: config, homeDirectory: options.homeDir, workingDirectory: options.workingDir });
+  return config;
+}
 
 describe('composition parity: append-only sweep + live config watch', () => {
   let root = '';
@@ -76,7 +84,7 @@ describe('composition parity: append-only sweep + live config watch', () => {
     writeFileSync(activityLogPath, 'x'.repeat(2 * 1024 * 1024), 'utf-8');
     expect(existsSync(activityLogPath)).toBe(true);
 
-    const configManager = new ConfigManager({ surfaceRoot: 'agent', workingDir, homeDir, configDir });
+    const configManager = metadataConfig({ surfaceRoot: 'agent', workingDir, homeDir, configDir });
     configManager.set('atRest.retentionMaxTotalMb', 1);
 
     const services = makeServices(configManager, workingDir, homeDir);
@@ -96,7 +104,7 @@ describe('composition parity: append-only sweep + live config watch', () => {
     const activityLogPath = join(logDir, 'activity.md');
     writeFileSync(activityLogPath, 'small', 'utf-8');
 
-    const configManager = new ConfigManager({ surfaceRoot: 'agent', workingDir, homeDir, configDir });
+    const configManager = metadataConfig({ surfaceRoot: 'agent', workingDir, homeDir, configDir });
     // Default caps (30 days / 512MB): a few bytes, just written, survives.
     const services = makeServices(configManager, workingDir, homeDir);
     try {
@@ -110,7 +118,7 @@ describe('composition parity: append-only sweep + live config watch', () => {
 
   test('configManager.watchConfigFiles() is live at composition: an external settings.json edit applies without an explicit reload', async () => {
     const { workingDir, homeDir, configDir } = makeRoots();
-    const configManager = new ConfigManager({ surfaceRoot: 'agent', workingDir, homeDir, configDir });
+    const configManager = metadataConfig({ surfaceRoot: 'agent', workingDir, homeDir, configDir });
     const services = makeServices(configManager, workingDir, homeDir);
     try {
       expect(configManager.get('power.keepAwake')).toBe(false);
@@ -169,7 +177,7 @@ describe('composition parity: live model discovery refreshes by default, and cal
       modelDiscovery: 'skip',
       runtimeBus: new RuntimeEventBus(),
       runtimeStore: createRuntimeStore(),
-      configManager: new ConfigManager({ workingDir, homeDir, surfaceRoot: 'agent' }),
+      configManager: metadataConfig({ workingDir, homeDir, surfaceRoot: 'agent' }),
       workingDir,
       homeDirectory: homeDir,
     });
@@ -211,7 +219,7 @@ describe('composition parity: live model discovery refreshes by default, and cal
           ...(mode === undefined ? {} : { modelDiscovery: mode }),
           runtimeBus: new RuntimeEventBus(),
           runtimeStore: createRuntimeStore(),
-          configManager: new ConfigManager({ workingDir, homeDir, surfaceRoot: 'agent' }),
+          configManager: metadataConfig({ workingDir, homeDir, surfaceRoot: 'agent' }),
           workingDir,
           homeDirectory: homeDir,
         });
@@ -250,7 +258,7 @@ describe('composition parity: the trigger family is composed, not just importabl
       modelDiscovery: 'skip',
       runtimeBus: new RuntimeEventBus(),
       runtimeStore: createRuntimeStore(),
-      configManager: new ConfigManager({ workingDir, homeDir, surfaceRoot: 'agent' }),
+      configManager: metadataConfig({ workingDir, homeDir, surfaceRoot: 'agent' }),
       workingDir,
       homeDirectory: homeDir,
     });

@@ -1,3 +1,4 @@
+import { seedProviderMetadataCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
 /**
  * The forget path, exercised against the REAL owner-profile store and the real
  * `profile.*` handlers, not a stub that agrees with whatever this surface
@@ -102,7 +103,10 @@ async function liveProfile(): Promise<LiveProfile> {
   // takes this ahead of the daemon home and the default location.
   configManager.set('profile.path', profilePath);
 
+  seedProviderMetadataCacheFixture({ configManager, homeDirectory: root, workingDirectory: workingDir });
   const services = await createRuntimeServices({
+    // This suite exercises profile persistence and gateway contracts, not remote model discovery.
+    modelDiscovery: 'skip',
     configManager,
     runtimeBus: new RuntimeEventBus(),
     runtimeStore: createRuntimeStore(),

@@ -1,3 +1,4 @@
+import { seedProviderMetadataCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -79,16 +80,14 @@ describe('HttpTransport', () => {
     port = await reservePort();
     mkdirSync(workingDir, { recursive: true });
     mkdirSync(homeDir, { recursive: true });
+    const configManager = new ConfigManager({ surfaceRoot: 'tui', configDir: join(homeDir, '.goodvibes', 'tui'), workingDir, homeDir });
+    seedProviderMetadataCacheFixture({ configManager, homeDirectory: homeDir, workingDirectory: workingDir });
     const runtimeServices = createRuntimeServices({
       // Opt out: this process does not outlive the unawaited sweep.
       modelDiscovery: 'skip',
       runtimeStore: createRuntimeStore(),
       runtimeBus: new RuntimeEventBus(),
-      configManager: new ConfigManager({ surfaceRoot: 'tui',
-        configDir: join(homeDir, '.goodvibes', 'tui'),
-        workingDir,
-        homeDir,
-      }),
+      configManager,
       workingDir,
       homeDirectory: homeDir,
       featureFlags: createTransportFeatureFlags(),

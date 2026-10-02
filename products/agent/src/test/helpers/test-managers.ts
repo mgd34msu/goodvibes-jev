@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { join } from 'node:path';
 import { BookmarkManager } from '@goodvibes-jev/engine/sdk/platform/bookmarks';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -77,6 +79,8 @@ export function createTestManagers(): TestManagers {
   });
   const favoritesStore = new FavoritesStore({ dir: providerDataDir });
   const benchmarkStore = new BenchmarkStore({ dir: providerDataDir });
+  mkdirSync(dirname(benchmarkStore.getCachePath()), { recursive: true });
+  writeFileSync(benchmarkStore.getCachePath(), JSON.stringify({ version: 1, fetchedAt: Date.now(), ttlMs: 86_400_000, entries: [] }));
   // Construct through the same launch-tolerant path production uses: the SDK's
   // ProviderRegistry eagerly instantiates each builtin provider's OpenAI client
   // at construction, and that client throws on an empty apiKey. The tolerant

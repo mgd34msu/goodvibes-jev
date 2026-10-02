@@ -1,3 +1,4 @@
+import { seedProviderMetadataCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -27,6 +28,7 @@ function makeRuntime() {
     homeDir,
   });
 
+  seedProviderMetadataCacheFixture({ configManager, homeDirectory: homeDir, workingDirectory: workingDir });
   return {
     configManager,
     services: createRuntimeServices({

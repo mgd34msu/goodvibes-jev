@@ -1,3 +1,4 @@
+import { seedProviderMetadataCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -83,6 +84,7 @@ function createRuntimeFixture(prefix: string) {
     workingDir,
     homeDir,
   });
+  seedProviderMetadataCacheFixture({ configManager, homeDirectory: homeDir, workingDirectory: workingDir });
   const runtimeServices = createRuntimeServices({
       // Opt out: this process does not outlive the unawaited sweep.
       modelDiscovery: 'skip',

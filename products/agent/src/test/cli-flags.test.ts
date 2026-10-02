@@ -1,3 +1,4 @@
+import { seedProviderMetadataCacheFixture } from './helpers/provider-metadata-cache-fixture.ts';
 import { describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,6 +18,7 @@ import {
 import { makeProjectTempDir } from './helpers/project-temp.ts';
 
 async function captureGoodVibesCliCommand(args: readonly string[], configManager: ConfigManager, root: string) {
+  seedProviderMetadataCacheFixture({ configManager, homeDirectory: root, workingDirectory: root });
   const logs: string[] = [];
   const originalLog = console.log;
   try {
