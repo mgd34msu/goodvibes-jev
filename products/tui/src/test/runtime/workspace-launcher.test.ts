@@ -7,6 +7,8 @@ import { resolveWorkspaceToolchain } from '../../../scripts/run-toolchain.ts';
 function fixture() {
   const root = makeProjectTempDir('gv-private-launcher');
   mkdirSync(join(root, 'bin'));
+  mkdirSync(join(root, 'src/cli'), { recursive: true });
+  copyFileSync(resolve(import.meta.dir, '../../cli/workspace-binary.ts'), join(root, 'src/cli/workspace-binary.ts'));
   copyFileSync(resolve(import.meta.dir, '../../../bin/goodvibes'), join(root, 'bin/goodvibes'));
   return root;
 }
