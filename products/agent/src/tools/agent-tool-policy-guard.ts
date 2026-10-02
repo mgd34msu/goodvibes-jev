@@ -46,8 +46,8 @@ const READ_ONLY_AGENT_TOOL_MODES = [
   'plan',
   'wait',
   'message',
-  'wrfc-chains',
-  'wrfc-history',
+  'contracts',
+  'contract-history',
   'cohort-status',
   'cohort-report',
 ] as const;
