@@ -450,22 +450,31 @@ describe('operator surfaces gate', () => {
     expect(orchestration).toBeDefined();
 
     const manager = new AgentManager({ configManager });
-    const a = manager.spawn({ mode: 'spawn', task: 'Stuck task', template: 'engineer', tools: ['read'], restrictTools: true, cohort: 'alpha' });
-    const b = manager.spawn({ mode: 'spawn', task: 'Stuck task', template: 'engineer', tools: ['read'], restrictTools: true, cohort: 'alpha' });
-    const printed: string[] = [];
+    const releases: Array<() => void> = [];
+    manager.setExecutor({ runAgent: async record => {
+      record.status = 'running';
+      await new Promise<void>(resolve => { releases.push(resolve); });
+    } });
+    try {
+      const a = manager.spawn({ mode: 'spawn', task: 'Stuck task', template: 'engineer', tools: ['read'], restrictTools: true, cohort: 'alpha', outsideContract: true });
+      const b = manager.spawn({ mode: 'spawn', task: 'Stuck task', template: 'engineer', tools: ['read'], restrictTools: true, cohort: 'alpha', outsideContract: true });
+      const other = manager.spawn({ mode: 'spawn', task: 'Other cohort', cohort: 'beta', outsideContract: true });
+      expect([a.status, b.status, other.status]).toEqual(['running', 'running', 'running']);
+      const printed: string[] = [];
 
-    await orchestration!.handler(['cancel', 'graph', 'cohort:alpha'], makeCommandContext('sess-orchestration-cancel', {
-      print: (text: string) => {
-        printed.push(text);
-      },
-      ops: {
-        agentManager: manager,
-      },
-    }));
+      await orchestration!.handler(['cancel', 'graph', 'cohort:alpha'], makeCommandContext('sess-orchestration-cancel', {
+        print: (text: string) => { printed.push(text); },
+        ops: { agentManager: manager },
+      }));
 
-    expect(manager.getStatus(a.id)?.status).toBe('cancelled');
-    expect(manager.getStatus(b.id)?.status).toBe('cancelled');
-    expect(printed.join('\n')).toContain('Cancelled 2 agents in graph cohort:alpha.');
+      expect(manager.getStatus(a.id)?.status).toBe('cancelled');
+      expect(manager.getStatus(b.id)?.status).toBe('cancelled');
+      expect(manager.getStatus(other.id)?.status).toBe('running');
+      expect(printed.join('\n')).toContain('Cancelled 2 agents in graph cohort:alpha.');
+    } finally {
+      for (const release of releases) release();
+      manager.setExecutor(null);
+    }
   });
 
   test('mcp command opens the fullscreen mcp workspace when no subcommand is supplied', async () => {
