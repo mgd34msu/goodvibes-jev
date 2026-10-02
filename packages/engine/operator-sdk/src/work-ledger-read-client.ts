@@ -33,7 +33,10 @@ function notifyObserver(callback: () => unknown): void {
   } catch { /* Observers, including hostile thenables, cannot affect reads. */ }
 }
 function statusOf(value: unknown): number | undefined {
-  return value !== null && typeof value === 'object' && 'status' in value && typeof value.status === 'number' ? value.status : undefined;
+  try {
+    const status: unknown = value !== null && typeof value === 'object' && 'status' in value ? value.status : undefined;
+    return typeof status === 'number' ? status : undefined;
+  } catch { return undefined; }
 }
 
 /** Reuses the selected operator client's existing authenticated transport. Opens no store. */
@@ -85,6 +88,7 @@ export function createOperatorWorkLedgerReadClient(
   }
   async function snapshot(controller?: AbortController): Promise<WorkLedgerReadSnapshot> {
     const value = await invoke<WorkLedgerReadSnapshot>('workLedger.snapshot', { projectId }, controller);
+    active();
     if (value.projectId !== projectId || !validCursor(value.cursor) || value.revision !== value.cursor) throw error('host project or cursor mismatch');
     return value;
   }
@@ -119,8 +123,9 @@ export function createOperatorWorkLedgerReadClient(
       // Unsubscribe/dispose advance the observation epoch before aborting.
       // A request timeout aborts only this request and must report/retry.
       if (disposed || epoch !== generation) return;
-      notifyObserver(() => options.onUnavailable?.(cause instanceof Error ? cause : error('read unavailable')));
+      // Capture admission state before handing an error to an observer.
       const status = statusOf(cause);
+      notifyObserver(() => options.onUnavailable?.(cause instanceof Error ? cause : error('read unavailable')));
       // Permanent admission failures need a new host/session binding; never keep an old grant alive.
       if (status === 401 || status === 403 || status === 404 || status === 410) { stopObservation(); return; }
       failures = Math.min(failures + 1, 6);
@@ -144,6 +149,7 @@ export function createOperatorWorkLedgerReadClient(
         const page = await invoke<HistoryPage>('workLedger.history', {
           projectId, afterSequence: current, ...(throughSequence === undefined ? {} : { throughSequence }),
         });
+        active();
         if (page.projectId !== projectId || page.afterSequence !== current
           || !validCursor(page.cursor) || !validCursor(page.throughSequence)
           || page.cursor < current || page.throughSequence < page.cursor

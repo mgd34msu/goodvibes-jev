@@ -365,3 +365,37 @@ describe('fresh authorization on every ledger entry point', () => {
       .toEqual(['workLedger.history', 'workLedger.snapshot']);
   });
 });
+
+
+test.each(['readSnapshot', 'history'] as const)('%s fences disposal at the outer await boundary', async method => {
+  const invoke: OperatorRemoteClient['invoke'] = async <T>() => (method === 'readSnapshot'
+    ? { projectId: 'fixture-project', cursor: 0, revision: 0, works: [] }
+    : { projectId: 'fixture-project', afterSequence: 0, cursor: 0, throughSequence: 0, hasMore: false, events: [] }) as T;
+  const reader = createOperatorWorkLedgerReadClient({ invoke }, 'fixture-project');
+  const pending = method === 'readSnapshot' ? reader.readSnapshot() : reader.history(0);
+  await Promise.resolve(); await Promise.resolve();
+  expect(Bun.inspect(pending)).toContain('<pending>');
+  reader.dispose(); await expect(pending).rejects.toThrow('disposed');
+});
+
+test('unavailable observer mutation cannot turn terminal auth failure into retries', async () => {
+  let calls = 0; let errors = 0;
+  const invoke: OperatorRemoteClient['invoke'] = async <T>(): Promise<T> => {
+    calls += 1; throw Object.assign(new Error('synthetic revoked token'), { status: 401 });
+  };
+  const reader = createOperatorWorkLedgerReadClient({ invoke }, 'fixture-project', {
+    pollIntervalMs: 100, onUnavailable: error => { errors += 1; Object.assign(error, { status: 503 }); },
+  });
+  reader.subscribe(() => {});
+  await waitFor(() => errors > 0); await pause(250);
+  expect(calls).toBe(1); expect(errors).toBe(1); reader.dispose();
+});
+
+test('one observer cannot rewrite another observer snapshot', async () => {
+  const host = fixture(1); const snapshots: number[] = [];
+  const reader = createOperatorWorkLedgerReadClient(host.sdk(), 'fixture-project', { pollIntervalMs: 100 });
+  reader.subscribe(snapshot => { Object.assign(snapshot, { cursor: 999, projectId: 'rewritten' }); });
+  reader.subscribe(snapshot => snapshots.push(snapshot.cursor));
+  await waitFor(() => snapshots.length > 0); expect(snapshots).toEqual([1]);
+  expect((await reader.readSnapshot()).projectId).toBe('fixture-project'); reader.dispose();
+});
