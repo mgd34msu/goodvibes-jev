@@ -29336,6 +29336,7 @@ export interface StructuredDaemonErrorBody {
     readonly code?: string | undefined;
     // (undocumented)
     readonly error: string;
+    readonly errorRef?: string | undefined;
     // (undocumented)
     readonly hint?: string | undefined;
     // (undocumented)
