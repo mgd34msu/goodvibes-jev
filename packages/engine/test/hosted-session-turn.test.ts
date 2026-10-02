@@ -30,6 +30,9 @@ import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.ts';
 import { createRuntimeStore } from '../sdk/src/platform/runtime/store/index.ts';
 import { createClientRuntimeServices, type ClientRuntimeServices } from '../sdk/src/platform/runtime/client-services.ts';
 import { createHostedSessionRuntime } from '../sdk/src/platform/hosted-sessions/session-runtime.ts';
+import { HostedSessionManager } from '../sdk/src/platform/hosted-sessions/manager.ts';
+import { HostedSessionStore } from '../sdk/src/platform/hosted-sessions/store.ts';
+import type { TurnInputOrigin } from '../sdk/src/events/turn.ts';
 import type { ChatRequest, ChatResponse, LLMProvider } from '../sdk/src/platform/providers/interface.ts';
 import type { ModelDefinition } from '../sdk/src/platform/providers/registry.ts';
 import type { PermissionPromptDecision } from '../sdk/src/platform/permissions/prompt.ts';
@@ -210,6 +213,55 @@ test('turn events reach the runtime bus stamped with this session\'s id', async 
   session.dispose();
 });
 
+test('the manager forwards only each collected input correlation into its session turn origin', async () => {
+  const queued = new Map<string, { id: string; body: string; correlationId?: string; metadata?: Record<string, unknown> }[]>();
+  const seen: { sessionId: string | undefined; origin: TurnInputOrigin | undefined }[] = [];
+  const consumed: string[] = [];
+  let finish!: () => void;
+  const finished = new Promise<void>((resolve) => { finish = resolve; });
+  const manager = new HostedSessionManager({
+    floorFactory: () => ({ services, contractRunner: services.contractRunner, dispose: (): void => {} }),
+    store: new HostedSessionStore(join(root, 'correlated-sessions'), { maxSessions: 4, maxMessagesPerSession: 20, terminatedRetentionMs: 60_000 }),
+    settings: { detachPolicy: () => 'survive', maxSessions: () => 4 },
+    runtimeBus,
+    systemPrompt: () => 'hosted',
+    intakeIntervalMs: 1,
+    spine: {
+      register: async () => ({}), closeSession: async () => ({}),
+      getInputsSince: (sessionId) => queued.get(sessionId) ?? [],
+      markInputDelivered: async (sessionId, inputId, options) => {
+        if (options?.consumed) {
+          consumed.push(`${sessionId}:${inputId}`);
+          if (consumed.length === 3) finish();
+        } else queued.set(sessionId, (queued.get(sessionId) ?? []).filter((entry) => entry.id !== inputId));
+        return {};
+      },
+    },
+  });
+  const stop = runtimeBus.on('TURN_SUBMITTED', (event) => {
+    if (event.payload.type === 'TURN_SUBMITTED') seen.push({ sessionId: event.sessionId, origin: event.payload.origin });
+  });
+  try {
+    await manager.init();
+    const a = await manager.create({ workspaceRoot: workspace, clientId: 'a' });
+    const b = await manager.create({ workspaceRoot: workspace, clientId: 'b' });
+    queued.set(a.id, [
+      { id: 'same-id', body: 'same prompt', correlationId: 'caller:a', metadata: { ownerDirect: true, unexpected: 'must not propagate' } },
+      { id: 'legacy', body: 'legacy prompt' },
+    ]);
+    queued.set(b.id, [{ id: 'same-id', body: 'same prompt', correlationId: 'caller:b' }]);
+    await finished;
+    expect(seen.filter((event) => event.sessionId === a.id).map((event) => event.origin)).toEqual([
+      { source: 'hosted-session', surface: 'service', metadata: { correlationId: 'caller:a' } },
+      { source: 'hosted-session', surface: 'service' },
+    ]);
+    expect(seen.filter((event) => event.sessionId === b.id).map((event) => event.origin)).toEqual([
+      { source: 'hosted-session', surface: 'service', metadata: { correlationId: 'caller:b' } },
+    ]);
+    expect(consumed).toHaveLength(3);
+  } finally { stop(); await manager.dispose(); }
+});
+
 test('the transcript survives the persistence round trip a restart replays', async () => {
   answers.push(textAnswer('remember this'));
   const first = createHostedSessionRuntime({
@@ -364,10 +416,11 @@ test('held provider cancellation is idempotent, settles honestly, and cannot can
   heldChat = async (request) => { signal = request.signal; start(); await held; return textAnswer('late provider answer'); };
   const ids: string[] = [];
   const cancelled: string[] = [];
-  runtimeBus.on('TURN_SUBMITTED', (event) => { if (event.payload.type !== 'TURN_SUBMITTED') return; ids.push(event.payload.turnId); });
+  const origins: (TurnInputOrigin | undefined)[] = [];
+  runtimeBus.on('TURN_SUBMITTED', (event) => { if (event.payload.type !== 'TURN_SUBMITTED') return; ids.push(event.payload.turnId); origins.push(event.payload.origin); });
   runtimeBus.on('TURN_CANCEL', (event) => { if (event.payload.type !== 'TURN_CANCEL') return; cancelled.push(event.payload.turnId); });
   try {
-    const first = session.submit('first');
+    const first = session.submit('first', 'caller:first');
     await started;
     expect(session.liveTurnControls.cancelTurn!('wrong').status).toBe('stale-turn');
     expect(signal?.aborted).toBe(false);
@@ -375,13 +428,17 @@ test('held provider cancellation is idempotent, settles honestly, and cannot can
     expect(signal?.aborted).toBe(true);
     expect(session.liveTurnControls.cancelTurn!(ids[0]!).status).toBe('cancellation-requested');
     expect(cancelled).toHaveLength(0);
-    await session.submit('future');
+    await session.submit('future', 'caller:future');
     expect(session.isRunning()).toBe(true);
     heldChat = undefined;
     release();
     await first;
     expect(cancelled).toEqual([ids[0]!]);
     expect(requests).toHaveLength(2);
+    expect(origins).toEqual([
+      { source: 'hosted-session', surface: 'service', metadata: { correlationId: 'caller:first' } },
+      { source: 'hosted-session', surface: 'service', metadata: { correlationId: 'caller:future' } },
+    ]);
     expect(session.liveTurnControls.cancelTurn!(ids[0]!).status).toBe('already-ended');
     expect(session.liveTurnControls.cancelTurn!(ids[1]!).status).toBe('already-ended');
     expect(session.conversation.getMessageSnapshot().some((m) => m.content === 'nothing left to say')).toBe(true);

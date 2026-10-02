@@ -164,7 +164,7 @@ export class HostedSessionManager {
       ...(options.spine === undefined ? {} : { spine: options.spine }),
       ...(options.intakeIntervalMs === undefined ? {} : { intervalMs: options.intakeIntervalMs }),
       liveSessions: () => this.list(),
-      deliver: (sessionId, text) => this.deliver(sessionId, text),
+      deliver: (sessionId, text, correlationId) => this.deliver(sessionId, text, correlationId),
       now: () => this.now(),
       alertOwner: (text) => this.alerter?.(text),
     });
@@ -502,13 +502,13 @@ export class HostedSessionManager {
    * Drive a turn on a hosted session: the path `sessions.steer` /
    * `sessions.followUp` reach, and the one `create`'s initial prompt uses.
    */
-  async deliver(sessionId: string, text: string): Promise<void> {
+  async deliver(sessionId: string, text: string, correlationId?: string): Promise<void> {
     const live = this.requireLive(sessionId);
     await this.ensureComposed(live);
     const runtime = live.runtime;
     if (!runtime) throw new HostedSessionUnavailableError(sessionId, 'its loop could not be composed');
     try {
-      await runtime.submit(text);
+      await runtime.submit(text, correlationId);
     } finally {
       live.record = {
         ...live.record,
