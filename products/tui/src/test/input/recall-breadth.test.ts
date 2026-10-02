@@ -11,6 +11,16 @@ import { MemoryEmbeddingProviderRegistry } from '@goodvibes-jev/engine/sdk/platf
 import { createShellPathService } from '@/runtime/index.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
+import { useMemoryRankingPort } from '../helpers/memory-ranking-port.ts';
+
+useMemoryRankingPort({
+  review: { 'Deploy runbook': 0.9 },
+  search: { query: 'orchestration runtime', candidates: {
+    'Use orchestration graph runtime edits for node scheduling changes': 0.98,
+    'Slack channel adapter handles slash commands': 0.02,
+  } },
+});
+
 function makeBaseContext(registry: MemoryRegistry, printed: string[]): CommandContext {
   const providerRegistry = {} as never;
   const conversationManager = {} as never;

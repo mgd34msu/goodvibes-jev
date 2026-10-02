@@ -12,6 +12,15 @@ import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { createShellPathService } from '@/runtime/index.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
+import { useMemoryRankingPort } from '../helpers/memory-ranking-port.ts';
+
+useMemoryRankingPort({ review: {
+  'Session-only decision': 0.9, 'Team-only decision': 0.9,
+  'Only a team record': 0.9, 'Only a session record': 0.9,
+  'Session decision A': 0.9, 'Session runbook B': 0.9,
+  'Team decision X': 0.9, 'Team risk Y': 0.9, 'Project fact Z': 0.9,
+} });
+
 /**
  * Memory front-door scope isolation tests.
  *
