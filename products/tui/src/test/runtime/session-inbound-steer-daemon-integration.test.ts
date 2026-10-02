@@ -1,3 +1,4 @@
+import { seedBenchmarkCacheFixture } from '../helpers/benchmark-cache-fixture.ts';
 /**
  * session-inbound-steer-daemon-integration.test.ts
  *
@@ -52,6 +53,7 @@ interface Harness {
 async function startHarness(): Promise<Harness> {
   const homeDirectory = makeProjectTempDir('goodvibes-inbound-home');
   const workingDir = makeProjectTempDir('goodvibes-inbound-project');
+  seedBenchmarkCacheFixture({ homeDirectory, workingDirectory: workingDir, surfaceRoot: 'goodvibes' });
   const daemon = await bootDaemon({ homeDirectory, workingDir, port: 0, token: TOKEN });
   const transport = createHttpTransport({ baseUrl: daemon.url, authToken: TOKEN });
   const spineClient: SpineSessionsClient = {

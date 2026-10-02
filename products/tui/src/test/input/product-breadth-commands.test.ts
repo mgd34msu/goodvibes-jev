@@ -1,3 +1,4 @@
+import { seedBenchmarkCacheFixture } from '../helpers/benchmark-cache-fixture.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
@@ -108,6 +109,7 @@ describe('product breadth commands', () => {
       bootstrapCredentialPath: join(root, '.goodvibes', 'tui', 'auth-bootstrap.txt'),
       users: [{ username: 'admin', passwordHash: UserAuthManager.hashPassword('admin-pass'), roles: ['admin'] }],
     });
+    seedBenchmarkCacheFixture({ homeDirectory: root, workingDirectory: root, surfaceRoot: 'tui' });
     runtimeServices = disposables.add(createRuntimeServices({
       runtimeBus: new RuntimeEventBus(),
       runtimeStore: createRuntimeStore(),
@@ -1946,6 +1948,7 @@ describe('product breadth commands', () => {
     expect(out.join('\n')).toContain('Auth Review Bundle');
     expect(out.join('\n')).toContain('active subscriptions: 0');
 
+    seedBenchmarkCacheFixture({ homeDirectory: root, workingDirectory: root, surfaceRoot: 'goodvibes' });
     const { DaemonServer } = await import('@goodvibes-jev/engine/sdk/platform/daemon');
     const { UserAuthManager } = await import('@goodvibes-jev/engine/sdk/platform/security');
     const daemon = new DaemonServer({

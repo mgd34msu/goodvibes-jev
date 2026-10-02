@@ -1,3 +1,4 @@
+import { seedBenchmarkCacheFixture } from '../helpers/benchmark-cache-fixture.ts';
 import { beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -79,6 +80,7 @@ describe('operator surfaces gate', () => {
     configManager.set('fleet.maxSize', 8);
     configManager.set('orchestration.maxDepth', 1);
     configManager.set('orchestration.recursionEnabled', true);
+    seedBenchmarkCacheFixture({ homeDirectory: tmpdir(), workingDirectory: configManager.getControlPlaneConfigDir(), surfaceRoot: 'tui' });
     runtimeServices = disposables.add(createRuntimeServices({
       runtimeBus: new RuntimeEventBus(),
       runtimeStore: createRuntimeStore(),

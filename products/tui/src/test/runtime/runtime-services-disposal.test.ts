@@ -1,3 +1,4 @@
+import { seedBenchmarkCacheFixture } from '../helpers/benchmark-cache-fixture.ts';
 /**
  * runtime-services-disposal.test.ts
  *
@@ -113,6 +114,7 @@ function describe(): string[] {
 
 beforeAll(async () => {
   root = makeProjectTempDir('tui-disposal');
+  seedBenchmarkCacheFixture({ homeDirectory: root, workingDirectory: root, surfaceRoot: 'tui' });
   install();
   try {
     services = createRuntimeServices({

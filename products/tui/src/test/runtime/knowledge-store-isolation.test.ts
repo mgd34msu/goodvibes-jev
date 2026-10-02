@@ -1,3 +1,4 @@
+import { seedBenchmarkCacheFixture } from '../helpers/benchmark-cache-fixture.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,6 +32,8 @@ function makeRuntime() {
   mkdirSync(homeDir, { recursive: true });
   mkdirSync(configDir, { recursive: true });
   roots.push(root);
+
+  seedBenchmarkCacheFixture({ homeDirectory: homeDir, workingDirectory: workingDir, surfaceRoot: 'tui' });
 
   const configManager = new ConfigManager({
     surfaceRoot: 'tui',

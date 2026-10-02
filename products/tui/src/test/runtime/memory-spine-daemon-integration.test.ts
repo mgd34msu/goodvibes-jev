@@ -1,3 +1,4 @@
+import { seedBenchmarkCacheFixture } from '../helpers/benchmark-cache-fixture.ts';
 /**
  * memory-spine-daemon-integration.test.ts
  *
@@ -178,6 +179,7 @@ interface Harness {
 async function startHarness(): Promise<Harness> {
   const homeDirectory = makeProjectTempDir('goodvibes-memory-spine-daemon-home');
   const workingDir = makeProjectTempDir('goodvibes-memory-spine-daemon-project');
+  seedBenchmarkCacheFixture({ homeDirectory, workingDirectory: workingDir, surfaceRoot: 'goodvibes' });
   const daemon = await bootDaemon({ homeDirectory, workingDir, port: 0, token: TOKEN });
   return { daemon, homeDirectory, workingDir };
 }
