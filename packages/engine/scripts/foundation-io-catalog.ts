@@ -1,3 +1,4 @@
+import { builtinGatewayWorkLedgerMethodDescriptors } from '../sdk/src/platform/control-plane/method-catalog-work-ledger.ts';
 // foundation-io-catalog.ts
 //
 // The one composition of every builtin gateway method descriptor, used by both
@@ -51,6 +52,7 @@ import type { GatewayMethodDescriptor } from '../sdk/src/platform/control-plane/
 
 /** Every builtin gateway method descriptor, in method-catalog.ts's own order. */
 export const ALL_GATEWAY_METHOD_DESCRIPTORS: readonly GatewayMethodDescriptor[] = [
+  ...builtinGatewayWorkLedgerMethodDescriptors,
   ...builtinGatewayControlMethodDescriptors,
   ...builtinBrowserJudgmentMethodDescriptors,
   ...builtinGatewayChannelMethodDescriptors,
