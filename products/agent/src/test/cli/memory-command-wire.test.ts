@@ -9,6 +9,8 @@
  *    run against the two different fixtures, lands in two different stores.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { mkdirSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
@@ -72,6 +74,8 @@ describe('memory CLI: daemon up routes over the wire', () => {
   let homeDir: string;
   let daemon: DaemonServer;
   let daemonServices: RuntimeServices;
+  let previousPort: ReturnType<typeof installJudgmentPort>;
+  let searchRequests: ReturnType<typeof fakePort>['requests'];
   let port: number;
 
   beforeEach(async () => {
@@ -97,6 +101,18 @@ describe('memory CLI: daemon up routes over the wire', () => {
       featureFlags: createFeatureFlagManager(),
       getConversationTitle: () => 'memory-cli-wire-daemon',
     });
+    // Composition installs its own port. Replace it only after the graph exists,
+    // with the explicit reading for this file's one semantic-search fixture.
+    const readings = fakePort((name, _question, state) => {
+      if (name !== 'match') throw new Error(`Unexpected memory-wire question: ${name}`);
+      expect(state).toMatchObject({
+        query: 'distinctive wire-searchable phrase about ostriches',
+        candidate: { summary: 'a distinctive wire-searchable phrase about ostriches' },
+      });
+      return noulAnswer(0.97);
+    });
+    searchRequests = readings.requests;
+    previousPort = installJudgmentPort(readings.port);
     daemon = new DaemonServer({ port, host: '127.0.0.1', runtimeServices: daemonServices.asDaemonGradeView(), userAuth: createUserAuth(daemonHomeDir) });
     daemon.enable({ daemon: true }, TEST_TOKEN);
     await daemon.start();
@@ -115,7 +131,12 @@ describe('memory CLI: daemon up routes over the wire', () => {
   });
 
   afterEach(async () => {
-    await daemon?.stop();
+    try {
+      await daemon?.stop();
+    } finally {
+      installJudgmentPort(previousPort);
+      daemonServices?.dispose();
+    }
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -191,6 +212,8 @@ describe('memory CLI: daemon up routes over the wire', () => {
     const parsed = JSON.parse(searched.output) as { readonly data: { readonly path: string; readonly records: readonly { readonly id: string }[] } };
     expect(parsed.data.path).toBe('wire:connected-daemon');
     expect(parsed.data.records.some((record) => record.id === id)).toBe(true);
+    expect(searchRequests).toHaveLength(1);
+    expect(Object.keys(searchRequests[0]!.questions)).toEqual(['match']);
   });
 
   test('memory export/import round-trip a bundle over the wire against the daemon store', async () => {

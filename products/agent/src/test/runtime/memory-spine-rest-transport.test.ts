@@ -9,6 +9,8 @@
  * local fallback from inside the transport itself).
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { mkdirSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
@@ -70,6 +72,8 @@ function createUserAuth(homeDir: string): UserAuthManager {
 describe('memory-spine REST transport against a real daemon', () => {
   let daemon: DaemonServer;
   let daemonServices: RuntimeServices;
+  let previousPort: ReturnType<typeof installJudgmentPort>;
+  let searchRequests: ReturnType<typeof fakePort>['requests'];
   let tempRoot: string;
   let port: number;
   let connection: SessionRegistrationConnection;
@@ -92,6 +96,18 @@ describe('memory-spine REST transport against a real daemon', () => {
       featureFlags: createFeatureFlagManager(),
       getConversationTitle: () => 'memory-spine-transport-test',
     });
+    // Composition installs its own port. Replace it only after the graph exists,
+    // with the explicit reading for this file's one semantic-search fixture.
+    const readings = fakePort((name, _question, state) => {
+      if (name !== 'match') throw new Error(`Unexpected memory-wire question: ${name}`);
+      expect(state).toMatchObject({
+        query: 'distinctive searchable phrase about llamas',
+        candidate: { summary: 'a very distinctive searchable phrase about llamas' },
+      });
+      return noulAnswer(0.97);
+    });
+    searchRequests = readings.requests;
+    previousPort = installJudgmentPort(readings.port);
     daemon = new DaemonServer({ port, host: '127.0.0.1', runtimeServices: daemonServices.asDaemonGradeView(), userAuth: createUserAuth(homeDir) });
     daemon.enable({ daemon: true }, TEST_TOKEN);
     await daemon.start();
@@ -99,7 +115,12 @@ describe('memory-spine REST transport against a real daemon', () => {
   });
 
   afterEach(async () => {
-    await daemon?.stop();
+    try {
+      await daemon?.stop();
+    } finally {
+      installJudgmentPort(previousPort);
+      daemonServices?.dispose();
+    }
     rmSync(tempRoot, { recursive: true, force: true });
   });
 
@@ -232,6 +253,8 @@ describe('memory-spine REST transport against a real daemon', () => {
     expect(match).toBeDefined();
     expect(typeof match?.similarity).toBe('number');
     expect(typeof match?.score).toBe('number');
+    expect(searchRequests).toHaveLength(1);
+    expect(Object.keys(searchRequests[0]!.questions)).toEqual(['match']);
   });
 
   test('exportBundle()/importBundle() round-trip through the DAEMON store as a no-loss, idempotent bundle', async () => {

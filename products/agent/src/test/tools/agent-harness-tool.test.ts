@@ -1,4 +1,10 @@
-import { describe, expect, test } from 'bun:test';
+import { buildTestModelDefinition } from '../helpers/test-managers.ts';
+import type { ModelFacts, ModelTierStore, TierRecord } from '@goodvibes-jev/engine/sdk/platform/routing';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { securityPort } from '../helpers/security-readings.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type AddressInfo } from 'node:net';
 import { join } from 'node:path';
@@ -151,6 +157,16 @@ function makeFixture(options: {
   });
   const toolRegistry = new ToolRegistry();
   const processManager = new ProcessManager();
+  const fixtureModel = { ...buildTestModelDefinition('openai', 'gpt-4.1'), contextWindow: 128_000 };
+  const tierReading = { tier: 'standard', frontier: 0.01, small: 0.01 } satisfies TierRecord;
+  const modelTiers = {
+    read: async (facts: ModelFacts, options?: { site?: string; signal?: AbortSignal }) => {
+      expect(facts.registryKey).toBe(fixtureModel.registryKey);
+      expect(options?.site).toBe('agent.prompt-context-inspection');
+      options?.signal?.throwIfAborted();
+      return tierReading;
+    },
+  } satisfies Pick<ModelTierStore, 'read'>;
   const fileUndoManager = new FileUndoManager();
   const workPlanStore = new WorkPlanStore({ homeDirectory: root, surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT, projectId: 'harness-test', projectRoot: root });
   const printed: string[] = [];
@@ -406,6 +422,9 @@ function makeFixture(options: {
       providerRegistry: {
         listModels: () => [{ provider: 'openai', modelId: 'gpt-4.1', providerEnvVars: ['OPENAI_API_KEY'] }],
         getContextWindowForModel: () => 128_000,
+        getCurrentModel: () => fixtureModel,
+        resolveModelPricing: () => ({ status: 'unknown' }),
+        modelTiers,
       },
     },
     ops: {
@@ -597,7 +616,7 @@ function expectRowsHaveCompactModelRoutes(rows: readonly Record<string, unknown>
 
 async function executeHarnessJson<T>(fixture: HarnessFixture, args: Record<string, unknown>): Promise<T> {
   const result = await fixture.tool.execute(args);
-  expect(result.success).toBe(true);
+  expect(result.success, result.error).toBe(true);
   if (!result.success) throw new Error(result.error);
   return JSON.parse(result.output ?? '{}') as T;
 }
@@ -715,11 +734,31 @@ function writeConnectedHostOperatorToken(fixture: HarnessFixture, token = 'fixtu
 }
 
 describe('agent_harness tool', () => {
+  let previousPort: JudgmentPort | undefined;
+  beforeEach(() => {
+    const security = securityPort();
+    const credentials = fakePort((name, _question, state) => {
+      if (name !== 'credential' || !state || typeof state !== 'object' || !('name' in state) || typeof state.name !== 'string') {
+        throw new Error(`Unscripted harness process reading: ${name}`);
+      }
+      // Explicit test readings retain the real environment scrub: synthetic
+      // credential-shaped names are withheld, ordinary fixture env passes.
+      return noulAnswer(/key|token|secret|password|credential/i.test(state.name) ? 0.999 : 0.001);
+    });
+    const port: JudgmentPort = {
+      model: security.port.model,
+      ask: request => Object.keys(request.questions).length === 1 && Object.hasOwn(request.questions, 'credential')
+        ? credentials.port.ask(request) : security.port.ask(request),
+    };
+    previousPort = installJudgmentPort(port);
+  });
+  afterEach(() => { installJudgmentPort(previousPort); });
+
   test('exposes a searchable compact harness mode catalog to the model', async () => {
     const fixture = makeFixture();
     try {
       const summary = await fixture.tool.execute({ mode: 'summary' });
-      expect(summary.success).toBe(true);
+      expect(summary.success, summary.error).toBe(true);
       if (!summary.success) throw new Error(summary.error);
       const summaryJson = JSON.parse(summary.output ?? '{}') as {
         readonly assistant?: {
@@ -10346,7 +10385,7 @@ describe('agent_harness tool', () => {
       expect(compactSummaryJson.modelAccess).toBeUndefined();
 
       const summary = await fixture.tool.execute({ mode: 'summary', includeParameters: true });
-      expect(summary.success).toBe(true);
+      expect(summary.success, summary.error).toBe(true);
       const summaryJson = JSON.parse(summary.output ?? '{}') as { readonly modelAccess?: { readonly workspace?: string; readonly documentOps?: string } };
       expect(summaryJson.modelAccess?.workspace).toContain('workspace action:"status');
       expect(summaryJson.modelAccess?.workspace).toContain('|actions');
@@ -10653,7 +10692,7 @@ describe('agent_harness tool', () => {
       compactRegisteredToolDefinitions(fixture.toolRegistry);
 
       const summary = await fixture.tool.execute({ mode: 'summary', includeParameters: true });
-      expect(summary.success).toBe(true);
+      expect(summary.success, summary.error).toBe(true);
       const summaryJson = JSON.parse(summary.output ?? '{}') as { readonly modelAccess?: { readonly tools?: string } };
       expect(summaryJson.modelAccess?.tools).toContain('mode:"tool"');
       expect(summaryJson.modelAccess?.tools).toContain('includeParameters:true');
@@ -10746,7 +10785,7 @@ describe('agent_harness tool', () => {
     const fixture = makeFixture();
     try {
       const summary = await fixture.tool.execute({ mode: 'summary', includeParameters: true });
-      expect(summary.success).toBe(true);
+      expect(summary.success, summary.error).toBe(true);
       if (!summary.success) throw new Error(summary.error);
       const summaryJson = JSON.parse(summary.output!) as {
         readonly releaseEvidence?: { readonly status?: string; readonly artifacts?: number; readonly available?: number };
@@ -10891,7 +10930,7 @@ describe('agent_harness tool', () => {
       fixture.configManager.setDynamic('web.enabled', false);
 
       const summary = await fixture.tool.execute({ mode: 'summary', includeParameters: true });
-      expect(summary.success).toBe(true);
+      expect(summary.success, summary.error).toBe(true);
       if (!summary.success) throw new Error(summary.error);
       const summaryJson = JSON.parse(summary.output!) as {
         readonly operatorMethods?: { readonly modes?: readonly string[]; readonly methods?: number; readonly readOnlyMethods?: number };
@@ -10975,7 +11014,7 @@ describe('agent_harness tool', () => {
     const fixture = makeFixture();
     try {
       const summary = await fixture.tool.execute({ mode: 'summary', includeParameters: true });
-      expect(summary.success).toBe(true);
+      expect(summary.success, summary.error).toBe(true);
       expect(summary.output).toContain('"cliCommands"');
       const summaryJson = JSON.parse(summary.output ?? '{}') as { readonly modelAccess?: { readonly cliCommands?: string } };
       expect(summaryJson.modelAccess?.cliCommands).toContain('workspace action:"cli_commands');
@@ -11043,7 +11082,7 @@ describe('agent_harness tool', () => {
     const fixture = makeFixture();
     try {
       const summary = await fixture.tool.execute({ mode: 'summary', includeParameters: true });
-      expect(summary.success).toBe(true);
+      expect(summary.success, summary.error).toBe(true);
       expect(summary.output).toContain('"uiSurfaces"');
       const summaryJson = JSON.parse(summary.output ?? '{}') as { readonly modelAccess?: { readonly uiSurfaces?: string } };
       expect(summaryJson.modelAccess?.uiSurfaces).toContain('workspace action:"surfaces');
@@ -11615,7 +11654,7 @@ describe('agent_harness tool', () => {
     const fixture = makeFixture();
     try {
       const summary = await fixture.tool.execute({ mode: 'summary', includeParameters: true });
-      expect(summary.success).toBe(true);
+      expect(summary.success, summary.error).toBe(true);
       expect(summary.output).toContain('"shortcuts"');
       const summaryJson = JSON.parse(summary.output ?? '{}') as { readonly modelAccess?: { readonly shortcuts?: string } };
       expect(summaryJson.modelAccess?.shortcuts).toContain('workspace action:"shortcuts');
@@ -11834,7 +11873,7 @@ describe('agent_harness tool', () => {
       expect(JSON.parse(daemonAlias.output!)).toEqual(JSON.parse(compactResult.output!));
 
       const result = await fixture.tool.execute({ mode: 'connected_host', includeParameters: true });
-      expect(result.success).toBe(true);
+      expect(result.success, result.error).toBe(true);
       expect(result.output).toContain('"routeFamilies"');
       expect(result.output).toContain('/api/goodvibes-agent/knowledge/*');
       expect(result.output).toContain('"capabilities"');
@@ -11926,7 +11965,7 @@ describe('agent_harness tool', () => {
       }) as typeof globalThis.fetch;
 
       const result = await fixture.tool.execute({ mode: 'connected_host_status' });
-      expect(result.success).toBe(true);
+      expect(result.success, result.error).toBe(true);
       if (!result.success) throw new Error(result.error);
       const payload = JSON.parse(result.output!) as {
         readonly modelRoute?: string;
@@ -13743,7 +13782,7 @@ describe('agent_harness tool', () => {
     const fixture = makeFixture();
     try {
       const summary = await fixture.tool.execute({ mode: 'summary', includeParameters: true });
-      expect(summary.success).toBe(true);
+      expect(summary.success, summary.error).toBe(true);
       const summaryJson = JSON.parse(summary.output ?? '{}') as { readonly modelAccess?: { readonly settings?: string } };
       expect(summaryJson.modelAccess?.settings).toContain('category');
       expect(summaryJson.modelAccess?.settings).toContain('prefix');
@@ -13791,7 +13830,8 @@ describe('agent_harness tool', () => {
       };
       expect(allPayload.returned).toBe(CONFIG_SCHEMA.length);
       expect(allPayload.total).toBe(CONFIG_SCHEMA.length);
-      expect(allPayload.settings.filter((setting) => !setting.visibleInWorkspace).length).toBeGreaterThan(0);
+      expect(allPayload.settings.filter((setting) => !setting.visibleInWorkspace).map(setting => setting.key).sort())
+        .toEqual(CONFIG_SCHEMA.filter(setting => isAgentHiddenSettingKey(setting.key)).map(setting => setting.key).sort());
 
       const filteredSettings = await fixture.tool.execute({
         mode: 'settings',
@@ -13893,7 +13933,7 @@ describe('agent_harness tool', () => {
         explicitUserRequest: 'Set the Slack bot token.',
       });
 
-      expect(result.success).toBe(true);
+      expect(result.success, result.error).toBe(true);
       expect(result.output).toContain('<secret-ref>');
       expect(result.output).not.toContain('xoxb-secret-value');
       expect(fixture.configManager.get('surfaces.slack.botToken')).toContain('goodvibes://secrets/');
@@ -13936,7 +13976,7 @@ describe('agent_harness tool', () => {
         explicitUserRequest: 'Reset the Slack bot token.',
       });
 
-      expect(result.success).toBe(true);
+      expect(result.success, result.error).toBe(true);
       expect(fixture.configManager.get('surfaces.slack.botToken')).toBe('');
       expect(await fixture.secretsManager?.get(key)).toBeNull();
     } finally {
@@ -13978,7 +14018,7 @@ describe('agent_harness tool', () => {
         explicitUserRequest: 'Set the Slack bot token.',
       });
 
-      expect(result.success).toBe(true);
+      expect(result.success, result.error).toBe(true);
       expect(result.output).toContain('Command /settings completed.');
       expect(result.output).toContain('<secret-ref>');
       expect(result.output).not.toContain('xoxb-secret-value');
@@ -14101,7 +14141,7 @@ describe('agent_harness catalogs: an empty page states its cause', () => {
         toolRegistry: fixture.toolRegistry,
       });
       const result = await workspaceTool.execute({ action: 'actions', category: 'actions' });
-      expect(result.success).toBe(true);
+      expect(result.success, result.error).toBe(true);
       const page = JSON.parse(result.output ?? '{}') as CatalogPage;
       expect(page.returned).toBe(0);
       expect(page.total).toBeGreaterThan(0);

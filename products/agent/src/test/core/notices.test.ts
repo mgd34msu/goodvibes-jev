@@ -43,24 +43,39 @@ describe('system notices become toasts and history entries', () => {
     conversation.addUserMessage('review the retry logic');
     conversation.addAssistantMessage('Starting a reviewer.');
     conversation.addSystemMessage(FAILED);
-    conversation.addSystemMessage('[WRFC] ✗ Chain wrfc-e9823b8 FAILED: planned-fix execution is not wired in this composition (setFixWorkstreamRunner was never called)');
+    const contractFailed = '[Contract] ✗ ctr-e9823b8 FAILED: planned-fix execution is not wired in this composition (setFixWorkstreamRunner was never called)';
+    conversation.addSystemMessage(contractFailed);
 
     const entries = feed.list();
     expect(entries).toHaveLength(2);
-    // An agent or chain event line is kept under the event's plain title, its full text in the body.
+    // An agent or contract event line is kept under the event's plain title, its full text in the body.
     expect(entries[1]!.title).toBe('Agent failed');
     expect(entries[1]!.body).toBe(FAILED.replace('[Agents] ✗ ', ''));
     expect(entries[1]!.level).toBe('warning');
     expect(entries[1]!.subject).toBe('agents');
-    expect(entries[0]!.title).toBe('Review chain failed');
-    expect(entries[0]!.body).toContain('(setFixWorkstreamRunner was never called)');
-    expect(toasts.visible().map((t) => t.title)).toEqual(['Review chain failed', 'Agent failed']);
+    expect(entries[0]!.title).toBe('Workstream failed');
+    expect(entries[0]!.body).toBe(contractFailed.replace('[Contract] ✗ ', ''));
+    expect(entries[0]!.level).toBe('warning');
+    expect(entries[0]!.domain).toBe('contract');
+    expect(toasts.visible().map((t) => t.title)).toEqual(['Workstream failed', 'Agent failed']);
+    expect(toasts.visible()[0]!.tone).toBe('warning');
     expect(toasts.visible()[1]!.tone).toBe('warning');
 
     const frame = text(conversation.getDisplayBlocks());
     expect(frame).toContain('Starting a reviewer.');
     expect(frame).not.toContain('[Agents]');
-    expect(frame).not.toContain('[WRFC]');
+    expect(frame).not.toContain('[Contract]');
+  });
+
+  test('a legacy WRFC notice remains intact without inventing a current contract event', () => {
+    const { conversation, feed, toasts } = wired();
+    const legacy = '[WRFC] ✗ Chain wrfc-e9823b8 FAILED: legacy failure detail';
+    conversation.addSystemMessage(legacy);
+    expect(feed.list()).toHaveLength(1);
+    expect(feed.list()[0]!.title).toBe(legacy);
+    expect(feed.list()[0]!.body).toBeUndefined();
+    expect(toasts.visible().map((t) => t.title)).toEqual([legacy]);
+    expect(text(conversation.getDisplayBlocks())).not.toContain(legacy);
   });
 
   test('a notice between turns draws no row either', () => {

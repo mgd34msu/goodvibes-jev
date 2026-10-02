@@ -90,7 +90,12 @@ describe('TelemetryApiService', () => {
     expect(errors).toHaveLength(2);
     const transportError = errors.find((record) => record.type === 'TRANSPORT_TERMINAL_FAILURE');
     expect(transportError?.error?.source).toBe('transport');
-    expect(transportError?.error?.category).toBe('network');
+    // Event errors are plain text. ECONNREFUSED in prose is not a structured
+    // errno, so synchronous normalization must not invent a network category.
+    expect(transportError?.error?.category).toBe('unknown');
+    expect(service.listErrors({ limit: 5, view: 'raw' })
+      .find((record) => record.type === 'TRANSPORT_TERMINAL_FAILURE')?.error?.message)
+      .toBe('ECONNREFUSED connecting to collector');
 
     const spans = service.listSpans({ limit: 5 });
     expect(spans).toHaveLength(1);

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import * as Knowledge from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import * as Providers from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { KnowledgeApi } from '@goodvibes-jev/engine/sdk/platform/knowledge';
@@ -35,17 +37,52 @@ function sortedKeys(value: object): string[] {
 }
 
 describe('foundation surface stability gate', () => {
+  let previousPort: ReturnType<typeof installJudgmentPort> | undefined;
   beforeEach(() => {
     resetTestRuntimeServices();
   });
 
   afterEach(() => {
+    if (previousPort) installJudgmentPort(previousPort);
+    previousPort = undefined;
     resetTestRuntimeServices();
   });
 
   test('foundation surfaces support one coherent in-process consumer workflow', async () => {
     const runtimeServices = getTestRuntimeServices();
     resetPeerFoundationState();
+    const note = '# Foundation Surface Note\n\nThis note proves the in-process knowledge API remains consumable.\n';
+    const rejected: string[] = [];
+    const readings = fakePort((name, question, state) => {
+      const facts = state as { filename?: string; mimeType?: string; sample?: string };
+      if (name === 'kind' && facts.filename === 'foundation-surface-note.md' && facts.mimeType === 'text/markdown') {
+        return choiceAnswer(question, 'document', 0.99);
+      }
+      if (name === 'readable' && facts.sample === note) return noulAnswer(0.99);
+      if (name === 'wanted') {
+        const extraction = state as { query: string; subjects: string[]; text: string; source: unknown; extraction: unknown; category: { title: string } };
+        expect(extraction.query).toBe('complete features specifications capabilities');
+        expect(extraction.subjects).toEqual([]);
+        expect(extraction.source).toEqual({ title: 'Foundation Surface Note', sourceType: 'document' });
+        expect(extraction.extraction).toEqual({ format: 'markdown', title: 'Foundation Surface Note' });
+        expect(extraction.text).toBe(`Foundation Surface Note\n\n${note}\n${note}\nFoundation Surface Note\n\n${note.trimEnd()}`);
+        expect([
+          'Display and picture specifications', 'Input and output ports',
+          'Smart TV platform and integrations', 'Network and wireless capabilities',
+        ]).toContain(extraction.category.title);
+        // This consumer-workflow note contains no device features/specifications.
+        return noulAnswer(0.01);
+      }
+      rejected.push(`${name}:${JSON.stringify(state)}`);
+      throw new Error(`Unexpected foundation reading: ${name}`);
+    });
+    previousPort = installJudgmentPort(readings.port);
+    const configDir = runtimeServices.configManager.getControlPlaneConfigDir();
+    for (const gateway of ['aihubmix', 'vercel-ai-gateway']) {
+      writeFileSync(join(configDir, `gateway-pricing-${gateway}.json`), JSON.stringify({
+        version: 1, fetchedAt: Date.now(), ttlMs: 86_400_000, models: {},
+      }));
+    }
     const foundationServices = {
       operator: createOperatorClientServices(runtimeServices.asDaemonGradeView()),
       peer: createPeerClientDependencies(runtimeServices),
@@ -93,7 +130,7 @@ describe('foundation surface stability gate', () => {
     expect(sortedKeys(legacyTransport.peer)).toEqual(sortedKeys(transport.peer));
 
     const artifactPath = join(runtimeServices.shellPaths.workingDirectory, 'foundation-surface-note.md');
-    writeFileSync(artifactPath, '# Foundation Surface Note\n\nThis note proves the in-process knowledge API remains consumable.\n', 'utf-8');
+    writeFileSync(artifactPath, note, 'utf-8');
     const ingest = await knowledge.ingest.artifact({
       path: artifactPath,
       connectorId: 'artifact',
@@ -106,6 +143,8 @@ describe('foundation surface stability gate', () => {
     expect(packet.items.length).toBeGreaterThan(0);
     const status = await knowledge.status.get();
     expect(status.ready).toBe(true);
+    expect(rejected).toEqual([]);
+    expect(readings.requests.length).toBeGreaterThan(0);
 
     const pair = await peer.pairing.request({
       peerKind: 'node',

@@ -1,15 +1,9 @@
-import { describe, test, expect, beforeEach } from 'bun:test';
-import { LiveTailModal, renderLiveTailModal } from '../../renderer/live-tail-modal.ts';
+import { describe, test, expect, mock } from 'bun:test';
+import { LiveTailModal, renderLiveTailModal, type LiveTailModalDeps } from '../../renderer/live-tail-modal.ts';
 import type { ProcessEntry } from '../../renderer/process-modal.ts';
-import { getTestProcessManager, resetTestProcessManager, resetTestRuntimeServices } from '../helpers/runtime-services.ts';
 import { layerTextBlock } from '../helpers/surface-frame.ts';
 
 const W = 100;
-
-beforeEach(() => {
-  resetTestRuntimeServices();
-  resetTestProcessManager();
-});
 
 function makeEntry(overrides: Partial<ProcessEntry> = {}): ProcessEntry {
   return {
@@ -22,10 +16,13 @@ function makeEntry(overrides: Partial<ProcessEntry> = {}): ProcessEntry {
   };
 }
 
-function createLiveTailModal(): LiveTailModal {
-  return new LiveTailModal({
-    processManager: getTestProcessManager(),
-  });
+// Exercise the modal's public process port. Process spawning, judgment, and
+// OS cancellation belong to the real-process integration suites.
+function createLiveTailModal(processManager: LiveTailModalDeps['processManager'] = {
+  getOutput: () => undefined,
+  stop: () => false,
+}): LiveTailModal {
+  return new LiveTailModal({ processManager });
 }
 
 describe('LiveTailModal state', () => {
@@ -66,24 +63,69 @@ describe('LiveTailModal state', () => {
     expect(modal.getOutput()).toBe('');
   });
 
-  test('getOutput() returns exec output for exec entries', async () => {
-    const processManager = getTestProcessManager();
-    const result = await processManager.spawn('echo hello', undefined, undefined);
-    const id = result.process_id;
-    if (!id) throw new Error('expected process id');
-    const modal = createLiveTailModal();
+  test('getOutput() reads the selected exec entry and combines its current stdout and stderr', () => {
+    const id = 'exec-output';
+    let output = { stdout: 'hello', stderr: 'warning\n' };
+    const getOutput = mock((_id: string) => output);
+    const modal = createLiveTailModal({ getOutput, stop: () => false });
     modal.open(makeEntry({ id, label: 'echo hello' }));
-    expect(typeof modal.getOutput()).toBe('string');
+    expect(modal.getOutput()).toBe('hello\nwarning');
+    expect(getOutput).toHaveBeenLastCalledWith(id);
+    output = { stdout: 'hello\nnext line\n', stderr: '' };
+    expect(modal.getOutput()).toBe('hello\nnext line');
+    expect(getOutput).toHaveBeenCalledTimes(2);
   });
 
-  test('stopProcess() delegates to ProcessManager for exec entries', async () => {
-    const processManager = getTestProcessManager();
-    const result = await processManager.spawn('sleep 100', undefined, undefined);
-    const id = result.process_id;
-    if (!id) throw new Error('expected process id');
-    const modal = createLiveTailModal();
+  test('stopProcess() delegates to the selected exec entry and preserves the process port result', () => {
+    const id = 'exec-running';
+    let running = true;
+    const stop = mock((_id: string) => {
+      const wasRunning = running;
+      running = false;
+      return wasRunning;
+    });
+    const modal = createLiveTailModal({ getOutput: () => undefined, stop });
     modal.open(makeEntry({ id }));
-    expect(typeof modal.stopProcess()).toBe('boolean');
+    expect(modal.stopProcess()).toBe(true);
+    expect(stop).toHaveBeenLastCalledWith(id);
+    expect(running).toBe(false);
+    expect(modal.stopProcess()).toBe(false);
+    expect(stop).toHaveBeenCalledTimes(2);
+  });
+
+  test('a closed modal neither reads output nor stops a process', () => {
+    const getOutput = mock((_id: string) => ({ stdout: 'saved output', stderr: '' }));
+    const stop = mock((_id: string) => true);
+    const modal = createLiveTailModal({ getOutput, stop });
+    modal.open(makeEntry());
+    modal.close();
+    expect(modal.getOutput()).toBe('');
+    expect(modal.stopProcess()).toBe(false);
+    expect(getOutput).not.toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  test('an empty process buffer and a pruned process have distinct output states', () => {
+    const getOutput = mock((id: string) => id === 'empty' ? { stdout: '', stderr: '' } : undefined);
+    const modal = createLiveTailModal({ getOutput, stop: () => false });
+    modal.open(makeEntry({ id: 'empty' }));
+    expect(modal.getOutput()).toBe('(no output yet)');
+    expect(getOutput).toHaveBeenLastCalledWith('empty');
+    modal.open(makeEntry({ id: 'pruned', status: 'done' }));
+    expect(modal.getOutput()).toBe('');
+    expect(getOutput).toHaveBeenLastCalledWith('pruned');
+  });
+
+  test('a finished process keeps its buffered output when stopping it is no longer possible', () => {
+    const id = 'exec-finished';
+    const getOutput = mock((_id: string) => ({ stdout: 'finished\n', stderr: '' }));
+    const stop = mock((_id: string) => false);
+    const modal = createLiveTailModal({ getOutput, stop });
+    modal.open(makeEntry({ id, status: 'done', elapsedMs: 6000 }));
+    expect(modal.getOutput()).toBe('finished');
+    expect(getOutput).toHaveBeenLastCalledWith(id);
+    expect(modal.stopProcess()).toBe(false);
+    expect(stop).toHaveBeenLastCalledWith(id);
   });
 });
 

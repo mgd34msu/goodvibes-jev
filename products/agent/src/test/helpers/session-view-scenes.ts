@@ -32,7 +32,8 @@ export const FIXTURE_VERSION = '2.0.21';
 const user = (content: string): Message => ({ role: 'user', content });
 const call = (id: string, name: string, args: Record<string, unknown>): ToolCall => ({ id, name, arguments: args });
 const assistant = (content: string, toolCalls?: ToolCall[]): Message => ({ role: 'assistant', content, model: 'claude-sonnet-5-5', provider: 'anthropic', ...(toolCalls ? { toolCalls } : {}) });
-const result = (callId: string, toolName: string, content: string): Message => ({ role: 'tool', callId, toolName, content });
+// These read/edit/spawn scene records depict successful execution, not legacy text imports.
+const result = (callId: string, toolName: string, content: string): Message => ({ role: 'tool', callId, toolName, content, outcome: 'ok' });
 
 const ENG_START = VIEW_NOW - 134_000;
 const TESTER_START = VIEW_NOW - 60_000;

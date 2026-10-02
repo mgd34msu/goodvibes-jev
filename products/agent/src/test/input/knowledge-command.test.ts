@@ -1,6 +1,8 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { rmSync, writeFileSync } from 'node:fs';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import { ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { CommandContext } from '../../input/command-registry.ts';
@@ -120,6 +122,22 @@ describe('knowledgeCommand', () => {
   let memoryStore: MemoryStore;
   let memoryRegistry: MemoryRegistry;
   let configManager: ConfigManager;
+  let restoreJudgment: (() => void) | undefined;
+
+  function installArtifactKindReadings(filename: string) {
+    const rejected: string[] = [];
+    const readings = fakePort((name, question, state) => {
+      const input = state as { filename?: string; mimeType?: string };
+      if (name === 'kind' && input.filename === filename && input.mimeType === 'text/markdown') {
+        return choiceAnswer(question, 'document', 0.99);
+      }
+      rejected.push(name);
+      throw new Error(`Unexpected knowledge command reading: ${name}`);
+    });
+    const previous = installJudgmentPort(readings.port);
+    restoreJudgment = () => { installJudgmentPort(previous); };
+    return { ...readings, rejected };
+  }
 
   beforeEach(() => {
     printed = [];
@@ -129,6 +147,12 @@ describe('knowledgeCommand', () => {
       embeddingRegistry: new MemoryEmbeddingProviderRegistry({ configManager }),
     });
     memoryRegistry = new MemoryRegistry(memoryStore);
+  });
+
+  afterEach(() => {
+    restoreJudgment?.();
+    restoreJudgment = undefined;
+    memoryStore.close();
   });
 
   test('opens Agent Knowledge workspace by default instead of copied panels or fallback APIs', async () => {
@@ -208,7 +232,9 @@ describe('knowledgeCommand', () => {
     await memoryStore.init();
     const knowledgeService = new KnowledgeService(knowledgeStore, artifactStore, undefined, { memoryRegistry });
     const filePath = join(root, 'agent-guide.md');
-    writeFileSync(filePath, '# Agent Guide\n\nUse Agent Knowledge for product-owned references.\n');
+    const text = '# Agent Guide\n\nUse Agent Knowledge for product-owned references.\n';
+    const readings = installArtifactKindReadings('agent-guide.md');
+    writeFileSync(filePath, text);
 
     await knowledgeCommand.handler(
       ['ingest-file', filePath, '--title', 'Agent Guide', '--tags', 'agent,guide'],
@@ -217,6 +243,7 @@ describe('knowledgeCommand', () => {
 
     expect(printed.join('\n')).toContain('Refusing to ingest file into Agent Knowledge');
     expect(knowledgeStore.listSources()).toHaveLength(0);
+    expect(readings.requests).toHaveLength(0);
 
     printed = [];
     await knowledgeCommand.handler(
@@ -229,6 +256,12 @@ describe('knowledgeCommand', () => {
     const sources = knowledgeStore.listSources();
     expect(sources).toHaveLength(1);
     expect(sources[0]?.connectorId).toBe('goodvibes-agent-file');
+    expect(sources[0]?.status).toBe('indexed');
+    expect(knowledgeStore.getExtractionBySourceId(sources[0]!.id)?.excerpt).toBe(text.trim());
+    // Optional semantic enrichment is outside this extraction fixture and
+    // remains fail-closed rather than inventing facts for the document.
+    expect(readings.rejected.filter(name => name !== 'wanted')).toEqual([]);
+    expect(readings.requests.some(request => Object.hasOwn(request.questions, 'kind'))).toBe(true);
   });
 
   test('ingests a saved artifact id into Agent Knowledge only after confirmation', async () => {
@@ -244,10 +277,14 @@ describe('knowledgeCommand', () => {
     });
     await memoryStore.init();
     const knowledgeService = new KnowledgeService(knowledgeStore, artifactStore, undefined, { memoryRegistry });
+    const text = '# Reviewed Export\n\nPromote this artifact into Agent Knowledge.\n';
+    const readings = installArtifactKindReadings('reviewed-export.md');
     const artifact = await artifactStore.create({
       filename: 'reviewed-export.md',
-      text: '# Reviewed Export\n\nPromote this artifact into Agent Knowledge.\n',
+      text,
     });
+    expect(readings.requests).toHaveLength(1);
+    expect(Object.keys(readings.requests[0]!.questions)).toEqual(['kind']);
 
     await knowledgeCommand.handler(
       ['ingest-artifact', artifact.id, '--title', 'Reviewed Export', '--tags', 'artifact,reviewed'],
@@ -256,6 +293,7 @@ describe('knowledgeCommand', () => {
 
     expect(printed.join('\n')).toContain('Refusing to ingest artifact into Agent Knowledge');
     expect(knowledgeStore.listSources()).toHaveLength(0);
+    expect(readings.requests).toHaveLength(1);
 
     printed = [];
     await knowledgeCommand.handler(
@@ -267,6 +305,11 @@ describe('knowledgeCommand', () => {
     const sources = knowledgeStore.listSources();
     expect(sources).toHaveLength(1);
     expect(sources[0]?.connectorId).toBe('goodvibes-agent-artifact-browser');
+    expect(sources[0]?.status).toBe('indexed');
+    expect(knowledgeStore.getExtractionBySourceId(sources[0]!.id)?.excerpt).toBe(text.trim());
+    // Optional semantic enrichment is outside this extraction fixture and
+    // remains fail-closed rather than inventing facts for the document.
+    expect(readings.rejected.filter(name => name !== 'wanted')).toEqual([]);
     expect(sources[0]?.metadata).toMatchObject({
       knowledgeIntent: {
         ingestMode: 'artifact',

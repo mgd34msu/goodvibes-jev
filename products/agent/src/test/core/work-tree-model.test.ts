@@ -8,7 +8,8 @@ import { WorkTreeTimingStore } from '../../core/work-tree-sources.ts';
 type Message = ConversationMessageSnapshot;
 const call = (id: string, name: string, args: Record<string, unknown> = {}): ToolCall => ({ id, name, arguments: args });
 const asst = (content: string, calls?: ToolCall[], model = 'm1'): Message => ({ role: 'assistant', content, model, ...(calls ? { toolCalls: calls } : {}) });
-const res = (callId: string, content = 'ok', toolName = 'exec'): Message => ({ role: 'tool', callId, toolName, content });
+// Completed fixture calls carry their recorded outcome, independent of result text.
+const res = (callId: string, content = 'ok', toolName = 'exec', outcome: 'ok' | 'error' | 'cancelled' = 'ok'): Message => ({ role: 'tool', callId, toolName, content, outcome });
 const spawn = (id: string, agentId: string): [ToolCall, Message] => [call(id, 'agent', { mode: 'spawn', task: `task ${agentId}` }), res(id, JSON.stringify({ agentId, status: 'spawned' }), 'agent')];
 
 function model(messages: Message[], sources: WorkTreeSources = {}, collapse = new Map<string, boolean>(), streamingIndex = -1): TurnModel {
@@ -62,8 +63,23 @@ describe('turn rows', () => {
   });
 
   test('a result that arrives out of order lands on its own call\'s bead', () => {
-    const m = model([{ role: 'user', content: 'q' }, asst('', [call('a', 'read'), call('b', 'exec')]), res('b', 'Error: boom'), res('a', '{}', 'read')]);
+    const m = model([{ role: 'user', content: 'q' }, asst('', [call('a', 'read'), call('b', 'exec')]), res('b', 'Error: boom', 'exec', 'error'), res('a', '{}', 'read')]);
     expect(shape(m.rows)).toEqual(['head', 'bead spine:read:ok', 'bead spine:exec:err']);
+  });
+
+  test('a recorded outcome controls a settled bead even when the output looks like an error or cancellation', () => {
+    const content = 'Error: cancelled by user';
+    for (const [outcome, status] of [['ok', 'ok'], ['error', 'err'], ['cancelled', 'cancel']] as const) {
+      const m = model([asst('', [call('a', 'exec')]), res('a', content, 'exec', outcome)]);
+      expect(shape(m.rows)).toEqual(['head', `bead spine:exec:${status}`]);
+    }
+  });
+
+  test('legacy result text alone does not invent a success, failure, or cancellation outcome', () => {
+    for (const content of ['ok', 'Error: boom', 'Error: cancelled by user']) {
+      const m = model([asst('', [call('a', 'exec')]), { role: 'tool', callId: 'a', toolName: 'exec', content }]);
+      expect(shape(m.rows)).toEqual(['head', 'bead spine:exec:unknown']);
+    }
   });
 
   test('an in-flight call spins while the turn works, and reads cancelled once it stopped', () => {
@@ -122,7 +138,7 @@ describe('agent lanes', () => {
   test('a lane whose own call failed merges back amber; the failure does not climb past it', () => {
     const [innerCall, innerResult] = spawn('i', 'tester');
     const eng: Message[] = [asst('', [innerCall]), innerResult];
-    const tester: Message[] = [asst('', [call('t1', 'exec')]), res('t1', 'Error: exit code 1')];
+    const tester: Message[] = [asst('', [call('t1', 'exec')]), res('t1', 'Error: exit code 1', 'exec', 'error')];
     const m = model([{ role: 'user', content: 'q' }, asst('', [spawnCall]), spawnResult], {
       agent: (id) => (id === 'eng' ? agent('eng', eng) : id === 'tester' ? agent('tester', tester) : null),
     });

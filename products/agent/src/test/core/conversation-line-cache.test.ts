@@ -304,6 +304,7 @@ describe('cache-vs-cold equivalence', () => {
     // 1 kept showing the pending glyph (◌) instead of flipping to done (✓)
     // until the LAST of the three results arrived.
     const cm = new ConversationManager(() => 100);
+    cm.setUnicodeCapable(true); // The status counts below deliberately inspect Unicode bead marks.
     cm.addUserMessage('run three tools');
     cm.addAssistantMessage('running now', {
       toolCalls: [

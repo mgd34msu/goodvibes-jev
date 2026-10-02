@@ -31,6 +31,7 @@ const RESULT_B = 'second result body';
 /** One assistant turn that ran two web searches, then answered. */
 function twoSearchTurn(): ConversationManager {
   const cm = new ConversationManager(() => WIDTH);
+  cm.setUnicodeCapable(true); // This fixture asserts the Unicode work-tree glyphs, independent of the runner's locale.
   cm.addUserMessage('compare two libraries');            // absolute index 0
   cm.addAssistantMessage('Searching for both.', {        // absolute index 1
     toolCalls: [
@@ -115,6 +116,7 @@ describe('assistant turns as a work tree', () => {
 
   test('every assistant message between two user messages is one turn: narration on the spine, the last answer closes it', () => {
     const cm = new ConversationManager(() => WIDTH);
+    cm.setUnicodeCapable(true);
     cm.addUserMessage('do it twice');
     cm.addAssistantMessage('first pass', { toolCalls: [{ id: 'a1', name: 'read', arguments: { path: 'a.md' } }] });
     cm.addToolResults([{ callId: 'a1', success: true, output: 'alpha' }]);

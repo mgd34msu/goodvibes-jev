@@ -4,7 +4,7 @@
  *
  * Live incident (abacusai): the provider file written by the old
  * `/provider add` says `contextWindow: 8192` for every model; the models.dev
- * catalog lists route-llm under `abacus` at 128000. The status line read
+ * catalog lists route-llm under its exact `abacusai` provider at 128000. The status line read
  * 8.2k. Now the catalog figure replaces the guess and both reports say so.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -44,11 +44,11 @@ let root = '';
 beforeEach(() => {
   root = makeProjectTempDir('gv-ctxwin-catalog-source');
   writeFileSync(join(root, 'model-catalog.json'), JSON.stringify({
-    version: 4,
+    version: 5,
     fetchedAt: Date.now(),
     ttlMs: 86_400_000,
     models: [
-      catalogEntry('abacus', 'route-llm', 128_000),
+      catalogEntry('abacusai', 'route-llm', 128_000),
       catalogEntry('zhipu', 'glm-9', 200_000),
       catalogEntry('deepinfra', 'glm-9', 200_000),
       catalogEntry('together', 'glm-9', 200_000),
@@ -92,17 +92,17 @@ describe('the window source, end to end through the SDK registry', () => {
     const registry = await registryOn('abacusai:route-llm');
     const window = contextWindowText(registry);
     expect(window).toContain('resolved: 128,000 tokens');
-    expect(window).toContain('source:   catalog: abacus');
+    expect(window).toContain('source:   catalog: abacusai');
     expect(window).not.toContain('8,192');
     const status = statusText(registry);
     expect(status).toMatch(/context +128\.0k/);
-    expect(status).toMatch(/window from +catalog: abacus/);
+    expect(status).toMatch(/window from +catalog: abacusai/);
   });
 
-  test('a model its own provider does not list: the consensus names its count', async () => {
+  test('a model its own provider does not list: the cross-provider estimate names its count', async () => {
     const registry = await registryOn('abacusai:glm-9');
-    expect(contextWindowText(registry)).toContain('source:   consensus of 4 providers');
-    expect(statusText(registry)).toMatch(/window from +consensus of 4 providers/);
+    expect(contextWindowText(registry)).toContain('source:   estimate from 4 providers');
+    expect(statusText(registry)).toMatch(/window from +estimate from 4 providers/);
   });
 
   test('a model nobody lists: unknown, with the family default named as a guess', async () => {

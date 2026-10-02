@@ -5,9 +5,11 @@
  * Hermetic, temp home/workspace + a throwaway MemoryStore; no daemon, no network.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { rmSync } from 'node:fs';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore } from '@goodvibes-jev/engine/sdk/platform/state';
@@ -31,6 +33,8 @@ describe('VIBE.md persona migration', () => {
   let configRoot: string;
   let registry: MemoryRegistry;
   let memorySpine: MemoryAccess;
+  let previousPort: ReturnType<typeof installJudgmentPort>;
+  let lineRequests: ReturnType<typeof fakePort>['requests'];
 
   beforeEach(async () => {
     dbPath = join(makeProjectTempDir('vibe-migration-db'), `vibe-migration-${randomUUID()}.db`);
@@ -46,9 +50,18 @@ describe('VIBE.md persona migration', () => {
     // surface (services.memorySpineClient in production); wrap the local registry the
     // same way so the test exercises the real seam instead of a raw registry.
     memorySpine = createLocalMemoryAccess(registry);
+    const readings = fakePort((name, _question, state) => {
+      if (name !== 'instruction') throw new Error(`Unexpected VIBE question: ${name}`);
+      expect((state as { line: string }).line).toBe('# VIBE.md');
+      // The fixture heading names the format; only its bullets are instructions.
+      return noulAnswer(0.03);
+    });
+    lineRequests = readings.requests;
+    previousPort = installJudgmentPort(readings.port);
   });
 
   afterEach(() => {
+    installJudgmentPort(previousPort);
     store.close();
     rmSync(configRoot, { recursive: true, force: true });
   });
@@ -65,9 +78,17 @@ describe('VIBE.md persona migration', () => {
     expect(firstRun).toBe(2);
     expect(registry.getAll().filter((r) => r.cls === 'constraint')).toHaveLength(2);
 
-    // Second run is a no-op, the marker keeps the same VIBE.md from re-importing.
+    expect(lineRequests).toHaveLength(1);
+    expect(Object.keys(lineRequests[0]!.questions)).toEqual(['instruction']);
+    const markerPath = shellPaths.resolveUserPath('agent', 'vibe-import.migrated.json');
+    const marker = JSON.parse(readFileSync(markerPath, 'utf8')) as { migrated: Record<string, string> };
+    const vibePath = join(shellPaths.workingDirectory, 'VIBE.md');
+    expect(marker.migrated[vibePath]).toBe(createHash('sha256').update(readFileSync(vibePath, 'utf8')).digest('hex'));
+
+    // Second run is a no-op, the persisted marker also prevents new readings.
     const secondRun = await importVibeFilesIntoMemoryOnce(memorySpine, shellPaths);
     expect(secondRun).toBe(0);
+    expect(lineRequests).toHaveLength(1);
     expect(registry.getAll().filter((r) => r.cls === 'constraint')).toHaveLength(2);
   });
 

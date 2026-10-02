@@ -18,6 +18,7 @@ function textOf(cm: ConversationManager): string {
 describe('thinking block collapse', () => {
   function buildWithThinking(): ConversationManager {
     const cm = new ConversationManager(() => 80);
+    cm.setUnicodeCapable(true); // The expected triangles and ellipsis belong to the Unicode fixture.
     // showThinking defaults to false unless configManager says otherwise,
     // wire a stub that turns display.showThinking on, same as main.ts does
     // via setConfigManager() after construction.
@@ -59,6 +60,7 @@ describe('thinking block collapse', () => {
 describe('bead blocks count the rows they draw', () => {
   test('a closed bead is one row; opened, its block spans the row and its whole body, never raw JSON', () => {
     const cm = new ConversationManager(() => 80);
+    cm.setUnicodeCapable(true);
     const padding: Record<string, number> = {};
     for (let i = 0; i < 20; i++) padding[`field_${i}`] = i;
     const jsonContent = JSON.stringify({ files_written: 1, bytes_written: 42, ...padding });

@@ -1,4 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { ChannelDeliveryRequest } from '@goodvibes-jev/engine/sdk/platform/channels';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -67,6 +69,25 @@ function artifactStore(records: ArtifactRecord[] = [archiveRecord()]) {
 }
 
 describe('agent_review_packet_share tool', () => {
+  let previousPort: ReturnType<typeof installJudgmentPort>;
+  let readings: ReturnType<typeof fakePort>;
+  let cardProbability: number;
+
+  beforeEach(() => {
+    cardProbability = 0.03;
+    readings = fakePort((name, _question, state) => {
+      if (name !== 'security_code') throw new Error(`Unexpected packet-share question: ${name}`);
+      expect(String(state)).toContain('Reviewer packet evidence:');
+      expect(String(state)).toContain('#### bytes');
+      return noulAnswer(cardProbability);
+    });
+    previousPort = installJudgmentPort(readings.port);
+  });
+
+  afterEach(() => {
+    installJudgmentPort(previousPort);
+  });
+
   test('previews archive delivery without sending when confirmation is missing', async () => {
     const requests: ChannelDeliveryRequest[] = [];
     const tool = createAgentReviewPacketShareTool(artifactStore(), fakeRouter(requests));
@@ -84,6 +105,7 @@ describe('agent_review_packet_share tool', () => {
     expect(result.error).toContain('slack');
     expect(result.error).toContain('confirmation required');
     expect(result.error).not.toContain('zip-bytes-never-printed');
+    expect(readings.requests).toHaveLength(0);
     expect(requests).toEqual([]);
   });
 
@@ -111,6 +133,26 @@ describe('agent_review_packet_share tool', () => {
     expect(requests[0]?.body).toContain('Archive: artifact-archive');
     expect(requests[0]?.body).toContain('Included artifacts: 5');
     expect(requests[0]?.body).not.toContain('zip-bytes-never-printed');
+    expect(readings.requests).toHaveLength(1);
+    expect(Object.keys(readings.requests[0]!.questions)).toEqual(['security_code']);
+  });
+
+  test('a card-material reading refuses even a confirmed share without sending', async () => {
+    cardProbability = 0.97;
+    const requests: ChannelDeliveryRequest[] = [];
+    const tool = createAgentReviewPacketShareTool(artifactStore(), fakeRouter(requests));
+    const result = await tool.execute({
+      archiveArtifactId: 'artifact-archive',
+      channel: 'slack:review:Review',
+      confirm: true,
+      explicitUserRequest: 'Share this review packet with the review channel.',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("I can't take card details over slack");
+    expect(result.error).not.toContain('4096');
+    expect(requests).toEqual([]);
+    expect(readings.requests).toHaveLength(1);
   });
 
   test('rejects non-handoff archive artifacts without delivery', async () => {
@@ -145,6 +187,8 @@ describe('agent_review_packet_share tool', () => {
     });
     expect(result.success).toBe(false);
     expect(result.error).toContain('explicitUserRequest is required');
+    expect(requests).toEqual([]);
+    expect(readings.requests).toHaveLength(0);
 
     const registry = new ToolRegistry();
     registerAgentReviewPacketShareTool(registry, artifactStore(), fakeRouter(requests));

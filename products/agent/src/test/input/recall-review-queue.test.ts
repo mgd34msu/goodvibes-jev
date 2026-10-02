@@ -22,7 +22,7 @@ function makeContext(
     clients: {
       agentKnowledgeApi: {
         memory: {
-          reviewQueue: () => queue,
+          reviewQueue: async () => queue,
         } as never,
       } as never,
       ...(options.withMemoryConsolidationClient === false
@@ -36,15 +36,15 @@ function makeContext(
 }
 
 describe('handleRecallQueue (memory review surface)', () => {
-  test('an empty queue and no proposals prints the honest empty message', () => {
+  test('an empty queue and no proposals prints the honest empty message', async () => {
     const printed: string[] = [];
-    handleRecallQueue([], makeContext(printed));
+    await handleRecallQueue([], makeContext(printed));
     expect(printed).toEqual(['[memory] Review queue is empty.']);
   });
 
-  test('lists queued records as before when there are no pending proposals', () => {
+  test('lists queued records as before when there are no pending proposals', async () => {
     const printed: string[] = [];
-    handleRecallQueue([], makeContext(printed, {
+    await handleRecallQueue([], makeContext(printed, {
       queue: [{ id: 'mem-1', scope: 'project', cls: 'fact', summary: 'deploys run on Fridays', reviewState: 'contradicted', confidence: 40 }],
     }));
     expect(printed[0]).toBe('[memory] Review queue (1):');
@@ -52,9 +52,9 @@ describe('handleRecallQueue (memory review surface)', () => {
     expect(printed.some((line) => line.includes('Pending consolidation proposals'))).toBe(false);
   });
 
-  test('surfaces pending consolidation proposals alongside the review queue, legible and jumpable', () => {
+  test('surfaces pending consolidation proposals alongside the review queue, legible and jumpable', async () => {
     const printed: string[] = [];
-    handleRecallQueue([], makeContext(printed, {
+    await handleRecallQueue([], makeContext(printed, {
       queue: [{ id: 'mem-1', scope: 'project', cls: 'fact', summary: 'deploys run on Fridays', reviewState: 'contradicted', confidence: 40 }],
       proposals: [{ kind: 'contradiction', ids: ['mem-1', 'mem-2'], route: '/memory/review', reason: 'mem-1 and mem-2 disagree' }],
     }));
@@ -66,9 +66,9 @@ describe('handleRecallQueue (memory review surface)', () => {
     expect(text).toContain('/memory review mem-1');
   });
 
-  test('proposals appear even when the review queue itself is empty (a proposal with no other queue entries)', () => {
+  test('proposals appear even when the review queue itself is empty (a proposal with no other queue entries)', async () => {
     const printed: string[] = [];
-    handleRecallQueue([], makeContext(printed, {
+    await handleRecallQueue([], makeContext(printed, {
       queue: [],
       proposals: [{ kind: 'stale-delete', ids: ['mem-7'], route: '/memory/review', reason: 'never referenced' }],
     }));
@@ -78,9 +78,9 @@ describe('handleRecallQueue (memory review surface)', () => {
     expect(text).toContain('mem-7');
   });
 
-  test('an entrypoint that never wires clients.memoryConsolidation degrades gracefully (no crash, no phantom section)', () => {
+  test('an entrypoint that never wires clients.memoryConsolidation degrades gracefully (no crash, no phantom section)', async () => {
     const printed: string[] = [];
-    handleRecallQueue([], makeContext(printed, {
+    await handleRecallQueue([], makeContext(printed, {
       queue: [{ id: 'mem-1', scope: 'project', cls: 'fact', summary: 'x', reviewState: 'fresh', confidence: 60 }],
       withMemoryConsolidationClient: false,
     }));

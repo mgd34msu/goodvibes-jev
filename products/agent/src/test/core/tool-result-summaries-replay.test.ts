@@ -96,7 +96,7 @@ describe('a compaction keeps the kept messages whole', () => {
     for (const m of after) if (m.role === 'tool') expect(calls.has(m.callId)).toBe(true);
   });
 
-  test('provider messages the compaction wrote itself keep their tool calls too', () => {
+  test('provider-only reconstructed messages keep calls and content without inventing an outcome', () => {
     const cm = conversationWithTurns();
     cm.replaceMessagesForLLM([
       { role: 'user', content: 'summary' },
@@ -105,7 +105,9 @@ describe('a compaction keeps the kept messages whole', () => {
     ]);
     const { beads } = turnBeads(cm.getMessageSnapshot());
     expect(beads[0]!.arg).toBe('z.ts');
-    expect(beads[0]!.summary?.text).toBe('2 lines');
+    expect(beads[0]!.result).toBe('a\nb\n');
+    expect(beads[0]!.status).toBe('unknown');
+    expect(beads[0]!.summary?.text).toBe('outcome unknown');
   });
 
   test('system messages and the title survive the replace', () => {

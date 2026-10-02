@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { CommandContext } from '../../input/command-registry.ts';
 import { recallCommand } from '../../input/commands/memory.ts';
@@ -60,6 +62,27 @@ describe('recall command breadth', () => {
   let registry: MemoryRegistry;
   let printed: string[];
   let configManager: ConfigManager;
+  let previousJudgment: ReturnType<typeof installJudgmentPort>;
+  let readings: ReturnType<typeof fakePort>;
+
+  // Authored readings for these exact fixtures. Unknown requests fail closed;
+  // no lexical classifier or production decision implementation is substituted.
+  function rankFixture(name: string, state: unknown) {
+    const input = state as {
+      record?: { summary?: string; review_state?: string };
+      candidate?: { summary?: string };
+      query?: string;
+    };
+    if (name === 'needs_review' && input.record?.summary === 'Deploy runbook') {
+      if (input.record.review_state === 'fresh') return noulAnswer(0.97);
+      if (input.record.review_state === 'reviewed') return noulAnswer(0.03);
+    }
+    if (name === 'match' && input.query === 'orchestration runtime') {
+      if (input.candidate?.summary === 'Use orchestration graph runtime edits for node scheduling changes') return noulAnswer(0.98);
+      if (input.candidate?.summary === 'Slack channel adapter handles slash commands') return noulAnswer(0.02);
+    }
+    throw new Error(`Unexpected recall breadth reading: ${name}`);
+  }
 
   beforeEach(async () => {
     dir = makeProjectTempDir('gv-recall');
@@ -70,9 +93,12 @@ describe('recall command breadth', () => {
     await store.init();
     registry = new MemoryRegistry(store);
     printed = [];
+    readings = fakePort((name, _question, state) => rankFixture(name, state));
+    previousJudgment = installJudgmentPort(readings.port);
   });
 
   afterEach(() => {
+    installJudgmentPort(previousJudgment);
     store.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -84,14 +110,27 @@ describe('recall command breadth', () => {
     const created = registry.getAll()[0];
     expect(created?.scope).toBe('team');
 
-    recallCommand.handler(['queue', '5'], context);
-    expect(printed.join('\n')).toContain('Review queue');
+    await recallCommand.handler(['queue', '5'], context);
+    expect(printed.join('\n')).toContain('Review queue (1)');
+    expect(readings.requests).toHaveLength(1);
+    expect(readings.requests[0]?.state).toMatchObject({ record: { summary: 'Deploy runbook', review_state: 'fresh' } });
+    expect(Object.keys(readings.requests[0]!.questions)).toEqual(['needs_review']);
 
     printed.length = 0;
-    recallCommand.handler(['review', created!.id, 'reviewed', '--confidence', '92', '--by', 'operator'], context);
+    await recallCommand.handler(['review', created!.id, 'reviewed', '--confidence', '92', '--by', 'operator'], context);
     expect(registry.get(created!.id)?.reviewState).toBe('reviewed');
     expect(registry.get(created!.id)?.confidence).toBe(92);
     expect(printed.join('\n')).toContain('Reviewed');
+
+    // Review changes the priority, not membership: even a reviewed record is
+    // ranked before the queue limit is applied.
+    printed.length = 0;
+    await recallCommand.handler(['queue', '1'], context);
+    expect(printed.join('\n')).toContain('Review queue (1)');
+    expect(printed.join('\n')).toContain(created!.id);
+    expect(readings.requests).toHaveLength(2);
+    expect(readings.requests[1]?.state).toMatchObject({ record: { review_state: 'reviewed', confidence: 92 } });
+    expect(registry.get(created!.id)?.scope).toBe('team');
   });
 
   test('supports sqlite-vec semantic search and vector status commands', async () => {
@@ -111,18 +150,28 @@ describe('recall command breadth', () => {
       review: { state: 'reviewed', confidence: 90 },
     });
 
-    recallCommand.handler(['search', '--semantic', 'orchestration', 'runtime', '--limit', '1'], context);
+    await recallCommand.handler(['search', '--semantic', 'orchestration', 'runtime', '--limit', '1'], context);
     expect(printed.join('\n')).toContain('semantic record');
     expect(printed.join('\n')).toContain('orchestration graph runtime edits');
     expect(printed.join('\n')).toContain('sim ');
+    expect(printed.join('\n')).not.toContain('Slack channel adapter handles slash commands');
+    expect(readings.requests).toHaveLength(2);
+    expect(readings.requests.map(request => (request.state as { candidate: { summary: string } }).candidate.summary).sort()).toEqual([
+      'Slack channel adapter handles slash commands',
+      'Use orchestration graph runtime edits for node scheduling changes',
+    ]);
+    for (const request of readings.requests) {
+      expect(request.state).toMatchObject({ query: 'orchestration runtime' });
+      expect(Object.keys(request.questions)).toEqual(['match']);
+    }
 
     printed.length = 0;
-    recallCommand.handler(['vector', 'status'], context);
+    await recallCommand.handler(['vector', 'status'], context);
     expect(printed.join('\n')).toContain('backend: sqlite-vec');
     expect(printed.join('\n')).toContain('indexed records: 2');
 
     printed.length = 0;
-    recallCommand.handler(['vector', 'rebuild'], context);
+    await recallCommand.handler(['vector', 'rebuild'], context);
     expect(printed.join('\n')).toContain('rebuild complete');
   });
 
@@ -132,12 +181,12 @@ describe('recall command breadth', () => {
     await registry.add({ scope: 'team', cls: 'decision', summary: 'Shared deploy decision' });
     const exportPath = join(dir, 'knowledge', 'team-bundle.json');
 
-    recallCommand.handler(['export', exportPath, '--scope', 'team'], context);
+    await recallCommand.handler(['export', exportPath, '--scope', 'team'], context);
     expect(printed.join('\n')).toContain('Refusing to export durable memory bundle');
     expect(existsSync(exportPath)).toBe(false);
 
     printed.length = 0;
-    recallCommand.handler(['export', exportPath, '--scope', 'team', '--yes'], context);
+    await recallCommand.handler(['export', exportPath, '--scope', 'team', '--yes'], context);
     const bundleText = readFileSync(exportPath, 'utf-8');
     expect(bundleText).toContain('"scope": "team"');
     expect(bundleText).toContain('"recordCount": 1');
@@ -173,16 +222,16 @@ describe('recall command breadth', () => {
     await registry.add({ scope: 'team', cls: 'runbook', summary: 'Shared rollout checklist' });
     const handoffPath = join(dir, 'handoff', 'team.json');
 
-    recallCommand.handler(['handoff-export', handoffPath, '--scope', 'team'], context);
+    await recallCommand.handler(['handoff-export', handoffPath, '--scope', 'team'], context);
     expect(printed.join('\n')).toContain('Refusing to export memory handoff bundle');
     expect(existsSync(handoffPath)).toBe(false);
 
     printed.length = 0;
-    recallCommand.handler(['handoff-export', handoffPath, '--scope', 'team', '--yes'], context);
+    await recallCommand.handler(['handoff-export', handoffPath, '--scope', 'team', '--yes'], context);
     expect(readFileSync(handoffPath, 'utf-8')).toContain('"scope": "team"');
 
     printed.length = 0;
-    recallCommand.handler(['handoff-inspect', handoffPath], context);
+    await recallCommand.handler(['handoff-inspect', handoffPath], context);
     expect(printed.join('\n')).toContain('Memory Handoff Review');
 
     const importDir = makeProjectTempDir('gv-recall-handoff-import');
