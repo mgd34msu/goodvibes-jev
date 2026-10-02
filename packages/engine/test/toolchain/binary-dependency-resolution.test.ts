@@ -17,7 +17,7 @@ function pkg(directory: string, name: string, version = '0.1.9', extra: Record<s
 }
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'binary-owner-test-')); roots.push(root);
-  const product = pkg(join(root, 'products', 'app'), 'fixture-app');
+  const product = pkg(join(root, 'products', 'app'), 'fixture-app', '1.0.0', { dependencies: { 'sqlite-vec': '0.1.9' } });
   const owner = pkg(join(root, 'store', 'sqlite-vec', 'node_modules', 'sqlite-vec'), 'sqlite-vec', '0.1.9', { optionalDependencies: { [target.nativeAddonPackage!]: '0.1.9', [cross.nativeAddonPackage!]: '0.1.9' } });
   mkdirSync(join(product, 'node_modules'), { recursive: true });
   symlinkSync(owner, join(product, 'node_modules', 'sqlite-vec'), 'dir');
@@ -187,4 +187,30 @@ test('engine optional dependency ownership matches the real private workspace la
   const f = engineOwnedFixture(true, true, true); f.install();
   expect(f.stage()).toBe(true);
   expect(readFileSync(f.destination(), 'utf8')).toBe('fixture linux-x64');
+});
+
+function unrelatedAncestor(f: ReturnType<typeof engineOwnedFixture>, malformed = false) {
+  const owner = pkg(join(f.root, 'node_modules', 'sqlite-vec'), malformed ? 'wrong-package' : 'sqlite-vec', '0.1.8', { optionalDependencies: { [target.nativeAddonPackage!]: '0.1.8' } });
+  const native = pkg(join(f.root, 'node_modules', target.nativeAddonPackage!), target.nativeAddonPackage!, '0.1.8');
+  writeFileSync(join(native, 'vec0.so'), 'unrelated ancestor');
+  return owner;
+}
+
+test.each([false, true])('undeclared ancestor sqlite cannot shadow declared engine owner (malformed=%s)', malformed => {
+  const f = engineOwnedFixture(true, true, true); f.install(); unrelatedAncestor(f, malformed);
+  expect(f.stage()).toBe(true);
+  expect(readFileSync(f.destination(), 'utf8')).toBe('fixture linux-x64');
+});
+
+test('explicit product sqlite owner retains precedence over configured engine owner', () => {
+  const f = engineOwnedFixture(); f.install(); unrelatedAncestor(f);
+  pkg(f.product, 'fixture-app', '1.0.0', { dependencies: { '@fixture/engine': 'workspace:*', 'sqlite-vec': '0.1.8' } });
+  expect(f.stage()).toBe(true);
+  expect(readFileSync(f.destination(), 'utf8')).toBe('unrelated ancestor');
+});
+
+test('an undeclared direct sqlite installation is not an owner', () => {
+  const f = fixture(); f.install(); pkg(f.product, 'fixture-app');
+  expect(f.stage()).toBe(false);
+  expect(existsSync(f.destination())).toBe(false);
 });

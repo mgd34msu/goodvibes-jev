@@ -83,12 +83,13 @@ export function provideNativeAddon(options: ProvideNativeAddonOptions): boolean 
   const file = target.nativeAddonFile;
   if (!packageName || !file) return true;
   const productManifest = join(root, 'package.json');
-  let ownerPath = resolveOwnedPackageManifest(productManifest, 'sqlite-vec');
+  const product = JSON.parse(readFileSync(productManifest, 'utf8')) as PackageManifest;
+  const declaredByProduct = Object.hasOwn(product.dependencies ?? {}, 'sqlite-vec') || Object.hasOwn(product.optionalDependencies ?? {}, 'sqlite-vec');
+  let ownerPath = declaredByProduct ? resolveOwnedPackageManifest(productManifest, 'sqlite-vec') : null;
   // Private clients depend on the engine; sqlite-vec belongs to that declared
   // dependency, not to a fictitious product-level or hoisted installation.
-  if (ownerPath === null && options.sdkPackage) {
+  if (!declaredByProduct && options.sdkPackage) {
     const sdkName = options.sdkPackage.split('/').slice(0, options.sdkPackage.startsWith('@') ? 2 : 1).join('/');
-    const product = JSON.parse(readFileSync(productManifest, 'utf8')) as PackageManifest;
     if (Object.hasOwn(product.dependencies ?? {}, sdkName) || Object.hasOwn(product.optionalDependencies ?? {}, sdkName)) {
       const sdkPath = resolveOwnedPackageManifest(productManifest, options.sdkPackage);
       if (sdkPath !== null) {
