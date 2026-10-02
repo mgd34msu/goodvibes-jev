@@ -214,3 +214,10 @@ test('an undeclared direct sqlite installation is not an owner', () => {
   expect(f.stage()).toBe(false);
   expect(existsSync(f.destination())).toBe(false);
 });
+
+test('missing explicitly declared product owner does not switch to installed engine owner', () => {
+  const f = engineOwnedFixture(); f.install();
+  pkg(f.product, 'fixture-app', '1.0.0', { dependencies: { '@fixture/engine': 'workspace:*', 'sqlite-vec': '0.1.8' } });
+  expect(f.stage()).toBe(false);
+  expect(existsSync(f.destination())).toBe(false);
+});
