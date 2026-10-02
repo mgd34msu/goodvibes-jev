@@ -56,6 +56,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Writable } from 'node:stream';
 
 // From the env-names module, never from the watchdog itself: that one imports
 // `bun:test` and registers a global `beforeEach`, and this runs in the PARENT.
@@ -168,30 +169,54 @@ function describeSeconds(ms: number): string {
  * Stream a child pipe to this process's own, remembering enough of it to name
  * what the run was doing if it has to be ended.
  */
-async function pump(
+export async function pumpTestOutput(
   stream: ReadableStream<Uint8Array> | undefined,
-  sink: NodeJS.WriteStream,
+  sink: Writable,
   seen: { lastLine: string | null; lastFile: string | null },
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!stream) return;
   const decoder = new TextDecoder();
+  const reader = stream.getReader();
   let pending = '';
-  for await (const chunk of stream) {
-    sink.write(chunk);
-    pending += decoder.decode(chunk, { stream: true });
-    const lines = pending.split('\n');
-    pending = lines.pop() ?? '';
-    for (const line of lines) {
-      const text = line.replace(ANSI_SGR, '').trim();
-      if (text === '') continue;
-      seen.lastLine = text;
-      // bun opens each file with a header, `path/to.test.ts:`, wrapped in a
-      // `::group::` under GitHub Actions. That header is printed BEFORE the
-      // file is loaded, which is precisely why it is the last thing a wedged
-      // run ever printed.
-      const header = /^(?:::group::)?([\w./@-]+\.(?:test|spec)\.[cm]?[jt]sx?):$/.exec(text);
-      if (header) seen.lastFile = header[1] as string;
+  let onSinkError!: (error: Error) => void;
+  const sinkFailed = new Promise<never>((_resolve, reject) => { onSinkError = reject; });
+  const onAbort = (): void => onSinkError(signal?.reason instanceof Error ? signal.reason : new Error('test output drain aborted'));
+  sink.on('error', onSinkError);
+  signal?.addEventListener('abort', onAbort, { once: true });
+  if (signal?.aborted) onAbort();
+  try {
+    while (true) {
+      // An error can arrive while either the source or the sink is idle. Race
+      // both waits so a destroyed sink cannot leave the runner parked forever.
+      const { done, value: chunk } = await Promise.race([reader.read(), sinkFailed]);
+      if (done) break;
+      // Pipe exhaustion is not downstream delivery: throwing on a failed child
+      // can otherwise discard the final buffered diagnostics in this process.
+      await Promise.race([
+        new Promise<void>((resolve, reject) => {
+          sink.write(chunk, (error) => error ? reject(error) : resolve());
+        }),
+        sinkFailed,
+      ]);
+      pending += decoder.decode(chunk, { stream: true });
+      const lines = pending.split('\n');
+      pending = lines.pop() ?? '';
+      for (const line of lines) {
+        const text = line.replace(ANSI_SGR, '').trim();
+        if (text === '') continue;
+        seen.lastLine = text;
+        // bun opens each file with a header, before loading it. Keep that
+        // context available to the existing stall and overall ceilings.
+        const header = /^(?:::group::)?([\w./@-]+\.(?:test|spec)\.[cm]?[jt]sx?):$/.exec(text);
+        if (header) seen.lastFile = header[1] as string;
+      }
     }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+    sink.off('error', onSinkError);
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 
@@ -246,10 +271,17 @@ export async function runOwnedTestChild(options: {
   process.on('SIGHUP', onHangup);
 
   const seen: { lastLine: string | null; lastFile: string | null } = { lastLine: null, lastFile: null };
-  const pumps = Promise.all([
-    pump(child.stdout as ReadableStream<Uint8Array> | undefined, process.stdout, seen),
-    pump(child.stderr as ReadableStream<Uint8Array> | undefined, process.stderr, seen),
-  ]).catch(() => undefined);
+  const outputAbort = new AbortController();
+  let outputAbortReason: Error | null = null;
+  const pumps = [
+    pumpTestOutput(child.stdout as ReadableStream<Uint8Array> | undefined, process.stdout, seen, outputAbort.signal),
+    pumpTestOutput(child.stderr as ReadableStream<Uint8Array> | undefined, process.stderr, seen, outputAbort.signal),
+  ];
+  const outputDone = Promise.all(pumps).catch((error: unknown) => {
+    // Only our existing watchdog may abandon undeliverable output. Its stopped
+    // result is still a failure; all genuine sink errors keep rejecting.
+    if (error !== outputAbortReason) throw error;
+  });
 
   let stopped: OwnedTestChildStop | null = null;
   let stopReason: string | null = null;
@@ -259,6 +291,8 @@ export async function runOwnedTestChild(options: {
     stopped = kind;
     stopReason = reason;
     process.stderr.write(`\ngoodvibes: ${reason}\n`);
+    outputAbortReason = new Error(`test output drain ended by ${kind}`);
+    outputAbort.abort(outputAbortReason);
     try { child.kill('SIGTERM'); } catch { /* already gone */ }
     escalation = setTimeout(() => {
       process.stderr.write(
@@ -310,8 +344,9 @@ export async function runOwnedTestChild(options: {
   }, POLL_MS);
 
   try {
-    let exitCode = await child.exited;
-    await pumps;
+    // A broken output sink is a failed run too. Observe it while the child is
+    // alive, so finally can stop and reap the child rather than leave it blocked.
+    let [exitCode] = await Promise.all([child.exited, outputDone]);
     let violations = '';
     try { violations = readFileSync(violationsPath, 'utf8'); } catch { /* no blocked requests */ }
     if (violations.length > 0) {
@@ -320,16 +355,17 @@ export async function runOwnedTestChild(options: {
     }
     return { exitCode, signalCode: child.signalCode, stopped, stopReason };
   } finally {
+    try { child.kill('SIGKILL'); } catch { /* already gone */ }
+    // Reaped, not merely signalled: returning while the child is still dying
+    // would let the caller's temp-tree removal race its last writes.
+    await child.exited.catch(() => undefined);
+    await Promise.allSettled(pumps);
+    // Keep the existing ceilings alive until both child and pipes are done.
     clearInterval(watchdog);
     if (escalation !== null) clearTimeout(escalation);
     process.off('SIGINT', onInterrupt);
     process.off('SIGTERM', onTerminate);
     process.off('SIGHUP', onHangup);
-    try { child.kill('SIGKILL'); } catch { /* already gone */ }
-    // Reaped, not merely signalled: returning while the child is still dying
-    // would let the caller's temp-tree removal race its last writes.
-    await child.exited.catch(() => undefined);
-    await pumps;
     rmSync(heartbeatDir, { recursive: true, force: true });
   }
 }
