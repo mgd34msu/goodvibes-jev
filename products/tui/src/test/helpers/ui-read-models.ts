@@ -5,7 +5,7 @@ import type {
   UiCockpitSnapshot,
   UiCommunicationSnapshot,
   UiControlPlaneSnapshot,
-  UiOrchestrationSnapshot,
+  UiContractsSnapshot,
   UiReadModel,
   UiRoutesSnapshot,
   UiTasksSnapshot,
@@ -18,7 +18,6 @@ import type { AutomationRouteBinding } from '@goodvibes-jev/engine/sdk/platform/
 import type { WatcherRecord } from '@/runtime/index.ts';
 import type { RuntimeCommunicationRecord } from '@/runtime/index.ts';
 import type { RuntimeTask } from '@/runtime/index.ts';
-import type { OrchestrationGraphRecord } from '@/runtime/index.ts';
 import type { ControlPlaneClientRecord } from '@/runtime/index.ts';
 
 export function createStaticUiReadModel<TSnapshot>(snapshot: TSnapshot): UiReadModel<TSnapshot> {
@@ -129,17 +128,17 @@ export function createCommunicationReadModel(store: RuntimeStore): UiReadModel<U
   });
 }
 
-export function createOrchestrationReadModel(store: RuntimeStore): UiReadModel<UiOrchestrationSnapshot> {
+export function createContractsReadModel(store: RuntimeStore): UiReadModel<UiContractsSnapshot> {
   return createStoreBackedUiReadModel(store, () => {
-    const state = store.getState().orchestration;
-    const graphs = [...state.graphs.values()].sort((a, b) => b.createdAt - a.createdAt) as OrchestrationGraphRecord[];
+    const state = store.getState().contracts;
     return {
-      graphs,
-      totalGraphs: state.totalGraphs,
-      activeGraphIds: state.activeGraphIds,
-      totalCompletedGraphs: state.totalCompletedGraphs,
-      totalFailedGraphs: state.totalFailedGraphs,
-      recursionGuardTrips: state.recursionGuardTrips,
+      contracts: [...state.contracts.values()].sort((a, b) => b.createdAt - a.createdAt),
+      totalContracts: state.totalContracts,
+      activeContractIds: state.activeContractIds,
+      totalPassed: state.totalPassed,
+      totalFailed: state.totalFailed,
+      totalCancelled: state.totalCancelled,
+      spawnGuardTrips: state.spawnGuardTrips,
     };
   });
 }

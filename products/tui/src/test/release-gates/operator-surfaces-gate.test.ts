@@ -27,7 +27,6 @@ import type { CommandContext } from '../../input/command-registry.ts';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { MemoryRegistry, MemoryStore } from '@goodvibes-jev/engine/sdk/platform/state';
 import { MemorySpineClient, createLocalMemoryAccess } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
-import { createOrchestrationReadModel } from '../helpers/ui-read-models.ts';
 import { listHookPointContracts } from '@goodvibes-jev/engine/sdk/platform/hooks';
 
 type CommandContextOverrides =
@@ -442,59 +441,6 @@ describe('operator surfaces gate', () => {
     }));
 
     expect(opened).toBe(true);
-  });
-
-  test('orchestration show prints the selected graph summary', async () => {
-    const registry = new CommandRegistry();
-    registerBuiltinCommands(registry);
-    const orchestration = registry.get('orchestration');
-    expect(orchestration).toBeDefined();
-
-    const store = createRuntimeStore();
-    store.setState((state) => ({
-      ...state,
-      orchestration: {
-        ...state.orchestration,
-        graphs: new Map([
-          ['graph-1', {
-            id: 'graph-1',
-            title: 'Graph One',
-            mode: 'parallel-workers',
-            status: 'running',
-            nodeOrder: ['node-1'],
-            nodes: new Map([
-              ['node-1', {
-                id: 'node-1',
-                title: 'Engineer',
-                role: 'engineer',
-                status: 'running',
-                childNodeIds: [],
-                dependencyNodeIds: [],
-              }],
-            ]),
-            createdAt: Date.now(),
-          }],
-        ]),
-        activeGraphIds: ['graph-1'],
-        totalGraphs: 1,
-      },
-    }));
-
-    const printed: string[] = [];
-    await orchestration!.handler(['show', 'graph-1'], makeCommandContext('sess-orchestration-show', {
-      print: (text: string) => {
-        printed.push(text);
-      },
-      platform: {
-        readModels: {
-          orchestration: createOrchestrationReadModel(store),
-        } as never,
-      },
-    }));
-
-    expect(printed.join('\n')).toContain('Graph graph-1');
-    expect(printed.join('\n')).toContain('Graph One');
-    expect(printed.join('\n')).toContain('Engineer');
   });
 
   test('orchestration cancel graph cancels active agents in the target graph', async () => {
