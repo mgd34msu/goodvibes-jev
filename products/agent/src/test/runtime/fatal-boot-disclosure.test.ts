@@ -35,7 +35,6 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { patchBunCompileCompatibility } from '../../../scripts/bun-compile-compat.ts';
 import { makeLongLivedProjectTempDir, makeProjectTempDir } from '../helpers/project-temp.ts';
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..');
@@ -61,13 +60,12 @@ interface CompiledEntry {
 /**
  * Compile one entry the way the release lane does.
  *
- * `patchBunCompileCompatibility` is the same call `scripts/prebuild.ts` makes
- * before every `build:*` script; without it a compiled artifact dies at module
+ * The compile driver applies the same in-memory compatibility transforms as
+ * the production binary build; without it a compiled artifact dies at module
  * init on `css-tree`'s `createRequire` of `../data/patch.json`, long before any
  * code under test runs.
  */
 function compileEntry(entry: string, name: string): CompiledEntry {
-  patchBunCompileCompatibility(REPO_ROOT);
   // Long-lived on purpose: a binary compiled in beforeAll has to outlive every
   // test in its describe, and the ordinary per-test sweep would delete it after
   // the first one. Each describe still removes its own directory in afterAll.
@@ -75,7 +73,7 @@ function compileEntry(entry: string, name: string): CompiledEntry {
   const binary = join(dir, name);
   const built = spawnSync(
     process.execPath,
-    ['build', entry, '--compile', '--target=bun-linux-x64', '--outfile', binary],
+    ['scripts/compile.ts', entry, '--compile', '--target=bun-linux-x64', '--outfile', binary],
     { cwd: REPO_ROOT, encoding: 'utf-8', timeout: COMPILE_TIMEOUT_MS },
   );
   if (built.status !== 0) {

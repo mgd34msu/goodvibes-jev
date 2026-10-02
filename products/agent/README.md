@@ -138,7 +138,8 @@ bun run dev
 | `bun run dev` | Run the Agent TUI from source |
 | `bun run test` | Run the full test suite through the deterministic suite runner |
 | `bun run typecheck` | Type-check the source tree |
-| `bun run build` | Compile `src/main.ts` into `dist/goodvibes-agent` |
+| `bun run build` | Bundle the workspace package entrypoint into `dist/package/main.js` |
+| `bun run build:binary` | Compile the native Agent executable and stage its sqlite-vec library in `dist/lib` |
 | `bun run package:install-check` | Verify the packaged CLI actually installs and runs |
 | `bun run publish:check` | Run the package-facing text, metadata, and tarball-contents gates |
 

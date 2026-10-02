@@ -1,7 +1,7 @@
 /**
  * End-to-end harness: the BUILT goodvibes-agent binary in a real terminal.
  *
- * Every test here drives the compiled artifact (`bun run build`, or
+ * Every test here drives the compiled artifact (`bun run build:binary`, or
  * GOODVIBES_E2E_BINARY), never the source. The terminal is a tmux server this
  * harness owns (a private `-L` socket per session, killed on stop), which gives
  * a real pty, keystrokes, the rendered screen (capture-pane) and the raw byte
@@ -13,6 +13,9 @@
  * machine is already running. The model is a scripted OpenAI-compatible server
  * in this test process (startStubModel).
  */
+import { AgentConfigManager } from '../../config/host-settings.ts';
+import { seedProviderMetadataCacheFixture, seedProviderModelListCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
+import { startE2EJudgments } from './judgment-fixture.ts';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -30,7 +33,7 @@ const ARTIFACT_BY_PLATFORM: Record<string, string> = {
 
 /**
  * The compiled binary under test: GOODVIBES_E2E_BINARY, else the platform
- * artifact (`bun run build:linux-x64`), else the native `bun run build` output.
+ * artifact (`bun run build:binary`), else the legacy native output.
  * Fails loudly when none has been built.
  */
 export function resolveBinary(): string {
@@ -43,7 +46,7 @@ export function resolveBinary(): string {
     ];
   const found = candidates.find((candidate) => existsSync(candidate));
   if (!found) {
-    throw new Error(`E2E: no built binary at ${candidates.join(' or ')}. Run \`bun run build\` first, or set GOODVIBES_E2E_BINARY.`);
+    throw new Error(`E2E: no built binary at ${candidates.join(' or ')}. Run \`bun run build:binary\` first, or set GOODVIBES_E2E_BINARY.`);
   }
   return found;
 }
@@ -261,6 +264,8 @@ export interface E2EHome {
   readonly daemonPort: number;
   /** The daemon's own state directory inside the isolated home. */
   readonly daemonHome: string;
+  readonly judgments: ReturnType<typeof startE2EJudgments>;
+  readonly networkViolations: string;
   /** Write a settings key (dot path) into the Agent's settings file. */
   setAgentSetting(key: string, value: unknown): void;
 }
@@ -323,6 +328,8 @@ export async function makeHome(model: StubModel): Promise<E2EHome> {
   const settingsPath = join(agentDir, 'settings.json');
   const e2eHome: E2EHome = {
     root, home, workspace, daemonPort, daemonHome,
+    judgments: startE2EJudgments(),
+    networkViolations: join(root, 'network-violations.log'),
     setAgentSetting: (key, value) => mergeJson(settingsPath, key, value),
   };
   e2eHome.setAgentSetting('provider.model', 'e2e-stub:stub-model');
@@ -330,6 +337,16 @@ export async function makeHome(model: StubModel): Promise<E2EHome> {
   // The daemon's settings file owns controlPlane.*; the Agent reads it there.
   mergeJson(join(daemonHome, 'settings.json'), 'controlPlane.host', '127.0.0.1');
   mergeJson(join(daemonHome, 'settings.json'), 'controlPlane.port', daemonPort);
+  for (const surfaceRoot of ['agent', 'goodvibes'] as const) {
+    const configManager = new AgentConfigManager({ configDir: join(home, '.goodvibes', surfaceRoot), homeDir: home, workingDir: workspace, surfaceRoot });
+    seedProviderMetadataCacheFixture({ configManager, homeDirectory: home, workingDirectory: workspace, surfaceRoot });
+    seedProviderModelListCacheFixture(configManager, 'openai');
+  }
+  // Compiled Bun executables honor the workspace preload, too. The existing
+  // owned runner's guard blocks every unexpected external request, even if a
+  // product catches the fetch error; removeHome verifies its durable log.
+  const guard = resolve(REPO_ROOT, '../../packages/engine/scripts/test-network-preload.ts');
+  writeFileSync(join(workspace, 'bunfig.toml'), `preload = [${JSON.stringify(guard)}]\n`);
   return e2eHome;
 }
 
@@ -343,6 +360,9 @@ export function isolatedEnv(e2eHome: E2EHome, extra: Record<string, string> = {}
     LANG: 'C.UTF-8',
     LC_ALL: 'C.UTF-8',
     TMPDIR: join(e2eHome.root, 'tmp'),
+    TYPESAFE_API_KEY: 'local-e2e-judgment-fixture-not-a-secret',
+    TYPESAFE_BASE_URL: e2eHome.judgments.baseURL,
+    GOODVIBES_TEST_NETWORK_VIOLATIONS: e2eHome.networkViolations,
     ...extra,
   };
 }
@@ -446,5 +466,10 @@ export function screenText(screen: string): string {
 
 /** Remove a home made by makeHome. */
 export function removeHome(e2eHome: E2EHome | null): void {
-  if (e2eHome) rmSync(e2eHome.root, { recursive: true, force: true });
+  if (!e2eHome) return;
+  e2eHome.judgments.stop();
+  const violations = existsSync(e2eHome.networkViolations) ? readFileSync(e2eHome.networkViolations, 'utf8') : '';
+  rmSync(e2eHome.root, { recursive: true, force: true });
+  e2eHome.judgments.assertNoUnexpected();
+  if (violations.trim()) throw new Error(`E2E attempted unexpected external requests:\n${violations}`);
 }
