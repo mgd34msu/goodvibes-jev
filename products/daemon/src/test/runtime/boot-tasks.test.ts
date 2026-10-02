@@ -129,11 +129,11 @@ test('plugin shutdown begins while its admitted initialization is held', async (
   expect(fx.controller.snapshot().state).toBe('closed');
 });
 
-test('cleanup failure preserves the failure while all remaining owners retire', async () => {
+test('cleanup failure is bounded while all remaining owners retire', async () => {
   const failure = new Error('fixture cleanup failed');
   const fx = fixture({ async closePlugins() { throw failure; } });
   await fx.controller.start();
-  await expect(fx.controller.close()).rejects.toMatchObject({ failures: [{ label: 'plugins', error: failure }] });
+  await expect(fx.controller.close()).rejects.toMatchObject({ failures: [{ label: 'plugins', error: new Error('plugins cleanup failed') }] });
   expect(fx.events.slice(-3)).toEqual(['close:notifier', 'close:webhooks', 'stop-watch']);
   expect(fx.controller.snapshot().state).toBe('failed');
 });
@@ -195,3 +195,21 @@ test('close owns a held reporting promise and fences subsequent boot steps', asy
   expect(fx.events).toEqual([]);
   expect(fx.controller.snapshot().state).toBe('closed');
 });
+
+test('hostile cleanup rejections are neither inspected nor retained', async () => {
+  let reads = 0;
+  const failure = new Proxy({}, { get() { reads++; throw new Error('private property'); }, getPrototypeOf() { reads++; throw new Error('private prototype'); } });
+  const fx = fixture({ closePlugins() { return Promise.reject(failure); } });
+  await fx.controller.start();
+  const closing = fx.controller.close();
+  expect(fx.controller.close()).toBe(closing);
+  await expect(closing).rejects.toMatchObject({ failures: [{ label: 'plugins', error: new Error('plugins cleanup failed') }] });
+  expect(reads).toBe(0);
+});
+
+test('a cleanup directly returning the reentrant controller close rejects without a self-drain deadlock', async () => {
+  const fx = fixture({ closePlugins() { return fx.controller.close(); } });
+  await fx.controller.start();
+  await expect(fx.controller.close()).rejects.toMatchObject({ failures: [{ label: 'plugins', error: new Error('plugins cleanup failed') }] });
+  expect(fx.events.slice(-3)).toEqual(['close:notifier', 'close:webhooks', 'stop-watch']);
+}, 1000);
