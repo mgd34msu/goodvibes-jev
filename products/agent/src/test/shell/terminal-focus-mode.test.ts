@@ -132,8 +132,8 @@ describe('wrapRequestPermissionWithApprovalAlert', () => {
     const result = await wrapped(request);
 
     expect(notified.length).toBe(1);
-    expect(notified[0]!.message).toBe('shell (shell) is waiting for approval');
-    // PRIVACY: no args, no command strings, only tool name + category.
+    expect(notified[0]!.message).toBe('A tool is waiting for approval');
+    // Unknown tool metadata stays generic; no args or command strings leak.
     expect(notified[0]!.message).not.toContain('args');
     expect((result as { approved: boolean }).approved).toBe(true); // original handler's resolution is unchanged
   });

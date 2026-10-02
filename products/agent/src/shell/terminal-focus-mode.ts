@@ -45,7 +45,7 @@
  * Text (owner ruling 2026-09-29, SDK runtime/turn-notification.ts, the same
  * words the TUI uses): the alert names what is waiting, the command for exec,
  * the file for write and edit, the URL for fetch, and the turn that asked for
- * it. When behavior.notificationsMetadataOnly is on (default off) it carries
+ * it. Unless behavior.notificationsMetadataOnly is explicitly false it carries
  * the tool name and permission category only.
  */
 import { logger, notifyCompletion, summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
@@ -105,7 +105,7 @@ export function installFocusModeExitGuard(
 export interface ApprovalAlertDeps {
   readonly focusTracker: Pick<FocusTracker, 'shouldAlertWhenUnfocused'>;
   readonly notify?: typeof notifyCompletion;
-  /** Config reader for behavior.notificationsMetadataOnly; absent reads as the default (off). */
+  /** Config reader for behavior.notificationsMetadataOnly; absent or invalid reads remain metadata-only. */
   readonly configGet?: ConfigGet;
   /**
    * The live conversation, read for the name of the turn that is asking: a
@@ -124,7 +124,7 @@ export interface ApprovalTurnSource {
 
 /** Title and body for an approval alert (SDK buildApprovalNotification). */
 export function describeApprovalAlert(request: PermissionPromptRequest, deps: Pick<ApprovalAlertDeps, 'configGet' | 'conversation'>): { title: string; body: string } {
-  const metadataOnly = deps.configGet ? readNotificationsMetadataOnly(deps.configGet) : false;
+  const metadataOnly = deps.configGet ? readNotificationsMetadataOnly(deps.configGet) : true;
   const conversation = deps.conversation;
   const titleSource = conversation?.getTitleSource();
   return buildApprovalNotification({

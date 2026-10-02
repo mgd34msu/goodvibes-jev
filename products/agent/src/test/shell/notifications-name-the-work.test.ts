@@ -10,7 +10,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { PermissionPromptRequest } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { FocusTracker } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
-import { wrapRequestPermissionWithApprovalAlert } from '../../shell/terminal-focus-mode.ts';
+import { wrapRequestPermissionWithApprovalAlert, describeApprovalAlert } from '../../shell/terminal-focus-mode.ts';
 import { AGENT_WORKSPACE_CATEGORIES } from '../../input/agent-workspace-categories.ts';
 
 const ASK = 'Refactor the authentication middleware so expired sessions redirect to the login page instead of throwing a 500 error';
@@ -38,13 +38,27 @@ async function alertText(config: Record<string, unknown>): Promise<Array<{ title
 }
 
 describe('the agent approval alert names the work', () => {
-  test('privacy setting off (default): names the command and the turn, trimmed at a word boundary', async () => {
-    const [notice] = await alertText({});
+  test('privacy setting explicitly false: names the command and the turn, trimmed at a word boundary', async () => {
+    const [notice] = await alertText({ 'behavior.notificationsMetadataOnly': false });
     expect(notice).toEqual({
       title: 'Approval needed: Refactor the authentication middleware…',
       body: 'exec is waiting for approval: bun test src/auth/middleware.test.ts',
     });
     expect(notice!.title.length).toBeLessThanOrEqual(60);
+  });
+
+  test('missing, malformed and unreadable preferences remain metadata-only', async () => {
+    for (const value of [undefined, null, 'false', 0, {}, Promise.resolve(false)]) {
+      expect(await alertText({ 'behavior.notificationsMetadataOnly': value })).toEqual([
+        { title: 'GoodVibes: approval needed', body: 'exec (execute) is waiting for approval' },
+      ]);
+    }
+    const conversation = { title: ASK, getTitleSource: () => 'user', getLastUserMessage: () => ASK };
+    for (const configGet of [undefined, () => { throw new Error('unreadable'); }]) {
+      expect(describeApprovalAlert(request(), { configGet, conversation })).toEqual({
+        title: 'GoodVibes: approval needed', body: 'exec (execute) is waiting for approval',
+      });
+    }
   });
 
   test('privacy setting on: tool and category only', async () => {
