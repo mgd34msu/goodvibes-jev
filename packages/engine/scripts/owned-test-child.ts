@@ -109,6 +109,9 @@ const POLL_MS = 1_000;
  */
 const KILL_GRACE_MS = 5_000;
 
+/** Additional bounded drain time after the direct child has exited. */
+const OUTPUT_DRAIN_GRACE_MS = 5_000;
+
 /**
  * The heartbeat file lives under the REAL system temp dir, in a directory named
  * for this tool, and every run sweeps its own stale siblings before creating
@@ -128,7 +131,7 @@ const HEARTBEAT_PREFIX = 'goodvibes-test-heartbeat-';
 const STALE_HEARTBEAT_MS = 60 * 60 * 1000;
 
 /** Why this module ended a run itself, when it did. */
-export type OwnedTestChildStop = 'stalled' | 'ceiling' | 'parent-died';
+export type OwnedTestChildStop = 'stalled' | 'ceiling' | 'parent-died' | 'interrupted' | 'output-drain';
 
 export interface OwnedTestChildResult {
   /** The child's exit code, or null when a signal ended it. */
@@ -139,6 +142,8 @@ export interface OwnedTestChildResult {
   readonly stopped: OwnedTestChildStop | null;
   /** A sentence naming what the run was doing when it was ended. */
   readonly stopReason: string | null;
+  /** True only when undeliverable output was explicitly abandoned after its grace. */
+  readonly outputTruncated: boolean;
 }
 
 function positiveEnvMs(name: string, fallback: number): number {
@@ -147,6 +152,12 @@ function positiveEnvMs(name: string, fallback: number): number {
   const value = Number(raw);
   if (!Number.isFinite(value) || value < 0) return fallback;
   return Math.floor(value);
+}
+
+function perCallMs(name: string, value: number | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
+  return value;
 }
 
 /** `{ at, started }` from the child's heartbeat, or null before the first one. */
@@ -226,42 +237,76 @@ export async function runOwnedTestChild(options: {
   readonly env: Record<string, string | undefined>;
   /** Deliberately supplied fixture values, after inherited credentials have been removed. */
   readonly fixtureEnv?: Readonly<Record<string, string | undefined>>;
+  /** Per-call ceiling; cannot extend an enabled environment/default ceiling. */
+  readonly ceilingMs?: number;
+  /** Declared long-test allowance; an explicitly configured stall ceiling still wins. */
+  readonly stallMs?: number;
+  /** SIGTERM/interruption escalation grace; defaults to 5 seconds. */
+  readonly killGraceMs?: number;
+  /** Additional output-drain grace after child exit; defaults to 5 seconds. */
+  readonly outputDrainGraceMs?: number;
+  /** Caller-owned output sinks remain open after this run. */
+  readonly stdout?: Writable;
+  readonly stderr?: Writable;
+  /** Opt in to a dedicated POSIX group, including non-detached descendants. */
+  readonly ownProcessGroup?: boolean;
+  /** Preserve the owner captured before a worker is dispatched. */
+  readonly expectedParentPid?: number;
 }): Promise<OwnedTestChildResult> {
-  const stallMs = positiveEnvMs('GOODVIBES_TEST_STALL_MS', DEFAULT_STALL_MS);
-  const ceilingMs = positiveEnvMs('GOODVIBES_TEST_CEILING_MS', DEFAULT_CEILING_MS);
+  const initialPpid = perCallMs('expectedParentPid', options.expectedParentPid, process.ppid);
+  if (options.ownProcessGroup && process.platform === 'win32') throw new Error('ownProcessGroup requires POSIX process-group support');
+  const ownProcessGroup = options.ownProcessGroup ?? false;
+  const enclosingStallMs = positiveEnvMs('GOODVIBES_TEST_STALL_MS', DEFAULT_STALL_MS);
+  const requestedStallMs = perCallMs('stallMs', options.stallMs, enclosingStallMs);
+  const hasExplicitStall = Boolean(process.env.GOODVIBES_TEST_STALL_MS);
+  const stallMs = hasExplicitStall && enclosingStallMs > 0 ? Math.min(requestedStallMs, enclosingStallMs) : requestedStallMs;
+  const enclosingCeilingMs = positiveEnvMs('GOODVIBES_TEST_CEILING_MS', DEFAULT_CEILING_MS);
+  const requestedCeilingMs = perCallMs('ceilingMs', options.ceilingMs, enclosingCeilingMs);
+  const ceilingMs = enclosingCeilingMs > 0 ? Math.min(requestedCeilingMs, enclosingCeilingMs) : requestedCeilingMs;
+  const killGraceMs = perCallMs('killGraceMs', options.killGraceMs, KILL_GRACE_MS);
+  const outputDrainGraceMs = perCallMs('outputDrainGraceMs', options.outputDrainGraceMs, OUTPUT_DRAIN_GRACE_MS);
+  const stdout = options.stdout ?? process.stdout;
+  const stderr = options.stderr ?? process.stderr;
   sweepStaleTmpDirs(tmpdir(), HEARTBEAT_PREFIX, STALE_HEARTBEAT_MS);
   const heartbeatDir = mkdtempSync(join(tmpdir(), HEARTBEAT_PREFIX));
   const heartbeatPath = join(heartbeatDir, 'progress');
   const violationsPath = join(heartbeatDir, 'network-violations');
-  const childEnv = isolatedTestEnvironment(options.env, join(heartbeatDir, 'isolated'), options.fixtureEnv);
   const startedAt = Date.now();
-  const initialPpid = process.ppid;
 
-  const child = Bun.spawn(['bun', '--no-env-file', 'test', '--preload', NETWORK_PRELOAD, '--preload', CHILD_WATCHDOG, ...options.argv], {
-    cwd: options.cwd,
-    stdin: 'inherit',
-    // Piped rather than inherited, so this process can see what the suite last
-    // said and quote it back if it has to end the run. Every byte is written
-    // straight through unchanged; the capture is a copy, not a filter.
-    stdout: 'pipe',
-    stderr: 'pipe',
-    env: {
-      // A pipe costs the child its colour, because bun colours for a terminal
-      // and there is no longer one on the other end. Handing it FORCE_COLOR
-      // back when THIS process has a terminal keeps an interactive run looking
-      // exactly as it did, and leaves a CI log, which never had one, alone.
-      ...(process.stdout.isTTY && options.env.FORCE_COLOR === undefined
-        ? { FORCE_COLOR: '1' }
-        : {}),
-      ...childEnv,
-      [NETWORK_VIOLATIONS_ENV]: violationsPath,
-      [PARENT_PID_ENV]: String(process.pid),
-      [HEARTBEAT_PATH_ENV]: heartbeatPath,
-    },
-  });
+  const child = (() => {
+    try {
+      const childEnv = isolatedTestEnvironment(options.env, join(heartbeatDir, 'isolated'), options.fixtureEnv);
+      return Bun.spawn(['bun', '--no-env-file', 'test', '--preload', NETWORK_PRELOAD, '--preload', CHILD_WATCHDOG, ...options.argv], {
+        cwd: options.cwd,
+        detached: ownProcessGroup,
+        stdin: 'inherit',
+        // Piped rather than inherited, so this process can see what the suite last
+        // said and quote it back if it has to end the run. Every byte is written
+        // straight through unchanged; the capture is a copy, not a filter.
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: {
+          // A pipe costs the child its colour, because bun colours for a terminal
+          // and there is no longer one on the other end. Handing it FORCE_COLOR
+          // back when THIS process has a terminal keeps an interactive run looking
+          // exactly as it did, and leaves a CI log, which never had one, alone.
+          ...(process.stdout.isTTY && options.env.FORCE_COLOR === undefined
+            ? { FORCE_COLOR: '1' }
+            : {}),
+          ...childEnv,
+          [NETWORK_VIOLATIONS_ENV]: violationsPath,
+          [PARENT_PID_ENV]: String(process.pid),
+          [HEARTBEAT_PATH_ENV]: heartbeatPath,
+        },
+      });
+    } catch (error) {
+      rmSync(heartbeatDir, { recursive: true, force: true });
+      throw error;
+    }
+  })();
 
   const relay = (signal: NodeJS.Signals) => (): void => {
-    try { child.kill(signal); } catch { /* already gone */ }
+    stop('interrupted', `test runner received ${signal}; ending its owned suite`, signal);
   };
   const onInterrupt = relay('SIGINT');
   const onTerminate = relay('SIGTERM');
@@ -273,37 +318,101 @@ export async function runOwnedTestChild(options: {
   const seen: { lastLine: string | null; lastFile: string | null } = { lastLine: null, lastFile: null };
   const outputAbort = new AbortController();
   let outputAbortReason: Error | null = null;
-  const pumps = [
-    pumpTestOutput(child.stdout as ReadableStream<Uint8Array> | undefined, process.stdout, seen, outputAbort.signal),
-    pumpTestOutput(child.stderr as ReadableStream<Uint8Array> | undefined, process.stderr, seen, outputAbort.signal),
-  ];
-  const outputDone = Promise.all(pumps).catch((error: unknown) => {
-    // Only our existing watchdog may abandon undeliverable output. Its stopped
-    // result is still a failure; all genuine sink errors keep rejecting.
-    if (error !== outputAbortReason) throw error;
-  });
-
   let stopped: OwnedTestChildStop | null = null;
   let stopReason: string | null = null;
+  let outputTruncated = false;
   let escalation: ReturnType<typeof setTimeout> | null = null;
-  const stop = (kind: OwnedTestChildStop, reason: string): void => {
-    if (stopped !== null) return;
+  let drainTimer: ReturnType<typeof setTimeout> | null = null;
+  let childHasExited = false;
+  let groupTeardown: Promise<void> | null = null;
+  let signallingError: unknown;
+  let rejectSignalling!: (error: unknown) => void;
+  const signallingFailed = new Promise<never>((_resolve, reject) => { rejectSignalling = reject; });
+  const diagnostics: Promise<void>[] = [];
+  const report = (message: string): Promise<void> => {
+    const stream = new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(new TextEncoder().encode(message));
+      controller.close();
+    } });
+    const written = pumpTestOutput(stream, stderr, { lastLine: null, lastFile: null }, outputAbort.signal);
+    diagnostics.push(written);
+    // The run awaits all diagnostic writes below; a callback may finish before
+    // that await is reached, so retain the failure without an unhandled rejection.
+    void written.catch(() => undefined);
+    return written;
+  };
+  const pumps = [
+    pumpTestOutput(child.stdout as ReadableStream<Uint8Array> | undefined, stdout, seen, outputAbort.signal),
+    pumpTestOutput(child.stderr as ReadableStream<Uint8Array> | undefined, stderr, seen, outputAbort.signal),
+  ];
+  const ignoreOwnedAbort = (error: unknown): void => {
+    if (error !== outputAbortReason) throw error;
+  };
+  const outputDone = Promise.all(pumps).catch(ignoreOwnedAbort);
+
+  const signalOwned = (signal: NodeJS.Signals): void => {
+    try {
+      if (ownProcessGroup) process.kill(-child.pid, signal);
+      else child.kill(signal);
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) { signallingError ??= error; rejectSignalling(error); }
+    }
+  };
+  const groupExists = (): boolean => {
+    try { process.kill(-child.pid, 0); return true; }
+    catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) { signallingError ??= error; rejectSignalling(error); }
+      return false;
+    }
+  };
+  const beginGroupTeardown = (signal: NodeJS.Signals): Promise<void> => {
+    if (groupTeardown) return groupTeardown;
+    signalOwned(signal);
+    groupTeardown = (async () => {
+      const deadline = Date.now() + killGraceMs;
+      while (groupExists()) {
+        if (Date.now() >= deadline) {
+          void report(`goodvibes: the owned process group still exists ${killGraceMs}ms after ${signal}; sending SIGKILL\n`);
+          signalOwned('SIGKILL');
+          return;
+        }
+        await Bun.sleep(Math.min(25, Math.max(1, deadline - Date.now())));
+      }
+    })();
+    return groupTeardown;
+  };
+  const childExited = child.exited.then(async (exitCode) => {
+    childHasExited = true;
+    if (escalation !== null) clearTimeout(escalation);
+    // Teardown is independent of EOF: descendants may close/ignore stdio and
+    // still need their declared grace. Never signal an inherited process group.
+    if (ownProcessGroup) await beginGroupTeardown('SIGTERM');
+    drainTimer = setTimeout(() => {
+      outputTruncated = true;
+      stopped ??= 'output-drain';
+      const reason = `test output was truncated: drain did not finish within ${outputDrainGraceMs}ms after child exit${ownProcessGroup ? ' and owned-group teardown' : ''}`;
+      stopReason = stopReason ? `${stopReason}; ${reason}` : reason;
+      outputAbortReason = new Error(reason);
+      outputAbort.abort(outputAbortReason);
+    }, outputDrainGraceMs);
+    return exitCode;
+  });
+  const stop = (kind: OwnedTestChildStop, reason: string, signal: NodeJS.Signals = 'SIGTERM'): void => {
+    if (stopped !== null || childHasExited) return;
     stopped = kind;
     stopReason = reason;
-    process.stderr.write(`\ngoodvibes: ${reason}\n`);
-    outputAbortReason = new Error(`test output drain ended by ${kind}`);
-    outputAbort.abort(outputAbortReason);
-    try { child.kill('SIGTERM'); } catch { /* already gone */ }
+    void report(`\ngoodvibes: ${reason}\n`);
+    if (ownProcessGroup) { void beginGroupTeardown(signal); return; }
+    signalOwned(signal);
     escalation = setTimeout(() => {
-      process.stderr.write(
-        `goodvibes: the suite did not exit ${describeSeconds(KILL_GRACE_MS)} after SIGTERM; killing it\n`,
-      );
-      try { child.kill('SIGKILL'); } catch { /* already gone */ }
-    }, KILL_GRACE_MS);
+      void report(`goodvibes: the suite did not exit ${killGraceMs}ms after ${signal}; killing it\n`);
+      signalOwned('SIGKILL');
+    }, killGraceMs);
     escalation.unref?.();
   };
 
   const watchdog = setInterval(() => {
+    if (childHasExited) return;
     const now = Date.now();
     const beat = readHeartbeat(heartbeatPath);
     const progress = beat === null
@@ -346,26 +455,36 @@ export async function runOwnedTestChild(options: {
   try {
     // A broken output sink is a failed run too. Observe it while the child is
     // alive, so finally can stop and reap the child rather than leave it blocked.
-    let [exitCode] = await Promise.all([child.exited, outputDone]);
+    let [exitCode] = await Promise.race([Promise.all([childExited, outputDone]), signallingFailed]);
+    // Every source of diagnostics has now quiesced: child/group teardown is
+    // complete, and stop() ignores a reaped child. Do not snapshot the result
+    // until late watchdog and teardown reports have also drained.
+    clearInterval(watchdog);
+    if (escalation !== null) clearTimeout(escalation);
+    await Promise.all(diagnostics).catch(ignoreOwnedAbort);
     let violations = '';
     try { violations = readFileSync(violationsPath, 'utf8'); } catch { /* no blocked requests */ }
     if (violations.length > 0) {
-      process.stderr.write(`\ngoodvibes: unexpected external test I/O was blocked:\n${violations}`);
+      await report(`\ngoodvibes: unexpected external test I/O was blocked:\n${violations}`).catch(ignoreOwnedAbort);
       if (exitCode === 0) exitCode = 1;
     }
-    return { exitCode, signalCode: child.signalCode, stopped, stopReason };
+    if (outputTruncated && exitCode === 0) exitCode = 1;
+    return { exitCode, signalCode: child.signalCode, stopped, stopReason, outputTruncated };
   } finally {
-    try { child.kill('SIGKILL'); } catch { /* already gone */ }
+    if (ownProcessGroup) await beginGroupTeardown('SIGTERM');
+    signalOwned('SIGKILL');
     // Reaped, not merely signalled: returning while the child is still dying
     // would let the caller's temp-tree removal race its last writes.
-    await child.exited.catch(() => undefined);
-    await Promise.allSettled(pumps);
+    await childExited.catch(() => undefined);
+    await Promise.allSettled([...pumps, ...diagnostics]);
     // Keep the existing ceilings alive until both child and pipes are done.
     clearInterval(watchdog);
     if (escalation !== null) clearTimeout(escalation);
+    if (drainTimer !== null) clearTimeout(drainTimer);
     process.off('SIGINT', onInterrupt);
     process.off('SIGTERM', onTerminate);
     process.off('SIGHUP', onHangup);
     rmSync(heartbeatDir, { recursive: true, force: true });
+    if (signallingError !== undefined) throw signallingError;
   }
 }
