@@ -9,11 +9,11 @@
 // go over the generic operator invoke path (operator-rpc.ts's resolveOperatorRpc
 // -> sdk.operator.invoke), reaching the SAME daemon the command layer does.
 //
-// The view never types an id: it derives the workstream/work-item id from the
-// selected node's namespaced id (workstream:<id> / work-item:<id>, the SDK's own
-// fleet-adapter id scheme) and drives the verbs from there. The interface is
-// injectable so the Agents modal's act flow round-trips against a mocked daemon in
-// tests; the live builder (createFleetGateway) is wired in builtin/operations.ts.
+// The current public registry emits group:<contract>:<group> and
+// unit:<contract>:<unit>. The verbs retain workstreamId/itemId wire names but
+// require <contract>:<group/unit> values (contract/fleet-controls.ts).
+// A bare contract root cannot stand in for a group, and retired unqualified
+// workstream/work-item IDs are refused. Selection comes from recorded views.
 // ---------------------------------------------------------------------------
 
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -65,17 +65,25 @@ export interface FleetGateway {
   armFixSessionAttach(sessionId: string): void;
 }
 
-const WORKSTREAM_NODE_PREFIX = 'workstream:';
-const WORK_ITEM_NODE_PREFIX = 'work-item:';
+const WORKSTREAM_NODE_PREFIX = 'group:';
+const WORK_ITEM_NODE_PREFIX = 'unit:';
 
-/** The raw workstream id behind a `workstream:<id>` fleet node id, or null for any other node. */
-export function workstreamIdFromNodeId(nodeId: string): string | null {
-  return nodeId.startsWith(WORKSTREAM_NODE_PREFIX) ? nodeId.slice(WORKSTREAM_NODE_PREFIX.length) : null;
+/** Contract-qualified group ID required by the public fleet verbs, or null. */
+function qualifiedNodeId(nodeId: string, prefix: string): string | null {
+  if (!nodeId.startsWith(prefix)) return null;
+  const qualified = nodeId.slice(prefix.length);
+  const separator = qualified.indexOf(':');
+  return separator > 0 && separator < qualified.length - 1 ? qualified : null;
 }
 
-/** The raw work-item id behind a `work-item:<id>` fleet node id, or null for any other node. */
+/** `group:<contract>:<group>` maps to the wire's `<contract>:<group>` workstream ID. */
+export function workstreamIdFromNodeId(nodeId: string): string | null {
+  return qualifiedNodeId(nodeId, WORKSTREAM_NODE_PREFIX);
+}
+
+/** `unit:<contract>:<unit>` maps to the wire's `<contract>:<unit>` item ID. */
 export function workItemIdFromNodeId(nodeId: string): string | null {
-  return nodeId.startsWith(WORK_ITEM_NODE_PREFIX) ? nodeId.slice(WORK_ITEM_NODE_PREFIX.length) : null;
+  return qualifiedNodeId(nodeId, WORK_ITEM_NODE_PREFIX);
 }
 
 /**

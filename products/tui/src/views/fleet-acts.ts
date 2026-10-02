@@ -6,28 +6,23 @@
 // with no id ever typed. This controller owns that flow; the Agents modal
 // delegates the trigger keys and the pick-mode input here and draws pickView().
 //
-//   • Pick , the flagged workstream row (needsAttention 'pick') opens a
-//     candidate picker (best-of-N held attempts, from fleet.attempts.list);
-//     ↑↓ chooses the winner, Enter shows its diff in a Changes preview and
-//     drives fleet.attempts.pick preview (confirm:false) -> confirm (confirm:true)
-//     through the question on that preview. No group/candidate id is ever
-//     typed; they come from the node and the selection.
-//   • Conflict, the flagged work-item row (needsAttention 'conflict') runs
-//     fleet.conflicts.resolve and hands the STAMPED resolution session id to the
-//     shared one-key jump/attach affordance (the CI fix-session machinery). On
-//     resolution the SDK reclaims the tree and the row clears on the next tick.
-//   • Discard, a worktree-owning work-item row runs worktrees.discard behind a
-//     confirm and renders the honest receipt (branch KEPT, dirty state preserved
-//     as a commit), no path retyping.
+//   • Pick: a contract plan-unit row opens only its recorded attempt group.
+//     Choosing a candidate previews its diff; only confirmation applies it.
+//   • Conflict: a recorded contract-unit ID maps to the qualified public verb
+//     and attaches only the resolution session the gateway actually returns.
+//   • Discard: only a terminal contract root exposes its own recorded worktree.
+//     Confirmation rechecks that record and preserves the gateway receipt.
 // ---------------------------------------------------------------------------
 
 import type { ProcessNode } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
+import { isTerminalContractStatus, type ContractView, type ContractUnitView } from '@goodvibes-jev/engine/sdk/platform/contract';
 import type { WorkItem } from '@goodvibes-jev/engine/sdk/platform/orchestration';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { isViewSearchBackspace, isViewSearchCancel, isViewSearchCommit, isViewSearchPrintable } from './search-focus.ts';
 import { appendSteerText } from './fleet-session-tabs.ts';
 import { isObservedExternalNode, observedKindLabel, type ObservedNode } from './fleet-observed-render.ts';
 import { formatAgentCost } from './agent-inspector-shared.ts';
+import { rootContractFromNode } from './fleet-contract-targets.ts';
 import { fleetNodeAttention } from './fleet-read-model.ts';
 import {
   workItemIdFromNodeId,
@@ -100,6 +95,25 @@ export function workItemFromNode(node: ProcessNode): WorkItem | null {
   const item = (node.raw as { item?: WorkItem } | undefined)?.item;
   return item ?? null;
 }
+
+/** Validate the public adapter's recorded identity before deriving any mutating target. */
+function contractUnitData(node: ProcessNode): { contract: ContractView; unit: ContractUnitView } | null {
+  if (node.kind !== 'contract-unit') return null;
+  const raw = node.raw as { contract?: ContractView; unit?: ContractUnitView } | undefined;
+  if (!raw?.contract || !raw.unit || !raw.contract.id || !raw.unit.id || !raw.unit.groupId) return null;
+  if (workItemIdFromNodeId(node.id) !== `${raw.contract.id}:${raw.unit.id}`) return null;
+  return { contract: raw.contract, unit: raw.unit };
+}
+
+function contractGroupTarget(node: ProcessNode): string | null {
+  const unit = contractUnitData(node);
+  if (unit) return `${unit.contract.id}:${unit.unit.groupId}`;
+  if (node.kind !== 'contract-group') return null;
+  const raw = node.raw as { contract?: ContractView; group?: { id?: string } } | undefined;
+  const target = workstreamIdFromNodeId(node.id);
+  return raw?.contract?.id && raw.group?.id && target === `${raw.contract.id}:${raw.group.id}` ? target : null;
+}
+
 
 export class FleetActs {
   private pick: PickMode | null = null;
@@ -212,7 +226,7 @@ export class FleetActs {
    * no-op for any non-workstream node.
    */
   public ensureGraphFor(node: ProcessNode): void {
-    const workstreamId = workstreamIdFromNodeId(node.id);
+    const workstreamId = contractGroupTarget(node);
     if (workstreamId === null) return;
     if (this.graphCache.has(node.id) || this.graphInFlight.has(node.id)) return;
     const resolution = this.deps.resolveGateway();
@@ -231,21 +245,29 @@ export class FleetActs {
 
   // ── Pick (STEP 3) ─────────────────────────────────────────────────────────
 
-  /** Open the candidate picker for a flagged pick row (the workstream node). */
+  /** Open the candidate picker for a flagged contract plan-unit row. */
   public async beginPick(node: ProcessNode): Promise<void> {
-    const workstreamId = workstreamIdFromNodeId(node.id);
-    if (workstreamId === null) { this.deps.notify('This row is not a workstream with a ready pick.'); return; }
+    const data = contractUnitData(node);
+    const selection = data?.unit.attemptSelection;
+    if (!data || !selection || selection.pickedId !== undefined || isTerminalContractStatus(data.contract.status)) {
+      this.deps.notify('Select a contract unit with an unresolved attempt choice.'); return;
+    }
+    const workstreamId = `${data.contract.id}:${data.unit.groupId}`;
+    const groupId = `${data.contract.id}:${selection.engineGroupId}`;
+    const allowedCandidates = new Set(selection.candidateIds.map(id => `${data.contract.id}:${id}`));
     const gateway = this.requireGateway();
     if (!gateway) return;
     let group: FleetHeldMergeGroup | undefined;
     try {
       const { groups } = await gateway.listAttempts(workstreamId);
-      group = groups.find((g) => g.ready && heldCandidates(g).length > 0);
+      const recorded = groups.find(g => g.groupId === groupId && g.workstreamId === workstreamId && g.ready);
+      if (recorded) group = { ...recorded, candidates: recorded.candidates.filter(candidate => allowedCandidates.has(candidate.itemId)) };
+      if (group && heldCandidates(group).length === 0) group = undefined;
     } catch (err) {
       this.deps.notify(`Could not read the best-of-N candidates: ${summarizeError(err)}`);
       return;
     }
-    if (!group) { this.deps.notify('No ready best-of-N group on this workstream; every attempt must settle first.'); return; }
+    if (!group) { this.deps.notify('No ready best-of-N group for this contract unit; every attempt must settle first.'); return; }
     this.pick = { workstreamNodeId: node.id, group, selectedHeldIndex: 0 };
     this.deps.markDirty();
   }
@@ -276,7 +298,7 @@ export class FleetActs {
    */
   private async confirmSelectedPick(): Promise<void> {
     if (!this.pick) return;
-    const { group } = this.pick;
+    const { group, workstreamNodeId } = this.pick;
     const cand = heldCandidates(group)[this.pick.selectedHeldIndex];
     if (!cand) return;
     const gateway = this.requireGateway();
@@ -296,6 +318,15 @@ export class FleetActs {
       verb: 'Pick',
       label: `Pick attempt ${cand.attemptIndex + 1} ("${cand.title}"): merge it, clean the ${losers} other worktree(s)`,
       onConfirm: async () => {
+        const current = this.deps.findNode(workstreamNodeId);
+        const data = current ? contractUnitData(current) : null;
+        const selection = data?.unit.attemptSelection;
+        if (!data || !selection || selection.pickedId !== undefined || isTerminalContractStatus(data.contract.status)
+          || `${data.contract.id}:${selection.engineGroupId}` !== group.groupId
+          || !selection.candidateIds.some(id => `${data.contract.id}:${id}` === cand.itemId)) {
+          this.deps.notify('Pick no longer available: inspect the current contract unit before choosing again.');
+          this.deps.diffSurface.close(); this.pick = null; this.deps.markDirty(); return;
+        }
         try {
           const result = await gateway.pick({ groupId: group.groupId, winnerItemId: cand.itemId, confirm: true });
           if (result.applied) {
@@ -324,8 +355,9 @@ export class FleetActs {
 
   /** Run fleet.conflicts.resolve on a flagged conflict row; on success arm the shared jump/attach on the stamped session. */
   public async resolveConflict(node: ProcessNode): Promise<void> {
-    const itemId = workItemIdFromNodeId(node.id);
-    if (itemId === null) { this.deps.notify('This row is not a conflicted work item.'); return; }
+    const data = contractUnitData(node);
+    const itemId = data ? workItemIdFromNodeId(node.id) : null;
+    if (itemId === null) { this.deps.notify('This row is not a recorded contract unit.'); return; }
     const gateway = this.requireGateway();
     if (!gateway) return;
     try {
@@ -344,14 +376,17 @@ export class FleetActs {
   // ── Discard (STEP 5) ──────────────────────────────────────────────────────
 
   /**
-   * Discard the worktree a work-item row owns, behind a confirm, rendering the
+   * Discard the worktree a terminal contract root owns, behind a confirm, rendering the
    * honest receipt (branch KEPT, dirty state preserved as a commit). Returns
    * true when the key is consumed (a worktree row), false to fall through.
    */
   public discardWorktree(node: ProcessNode): boolean {
-    const item = workItemFromNode(node);
-    const path = item?.worktreePath;
-    if (!path) return false; // not a worktree-owning row, let the key fall through
+    const contract = rootContractFromNode(node);
+    const path = contract?.worktreePath;
+    if (!path) return false; // unit views expose no owned worktree path; never invent one
+    if (!isTerminalContractStatus(contract.status)) {
+      this.deps.notify('Stop the contract before discarding its worktree.'); return true;
+    }
     const gateway = this.requireGateway();
     if (!gateway) return true;
     this.deps.diffSurface.armConfirm({
@@ -359,6 +394,12 @@ export class FleetActs {
       verb: 'Discard',
       label: `Discard worktree ${path}: the branch is KEPT and dirty state preserved as a commit`,
       onConfirm: async () => {
+        const current = this.deps.findNode(node.id);
+        const recorded = current ? rootContractFromNode(current) : null;
+        if (!recorded || recorded.worktreePath !== path || !isTerminalContractStatus(recorded.status)) {
+          this.deps.notify('Discard no longer available: inspect the current contract worktree.');
+          this.deps.diffSurface.close(); this.deps.markDirty(); return;
+        }
         try {
           const receipt = await gateway.discardWorktree(path);
           if (receipt.ok) {

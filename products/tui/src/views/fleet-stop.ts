@@ -8,12 +8,12 @@
 // ---------------------------------------------------------------------------
 
 import type { ProcessNode, ProcessState } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
-import type { WorkItem } from '@goodvibes-jev/engine/sdk/platform/orchestration';
+import { discardableContractWorktree } from './fleet-contract-targets.ts';
 import { fleetNodeAttention, fleetStateGlyph, fleetStateTone, isTerminalProcessState, type FleetStateTone, type FleetTreeRow } from './fleet-read-model.ts';
 
-/** True when a work-item node owns a worktree that worktrees.discard can act on (D from the tree). */
+/** The discard chip follows the same terminal contract-root ownership as the action. */
 function ownsWorktree(node: ProcessNode): boolean {
-  return Boolean((node.raw as { item?: WorkItem } | undefined)?.item?.worktreePath);
+  return discardableContractWorktree(node) !== null;
 }
 
 /** How long 'stopping…' lingers after a stop keypress before the true state is shown regardless (never masks a stuck kill). */
