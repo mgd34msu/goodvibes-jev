@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // fleet-steer.test.ts
-// Pure steer-badge rendering helpers and the "dropped
-// inference" reconciliation pass, independent of the Agents modal/rendering.
-// Integration coverage (keyboard-driven steer -> badge -> consumed/dropped,
+// Pure steer-badge rendering helpers and delivery-unknown
+// reconciliation, independent of the Agents modal/rendering.
+// Integration coverage (keyboard-driven steer -> badge -> consumed/unknown,
 // end to end through the Agents modal's input handler) lives in the Agents modal tests;
 // this file isolates the pure logic itself.
 // ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ function makeNode(overrides: Partial<ProcessNode> & { id: string }): ProcessNode
 
 describe('steerBadgeGlyph / steerBadgeTone', () => {
   test('every status maps to a distinct, non-empty glyph', () => {
-    const statuses: SteerBadgeStatus[] = ['queued', 'accepted', 'consumed', 'dropped'];
+    const statuses: SteerBadgeStatus[] = ['queued', 'accepted', 'unknown', 'consumed', 'dropped'];
     const glyphs = statuses.map(steerBadgeGlyph);
     expect(glyphs.every((g) => g.length > 0)).toBe(true);
     expect(new Set(glyphs).size).toBe(statuses.length);
@@ -75,22 +75,22 @@ describe('reconcileSteerBadges', () => {
     expect(tab.steerBadge).toEqual({ messageId: 'm1', status: 'queued' });
   });
 
-  test('a queued badge whose node has gone terminal resolves to dropped with a descriptive note', () => {
+  test('a queued badge whose node has gone terminal becomes delivery unknown with a descriptive note', () => {
     const tab = makeTab({ nodeId: 'a', steerBadge: { messageId: 'm1', status: 'queued' } });
     const findLiveNode = (id: string) => makeNode({ id, state: 'failed' });
     const changed = reconcileSteerBadges([tab], findLiveNode, NOW);
     expect(changed).toBe(true);
-    expect(tab.steerBadge?.status).toBe('dropped');
+    expect(tab.steerBadge?.status).toBe('unknown');
     expect(tab.steerBadge?.messageId).toBe('m1'); // messageId is preserved through the transition
     expect(tab.steerBadge?.note).toContain('went failed');
-    expect(tab.steerBadge?.resolvedAt).toBe(NOW);
+    expect(tab.steerBadge?.resolvedAt).toBeUndefined();
   });
 
-  test('a queued badge whose node has disappeared entirely (pruned) also resolves to dropped', () => {
+  test('a queued badge whose node has disappeared entirely (pruned) also becomes delivery unknown', () => {
     const tab = makeTab({ nodeId: 'a', steerBadge: { messageId: 'm1', status: 'queued' } });
     const changed = reconcileSteerBadges([tab], () => null, NOW);
     expect(changed).toBe(true);
-    expect(tab.steerBadge?.status).toBe('dropped');
+    expect(tab.steerBadge?.status).toBe('unknown');
     expect(tab.steerBadge?.note).toContain('no longer tracked');
   });
 
@@ -131,7 +131,7 @@ describe('reconcileSteerBadges', () => {
     const findLiveNode = (id: string) => (id === 'a' ? makeNode({ id, state: 'done' }) : makeNode({ id, state: 'streaming' }));
     const changed = reconcileSteerBadges([queuedAndTerminal, queuedAndRunning], findLiveNode, NOW);
     expect(changed).toBe(true);
-    expect(queuedAndTerminal.steerBadge?.status).toBe('dropped');
+    expect(queuedAndTerminal.steerBadge?.status).toBe('unknown');
     expect(queuedAndRunning.steerBadge?.status).toBe('queued');
   });
 
@@ -141,7 +141,7 @@ describe('reconcileSteerBadges', () => {
   // (the SDK's MessageBus stamps every steer with STEER_TTL_MS, see
   // registry.js's steer()) lapses in the bus without ever producing a
   // COMMUNICATION_CONSUMED. Without this, the badge would show 'queued'
-  // forever even though the message is provably gone.
+  // forever while delivery is still unknown.
   // -------------------------------------------------------------------------
   test('a queued badge whose target is still healthy/non-terminal is left untouched well within the TTL', () => {
     const tab = makeTab({ nodeId: 'a', steerBadge: { messageId: 'm1', status: 'queued', queuedAt: NOW - 1_000 } });
@@ -150,17 +150,17 @@ describe('reconcileSteerBadges', () => {
     expect(tab.steerBadge?.status).toBe('queued');
   });
 
-  test('a queued badge past STEER_TTL_MS resolves to dropped as "expired undelivered", even though the target is still non-terminal (long-tool-call case)', () => {
+  test('a queued badge past STEER_TTL_MS becomes delivery unknown without claiming non-delivery, even though the target is still non-terminal (long-tool-call case)', () => {
     const tab = makeTab({
       nodeId: 'a',
       steerBadge: { messageId: 'm1', status: 'queued', queuedAt: NOW - STEER_TTL_MS - 1 },
     });
     const changed = reconcileSteerBadges([tab], () => makeNode({ id: 'a', state: 'executing-tool' }), NOW);
     expect(changed).toBe(true);
-    expect(tab.steerBadge?.status).toBe('dropped');
+    expect(tab.steerBadge?.status).toBe('unknown');
     expect(tab.steerBadge?.messageId).toBe('m1');
-    expect(tab.steerBadge?.note).toBe('expired undelivered');
-    expect(tab.steerBadge?.resolvedAt).toBe(NOW);
+    expect(tab.steerBadge?.note).toBe('no consumption acknowledgement before the tracking deadline');
+    expect(tab.steerBadge?.resolvedAt).toBeUndefined();
   });
 
   test('a queued badge with no queuedAt (older/hand-built badge) never TTL-expires; absence of the field just means no inference is possible, not an error', () => {
@@ -170,7 +170,7 @@ describe('reconcileSteerBadges', () => {
     expect(tab.steerBadge?.status).toBe('queued');
   });
 
-  test('a badge already dropped by the terminal-target inference (not the TTL path) is not double-processed by the TTL branch', () => {
+  test('a badge already unknown after the terminal-target inference (not the TTL path) is not double-processed by the TTL branch', () => {
     const tab = makeTab({
       nodeId: 'a',
       steerBadge: { messageId: 'm1', status: 'queued', queuedAt: NOW - STEER_TTL_MS - 1 },
@@ -178,7 +178,7 @@ describe('reconcileSteerBadges', () => {
     // Terminal-target branch takes priority when both conditions are true.
     const changed = reconcileSteerBadges([tab], () => makeNode({ id: 'a', state: 'failed' }), NOW);
     expect(changed).toBe(true);
-    expect(tab.steerBadge?.status).toBe('dropped');
+    expect(tab.steerBadge?.status).toBe('unknown');
     expect(tab.steerBadge?.note).toContain('went failed'); // terminal-target note, not the TTL note
   });
 });

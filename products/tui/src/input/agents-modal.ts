@@ -122,7 +122,7 @@ export class AgentsModal implements SurfaceModal {
       if (this.closed) return;
       for (const tab of this.tabs.tabs) {
         const badge = tab.steerBadge;
-        if (badge && badge.messageId === event.messageId && (badge.status === 'queued' || badge.status === 'dropped')) {
+        if (badge && badge.messageId === event.messageId && (badge.status === 'queued' || badge.status === 'unknown' || badge.status === 'dropped')) {
           tab.steerBadge = { messageId: badge.messageId, status: 'consumed', queuedAt: badge.queuedAt, resolvedAt: Date.now() };
         }
       }

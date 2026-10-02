@@ -32,20 +32,13 @@ export function isAttachableFleetKind(kind: ProcessKind): kind is FleetAttachabl
 }
 
 /**
- * Lifecycle of a steer receipt, tracked per-tab. `accepted` records ACP-host
- * or wake admission with delivery unknown; it has no bus expiry/consumption
- * inference and remains until replaced or the tab closes. `queued` is only
- * for a real message-bus receipt, NOT evidence the agent has seen it. That is the
- * later, honest `consumed` transition (a `COMMUNICATION_CONSUMED` runtime-bus
- * event matching this badge's `messageId`). `dropped` is a TUI-side
- * inference: the SDK emits no "expired"/"cancelled" signal for a queued
- * steer, so if the target node goes terminal (done/failed/killed/
- * interrupted) while the badge is still `queued`, the Agents modal resolves it to
- * `dropped` itself rather than leaving the badge hanging forever (see
- * src/input/agents-modal.ts reconcileSteerBadges, cross-WO note: the SDK engineer
- * confirmed no dropped signal exists).
+ * One receipt per open tab. Accepted host/wake receipts and unknown native
+ * delivery stay until replaced or the tab closes. A queued bus receipt becomes
+ * consumed only after its matching acknowledgement. Timeout or target removal
+ * cannot prove a drop: the runner may already have drained the message.
+ * Explicit consumed/dropped results alone use the short display linger.
  */
-export type SteerBadgeStatus = 'queued' | 'accepted' | 'consumed' | 'dropped';
+export type SteerBadgeStatus = 'queued' | 'accepted' | 'unknown' | 'consumed' | 'dropped';
 
 /** A tab's steer-message badge state (null on the tab = no active/recent steer). */
 export interface SteerBadge {
@@ -53,9 +46,9 @@ export interface SteerBadge {
   readonly status: SteerBadgeStatus;
   /** Host/wake acceptance is a receipt, not message-bus delivery evidence. */
   readonly acceptedVia?: 'acp-host' | 'wake' | 'runtime';
-  /** Present for 'dropped', a one-line honest explanation shown in the tab. */
+  /** Optional delivery uncertainty or authoritative drop explanation. */
   readonly note?: string;
-  /** epoch ms when status left 'queued' (consumed or dropped), drives the Agents modal's linger-then-clear tick. */
+  /** epoch ms of an explicit consumed or dropped result, drives the Agents modal's linger-then-clear tick. */
   readonly resolvedAt?: number;
   /**
    * epoch ms when status entered 'queued' (set once, at submit time). Drives

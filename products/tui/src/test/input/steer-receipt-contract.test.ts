@@ -57,10 +57,10 @@ test('native bus receipt retains queued, exact consumption and unrelated-event c
  emitCommunicationConsumed(f.bus, { sessionId: 'synthetic', traceId: 'synthetic', source: 'test' }, { messageId: f.badge()!.messageId, agentId: 'a1', turn: 2 }); await flush(); expect(f.badge()?.status).toBe('consumed');
 });
 
-test('native bus expiry remains bounded by its actual stamped TTL', () => {
+test('native bus tracking deadline marks delivery unknown without claiming expiration', () => {
  const f = fixture('native'); f.start(); f.submit();
  reconcileSteerBadges(f.modal.tabs.tabs, id => f.registry.getNode(id), Date.now() + STEER_TTL_MS + 1);
- expect(f.badge()?.status).toBe('dropped'); expect(f.badge()?.note).toBe('expired undelivered');
+ expect(f.badge()?.status).toBe('unknown'); expect(f.badge()?.note).toBe('no consumption acknowledgement before the tracking deadline');
 });
 
 test('a target failing after composition returns a real wake acceptance without bus TTL', () => {
@@ -109,4 +109,32 @@ test('a queued consumed notification cannot repaint the modal after close', asyn
  emitCommunicationConsumed(f.bus, { sessionId: 'synthetic', traceId: 'synthetic', source: 'test' }, { messageId: before!.messageId, agentId: 'a1', turn: 2 });
  f.host.clear(); const renders = f.renders(); await flush();
  expect(f.renders()).toBe(renders); expect(f.badge()).toEqual(before);
+});
+
+test('target end retains unknown receipt identity for a late matching acknowledgement', async () => {
+ const f = fixture('native'); f.start(); f.submit(); const id = f.badge()!.messageId;
+ f.record.status = 'failed';
+ reconcileSteerBadges(f.modal.tabs.tabs, nodeId => f.registry.getNode(nodeId), Date.now());
+ expect(f.badge()?.status).toBe('unknown'); expect(f.badge()?.note).not.toContain('before the steer was delivered');
+ reconcileSteerBadges(f.modal.tabs.tabs, () => null, Date.now() + STEER_TTL_MS * 10);
+ expect(f.badge()?.messageId).toBe(id);
+ emitCommunicationConsumed(f.bus, {sessionId:'synthetic',traceId:'synthetic',source:'test'}, {messageId:id,agentId:'a1',turn:2}); await flush();
+ expect(f.badge()?.status).toBe('consumed');
+});
+
+test('replacing an unknown receipt bounds tracking to the new receipt and ignores the old acknowledgement', async () => {
+ const f = fixture('native'); f.start(); f.submit(); const oldId = f.badge()!.messageId;
+ reconcileSteerBadges(f.modal.tabs.tabs, id => f.registry.getNode(id), Date.now() + STEER_TTL_MS + 1);
+ f.start(); f.submit(); const next = f.badge();
+ expect(next?.messageId).not.toBe(oldId); expect(f.modal.tabs.tabs).toHaveLength(1);
+ emitCommunicationConsumed(f.bus, {sessionId:'synthetic',traceId:'synthetic',source:'test'}, {messageId:oldId,agentId:'a1',turn:2}); await flush();
+ expect(f.badge()).toEqual(next);
+});
+
+test('closing an unknown receipt stops its late acknowledgement from mutating or rendering', async () => {
+ const f = fixture('native'); f.start(); f.submit();
+ reconcileSteerBadges(f.modal.tabs.tabs, id => f.registry.getNode(id), Date.now() + STEER_TTL_MS + 1);
+ const before = f.badge(); f.host.clear(); const renders = f.renders();
+ emitCommunicationConsumed(f.bus, {sessionId:'synthetic',traceId:'synthetic',source:'test'}, {messageId:before!.messageId,agentId:'a1',turn:2}); await flush();
+ expect(f.badge()).toEqual(before); expect(f.renders()).toBe(renders);
 });

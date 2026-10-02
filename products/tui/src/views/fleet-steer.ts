@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // fleet-steer.ts
 //
-// Steer-badge rendering helpers and the "dropped inference"
+// Steer-badge rendering helpers and delivery-unknown
 // reconciliation pass, split out of src/input/agents-modal.ts to keep that file under
 // the architecture line cap (see check-architecture.ts's 800-line gate).
 // Pure functions only; the Agents modal still owns the mutable FleetTab.steerBadge
@@ -15,13 +15,14 @@ import type { FleetTab, SteerBadge, SteerBadgeStatus } from './fleet-session-tab
 import { buildViewLine, DEFAULT_VIEW_PALETTE, type ViewPalette } from './polish.ts';
 import type { Line } from '@goodvibes-jev/engine/sdk/platform/types';
 
-/** Linger before an auto-resolved (consumed/dropped) steer badge is cleared from the tab. */
+/** Linger before an explicitly resolved (consumed/dropped) steer badge is cleared from the tab. */
 export const STEER_BADGE_LINGER_MS = 4_000;
 
 export function steerBadgeGlyph(status: SteerBadgeStatus): string {
   switch (status) {
     case 'queued': return '⧗';
     case 'accepted': return '↗';
+    case 'unknown': return '?';
     case 'consumed': return '✓';
     case 'dropped': return '⚠';
   }
@@ -31,6 +32,7 @@ export function steerBadgeTone(status: SteerBadgeStatus, palette: ViewPalette): 
   switch (status) {
     case 'queued': return palette.warn ?? DEFAULT_VIEW_PALETTE.warn;
     case 'accepted': return palette.info;
+    case 'unknown': return palette.warn ?? DEFAULT_VIEW_PALETTE.warn;
     case 'consumed': return palette.good ?? DEFAULT_VIEW_PALETTE.good;
     case 'dropped': return palette.bad ?? DEFAULT_VIEW_PALETTE.bad;
   }
@@ -70,9 +72,10 @@ export function steerReceiptLabel(badge: SteerBadge, targetLabel?: string): stri
       : badge.acceptedVia === 'wake' ? 'Wake accepted' : 'Runtime accepted the steer';
     return `${origin}; delivery unknown${forTarget}.`;
   }
+  if (badge.status === 'unknown') return `Steer delivery unknown: ${badge.note ?? 'awaiting consumption acknowledgement'}.`;
   if (badge.status === 'queued') return `Steer queued; the delivery badge tracks consumption${forTarget}.`;
   if (badge.status === 'consumed') return 'Steer consumed';
-  return `Steer dropped: ${badge.note ?? 'the target ended before delivery'}`;
+  return `Steer dropped: ${badge.note ?? 'no reason supplied'}`;
 }
 
 /** One receipt label shared by the actual modal and standalone line renderer. */
@@ -85,17 +88,9 @@ export function renderSteerBadgeLine(badge: SteerBadge, width: number, palette: 
 }
 
 /**
- * The "dropped inference" risk: the SDK emits no
- * cancelled/expired signal for a queued steer, so a badge left `queued`
- * after its target node goes terminal (done/failed/killed/interrupted)
- * would hang forever with no honest resolution. Resolves any such badge to
- * `dropped`, and clears any already-resolved (consumed/dropped) badge past
- * its short linger so a tab doesn't accumulate stale indicators.
- *
- * Mutates `tab.steerBadge` in place (same mutable-slot convention as
- * `FleetTab.ledgerEntries`, see src/input/agents-modal.ts's ensureLedgerLoaded).
- * Returns true when anything changed, so the caller knows whether to mark
- * itself dirty.
+ * Missing acknowledgement is not proof of non-delivery. Keep one uncertain
+ * receipt per tab for a late acknowledgement, bounded by replacement/tab close.
+ * Only explicit terminal receipt states use the short display linger.
  */
 export function reconcileSteerBadges(
   tabs: readonly FleetTab[],
@@ -111,30 +106,23 @@ export function reconcileSteerBadges(
       if (!node || isTerminalProcessState(node.state)) {
         tab.steerBadge = {
           ...badge,
-          status: 'dropped',
+          status: 'unknown',
           note: node
-            ? `the ${node.kind} went ${node.state} before the steer was delivered`
+            ? `the ${node.kind} went ${node.state} without a consumption acknowledgement`
             : 'the target is no longer tracked',
-          resolvedAt: now,
         };
         changed = true;
       } else if (badge.queuedAt !== undefined && now - badge.queuedAt > STEER_TTL_MS) {
-        // Long-tool-call case: the target is still healthy and non-terminal,
-        // but the underlying steer message's own TTL (the SDK's MessageBus,
-        // see registry.js's steer(), which stamps every steer with
-        // STEER_TTL_MS) has lapsed without a COMMUNICATION_CONSUMED ever
-        // arriving. The SDK gives no explicit expiry signal, so without this
-        // the badge would show 'queued' forever even though the message is
-        // provably gone from the bus.
+        // The runner can drain a message before its model call completes and
+        // emits the acknowledgement. The bus TTL is not delivery evidence.
         tab.steerBadge = {
           ...badge,
-          status: 'dropped',
-          note: 'expired undelivered',
-          resolvedAt: now,
+          status: 'unknown',
+          note: 'no consumption acknowledgement before the tracking deadline',
         };
         changed = true;
       }
-    } else if (badge.resolvedAt !== undefined && now - badge.resolvedAt > STEER_BADGE_LINGER_MS) {
+    } else if ((badge.status === 'consumed' || badge.status === 'dropped') && badge.resolvedAt !== undefined && now - badge.resolvedAt > STEER_BADGE_LINGER_MS) {
       tab.steerBadge = null;
       changed = true;
     }
