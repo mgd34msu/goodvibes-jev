@@ -40,3 +40,17 @@ Five test imports plus three local fixture helpers were adapted to product works
 Standard prebuild regenerated the command reference and operator contract artifact against current main. These generated deltas are included, rather than retaining stale engine metadata. No renderer source or golden changes.
 
 The 22-line lock addition preserves existing resolutions and adopts only the previously verified TUI workspace, alias and Fuse resolution. Dependencies reuse the installed cache with every workspace link explicitly rebound here; no live installation was performed.
+
+## Offline fixture and postinstall follow-up (2026-10-02)
+
+Checkpoints `6992fc5`, `b939fea`, `00dc612`, and `d2a1e64` build on safeguarded `994856e` in an isolated branch.
+
+The ten earlier strict guard failures are resolved without intercepting fetch: runtime/CLI fixtures seed the current exact benchmark, catalog, model-limit and gateway-pricing cache envelopes under their own temporary homes. Metadata-dependent behavior is not claimed by these fixtures. The postinstall product bug is repaired by recognizing the exact private source workspace contract and declared root layout; standalone download/checksum behavior remains unchanged. Independent review reproduced 34 tests / 54 assertions, 25 extra malformed/boundary cases and four offline actual-main install layouts, including checksum failures and download-file cleanup.
+
+All nine formerly excluded tests were classified from their descriptions and public imports as ordinary profile, file-selection, permission-presentation or PR51 modal revision tests. They do not exercise the stopped original-path authority/symlink-race mechanics. Permission presentation fixtures now carry explicit public risk-family facts, with a generic unread control; no classification or permission policy is changed.
+
+The final strict source run uses zero exclusions and the unchanged network guard: **498 files, 497 passed, one failed, zero network-violation files**. Completed summaries contain **6,001 passing tests and 26,737 assertions**. The remaining planning-store file reports one explicit 60-second test timeout and is killed at the 120-second file ceiling without an aggregate summary; remaining tests in that file are unverified. Separate built-binary E2E tests remain outside this source runner. Original tmux E2E remains unavailable.
+
+Final source-plus-test TypeScript has **15 diagnostics, all held planning API references**, and zero ordinary diagnostics. No held PR57 implementation was adopted. Inventory accounting remains partial at 591 unresolved rows.
+
+Standard Linux build, actual 605-file private package check, fresh launcher frame/help/dismissal/exit-zero PTY and staged sqlite-vec load pass. PTY metadata remains the explicitly bounded three-URL synthetic fixture proof. However, **standard smoke:tui fails the unchanged eager-namespace artifact scanner**: it reports 25 zod namespace schema-constructor reads despite preceding initializer calls. Actual startup success does not waive that gate. Emitted initialization evidence is preserved; checker/source remediation and independent review remain outstanding. This checkpoint is not full acceptance.
