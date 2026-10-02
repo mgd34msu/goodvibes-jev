@@ -1,14 +1,24 @@
-import type { PermissionCategory, PermissionCheckResult } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import type { PermissionCategory, PermissionManager } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { HARNESS_MODE_DESCRIPTORS } from '../tools/agent-harness-mode-catalog.ts';
 import { normalizeOccasionsAction, OCCASIONS_WRITE_ACTIONS } from '../tools/agent-occasions-types.ts';
 import { normalizeProfileAction, PROFILE_WRITE_ACTIONS } from '../tools/agent-profile-types.ts';
 
-type PermissionManagerLike = {
-  check(toolName: string, args: Record<string, unknown>): Promise<boolean>;
-  checkDetailed?: (toolName: string, args: Record<string, unknown>) => Promise<PermissionCheckResult>;
-  getCategory(toolName: string, args?: Record<string, unknown>): PermissionCategory;
-};
+type PermissionManagerLike = Pick<PermissionManager, 'check' | 'getCategory'>
+  & Partial<Pick<PermissionManager, 'checkDetailed'>>;
+
+function assertPermissionActive(signal: AbortSignal | undefined): void {
+  // Never return the caller's abort reason, which can contain private context.
+  if (signal?.aborted) throw new DOMException('The permission request was cancelled', 'AbortError');
+}
+
+function rethrowCancellation(error: unknown, signal: AbortSignal | undefined): void {
+  // The engine's normalized cancellation is a JudgmentError; other permission
+  // adapters can use the standard AbortError. Neither is a lookup failure.
+  if (error instanceof Error && (error.name === 'AbortError'
+    || (error.name === 'JudgmentError' && 'kind' in error && error.kind === 'aborted'))) throw error;
+  assertPermissionActive(signal);
+}
 
 const SAFETY_MARKER = Symbol.for('goodvibes-agent.permission-safety-installed');
 
@@ -116,19 +126,31 @@ export function installPermissionManagerSafetyGuard(manager: PermissionManagerLi
     }
   };
 
-  manager.check = async (toolName, args) => {
+  manager.check = async (...input: Parameters<PermissionManager['check']>) => {
+    const [toolName, args, , options] = input;
+    const signal = options?.signal;
+    assertPermissionActive(signal);
     try {
-      return await originalCheck(toolName, args);
-    } catch {
+      const approved = await originalCheck(...input);
+      assertPermissionActive(signal);
+      return approved;
+    } catch (error) {
+      rethrowCancellation(error, signal);
       return fallbackPermissionCategoryForArgs(toolName, args) === 'read';
     }
   };
 
   if (originalCheckDetailed) {
-    manager.checkDetailed = async (toolName, args) => {
+    manager.checkDetailed = async (...input: Parameters<PermissionManager['checkDetailed']>) => {
+      const [toolName, args, , options] = input;
+      const signal = options?.signal;
+      assertPermissionActive(signal);
       try {
-        return await originalCheckDetailed(toolName, args);
+        const result = await originalCheckDetailed(...input);
+        assertPermissionActive(signal);
+        return result;
       } catch (error) {
+        rethrowCancellation(error, signal);
         const category = fallbackPermissionCategoryForArgs(toolName, args);
         const approved = category === 'read';
         return {

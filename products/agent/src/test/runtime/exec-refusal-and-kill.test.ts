@@ -24,11 +24,13 @@
  * answered on the host instead: each long command carries a unique token in
  * its own command line, and /proc is scanned for it.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { executeToolCalls, type ToolExecutionDeps } from '@goodvibes-jev/engine/sdk/platform/core';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool, ToolCall, ToolResult } from '@goodvibes-jev/engine/sdk/platform/types';
@@ -43,6 +45,41 @@ import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 /** What the owner said this turn; the platform-boundary guard reads it. */
 const LAST_USER_MESSAGE = 'run the maintenance commands in the scratch folder';
+
+// The current engine reads permission stakes and exec policy through Jev.
+// Script these fixture facts, not the permission decisions: allow-all/plan,
+// Agent background refusal and the owner-terminal rule still decide normally.
+function execReadings() {
+  return fakePort((name, question, state) => {
+    const foreignTerminal = JSON.stringify(state).includes('tmux -L gv-exec-refusal-');
+    if (name === 'family' || name === 'capability') return choiceAnswer(question, 'generic', 0.99);
+    if (name === 'kind') return choiceAnswer(question, 'other', 0.99);
+    if (name === 'mutates') return noulAnswer(0.999);
+    if (name === 'acts_on_session') return noulAnswer(foreignTerminal ? 0.999 : 0.001);
+    if (name === 'owned_targets') return noulAnswer(foreignTerminal ? 0.001 : 0.999);
+    if (name === 'credential') return noulAnswer(/key|token|secret|password|credential/i.test(String((state as { name?: string }).name)) ? 0.999 : 0.001);
+    if (['outward', 'secrets', 'irreversible', 'beyondProject', 'weakensSecurity', 'obfuscated', 'flagsRisk', 'catastrophic', 'cardDetails', 'derives', 'needsNetwork', 'needsPrivilege', 'will_prompt'].includes(name)) return noulAnswer(0.001);
+    throw new Error(`Unscripted composed Agent exec judgment: ${name}`);
+  });
+}
+
+let answers = execReadings();
+let previousPort: ReturnType<typeof installJudgmentPort>;
+const runtimes: RuntimeServices[] = [];
+beforeEach(() => {
+  answers = execReadings();
+  previousPort = installJudgmentPort(answers.port);
+});
+afterEach(async () => {
+  try {
+    for (const services of runtimes.splice(0).reverse()) {
+      try { await services.processManager.close(); }
+      finally { services.dispose(); }
+    }
+  } finally {
+    installJudgmentPort(previousPort);
+  }
+});
 
 /**
  * The agent's runtime graph over a fresh temp workspace and home. The home is
@@ -69,6 +106,10 @@ function agentRuntime(prefix: string): { services: RuntimeServices; workspace: s
     homeDirectory: homeDir,
     getConversationTitle: () => 'exec-refusal-and-kill',
   });
+  runtimes.push(services);
+  // Composition installs its production judgment port; replace only that I/O
+  // boundary after construction so this regression stays offline.
+  installJudgmentPort(answers.port);
   return { services, workspace };
 }
 
@@ -192,7 +233,7 @@ function scratch(workspace: string): { victim: string; victimFile: string; marke
 async function expectPipelineCanWrite(pipeline: Pipeline): Promise<void> {
   const probe = join(pipeline.workspace, 'control-probe');
   const result = await pipeline.run(execCall('control-probe', { commands: [{ cmd: `touch '${probe}'` }] }));
-  expect(result.success).toBe(true);
+  expect(result).toMatchObject({ success: true });
   expect(existsSync(probe)).toBe(true);
 }
 
