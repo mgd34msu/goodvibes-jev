@@ -15636,6 +15636,10 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "updatedAt": 0,
         "metadata": {}
       },
+      "revision": {
+        "sourceId": "sample",
+        "generation": "sample"
+      },
       "source": {
         "id": "sample",
         "connectorId": "sample",
@@ -15770,6 +15774,10 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "createdAt": 0,
         "updatedAt": 0,
         "metadata": {}
+      },
+      "revision": {
+        "sourceId": "sample",
+        "generation": "sample"
       },
       "source": {
         "id": "sample",
