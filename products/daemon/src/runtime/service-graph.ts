@@ -48,6 +48,7 @@ import { BookmarkManager } from '@goodvibes-jev/engine/sdk/platform/bookmarks';
 import { ProfileManager } from '@goodvibes-jev/engine/sdk/platform/profiles';
 import { CrossSessionTaskRegistry, SessionChangeTracker } from '@goodvibes-jev/engine/sdk/platform/sessions';
 import { ApiTokenAuditor, UserAuthManager } from '@goodvibes-jev/engine/sdk/platform/security';
+import { NOTIFICATIONS_METADATA_ONLY_KEY, readNotificationsMetadataOnly } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { WebhookNotifier } from '@goodvibes-jev/engine/sdk/platform/integrations';
 import { BenchmarkStore, CacheHitTracker, FavoritesStore, ModelLimitsService, ProviderCapabilityRegistry, ProviderOptimizer, createLaunchTolerantProviderRegistry, ensureConfiguredModelIsRoutable } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { AdaptivePlanner, DeterministicReplayEngine, ExecutionPlanManager, SessionLineageTracker, SessionMemoryStore } from '@goodvibes-jev/engine/sdk/platform/core';
@@ -404,7 +405,12 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     const tokenAuditor = new ApiTokenAuditor({ managed: false, featureFlags });
     const componentHealthMonitor = new ComponentHealthMonitor();
     const worktreeRegistry = new WorktreeRegistry(workingDirectory);
-    const webhookNotifier = new WebhookNotifier();
+    const webhookNotifier = new WebhookNotifier([], {
+      metadataOnly: () => readNotificationsMetadataOnly(() => configManager.get(NOTIFICATIONS_METADATA_ONLY_KEY as never)),
+    });
+    // This shared owner can send memory-pressure notices before boot attachment.
+    // Own it immediately, including failed graph construction or omitted boot.
+    disposalScope.registry.add('shared webhook notifier', () => webhookNotifier.close());
     const replayEngine = new DeterministicReplayEngine(workingDirectory);
     const providerOptimizer = new ProviderOptimizer(providerRegistry, providerCapabilityRegistry, false); // dark until its gate flips it
     disposalScope.registry.add('provider optimizer bridge', bindProviderOptimizerFeatureFlag(featureFlags, providerOptimizer));
