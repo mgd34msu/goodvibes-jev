@@ -15,13 +15,15 @@
 import type { HookDefinition, HookResult, HookEvent } from '../types.js';
 import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
+import type { HookExecutionOptions } from '../execution.js';
+import { OwnedProcessGroupUnsupportedError, runProcess } from '../../runtime/remote/host/backends/process-runner.js';
 
 /**
  * Run a shell command hook.
  * The event JSON is written to stdin; stdout is parsed as HookResult JSON.
  * If stdout is not valid JSON, returns { ok: true } (fire-and-forget semantics).
  */
-export async function run(hook: HookDefinition, event: HookEvent): Promise<HookResult> {
+export async function run(hook: HookDefinition, event: HookEvent, options?: HookExecutionOptions): Promise<HookResult> {
   const command = hook.command;
   if (!command) {
     return { ok: false, error: 'command hook missing "command" field' };
@@ -31,6 +33,29 @@ export async function run(hook: HookDefinition, event: HookEvent): Promise<HookR
   const eventJson = JSON.stringify(event);
 
   try {
+    if (options !== undefined) {
+      const result = await runProcess({
+        args: ['/bin/sh', '-c', command],
+        stdin: eventJson,
+        timeoutMs,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        ownedProcessGroup: true,
+      });
+      options.signal?.throwIfAborted();
+      if (result.timedOut) return { ok: false, error: `command hook timed out after ${hook.timeout ?? 30}s` };
+      if (result.exitCode !== 0) {
+        return {
+          ok: false,
+          error: `command exited with code ${result.exitCode}${result.stderr ? ': ' + result.stderr.slice(0, 200) : ''}`,
+        };
+      }
+      try {
+        const parsed = JSON.parse(result.stdout.trim()) as HookResult;
+        return { ...parsed, ok: parsed.ok ?? true };
+      } catch {
+        return { ok: true };
+      }
+    }
     const proc = Bun.spawn(['/bin/sh', '-c', command], {
       stdin: 'pipe',
       stdout: 'pipe',
@@ -98,8 +123,9 @@ export async function run(hook: HookDefinition, event: HookEvent): Promise<HookR
     }
   } catch (err) {
     const message = summarizeError(err);
-    logger.error('command hook error', { command, error: message });
-    return { ok: false, error: message };
+    const code = err instanceof OwnedProcessGroupUnsupportedError ? err.code : undefined;
+    logger.error('command hook error', { command, error: message, ...(code === undefined ? {} : { code }) });
+    return { ok: false, error: message, ...(code === undefined ? {} : { code }) };
   }
 }
 

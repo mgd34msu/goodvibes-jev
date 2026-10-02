@@ -8,12 +8,12 @@ GoodVibes SDK is the typed TypeScript platform layer behind the GoodVibes produc
 
 Public contract, config keys, route paths, event shapes, and file layouts follow the semver policy in `docs/semver-policy.md`. Pin exact versions and read `CHANGELOG.md` before upgrading.
 
-**Hosted-turn cancellation is still held for an async-hook ownership gap.**
-Ordinary tool and file-hook dispatch is now drained, but configured `async: true`
-hooks remain detached and can mutate files after `TURN_CANCEL`. Agent consumers
-must not treat that event as proof that all admitted work has stopped.
-[PR #75](https://github.com/mgd34msu/goodvibes-jev/pull/75) remains draft and held;
-see the [cancellation contract and open limitation](docs/hosted-turn-cancellation.md).
+**Hosted-turn cancellation remains under ownership review.**
+The proposed settlement boundary covers this turn's owned provider/tool/hook
+and hook-Agent work. Independent workflow-trigger automations may continue;
+`TURN_CANCEL` is not a global “all side effects stopped” receipt. Uncooperative
+owned work must stay pending rather than be reported drained. [PR #75](https://github.com/mgd34msu/goodvibes-jev/pull/75)
+remains draft and held; see the [cancellation contract and platform limits](docs/hosted-turn-cancellation.md).
 
 ```mermaid
 flowchart LR

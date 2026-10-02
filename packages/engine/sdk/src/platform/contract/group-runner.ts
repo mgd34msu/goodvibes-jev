@@ -141,6 +141,12 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
       fleetCapacity: deps.fleetCapacity,
       judgeAttempts: createContractAttemptJudge(run),
     });
+    if (run.requireSettlement && typeof engine.join !== 'function') {
+      const owner = deps.getStatus(run.contract.ownerAgentId);
+      if (owner) owner.failureReason = 'OWNED_AGENT_EXECUTION_UNSUPPORTED';
+      engine.dispose();
+      throw new Error('Owned contract requires an orchestration engine with execution settlement');
+    }
     run.engine = engine;
     run.unsubscribeEngine = engine.on((event) => onEngineEvent(run, event));
     return engine;
@@ -161,7 +167,7 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
       if (group.status !== 'pending' && group.status !== 'blocked') continue;
       if (run.startingGroups.has(group.id)) continue;
       const ready = group.dependsOn.every((id) => run.group(id)?.status === 'passed');
-      if (ready) void startGroup(run, group);
+      if (ready) void run.work.run(() => startGroup(run, group));
     }
   }
 
@@ -280,11 +286,11 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
   }
 
   function attemptsReady(run: ContractRun, event: Extract<OrchestrationEvent, { type: 'attempts-ready' }>): void {
-    void selectAttempts(run, event.groupId, {
+    void run.work.run(() => selectAttempts(run, event.groupId, {
       steps: deps.steps,
       failUnit: deps.failUnit,
       failContract: deps.failContract,
-    }).catch((error: unknown) => stepFailed(run, `the attempts of group ${event.groupId} could not be selected`, error));
+    })).catch((error: unknown) => stepFailed(run, `the attempts of group ${event.groupId} could not be selected`, error));
   }
 
   function onEngineEvent(run: ContractRun, event: OrchestrationEvent): void {
@@ -444,14 +450,14 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
       run.settle(unit, 'cancelled');
       if (unit.activeAgentId !== undefined) deps.watchdog.forget(unit.activeAgentId);
     }
-    for (const release of run.sharedTreeReleases.values()) release();
-    run.sharedTreeReleases.clear();
+    // Locks are released by the runner only after real executor, phase and
+    // contract cleanup has joined. Terminal statuses are too early.
   }
 
   function startGroupNow(run: ContractRun, groupId: string): void {
     const group = run.group(groupId);
     if (group === undefined || run.terminal || run.startingGroups.has(group.id) || (group.status !== 'pending' && group.status !== 'blocked')) return;
-    void startGroup(run, group);
+    void run.work.run(() => startGroup(run, group));
   }
 
   return { startRun, unitPassed, passGroup, startGroupNow, requeueUnit, stopRun, resumeEngine, startReadyGroups, reconcileMerged, selectAttempts: selectAttemptsAgain };

@@ -21,7 +21,7 @@
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -376,6 +376,7 @@ test('held provider cancellation is idempotent, settles honestly, and cannot can
     expect(session.liveTurnControls.cancelTurn!(ids[0]!).status).toBe('cancellation-requested');
     expect(cancelled).toHaveLength(0);
     await session.submit('future');
+    expect(session.isRunning()).toBe(true);
     heldChat = undefined;
     release();
     await first;
@@ -568,3 +569,127 @@ for (const toolName of ['write', 'edit'] as const) {
     }
   }
 }
+
+for (const cancel of [false, true]) {
+  test(`actual async hook definitions stay concurrent but ${cancel ? 'cancellation' : 'completion'} joins their real settlement`, async () => {
+    const session = cancellationSession();
+    const records: Record<string, { start: () => void; wait: Promise<void>; signal?: AbortSignal }> = {};
+    const globals = globalThis as typeof globalThis & { __hostedOwnedHookProbe?: typeof records };
+    globals.__hostedOwnedHookProbe = records;
+    const releases: (() => void)[] = [];
+    const started: Promise<void>[] = [];
+    for (const name of ['one', 'two']) {
+      let start!: () => void;
+      started.push(new Promise<void>((resolve) => { start = resolve; }));
+      let release!: () => void;
+      const wait = new Promise<void>((resolve) => { release = resolve; });
+      releases.push(release);
+      records[name] = { start, wait };
+      writeFileSync(join(workspace, `${name}.ts`), `export default async function (_event, options) { const probe = globalThis.__hostedOwnedHookProbe[${JSON.stringify(name)}]; probe.signal = options?.signal; probe.start(); await probe.wait; return { ok: true }; }`);
+      services.hookDispatcher.register('Post:tool:read', { match: 'Post:tool:read', name, type: 'ts', path: `${name}.ts`, async: true, once: true });
+    }
+    const terminals: string[] = [];
+    let turnId = '';
+    runtimeBus.on('TURN_SUBMITTED', (event) => { if (event.payload.type === 'TURN_SUBMITTED') turnId = event.payload.turnId; });
+    runtimeBus.on('TURN_COMPLETED', () => { terminals.push('completed'); });
+    runtimeBus.on('TURN_CANCEL', () => { terminals.push('cancel'); });
+    answers.push({ content: '', toolCalls: [{ id: 'read-for-hooks', name: 'read', arguments: { files: [{ path: 'note.txt' }] } }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse, textAnswer('answer before hooks finish'));
+    let ended = false;
+    const turn = session.submit('read and answer').then(() => { ended = true; });
+    try {
+      await Promise.race([Promise.all(started), turn.then(() => { throw new Error('Turn settled before both async hooks were owned'); })]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(requests).toHaveLength(2); // async hooks did not block the next provider call
+      expect(ended).toBe(false);
+      expect(terminals).toEqual([]);
+      if (cancel) {
+        expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('cancellation-requested');
+        expect(records.one!.signal?.aborted).toBe(true);
+        expect(records.two!.signal?.aborted).toBe(true);
+      }
+      releases[0]!();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(ended).toBe(false);
+      expect(terminals).toEqual([]);
+      releases[1]!();
+      await turn;
+      expect(terminals).toEqual([cancel ? 'cancel' : 'completed']);
+      expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('already-ended');
+    } finally { for (const release of releases) release(); await turn; delete globals.__hostedOwnedHookProbe; session.dispose(); }
+  });
+}
+
+
+for (const cancel of [false, true]) {
+  test.skipIf(process.platform === 'win32')(`actual async command descendants ${cancel ? 'are stopped before cancellation' : 'finish before completion'}`, async () => {
+    const session = cancellationSession();
+    const startedPath = join(workspace, 'hook-started');
+    const releasePath = join(workspace, 'hook-release');
+    const mutationPath = join(workspace, 'hook-mutation');
+    const q = (value: string) => JSON.stringify(value);
+    // The shell leader exits; its valid background descendant is still owned.
+    services.hookDispatcher.register('Post:tool:read', { match: 'Post:tool:read', name: 'owned-command', type: 'command', async: true, once: true, timeout: 5,
+      command: `(printf started > ${q(startedPath)}; while [ ! -f ${q(releasePath)} ]; do sleep 0.02; done; printf mutation > ${q(mutationPath)}) &`,
+    });
+    const terminals: string[] = [];
+    let turnId = '';
+    runtimeBus.on('TURN_SUBMITTED', (event) => { if (event.payload.type === 'TURN_SUBMITTED') turnId = event.payload.turnId; });
+    runtimeBus.on('TURN_COMPLETED', () => { terminals.push('completed'); });
+    runtimeBus.on('TURN_CANCEL', () => { terminals.push('cancel'); });
+    answers.push({ content: '', toolCalls: [{ id: 'read-for-command', name: 'read', arguments: { files: [{ path: 'note.txt' }] } }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse, textAnswer('provider finished'));
+    const turn = session.submit('read the note');
+    try {
+      for (let i = 0; i < 200 && !existsSync(startedPath); i++) await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(existsSync(startedPath)).toBe(true);
+      expect(terminals).toEqual([]);
+      expect(existsSync(mutationPath)).toBe(false);
+      if (cancel) expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('cancellation-requested');
+      else writeFileSync(releasePath, 'release');
+      await turn;
+      expect(terminals).toEqual([cancel ? 'cancel' : 'completed']);
+      expect(existsSync(mutationPath)).toBe(!cancel);
+    } finally { writeFileSync(releasePath, 'release'); session.dispose(); await turn; }
+  });
+}
+
+test('a shared native dispatcher keeps concurrent hosted turn hook ownership isolated', async () => {
+  const floor = { services, contractRunner: services.contractRunner, dispose: (): void => {} };
+  const a = createHostedSessionRuntime({ sessionId: 'scope-a', workspaceRoot: workspace, floor, systemPrompt: 'a' });
+  const b = createHostedSessionRuntime({ sessionId: 'scope-b', workspaceRoot: workspace, floor, systemPrompt: 'b' });
+  const records: Record<string, { start: () => void; wait: Promise<void>; signal?: AbortSignal }> = {};
+  const globals = globalThis as typeof globalThis & { __hostedIsolationProbe?: typeof records };
+  globals.__hostedIsolationProbe = records;
+  const releases: (() => void)[] = [];
+  const starts: Promise<void>[] = [];
+  for (const id of ['scope-a', 'scope-b']) {
+    let start!: () => void;
+    starts.push(new Promise<void>((resolve) => { start = resolve; }));
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    releases.push(release);
+    records[id] = { start, wait };
+  }
+  writeFileSync(join(workspace, 'isolation-hook.ts'), `export default async function(event, options) { const probe = globalThis.__hostedIsolationProbe[event.sessionId]; probe.signal = options?.signal; probe.start(); await probe.wait; return { ok: true }; }`);
+  services.hookDispatcher.register('Post:tool:read', { match: 'Post:tool:read', name: 'isolated-owner', type: 'ts', path: 'isolation-hook.ts', async: true });
+  const ids: Record<string, string> = {};
+  runtimeBus.on('TURN_SUBMITTED', (event) => { if (event.payload.type === 'TURN_SUBMITTED' && event.sessionId) ids[event.sessionId] = event.payload.turnId; });
+  heldChat = async (request) => request.messages.some((message) => message.role === 'tool') ? textAnswer('done') : {
+    content: '', toolCalls: [{ id: 'read', name: 'read', arguments: { files: [{ path: 'note.txt' }] } }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call',
+  } as unknown as ChatResponse;
+  const first = a.submit('read a');
+  let bEnded = false;
+  const second = b.submit('read b').then(() => { bEnded = true; });
+  try {
+    await Promise.all(starts);
+    expect(a.liveTurnControls.cancelTurn!(ids['scope-a']!).status).toBe('cancellation-requested');
+    expect(records['scope-a']!.signal?.aborted).toBe(true);
+    expect(records['scope-b']!.signal?.aborted).toBe(false);
+    releases[0]!();
+    await first;
+    expect(bEnded).toBe(false);
+    expect(records['scope-b']!.signal?.aborted).toBe(false);
+    releases[1]!();
+    await second;
+    expect(b.conversation.getMessageSnapshot().some((message) => message.content === 'done')).toBe(true);
+  } finally { for (const release of releases) release(); await Promise.all([first, second]); delete globals.__hostedIsolationProbe; a.dispose(); b.dispose(); }
+});

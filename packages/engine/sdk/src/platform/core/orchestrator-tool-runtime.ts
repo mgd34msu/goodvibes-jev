@@ -1,3 +1,4 @@
+import type { TurnHookOwner } from '../hooks/turn-ownership.js';
 import { ToolError, PermissionError } from '../types/errors.js';
 import type { HookEvent, HookEventPath, HookResult } from '../hooks/types.js';
 import type { ToolCall, ToolResult } from '../types/tools.js';
@@ -44,15 +45,16 @@ async function resolvePermissionCheck(
   toolName: string,
   args: Record<string, unknown>,
   signal?: AbortSignal,
+  hookOwner?: TurnHookOwner,
 ): Promise<import('../permissions/types.js').PermissionCheckResult> {
   const manager = permissionManager as {
     checkDetailed?: PermissionManager['checkDetailed'];
     check: PermissionManager['check'];
   };
   if (typeof manager.checkDetailed === 'function') {
-    return manager.checkDetailed(toolName, args, undefined, { signal });
+    return manager.checkDetailed(toolName, args, undefined, { signal, hookOwner });
   }
-  const approved = await manager.check(toolName, args, undefined, { signal });
+  const approved = await manager.check(toolName, args, undefined, { signal, hookOwner });
   return {
     approved,
     persisted: false,
@@ -70,6 +72,7 @@ async function resolvePermissionCheck(
 type EmitterContextFactory = (turnId: string) => import('../runtime/emitters/index.js').EmitterContext;
 
 export type ToolExecutionDeps = {
+  hookOwner?: TurnHookOwner | undefined;
   /** This execution's immutable whole-turn signal, never a later turn's controller. */
   turnSignal?: AbortSignal | undefined;
   toolRegistry: ToolRegistry;
@@ -141,7 +144,7 @@ export async function executeToolCalls(
 
     // Event observers and every awaited admission boundary can cancel the turn.
     assertTurnActive();
-    const checkResult = await resolvePermissionCheck(deps.permissionManager, call.name, call.arguments, turnSignal);
+    const checkResult = await resolvePermissionCheck(deps.permissionManager, call.name, call.arguments, turnSignal, deps.hookOwner);
     assertTurnActive();
     const approved = checkResult.approved;
     if (deps.runtimeBus) {

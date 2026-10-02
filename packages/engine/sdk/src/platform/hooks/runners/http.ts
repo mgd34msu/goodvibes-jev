@@ -3,12 +3,13 @@ import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { classifyHostTrustTier, extractHostname, emitSsrfDeny } from '../../tools/fetch/trust-tiers.js';
 import { instrumentedFetch, fetchWithTimeout } from '../../utils/fetch-with-timeout.js';
+import { createHookExecution, type HookExecutionOptions } from '../execution.js';
 
 /**
  * HTTP hook runner.
  * POSTs the event JSON to the configured URL and parses the response as HookResult.
  */
-export async function run(hook: HookDefinition, event: HookEvent): Promise<HookResult> {
+export async function run(hook: HookDefinition, event: HookEvent, options?: HookExecutionOptions): Promise<HookResult> {
   const url = hook.url;
   if (!url) {
     return { ok: false, error: 'http hook missing "url" field' };
@@ -30,16 +31,26 @@ export async function run(hook: HookDefinition, event: HookEvent): Promise<HookR
   }
 
   const timeoutMs = (hook.timeout ?? 30) * 1000;
+  const execution = options === undefined ? undefined : createHookExecution(options, hook.timeout ?? 30, 'http');
 
   try {
-    const response = await fetchWithTimeout(url, {
+    execution?.signal.throwIfAborted();
+    const init: RequestInit = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...hook.headers,
       },
       body: JSON.stringify(event),
-    }, timeoutMs, instrumentedFetch);
+    };
+    const response = execution
+      ? await instrumentedFetch(url, { ...init, signal: execution.signal })
+      : await fetchWithTimeout(url, init, timeoutMs, instrumentedFetch);
+
+    // Keep cancellation and the deadline alive through body consumption. This
+    // also settles error responses instead of leaving an unread owned body.
+    const ownedText = execution ? await response.text() : undefined;
+    execution?.signal.throwIfAborted();
 
     if (!response.ok) {
       return {
@@ -48,7 +59,7 @@ export async function run(hook: HookDefinition, event: HookEvent): Promise<HookR
       };
     }
 
-    const text = await response.text();
+    const text = ownedText ?? await response.text();
     if (!text.trim()) {
       return { ok: true };
     }
@@ -63,5 +74,7 @@ export async function run(hook: HookDefinition, event: HookEvent): Promise<HookR
     const message = summarizeError(err);
     logger.error('http hook error', { url, error: message });
     return { ok: false, error: message };
+  } finally {
+    execution?.dispose();
   }
 }

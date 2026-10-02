@@ -36,3 +36,9 @@ export class TurnCancellationFence {
     return active ? { status: 'stale-turn', activeTurnId: active.id } : { status: 'turn-not-found' };
   }
 }
+
+/** Preserve the existing event while allowing an owning turn to defer publication. */
+export function publishTurnTerminal(publish: () => void, defer?: ((publish: () => void) => void) | undefined): void {
+  if (defer) defer(publish);
+  else publish();
+}

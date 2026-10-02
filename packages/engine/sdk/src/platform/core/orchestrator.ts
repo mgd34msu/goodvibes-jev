@@ -1,3 +1,4 @@
+import { TurnHookOwner, bindTurnHookDispatcher } from '../hooks/turn-ownership.js';
 import { TurnCancellationFence, type TurnCancellationResult } from './turn-cancellation.js';
 import { resolveSystemPrompt } from './orchestrator-system-prompt.js';
 import { JudgmentError } from '@goodvibes-jev/judgment';
@@ -488,6 +489,7 @@ export class Orchestrator {
   }
 
   private readonly turnCancellation = new TurnCancellationFence();
+  private turnHookOwner: TurnHookOwner | null = null;
 
   /** Compare and request cancellation synchronously; terminal events establish settlement. */
   public cancelTurn(expectedTurnId: string): TurnCancellationResult {
@@ -612,6 +614,9 @@ export class Orchestrator {
 
   private turnInFlight = false;
 
+  /** Actual execution ownership, including cancellation and hook drainage. */
+  public get isTurnInFlight(): boolean { return this.turnInFlight; }
+
   private startThinking(estimatedInputTokens?: number): void {
     this.followUpRuntime.cancel(true);
     this.isThinking = true;
@@ -668,6 +673,8 @@ export class Orchestrator {
     const preflight = this.runTurnPreflight(text, content, options, providerRegistry);
     if (!preflight) return; // duplicate in-flight turn was rejected and reported
     const { submissionKey, turnId } = preflight;
+    const hookOwner = this.turnHookOwner!;
+    const terminal: { publish?: () => void } = {};
 
     // Judgment preflight shares the same cancellation and cleanup as streaming.
     try {
@@ -685,15 +692,21 @@ export class Orchestrator {
       this.turnStartMessageCount = this.conversation.getMessageCount();
       this.scrollToEnd(this.getViewportHeight());
       this.streamingInputTokens = estimateFreshTurnInputTokens(this.lastInputTokens, estimateConversationTokens(this.conversation.getMessagesForLLM()), text, content);
-      await this.runTurnStream(text, content, turnId, preTurnPlan, configManager, providerRegistry, turnClassification);
+      await this.runTurnStream(text, content, turnId, preTurnPlan, configManager, providerRegistry, turnClassification, (publish) => { terminal.publish = publish; });
 
       signal?.throwIfAborted();
       // --- Phase 3: Post-turn reconciliation ---
       await this.runTurnReconcile(turnId, configManager, providerRegistry);
+      await hookOwner.closeAndDrain();
+      signal?.throwIfAborted();
+      this.turnCancellation.end(turnId);
+      terminal.publish?.();
     } catch (err: unknown) {
       this._turnFailed = true;
+      await hookOwner.closeAndDrain();
       await this.handleTurnError(err, turnId, configManager, providerRegistry);
     } finally {
+      this.turnHookOwner = null;
       this.finalizeTurn(turnStartTime, submissionKey, turnId, configManager);
     }
   }
@@ -751,6 +764,7 @@ export class Orchestrator {
     // Reserve and bind before notifying synchronous submitted-event observers.
     this.turnInFlight = true;
     this.startThinking();
+    this.turnHookOwner = new TurnHookOwner(this.sessionId, turnId, this.abortController!.signal);
     this.turnCancellation.begin(turnId, () => this.abort());
 
     if (this.runtimeBus) {
@@ -773,17 +787,15 @@ export class Orchestrator {
     configManager: ReturnType<typeof requireConfigManager>,
     providerRegistry: ReturnType<typeof requireProviderRegistry>,
     turnClassification?: ClassificationResult,
+    onTurnTerminal?: (publish: () => void) => void,
   ): Promise<void> {
     await executeOrchestratorTurnLoop({
-      onTurnTerminal: () => {
-        this.abortController?.signal.throwIfAborted();
-        this.turnCancellation.end(turnId);
-      },
+      onTurnTerminal,
       conversation: this.conversation,
       toolRegistry: this.toolRegistry,
       getSystemPrompt: this.getSystemPrompt,
       getAbortSignal: () => this.abortController?.signal,
-      hookDispatcher: this.hookDispatcher,
+      hookDispatcher: bindTurnHookDispatcher(this.hookDispatcher, this.turnHookOwner),
       requestRender: this.requestRender,
       runtimeBus: this.runtimeBus,
       agentManager: this.agentManager,
@@ -863,7 +875,7 @@ export class Orchestrator {
       sessionLineageTracker: getSessionLineageTracker(this.coreServices, this.ownedSessionLineageTracker),
       runtimeBus: this.runtimeBus,
       emitterContext: (id: string) => createEmitterContext(this.sessionId, id),
-      hookDispatcher: this.hookDispatcher,
+      hookDispatcher: bindTurnHookDispatcher(this.hookDispatcher, this.turnHookOwner),
       sessionId: this.sessionId,
       requestRender: this.requestRender,
       isCompacting: this.isCompacting,
@@ -1101,9 +1113,10 @@ export class Orchestrator {
   private async executeToolCalls(turnId: string, calls: ToolCall[]): Promise<ToolResult[]> {
     const results = await executeToolCalls({
       turnSignal: this.abortController?.signal,
+      hookOwner: this.turnHookOwner ?? undefined,
       toolRegistry: this.toolRegistry,
       permissionManager: this.permissionManager,
-      hookDispatcher: this.hookDispatcher,
+      hookDispatcher: bindTurnHookDispatcher(this.hookDispatcher, this.turnHookOwner),
       runtimeBus: this.runtimeBus,
       sessionId: this.sessionId,
       emitterContext: (id) => createEmitterContext(this.sessionId, id),

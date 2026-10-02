@@ -189,7 +189,12 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     return 'stopped';
   }
 
-  async function runCheck(run: ContractRun, unit: ContractUnit, trigger: CheckTrigger, given?: string): Promise<void> {
+  function runCheck(run: ContractRun, unit: ContractUnit, trigger: CheckTrigger, given?: string): Promise<void> {
+    if (run.terminal) return Promise.resolve();
+    return run.work.run(() => checkUnit(run, unit, trigger, given));
+  }
+
+  async function checkUnit(run: ContractRun, unit: ContractUnit, trigger: CheckTrigger, given?: string): Promise<void> {
     const runtime = run.runtime(unit);
     const config = run.env.config();
     const check: InFlightCheck = { trigger, abort: new AbortController(), superseded: false };
@@ -394,7 +399,7 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
       else if (sent.kind === 'woke') run.decide('woke', unit.id, `woke ${agentId} from ${state} with nudge ${nudge.id}`, check.decisionIds);
       else if (sent.kind === 'undelivered') deps.respawnUnit(run, unit, `nudge ${nudge.id} could not reach ${agentId}: ${sent.reason}`, nudge.text);
     }
-    if (outcome.unmetCriterionIds.length > 0) void readSeverities(run, unit, runtime, check.id, outcome.unmetCriterionIds);
+    if (outcome.unmetCriterionIds.length > 0) void run.work.run(() => readSeverities(run, unit, runtime, check.id, outcome.unmetCriterionIds));
   }
 
   /** Severity of the unmet criteria, read after the nudge went out so it never delays one. */

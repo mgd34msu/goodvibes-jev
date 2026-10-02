@@ -34,6 +34,7 @@ import {
 } from './types.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
+import { OwnedWork } from '../utils/owned-work.js';
 
 /** Thrown for an honest caller error against the best-of-N surface (unknown group, not-ready, bad winner). */
 export class AttemptError extends Error {
@@ -44,10 +45,12 @@ export class AttemptError extends Error {
 }
 
 export interface AttemptsCoordinatorDeps {
+  /** Shared with the engine so nested integration/cleanup belongs to the same drain. */
+  readonly ownedWork?: OwnedWork | undefined;
   readonly emit: (event: OrchestrationEvent) => void;
   readonly getWorkstream: (id: string) => Workstream | null;
   /** Route a (non-attempt terminal-passed item, or a picked winner) onto the sequential integration lane. */
-  readonly enqueueIntegration: (workstream: Workstream, item: WorkItem) => void;
+  readonly enqueueIntegration: (workstream: Workstream, item: WorkItem) => void | Promise<void>;
   /** Remove a loser's worktree (clean → removed; dirty → kept, the existing cleanup rule). Never throws. */
   readonly cleanupWorktree: (workstream: Workstream, item: WorkItem) => Promise<void>;
   /** The diff a candidate's worktree branch introduced over base, or null if it has no live worktree. */
@@ -57,6 +60,7 @@ export interface AttemptsCoordinatorDeps {
 }
 
 export interface AttemptsCoordinator {
+  join(): Promise<void>;
   /** Expand any `attempts:N` spec into N sibling items (worktree isolation only); pass others through unchanged. */
   expandItems(
     workstreamId: string,
@@ -104,6 +108,7 @@ function siblingId(spec: WorkItemSpec, index: number): string {
 
 export function createAttemptsCoordinator(deps: AttemptsCoordinatorDeps): AttemptsCoordinator {
   const groups = new Map<string, GroupEntry>();
+  const ownedWork = deps.ownedWork ?? new OwnedWork();
 
   function siblingsOf(workstream: Workstream, entry: GroupEntry): WorkItem[] {
     return entry.siblingItemIds
@@ -203,17 +208,27 @@ export function createAttemptsCoordinator(deps: AttemptsCoordinatorDeps): Attemp
     if (!allTerminal(siblings) || entry.readyEmitted) return;
     entry.readyEmitted = true;
     const candidateItemIds = siblings.filter((s) => s.state === 'held-merge').map((s) => s.id);
-    deps.emit({ type: 'attempts-ready', workstreamId: workstream.id, groupId, candidateItemIds });
     if (entry.autoAccept && deps.judge) {
-      void autoJudgeAndPick(groupId).catch((error) => {
+      void ownedWork.run(async () => {
+        deps.emit({ type: 'attempts-ready', workstreamId: workstream.id, groupId, candidateItemIds });
+        await autoJudgeAndPick(groupId);
+      }).catch((error) => {
         logger.warn('attempts: auto judge-and-pick did not complete', { groupId, error: summarizeError(error) });
       });
+    } else {
+      deps.emit({ type: 'attempts-ready', workstreamId: workstream.id, groupId, candidateItemIds });
     }
+  }
+
+  function enqueueIntegration(workstream: Workstream, item: WorkItem): void {
+    void ownedWork.run(() => deps.enqueueIntegration(workstream, item)).catch((error) => {
+      logger.warn('attempts: winner integration did not complete', { itemId: item.id, error: summarizeError(error) });
+    });
   }
 
   function onItemPassedTerminal(workstream: Workstream, item: WorkItem): void {
     if (!item.attemptGroupId) {
-      deps.enqueueIntegration(workstream, item);
+      enqueueIntegration(workstream, item);
       return;
     }
     // A best-of-N attempt passed: PARK it (do not merge). Its worktree stays put
@@ -287,7 +302,7 @@ export function createAttemptsCoordinator(deps: AttemptsCoordinatorDeps): Attemp
     // merge rather than any passed sibling (losers are set 'passed' too, below).
     winner.state = 'passed';
     winner.attemptWinner = true;
-    deps.enqueueIntegration(workstream, winner);
+    enqueueIntegration(workstream, winner);
     // Losers: discard their work (clean the worktree) and mark terminal. A held
     // loser passed its gates, it is 'passed' with an honest "not selected" note,
     // not a failure; a failed loser is left failed.
@@ -296,7 +311,7 @@ export function createAttemptsCoordinator(deps: AttemptsCoordinatorDeps): Attemp
         loser.state = 'passed';
         (loser.warnings ??= []).push('best-of-N: not selected (loser worktree cleaned)');
       }
-      void deps.cleanupWorktree(workstream, loser).catch((error) => {
+      void ownedWork.run(() => deps.cleanupWorktree(workstream, loser)).catch((error) => {
         logger.warn('attempts: loser worktree cleanup did not complete', { itemId: loser.id, error: summarizeError(error) });
       });
     }
@@ -349,5 +364,11 @@ export function createAttemptsCoordinator(deps: AttemptsCoordinatorDeps): Attemp
     }
   }
 
-  return { expandItems, reconcileGroups, onItemPassedTerminal, onItemFailedTerminal, listGroups, pickWinner, proposeWinner };
+  return {
+    expandItems, reconcileGroups, onItemPassedTerminal, onItemFailedTerminal,
+    listGroups: (workstreamId) => ownedWork.run(() => listGroups(workstreamId)),
+    pickWinner: (groupId, winnerItemId) => ownedWork.run(() => pickWinner(groupId, winnerItemId)),
+    proposeWinner: (groupId) => ownedWork.run(() => proposeWinner(groupId)),
+    join: () => ownedWork.join(),
+  };
 }

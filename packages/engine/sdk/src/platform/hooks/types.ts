@@ -39,6 +39,8 @@ export interface HookResult {
   ok: boolean;
   /** Error message if hook failed */
   error?: string | undefined;
+  /** Machine-readable failure reason, when the runner can identify one. */
+  code?: 'OWNED_PROCESS_GROUP_UNSUPPORTED' | 'OWNED_AGENT_EXECUTION_UNSUPPORTED' | undefined;
 }
 
 /** The 5 hook types */

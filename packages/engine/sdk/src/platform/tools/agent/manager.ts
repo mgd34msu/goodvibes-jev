@@ -15,6 +15,7 @@ import { evaluateOrchestrationSpawn } from '../../runtime/orchestration/spawn-po
 import { logger } from '../../utils/logger.js';
 import type { AgentInput } from './schema.js';
 import { summarizeError } from '../../utils/error-display.js';
+import { OwnedWork } from '../../utils/owned-work.js';
 import { splitModelRegistryKey } from '../../providers/registry-helpers.js';
 import type { ProviderRegistry } from '../../providers/registry.js';
 import { requireProviderQualifiedModel, normalizeProviderQualifiedModelList } from './model-routing.js';
@@ -31,7 +32,7 @@ export interface AgentManagerDependencies {
   readonly archetypeLoader?: Pick<ArchetypeLoader, 'loadArchetype'> | undefined;
   readonly messageBus?: Pick<AgentMessageBus, 'registerAgent'> | undefined;
   /** Starts the contract a spawn that is not outside every contract becomes the owner of (design 10.3). */
-  readonly contractRunner?: Pick<ContractRunner, 'startForOwner'> | null | undefined;
+  readonly contractRunner?: AgentContractRunner | null | undefined;
   readonly executor?: AgentExecutor | null | undefined;
   readonly configManager?: Pick<ConfigManager, 'get'> | undefined;
   /**
@@ -93,12 +94,49 @@ export const AGENT_TEMPLATES: Record<string, { description: string; defaultTools
   },
 };
 
+
+/** Legacy starts remain valid; owned starts require an explicit real receipt. */
+export type AgentContractRunner = Pick<ContractRunner, 'startForOwner'> & Partial<Pick<ContractRunner, 'assertOwnedExecution' | 'startOwnedForOwner'>>;
+
+/** An owned spawn was refused before admission because its driver cannot join. */
+export class OwnedAgentExecutionUnavailableError extends Error {
+  override readonly name = 'OwnedAgentExecutionUnavailableError';
+  readonly code = 'OWNED_AGENT_EXECUTION_UNSUPPORTED' as const;
+}
+
+/** One captured invocation, not a later wake of the same mutable agent record. */
+export interface OwnedAgentExecution {
+  readonly record: AgentRecord;
+  /** Immutable-at-settlement snapshot, taken before any queued wake starts. */
+  readonly settled: Promise<AgentRecord>;
+  cancel(): void;
+}
+
+interface OwnedSpawnContext {
+  reserved(record: AgentRecord, slot: AgentExecutionSlot): void;
+  startContract(record: AgentRecord): { readonly settled: Promise<void>; cancel(reason: string): boolean };
+}
+
+interface AgentExecutionSlot {
+  readonly controller: AbortController;
+  readonly settled: Promise<void>;
+  active: boolean;
+}
+
+interface AgentExecutionState {
+  readonly work: OwnedWork;
+  readonly slots: Set<AgentExecutionSlot>;
+  tail?: Promise<void> | undefined;
+}
+
 export class AgentManager {
   private agents = new Map<string, AgentRecord>();
+  /** Actual per-agent invocations; terminal records alone do not prove cleanup. */
+  private readonly executions = new Map<string, AgentExecutionState>();
   private runtimeBus: RuntimeEventBus | null = null;
   private readonly archetypeLoader: Pick<ArchetypeLoader, 'loadArchetype'>;
   private readonly messageBus: Pick<AgentMessageBus, 'registerAgent'>;
-  private contractRunner: Pick<ContractRunner, 'startForOwner'> | null;
+  private contractRunner: AgentContractRunner | null;
   private executor: AgentExecutor | null;
   private readonly configManager: Pick<ConfigManager, 'get'> | null;
   /**
@@ -234,6 +272,79 @@ export class AgentManager {
    * composed contract runner's startForOwner, and runs no executor.
    */
   spawn(input: AgentInput, spawnBinding?: ContractUnitBinding | ContractOwnerBinding): AgentRecord {
+    return this.spawnInternal(input, spawnBinding);
+  }
+
+  /**
+   * Captures one spawn's cancellation and genuine settlement before publishing
+   * it. A legacy contract driver is refused before any record/event/work exists.
+   */
+  spawnOwned(input: AgentInput, options: { readonly signal?: AbortSignal | undefined } = {}): OwnedAgentExecution {
+    options.signal?.throwIfAborted();
+    const startOwned = this.contractRunner?.startOwnedForOwner;
+    if (!input.outsideContract) {
+      if (typeof startOwned !== 'function' || typeof this.contractRunner?.assertOwnedExecution !== 'function') {
+        throw new OwnedAgentExecutionUnavailableError('Owned agent spawn requires a contract runner with owned execution settlement');
+      }
+      try {
+        this.contractRunner.assertOwnedExecution();
+      } catch (error) {
+        throw new OwnedAgentExecutionUnavailableError(summarizeError(error));
+      }
+    }
+    let handle: OwnedAgentExecution | undefined;
+    let abortRequested = false;
+    let cancelContract: ((reason: string) => boolean) | undefined;
+    const onAbort = (): void => { abortRequested = true; handle?.cancel(); };
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+    if (options.signal?.aborted) onAbort();
+    try {
+      if (abortRequested) options.signal!.throwIfAborted();
+      this.spawnInternal(input, undefined, {
+        reserved: (record, slot) => {
+          // Attach this snapshot before a re-entrant observer can queue a wake.
+          const settled = slot.settled.then(() => structuredClone(record));
+          handle = {
+            record,
+            settled,
+            cancel: () => {
+              if (!slot.active) return;
+              const cancelRecord = record.status === 'pending' || record.status === 'running';
+              if (cancelRecord) {
+                record.status = 'cancelled';
+                record.terminationKind = 'kill';
+                record.completedAt = Date.now();
+              }
+              slot.controller.abort();
+              cancelContract?.('the owning hook was cancelled');
+              if (cancelRecord && this.runtimeBus) {
+                emitAgentCancelled(this.runtimeBus, {
+                  sessionId: 'agent-manager', traceId: `agent-manager:${record.id}:cancel`, source: 'agent-manager', agentId: record.id,
+                }, { agentId: record.id, reason: 'owning hook cancellation' });
+              }
+            },
+          };
+          void settled.then(
+            () => options.signal?.removeEventListener('abort', onAbort),
+            () => options.signal?.removeEventListener('abort', onAbort),
+          );
+          if (abortRequested) handle.cancel();
+        },
+        startContract: (record) => {
+          const started = startOwned!.call(this.contractRunner, record);
+          cancelContract = (reason) => started.cancel(reason);
+          if (abortRequested) cancelContract('the owning hook was cancelled');
+          return started;
+        },
+      });
+      return handle!;
+    } catch (error) {
+      options.signal?.removeEventListener('abort', onAbort);
+      throw error;
+    }
+  }
+
+  private spawnInternal(input: AgentInput, spawnBinding?: ContractUnitBinding | ContractOwnerBinding, owned?: OwnedSpawnContext): AgentRecord {
     const { unit: binding, owner: ownerBinding } = splitContractBinding(spawnBinding);
     const task = input.task;
     if (!task || typeof task !== 'string' || task.trim() === '') {
@@ -386,76 +497,133 @@ export class AgentManager {
     };
 
     this.agents.set(id, record);
-    this.messageBus.registerAgent({
-      agentId: id,
-      template,
-      parentAgentId: input.parentAgentId,
-      cohort: input.cohort,
-    });
-    if (this.runtimeBus) {
-      const taskContract: AgentTaskContract = {
-        allowedTools: [...record.tools],
-        capabilityCeiling: [...(record.capabilityCeilingTools ?? record.tools)],
-        ...(record.successCriteria ? { successCriteria: [...record.successCriteria] } : {}),
-        ...(record.requiredEvidence ? { requiredEvidence: [...record.requiredEvidence] } : {}),
-        ...(record.writeScope ? { writeScope: [...record.writeScope] } : {}),
-        executionProtocol: record.executionProtocol,
-        reviewMode: record.reviewMode,
-        inheritsParentConstraints: Boolean(record.parentAgentId),
-        communicationLane: record.communicationLane,
-      };
-      emitAgentSpawning(this.runtimeBus, {
-        sessionId: 'agent-manager',
-        traceId: `agent-manager:${id}`,
-        source: 'agent-manager',
-      }, {
+    // Reserve before publishing the record or invoking any re-entrant callback.
+    const { begin, controller, slot } = this.reserveExecution(id);
+    this.cancellationControllers.set(id, controller);
+    owned?.reserved(record, slot);
+    try {
+      this.messageBus.registerAgent({
         agentId: id,
-        task,
-        ...(record.parentAgentId ? { parentAgentId: record.parentAgentId } : {}),
-        ...(record.contractUnitId ? { contractId: record.contractId, contractRole: record.contractRole, contractUnitId: record.contractUnitId } : {}),
-        ...(ownerBinding ? { contractId: ownerBinding.contractId, contractRole: 'owner' as const } : {}),
-        ...(record.orchestrationGraphId ? { orchestrationGraphId: record.orchestrationGraphId } : {}),
-        ...(record.parentNodeId ? { parentNodeId: record.parentNodeId } : {}),
-        taskContract,
+        template,
+        parentAgentId: input.parentAgentId,
+        cohort: input.cohort,
       });
-    }
-    if (ownerBinding) return startContractOwner(record, ownerBinding, this.runtimeBus);
-
-    if (startsContract) {
-      try {
-        this.contractRunner!.startForOwner(record);
-      } catch (error) {
-        record.status = 'failed';
-        record.error = `The contract could not start: ${summarizeError(error)}`;
-        record.completedAt = Date.now();
-        throw error;
-      }
-      return record;
-    }
-
-    if (this.executor) {
-      this.executor.runAgent(record).catch((error) => {
-        record.status = 'failed';
-        record.error = summarizeError(error, {
-          ...(record.provider ? { provider: record.provider } : {}),
+      if (this.runtimeBus) {
+        const taskContract: AgentTaskContract = {
+          allowedTools: [...record.tools],
+          capabilityCeiling: [...(record.capabilityCeilingTools ?? record.tools)],
+          ...(record.successCriteria ? { successCriteria: [...record.successCriteria] } : {}),
+          ...(record.requiredEvidence ? { requiredEvidence: [...record.requiredEvidence] } : {}),
+          ...(record.writeScope ? { writeScope: [...record.writeScope] } : {}),
+          executionProtocol: record.executionProtocol,
+          reviewMode: record.reviewMode,
+          inheritsParentConstraints: Boolean(record.parentAgentId),
+          communicationLane: record.communicationLane,
+        };
+        emitAgentSpawning(this.runtimeBus, {
+          sessionId: 'agent-manager',
+          traceId: `agent-manager:${id}`,
+          source: 'agent-manager',
+        }, {
+          agentId: id,
+          task,
+          ...(record.parentAgentId ? { parentAgentId: record.parentAgentId } : {}),
+          ...(record.contractUnitId ? { contractId: record.contractId, contractRole: record.contractRole, contractUnitId: record.contractUnitId } : {}),
+          ...(ownerBinding ? { contractId: ownerBinding.contractId, contractRole: 'owner' as const } : {}),
+          ...(record.orchestrationGraphId ? { orchestrationGraphId: record.orchestrationGraphId } : {}),
+          ...(record.parentNodeId ? { parentNodeId: record.parentNodeId } : {}),
+          taskContract,
         });
-        record.completedAt = Date.now();
-      });
-    } else {
-      record.status = 'failed';
-      record.error = 'Agent executor is not configured';
-      record.completedAt = Date.now();
-    }
+      }
+      if (ownerBinding) {
+        begin(ownerBinding.settled);
+        return startContractOwner(record, ownerBinding, this.runtimeBus);
+      }
 
-    return record;
+      if (startsContract) {
+        try {
+          const started = owned ? owned.startContract(record) : this.contractRunner!.startForOwner(record);
+          begin(started.settled);
+        } catch (error) {
+          record.status = 'failed';
+          record.error = `The contract could not start: ${summarizeError(error)}`;
+          record.completedAt = Date.now();
+          throw error;
+        }
+        return record;
+      }
+
+      if (this.executor && record.status !== 'cancelled') {
+        begin(this.executor.runAgent(record).catch((error) => {
+          record.status = 'failed';
+          record.error = summarizeError(error, {
+            ...(record.provider ? { provider: record.provider } : {}),
+          });
+          record.completedAt = Date.now();
+        }));
+      } else if (record.status !== 'cancelled') {
+        record.status = 'failed';
+        record.error = 'Agent executor is not configured';
+        record.completedAt = Date.now();
+        begin();
+      } else {
+        begin();
+      }
+
+      return record;
+    } catch (error) {
+      begin();
+      throw error;
+    }
+  }
+
+  private reserveExecution(agentId: string): {
+    readonly begin: (operation: PromiseLike<void> | void) => void;
+    readonly controller: AbortController;
+    readonly previous: Promise<void> | undefined;
+    readonly slot: AgentExecutionSlot;
+  } {
+    let state = this.executions.get(agentId);
+    if (!state) {
+      state = { work: new OwnedWork(), slots: new Set() };
+      this.executions.set(agentId, state);
+    }
+    const owner = state;
+    const previous = owner.tail;
+    let begin!: (operation: PromiseLike<void> | void) => void;
+    const settled = new Promise<void>((resolve) => { begin = resolve; });
+    const slot: AgentExecutionSlot = { settled, controller: new AbortController(), active: true };
+    void settled.then(() => { slot.active = false; }, () => { slot.active = false; });
+    owner.slots.add(slot);
+    owner.tail = settled;
+    const reclaim = (): void => {
+      owner.slots.delete(slot);
+      // Identity plus actual idleness prevents an old cleanup from removing a
+      // newer admission. clear() does not drop still-live execution ownership.
+      if (owner.work.idle && this.executions.get(agentId) === owner) {
+        this.executions.delete(agentId);
+        this.cancellationControllers.delete(agentId);
+      }
+    };
+    void owner.work.run(() => settled).then(reclaim, reclaim);
+    return { begin, controller: slot.controller, previous, slot };
+  }
+
+  /**
+   * Joins admitted executor/contract work, including async finally cleanup.
+   * Cancellation and outward terminal statuses are deliberately not evidence.
+   * A later independent wake after this barrier is a new execution.
+   */
+  join(agentId: string): Promise<void> {
+    return this.executions.get(agentId)?.work.join() ?? Promise.resolve();
   }
 
   /**
    * Re-trigger a wedged agent's processing loop with a steer message as input.
    *
-   * Only a terminally-FAILED agent is woken by default: its turn loop has
-   * definitively exited (an exhausted turn/circuit-breaker loop, idle-after-error,
-   * or a watchdog kill), so re-running cannot race a still-live promise. A
+   * Only a terminally-FAILED agent is woken by default. Its outward status
+   * may precede async cleanup, so the admitted wake waits for that actual
+   * invocation before re-entering the executor. A
    * genuinely-running agent is left alone (its steer is delivered through the
    * message bus and drained at its next turn boundary); a cancelled agent is
    * never woken. A completed agent is woken only with `allowCompleted` and only
@@ -476,22 +644,39 @@ export class AgentManager {
     if (typeof steer !== 'string' || steer.trim().length === 0) {
       return { woke: false, reason: 'empty steer message' };
     }
-    const priorSummary = this.summarizeTranscriptTailForWake(agentId);
-    record.resumeSteer = { steer, ...(priorSummary ? { priorSummary } : {}) };
-    // Clear the prior terminal outcome; runAgentTask sets status back to
-    // 'running' and emits agent-started on the re-run.
-    record.error = undefined;
-    record.failureReason = undefined;
-    record.turnBudget = undefined;
-    record.completedAt = undefined;
-    this.executor.runAgent(record).catch((error) => {
+    const executor = this.executor;
+    const { begin, controller, previous } = this.reserveExecution(agentId);
+    const start = (): Promise<void> | void => {
+      // Cancellation covers the queued admission too, without aborting an
+      // unrelated future wake admitted after this one actually settles.
+      if (controller.signal.aborted) return;
+      // An aborted engine signal belongs to the ended phase. A fresh wake
+      // cannot inherit that old cancellation; a still-live phase keeps its
+      // exact external signal identity and authority.
+      if (this.cancellationSignals.get(agentId)?.aborted) this.cancellationSignals.delete(agentId);
+      this.cancellationControllers.set(agentId, controller);
+      const priorSummary = this.summarizeTranscriptTailForWake(agentId);
+      record.resumeSteer = { steer, ...(priorSummary ? { priorSummary } : {}) };
+      record.error = undefined;
+      record.failureReason = undefined;
+      record.turnBudget = undefined;
+      record.completedAt = undefined;
+      return executor.runAgent(record);
+    };
+    let running: Promise<void>;
+    try {
+      running = previous ? previous.then(start, start) : Promise.resolve(start());
+    } catch (error) {
+      running = Promise.reject(error);
+    }
+    begin(running.catch((error) => {
       record.status = 'failed';
       record.error = summarizeError(error, {
         ...(record.provider ? { provider: record.provider } : {}),
       });
       record.completedAt = Date.now();
-    });
-    return { woke: true, reason: `re-triggered from ${wakeCompleted ? 'completed' : 'failed'} state with steer` };
+    }));
+    return { woke: true, reason: previous ? 'wake admitted; waiting for prior execution cleanup' : `re-triggered from ${wakeCompleted ? 'completed' : 'failed'} state with steer` };
   }
 
   /** Build an honest prior-context summary from the frozen transcript tail for a wake. */
@@ -514,10 +699,19 @@ export class AgentManager {
   cancel(id: string, kind: 'interrupt' | 'kill' = 'kill'): boolean {
     const record = this.agents.get(id);
     if (!record) return false;
-    if (record.status === 'pending' || record.status === 'running') {
+    const cancelRecord = record.status === 'pending' || record.status === 'running';
+    if (cancelRecord) {
       record.status = 'cancelled';
       record.terminationKind = kind;
       record.completedAt = Date.now();
+    }
+    // Snapshot admission before abort listeners run: they may admit a later
+    // independent wake, which this cancellation must not accidentally inherit.
+    const slots = [...(this.executions.get(id)?.slots ?? [])];
+    for (const slot of slots) slot.controller.abort();
+    // Outward failure/completion can precede finally cleanup. The abort above
+    // still reaches it without rewriting the terminal record or emitting twice.
+    if (cancelRecord) {
       // Abort the manager-owned controller so an in-flight provider call for this
       // agent is interrupted mid-stream, not only cooperatively at the next
       // boundary. (An engine-registered external signal is aborted by the engine's
@@ -570,9 +764,12 @@ export class AgentManager {
   }
 
   /** Drop the registered signal + owned controller once the run ends (success, failure, or cancel). Safe to call unconditionally. */
-  releaseCancellationSignal(agentId: string): void {
+  releaseCancellationSignal(agentId: string, expectedSignal?: AbortSignal): void {
+    if (expectedSignal !== undefined && this.cancellationSignals.get(agentId) !== expectedSignal) return;
     this.cancellationSignals.delete(agentId);
-    this.cancellationControllers.delete(agentId);
+    // A delayed prior phase release must not delete a newly admitted wake's
+    // owned controller. Its actual execution settlement reclaims that itself.
+    if (!this.executions.has(agentId)) this.cancellationControllers.delete(agentId);
   }
 
   /**
@@ -722,7 +919,7 @@ export class AgentManager {
   }
 
   /** Composes the contract runner that spawns not outside every contract start through (design 10.3). */
-  setContractRunner(runner: Pick<ContractRunner, 'startForOwner'> | null): void {
+  setContractRunner(runner: AgentContractRunner | null): void {
     this.contractRunner = runner;
   }
 }

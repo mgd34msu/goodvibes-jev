@@ -1,20 +1,42 @@
 # Cancel one hosted turn without ending its session
 
-## Known open async-hook ownership gap: draft remains held
+## Review status and ownership boundary
 
-This is a partial implementation update, not full cancellation settlement
-clearance. Ordinary admitted file-hook dispatch is now awaited, including
-rejection paths. Configured `async: true` hooks remain detached inside the
-shared dispatcher, with no turn-linked running-handle registry or drain.
-A real command-hook probe demonstrated a file mutation **after `TURN_CANCEL`**.
-Agent consumers therefore cannot yet interpret that event as all admitted work
-having stopped. The intended ownership/settlement requirement remains open;
-[PR #75](https://github.com/mgd34msu/goodvibes-jev/pull/75) is held and must not
-merge on the strength of ordinary-hook tests or green CI alone. This limitation
-also applies to claims based solely on `HookDispatcher.fire()` resolving.
+The broader ownership implementation is local review work. PR #75 remains held
+until source review and consumer agreement; the earlier published partial head
+still demonstrated an async command-hook mutation after `TURN_CANCEL`. Retained
+negative evidence is not replaced by a claim of full clearance from green CI.
 
-The repair preserves existing hook timeouts and explicit async configuration;
-it does not silently disable async hooks or hide the unresolved behavior.
+The intended settlement boundary is **this turn's owned execution**, including
+its provider calls, tools, hook runners and hook-owned Agent contracts. Hooks
+configured `async: true` may run concurrently without blocking each individual
+tool dispatch. The turn's terminal event must join their actual settlement and
+owned cleanup, not merely the dispatcher response or an Agent's status record.
+Cancellation closes new admissions and requests abort on active owned work.
+An ignored abort or an unproven cleanup leaves settlement pending; a deadline
+must not race away live work and manufacture `TURN_CANCEL`.
+
+**Independent workflow-trigger actions are excluded.** These are separately
+configured event-driven automations with their own trigger ID and background
+action, not the turn's owned hook runners. They may continue and mutate files
+after this turn's terminal event. This endpoint also cannot undo effects already
+committed externally or prove a remote HTTP server stopped processing a request.
+Do not render cancellation as a global “all side effects stopped” guarantee.
+
+Command ownership covers the tracked process group, not sandbox containment or
+deliberate session detachment. Valid descendants may finish after their shell
+leader exits; cancellation or the hook deadline requests group shutdown and
+cleanup is joined. The new owned command mode refuses Windows before spawning
+with `OWNED_PROCESS_GROUP_UNSUPPORTED`: “Owned process-group cleanup is
+unavailable on Windows; command was not started.” Unscoped behavior is unchanged;
+Windows owned-command parity remains open. In-process TypeScript hooks are
+cooperative: an abort-ignoring handler remains pending until it actually settles.
+
+Custom Agent/contract adapters must supply truthful owned settlement capability
+before an owned hook starts. Unsupported capability is refused before admission
+with `OWNED_AGENT_EXECUTION_UNSUPPORTED`, also exposed in hook activity. A
+status-only adapter cannot certify drainage.
+Hook calls outside an explicit turn scope retain their existing behavior.
 
 ## Native request
 
@@ -36,8 +58,9 @@ receives the combined whole-turn and per-call signal. A cancelled turn cannot
 open an un-aborted signal for a later tool; per-call cancellation alone still
 allows other calls in the same turn. Admitted `Post:file:write/edit` and
 `Fail:file:write/edit` dispatches are also awaited before terminal settlement,
-including rejection paths. This retains the dispatcher's existing timeout and
-explicit async-hook policy; it does not wait on arbitrary event observers.
+including rejection paths. Scoped async runners are concurrent but owned;
+terminal settlement joins them. This does not wait on arbitrary event observers
+or independently configured workflow-trigger actions.
 
 ## Responses
 
@@ -65,7 +88,7 @@ handler is invoked.
 
 Keep the UI in a cancelling/pending state after acceptance. The existing
 runtime terminal event for the same `sessionId` and `turnId` is the authority
-for settlement (`TURN_CANCEL`, `TURN_COMPLETED`, or `TURN_ERROR`, and preflight
+for this turn's owned settlement (`TURN_CANCEL`, `TURN_COMPLETED`, or `TURN_ERROR`, and preflight
 failure where applicable). Cancellation is cooperative: a provider or tool
 that ignores its signal may remain in flight until it settles. HTTP acceptance
 must never be rendered as proof that external side effects have stopped.

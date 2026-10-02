@@ -1,3 +1,5 @@
+import type { HookDispatchOptions, HookWorkAdmission, TurnHookOwner } from './turn-ownership.js';
+import type { HookExecutionOptions } from './execution.js';
 import { existsSync, readFileSync, statSync } from 'fs';
 import { dirname } from 'path';
 import type { HookDefinition, HookChain, HookEvent, HookResult } from './types.js';
@@ -19,7 +21,7 @@ import type { TriggerManagerLike } from '../workflow/trigger-executor.js';
 import { summarizeError } from '../utils/error-display.js';
 
 type HookRunnerDeps = {
-  readonly agentManager?: Pick<AgentManager, 'spawn' | 'getStatus' | 'cancel'> | undefined;
+  readonly agentManager?: (Pick<AgentManager, 'spawn' | 'getStatus' | 'cancel'> & Partial<Pick<AgentManager, 'spawnOwned'>>) | undefined;
   readonly toolLLM?: Pick<ToolLLM, 'chat'> | undefined;
   readonly projectRoot?: string | undefined;
 };
@@ -32,22 +34,23 @@ function runHook(
   event: HookEvent,
   deps: HookRunnerDeps,
   hooksBaseDirectory: string | null,
+  execution?: HookExecutionOptions,
 ): Promise<HookResult> {
   switch (hook.type) {
-    case 'command': return commandRunner.run(hook, event);
-    case 'prompt': return promptRunner.run(hook, event, deps.toolLLM ?? null);
+    case 'command': return commandRunner.run(hook, event, execution);
+    case 'prompt': return promptRunner.run(hook, event, deps.toolLLM ?? null, execution);
     case 'agent':
       if (!deps.agentManager) {
-        return Promise.resolve({ ok: false, error: 'agent hook runner is not configured in this runtime' });
+        return Promise.resolve({ ok: false, error: 'agent hook runner is not configured in this runtime', ...(execution === undefined ? {} : { code: 'OWNED_AGENT_EXECUTION_UNSUPPORTED' as const }) });
       }
-      return agentRunner.run(hook, event, deps.agentManager);
-    case 'http': return httpRunner.run(hook, event);
+      return agentRunner.run(hook, event, deps.agentManager, execution);
+    case 'http': return httpRunner.run(hook, event, execution);
     case 'ts': {
       const projectRoot = deps.projectRoot ?? hooksBaseDirectory;
       if (!projectRoot) {
         return Promise.resolve({ ok: false, error: 'ts hook runner requires an explicit project root' });
       }
-      return tsRunner.run(hook, event, projectRoot);
+      return tsRunner.run(hook, event, projectRoot, execution);
     }
     default:
       return Promise.resolve({ ok: false, error: `unknown hook type: ${(hook as HookDefinition).type}` });
@@ -204,13 +207,16 @@ export class HookDispatcher {
    * Once hooks are auto-removed after first execution.
    * Async hooks fire and forget.
    */
-  async fire(event: HookEvent): Promise<HookResult> {
+  async fire(event: HookEvent, options?: HookDispatchOptions): Promise<HookResult> {
     // Attribute any LLM usage a hook drives to the hook path (cost-origin scope),
     // so cost.attribution.get grouped by 'hook' reflects hook-caused spend.
-    return withCostOriginAsync({ hook: event.path }, () => this.fireInScope(event));
+    const owner = options?.owner;
+    if (owner && event.sessionId !== owner.sessionId) throw new Error('Hook event session does not match its turn owner');
+    const fire = (admitHook?: HookWorkAdmission) => withCostOriginAsync({ hook: event.path }, () => this.fireInScope(event, owner, admitHook));
+    return owner ? owner.dispatch(fire) : fire();
   }
 
-  private async fireInScope(event: HookEvent): Promise<HookResult> {
+  private async fireInScope(event: HookEvent, owner?: TurnHookOwner, admitHook?: HookWorkAdmission): Promise<HookResult> {
     const contract = getHookPointContract(event.path);
     const matchingEntries: Array<{ pattern: string; hook: HookDefinition }> = [];
 
@@ -239,6 +245,7 @@ export class HookDispatcher {
     const startTime = Date.now();
 
     for (const { pattern, hook } of matchingEntries) {
+      if (owner?.signal.aborted) break;
       // Global timeout check
       if (Date.now() - startTime > GLOBAL_TIMEOUT_MS) {
         logger.error('HookDispatcher: global timeout exceeded, skipping remaining hooks', {
@@ -247,10 +254,10 @@ export class HookDispatcher {
         break;
       }
 
-      // Async hooks fire and forget
+      // Async hooks run concurrently; a turn owner joins them before settlement.
       if (hook.async) {
         const asyncStart = Date.now();
-        runHook(hook, event, this.runnerDeps, this.hooksBaseDirectory)
+        const execute = (signal?: AbortSignal) => runHook(hook, event, this.runnerDeps, this.hooksBaseDirectory, signal ? { signal } : undefined)
           .then((result) => {
             this.activityTracker.record(event, {
               pattern,
@@ -259,6 +266,7 @@ export class HookDispatcher {
               result,
               durationMs: Date.now() - asyncStart,
               async: true,
+              turnId: owner?.turnId,
             });
           })
           .catch((err) => {
@@ -274,8 +282,15 @@ export class HookDispatcher {
               result: { ok: false, error: message },
               durationMs: Date.now() - asyncStart,
               async: true,
+              turnId: owner?.turnId,
             });
           });
+        // Reserve the complete runner/recording chain before runHook can call
+        // any host code. Async still means concurrent, never unowned.
+        const running = admitHook ? admitHook((signal) => execute(signal)) : execute();
+        void running.catch((error) => {
+          if (!owner?.signal.aborted) logger.warn('Hook dispatch admission failed', { path: event.path, error: summarizeError(error) });
+        });
         if (hook.once) onceToRemove.push({ pattern, hook });
         continue;
       }
@@ -283,7 +298,9 @@ export class HookDispatcher {
       let result: HookResult;
       const hookStart = Date.now();
       try {
-        result = await runHook(hook, event, this.runnerDeps, this.hooksBaseDirectory);
+        result = await (admitHook
+          ? admitHook((signal) => runHook(hook, event, this.runnerDeps, this.hooksBaseDirectory, { signal }))
+          : runHook(hook, event, this.runnerDeps, this.hooksBaseDirectory));
       } catch (err) {
         const message = summarizeError(err);
         logger.error('HookDispatcher: hook threw unexpectedly', {
@@ -299,6 +316,7 @@ export class HookDispatcher {
         result,
         durationMs: Date.now() - hookStart,
         async: false,
+        turnId: owner?.turnId,
       });
 
       if (hook.once) onceToRemove.push({ pattern, hook });
@@ -306,6 +324,7 @@ export class HookDispatcher {
       if (!result.ok) {
         aggregated.ok = false;
         if (!aggregated.error) aggregated.error = result.error;
+        if (!aggregated.code) aggregated.code = result.code;
       }
 
       // For Pre hooks: first deny wins
@@ -344,7 +363,7 @@ export class HookDispatcher {
 
     // Trigger dispatch is asynchronous; failures are logged and do not change
     // the hook result returned to the caller.
-    if (this.triggerManager) {
+    if (this.triggerManager && !owner?.signal.aborted) {
       fireTriggers(event, this.triggerManager).catch((err) => {
         logger.warn('HookDispatcher: trigger dispatch failed', {
           path: event.path,
