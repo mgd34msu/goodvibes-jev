@@ -393,17 +393,42 @@ export async function loadCustomProviders(
 /**
  * Start watching an owned providers directory for file changes.
  * Debounces rapid events by 300ms before invoking the onChange callback.
- * Emits typed provider warnings if the watcher cannot be started.
- * Returns a handle with a `close()` method to stop watching.
+ * close() synchronously stops admission; closeAndDrain() additionally awaits
+ * setup and every admitted callback, rejecting with their failures after settlement.
+ * A callback may request close, but must not await its own drain.
  */
 export function watchCustomProviders(
   runtimeBus: RuntimeEventBus | null,
-  onChange: () => void,
+  onChange: () => unknown,
   providersDir: string,
-): { close: () => void } {
+): { close: () => void; closeAndDrain: () => Promise<void> } {
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let watcher: fs.FSWatcher | null = null;
   let closed = false;
+  let closing: Promise<void> | undefined;
+  const pending = new Set<Promise<void>>();
+  let failedReload = false;
+
+  const failed = (): void => {
+    failedReload = true;
+    // Do not include arbitrary callback rejection values in runtime events.
+    try { emitWarning('[custom-loader] Provider watcher reload failed.'); }
+    catch { /* Failure status remains observable through closeAndDrain. */ }
+  };
+
+  const reload = (): void => {
+    if (closed) return;
+    // Admit before invoking user code: reentrant close must see this obligation.
+    const task = Promise.resolve().then(() => {
+      const result = onChange();
+      if (result !== undefined && result === closing) {
+        throw new Error('A provider watcher callback cannot await its own drain.');
+      }
+      return result;
+    }).then(() => {}, failed);
+    pending.add(task);
+    void task.then(() => { pending.delete(task); });
+  };
 
   const emitWarning = (message: string): void => {
     if (runtimeBus) {
@@ -425,13 +450,14 @@ export function watchCustomProviders(
         providersDir,
         { persistent: false }, // Don't keep the Node process alive just for this watcher
         (_eventType, _filename) => {
-        if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-          debounceTimer = null;
-          onChange();
-        }, WATCH_DEBOUNCE_MS);
-        debounceTimer.unref?.();
-      });
+          if (closed) return;
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            debounceTimer = null;
+            reload();
+          }, WATCH_DEBOUNCE_MS);
+          debounceTimer.unref?.();
+        });
 
       watcher.on('error', (err) => {
         if (closed) return;
@@ -444,7 +470,7 @@ export function watchCustomProviders(
   };
 
   // Ensure the directory exists before starting the watcher
-  fsPromises
+  const setup = fsPromises
     .mkdir(providersDir, { recursive: true })
     .then(() => {
       if (closed) return;
@@ -455,17 +481,32 @@ export function watchCustomProviders(
       emitWarning(`[custom-loader] Could not create/watch providers directory: ${summarizeError(err)}`);
     });
 
-  return {
-    close() {
-      closed = true;
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
-      }
-      if (watcher) {
-        watcher.close();
-        watcher = null;
-      }
-    },
-  };
+  function close(): void {
+    if (closed) return;
+    closed = true;
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    const active = watcher;
+    watcher = null;
+    try { active?.close(); }
+    catch { failed(); }
+  }
+
+  function closeAndDrain(): Promise<void> {
+    if (closing) return closing;
+    // Publish the promise before close invokes any potentially reentrant code.
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    closing = new Promise<void>((ok, no) => { resolve = ok; reject = no; });
+    close();
+    void Promise.all([setup, ...pending]).then(() => {
+      if (failedReload) reject(new Error('Provider watcher drain failed.'));
+      else resolve();
+    }, reject);
+    return closing;
+  }
+
+  return { close, closeAndDrain };
 }
