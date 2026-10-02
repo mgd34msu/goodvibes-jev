@@ -49,6 +49,8 @@ export interface BinaryTarget {
 export interface BuildConfig {
   /** Primary compile entrypoint, e.g. `src/main.ts`. */
   readonly appEntrypoint: string;
+  /** Optional Bun script that accepts the compile argv (without the `build` verb). No shell is used. */
+  readonly compileDriver?: string;
   /** Optional daemon compile entrypoint (present only for repos with a daemon leg), e.g. `src/daemon/cli.ts`. */
   readonly daemonEntrypoint?: string;
   /** Output directory for binaries, e.g. `dist`. */
@@ -212,6 +214,7 @@ const BinaryTargetSchema = z.object({
 }).catchall(z.unknown());
 
 const BuildConfigSchema = z.object({
+  compileDriver: z.string().min(1).optional(),
   appEntrypoint: z.string(),
   daemonEntrypoint: z.string().optional(),
   outDir: z.string(),

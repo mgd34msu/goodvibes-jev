@@ -64,6 +64,19 @@ describe('build-binaries run', () => {
     expect(calls[2]).toContain('src/daemon/cli.ts');
   });
 
+  test('an optional Bun compile driver preserves each app and daemon argument without a shell', () => {
+    const calls: { executable: string; args: string[] }[] = [];
+    const exec = scriptedExec((executable, args) => { calls.push({ executable, args: [...args] }); return { status: 0 }; });
+    const config = { ...build, compileDriver: 'scripts/compile driver.ts' };
+    runBuildBinaries({
+      cwd: '/repo', config, selection: { targets: [build.targets[0]!], daemonOnly: false }, nativeKey: 'linux-x64',
+      provideAddon: () => true, exec, logger: captureLogger(),
+    });
+    for (const [index, entrypoint, artifact] of [[1, 'src/main.ts', 'goodvibes-linux-x64'], [2, 'src/daemon/cli.ts', 'goodvibes-daemon-linux-x64']] as const) {
+      expect(calls[index]).toEqual({ executable: 'bun', args: ['scripts/compile driver.ts', ...buildCompileArgs(entrypoint, 'bun-linux-x64', `dist/${artifact}`, ['sqlite-vec-linux-x64']).slice(1)] });
+    }
+  });
+
   test('daemon-only skips the app leg', () => {
     const calls: string[][] = [];
     const exec = scriptedExec((_c, args) => { calls.push([...args]); return { status: 0 }; });
