@@ -31344,8 +31344,10 @@
       "name": "WebhookNotifier",
       "kind": "class",
       "publicMembers": [
+        "[Symbol.asyncDispose]",
         "addUrl",
         "attachToRuntimeBus",
+        "close",
         "constructor",
         "detach",
         "fromConfig",
@@ -31357,7 +31359,7 @@
         "setUrls",
         "test"
       ],
-      "text": "export declare class WebhookNotifier { private urls; private unsubscribers; private readonly timeoutMs; private readonly metadataOnly; private readonly maxConcurrent; private readonly maxBodyBytes; private readonly signingSecret?; private readonly force; constructor(urls?: string[], options?: WebhookNotifierOptions); static fromConfig(urls: string[], options?: WebhookNotifierOptions): WebhookNotifier; addUrl(url: string): void; removeUrl(url: string): boolean; setUrls(urls: string[]): void; getUrls(): string[]; isConfigured(): boolean; send(text: string): Promise<WebhookNotifierSendResult>; sendNotification(delivery: NotificationDelivery): Promise<WebhookNotifierSendResult>; private sendEnvelope; test(): Promise<WebhookNotifierDeliveryResult[]>; attachToRuntimeBus(bus: RuntimeEventBus): void; detach(): void; private postOne; private sendRuntimeNotification; } ;; via NotificationDelivery = export type NotificationDelivery = { readonly kind: 'turn'; readonly facts: TurnNotificationFacts; } | { readonly kind: 'approval'; readonly facts: ApprovalNotificationFacts; } | { readonly kind: 'budget'; readonly facts: BudgetNotificationFacts; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare class WebhookNotifier { private urls; private unsubscribers; private closed; private closing; private readonly active; private readonly requests; private subscriptionRevision; private readonly timeoutMs; private readonly metadataOnly; private readonly maxConcurrent; private readonly maxBodyBytes; private readonly signingSecret?; private readonly force; constructor(urls?: string[], options?: WebhookNotifierOptions); static fromConfig(urls: string[], options?: WebhookNotifierOptions): WebhookNotifier; addUrl(url: string): void; removeUrl(url: string): boolean; setUrls(urls: string[]): void; getUrls(): string[]; isConfigured(): boolean; send(text: string): Promise<WebhookNotifierSendResult>; sendNotification(delivery: NotificationDelivery): Promise<WebhookNotifierSendResult>; private dispatch; private closedReceipt; private sendEnvelope; test(): Promise<WebhookNotifierDeliveryResult[]>; close(): Promise<void>; [Symbol.asyncDispose](): Promise<void>; private own; attachToRuntimeBus(bus: RuntimeEventBus): void; detach(): void; private unsubscribe; private postOne; private assertOpen; private sendRuntimeNotification; } ;; via NotificationDelivery = export type NotificationDelivery = { readonly kind: 'turn'; readonly facts: TurnNotificationFacts; } | { readonly kind: 'approval'; readonly facts: ApprovalNotificationFacts; } | { readonly kind: 'budget'; readonly facts: BudgetNotificationFacts; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "WebhookNotifierDeliveryResult",
