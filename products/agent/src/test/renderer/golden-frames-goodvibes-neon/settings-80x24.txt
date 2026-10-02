@@ -7,19 +7,19 @@
 |     ▏Search all settings                                           display     |
 |                                                                                |
 |   ✦ agent experience                                                           |
-|     Display         10      stream                                  true       |
-|     UI               3      lineNumbers                              off       |
-|     Behavior        12                                                         |
+|     Display          9      stream                                  true       |
+|     UI               4      lineNumbers                              off       |
+|     Behavior        11                                                         |
 |     Your Profile    10      display.lineNumbers · default off · enum           |
 |     Dates and       11      with 3 possible value(s) · source default          |
 |     Plans                                                                      |
 |     Agent Runtime    9      12 more ↓ · pgdn                                   |
 |     Notifications   14                                                         |
 |     Permissions     22      collapseThreshold                         30       |
-|              51 more ↓                                                         |
+|              52 more ↓                                                         |
 |                                                                                |
 |      ↑↓  move    ⏎  change    ←→  category    pgup pgdn  docs                  |
-|      ctrl+r  reset                                                7 more ↓     |
+|      ctrl+r  reset                                                6 more ↓     |
 |                                                                                |
 | ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ |
 |                                                                                |
@@ -972,7 +972,6 @@
 8 18 bg=#161a22
 8 19 bg=#161a22
 8 20 bg=#161a22
-8 21 fg=#4e5c6f
 8 21 bg=#161a22
 8 22 fg=#4e5c6f
 8 22 bg=#161a22

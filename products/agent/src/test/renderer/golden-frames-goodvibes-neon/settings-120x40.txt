@@ -8,9 +8,9 @@
 |            ▏Search all settings                                                                    display             |
 |                                                                                                                        |
 |          ✦ agent experience                                                                                            |
-|            Display            10      stream                                                        true               |
-|            UI                  3      lineNumbers                                                    off               |
-|            Behavior           12                                                                                       |
+|            Display             9      stream                                                        true               |
+|            UI                  4      lineNumbers                                                    off               |
+|            Behavior           11                                                                                       |
 |            Your Profile       10      display.lineNumbers · default off · enum with 3 possible value(s)                |
 |            Dates and Plans    11      · source default                                                                 |
 |            Agent Runtime       9                                                                                       |
@@ -24,17 +24,17 @@
 |                                                                                                                        |
 |          ✦ models and providers       Category purpose: Presentation settings for the terminal                         |
 |            Provider            7      transcript: streaming, line numbers, thinking visibility,                        |
-|            Subscriptions       1      reasoning summaries, token speed, and tool previews.                             |
-|            Helper              3                                                                                       |
-|            Tools               9      collapseThreshold                                               30               |
-|            TTS                 5      theme                                                    goodvibes               |
-|            Local Voice        34      themeMode                                                     auto               |
-|            Model Pricing       1      treeGlyphs                                                 rounded               |
-|                                       showThinking                                                 false               |
-|                                       showReasoningSummary                                         false               |
+|            Judgment            4      reasoning summaries, token speed, and tool previews.                             |
+|            Subscriptions       1                                                                                       |
+|            Helper              3      collapseThreshold                                               30               |
+|            Tools               9      theme                                                    vaporwave               |
+|            TTS                 5      themeMode                                                     auto               |
+|            Local Voice        34      showThinking                                                 false               |
+|            Model Pricing       1      showReasoningSummary                                         false               |
+|                                       showTokenSpeed                                               false               |
 |                        39 more ↓                                                                                       |
 |                                                                                                                        |
-|             ↑↓  move    ⏎  change    ←→  category    pgup pgdn  docs    ctrl+r  reset             2 more ↓             |
+|             ↑↓  move    ⏎  change    ←→  category    pgup pgdn  docs    ctrl+r  reset             1 more ↓             |
 |                                                                                                                        |
 |        ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀         |
 |                                                                                                                        |
@@ -1735,7 +1735,6 @@
 9 28 bg=#161a22
 9 29 bg=#161a22
 9 30 bg=#161a22
-9 31 fg=#4e5c6f
 9 31 bg=#161a22
 9 32 fg=#4e5c6f
 9 32 bg=#161a22
@@ -4555,15 +4554,10 @@
 25 18 bg=#161a22
 25 19 fg=#e2e8f0
 25 19 bg=#161a22
-25 20 fg=#e2e8f0
 25 20 bg=#161a22
-25 21 fg=#e2e8f0
 25 21 bg=#161a22
-25 22 fg=#e2e8f0
 25 22 bg=#161a22
-25 23 fg=#e2e8f0
 25 23 bg=#161a22
-25 24 fg=#e2e8f0
 25 24 bg=#161a22
 25 25 bg=#161a22
 25 26 bg=#161a22
@@ -4754,12 +4748,19 @@
 26 16 bg=#161a22
 26 17 fg=#e2e8f0
 26 17 bg=#161a22
+26 18 fg=#e2e8f0
 26 18 bg=#161a22
+26 19 fg=#e2e8f0
 26 19 bg=#161a22
+26 20 fg=#e2e8f0
 26 20 bg=#161a22
+26 21 fg=#e2e8f0
 26 21 bg=#161a22
+26 22 fg=#e2e8f0
 26 22 bg=#161a22
+26 23 fg=#e2e8f0
 26 23 bg=#161a22
+26 24 fg=#e2e8f0
 26 24 bg=#161a22
 26 25 bg=#161a22
 26 26 bg=#161a22
@@ -4896,6 +4897,7 @@
 27 15 bg=#161a22
 27 16 fg=#e2e8f0
 27 16 bg=#161a22
+27 17 fg=#e2e8f0
 27 17 bg=#161a22
 27 18 bg=#161a22
 27 19 bg=#161a22
@@ -5054,7 +5056,9 @@
 28 13 bg=#161a22
 28 14 fg=#e2e8f0
 28 14 bg=#161a22
+28 15 fg=#e2e8f0
 28 15 bg=#161a22
+28 16 fg=#e2e8f0
 28 16 bg=#161a22
 28 17 bg=#161a22
 28 18 bg=#161a22
@@ -5209,21 +5213,13 @@
 29 13 bg=#161a22
 29 14 fg=#e2e8f0
 29 14 bg=#161a22
-29 15 fg=#e2e8f0
 29 15 bg=#161a22
-29 16 fg=#e2e8f0
 29 16 bg=#161a22
-29 17 fg=#e2e8f0
 29 17 bg=#161a22
-29 18 fg=#e2e8f0
 29 18 bg=#161a22
-29 19 fg=#e2e8f0
 29 19 bg=#161a22
-29 20 fg=#e2e8f0
 29 20 bg=#161a22
-29 21 fg=#e2e8f0
 29 21 bg=#161a22
-29 22 fg=#e2e8f0
 29 22 bg=#161a22
 29 23 bg=#161a22
 29 24 bg=#161a22
@@ -5233,7 +5229,6 @@
 29 28 bg=#161a22
 29 29 bg=#161a22
 29 30 bg=#161a22
-29 31 fg=#4e5c6f
 29 31 bg=#161a22
 29 32 fg=#4e5c6f
 29 32 bg=#161a22
@@ -5388,9 +5383,7 @@
 30 21 bg=#161a22
 30 22 fg=#e2e8f0
 30 22 bg=#161a22
-30 23 fg=#e2e8f0
 30 23 bg=#161a22
-30 24 fg=#e2e8f0
 30 24 bg=#161a22
 30 25 bg=#161a22
 30 26 bg=#161a22
@@ -5398,6 +5391,7 @@
 30 28 bg=#161a22
 30 29 bg=#161a22
 30 30 bg=#161a22
+30 31 fg=#4e5c6f
 30 31 bg=#161a22
 30 32 fg=#4e5c6f
 30 32 bg=#161a22
@@ -5427,7 +5421,9 @@
 30 47 bg=#1e293b
 30 48 fg=#e2e8f0
 30 48 bg=#1e293b
+30 49 fg=#e2e8f0
 30 49 bg=#1e293b
+30 50 fg=#e2e8f0
 30 50 bg=#1e293b
 30 51 bg=#1e293b
 30 52 bg=#1e293b
@@ -5476,9 +5472,7 @@
 30 95 bg=#1e293b
 30 96 bg=#1e293b
 30 97 bg=#1e293b
-30 98 fg=#94a3b8
 30 98 bg=#1e293b
-30 99 fg=#94a3b8
 30 99 bg=#1e293b
 30 100 fg=#94a3b8
 30 100 bg=#1e293b
@@ -5534,18 +5528,31 @@
 31 9 bg=#161a22
 31 10 bg=#161a22
 31 11 bg=#161a22
+31 12 fg=#e2e8f0
 31 12 bg=#161a22
+31 13 fg=#e2e8f0
 31 13 bg=#161a22
+31 14 fg=#e2e8f0
 31 14 bg=#161a22
+31 15 fg=#e2e8f0
 31 15 bg=#161a22
+31 16 fg=#e2e8f0
 31 16 bg=#161a22
+31 17 fg=#e2e8f0
 31 17 bg=#161a22
+31 18 fg=#e2e8f0
 31 18 bg=#161a22
+31 19 fg=#e2e8f0
 31 19 bg=#161a22
+31 20 fg=#e2e8f0
 31 20 bg=#161a22
+31 21 fg=#e2e8f0
 31 21 bg=#161a22
+31 22 fg=#e2e8f0
 31 22 bg=#161a22
+31 23 fg=#e2e8f0
 31 23 bg=#161a22
+31 24 fg=#e2e8f0
 31 24 bg=#161a22
 31 25 bg=#161a22
 31 26 bg=#161a22
@@ -5554,6 +5561,7 @@
 31 29 bg=#161a22
 31 30 bg=#161a22
 31 31 bg=#161a22
+31 32 fg=#4e5c6f
 31 32 bg=#161a22
 31 33 bg=#161a22
 31 34 bg=#161a22
@@ -5585,13 +5593,21 @@
 31 49 bg=#1e293b
 31 50 fg=#e2e8f0
 31 50 bg=#1e293b
+31 51 fg=#e2e8f0
 31 51 bg=#1e293b
+31 52 fg=#e2e8f0
 31 52 bg=#1e293b
+31 53 fg=#e2e8f0
 31 53 bg=#1e293b
+31 54 fg=#e2e8f0
 31 54 bg=#1e293b
+31 55 fg=#e2e8f0
 31 55 bg=#1e293b
+31 56 fg=#e2e8f0
 31 56 bg=#1e293b
+31 57 fg=#e2e8f0
 31 57 bg=#1e293b
+31 58 fg=#e2e8f0
 31 58 bg=#1e293b
 31 59 bg=#1e293b
 31 60 bg=#1e293b
@@ -5743,17 +5759,11 @@
 32 51 bg=#1e293b
 32 52 fg=#e2e8f0
 32 52 bg=#1e293b
-32 53 fg=#e2e8f0
 32 53 bg=#1e293b
-32 54 fg=#e2e8f0
 32 54 bg=#1e293b
-32 55 fg=#e2e8f0
 32 55 bg=#1e293b
-32 56 fg=#e2e8f0
 32 56 bg=#1e293b
-32 57 fg=#e2e8f0
 32 57 bg=#1e293b
-32 58 fg=#e2e8f0
 32 58 bg=#1e293b
 32 59 bg=#1e293b
 32 60 bg=#1e293b
