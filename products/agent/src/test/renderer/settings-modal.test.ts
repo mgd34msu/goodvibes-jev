@@ -1,3 +1,4 @@
+import { settingContextLines } from '../../renderer/settings-modal-context.ts';
 /**
  * Tests for renderSettingsModal renderer.
  */
@@ -126,6 +127,16 @@ describe('renderSettingsModal', () => {
     expect(text).toContain('theme▏');
     expect(text).toContain('› Search');
     expect(text).toMatch(/\d+ results?/);
+  });
+
+  test('theme setting instructions match the actual preview picker', () => {
+    modal.selectTarget('display.theme');
+    const context = settingContextLines(modal).join('\n');
+    expect(context).toContain('theme picker');
+    expect(context).not.toContain('Enter opens inline edit');
+    modal.activateSelected();
+    expect(modal.pendingSettingsPickerAction).toBe('theme');
+    expect(modal.editingMode).toBe(false);
   });
 
   test('category list shows each category with its count', () => {

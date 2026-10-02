@@ -208,7 +208,10 @@ function buildSettingContext(modal: SettingsModal, entry: SettingEntry): string[
     lines.push('Editing: Enter opens inline edit, then type the value and press Enter to save. Arrow keys only navigate.');
   }
 
-  if (entry.setting.type === 'string' && !isSecretConfigKey(entry.setting.key)) {
+  if (entry.setting.key === 'display.theme') {
+    lines.push('');
+    lines.push('Editing: Enter opens the theme picker with live preview. Enter saves the selected theme; Esc restores the previous theme.');
+  } else if (entry.setting.type === 'string' && !isSecretConfigKey(entry.setting.key)) {
     lines.push('');
     lines.push('Editing: Enter opens inline edit. Delete the current text to save an empty value when that is valid for the setting.');
   }
