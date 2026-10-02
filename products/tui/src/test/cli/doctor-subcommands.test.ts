@@ -154,6 +154,36 @@ describe('goodvibes doctor subcommands', () => {
     expect(result!.output).toContain('HIGH');
   });
 
+  test('a real below-critical preset allowance is attributed to the preset in JSON and text', async () => {
+    const opts = makeOptions(root, 'explain', ['rm', '-rf', 'build'], 'json');
+    opts.configManager.set('permissions.mode', 'allow-all');
+    opts.configManager.set('behavior.autoApprove', false);
+    const actual = JSON.parse((await handleDoctorSubcommand(opts))!.output);
+    expect(actual.verdict).toBe('ALLOW');
+    expect(actual.sourceLayer).toBe('stakes_preset');
+    expect(actual.reasonCode).toBe('preset_allow');
+    expect(actual.decidedLayer).toBe('Stakes preset');
+    expect(actual.because).toContain('auto preset returned "allow"');
+    expect(actual.because).toContain('high stakes');
+    const text = (await handleDoctorSubcommand({ ...opts, outputFormat: 'text' }))!.output;
+    expect(text).toContain('Stakes preset   ← DECIDED HERE');
+    expect(text).not.toContain('Layers walked');
+    expect(text).not.toContain('every tool call is auto-approved');
+  });
+
+  test('auto-approve overriding a custom deny is not attributed to a nonexistent custom allow', async () => {
+    const opts = makeOptions(root, 'explain', ['rm', '-rf', 'build'], 'json');
+    opts.configManager.set('permissions.mode', 'custom');
+    opts.configManager.set('permissions.tools.exec', 'deny');
+    opts.configManager.set('behavior.autoApprove', true);
+    const actual = JSON.parse((await handleDoctorSubcommand(opts))!.output);
+    expect(actual.verdict).toBe('ALLOW');
+    expect(actual.sourceLayer).toBe('config_policy');
+    expect(actual.decidedLayer).toBe('Automatic approval after boundary checks');
+    expect(actual.because).toContain('Auto-approve is active');
+    expect(actual.because).not.toContain('permissions.tools.exec is set to "allow"');
+  });
+
   test('explain: json output carries the authoritative verdict and layers', async () => {
     const opts = makeOptions(root, 'explain', ['write', './a.ts'], 'json');
     opts.configManager.set('permissions.mode', 'prompt');

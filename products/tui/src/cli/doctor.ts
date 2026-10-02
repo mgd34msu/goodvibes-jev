@@ -1,7 +1,7 @@
 import { describeConfiguredPermissions, describePermissionMode } from '../permissions/configured-posture.ts';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { PermissionManager, createPermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
-import type { PermissionCategory, PermissionCheckResult } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import type { PermissionCheckResult } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { PolicyRuntimeState, createFeatureFlagManager, deriveFeatureStates } from '@/runtime/index.ts';
 import { getProviderIdFromModel } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { describeConfiguredEffort } from '../providers/reasoning-effort-surface.ts';
@@ -66,39 +66,20 @@ function resolveExplainTarget(args: readonly string[]): { tool: string; args: Re
   return { tool: 'exec', args: { command }, interpretation: `shell command run through the "exec" tool: ${command}` };
 }
 
-/** The ordered permission layers the PermissionManager consults, for the explainer's narrative. */
-const LAYER_NAMES: readonly string[] = [
-  'Auto-approve override (behavior.autoApprove / --no-worries-just-vibes)',
-  'Session permission mode (permissions.mode)',
-  'Runtime policy engine (permissions.engine = policy-engine)',
-  'Per-tool config rule (permissions.tools.<tool>)',
-  'Default read auto-approve (prompt mode)',
-  'Session approval cache (remembered [A] decisions)',
-  'Human approval prompt (Human-in-the-Loop)',
-];
+/** Labels describe only the source the platform returned, not an invented execution trace. */
+const DECISION_SOURCE_LABELS: Readonly<Record<PermissionCheckResult['sourceLayer'], string>> = {
+  boundary: 'Boundary checks', stakes_preset: 'Stakes preset',
+  config_policy: 'Configured permission policy', managed_policy: 'Managed runtime policy',
+  safety_check: 'Safety check', runtime_mode: 'Active permission mode',
+  session_override: 'Remembered session decision', user_rule: 'Durable owner rule',
+  user_prompt: 'Human approval prompt (Human-in-the-Loop)',
+};
 
-/**
- * Which layer index (into LAYER_NAMES) actually decided, inferred from the
- * PermissionManager's own sourceLayer + reasonCode. The verdict itself is the
- * platform's; this only positions the marker in the narrative.
- */
-function decidedLayerIndex(result: PermissionCheckResult, mode: string, autoApprove: boolean, category: PermissionCategory): number {
-  switch (result.sourceLayer) {
-    case 'user_prompt': return 6;
-    case 'session_override': return 5;
-    case 'safety_check':
-    case 'managed_policy': return 2;
-    case 'runtime_mode': return 1;
-    case 'config_policy':
-      if (result.reasonCode === 'config_allow') {
-        if (autoApprove) return 0;
-        if (mode === 'custom') return 3;
-        if (category === 'read') return 4;
-        return 3;
-      }
-      return 3; // config_deny → custom per-tool rule
-    default: return 6;
+function decidedLayerLabel(result: PermissionCheckResult, autoApprove: boolean): string {
+  if (result.sourceLayer === 'config_policy' && result.reasonCode === 'config_allow' && autoApprove) {
+    return 'Automatic approval after boundary checks';
   }
+  return DECISION_SOURCE_LABELS[result.sourceLayer] ?? 'Unknown permission source';
 }
 
 /** The authoritative ALLOW / ASK / DENY verdict from a PermissionManager result. */
@@ -108,25 +89,36 @@ function verdictOf(result: PermissionCheckResult): 'ALLOW' | 'ASK' | 'DENY' {
 }
 
 /** A plain-language "because" line keyed off the platform's own reasonCode. */
-function reasonExplanation(result: PermissionCheckResult, mode: string, toolKey: string): string {
+function reasonExplanation(result: PermissionCheckResult, mode: string, autoApprove: boolean, toolKey: string): string {
+  if (result.detail) return result.detail;
   switch (result.reasonCode) {
     case 'config_allow':
+      if (autoApprove) return 'Auto-approve is active (behavior.autoApprove); this call passed the boundary and was allowed without a prompt.';
       if (mode === 'custom') return `The per-tool rule permissions.tools.${toolKey} is set to "allow".`;
-      if (result.sourceLayer === 'config_policy' && result.analysis.classification === 'read') return 'Read-class tools are auto-approved in the default "prompt" mode.';
-      return 'Auto-approve is active (behavior.autoApprove), so this call is approved without a prompt.';
+      return 'The configured permission policy allowed this call after boundary checks.';
     case 'config_deny': return `The per-tool rule permissions.tools.${toolKey} is set to "deny".`;
-    case 'mode_allow_all':
-      if (mode === 'plan') return 'Plan mode allows read-class tools.';
-      if (mode === 'accept-edits') return 'Accept-edits mode allows read-class tools.';
-      return 'Permission mode is "allow-all": every tool call is auto-approved.';
+    case 'preset_allow':
+    case 'preset_deny':
+      return result.preset && result.reading
+        ? `The ${result.preset.preset} preset returned "${result.preset.action}" for this call's ${result.reading.stakes} stakes reading.`
+        : `The stakes preset ${result.approved ? 'allowed' : 'denied'} this call.`;
+    case 'mode_allow_all': return 'The configured permission mode allowed this call.';
     case 'mode_denied': return 'The active permission mode denies this tool class.';
-    case 'plan_mode': return 'Plan mode refuses mutating / execute / delegate tools and steers the model to present a plan instead.';
-    case 'mode_accept_edits': return 'Accept-edits mode auto-approves file write/edit tools.';
+    case 'plan_mode': return 'The plan preset refused this call because it changes state or reaches outside the machine.';
+    case 'mode_accept_edits': return 'The accept-edits preset allowed this call.';
     case 'managed_policy_allow': return 'A runtime policy rule allowed this call.';
     case 'managed_policy_deny': return 'A runtime policy rule denied this call.';
     case 'safety_guardrail': return 'A safety guardrail blocked this call.';
     case 'session_cached_allow': return 'A remembered session decision ([A] allow-always) approves this call.';
     case 'session_cached_deny': return 'A remembered session decision denies this call.';
+    case 'user_rule_allow': return 'A durable owner rule allowed this call.';
+    case 'user_rule_deny': return 'A durable owner rule denied this call.';
+    case 'owner_approved_outward': return 'The owner approved this outward call.';
+    case 'boundary_judgment_input':
+    case 'boundary_catastrophic':
+    case 'boundary_surface_authority':
+    case 'boundary_card_details':
+    case 'boundary_outward_effect': return `The boundary refused this call (${result.boundary?.refusedBy ?? result.reasonCode}).`;
     case 'user_approved':
     case 'user_denied': return 'This reaches a Human-in-the-Loop approval prompt; the outcome depends on your response at the prompt.';
     default: return 'Decided by the platform permission machinery.';
@@ -172,9 +164,9 @@ async function explain(options: DoctorSubcommandOptions): Promise<CliCommandOutp
   const category = manager.getCategory(target.tool, target.args);
   const result = await manager.checkDetailed(target.tool, target.args);
   const verdict = verdictOf(result);
-  const decidedIdx = decidedLayerIndex(result, mode, autoApprove, category);
+  const decidedLayer = decidedLayerLabel(result, autoApprove);
   const toolKey = toolConfigKey(target.tool);
-  const because = reasonExplanation(result, mode, toolKey);
+  const because = reasonExplanation(result, mode, autoApprove, toolKey);
 
   if (json) {
     return {
@@ -189,7 +181,7 @@ async function explain(options: DoctorSubcommandOptions): Promise<CliCommandOutp
         permissionEvaluated: true,
         policyEngine: policyEngineOn ? 'enabled' : 'disabled',
         verdict,
-        decidedLayer: LAYER_NAMES[decidedIdx],
+        decidedLayer,
         sourceLayer: result.sourceLayer,
         reasonCode: result.reasonCode,
         because,
@@ -219,8 +211,11 @@ async function explain(options: DoctorSubcommandOptions): Promise<CliCommandOutp
     `  summary     : ${a.summary}`,
     ...a.reasons.slice(0, 3).map((r) => `  reason      : ${r}`),
     '',
-    'Layers walked (priority order: the platform PermissionManager decides; this shows the order it walks):',
-    ...LAYER_NAMES.map((name, i) => `  ${i === decidedIdx ? '▶' : ' '} ${i + 1}. ${name}${i === decidedIdx ? '   ← DECIDED HERE' : ''}`),
+    'Reported gate facts (not an inferred execution trace):',
+    ...(result.boundary ? [`  boundary    : ${result.boundary.passed ? 'passed' : `not passed (${result.boundary.refusedBy ?? 'unspecified'})`}`] : []),
+    ...(result.reading ? [`  stakes      : ${result.reading.stakes}`] : []),
+    ...(result.preset ? [`  preset      : ${result.preset.preset} -> ${result.preset.action}`] : []),
+    `  source      : ${decidedLayer}   ← DECIDED HERE`,
     '',
     `Decision: ${verdict}`,
     `  decided by : ${result.sourceLayer} (${result.reasonCode})`,
