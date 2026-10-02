@@ -49,7 +49,9 @@ describe('project planning routes', () => {
 
     expect(saved?.status).toBe(200);
     expect(loaded?.status).toBe(200);
-    const body = await loaded!.json() as { readonly state: { readonly readiness: string; readonly goal: string } };
+    const body = await loaded!.json() as { readonly state: { readonly readiness: string; readonly goal: string }; readonly source: { readonly id: string }; readonly revision: { readonly sourceId: string; readonly generation: string } };
+    expect(body.revision.sourceId).toBe(body.source.id);
+    expect(body.revision.generation).toMatch(/^[a-f0-9]{64}$/);
     expect(body.state.goal).toBe('Add planning support');
     expect(body.state.readiness).toBe('executable');
   });
