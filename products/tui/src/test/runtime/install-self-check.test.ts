@@ -40,8 +40,8 @@ describe('repairCommandForInstallKind', () => {
     expect(repairCommandForInstallKind('binary')).toBe('curl -fsSL https://goodvibes.sh/install.sh | sh');
   });
 
-  test('a vendored package install is repaired by re-running the global add', () => {
-    expect(repairCommandForInstallKind('bun-global-package')).toBe('bun add -g @pellux/goodvibes-tui');
+  test('a private workspace package install directs the owner to rebuild locally', () => {
+    expect(repairCommandForInstallKind('bun-global-package')).toBe('bun run --filter @goodvibes-jev/tui build');
   });
 });
 
@@ -71,7 +71,7 @@ describe('evaluateInstallSelfCheck', () => {
     const missing = findings.find((finding) => finding.id === 'missing-vendor-binaries');
     expect(missing).toBeDefined();
     expect(missing?.detail).toContain('goodvibes-daemon-linux-x64');
-    expect(missing?.repairCommand).toBe('bun add -g @pellux/goodvibes-tui');
+    expect(missing?.repairCommand).toBe('bun run --filter @goodvibes-jev/tui build');
   });
 
   test('flags a broken daemon path when resolution fell back to a bare PATH command', () => {

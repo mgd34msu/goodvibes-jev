@@ -24,7 +24,7 @@ describe('dependency ranges agree with the platform that declares them', () => {
     const ours = (await import(join(repoRoot, 'package.json'))).default as {
       dependencies?: Record<string, string>;
     };
-    const platform = (await import(join(repoRoot, 'node_modules', '@pellux', 'goodvibes-sdk', 'package.json'))).default as {
+    const platform = (await import(join(repoRoot, 'node_modules', '@goodvibes-jev', 'engine', 'package.json'))).default as {
       dependencies?: Record<string, string>;
       peerDependencies?: Record<string, string>;
       optionalDependencies?: Record<string, string>;
@@ -45,7 +45,7 @@ describe('dependency ranges agree with the platform that declares them', () => {
         // version, this repo's caret pin must include it.
         const vendored = JSON.parse(
           readFileSync(
-            join(repoRoot, 'node_modules', '@pellux', 'goodvibes-sdk', platformRange.slice('file:'.length), 'package.json'),
+            join(repoRoot, 'node_modules', '@goodvibes-jev', 'engine', platformRange.slice('file:'.length), 'package.json'),
             'utf-8',
           ),
         ) as { version: string };
