@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { CONFIG_SCHEMA, ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { isFeatureConfigEnabled } from '@goodvibes-jev/engine/terminal-shell';
 import {
   applyRuntimeConfigDefault,
@@ -530,49 +532,74 @@ describe('parseCliFlags', () => {
   });
 
   test('bundle export redacts secret config values and import skips redacted sentinels', async () => {
-    const root = makeProjectTempDir('goodvibes-cli-bundle-redaction');
-    const configManager = new ConfigManager({
-      surfaceRoot: 'tui',
-      configDir: join(root, '.goodvibes', 'tui'),
-      workingDir: root,
-    });
-    configManager.setDynamic('surfaces.slack.signingSecret', 'slack-secret-value');
-    configManager.setDynamic('surfaces.slack.botToken', 'xoxb-secret-value');
-    configManager.setDynamic('surfaces.slack.defaultChannel', 'goodvibes-alerts');
-    const logPath = join(root, '.goodvibes', 'tui', 'service', 'manual.log');
-    mkdirSync(join(root, '.goodvibes', 'tui', 'service'), { recursive: true });
-    writeFileSync(logPath, 'failed with slack-secret-value and xoxb-secret-value\n', 'utf-8');
-    configManager.setDynamic('service.logPath', logPath);
-
-    const exported = await captureGoodVibesCliCommand(['bundle', 'export', 'support-bundle.json'], configManager, root);
-    expect(exported.result).toEqual({ handled: true, exitCode: 0 });
-    const raw = readFileSync(join(root, 'support-bundle.json'), 'utf-8');
-    expect(raw).not.toContain('slack-secret-value');
-    expect(raw).not.toContain('xoxb-secret-value');
-    expect(raw).toContain('<redacted>');
-    const bundle = JSON.parse(raw) as {
-      config: { surfaces: { slack: { signingSecret: string; botToken: string; defaultChannel: string } } };
-      redaction: { redactedConfigPaths: string[] };
-      diagnostics: { service: { issues: string[] } };
+    // Container paths of declared settings are synthetic config structure, not credential leaves.
+    const containers = new Set(CONFIG_SCHEMA.flatMap(setting => {
+      const parts = setting.key.split('.');
+      return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('.'));
+    }));
+    const secretPaths = new Set(['surfaces.slack.signingSecret', 'surfaces.slack.botToken']);
+    const ordinaryPaths = new Set(['surfaces.slack.defaultChannel', 'service.logPath', 'sandbox.egressAllowlist', 'sandbox.workspaceWritable',
+      'notifications.webhookUrls', 'cluster.peers', 'contract.gates',
+      ...Array.from({ length: 3 }, (_, index) => ['', '.name', '.command', '.enabled'].map(suffix => `contract.gates.${index}${suffix}`)).flat(),
+      'worktree', 'worktree.setup', 'worktree.setup.commands', 'worktree.setup.carryOverGlobs',
+      'conversationGate.gatedSurfaces', ...Array.from({ length: 14 }, (_, index) => `conversationGate.gatedSurfaces.${index}`)]);
+    const readingFor = (name: string, key: string | undefined): number => {
+      if (name === 'credential' && key !== undefined) {
+        if (secretPaths.has(key)) return 0.99;
+        if (containers.has(key) || ordinaryPaths.has(key)) return 0.01;
+      }
+      throw new Error(`Unexpected redaction fixture question: ${name} / ${key}`);
     };
-    expect(bundle.config.surfaces.slack.signingSecret).toBe('<redacted>');
-    expect(bundle.config.surfaces.slack.botToken).toBe('<redacted>');
-    expect(bundle.config.surfaces.slack.defaultChannel).toBe('goodvibes-alerts');
-    expect(bundle.redaction.redactedConfigPaths).toContain('surfaces.slack.signingSecret');
-    expect(bundle.diagnostics.service.issues).toBeArray();
+    expect(() => readingFor('credential', 'surfaces.slack.unlistedValue')).toThrow();
+    expect(() => readingFor('unlisted-question', 'provider')).toThrow();
+    const previousJudgment = installJudgmentPort(fakePort((name, _question, state) => {
+      return noulAnswer(readingFor(name, (state as { key?: string }).key));
+    }).port);
+    try {
+      const root = makeProjectTempDir('goodvibes-cli-bundle-redaction');
+      const configManager = new ConfigManager({
+        surfaceRoot: 'tui',
+        configDir: join(root, '.goodvibes', 'tui'),
+        workingDir: root,
+      });
+      configManager.setDynamic('surfaces.slack.signingSecret', 'slack-secret-value');
+      configManager.setDynamic('surfaces.slack.botToken', 'xoxb-secret-value');
+      configManager.setDynamic('surfaces.slack.defaultChannel', 'goodvibes-alerts');
+      const logPath = join(root, '.goodvibes', 'tui', 'service', 'manual.log');
+      mkdirSync(join(root, '.goodvibes', 'tui', 'service'), { recursive: true });
+      writeFileSync(logPath, 'failed with slack-secret-value and xoxb-secret-value\n', 'utf-8');
+      configManager.setDynamic('service.logPath', logPath);
 
-    const importRoot = makeProjectTempDir('goodvibes-cli-bundle-import');
-    const importedConfig = new ConfigManager({
-      surfaceRoot: 'tui',
-      configDir: join(importRoot, '.goodvibes', 'tui'),
-      workingDir: importRoot,
-    });
-    const imported = await captureGoodVibesCliCommand(['bundle', 'import', join(root, 'support-bundle.json')], importedConfig, importRoot);
-    expect(imported.result).toEqual({ handled: true, exitCode: 0 });
-    expect(imported.output).toContain('redacted values skipped');
-    expect(importedConfig.get('surfaces.slack.signingSecret')).toBe('');
-    expect(importedConfig.get('surfaces.slack.botToken')).toBe('');
-    expect(importedConfig.get('surfaces.slack.defaultChannel')).toBe('goodvibes-alerts');
+      const exported = await captureGoodVibesCliCommand(['bundle', 'export', 'support-bundle.json'], configManager, root);
+      expect(exported.result).toEqual({ handled: true, exitCode: 0 });
+      const raw = readFileSync(join(root, 'support-bundle.json'), 'utf-8');
+      expect(raw).not.toContain('slack-secret-value');
+      expect(raw).not.toContain('xoxb-secret-value');
+      expect(raw).toContain('<redacted>');
+      const bundle = JSON.parse(raw) as {
+        config: { surfaces: { slack: { signingSecret: string; botToken: string; defaultChannel: string } } };
+        redaction: { redactedConfigPaths: string[] };
+        diagnostics: { service: { issues: string[] } };
+      };
+      expect(bundle.config.surfaces.slack.signingSecret).toBe('<redacted>');
+      expect(bundle.config.surfaces.slack.botToken).toBe('<redacted>');
+      expect(bundle.config.surfaces.slack.defaultChannel).toBe('goodvibes-alerts');
+      expect(bundle.redaction.redactedConfigPaths).toContain('surfaces.slack.signingSecret');
+      expect(bundle.diagnostics.service.issues).toBeArray();
+
+      const importRoot = makeProjectTempDir('goodvibes-cli-bundle-import');
+      const importedConfig = new ConfigManager({
+        surfaceRoot: 'tui',
+        configDir: join(importRoot, '.goodvibes', 'tui'),
+        workingDir: importRoot,
+      });
+      const imported = await captureGoodVibesCliCommand(['bundle', 'import', join(root, 'support-bundle.json')], importedConfig, importRoot);
+      expect(imported.result).toEqual({ handled: true, exitCode: 0 });
+      expect(imported.output).toContain('redacted values skipped');
+      expect(importedConfig.get('surfaces.slack.signingSecret')).toBe('');
+      expect(importedConfig.get('surfaces.slack.botToken')).toBe('');
+      expect(importedConfig.get('surfaces.slack.defaultChannel')).toBe('goodvibes-alerts');
+    } finally { installJudgmentPort(previousJudgment); }
   });
 
   test('service check reports lifecycle posture with failing readiness exit code', async () => {
