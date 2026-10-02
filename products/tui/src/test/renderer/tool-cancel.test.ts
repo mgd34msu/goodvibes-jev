@@ -45,7 +45,7 @@ const renderMessages = (messages: unknown[], width = 80): string => {
 const cancelledTurn = (partial: string): unknown[] => [
   { role: 'user', content: 'run it' },
   { role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'exec', arguments: { command: 'sleep 100' } }] },
-  { role: 'tool', callId: 'c1', content: `Error: cancelled by user\n${partial}`, toolName: 'exec' },
+  { role: 'tool', callId: 'c1', content: `Error: cancelled by user\n${partial}`, toolName: 'exec', outcome: 'cancelled' },
 ];
 
 describe('a cancelled call in the work tree (STEP 2a)', () => {
@@ -69,11 +69,24 @@ describe('a cancelled call in the work tree (STEP 2a)', () => {
     expect(lines.map(lineToString).join('\n')).toContain('SENTINELPARTIAL1234');
   });
 
+  test('legacy text alone does not invent a cancellation outcome', () => {
+    const messages = cancelledTurn('partial').map(message => {
+      const entry = message as Record<string, unknown>;
+      if (entry.role !== 'tool') return entry;
+      const { outcome: _outcome, ...legacy } = entry;
+      return legacy;
+    });
+    const text = renderMessages(messages);
+    expect(text).toContain('outcome unknown');
+    expect(text).not.toContain('○');
+    expect(text).not.toContain('✓');
+  });
+
   test('a normal result is a ✓ bead, not a cancelled one', () => {
     const text = renderMessages([
       { role: 'user', content: 'read it' },
       { role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'read', arguments: { path: 'a.ts' } }] },
-      { role: 'tool', callId: 'c1', content: 'ok', toolName: 'read' },
+      { role: 'tool', callId: 'c1', content: 'ok', toolName: 'read', outcome: 'ok' },
     ]);
     expect(text).toContain('✓');
     expect(text).not.toContain('○');
