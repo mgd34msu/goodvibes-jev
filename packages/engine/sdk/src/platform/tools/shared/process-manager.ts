@@ -483,14 +483,15 @@ export class ProcessManager {
     return true;
   }
 
-  /** List all tracked background processes with their status summaries. */
-  list(): Array<{ id: string; pid: number; cmd: string; status: string }> {
+  /** List tracked processes with authoritative completion and display status. */
+  list(): Array<{ id: string; pid: number; cmd: string; status: string; done: boolean }> {
     this.pruneCompletedProcesses();
     return Array.from(this._processes.values()).map((e) => ({
       id: e.id,
       pid: e.pid,
       cmd: e.cmd,
       status: describeProcessStatus(e),
+      done: e.done,
     }));
   }
 
