@@ -81,3 +81,35 @@ export {
   initial, validated, actor, command, result, snapshot, history, unsubscribe,
   closed, admissionError, persistedRevision, forgedActor,
 };
+
+// Read-only consumer capability: actor and owner are captured by trusted host.
+import {
+  createLocalWorkLedgerReadBinding,
+  type WorkLedgerReadBinding,
+  type WorkLedgerReadClient,
+  type WorkLedgerReadSnapshot,
+} from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
+const readBinding: WorkLedgerReadBinding = createLocalWorkLedgerReadBinding({
+  available: true, projectId: initial.projectId, actorId: 'reader', service, authority,
+});
+if (readBinding.available) {
+  const reader: WorkLedgerReadClient = readBinding.client;
+  const readSnapshot: Promise<WorkLedgerReadSnapshot> = reader.readSnapshot();
+  void readSnapshot;
+  // @ts-expect-error A read capability does not expose mutation.
+  reader.execute(command, actor);
+  // @ts-expect-error A read capability does not expose authority.
+  reader.authority;
+  // @ts-expect-error Disposal cannot close the shared host service.
+  reader.close();
+  // @ts-expect-error The host-selected project binding is immutable.
+  reader.projectId = 'another-project';
+  void reader.readSnapshot().then(view => {
+    // @ts-expect-error Read views do not advertise mutation affordances.
+    view.works[0]?.allowedActions;
+  });
+}
+// @ts-expect-error No broad root export for the local host binding seam.
+sdkRoot.createLocalWorkLedgerReadBinding;
+// @ts-expect-error No broad workflow export for the local host binding seam.
+workflow.createLocalWorkLedgerReadBinding;
