@@ -1,3 +1,5 @@
+import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { seedProviderMetadataCacheFixture, seedProviderModelListCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
 /**
  * Daemon drop and re-adoption, on the built binary.
  *
@@ -68,15 +70,26 @@ describe('daemon drop and re-adoption', () => {
     writeFileSync(daemonSettings, JSON.stringify({ ...settings, watchers: { enabled: true, heartbeatIntervalMs: 1000 } }, null, 2));
 
     const e2eHome = home;
-    const boot = () => bootDaemon({
-      homeDirectory: e2eHome.home,
-      workingDir: e2eHome.workspace,
-      daemonHomeDir: e2eHome.daemonHome,
-      host: '127.0.0.1',
-      port: 0,
-      token: TOKEN,
-      hasOverriddenHome: true,
-    });
+    const boot = () => {
+      const configManager = new ConfigManager({
+        workingDir: e2eHome.workspace, homeDir: e2eHome.home,
+        surfaceRoot: 'goodvibes', ownsDaemonTier: true,
+      });
+      // Adoption exercises the real daemon, not remote metadata services.
+      seedProviderMetadataCacheFixture({ configManager, homeDirectory: e2eHome.home,
+        workingDirectory: e2eHome.workspace, surfaceRoot: 'goodvibes' });
+      seedProviderModelListCacheFixture(configManager, 'openai');
+      return bootDaemon({
+        configManager,
+        homeDirectory: e2eHome.home,
+        workingDir: e2eHome.workspace,
+        daemonHomeDir: e2eHome.daemonHome,
+        host: '127.0.0.1',
+        port: 0,
+        token: TOKEN,
+        hasOverriddenHome: true,
+      });
+    };
     const theDoor = createDaemonDoor(home.daemonPort);
     door = theDoor;
     daemon = await boot();
