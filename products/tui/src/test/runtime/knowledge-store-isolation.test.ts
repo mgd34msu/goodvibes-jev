@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { knowledgeIsolationReadings } from '../helpers/knowledge-isolation-readings.ts';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { RuntimeEventBus } from '@/runtime/index.ts';
 import { createRuntimeServices } from '../../runtime/services.ts';
@@ -58,44 +60,52 @@ afterEach(() => {
 describe('runtime knowledge store isolation', () => {
   test('regular Knowledge/Wiki, Agent knowledge, and Home Graph use separate sqlite stores', async () => {
     const { configManager, services } = makeRuntime();
-    const controlPlaneDir = configManager.getControlPlaneConfigDir();
+    const readings = knowledgeIsolationReadings();
+    const previousJudgment = installJudgmentPort(readings.port);
+    try {
+      const controlPlaneDir = configManager.getControlPlaneConfigDir();
 
-    await services.knowledgeService.getStatus({ includeAllSpaces: true });
-    const agentStatus = await services.agentKnowledgeService.getStatus({ includeAllSpaces: true });
-    const sync = await services.homeGraphService.syncSnapshot({
-      installationId: 'isolation',
-      title: 'Isolation Home',
-      capturedAt: Date.now(),
-      pageAutomation: { enabled: false },
-      areas: [{ id: 'area-lab', name: 'Lab' }],
-      devices: [{ id: 'device-light', name: 'Isolation Light', areaId: 'area-lab' }],
-      entities: [{ id: 'light.isolation_light', name: 'Isolation Light', deviceId: 'device-light', areaId: 'area-lab' }],
-      integrations: [{ id: 'integration-light', name: 'Light Integration' }],
-    });
-    const homeGraphStatus = await services.homeGraphService.status({ installationId: 'isolation' });
-    const ask = await services.homeGraphService.ask({
-      installationId: 'isolation',
-      query: 'where is the isolation light?',
-      includeSources: true,
-      includeLinkedObjects: true,
-      timeoutMs: 1_000,
-    });
-    await new Promise((resolve) => setTimeout(resolve, 100));
+      await services.knowledgeService.getStatus({ includeAllSpaces: true });
+      const agentStatus = await services.agentKnowledgeService.getStatus({ includeAllSpaces: true });
+      const sync = await services.homeGraphService.syncSnapshot({
+        installationId: 'isolation',
+        title: 'Isolation Home',
+        capturedAt: Date.now(),
+        pageAutomation: { enabled: false },
+        areas: [{ id: 'area-lab', name: 'Lab' }],
+        devices: [{ id: 'device-light', name: 'Isolation Light', areaId: 'area-lab' }],
+        entities: [{ id: 'light.isolation_light', name: 'Isolation Light', deviceId: 'device-light', areaId: 'area-lab' }],
+        integrations: [{ id: 'integration-light', name: 'Light Integration' }],
+      });
+      const homeGraphStatus = await services.homeGraphService.status({ installationId: 'isolation' });
+      const ask = await services.homeGraphService.ask({
+        installationId: 'isolation',
+        query: 'where is the isolation light?',
+        includeSources: true,
+        includeLinkedObjects: true,
+        timeoutMs: 1_000,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
-    expect(sync.ok).toBe(true);
-    expect(ask.ok).toBe(true);
-    expect(homeGraphStatus.nodeCount).toBeGreaterThan(0);
-    expect(agentStatus.sourceCount).toBe(0);
-    expect(agentStatus.nodeCount).toBe(0);
-    expect(existsSync(join(controlPlaneDir, 'knowledge-wiki.sqlite'))).toBe(true);
-    expect(existsSync(join(controlPlaneDir, 'knowledge-agent.sqlite'))).toBe(true);
-    expect(existsSync(join(controlPlaneDir, 'knowledge-home-graph.sqlite'))).toBe(true);
+      expect(sync.ok).toBe(true);
+      expect(ask.ok).toBe(true);
+      expect(readings.requests.some(request => Object.hasOwn(request.questions, 'readable'))).toBe(true);
+      expect(readings.requests.some(request => Object.hasOwn(request.questions, 'excerptUseful'))).toBe(true);
+      // Provider routing is outside this store fixture and remains fail-closed.
+      expect(readings.rejected.filter(name => name !== 'route')).toEqual([]);
+      expect(homeGraphStatus.nodeCount).toBeGreaterThan(0);
+      expect(agentStatus.sourceCount).toBe(0);
+      expect(agentStatus.nodeCount).toBe(0);
+      expect(existsSync(join(controlPlaneDir, 'knowledge-wiki.sqlite'))).toBe(true);
+      expect(existsSync(join(controlPlaneDir, 'knowledge-agent.sqlite'))).toBe(true);
+      expect(existsSync(join(controlPlaneDir, 'knowledge-home-graph.sqlite'))).toBe(true);
 
-    const regularNodes = services.knowledgeService.queryNodes({ includeAllSpaces: true, limit: 100 }).items;
-    const agentNodes = services.agentKnowledgeService.queryNodes({ includeAllSpaces: true, limit: 100 }).items;
-    const regularMap = await services.knowledgeService.map({ includeAllSpaces: true, limit: 100 });
-    expect(regularNodes.some((node) => node.title.includes('Isolation Light') || node.id.includes('isolation'))).toBe(false);
-    expect(agentNodes.some((node) => node.title.includes('Isolation Light') || node.id.includes('isolation'))).toBe(false);
-    expect(regularMap.nodes.some((node) => String(node.title ?? '').includes('Isolation Light') || node.id.includes('isolation'))).toBe(false);
+      const regularNodes = services.knowledgeService.queryNodes({ includeAllSpaces: true, limit: 100 }).items;
+      const agentNodes = services.agentKnowledgeService.queryNodes({ includeAllSpaces: true, limit: 100 }).items;
+      const regularMap = await services.knowledgeService.map({ includeAllSpaces: true, limit: 100 });
+      expect(regularNodes.some((node) => node.title.includes('Isolation Light') || node.id.includes('isolation'))).toBe(false);
+      expect(agentNodes.some((node) => node.title.includes('Isolation Light') || node.id.includes('isolation'))).toBe(false);
+      expect(regularMap.nodes.some((node) => String(node.title ?? '').includes('Isolation Light') || node.id.includes('isolation'))).toBe(false);
+    } finally { installJudgmentPort(previousJudgment); }
   });
 });
