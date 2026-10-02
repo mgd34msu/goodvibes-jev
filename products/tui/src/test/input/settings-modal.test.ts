@@ -8,8 +8,6 @@ import { tmpdir } from 'os';
 import { SettingsModal, SETTINGS_CATEGORIES, SETTINGS_CATEGORY_GROUPS } from '../../input/settings-modal.ts';
 import { InputHistory } from '../../input/input-history.ts';
 import { ConfigManager, type ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
-import { modelPickerLaunchForKey } from '../../input/settings-modal-behavior.ts';
-import { isSecretConfigKey } from '../../config/secret-config.ts';
 import { CONFIG_SCHEMA } from '@goodvibes-jev/engine/sdk/platform/config';
 import { SecretsManager } from '../../config/secrets.ts';
 import { buildGoodVibesSecretKey, buildGoodVibesSecretRef } from '../../config/secret-config.ts';
@@ -29,26 +27,14 @@ function makeTmpDir(): string {
   return dir;
 }
 
-/**
- * Move the modal onto the first plain string setting: one edited inline (not
- * a secret, not handed to a model/TTS picker), unvalidated, with a non-empty
- * current value. Returns false when none exists.
+/** Select a real inline string field, independent of category/schema ordering.
+ * display.theme is also a string but intentionally opens its dedicated picker.
  */
 function selectPlainStringSetting(modal: SettingsModal): boolean {
-  const plain = (key: string, type: string): boolean =>
-    type === 'string' && !isSecretConfigKey(key) && !key.startsWith('tts.') && modelPickerLaunchForKey(key) === null;
-  for (let pass = 0; pass < SETTINGS_CATEGORIES.length; pass++) {
-    const index = modal.currentItems.findIndex((entry) =>
-      plain(String(entry.setting.key), entry.setting.type)
-      && typeof entry.currentValue === 'string' && entry.currentValue.length > 0
-      && entry.setting.validate === undefined);
-    if (index >= 0) {
-      modal.selectedIndex = index;
-      return true;
-    }
-    modal.nextCategory();
-  }
-  return false;
+  modal.categoryIndex = SETTINGS_CATEGORIES.indexOf('provider');
+  const index = modal.currentItems.findIndex(entry => entry.setting.key === 'provider.optimizerPinnedModel');
+  modal.selectedIndex = index;
+  return index >= 0;
 }
 
 function createConfigManager(root: string): ConfigManager {
@@ -212,13 +198,14 @@ describe('SettingsModal', () => {
   });
 
   test('activateSelected enters editingMode for string setting', () => {
+    cm.set('provider.optimizerPinnedModel', 'openrouter:fixture-model');
     modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry);
     // Navigate to a plain (inline-edited) string setting
     expect(selectPlainStringSetting(modal)).toBe(true);
 
     modal.activateSelected();
     expect(modal.editingMode).toBe(true);
-    expect(modal.editBuffer).toBeTruthy(); // pre-populated with current value
+    expect(modal.editBuffer).toBe('openrouter:fixture-model'); // actual current value
   });
 
   test('activateSelected delegates TTS LLM settings to the targeted provider-model picker flow', () => {
@@ -250,6 +237,7 @@ describe('SettingsModal', () => {
   });
 
   test('editChar appends to editBuffer', () => {
+    cm.set('provider.optimizerPinnedModel', 'openrouter:fixture-model');
     modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry);
     expect(selectPlainStringSetting(modal)).toBe(true);
     modal.activateSelected();
@@ -259,6 +247,7 @@ describe('SettingsModal', () => {
   });
 
   test('editBackspace removes last char', () => {
+    cm.set('provider.optimizerPinnedModel', 'openrouter:fixture-model');
     modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry);
     expect(selectPlainStringSetting(modal)).toBe(true);
     modal.activateSelected();
@@ -268,12 +257,14 @@ describe('SettingsModal', () => {
   });
 
   test('cancelEdit exits editingMode without saving', () => {
+    cm.set('provider.optimizerPinnedModel', 'openrouter:fixture-model');
     modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry);
     expect(selectPlainStringSetting(modal)).toBe(true);
     const entry = modal.getSelected()!;
     const originalValue = entry.currentValue;
     modal.activateSelected();
-    modal.editBuffer = 'something-new';
+    expect(modal.editingMode).toBe(true);
+    modal.editBuffer = 'openrouter:cancelled-model';
     modal.cancelEdit();
     expect(modal.editingMode).toBe(false);
     // Value should not have changed
@@ -292,13 +283,17 @@ describe('SettingsModal', () => {
   });
 
   test('commitEdit saves string value', () => {
+    cm.set('provider.optimizerPinnedModel', 'openrouter:fixture-model');
     modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry);
     expect(selectPlainStringSetting(modal)).toBe(true);
     modal.activateSelected();
-    modal.editBuffer = `${modal.editBuffer}-edited`;
+    const editedValue = `${modal.editBuffer}-edited`;
+    modal.editBuffer = editedValue;
     const editResult = modal.commitEdit();
     expect(editResult).toBe(true);
     expect(modal.editingMode).toBe(false);
+    expect(cm.get('provider.optimizerPinnedModel')).toBe(editedValue);
+    expect(createConfigManager(tmpDir).get('provider.optimizerPinnedModel')).toBe(editedValue);
   });
 
   test('activateSelected delegates main provider/model settings to the shared picker flow', () => {
