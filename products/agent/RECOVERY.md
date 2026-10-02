@@ -1,0 +1,160 @@
+# Agent source recovery
+
+This is an incomplete workspace reconstruction from goodvibes-agent
+`f05fe636c120baa469037efe7d7391c3d9503635` (tree
+`7f5575e17a8f52f638b145830f9a4fc4e4bf650f`, 1,650 tracked files).
+It is private and is not ready for product publication or interactive use.
+
+The source references the monorepo's public engine, terminal-shell, toolchain
+and daemon packages. The root workspace lock is authoritative. The upstream
+standalone scripts, release records and lock remain retained source material;
+they are not an accepted Jev release or installation contract. Standalone
+release and publication scripts are not exposed by this workspace's manifest.
+
+The source and package launchers support help, version, completion and parser
+errors through the original parser and help renderer before loading the
+interactive graph. The interactive implementation remains in `src/interactive.ts`.
+This early command boundary does not establish interactive runtime compatibility.
+The obsolete unused clipboard export is removed, and the store now uses the
+public engine factories. Full bundling stops at the retired WRFC construction in
+`src/runtime/services.ts`. Further runtime and semantic migration remains unfinished.
+
+Fresh local evidence for the ordinary adapter checkpoint: 269 CLI, renderer,
+profile and store tests, with 2,659 assertions. This includes source/package launcher subprocesses and theme,
+diff, markdown-width and terminal-size behavior. The corrected source diagnostic has 108 errors, down from 146 at initial
+materialization. The ordinary rendering/configuration fixes remove their own
+diagnostics and consume the SDK source declarations. Full product compilation,
+interactive startup, binary packaging and end-to-end acceptance have not passed.
+
+No captured-input authority proposal or unpublished shared engine overlay is
+part of this source recovery. The engine base is published main
+`9363f44d186e152f5c829aa106d5645ce3ed02a0`.
+
+## Published service graph checkpoint
+
+The Agent now consumes the client runtime's actual contract runner, operator and
+intake services, judgment and session snapshot. Both orchestrator dependency
+rewires retain the manager, contract hooks, foreground permission manager and
+all approval-derived handlers. The obsolete WRFC engine construction is gone.
+The client runtime owns live preset events; the Agent consumes those canonical
+store events and preserves its typed turn-budget and compaction notices.
+
+The actual Agent graph constructs and disposes offline, and a live preset change
+updates its store and produces one UI notice. A services-only bundle succeeds.
+The combined ordinary suite passes 281 tests and 2,723 assertions across 23 files.
+The latest source diagnostic has 89 errors, before the subsequent asynchronous
+memory command caller fixes. It reports no errors in the changed service graph.
+
+Interactive/main bundling remains blocked by notification exports absent from
+published main (buildApprovalNotification, describeToolTarget, resolveTurnName).
+No held notification implementation is copied. The canonical Agent-specific
+contract-event presentation helper is also not published yet. Full prompt memory
+ranking, wider command/view migration, product types, binary and end-to-end
+acceptance remain incomplete. The registered tier reader is now awaited with
+operation-signal caching; that change alone is not complete prompt parity.
+
+## Contract view and fleet checkpoint
+
+The lane graph reads public contract views and recorded tool outcomes. It renders
+owner questions/replies, attempt/check details and commit notes, keeps legacy
+outcomes unknown, and marks failed application as a display warning while the
+contract lifecycle remains passed. Restored owners remain visible without a
+live Agent record. Agent-specific fold restoration and header calls are retained.
+The fleet CLI uses the runner's real attempt controls and qualified IDs.
+Its one-shot calls explicitly skip background model-data refreshes.
+
+The combined ordinary suite passes 311 tests and 2,830 assertions across 26 files.
+This includes real offline fleet CLI calls, the actual service graph, and the
+contract view behavior. A prior run's external-I/O guard failure is preserved;
+that run was not a pass. Current source/type rechecking is queued separately.
+
+## Private workspace update boundary
+
+The private workspace has no separate published Agent update channel. Launch,
+periodic polling and `/update` entrypoints now return checkout/rebuild guidance
+before host/configuration inspection. The source launcher already runs the
+checked-out package. The shared download/swap mechanics remain available for
+their synthetic tests; no upstream artifact is adopted by the live workspace.
+
+The metadata CLI/private-update set passes 12 tests and 51 assertions. An expanded
+mechanical run passed 33 tests and failed one existing channel-delivery case at
+the inherited synchronous card-reading caller; that failure is retained and is
+not attributed to the update guard. Full interactive acceptance remains open.
+
+## Local executable acceptance
+
+The isolated acceptance branch composes the reviewed local notification candidate
+`3770f00807c56524c3eaa7632f9aae1a8a032ab2` with the ordinary Agent source. This
+candidate is not merged main and is not a product release. The ordinary source
+now bundles, starts interactively and compiles through the existing native Bun
+command. Contract tool registration uses the runner and project root, the UI
+adapters use current contract kinds, and the unused obsolete local command
+judgment shim delegates to the existing public engine functions.
+
+The source and compiled executable both displayed the first frame, declined the
+initial checkpoint-registration question with Escape, opened `/help`, and exited
+normally. The first receipts preserve blocked auxiliary metadata requests.
+The later executable proof supplied explicit empty synthetic responses for the
+three exact metadata endpoints after the unchanged network guard. It completed
+in 2.07 seconds with zero guard violations. Private compiled launches also skip
+upstream release reachability probing. These are bounded local terminal proofs,
+not live-provider, cross-platform packaging or the original tmux E2E acceptance.
+
+The latest source diagnostic has 20 errors in asynchronous memory/card/outward
+reader callers. The focused startup/update adapter set passes 10 tests and 41
+assertions. The shared toolchain's flat native-addon path still misses the valid
+workspace dependency-owner installation; declared CLI generation and complete
+asset packaging remain pending.
+
+## Awaited source-reader checkpoint
+
+All 20 remaining Agent source diagnostics are resolved. The final source check
+passes with Node's bounded 3 GiB TypeScript heap; the preceding Bun checker was
+killed with exit 137 and is not a pass. Memory ranking, VIBE import, usage credit,
+card screening and outward-effect checks now await the published asynchronous
+readers. Prompt text and its receipt share one ranking. Passive workspace paints
+read only the capped queue cardinality, since the public queue ranks but does not
+filter records; they do not start ranking requests.
+
+The focused memory/prompt/delayed-reader suite passes 27 tests and 109 assertions.
+The separate outward-adapter suite passes 31 of 32 tests: one inherited assertion
+still expects a literal quoted overlap in the refusal wording. Account, mail and
+channel side-effect boundaries themselves pass their ordinary fixture cases.
+These are explicit synthetic judgment fixtures, not live-provider acceptance.
+
+The package JS bundle and direct native compilation pass. The rebuilt executable
+again displays the first frame, declines checkpoint registration, opens `/help`,
+and exits 0 with explicit synthetic metadata and no network-guard violations.
+The full shared native packaging command still fails at its flat sqlite-vec
+addon lookup despite a valid dependency-owner installation. No flat symlink or
+unpublished toolchain overlay was added to hide that remaining packaging failure.
+The expanded ordinary regression set passes 345 tests and 2,949 assertions across
+31 files. This is focused Agent recovery coverage, not the full repository
+validation or the original tmux end-to-end harness.
+
+## Dependency-owner packaging checkpoint
+
+The local packaging composition resolves native addons from the installed
+sqlite-vec dependency owner, validates the requested package/version/payload,
+and stages the exact host addon beside the executable. It also resolves an SDK
+export subpath to its enclosing engine manifest. No flat installation symlink is
+required. The Agent binary launcher invokes the CLI declared by its installed
+workspace engine and fails clearly if the engine has not been built, without a
+registry fallback through bunx.
+
+The generated toolchain CLI and standard `build:binary --target linux-x64` now
+pass; the packaged executable passes its version/artifact smoke and the bounded
+first-frame/help/clean-exit terminal proof with explicit synthetic metadata and
+zero guard violations. A separately compiled native-loader probe uses the staged
+addon and returns sqlite-vec v0.1.9 and the expected vector distance. Shared
+packaging tests pass 36 tests/86 assertions; Agent launcher tests pass 2 tests/3
+assertions. Cross-platform package downloads are exercised only by fake execution
+fixtures, not live network calls or foreign-platform execution.
+
+The inherited Google refusal assertion is aligned with the current public
+engine's quoted-evidence label, while retaining the field/evidence checks and
+adding explicit refusal/zero-send assertions. No security wording or semantics
+changed. The outward-adapter suite now passes all 32 tests and 106 assertions.
+The final combined Agent regression passes 379 tests and 3,058 assertions across
+37 files. Quote-evidence tests account for the existing display ellipsis on long
+excerpts while checking nonempty evidence, source-text membership and zero sends.

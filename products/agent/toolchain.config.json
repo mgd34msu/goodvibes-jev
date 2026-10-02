@@ -1,0 +1,109 @@
+{
+  "//": "TOOLCHAIN-PIN: @goodvibes-jev/engine/toolchain is an exact-version devDependency resolved from the npm registry, matching the sdk/terminal-shell runtime pins. Reusable-workflow refs stay at mgd34msu/goodvibes-sdk@main; release.yml call sites that accept a toolchain-spec input pin it to the same exact version, so a reusable-workflow runner with no local node_modules also resolves the pinned CLI instead of npm latest. This file is the repo-specific contract consumed by @goodvibes-jev/engine/toolchain CLIs; behavior lives in the package.",
+  "packageName": "@pellux/goodvibes-agent",
+  "sdkPin": {
+    "sdkPackage": "@goodvibes-jev/engine/sdk",
+    "pinSource": "devDependencies",
+    "lockfile": "bun.lock",
+    "overlayMarker": "node_modules/@goodvibes-jev/engine/sdk/.local-sdk-overlay.json",
+    "sourceRoots": ["src"],
+    "enforceExportsMap": false
+  },
+  "build": {
+    "appEntrypoint": "src/main.ts",
+    "outDir": "dist",
+    "addonOutDir": "dist/lib",
+    "prebuild": [["bun", "run", "scripts/prebuild.ts"]],
+    "targets": [
+      {
+        "key": "linux-x64",
+        "bunTarget": "bun-linux-x64",
+        "appArtifact": "goodvibes-agent-linux-x64",
+        "nativeAddonPackage": "sqlite-vec-linux-x64",
+        "nativeAddonFile": "vec0.so"
+      },
+      {
+        "key": "linux-arm64",
+        "bunTarget": "bun-linux-arm64",
+        "appArtifact": "goodvibes-agent-linux-arm64",
+        "nativeAddonPackage": "sqlite-vec-linux-arm64",
+        "nativeAddonFile": "vec0.so"
+      },
+      {
+        "key": "darwin-x64",
+        "bunTarget": "bun-darwin-x64",
+        "appArtifact": "goodvibes-agent-macos-x64",
+        "nativeAddonPackage": "sqlite-vec-darwin-x64",
+        "nativeAddonFile": "vec0.dylib"
+      },
+      {
+        "key": "darwin-arm64",
+        "bunTarget": "bun-darwin-arm64",
+        "appArtifact": "goodvibes-agent-macos-arm64",
+        "nativeAddonPackage": "sqlite-vec-darwin-arm64",
+        "nativeAddonFile": "vec0.dylib"
+      }
+    ]
+  },
+  "smoke": {
+    "bannerPrefix": "goodvibes-agent ",
+    "forbiddenStrings": ["sqlite-vec", "$bunfs/root"],
+    "binaryDefault": "dist/goodvibes-agent-linux-x64"
+  },
+  "releaseCut": {
+    "branch": "main",
+    "versionFiles": [],
+    "syncCommands": [["bun", "run", "scripts/release-prepare.ts", "--no-bump", "--no-changelog", "--no-install", "--no-live"]],
+    "commitPaths": [
+      "package.json",
+      "src/version.ts",
+      "README.md",
+      "CHANGELOG.md",
+      "docs/README.md",
+      "docs/google-setup-runbook.md",
+      "release/release-notes.md",
+      ".github/workflows"
+    ],
+    "changelogHeading": "plain",
+    "changelogInsertMarker": "top"
+  },
+  "publish": {
+    "packageName": "@pellux/goodvibes-agent",
+    "defaultRegistry": "https://registry.npmjs.org",
+    "requiredTarballPaths": [
+      "README.md",
+      "CHANGELOG.md",
+      "LICENSE",
+      "package.json",
+      "src/main.ts",
+      "dist/package/main.js",
+      "bin/goodvibes-agent.ts",
+      "tsconfig.json",
+      "release/release-notes.md",
+      "release/performance-snapshot.json",
+      "release/release-readiness.json",
+      "release/live-verification/live-verification.json",
+      "release/live-verification/live-verification.md"
+    ],
+    "forbiddenTarballPrefixes": [
+      ".github/",
+      "src/test/",
+      "src/.test/",
+      "src/verification/",
+      "src/daemon/",
+      ".goodvibes/",
+      "vendor/"
+    ],
+    "maxTarballBytes": 52428800
+  },
+  "perJobGreen": {
+    "owner": "mgd34msu",
+    "repo": "goodvibes-agent",
+    "workflow": "ci.yml",
+    "event": "push",
+    "pollIntervalMs": 20000,
+    "deadlineMs": 1800000,
+    "retryAttempts": 8,
+    "retryDelayMs": 7000
+  }
+}

@@ -1,0 +1,148 @@
+{
+  "generatedAt": "2026-09-30T06:59:29.668Z",
+  "homeDir": "[goodvibes-home]",
+  "binaryPath": "[agent-binary]",
+  "connectedHostBaseUrl": "http://127.0.0.1:3421",
+  "strict": true,
+  "checks": [
+    {
+      "id": "verification-ledger",
+      "title": "Verification inventory ledger",
+      "status": "pass",
+      "summary": "99.6% local verification signal across 994 inventory items.",
+      "detail": "84% local behavior verified; 125 item(s) require external outcomes."
+    },
+    {
+      "id": "compiled-cli-present",
+      "title": "Compiled GoodVibes Agent CLI binary",
+      "status": "pass",
+      "summary": "Found [agent-binary]."
+    },
+    {
+      "id": "cli-version",
+      "title": "Agent CLI version command",
+      "status": "pass",
+      "summary": "Agent CLI version returned successfully.",
+      "detail": "goodvibes-agent 2.1.0"
+    },
+    {
+      "id": "cli-status-json",
+      "title": "Agent CLI status JSON command",
+      "status": "pass",
+      "summary": "Agent CLI status returned parseable JSON.",
+      "detail": "Status JSON command completed; provider/model identifiers omitted from release artifact."
+    },
+    {
+      "id": "cli-compat-json",
+      "title": "Agent CLI compatibility JSON command",
+      "status": "pass",
+      "summary": "Agent CLI compatibility returned parseable JSON.",
+      "detail": "{\n  \"ok\": true,\n  \"packageVersion\": \"2.1.0\",\n  \"connectedHost\": {\n    \"baseUrl\": \"http://127.0.0.1:3421\",\n    \"status\": 200,\n    \"reachable\": true,\n    \"compatible\": true\n  },\n  \"auth\": {\n    \"tokenPresent\": true,\n    \"tokenPath\": \"env:GOODVIBES_CONNECTED_HOST_TOKEN\"\n  },\n  \"agentKnowledge\": {\n    \"route\": \"/api/goodvibes-agent/knowledge/status\",\n    \"ready\": true,\n    \"kind\": \"ok\"\n  }\n}"
+    },
+    {
+      "id": "cli-agent-knowledge-status",
+      "title": "Agent Knowledge CLI status command",
+      "status": "pass",
+      "summary": "Agent Knowledge status returned parseable JSON.",
+      "detail": "{\n  \"ok\": true,\n  \"kind\": \"agentKnowledge.status\",\n  \"route\": \"/api/goodvibes-agent/knowledge/status\",\n  \"data\": {\n    \"ready\": true,\n    \"storagePath\": \"[goodvibes-home]/tui/knowledge-agent.sqlite\",\n    \"sourceCount\": 0,\n    \"nodeCount\": 4,\n    \"edgeCount\": 3,\n    \"issueCount\": 0,\n    \"extractionCount\": 0,\n    \"jobRunCount\": 500,\n    \"refinementTaskCount\": 0,\n    \"usageCount\": 7,\n    \"candidateCount\": 1,\n    \"reportCount\": 117,\n    \"scheduleCount\": 3,\n    \"note\": \"Structured knowledge uses SQL-backed sources, nodes, edges, issues, extractions, and job runs. Markdown is an optional projection, not the source of truth.\"\n  }\n}"
+    },
+    {
+      "id": "cli-providers",
+      "title": "Agent CLI providers command",
+      "status": "pass",
+      "summary": "Provider inventory rendered successfully.",
+      "detail": "Provider inventory command completed; provider names and credential posture omitted from release artifact."
+    },
+    {
+      "id": "cli-doctor",
+      "title": "CLI doctor command",
+      "status": "pass",
+      "summary": "Doctor completed; 2 operator-configuration risk advisory(ies) noted (intentional trust posture, not a release defect).",
+      "detail": "Doctor command completed without findings; provider/model identifiers and credential posture omitted from release artifact."
+    },
+    {
+      "id": "connected-host-status",
+      "title": "Authenticated connected-host /status",
+      "status": "pass",
+      "summary": "/status returned 200 with parseable JSON.",
+      "detail": "{\"status\":\"running\",\"version\":\"1.28.25\",\"buildVersion\":\"1.28.25\",\"platformVersion\":\"2.0.23\",\"cluster\":{\"enabled\":false,\"role\":\"master\",\"nodeId\":\"59a6a335-d62a-486d-a4a0-7e64e3ff4944\",\"version\":\"1.28.25\",\"uptimeMs\":0,\"consumersRunning\":true,\"heldSurfaceCount\":7,\"signed\":false,\"surfaces\":[{\"surfaceId\":\"6e9bf353efb32e17c43b5881204f9a20\",\"label\":\"inbox:6e9bf353\",\"kind\":\"inbox\",\"role\":\"master\",\"holderNodeId\":\"59a6a335-d62a-486d-a4a0-7e64e3ff4944\",\"consuming\":true,\"lastHolderHeartbeatAt\":null},{\"surfaceId\":\"89c112b2dc732cef71afa8c9df8fdc6f\",\"label\":\"inbox:89c112b2\",\"kind\":\"inbox\",\"role\":\"master\",\"holderNodeId\":\"59a6a335-d62a-486d-a4a0-7e64e3ff4944\",\"consuming\":true,\"lastHolderHeartbeatAt\":null},{\"surfaceId\":\"93b73cdc72c58e86297104412a7769bb\",\"label\":\"inbox:93b73cdc\",\"kind\":\"inbox\",\"role\":\"master\",\"holderNodeId\":\"59a6a335-d62a-486d-a4a0-7e64e3ff4944\",\"consuming\":true,\"lastHolder... [truncated]"
+    },
+    {
+      "id": "connected-host-health",
+      "title": "Authenticated connected-host /api/health",
+      "status": "pass",
+      "summary": "Health overall=healthy.",
+      "detail": "{\"overall\":\"healthy\",\"degradedDomains\":[],\"providerProblems\":[],\"mcpProblems\":{\"degraded\":[],\"quarantined\":[]},\"integrationProblems\":[],\"network\":{\"controlPlane\":{\"surface\":\"controlPlane\",\"host\":\"0.0.0.0\",\"port\":3421,\"mode\":\"off\",\"scheme\":\"http\",\"trustProxy\":false,\"usingDefaultPaths\":false,\"ready\":true,\"errors\":[]},\"httpListener\":{\"surface\":\"httpListener\",\"host\":\"0.0.0.0\",\"port\":3422,\"mode\":\"off\",\"scheme\":\"http\",\"trustProxy\":false,\"usingDefaultPaths\":false,\"ready\":true,\"errors\":[]},\"outbound\":{\"mode\":\"bundled\",\"allowInsecureLocalhost\":false,\"customCaEntryCount\":0,\"effectiveCaStrategy\":\"bun-default\",\"errors\":[]}}}"
+    },
+    {
+      "id": "openai-compatible-models",
+      "title": "OpenAI-compatible /v1/models route",
+      "status": "pass",
+      "summary": "/v1/models returned 2007 model(s).",
+      "detail": "/v1/models returned 2007 model(s); model identifiers omitted from release artifact."
+    },
+    {
+      "id": "agent-knowledge-status",
+      "title": "Agent Knowledge isolated /status",
+      "status": "pass",
+      "summary": "Agent Knowledge status route returned parseable isolated JSON.",
+      "detail": "{\"ready\":true,\"storagePath\":\"[goodvibes-home]/tui/knowledge-agent.sqlite\",\"sourceCount\":0,\"nodeCount\":4,\"edgeCount\":3,\"issueCount\":0,\"extractionCount\":0,\"jobRunCount\":500,\"refinementTaskCount\":0,\"usageCount\":7,\"candidateCount\":1,\"reportCount\":117,\"scheduleCount\":3,\"note\":\"Structured knowledge uses SQL-backed sources, nodes, edges, issues, extractions, and job runs. Markdown is an optional projection, not the source of truth.\"}"
+    },
+    {
+      "id": "agent-knowledge-ask-isolated",
+      "title": "Agent Knowledge isolated ask",
+      "status": "pass",
+      "summary": "Agent Knowledge ask stayed on the isolated Agent route.",
+      "detail": "{\"ok\":true,\"spaceId\":\"default\",\"query\":\"What is GoodVibes Agent?\",\"answer\":{\"text\":\"No knowledge matched \\\"What is GoodVibes Agent?\\\".\",\"mode\":\"concise\",\"confidence\":0,\"sources\":[],\"linkedObjects\":[],\"facts\":[],\"gaps\":[],\"synthesized\":false},\"results\":[]}"
+    },
+    {
+      "id": "agent-knowledge-search-isolated",
+      "title": "Agent Knowledge isolated search",
+      "status": "pass",
+      "summary": "Agent Knowledge search stayed on the isolated Agent route.",
+      "detail": "{\"results\":[{\"kind\":\"node\",\"id\":\"memory-mem_ms2bfhdt_092d1166\",\"score\":25,\"reason\":\"matched task token \\\"is\\\"\",\"node\":{\"id\":\"memory-mem_ms2bfhdt_092d1166\",\"kind\":\"memory\",\"slug\":\"mem-ms2bfhdt-092d1166\",\"title\":\"Standing authorization to use the assistant-dedicated email account when reasonably needed for user tasks.\",\"summary\":\"The user authorizes proactive use of the dedicated email account for task-integral website/forum sign-ups, routine account verification, and sending/receiving email without asking each time. Still pause for purchases or paid trials, contracts or consequential legal terms, high-impact or sensitive accounts, disclosure of sensitive data, destructive/irreversible actions, or any mandatory platform confirmation. Never expose credentials, recovery links, or verification codes.\",\"aliases\":[\"email\",\"standing-authorization\",\"autonomy\"],\"status\":\"active\",\"c... [truncated]"
+    },
+    {
+      "id": "agent-knowledge-sources-isolated",
+      "title": "Agent Knowledge isolated sources list",
+      "status": "pass",
+      "summary": "Agent Knowledge isolated sources list stayed on the isolated Agent route.",
+      "detail": "{\"sources\":[]}"
+    },
+    {
+      "id": "agent-knowledge-nodes-isolated",
+      "title": "Agent Knowledge isolated nodes list",
+      "status": "pass",
+      "summary": "Agent Knowledge isolated nodes list stayed on the isolated Agent route.",
+      "detail": "{\"nodes\":[{\"id\":\"node-56c8e2cc\",\"kind\":\"topic\",\"slug\":\"standing-authorization\",\"title\":\"standing-authorization\",\"summary\":\"Topic tag standing-authorization.\",\"aliases\":[\"standing-authorization\"],\"status\":\"active\",\"confidence\":70,\"metadata\":{\"tag\":\"standing-authorization\",\"knowledgeSpaceId\":\"default\",\"namespace\":\"default\",\"reviewProvenance\":{\"state\":\"auto-accepted\",\"reason\":\"auto-accepted: confidence 70 >= auto-accept threshold 40\",\"decidedAt\":1785104923908,\"threshold\":40}},\"createdAt\":1785104923908,\"updatedAt\":1785104923908},{\"id\":\"node-f02b3f1c\",\"kind\":\"topic\",\"slug\":\"autonomy\",\"title\":\"autonomy\",\"summary\":\"Topic tag autonomy.\",\"aliases\":[\"autonomy\"],\"status\":\"active\",\"confidence\":70,\"metadata\":{\"tag\":\"autonomy\",\"knowledgeSpaceId\":\"default\",\"namespace\":\"default\",\"reviewProvenance\":{\"state\":\"auto-accepted\",\"reason\":\"auto-accepted: confidence 70 >= auto-accept threshold 40... [truncated]"
+    },
+    {
+      "id": "agent-knowledge-issues-isolated",
+      "title": "Agent Knowledge isolated issues list",
+      "status": "pass",
+      "summary": "Agent Knowledge isolated issues list stayed on the isolated Agent route.",
+      "detail": "{\"issues\":[]}"
+    },
+    {
+      "id": "agent-knowledge-map-isolated",
+      "title": "Agent Knowledge isolated map",
+      "status": "pass",
+      "summary": "Agent Knowledge isolated map stayed on the isolated Agent route.",
+      "detail": "{\"ok\":true,\"title\":\"Knowledge Map\",\"generatedAt\":1790751569664,\"width\":1280,\"height\":920,\"nodeCount\":4,\"edgeCount\":3,\"totalNodeCount\":4,\"totalEdgeCount\":3,\"facets\":{\"recordKinds\":[{\"value\":\"node\",\"count\":4}],\"nodeKinds\":[{\"value\":\"topic\",\"count\":3},{\"value\":\"memory\",\"count\":1}],\"sourceTypes\":[],\"sourceStatuses\":[],\"nodeStatuses\":[{\"value\":\"active\",\"count\":4}],\"issueCodes\":[],\"issueStatuses\":[],\"issueSeverities\":[],\"edgeRelations\":[{\"value\":\"memory_tagged_with\",\"count\":3}],\"tags\":[]},\"nodes\":[{\"id\":\"node-f02b3f1c\",\"recordKind\":\"node\",\"kind\":\"topic\",\"title\":\"autonomy\",\"summary\":\"Topic tag autonomy.\",\"x\":720,\"y\":277,\"radius\":23,\"metadata\":{\"tag\":\"autonomy\",\"knowledgeSpaceId\":\"default\",\"namespace\":\"default\",\"reviewProvenance\":{\"state\":\"auto-accepted\",\"reason\":\"auto-accepted: confidence 70 >= auto-accept threshold 40\",\"decidedAt\":1785104923908,\"threshold\":40}}},{\"id\":\"node-a21... [truncated]"
+    },
+    {
+      "id": "agent-knowledge-connectors-isolated",
+      "title": "Agent Knowledge isolated connectors list",
+      "status": "pass",
+      "summary": "Agent Knowledge isolated connectors list stayed on the isolated Agent route.",
+      "detail": "{\"connectors\":[{\"id\":\"bookmark\",\"displayName\":\"Bookmarks Import\",\"version\":\"1\",\"description\":\"Parse bookmark exports or bookmark-like JSON into bookmark seeds.\",\"sourceType\":\"bookmark\",\"capabilities\":[\"bookmark-export\",\"netscape-html\",\"bookmark-json\"],\"inputSchema\":{\"type\":\"string\",\"description\":\"Bookmark export content such as Netscape bookmark HTML or bookmark-like JSON.\"},\"examples\":[\"<!DOCTYPE NETSCAPE-Bookmark-file-1>...\"],\"metadata\":{\"accepts\":[\"inline-content\",\"file-content\"],\"preferredContentType\":\"text/html\",\"transportHints\":[\"content\",\"path\"]},\"setup\":{\"version\":\"1\",\"summary\":\"Imports bookmark export files or bookmark-like JSON payloads.\",\"steps\":[\"Export bookmarks from a browser as Netscape-style HTML or supply bookmark-like JSON.\",\"Send the content directly or provide a file path to the ingest endpoint.\"],\"fields\":[{\"key\":\"content\",\"label\":\"Bookmark Content\",\"... [truncated]"
+    }
+  ],
+  "counts": {
+    "pass": 19,
+    "warn": 0,
+    "fail": 0,
+    "skip": 0
+  },
+  "ok": true
+}
