@@ -1,16 +1,11 @@
 #!/usr/bin/env bun
-import { accessSync, constants } from 'node:fs';
+import { resolveWorkspaceBinary } from '../src/cli/workspace-binary.ts';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const platform = process.platform === 'darwin' ? 'macos' : process.platform;
-const suffix = process.platform === 'win32' ? '.exe' : '';
-const candidates = [join(root, 'dist', `goodvibes-${platform}-${process.arch}${suffix}`), join(root, 'dist', `goodvibes${suffix}`)];
-const executable = candidates.find(path => {
-  try { accessSync(path, constants.X_OK); return true; } catch { return false; }
-});
+const executable = resolveWorkspaceBinary(root);
 if (!executable) {
   console.error('goodvibes: this private Jev workspace has no built TUI binary.');
   console.error('Build the workspace engine, then run bun run --filter @goodvibes-jev/tui build from the workspace root.');
