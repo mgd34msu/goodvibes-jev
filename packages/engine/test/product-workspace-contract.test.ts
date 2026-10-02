@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -215,3 +215,75 @@ test('product failures retain spawn errors alongside missing exit status', async
     status: null, signal: null, stdout: '', stderr: '', error: new Error('spawn bun ENOENT'),
   }))).rejects.toThrow('daemon:build failed (exit code null, signal none): spawn bun ENOENT');
 });
+
+
+test.each([0, 23])('real product commands inherit both complete output streams at exit %i', (status) => {
+  const root = fixture();
+  const runner = resolve(import.meta.dir, '../scripts/product-workspaces.ts');
+  const outputSize = 1024 * 1024;
+  write(root, 'package.json', { scripts: { test: 'bun child.ts' } });
+  write(root, 'child.ts', `
+    await Promise.all([
+      new Promise<void>((resolve, reject) => process.stdout.write('O'.repeat(${outputSize}) + '\\nSTDOUT-END\\n', (error) => error ? reject(error) : resolve())),
+      new Promise<void>((resolve, reject) => process.stderr.write('E'.repeat(${outputSize}) + '\\nSTDERR-END\\n', (error) => error ? reject(error) : resolve())),
+    ]);
+    process.exit(${status});
+  `);
+  write(root, 'output-fixture.ts', `
+    import { executeProductCommands } from ${JSON.stringify(runner)};
+    await executeProductCommands(${JSON.stringify(root)}, [
+      { kind: 'script', label: 'fixture:test', cwd: ${JSON.stringify(root)}, script: 'test' },
+    ], 'test');
+  `);
+  const run = spawnSync('bun', [join(root, 'output-fixture.ts')], { cwd: root, encoding: 'utf8', maxBuffer: 4 * outputSize, timeout: 10_000 });
+  expect(run.error).toBeUndefined();
+  expect(run.status).toBe(status === 0 ? 0 : 1);
+  expect(run.stdout).toContain('O'.repeat(outputSize) + '\nSTDOUT-END\n');
+  expect(run.stderr).toContain('E'.repeat(outputSize) + '\nSTDERR-END\n');
+  expect(run.stdout).not.toContain('STDERR-END');
+  expect(run.stderr).not.toContain('STDOUT-END');
+  if (status !== 0) expect(run.stderr).toContain('fixture:test failed (exit code 23, signal none)');
+});
+
+test('real product progress reaches both outer sinks before the command exits', async () => {
+  const root = fixture();
+  const runner = resolve(import.meta.dir, '../scripts/product-workspaces.ts');
+  write(root, 'package.json', { scripts: { test: 'bun child.ts' } });
+  write(root, 'child.ts', `
+    import { existsSync } from 'node:fs';
+    console.log('LIVE-STDOUT');
+    console.error('LIVE-STDERR');
+    const deadline = Date.now() + 5_000;
+    while (!existsSync('release')) {
+      if (Date.now() > deadline) throw new Error('outer sinks did not receive live output');
+      await Bun.sleep(10);
+    }
+    console.log('CHILD-FINISHED');
+  `);
+  write(root, 'output-fixture.ts', `
+    import { executeProductCommands } from ${JSON.stringify(runner)};
+    await executeProductCommands(${JSON.stringify(root)}, [
+      { kind: 'script', label: 'fixture:test', cwd: ${JSON.stringify(root)}, script: 'test' },
+    ], 'test');
+  `);
+  const child = spawn('bun', [join(root, 'output-fixture.ts')], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  let released = false;
+  const release = (): void => {
+    if (!released && stdout.includes('LIVE-STDOUT') && stderr.includes('LIVE-STDERR')) {
+      expect(stdout).not.toContain('CHILD-FINISHED');
+      released = true;
+      write(root, 'release', 'observed both streams while running');
+    }
+  };
+  child.stdout.on('data', (chunk) => { stdout += String(chunk); release(); });
+  child.stderr.on('data', (chunk) => { stderr += String(chunk); release(); });
+  const status = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', resolve);
+  });
+  expect(released).toBe(true);
+  expect(status, stderr).toBe(0);
+  expect(stdout).toContain('CHILD-FINISHED');
+}, 10_000);

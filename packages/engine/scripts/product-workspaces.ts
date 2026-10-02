@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { inspectProductWorkspaces, productCheckCommands, readProductSources, type ProductCheckCommand } from './product-workspace-contract.ts';
 import { typecheckFailures } from './typecheck-output-rule.ts';
 
-interface ProductCommandResult { readonly status: number | null; readonly signal?: NodeJS.Signals | null | undefined; readonly stdout: string; readonly stderr: string; readonly error?: Error | undefined; }
+interface ProductCommandResult { readonly status: number | null; readonly signal?: NodeJS.Signals | null | undefined; readonly stdout: string | null; readonly stderr: string | null; readonly error?: Error | undefined; }
 type ProductCommandRunner = (executable: string, args: string[], cwd: string) => ProductCommandResult;
 
 /** A failed command must not exit while its diagnostic tail is still queued. */
@@ -15,7 +15,13 @@ async function writeOutput(stream: NodeJS.WriteStream, output: string): Promise<
 }
 
 /** Run real product commands and refuse nonzero exits or printed TS diagnostics. */
-export async function executeProductCommands(root: string, commands: readonly ProductCheckCommand[], mode: 'build' | 'test' | 'typecheck', runCommand: ProductCommandRunner = (executable, args, cwd) => spawnSync(executable, args, { cwd, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })): Promise<void> {
+export async function executeProductCommands(root: string, commands: readonly ProductCheckCommand[], mode: 'build' | 'test' | 'typecheck', runCommand: ProductCommandRunner = (executable, args, cwd) => spawnSync(executable, args, {
+  cwd, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024,
+  // Test/build children own their output and lifecycle. Inherit the real sinks
+  // so progress is visible before exit without another pipe/drain layer.
+  // Compiler output must remain captured: printed errors also fail exit zero.
+  stdio: mode === 'typecheck' ? 'pipe' : 'inherit',
+})): Promise<void> {
   for (const command of commands) {
     console.log(`[products] ${command.label} ...`);
     const executable = command.kind === 'tsconfig' ? 'node' : 'bun';
