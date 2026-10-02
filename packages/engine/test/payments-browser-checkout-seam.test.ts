@@ -780,6 +780,31 @@ describe('the daemon browser composition offers the checkout seam', () => {
 
 // ── A daemon-style composition, all seven verbs ─────────────────────────────
 
+const CHECKOUT_NOW = Date.parse('2026-07-01T12:00:00.000Z');
+const CHECKOUT_PURCHASE_ID = `pur-${CHECKOUT_NOW}-i`;
+
+/**
+ * The service creates its ID before its first await. Own only that synchronous
+ * call, restoring randomness before any checkout continuation (or other test)
+ * can run. Random IDs and wall-clock milliseconds can otherwise contain the
+ * sentinel CVV by coincidence, making the whole-output containment check flaky.
+ */
+function withFixturePurchaseRandom<T>(begin: () => T): T {
+  const previousRandom = Math.random;
+  Math.random = () => 0.5;
+  try {
+    return begin();
+  } finally {
+    Math.random = previousRandom;
+  }
+}
+
+function expectNoCardMaterial(response: unknown, sent: readonly string[], recorded: readonly unknown[]): void {
+  const everything = JSON.stringify(response) + sent.join('\n') + JSON.stringify(recorded);
+  expect(everything).not.toContain(SENTINEL.number);
+  expect(everything).not.toContain(SENTINEL.cvv);
+}
+
 interface SevenVerbHarness {
   readonly catalog: GatewayMethodCatalog;
   readonly engine: ScriptedEngine;
@@ -819,6 +844,7 @@ async function sevenVerbComposition(options: SevenVerbCompositionOptions = {}): 
   });
 
   const impl = new PaymentsGatewayServiceImpl({
+    now: () => CHECKOUT_NOW,
     cards: {
       async metadata(id) {
         return {
@@ -887,7 +913,7 @@ async function sevenVerbComposition(options: SevenVerbCompositionOptions = {}): 
     async createCard() { throw new Error('not exercised here'); },
     async deleteCard() { return { deleted: true, secretsCleared: 1 }; },
     async listPurchases() { return { purchases: [], total: 0 }; },
-    beginCheckout: (input: never) => impl.beginCheckout(input),
+    beginCheckout: (input: never) => withFixturePurchaseRandom(() => impl.beginCheckout(input)),
     fillCardIntoCheckout: (input: never) => impl.fillCardIntoCheckout(input),
   } as unknown as PaymentsGatewayService;
 
@@ -967,10 +993,12 @@ describe('a daemon-style composition can now serve all seven payments verbs', ()
     // indistinguishable from a confirmed one. The money still moved (see the
     // dedicated describe block below for the record and the report).
     expect(response['outcome']).toBe('submitted-unverified');
+    expect(response['purchaseId']).toBe(CHECKOUT_PURCHASE_ID);
     // 12900 item + 1097 tax + 499 standard shipping.
     expect(response['totalMinorUnits']).toBe(14_496);
     expect(harness.recorded.length).toBe(1);
     expect(harness.recorded[0]?.outcome).toBe('submitted-unverified');
+    expect(harness.recorded[0]?.purchaseId).toBe(CHECKOUT_PURCHASE_ID);
 
     // ── the address went in through type, the card through fillSecretBatch ─
     //
@@ -992,9 +1020,38 @@ describe('a daemon-style composition can now serve all seven payments verbs', ()
     expect(harness.engine.typed.get('ccexp')).toBe('07/2029');
 
     // ── nothing that left the process carries the card ───────────────────
-    const everything = JSON.stringify(response) + harness.sent.join('\n') + JSON.stringify(harness.recorded);
-    expect(everything).not.toContain(SENTINEL.number);
-    expect(everything).not.toContain(SENTINEL.cvv);
+    expectNoCardMaterial(response, harness.sent, harness.recorded);
+  });
+
+  test('fixture randomness is restored before continuations and after a synchronous throw', async () => {
+    const previousRandom = Math.random;
+    const pending = withFixturePurchaseRandom(async () => {
+      expect(Math.random()).toBe(0.5);
+      await Promise.resolve();
+      expect(Math.random).toBe(previousRandom);
+    });
+    expect(Math.random).toBe(previousRandom);
+    await pending;
+
+    expect(() => withFixturePurchaseRandom(() => { throw new Error('fixture failure'); })).toThrow('fixture failure');
+    expect(Math.random).toBe(previousRandom);
+  });
+
+  test('containment still rejects card material in every outward surface, including IDs', async () => {
+    const harness = await sevenVerbComposition();
+    const response = await harness.catalog.invoke(
+      'payments.checkout.begin',
+      { body: beginParams() } as never,
+    ) as Record<string, unknown>;
+    expectNoCardMaterial(response, harness.sent, harness.recorded);
+
+    for (const secret of [SENTINEL.number, SENTINEL.cvv]) {
+      expect(() => expectNoCardMaterial({ ...response, reason: secret }, harness.sent, harness.recorded)).toThrow();
+      expect(() => expectNoCardMaterial(response, [...harness.sent, `leaked: ${secret}`], harness.recorded)).toThrow();
+      expect(() => expectNoCardMaterial(response, harness.sent, [...harness.recorded, { leaked: secret }])).toThrow();
+      // No key-based exclusion or string replacement can hide a genuine leak.
+      expect(() => expectNoCardMaterial({ ...response, purchaseId: `pur-${secret}` }, harness.sent, harness.recorded)).toThrow();
+    }
   });
 
   test('a composition that supplies describeSubmission gets a verified purchase', async () => {
