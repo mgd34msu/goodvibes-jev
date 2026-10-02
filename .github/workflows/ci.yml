@@ -110,11 +110,19 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      products: ${{ steps.product-matrix.outputs.products }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Setup Bun + deps (cached)
         uses: ./.github/actions/setup
+      - name: Discover every present product test lane
+        id: product-matrix
+        run: |
+          set -euo pipefail
+          products=$(bun packages/engine/scripts/product-workspaces.ts matrix)
+          echo "products=$products" >> "$GITHUB_OUTPUT"
       - name: Build SDK
         run: bun run build
       - name: Build Agent native E2E artifact
@@ -167,7 +175,7 @@ jobs:
           # `pretest` tsc build does not re-emit over the restored artifact.
           - platform: bun
             node-version: "22"
-            test-cmd: bun packages/engine/scripts/test.ts && bun run products:test
+            test-cmd: bun packages/engine/scripts/test.ts
           - platform: rn-bundle
             node-version: "22"
             test-cmd: bun run test:rn
@@ -234,6 +242,45 @@ jobs:
         # seven small suites, and deterministic; see the script's header.
         if: matrix.platform == 'bun'
         run: bun run sweep:wake-race
+
+  # Every present product gets its own bounded lane. The inspected catalog from
+  # this checkout drives coverage, so newly adopted products cannot be omitted.
+  # Keep engine/foundation suites in the Bun lane with their full existing budget.
+  product-tests:
+    name: Product tests (${{ matrix.product }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [build]
+    strategy:
+      fail-fast: false
+      matrix:
+        product: ${{ fromJSON(needs.build.outputs.products) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      - name: Download workspace package output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: workspace-build-output
+          path: /tmp/workspace-build-output
+      - name: Restore workspace package output
+        run: |
+          tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
+          find packages/engine/*/dist packages/judgment/dist -type f -exec touch {} +
+      - name: Configure git identity for product worktree tests
+        run: |
+          git config --global user.email "ci@goodvibes.local"
+          git config --global user.name "GoodVibes CI"
+      - name: Run complete declared product test suite
+        env:
+          PRODUCT: ${{ matrix.product }}
+        run: bun run products:test "$PRODUCT"
 
   # One browser lane exercises the production WebUI on both viewport sizes and
   # an actual LAN HTTP origin. Its daemon is a synthetic, loopback-only fixture.
@@ -494,6 +541,7 @@ jobs:
       - security-audit
       - build
       - platform-matrix
+      - product-tests
       - webui-browser
       - exec-containment-proof
       - types-resolution-check

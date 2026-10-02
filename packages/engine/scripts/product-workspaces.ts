@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { inspectProductWorkspaces, productCheckCommands, readProductSources, type ProductCheckCommand } from './product-workspace-contract.ts';
+import { inspectProductWorkspaces, productCheckCommands, productTestMatrix, readProductSources, selectProductWorkspaces, type ProductCheckCommand } from './product-workspace-contract.ts';
 import { typecheckFailures } from './typecheck-output-rule.ts';
 
 interface ProductCommandResult { readonly status: number | null; readonly signal?: NodeJS.Signals | null | undefined; readonly stdout: string | null; readonly stderr: string | null; readonly error?: Error | undefined; }
@@ -20,7 +20,7 @@ export async function executeProductCommands(root: string, commands: readonly Pr
   // Test/build children own their output and lifecycle. Inherit the real sinks
   // so progress is visible before exit without another pipe/drain layer.
   // Compiler output must remain captured: printed errors also fail exit zero.
-  stdio: mode === 'typecheck' ? 'pipe' : 'inherit',
+  stdio: mode === 'typecheck' ? 'pipe' : ['ignore', 'inherit', 'inherit'],
 })): Promise<void> {
   for (const command of commands) {
     console.log(`[products] ${command.label} ...`);
@@ -43,12 +43,17 @@ export async function executeProductCommands(root: string, commands: readonly Pr
 if (import.meta.main) {
   const root = resolve(import.meta.dir, '../../..');
   const mode = process.argv[2] ?? 'check';
-  if (!['check', 'complete', 'build', 'test', 'typecheck'].includes(mode)) throw new Error(`Unknown product check mode ${mode}`);
+  if (!['check', 'complete', 'build', 'test', 'typecheck', 'matrix'].includes(mode)) throw new Error(`Unknown product check mode ${mode}`);
+  const selectors = process.argv.slice(3);
+  if (selectors.length > 0 && !['build', 'test', 'typecheck'].includes(mode)) throw new Error(`${mode} does not accept product selectors`);
   const inspection = inspectProductWorkspaces(root, readProductSources(root), mode === 'complete');
   if (inspection.findings.length > 0) {
     for (const finding of inspection.findings) console.error(`[products] ${finding}`);
     process.exit(1);
   }
-  console.log(`[products] ${inspection.products.length} present, ${inspection.missing.length} pending${inspection.missing.length > 0 ? ` (${inspection.missing.join(', ')})` : ''}`);
-  if (mode === 'build' || mode === 'test' || mode === 'typecheck') await executeProductCommands(root, productCheckCommands(root, inspection.products, mode), mode);
+  if (mode === 'matrix') {
+    // Machine-readable stdout: findings are already checked for the whole tree.
+    console.log(JSON.stringify(productTestMatrix(inspection)));
+  } else console.log(`[products] ${inspection.products.length} present, ${inspection.missing.length} pending${inspection.missing.length > 0 ? ` (${inspection.missing.join(', ')})` : ''}`);
+  if (mode === 'build' || mode === 'test' || mode === 'typecheck') await executeProductCommands(root, productCheckCommands(root, selectProductWorkspaces(inspection.products, selectors), mode), mode);
 }

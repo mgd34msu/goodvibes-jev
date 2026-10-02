@@ -54,7 +54,7 @@ run('bun', ['run', '--cwd', 'packages/engine/examples', 'typecheck'], 'examples:
 run('bun', ['packages/engine/scripts/browser-compat-check.ts'], 'browser-compat:check');
 run('bun', ['packages/engine/scripts/package-metadata-check.ts'], 'package-metadata:check');
 run('bun', ['run', 'any:check'], 'any:check');
-// Test execution is owned by the CI platform-matrix (bun) job; removing it
+// Test execution is owned by the CI platform-matrix (bun) and product-tests jobs; removing it
 // from validate eliminates the duplicate test run that used to execute on
 // every push. Local callers can still run `bun run test` explicitly.
 run('bun', ['run', 'pack:check'], 'pack:check');
