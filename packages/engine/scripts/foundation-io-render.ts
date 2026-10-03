@@ -114,7 +114,7 @@ export function renderType(schema: Record<string, unknown>): string {
     }
     return 'string';
   }
-  if (schema.type === 'number') return 'number';
+  if (schema.type === 'number' || schema.type === 'integer') return 'number';
   if (schema.type === 'boolean') return 'boolean';
   if (schema.type === 'null') return 'null';
 
@@ -123,7 +123,7 @@ export function renderType(schema: Record<string, unknown>): string {
     const itemType = renderType(items);
     const isBarePrimitive =
       (items.type === 'string' && !Array.isArray(items.enum)) ||
-      items.type === 'number' ||
+      items.type === 'number' || items.type === 'integer' ||
       items.type === 'boolean';
     return isBarePrimitive ? `readonly ${itemType}[]` : `readonly (${itemType})[]`;
   }
