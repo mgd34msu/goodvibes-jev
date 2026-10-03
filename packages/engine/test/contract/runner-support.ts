@@ -35,6 +35,7 @@ import {
   type ContractHoldOutcome,
   type ContractRouteSelector,
   type ContractRunner,
+  type ContractRunnerDeps,
   type ContractSteps,
   type ExecutionPlans,
   type WorkPlanService,
@@ -176,6 +177,7 @@ export interface Harness {
 }
 
 export interface HarnessOptions {
+  readonly createEngine?: ContractRunnerDeps['createEngine'];
   readonly plan?: DraftPlan;
   readonly contract?: Record<string, unknown>;
   readonly scripts: Readonly<Record<string, AgentScript>>;
@@ -239,7 +241,13 @@ export function makeHarness(options: HarnessOptions): Harness {
         mkdirSync(dirname(join(cwd, path)), { recursive: true });
         writeFileSync(join(cwd, path), text);
       }
-      if (step.stop?.kind === 'hang') return new Promise<void>(() => undefined);
+      if (step.stop?.kind === 'hang') {
+        // Silent until cancelled, like the real cooperative executor. Tests of
+        // uncooperative cleanup supply their own explicit settlement barrier.
+        const signal = manager.getCancellationSignal(record.id)!;
+        if (!signal.aborted) await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+        return;
+      }
       if (step.stop !== undefined) {
         record.status = 'failed';
         record.fullOutput = step.text;
@@ -296,19 +304,20 @@ export function makeHarness(options: HarnessOptions): Harness {
     projectRoot: root,
     routeSelector: options.routeSelector ?? (async () => ROUTE),
     decompositionRunner: planner,
-    createEngine: (input) => createOrchestrationEngine({
+    createEngine: options.createEngine ?? ((input) => createOrchestrationEngine({
       agentManager: manager,
       configManager: config,
       runtimeBus: bus,
       projectRoot: input.projectRoot,
       initializeWorktree: input.initializeWorktree,
+      prepareInputAuthority: input.prepareInputAuthority,
       stateRoot: input.stateRoot,
       stateNamespace: input.stateNamespace,
       contractUnitSettlement: input.contractUnitSettlement,
       fleetCapacity: input.fleetCapacity,
       judgeAttempts: input.judgeAttempts,
       runWorktreeSetup: () => undefined,
-    }),
+    })),
     fleetCapacity: () => ({ active: 0, maxSize: 64, capKey: 'fleet.maxSize' }),
     priceUsage: (_model, usage) => (usage.inputTokens + usage.outputTokens) / 1_000_000,
     priceProvenance: () => ({ source: 'catalog', asOf: '2026-09-01' }),
@@ -316,6 +325,7 @@ export function makeHarness(options: HarnessOptions): Harness {
     ...(options.steps === undefined ? {} : { steps: options.steps }),
     ...(options.workPlanService === undefined ? {} : { workPlanService: options.workPlanService }),
     ...(options.planManager === undefined ? {} : { planManager: options.planManager }),
+    readAccessFilter: async () => true, // Owned synthetic fixtures have no denied source paths.
     repositoryMap: options.repositoryMap ?? (async () => 'README.md'),
   });
   runner.on((event) => events.push(event));

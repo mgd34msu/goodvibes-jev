@@ -1,0 +1,25 @@
+{
+  "intent": {
+    "type": "choice",
+    "instructions": "What does work ask the assistant to do? Read the requested outcome, not message length, particular words, or quoted examples.",
+    "criteria": {
+      "chat": "Conversation, acknowledgement, explanation or a question without an actionable deliverable.",
+      "task": "A bounded deliverable or change, including documenting previous work or writing a guide about it.",
+      "project": "Coordinated implementation of several interdependent deliverables or a substantial system change."
+    }
+  },
+  "needs_plan": {
+    "type": "noul",
+    "instructions": "Does work warrant writing a brief specification and execution plan BEFORE beginning the requested work? A request to explain, summarize or document an existing process does not itself require another implementation plan. Respect a request to answer directly or not to plan/delegate."
+  },
+  "risk": {
+    "type": "score",
+    "instructions": "How costly would a wrong or careless result of `work` be?",
+    "criteria": [
+      "Negligible: a mistake is obvious and redone in moments.",
+      "Minor: a mistake wastes a little time or needs a small follow-up fix.",
+      "Serious: a mistake breaks something that matters or wastes significant time, but can be recovered.",
+      "Severe: a mistake could lose data, expose secrets or security holes, cost money, take production down, or cannot be undone."
+    ]
+  }
+}

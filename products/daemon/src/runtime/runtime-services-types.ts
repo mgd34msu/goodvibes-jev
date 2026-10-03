@@ -55,6 +55,7 @@ import type { BenchmarkStore, CacheHitTracker, FavoritesStore, ModelLimitsServic
 import type { AdaptivePlanner, DeterministicReplayEngine, ExecutionPlanManager, SessionLineageTracker, SessionMemoryStore } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { ArchivableProcessRegistry } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
 import type { WorkPlanStore } from '@goodvibes-jev/engine/sdk/platform/workflow';
+import type { WorkLedgerService } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
 import type { DaemonHandlerSurfaces } from '../daemon/handlers/index.js';
 import type { ClusterGroupComposition } from './cluster-group-composition.js';
 import type { ClusterCoordinator } from '@goodvibes-jev/engine/sdk/platform/cluster';
@@ -64,8 +65,16 @@ import type { JudgmentServices } from '@goodvibes-jev/engine/sdk/platform/runtim
 import type { SessionSnapshot } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import type { DaemonInboxFactory } from './daemon-handler-composition.js';
 import type { TriggerManager } from '@goodvibes-jev/engine/sdk/platform/triggers';
+import type { DaemonBootController, DaemonBootOperations } from './boot-tasks.js';
 
 export interface RuntimeServicesOptions {
+  /**
+   * Explicit boot composition, constructed synchronously without starting its
+   * operations. The entrypoint starts the returned controller after the facade
+   * initializes memory. No production default is installed until the live
+   * notification privacy and awaited webhook lifetime dependencies are ready.
+   */
+  readonly createBootOperations?: ((services: RuntimeServices) => DaemonBootOperations) | undefined;
   /** Explicit server-side installation. Receives this graph's recorded port, never browser credentials. */
   readonly createBrowserJudgment?: ((judgment: JudgmentServices) => BrowserJudgmentService) | undefined;
   /** Required explicit composition until built-in inbox migration is complete. */
@@ -108,6 +117,8 @@ export interface RuntimeServicesOptions {
 }
 
 export interface RuntimeServices {
+  /** Absent when the host did not supply the pending product boot composition. */
+  readonly bootTasks?: DaemonBootController | undefined;
   readonly workingDirectory: string;
   readonly homeDirectory: string;
   /**
@@ -151,6 +162,8 @@ export interface RuntimeServices {
   readonly projectPlanningService: ProjectPlanningService;
   readonly projectPlanningProjectId: string;
   readonly workPlanStore: WorkPlanStore;
+  /** Native project ledger; actor issuance stays in trusted host composition. */
+  readonly workLedger: WorkLedgerService;
   readonly memoryStore: MemoryStore;
   readonly memoryRegistry: MemoryRegistry;
   /** Host-vs-client memory access: local until bootstrap.ts activates it for an adopted 'external' daemon (mirrors sessionSpine). */

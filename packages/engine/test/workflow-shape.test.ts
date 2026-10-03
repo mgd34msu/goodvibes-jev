@@ -23,7 +23,7 @@ type Job = Record<string, unknown> & {
   'timeout-minutes'?: number;
   uses?: string;
   steps?: Array<Record<string, unknown>>;
-  strategy?: { matrix?: Record<string, unknown> };
+  strategy?: { matrix?: Record<string, unknown>; 'fail-fast'?: boolean };
   permissions?: Record<string, string>;
   environment?: unknown;
 };
@@ -206,8 +206,8 @@ describe('ci.yml: build once, restore everywhere', () => {
     }
   });
 
-  test('eval-gate and platform-matrix restore the artifact instead of rebuilding', () => {
-    for (const name of ['eval-gate', 'platform-matrix']) {
+  test('eval-gate, platform-matrix and product-tests restore the artifact instead of rebuilding', () => {
+    for (const name of ['eval-gate', 'platform-matrix', 'product-tests']) {
       const job = ci.jobs![name]!;
       expect(needsOf(job)).toContain('build');
       expect(stepText(job)).toContain('workspace-build-output');
@@ -223,10 +223,69 @@ describe('ci.yml: build once, restore everywhere', () => {
     // The runner owns isolation; `bun run test` would first rebuild over the
     // restored artifact. Flags and environment settings need not be frozen.
     expect(bun?.['test-cmd']).toContain('packages/engine/scripts/test.ts');
-    expect(bun?.['test-cmd']).toContain('bun run products:test');
     expect(bun?.['test-cmd']).not.toMatch(/\bbun\s+(?:run\s+)?test(?:\s|$)/);
-    expect(bun?.['test-cmd']).toContain('products:test');
+    expect(bun?.['test-cmd']).not.toContain('products:test');
     for (const row of include) expect(row['test-cmd']).not.toContain('bun run build');
+  });
+
+  test('complete product suites are catalog-driven required lanes with independent unchanged caps', () => {
+    const build = ci.jobs!['build']!;
+    const products = ci.jobs!['product-tests']!;
+    const platform = ci.jobs!['platform-matrix']!;
+    expect(products).toBeDefined();
+    expect(products.if).toBeUndefined();
+    expect(products['continue-on-error']).toBeUndefined();
+    expect(products['timeout-minutes']).toBe(15);
+    expect(platform['timeout-minutes']).toBe(15);
+    expect(products.strategy?.['fail-fast']).toBe(false);
+    expect(products.strategy?.matrix).toEqual({ product: '${{ fromJSON(needs.build.outputs.products) }}' });
+    expect(build.outputs).toEqual({ products: '${{ steps.product-matrix.outputs.products }}' });
+    const discovery = steps(build).find((step) => step.id === 'product-matrix');
+    expect(discovery?.if).toBeUndefined();
+    expect(discovery?.['continue-on-error']).toBeUndefined();
+    expect(discovery?.run).toBe('set -euo pipefail\nproducts=$(bun packages/engine/scripts/product-workspaces.ts matrix)\necho "products=$products" >> "$GITHUB_OUTPUT"\n');
+    const run = steps(products).find((step) => step.run === 'bun run products:test "$PRODUCT"');
+    expect(run).toBeDefined();
+    expect(run?.env).toEqual({ PRODUCT: '${{ matrix.product }}' });
+    expect(run?.if).toBeUndefined();
+    for (const step of steps(products)) expect(step['continue-on-error']).toBeUndefined();
+    expect(runText(ci, 'product-tests')).not.toMatch(/--pass-with-no-tests|--passWithNoTests|--test-name-pattern|\|\|\s*true/);
+    expect(needsOf(ci.jobs!['auto-release']!)).toContain('product-tests');
+    const rootPackage = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
+    expect(rootPackage.scripts['products:test']).toBe('bun packages/engine/scripts/product-workspaces.ts test');
+    expect(rootPackage.scripts.test).toContain('bun run products:test');
+  });
+
+  test('the Agent lane verifies its exact native artifact and owns its terminal prerequisites', () => {
+    const build = ci.jobs!['build']!;
+    const product = ci.jobs!['product-tests']!;
+    expect(build['timeout-minutes']).toBe(15);
+    expect(runText(ci, 'build')).toContain('bun run --cwd products/agent build:binary --target linux-x64');
+    expect(runText(ci, 'build')).toContain('bun products/agent/scripts/ci-artifact.ts record "$GITHUB_SHA"');
+    for (const path of ['products/agent/dist/goodvibes-agent-linux-x64', 'products/agent/dist/lib', 'products/agent/dist/ci-artifact.json']) {
+      expect(runText(ci, 'build')).toContain(path);
+    }
+    const verify = steps(product).find((step) => step.name === 'Verify restored Agent native artifact');
+    const terminal = steps(product).find((step) => step.name === 'Install Agent terminal E2E prerequisite');
+    const run = steps(product).find((step) => step.name === 'Run complete declared product test suite');
+    const restore = steps(product).find((step) => step.name === 'Restore workspace package output');
+    expect(verify?.if).toBe("matrix.product == 'agent'");
+    expect(terminal?.if).toBe("matrix.product == 'agent'");
+    expect(verify?.run).toContain('bun products/agent/scripts/ci-artifact.ts verify "$GITHUB_SHA"');
+    expect(verify?.run).toContain('products/agent/dist/goodvibes-agent-linux-x64 --version');
+    expect(verify?.run).toContain('echo "GOODVIBES_E2E_BINARY=$GITHUB_WORKSPACE/products/agent/dist/goodvibes-agent-linux-x64" >> "$GITHUB_ENV"');
+    expect(terminal?.run).toContain('sudo apt-get install --no-install-recommends -y tmux');
+    expect(steps(product).indexOf(verify!)).toBeGreaterThan(steps(product).indexOf(restore!));
+    expect(steps(product).indexOf(run!)).toBeGreaterThan(steps(product).indexOf(verify!));
+    expect(steps(product).indexOf(run!)).toBeGreaterThan(steps(product).indexOf(terminal!));
+    expect(stepText(ci.jobs!['platform-matrix']!)).not.toMatch(/GOODVIBES_E2E_BINARY|ci-artifact\.ts verify|apt-get install.*tmux/);
+  });
+
+  test('the Bun lane retains the deterministic fake-IMAP race sweep', () => {
+    const sweep = steps(ci.jobs!['platform-matrix']!).find((step) => step.run === 'bun run sweep:wake-race');
+    expect(sweep).toBeDefined();
+    expect(sweep?.if).toBe("matrix.platform == 'bun'");
+    expect(sweep?.['continue-on-error']).toBeUndefined();
   });
 
   test('the required bun matrix leg also runs the judgment foundation suite', () => {

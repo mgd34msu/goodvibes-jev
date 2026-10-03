@@ -90,6 +90,8 @@ import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
 
 export interface CrossProcessLockOptions {
+  /** Fail closed unless ownership is atomically published or its recorded process is provably dead. No age/corrupt-payload takeover or direct-create fallback. */
+  readonly strictOwnership?: boolean | undefined;
   /**
    * A lock whose mtime has not moved for this long is treated as abandoned and
    * taken over. Default 30s. A live holder refreshes its mtime roughly every
@@ -159,16 +161,20 @@ function isPidAlive(pid: number): boolean {
  * understood rather than being misjudged as corrupt. Returns null on any
  * read/parse failure (the caller treats that as stale).
  */
-function readLockHolder(lockPath: string): { pid: number; token: string } | null {
+function readLockHolder(lockPath: string, strictOwnership = false): { pid: number; token: string } | null {
   try {
     const raw = readFileSync(lockPath, 'utf-8').trim();
     if (!raw) return null;
     if (raw.startsWith('{')) {
-      const parsed = JSON.parse(raw) as { pid?: unknown; token?: unknown };
+      const parsed = JSON.parse(raw) as { pid?: unknown; token?: unknown; acquiredAt?: unknown };
+      if (strictOwnership && (typeof parsed.pid !== 'number' || !Number.isSafeInteger(parsed.pid) || parsed.pid <= 0
+        || typeof parsed.token !== 'string' || !/^[a-f0-9]{16}$/.test(parsed.token)
+        || typeof parsed.acquiredAt !== 'number' || !Number.isFinite(parsed.acquiredAt) || parsed.acquiredAt <= 0)) return null;
       const pid = Number(parsed.pid);
       if (!Number.isFinite(pid)) return null;
       return { pid, token: typeof parsed.token === 'string' ? parsed.token : '' };
     }
+    if (strictOwnership) return null;
     const [pidStr] = raw.split(/\s+/);
     const pid = Number(pidStr);
     if (!Number.isFinite(pid)) return null;
@@ -191,15 +197,26 @@ interface LockVerdict {
  * null when the lock vanished between the failed create and this check,
  * there is nothing to take over, so the caller just retries the create.
  */
-function inspectLock(lockPath: string, staleMs: number): LockVerdict | null {
+function inspectLock(lockPath: string, staleMs: number, strictOwnership = false): LockVerdict | null {
   let stat: ReturnType<typeof statSync>;
   try {
     stat = statSync(lockPath);
   } catch {
     return null;
   }
-  const holder = readLockHolder(lockPath);
-  const stale = !holder || !isPidAlive(holder.pid) || Date.now() - stat.mtimeMs > staleMs;
+  const holder = readLockHolder(lockPath, strictOwnership);
+  let stale = false;
+  if (strictOwnership) {
+    // Unknown, malformed, reused-PID and inaccessible owners never grant a
+    // write. Only ESRCH for a validated local process identity proves death.
+    if (holder) {
+      try { process.kill(holder.pid, 0); } catch (error) {
+        stale = (error as NodeJS.ErrnoException).code === 'ESRCH';
+      }
+    }
+  } else {
+    stale = !holder || !isPidAlive(holder.pid) || Date.now() - stat.mtimeMs > staleMs;
+  }
   return { stale, ino: Number(stat.ino), dev: Number(stat.dev) };
 }
 
@@ -303,7 +320,7 @@ function reclaimAbandonedStagingFiles(lockPath: string, staleMs: number): void {
  * turned out to be live after all, or the lock vanished and a plain create
  * should be retried instead). Never throws.
  */
-function tryTakeOverStaleLock(lockPath: string, staleMs: number, token: string): number | null {
+function tryTakeOverStaleLock(lockPath: string, staleMs: number, token: string, strictOwnership = false): number | null {
   const ticketPath = `${lockPath}.takeover`;
   let ticketFd: number;
   try {
@@ -324,7 +341,7 @@ function tryTakeOverStaleLock(lockPath: string, staleMs: number, token: string):
     // Re-judge under the ticket. A lock that is gone is NOT taken over: the
     // path is free, so another waiter's plain create may land at any moment
     // and replacing it would hand out a second holder. Retry the plain create.
-    const verdict = inspectLock(lockPath, staleMs);
+    const verdict = inspectLock(lockPath, staleMs, strictOwnership);
     if (!verdict || !verdict.stale) return null;
 
     stagingPath = newStagingPath(lockPath);
@@ -345,8 +362,8 @@ function tryTakeOverStaleLock(lockPath: string, staleMs: number, token: string):
       // inspectLock already returns the inode identity for this purpose. The
       // check simply was not made, so the window spanned a staging create and a
       // payload write; it is now a stat immediately followed by the rename.
-      const current = inspectLock(lockPath, staleMs);
-      if (!current || current.ino !== verdict.ino || current.dev !== verdict.dev) {
+      const current = inspectLock(lockPath, staleMs, strictOwnership);
+      if (!current || current.ino !== verdict.ino || current.dev !== verdict.dev || (strictOwnership && !current.stale)) {
         // Someone replaced it. Not ours to take: retry the ordinary path.
         try {
           closeSync(fd);
@@ -403,8 +420,8 @@ let hardlinkUnsupported = false;
  * Returns the open descriptor of the lock file this process now owns, or null
  * when someone else holds the lock (EEXIST, ordinary contention).
  */
-function createLockAtomically(lockPath: string, token: string): number | null {
-  if (hardlinkUnsupported) return createLockDirectly(lockPath, token);
+function createLockAtomically(lockPath: string, token: string, strictOwnership = false): number | null {
+  if (hardlinkUnsupported && !strictOwnership) return createLockDirectly(lockPath, token);
 
   const stagingPath = newStagingPath(lockPath);
   let fd: number;
@@ -426,6 +443,7 @@ function createLockAtomically(lockPath: string, token: string): number | null {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === 'EEXIST') return null; // someone else holds it
     if (code === 'EPERM' || code === 'ENOSYS' || code === 'EOPNOTSUPP' || code === 'EXDEV') {
+      if (strictOwnership) throw new Error('cross-process-lock: strict ownership requires atomic populated lock creation');
       // A filesystem without hardlinks (exFAT and friends). Fall back to the
       // plain create, it reintroduces the tiny zero-byte window described
       // above, which is the best an FS with no atomic populated-create offers.
@@ -573,7 +591,10 @@ async function acquireFileLock(
   lockPath: string,
   options: CrossProcessLockOptions = {},
 ): Promise<() => void> {
-  const staleMs = options.staleMs ?? DEFAULT_STALE_MS;
+  const strictOwnership = options.strictOwnership === true;
+  // Strict ownership also disables age-only staging/ticket reclamation: a
+  // frozen live process may still resume. Ambiguous leftovers time out.
+  const staleMs = strictOwnership ? Infinity : options.staleMs ?? DEFAULT_STALE_MS;
   const maxBackoffMs = options.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
   const totalTimeoutMs = options.totalTimeoutMs ?? DEFAULT_TOTAL_TIMEOUT_MS;
   let backoffMs = options.initialBackoffMs ?? DEFAULT_INITIAL_BACKOFF_MS;
@@ -593,7 +614,7 @@ async function acquireFileLock(
     // create, or from a takeover's atomic replace. It stays open for the
     // lock's lifetime: it is both the refresh handle (futimes) and the
     // ownership proof (inode).
-    let fd = createLockAtomically(lockPath, token);
+    let fd = createLockAtomically(lockPath, token, strictOwnership);
     if (fd === null) {
       if (Date.now() - start >= totalTimeoutMs) {
         throw new Error(
@@ -601,9 +622,9 @@ async function acquireFileLock(
         );
       }
 
-      const verdict = inspectLock(lockPath, staleMs);
+      const verdict = inspectLock(lockPath, staleMs, strictOwnership);
       if (!verdict) continue; // vanished, retry the create immediately
-      if (verdict.stale) fd = tryTakeOverStaleLock(lockPath, staleMs, token);
+      if (verdict.stale) fd = tryTakeOverStaleLock(lockPath, staleMs, token, strictOwnership);
       if (fd === null) {
         await sleep(backoffMs);
         backoffMs = Math.min(backoffMs * 2, maxBackoffMs);

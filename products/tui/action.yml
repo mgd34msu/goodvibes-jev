@@ -1,0 +1,109 @@
+name: 'Run GoodVibes'
+description: 'Install a pinned, checksum-verified GoodVibes release and run a non-interactive command or prompt against a workspace in CI.'
+branding:
+  icon: 'terminal'
+  color: 'purple'
+
+inputs:
+  version:
+    description: 'GoodVibes release to install: a tag like v1.13.1, or "latest".'
+    required: false
+    default: 'latest'
+  prompt:
+    description: 'Non-interactive prompt to run (goodvibes run <prompt>). Requires a provider credential (e.g. OPENAI_API_KEY) in the job env.'
+    required: false
+    default: ''
+  command:
+    description: 'A goodvibes subcommand to run instead of a prompt (e.g. "doctor", "status"). Ignored when prompt is set.'
+    required: false
+    default: ''
+  args:
+    description: 'Extra arguments appended after the command.'
+    required: false
+    default: ''
+  output:
+    description: 'Output format for run: text | json | stream-json.'
+    required: false
+    default: 'text'
+  working-directory:
+    description: 'Workspace directory to run in.'
+    required: false
+    default: '.'
+  install-dir:
+    description: 'Directory to install the binaries into.'
+    required: false
+    default: ''
+  install-agent:
+    description: 'Also install goodvibes-agent (1) or not (0). Off by default in CI because it pulls in Bun.'
+    required: false
+    default: '0'
+
+outputs:
+  version:
+    description: 'The goodvibes --version string of the installed binary.'
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install GoodVibes (pinned, checksum-verified)
+      id: install
+      shell: bash
+      env:
+        GOODVIBES_VERSION: ${{ inputs.version }}
+        GOODVIBES_AGENT: ${{ inputs.install-agent }}
+        # CI installs binaries only — never register a persistent user service.
+        GOODVIBES_DAEMON_SERVICE: '0'
+      run: |
+        set -eu
+        # Resolve the install directory (default to a stable, PATH-able dir).
+        INSTALL_DIR="${{ inputs.install-dir }}"
+        if [ -z "$INSTALL_DIR" ]; then
+          INSTALL_DIR="$HOME/.goodvibes-bin"
+        fi
+        mkdir -p "$INSTALL_DIR"
+        export GOODVIBES_INSTALL_DIR="$INSTALL_DIR"
+        # The suite installer is hosted at https://goodvibes.sh/install.sh (a
+        # Cloudflare Pages project; its _redirects file owns this path) — the
+        # same script `curl -fsSL https://goodvibes.sh/install.sh | sh` runs.
+        # It resolves a release tag per product repository and verifies every
+        # binary it places against that repository's own SHA256SUMS.txt; a
+        # missing manifest entry is a hard failure, never a skip.
+        #
+        # This used to fetch a copy attached to the daemon repository's own
+        # GitHub release (https://github.com/mgd34msu/goodvibes-daemon/releases/
+        # latest/download/install.sh), but the daemon/TUI product split retired
+        # that asset — the daemon's releases now carry only the daemon's own
+        # artifacts, so that URL 404s. The hosted URL is the one canonical copy
+        # and does not drift per-repository.
+        curl -fsSL --proto '=https' --retry 3 \
+          -o "$RUNNER_TEMP/goodvibes-install.sh" \
+          https://goodvibes.sh/install.sh
+        sh "$RUNNER_TEMP/goodvibes-install.sh"
+        # Put the install dir on PATH for later steps in the job.
+        echo "$INSTALL_DIR" >> "$GITHUB_PATH"
+        VERSION_STRING="$("$INSTALL_DIR/goodvibes" --version)"
+        echo "version=$VERSION_STRING" >> "$GITHUB_OUTPUT"
+        echo "Installed: $VERSION_STRING"
+
+    - name: Run GoodVibes
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GV_PROMPT: ${{ inputs.prompt }}
+        GV_COMMAND: ${{ inputs.command }}
+        GV_ARGS: ${{ inputs.args }}
+        GV_OUTPUT: ${{ inputs.output }}
+      run: |
+        set -eu
+        goodvibes --version
+        if [ -n "$GV_PROMPT" ]; then
+          echo "Running non-interactive prompt"
+          goodvibes --non-interactive --output "$GV_OUTPUT" run "$GV_PROMPT" $GV_ARGS
+        elif [ -n "$GV_COMMAND" ]; then
+          echo "Running: goodvibes $GV_COMMAND $GV_ARGS"
+          # shellcheck disable=SC2086
+          goodvibes --non-interactive $GV_COMMAND $GV_ARGS
+        else
+          echo "No prompt or command provided; install + version only."
+        fi

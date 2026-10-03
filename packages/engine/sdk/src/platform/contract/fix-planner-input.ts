@@ -1,3 +1,4 @@
+import { createContractInputAuthority, assertContractInputAdmission, type ContractInputAuthority } from './input-authority.js';
 /** A corrective planner reads produced contract work, frozen independently of the live owner tree. */
 import { join } from 'node:path';
 import { IsolatedWorktree } from '../agents/worktree.js';
@@ -6,6 +7,7 @@ import { assertContractExecutionView, assertContractInputObjects, assertContract
 import type { ContractRun } from './run-context.js';
 
 export interface FixPlannerInput {
+  readonly authority?: ContractInputAuthority | undefined;
   readonly workingDirectory: string;
   /** Discard the plan if the source result tree or the frozen view changed while it was read. */
   assertCurrent(): Promise<void>;
@@ -20,6 +22,7 @@ export async function prepareFixPlannerInput(run: ContractRun): Promise<FixPlann
   if (contract.isolation !== 'worktree') return { workingDirectory: source, assertCurrent: async () => { signal.throwIfAborted(); } };
   const original = contract.inputSnapshot;
   if (original === undefined || contract.branch === undefined) throw new Error('fix planning has no recorded contract input; manual recovery is required');
+  assertContractInputAdmission(contract);
   assertContractInputObjects(original, contract.projectRoot);
   assertContractExecutionView(original, source, contract.branch);
   const current = await captureContractInput(source, { signal });
@@ -35,6 +38,7 @@ export async function prepareFixPlannerInput(run: ContractRun): Promise<FixPlann
   run.decide('created', contract.id, `fix planner admitted result view ${current.id} at ${current.inputCommit}; original input ${original.id}`);
   const assertCurrent = async (): Promise<void> => {
     signal.throwIfAborted();
+    assertContractInputAdmission(contract);
     assertContractExecutionView(original, source, contract.branch!);
     try { await assertContractInputOwner(current, signal); }
     catch (error) {
@@ -44,5 +48,6 @@ export async function prepareFixPlannerInput(run: ContractRun): Promise<FixPlann
     await assertContractInputView(current, signal, workingDirectory);
   };
   await assertCurrent();
-  return { workingDirectory, assertCurrent };
+  const authority = await createContractInputAuthority(contract, workingDirectory, { signal, snapshot: current, assertView: assertCurrent });
+  return { workingDirectory, assertCurrent, authority };
 }

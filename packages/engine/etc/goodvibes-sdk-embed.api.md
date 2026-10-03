@@ -12,6 +12,7 @@ import type { SimpleGit } from 'simple-git';
 import { SqliteDecisionLog } from '@goodvibes-jev/judgment';
 import type { Stakes } from '@goodvibes-jev/judgment';
 import type { StoreApi } from 'zustand';
+import { z } from 'zod/v4';
 
 // Warning: (ae-forgotten-export) The symbol "SessionEvent" needs to be exported by the entry point embed.d.ts
 // Warning: (ae-forgotten-export) The symbol "TurnEvent" needs to be exported by the entry point embed.d.ts
@@ -152,6 +153,7 @@ export class DaemonServer {
     // Warning: (ae-forgotten-export) The symbol "DaemonDangerConfig" needs to be exported by the entry point embed.d.ts
     enable(dangerConfig: DaemonDangerConfig, token?: string): boolean;
     get eventBus(): RuntimeEventBus;
+    fenceRestartAdmission(): void;
     // Warning: (ae-forgotten-export) The symbol "RelayReachability" needs to be exported by the entry point embed.d.ts
     getRelayReachability(): RelayReachability | null;
     get isRunning(): boolean;
@@ -241,8 +243,10 @@ export interface PermissionPromptRequest {
     workingDirectory?: string | undefined;
 }
 
+// Warning: (ae-forgotten-export) The symbol "PermissionExecutionOptions" needs to be exported by the entry point embed.d.ts
+//
 // @public (undocumented)
-export type PermissionRequestHandler = (request: PermissionPromptRequest) => Promise<PermissionPromptDecision>;
+export type PermissionRequestHandler = (request: PermissionPromptRequest, options?: PermissionExecutionOptions) => Promise<PermissionPromptDecision>;
 
 // @public
 export type RememberTier = 'session' | 'exact' | 'command-class' | 'path' | 'tool';
@@ -442,7 +446,7 @@ export interface SubmitSharedSessionMessageInput {
 //
 // sdk/src/platform/control-plane/approval-broker.ts:281:7 - (ae-forgotten-export) The symbol "PersistentStore" needs to be exported by the entry point embed.d.ts
 // sdk/src/platform/control-plane/approval-broker.ts:281:7 - (ae-forgotten-export) The symbol "SharedApprovalStoreSnapshot" needs to be exported by the entry point embed.d.ts
-// sdk/src/platform/control-plane/approval-broker.ts:488:7 - (ae-forgotten-export) The symbol "ExplicitApprovalDisposition" needs to be exported by the entry point embed.d.ts
+// sdk/src/platform/control-plane/approval-broker.ts:496:7 - (ae-forgotten-export) The symbol "ExplicitApprovalDisposition" needs to be exported by the entry point embed.d.ts
 // sdk/src/platform/control-plane/session-broker.ts:117:5 - (ae-forgotten-export) The symbol "SharedSessionStoreSnapshot" needs to be exported by the entry point embed.d.ts
 // sdk/src/platform/control-plane/session-broker.ts:119:5 - (ae-forgotten-export) The symbol "RouteBindingManager" needs to be exported by the entry point embed.d.ts
 // sdk/src/platform/control-plane/session-broker.ts:120:5 - (ae-forgotten-export) The symbol "SharedSessionAgentStatusProvider" needs to be exported by the entry point embed.d.ts

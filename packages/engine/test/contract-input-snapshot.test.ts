@@ -123,10 +123,12 @@ describe('local frozen contract input', () => {
 
 test('denied captured source exports stay withheld from the repository map', async () => {
   const { defaultRepositoryMap } = await import('../sdk/src/platform/contract/planner.js');
+  const { createContractInputAuthority, withContractInputAuthority } = await import('../sdk/src/platform/contract/input-authority.js');
   const root = repo(); writeFileSync(join(root, 'secret.ts'), 'export const SYNTHETIC_PRIVATE_EXPORT = 123;\n');
   const snapshot = await captureContractInput(root); const frozen = await view(root, snapshot);
+  const authority = await createContractInputAuthority({ projectRoot: root, inputSnapshot: snapshot } as import('../sdk/src/platform/contract/types.js').Contract, frozen);
   const checked: string[] = [];
-  const map = await defaultRepositoryMap(frozen, async (path) => { checked.push(path); return !path.endsWith('/secret.ts'); });
+  const map = await withContractInputAuthority(authority, () => defaultRepositoryMap(frozen, async (path) => { checked.push(path); return !path.endsWith('/secret.ts'); }));
   expect(checked.some((path) => path === join(frozen, 'secret.ts'))).toBe(true);
   expect(map).not.toContain('SYNTHETIC_PRIVATE_EXPORT');
 });

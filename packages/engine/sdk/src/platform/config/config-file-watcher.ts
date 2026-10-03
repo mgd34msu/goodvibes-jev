@@ -22,7 +22,7 @@
  * unknown later moment. A write landing at any point after the synchronous
  * baseline, including during watcher startup, differs from it and fires.
  */
-import { statSync } from 'node:fs';
+import { accessSync, constants, statSync } from 'node:fs';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 
@@ -36,6 +36,7 @@ interface FileSnapshot {
   readonly mtimeMs: number;
   readonly size: number;
   readonly exists: boolean;
+  readonly readError?: string;
 }
 
 /**
@@ -43,17 +44,24 @@ interface FileSnapshot {
  * an error: creating or deleting a settings file is a change the reader must
  * see so it can fall back to, or move off, defaults.
  */
-function readSnapshot(path: string): FileSnapshot {
+function readSnapshot(path: string, trackReadErrors = false): FileSnapshot {
   try {
     const stats = statSync(path);
+    // A file may remain stat-able after chmod/ACL changes deny its contents.
+    // Host permissions must observe both the failure and readable recovery.
+    if (trackReadErrors) accessSync(path, constants.R_OK);
     return { mtimeMs: stats.mtimeMs, size: stats.size, exists: true };
-  } catch {
+  } catch (error) {
+    if (trackReadErrors) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') return { mtimeMs: 0, size: 0, exists: false, readError: code ?? 'unreadable' };
+    }
     return { mtimeMs: 0, size: 0, exists: false };
   }
 }
 
 function sameSnapshot(a: FileSnapshot, b: FileSnapshot): boolean {
-  return a.mtimeMs === b.mtimeMs && a.size === b.size && a.exists === b.exists;
+  return a.mtimeMs === b.mtimeMs && a.size === b.size && a.exists === b.exists && a.readError === b.readError;
 }
 
 /**
@@ -65,13 +73,16 @@ export function watchConfigFiles(
   paths: readonly string[],
   onChange: () => void,
   intervalMs = 250,
+  // Registered host permissions distinguish ENOENT from an unreadable tier.
+  // Stable error codes remain stable snapshots, avoiding repeated reloads.
+  trackReadErrors = false,
 ): ConfigFileWatchHandle {
   // Baselines are captured synchronously HERE, before any polling is armed, so
   // no write can slip in behind an asynchronously-established baseline.
   const baselines = new Map<string, FileSnapshot>();
   for (const path of paths) {
     if (!path || baselines.has(path)) continue;
-    baselines.set(path, readSnapshot(path));
+    baselines.set(path, readSnapshot(path, trackReadErrors));
   }
   if (baselines.size === 0) return { stop(): void { /* nothing watched */ } };
 
@@ -80,7 +91,7 @@ export function watchConfigFiles(
     if (stopped) return;
     let changed = false;
     for (const [path, previous] of baselines) {
-      const current = readSnapshot(path);
+      const current = readSnapshot(path, trackReadErrors);
       if (sameSnapshot(previous, current)) continue;
       baselines.set(path, current);
       changed = true;

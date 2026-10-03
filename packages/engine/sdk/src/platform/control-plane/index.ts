@@ -193,3 +193,5 @@ export type {
 
 // Shared host handler binding, including explicit-user confirmation semantics.
 export * from './host-handlers.js';
+
+export { registerWorkLedgerGatewayMethods } from './routes/work-ledger.js';

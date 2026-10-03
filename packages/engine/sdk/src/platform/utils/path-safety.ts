@@ -1,3 +1,4 @@
+import { assertCapturedInputPathContext } from '../contract/input-authority.js';
 import { existsSync, realpathSync } from 'node:fs';
 import { dirname, resolve, relative, sep } from 'node:path';
 import { GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
@@ -34,12 +35,14 @@ function nearestExistingPath(path: string): string {
 export function resolveAndValidatePath(inputPath: string, projectRoot: string): string {
   const root = realpathSync(resolve(projectRoot), 'utf8');
   const resolved = resolve(root, inputPath);
+  assertCapturedInputPathContext(resolved);
   const rel = relative(root, resolved);
   if (rel.startsWith('..') || rel.split(sep).includes('..')) {
     throw pathOutsideRootError(inputPath);
   }
   const existingPath = nearestExistingPath(resolved);
   const realExistingPath = realpathSync(existingPath, 'utf8');
+  assertCapturedInputPathContext(realExistingPath);
   if (!isInsideRoot(root, realExistingPath)) {
     throw pathOutsideRootError(inputPath);
   }

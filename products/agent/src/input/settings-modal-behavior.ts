@@ -1,0 +1,47 @@
+import type { ConfigSetting } from '@goodvibes-jev/engine/sdk/platform/config';
+import type { ModelPickerTarget } from './model-picker.ts';
+
+export type ModelPickerLaunch =
+  | { readonly flow: 'providerModel'; readonly target: ModelPickerTarget }
+  | { readonly flow: 'model'; readonly target: ModelPickerTarget };
+
+/**
+ * Map config keys to the shared provider/model picker flows.
+ */
+export function modelPickerLaunchForKey(key: string): ModelPickerLaunch | null {
+  if (key === 'provider.model') return { flow: 'providerModel', target: 'main' };
+  if (key === 'helper.globalProvider') return { flow: 'providerModel', target: 'helper' };
+  if (key === 'helper.globalModel') return { flow: 'model', target: 'helper' };
+  if (key === 'tools.llmProvider') return { flow: 'providerModel', target: 'tool' };
+  if (key === 'tools.llmModel') return { flow: 'model', target: 'tool' };
+  if (key === 'tts.llmProvider') return { flow: 'providerModel', target: 'tts' };
+  if (key === 'tts.llmModel') return { flow: 'model', target: 'tts' };
+  return null;
+}
+
+export function roundToPrecision(value: number, precision: number): number {
+  const factor = 10 ** precision;
+  return Math.round(value * factor) / factor;
+}
+
+export function getNumericAdjustmentMeta(setting: ConfigSetting): {
+  step: number;
+  min?: number;
+  max?: number;
+  precision: number;
+} {
+  return { step: 1, precision: 0 };
+}
+
+/**
+ * Parse a committed number-setting edit buffer, money field or not: SDK
+ * 2.0.5 removed the major/minor conversion these keys used to need, so a
+ * money setting's stored value is now the plain number a person typed, same
+ * as any other number setting. Returns null for anything unparseable; the
+ * SDK's own config-set codec (`coerceSchemaValue`) tolerates a leading
+ * currency symbol or thousands grouping on the write path itself.
+ */
+export function parseNumberEditBuffer(buffer: string): number | null {
+  const parsed = Number(buffer);
+  return Number.isNaN(parsed) ? null : parsed;
+}

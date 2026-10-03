@@ -358,7 +358,7 @@ export function rollbackManagedApply(configManager: ConfigManager, token: string
 
 function buildResolvedEntries(configManager: ConfigManager, store: SettingsControlPlaneStore): ResolvedSettingEntry[] {
   const conflictKeys = new Set(store.conflicts.map((entry) => entry.key));
-  return CONFIG_SCHEMA.map((setting) => {
+  return configManager.getSchema().map((setting) => {
     const localValue = structuredClone(configManager.get(setting.key));
     const syncedEntry = store.syncedSettings.find((entry) => entry.key === setting.key);
     const managedEntry = store.managedSettings.find((entry) => entry.key === setting.key);
@@ -408,6 +408,8 @@ function buildResolvedEntries(configManager: ConfigManager, store: SettingsContr
 
 export function getSettingsControlPlaneSnapshot(configManager: ConfigManager): SettingsControlPlaneSnapshot {
   const store = readStore(getConfigControlPlaneDir(configManager));
+  const hostKeys = new Set(configManager.getHostSettingsSchema?.().map(entry => entry.key) ?? []);
+  const managedLocks = store.managedLocks.filter(entry => !hostKeys.has(entry.key));
   const resolvedEntries = buildResolvedEntries(configManager, store);
   const profileManager = new ProfileManager(join(configManager.getControlPlaneConfigDir(), 'profiles'));
   const resolvedCounts: Record<SettingsSource, number> = {
@@ -418,14 +420,14 @@ export function getSettingsControlPlaneSnapshot(configManager: ConfigManager): S
   };
   for (const entry of resolvedEntries) resolvedCounts[entry.effectiveSource]++;
   return {
-    liveKeyCount: CONFIG_SCHEMA.length,
+    liveKeyCount: configManager.getSchema().length,
     profileCount: profileManager.list().length,
-    managedLockCount: store.managedLocks.length,
+    managedLockCount: managedLocks.length,
     resolvedCounts,
     lastSync: store.events[store.events.length - 1],
     recentEvents: store.events.slice(-8).reverse(),
     recentFailures: store.failures.slice(-6).reverse(),
-    managedLocks: store.managedLocks,
+    managedLocks,
     conflicts: store.conflicts.slice(-10).reverse(),
     stagedManagedBundle: store.stagedManagedBundle,
     rollbackHistory: store.rollbackHistory.slice(-8).reverse(),

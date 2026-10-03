@@ -1,3 +1,4 @@
+import { createContractInputAuthority, type ContractInputAuthority } from './input-authority.js';
 /**
  * Groups on the orchestration engine (docs/design/contract-runner.md sections
  * 6.1, 7.3 and 7.4): one engine per contract, a workstream per group started
@@ -48,6 +49,7 @@ export interface ContractEngineInput {
   /** The contract id: its snapshots get their own directory, since every contract names its groups g1, g2... */
   readonly stateNamespace: string;
   readonly initializeWorktree?: import('../orchestration/worktree-isolation.js').WorktreeIsolationManagerDeps['initializeWorktree'];
+  readonly prepareInputAuthority?: ((worktree: { readonly path: string; readonly branch: string }, signal: AbortSignal) => Promise<ContractInputAuthority>) | undefined;
   readonly contractUnitSettlement: ContractUnitSettlement;
   readonly fleetCapacity: FleetCapacityFn;
   /** The `contract.best-of-n` selector over this contract's attempts, for `fleet.attempts.judge` (design 6.2). */
@@ -140,11 +142,22 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
       projectRoot: contract.worktreePath ?? contract.projectRoot,
       stateRoot: contract.projectRoot,
       stateNamespace: contract.id,
-      ...(contract.inputSnapshot === undefined ? {} : { initializeWorktree: (worktree: import('../agents/worktree.js').IsolatedWorktree) => initializeContractMemberWorktree(contract.worktreePath!, worktree) }),
+      ...(contract.inputSnapshot === undefined ? {} : { prepareInputAuthority: async (worktree: { readonly path: string; readonly branch: string }, signal: AbortSignal) => {
+        signal.throwIfAborted();
+        const authority = await createContractInputAuthority(contract, worktree.path, { signal: AbortSignal.any([run.abort.signal, signal]), mutable: true, branch: worktree.branch });
+        signal.throwIfAborted();
+        return authority;
+      }, initializeWorktree: (worktree: import('../agents/worktree.js').IsolatedWorktree) => initializeContractMemberWorktree(contract.worktreePath!, worktree) }),
       contractUnitSettlement: deps.settlement,
       fleetCapacity: deps.fleetCapacity,
       judgeAttempts: createContractAttemptJudge(run),
     });
+    if (run.requireSettlement && typeof engine.join !== 'function') {
+      const owner = deps.getStatus(run.contract.ownerAgentId);
+      if (owner) owner.failureReason = 'OWNED_AGENT_EXECUTION_UNSUPPORTED';
+      engine.dispose();
+      throw new Error('Owned contract requires an orchestration engine with execution settlement');
+    }
     run.engine = engine;
     run.unsubscribeEngine = engine.on((event) => onEngineEvent(run, event));
     return engine;
@@ -165,7 +178,7 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
       if (group.status !== 'pending' && group.status !== 'blocked') continue;
       if (run.startingGroups.has(group.id)) continue;
       const ready = group.dependsOn.every((id) => run.group(id)?.status === 'passed');
-      if (ready) void startGroup(run, group);
+      if (ready) void run.work.run(() => startGroup(run, group));
     }
   }
 
@@ -284,11 +297,11 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
   }
 
   function attemptsReady(run: ContractRun, event: Extract<OrchestrationEvent, { type: 'attempts-ready' }>): void {
-    void selectAttempts(run, event.groupId, {
+    void run.work.run(() => selectAttempts(run, event.groupId, {
       steps: deps.steps,
       failUnit: deps.failUnit,
       failContract: deps.failContract,
-    }).catch((error: unknown) => stepFailed(run, `the attempts of group ${event.groupId} could not be selected`, error));
+    })).catch((error: unknown) => stepFailed(run, `the attempts of group ${event.groupId} could not be selected`, error));
   }
 
   function onEngineEvent(run: ContractRun, event: OrchestrationEvent): void {
@@ -448,14 +461,14 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
       run.settle(unit, 'cancelled');
       if (unit.activeAgentId !== undefined) deps.watchdog.forget(unit.activeAgentId);
     }
-    for (const release of run.sharedTreeReleases.values()) release();
-    run.sharedTreeReleases.clear();
+    // Locks are released by the runner only after real executor, phase and
+    // contract cleanup has joined. Terminal statuses are too early.
   }
 
   function startGroupNow(run: ContractRun, groupId: string): void {
     const group = run.group(groupId);
     if (group === undefined || run.terminal || run.startingGroups.has(group.id) || (group.status !== 'pending' && group.status !== 'blocked')) return;
-    void startGroup(run, group);
+    void run.work.run(() => startGroup(run, group));
   }
 
   return { startRun, unitPassed, passGroup, startGroupNow, requeueUnit, stopRun, resumeEngine, startReadyGroups, reconcileMerged, selectAttempts: selectAttemptsAgain };

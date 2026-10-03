@@ -37,7 +37,7 @@
  * watching the file is unchanged either way.)
  */
 
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -56,13 +56,46 @@ import type { GatewayMethodHandler } from '../sdk/src/platform/control-plane/ind
 
 const dirs: string[] = [];
 const registries: InboundExpectationRegistry[] = [];
+const ownedTimers: ReturnType<typeof setInterval>[] = [];
+const pendingSweeps = new Set<Promise<readonly ExpectationExpiryReport[]>>();
+let restoreSweep: (() => void) | undefined;
 
-afterEach(() => {
-  // Stopped before the directory goes, or a timer that survives the test writes
-  // into a path that no longer exists and fails an unrelated test later.
+beforeEach(() => {
+  // Observe real work so teardown also drains an expiry already writing to disk.
+  const sweep = InboundExpectationRegistry.prototype.sweep;
+  const observer = spyOn(InboundExpectationRegistry.prototype, 'sweep').mockImplementation(function (this: InboundExpectationRegistry) {
+    const pending = sweep.call(this);
+    pendingSweeps.add(pending);
+    void pending.then(() => pendingSweeps.delete(pending), () => pendingSweeps.delete(pending));
+    return pending;
+  });
+  restoreSweep = () => observer.mockRestore();
+});
+
+afterEach(async () => {
   for (const registry of registries.splice(0)) registry.stopSweeping();
+  for (const timer of ownedTimers.splice(0)) clearInterval(timer);
+  await Promise.allSettled([...pendingSweeps]);
+  restoreSweep?.();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
+
+/** Capture only timers armed synchronously by this operation; keep native timers. */
+function captureTimers<T>(operation: () => T): { value: T; timers: ReturnType<typeof setInterval>[] } {
+  const timers: ReturnType<typeof setInterval>[] = [];
+  const nativeSetInterval = globalThis.setInterval;
+  const observer = spyOn(globalThis, 'setInterval').mockImplementation(((...args: Parameters<typeof setInterval>) => {
+    const timer = nativeSetInterval(...args);
+    timers.push(timer);
+    ownedTimers.push(timer);
+    return timer;
+  }) as typeof setInterval);
+  try {
+    return { value: operation(), timers };
+  } finally {
+    observer.mockRestore();
+  }
+}
 
 function newDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -71,6 +104,20 @@ function newDir(prefix: string): string {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+/** Retry an observable result, not a guess about timer or filesystem speed. */
+async function waitFor(assertion: () => void, timeoutMs = 5_000): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  for (;;) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      if (performance.now() >= deadline) throw error;
+    }
+    await sleep(10);
+  }
+}
 
 describe('the sweep interval is derived from the window it is sweeping', () => {
   test('a fifteen-minute window sweeps every thirty seconds', () => {
@@ -121,53 +168,33 @@ describe('a scheduled sweep reports an expiry with nobody calling sweep()', () =
     // real time by fifteen minutes and never calls `sweep()`.
     nowMs += 16 * 60_000;
     registry.startSweeping(10);
-    await sleep(150);
-
-    expect(reports.length).toBe(1);
+    await waitFor(() => expect(reports.length).toBe(1));
     expect(reports[0]?.reason).toBe('window-elapsed');
     expect(reports[0]?.recipientAddress).toBe('signup-a1@alias.test');
-  });
+  }, 10_000);
 
-  test('a second startSweeping replaces the timer rather than adding one', async () => {
-    const reports: ExpectationExpiryReport[] = [];
+  test('a second startSweeping clears each previous native timer and stop clears the last', () => {
     const store = new PersistedExpectationStore(join(newDir('gv-sweep-rearm-'), 'expectations.json'));
-    let nowMs = Date.parse('2026-07-28T09:00:00.000Z');
-    const registry = new InboundExpectationRegistry({
-      store,
-      now: () => new Date(nowMs),
-      onExpired: (report) => reports.push(report),
-    });
+    const registry = new InboundExpectationRegistry({ store });
     registries.push(registry);
-
-    registry.startSweeping(10);
-    registry.startSweeping(10);
-    registry.startSweeping(10);
-
-    await registry.open({
-      serviceDomain: 'example.com',
-      recipientAddress: 'signup-a1@alias.test',
-      purpose: 'confirm',
-      windowMs: 15 * 60_000,
-    });
-    nowMs += 16 * 60_000;
-    await sleep(150);
-
-    // One expectation, one report. Three timers would have swept it once and
-    // then found nothing twice, so the count is the assertion that catches a
-    // leaked interval rather than a proxy for it.
-    expect(reports.length).toBe(1);
-
-    registry.stopSweeping();
-    const after = reports.length;
-    await registry.open({
-      serviceDomain: 'example.com',
-      recipientAddress: 'signup-b2@alias.test',
-      purpose: 'confirm',
-      windowMs: 15 * 60_000,
-    });
-    nowMs += 16 * 60_000;
-    await sleep(120);
-    expect(reports.length).toBe(after);
+    const clear = spyOn(globalThis, 'clearInterval');
+    try {
+      const { timers } = captureTimers(() => {
+        registry.startSweeping(60_000);
+        registry.startSweeping(60_000);
+        registry.startSweeping(60_000);
+      });
+      // Expiry counts cannot detect duplicate timers: the first sweep removes
+      // the record synchronously, so every other timer merely finds no work.
+      expect(timers).toHaveLength(3);
+      expect(clear.mock.calls.map(([timer]) => timer)).toEqual(timers.slice(0, 2));
+      registry.stopSweeping();
+      expect(clear.mock.calls.map(([timer]) => timer)).toEqual(timers);
+      registry.stopSweeping();
+      expect(clear).toHaveBeenCalledTimes(3);
+    } finally {
+      clear.mockRestore();
+    }
   });
 });
 
@@ -197,7 +224,7 @@ function composeRig(overrides: Readonly<Record<string, unknown>> = {}): {
     ...overrides,
   };
   const handlers = new Map<string, GatewayMethodHandler>();
-  const supervisor = composeInboundMail({
+  const { value: supervisor } = captureTimers(() => composeInboundMail({
     configManager: { get: (key: string) => values[key] } as never,
     secretsManager: { get: async () => null } as never,
     shellPaths: { resolveUserPath: (_scope: string, name: string) => join(root, name) } as never,
@@ -221,7 +248,7 @@ function composeRig(overrides: Readonly<Record<string, unknown>> = {}): {
       detail: 'No Google account is connected on this machine.',
       fix: '',
     }),
-  });
+  }));
   expect(supervisor).not.toBeNull();
   return { handlers, expectationsPath: join(root, 'email-inbound-expectations.json') };
 }
@@ -251,12 +278,12 @@ describe('composeInboundMail arms the sweep in the daemon itself', () => {
       // assumption about one.
       expect(readFileSync(rig.expectationsPath, 'utf8')).toContain('signup-a1@alias.test');
 
-      // Longer than one 5 s tick plus the 1 s window. Nothing else in this rig
-      // touches the file: the supervisor was never started, so no recovery
-      // sweep runs, and the housekeeper's own timer is six hours away.
-      await sleep(7_000);
-
-      expect(readFileSync(rig.expectationsPath, 'utf8')).not.toContain('signup-a1@alias.test');
+      // Observe the actual persisted result, allowing busy CI time to finish
+      // the native 5 s tick and its asynchronous write. The supervisor is never
+      // started, so recovery cannot reap it; housekeeping is six hours away.
+      await waitFor(() => {
+        expect(readFileSync(rig.expectationsPath, 'utf8')).not.toContain('signup-a1@alias.test');
+      }, 15_000);
     },
     20_000,
   );

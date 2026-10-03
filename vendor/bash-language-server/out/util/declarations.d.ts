@@ -1,5 +1,5 @@
 import * as LSP from 'vscode-languageserver/node';
-import * as Parser from 'web-tree-sitter';
+import * as Parser from '@goodvibes-jev/bash-web-tree-sitter';
 export type GlobalDeclarations = {
     [word: string]: LSP.SymbolInformation;
 };

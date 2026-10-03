@@ -1,3 +1,5 @@
+import { createLocalWorkLedgerReadBinding } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
+import { registerWorkLedgerGatewayMethods } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import { join } from 'node:path';
 import { ServiceRegistry, SubscriptionManager, ToolLLM, sharedSubscriptionsPath } from '@goodvibes-jev/engine/sdk/platform/config';
 import { AutomationDeliveryManager, AutomationManager } from '@goodvibes-jev/engine/sdk/platform/automation';
@@ -48,6 +50,7 @@ import { BookmarkManager } from '@goodvibes-jev/engine/sdk/platform/bookmarks';
 import { ProfileManager } from '@goodvibes-jev/engine/sdk/platform/profiles';
 import { CrossSessionTaskRegistry, SessionChangeTracker } from '@goodvibes-jev/engine/sdk/platform/sessions';
 import { ApiTokenAuditor, UserAuthManager } from '@goodvibes-jev/engine/sdk/platform/security';
+import { NOTIFICATIONS_METADATA_ONLY_KEY, readNotificationsMetadataOnly } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { WebhookNotifier } from '@goodvibes-jev/engine/sdk/platform/integrations';
 import { BenchmarkStore, CacheHitTracker, FavoritesStore, ModelLimitsService, ProviderCapabilityRegistry, ProviderOptimizer, createLaunchTolerantProviderRegistry, ensureConfiguredModelIsRoutable } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { AdaptivePlanner, DeterministicReplayEngine, ExecutionPlanManager, SessionLineageTracker, SessionMemoryStore } from '@goodvibes-jev/engine/sdk/platform/core';
@@ -73,10 +76,17 @@ export type { RuntimeServicesOptions, RuntimeServices } from './runtime-services
 /** Construct the daemon's base owners before the outer async handler boundary.
  * Adapted from pinned daemon 443e5ee; shared capabilities use canonical factories.
  */
-export async function createRuntimeBaseServices(options: RuntimeServicesOptions): Promise<{ services: Omit<RuntimeServices, 'daemonHandlers'>; handlerOptions: Omit<DaemonHandlerCompositionOptions, 'distributedRuntimeReady'> }> {
+export async function createRuntimeBaseServices(options: RuntimeServicesOptions): Promise<{ services: Omit<RuntimeServices, 'daemonHandlers'>; handlerOptions: Omit<DaemonHandlerCompositionOptions, 'distributedRuntimeReady'>; closeWorkLedger: () => Promise<void> }> {
   // The SDK's disposal scope and its all-required poller list, plus the four
   // pollers only the daemon has, see disposal-wiring.ts.
   const disposalScope = createRuntimeAcquisitionScope('RuntimeServices');
+  let fenceWorkLedger: (() => Promise<void>) | undefined;
+  const close = (): Promise<void> => {
+    // Fence immediately, before reverse-order drains can await other owners.
+    // The registered ledger owner reports any cleanup failure through the scope.
+    void fenceWorkLedger?.().catch(() => {});
+    return disposalScope.close();
+  };
   try {
     const workingDirectory = options.workingDir;
     const homeDirectory = options.homeDirectory;
@@ -321,11 +331,21 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       knowledgeStore, agentKnowledgeStore, homeGraphKnowledgeStore,
       knowledgeSemanticService, homeGraphSemanticService, agentKnowledgeSemanticService,
       knowledgeService, agentKnowledgeService, homeGraphService,
-      projectPlanningService, projectPlanningProjectId, workPlanStore,
-    } = createKnowledgeServices({ configManager, providerRegistry, artifactStore, memoryRegistry, runtimeBus: options.runtimeBus, workingDirectory, homeDirectory, isBackgroundPaused: isKnowledgeBackgroundPaused, admitExpensiveWork });
-    disposalScope.ownUntilRegistered('knowledge service', () => knowledgeService.dispose());
-    disposalScope.ownUntilRegistered('agent knowledge service', () => agentKnowledgeService.dispose());
-    disposalScope.ownUntilRegistered('home graph service', () => homeGraphService.dispose());
+      projectPlanningService, projectPlanningProjectId, workPlanStore, workLedgerOwner,
+    } = createKnowledgeServices({ ownership: disposalScope, configManager, providerRegistry, artifactStore, memoryRegistry, runtimeBus: options.runtimeBus, workingDirectory, homeDirectory, isBackgroundPaused: isKnowledgeBackgroundPaused, admitExpensiveWork });
+    // This daemon's existing owner and host-selected project are authoritative.
+    // Request payloads can only verify this binding, never select a store or actor.
+    const workLedgerReadBinding = createLocalWorkLedgerReadBinding({
+      available: true, projectId: projectPlanningProjectId, actorId: 'host:operator-ledger-read',
+      service: workLedgerOwner.service, authority: workLedgerOwner.authority,
+    });
+    if (!workLedgerReadBinding.available) throw new Error(workLedgerReadBinding.reason);
+    const workLedgerReader = workLedgerReadBinding.client;
+    disposalScope.registry.add('native work ledger reader', () => workLedgerReader.dispose());
+    fenceWorkLedger = async () => {
+      try { workLedgerReader.dispose(); } finally { await workLedgerOwner.close(); }
+    };
+    registerWorkLedgerGatewayMethods(gatewayMethods, workLedgerReader);
     const voiceProviders = new VoiceProviderRegistry();
     ensureBuiltinVoiceProviders(voiceProviders, { readConfig: (key) => configManager.get(key as Parameters<typeof configManager.get>[0]) });
     const voiceService = new VoiceService(voiceProviders);
@@ -350,6 +370,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       },
       stateFilePath: shellPaths.resolveUserPath(GOODVIBES_DAEMON_SURFACE_ROOT, 'plugins.json'),
     });
+    disposalScope.ownUntilRegistered('plugins', () => pluginManager.close());
     const workflow = createWorkflowServices();
     hookDispatcher.setTriggerManager(workflow.triggerManager);
     const channelPolicy = new ChannelPolicyManager({
@@ -403,7 +424,12 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     const tokenAuditor = new ApiTokenAuditor({ managed: false, featureFlags });
     const componentHealthMonitor = new ComponentHealthMonitor();
     const worktreeRegistry = new WorktreeRegistry(workingDirectory);
-    const webhookNotifier = new WebhookNotifier();
+    const webhookNotifier = new WebhookNotifier([], {
+      metadataOnly: () => readNotificationsMetadataOnly(() => configManager.get(NOTIFICATIONS_METADATA_ONLY_KEY as never)),
+    });
+    // This shared owner can send memory-pressure notices before boot attachment.
+    // Own it immediately, including failed graph construction or omitted boot.
+    disposalScope.registry.add('shared webhook notifier', () => webhookNotifier.close());
     const replayEngine = new DeterministicReplayEngine(workingDirectory);
     const providerOptimizer = new ProviderOptimizer(providerRegistry, providerCapabilityRegistry, false); // dark until its gate flips it
     disposalScope.registry.add('provider optimizer bridge', bindProviderOptimizerFeatureFlag(featureFlags, providerOptimizer));
@@ -694,6 +720,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       projectPlanningService,
       projectPlanningProjectId,
       workPlanStore,
+      workLedger: workLedgerOwner.service,
       memoryStore,
       memoryRegistry,
       memorySpine,
@@ -778,10 +805,12 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       // Cancel hosted calls before their runtime dependencies close; the shared
       // poller registry places this ahead of runner, fleet and process teardown.
       cancelHostedAgentRuns: () => cancelAllAgentRuns(agentManager),
-      close: disposalScope.close,
-      dispose: (): void => disposalScope.dispose(),
+      close,
+      dispose: (): void => { void close().catch(() => {}); },
     };
     registerDaemonRuntimeBasePollers(disposalScope.registry, { ...services, contractRunner: contracts }, { stopConfigWatch });
+    // Drain plugin work before releasing the graph it can call into.
+    disposalScope.registry.add('plugins', () => pluginManager.close());
     const handlerOptions = {
       gatewayMethods,
       secretsManager,
@@ -793,9 +822,9 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       clusterCoordinator,
       checkoutSeam: browserCheckoutSeam.get, channelDeliveryRouter, inboxFactory: options.inboxFactory,
     };
-    return { services, handlerOptions };
+    return { services, handlerOptions, closeWorkLedger: fenceWorkLedger };
   } catch (startupError) {
-    try { await disposalScope.close(); }
+    try { await close(); }
     catch (cleanupError) { throw new AggregateError([startupError, cleanupError], 'Runtime graph construction and cleanup failed'); }
     throw startupError;
   }

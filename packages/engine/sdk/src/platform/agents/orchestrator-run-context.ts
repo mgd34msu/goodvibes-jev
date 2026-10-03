@@ -19,6 +19,8 @@ import type { ContractAgentHooks } from '../contract/agent-hooks.js';
 type EmitterContext = import('../runtime/emitters/index.js').EmitterContext;
 
 export interface AgentOrchestratorRunContext {
+  /** Revalidate captured byte authority immediately before each initial/retried provider admission. */
+  readonly beforeProviderRequest?: (() => Promise<void>) | undefined;
   readonly workingDirectory: string;
   readonly surfaceRoot?: string | undefined;
   /** At-rest journal redaction + retention policy; undefined -> honest default (redaction on). */

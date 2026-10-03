@@ -13239,6 +13239,10 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "updatedAt": 0,
         "metadata": {}
       },
+      "revision": {
+        "sourceId": "sample",
+        "generation": "sample"
+      },
       "source": {
         "id": "sample",
         "connectorId": "sample",
@@ -13374,6 +13378,10 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "createdAt": 0,
         "updatedAt": 0,
         "metadata": {}
+      },
+      "revision": {
+        "sourceId": "sample",
+        "generation": "sample"
       },
       "source": {
         "id": "sample",
@@ -20715,6 +20723,20 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "cancelled": false
     }
   },
+  "sessions.turns.cancel": {
+    "methodId": "sessions.turns.cancel",
+    "http": {
+      "method": "POST",
+      "path": "/api/sessions/{sessionId}/turns/cancel"
+    },
+    "status": 200,
+    "body": {
+      "sessionId": "sample",
+      "expectedTurnId": "sample",
+      "status": "cancellation-requested",
+      "activeTurnId": "sample"
+    }
+  },
   "security.settings": {
     "methodId": "security.settings",
     "http": {
@@ -21971,6 +21993,176 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "metadata": {}
       },
       "metadata": {}
+    }
+  },
+  "workLedger.history": {
+    "methodId": "workLedger.history",
+    "http": {
+      "method": "GET",
+      "path": "/api/work-ledger/history"
+    },
+    "status": 200,
+    "body": {
+      "projectId": "sample",
+      "afterSequence": 0,
+      "cursor": 0,
+      "throughSequence": 0,
+      "hasMore": false,
+      "events": [
+        {
+          "sequence": 0,
+          "type": "create",
+          "actorId": "sample",
+          "requestId": "sample",
+          "workId": "sample",
+          "attemptId": "sample",
+          "at": 0,
+          "work": {
+            "id": "sample",
+            "title": "sample",
+            "goal": "sample",
+            "criteria": [
+              "sample"
+            ],
+            "revision": 0,
+            "criteriaRevision": 0,
+            "reportedState": "pending",
+            "currentAttemptId": "sample",
+            "createdAt": 0,
+            "updatedAt": 0
+          },
+          "attempts": [
+            {
+              "id": "sample",
+              "workId": "sample",
+              "predecessorId": "sample",
+              "ownerId": "sample",
+              "revision": 0,
+              "state": "active",
+              "report": "sample",
+              "blocker": "sample",
+              "createdAt": 0,
+              "updatedAt": 0
+            }
+          ],
+          "evidence": {
+            "id": "sample",
+            "target": {
+              "workId": "sample",
+              "workRevision": 0,
+              "criteriaRevision": 0,
+              "attemptId": "sample",
+              "attemptRevision": 0
+            },
+            "outcome": "verified",
+            "reason": "sample",
+            "references": [
+              {
+                "kind": "decision",
+                "ref": "sample",
+                "digest": "sample"
+              }
+            ],
+            "source": "host_check",
+            "criteriaResults": [
+              {
+                "criterionIndex": 0,
+                "status": "satisfied",
+                "references": [
+                  "sample"
+                ]
+              }
+            ],
+            "actorId": "sample",
+            "at": 0
+          },
+          "reason": "sample"
+        }
+      ]
+    }
+  },
+  "workLedger.snapshot": {
+    "methodId": "workLedger.snapshot",
+    "http": {
+      "method": "GET",
+      "path": "/api/work-ledger/snapshot"
+    },
+    "status": 200,
+    "body": {
+      "projectId": "sample",
+      "revision": 0,
+      "cursor": 0,
+      "works": [
+        {
+          "work": {
+            "id": "sample",
+            "title": "sample",
+            "goal": "sample",
+            "criteria": [
+              "sample"
+            ],
+            "revision": 0,
+            "criteriaRevision": 0,
+            "reportedState": "pending",
+            "currentAttemptId": "sample",
+            "createdAt": 0,
+            "updatedAt": 0
+          },
+          "attempt": {
+            "id": "sample",
+            "workId": "sample",
+            "predecessorId": "sample",
+            "ownerId": "sample",
+            "revision": 0,
+            "state": "active",
+            "report": "sample",
+            "blocker": "sample",
+            "createdAt": 0,
+            "updatedAt": 0
+          },
+          "verification": {
+            "state": "unverified",
+            "reason": "sample",
+            "evidence": {
+              "id": "sample",
+              "target": {
+                "workId": "sample",
+                "workRevision": 0,
+                "criteriaRevision": 0,
+                "attemptId": "sample",
+                "attemptRevision": 0
+              },
+              "outcome": "verified",
+              "reason": "sample",
+              "references": [
+                {
+                  "kind": "decision",
+                  "ref": "sample",
+                  "digest": "sample"
+                }
+              ],
+              "source": "host_check",
+              "criteriaResults": [
+                {
+                  "criterionIndex": 0,
+                  "status": "satisfied",
+                  "references": [
+                    "sample"
+                  ]
+                }
+              ],
+              "actorId": "sample",
+              "at": 0
+            }
+          },
+          "attention": [
+            {
+              "kind": "blocked",
+              "reason": "sample"
+            }
+          ]
+        }
+      ]
     }
   },
   "workspaces.registrations.add": {

@@ -55,6 +55,8 @@ function route(method: string, template: string, methodId: string): GatewayRestR
  * bindings (the reconcile gate enforces it).
  */
 export const GATEWAY_REST_ROUTES: readonly GatewayRestRoute[] = [
+  route('GET', '/api/work-ledger/snapshot', 'workLedger.snapshot'),
+  route('GET', '/api/work-ledger/history', 'workLedger.history'),
   // skills.*
   route('GET', '/api/skills', 'skills.list'),
   route('POST', '/api/skills', 'skills.create'),
@@ -148,6 +150,7 @@ export const GATEWAY_REST_ROUTES: readonly GatewayRestRoute[] = [
   route('POST', '/api/sessions/{sessionId}/permission-mode', 'sessions.permissionMode.set'),
   route('GET', '/api/sessions/{sessionId}/context-usage', 'sessions.contextUsage.get'),
   // Live-turn verbs: per-call cancel + queued mid-turn message management.
+  route('POST', '/api/sessions/{sessionId}/turns/cancel', 'sessions.turns.cancel'),
   route('POST', '/api/sessions/{sessionId}/tool-calls/{callId}/cancel', 'sessions.toolCalls.cancel'),
   route('GET', '/api/sessions/{sessionId}/queued-messages', 'sessions.queuedMessages.list'),
   route('POST', '/api/sessions/{sessionId}/queued-messages/{messageId}', 'sessions.queuedMessages.edit'),

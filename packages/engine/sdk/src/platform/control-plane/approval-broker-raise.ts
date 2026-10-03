@@ -38,11 +38,16 @@ import type {
   SharedApprovalRecord,
 } from './approval-broker.js';
 import { logger } from '../utils/logger.js';
+import { assertPermissionActive } from '../permissions/cancellation.js';
 
 /** A pending ask's resolvers and its expiry timer, as the broker holds them. */
 export interface PendingApprovalEntry {
   readonly resolvers: ((decision: PermissionPromptDecision) => void)[];
   readonly timer?: ReturnType<typeof setTimeout> | undefined;
+  readonly promptController?: AbortController | undefined;
+  /** Restored asks retain their durable/wire owner even without local waiters. */
+  readonly externallyOwned?: boolean | undefined;
+  retired?: boolean | undefined;
 }
 
 /** Everything raising an ask needs from the broker that owns the state. */
@@ -59,6 +64,7 @@ export interface RaiseApprovalDeps {
   publish(approval: SharedApprovalRecord): void;
   /** Expire an ask whose deadline passed. */
   expire(approvalId: string, note: string): Promise<void>;
+  cancel(approvalId: string): Promise<void>;
   /** Audit-entry factory, the broker's own, so entries stay identical. */
   buildAudit(
     action: SharedApprovalAuditRecord['action'],
@@ -78,6 +84,39 @@ export interface RaisedApproval {
   readonly coalesced: boolean;
 }
 
+/** A consumer owns its waiter, never another consumer's shared prompt. */
+function joinApproval(
+  id: string,
+  pending: PendingApprovalEntry,
+  deps: RaiseApprovalDeps,
+  signal?: AbortSignal,
+): Promise<PermissionPromptDecision> {
+  return new Promise((resolve) => {
+    const complete = (decision: PermissionPromptDecision): void => {
+      signal?.removeEventListener('abort', abort);
+      resolve(decision);
+    };
+    const abort = (): void => {
+      const index = pending.resolvers.indexOf(complete);
+      if (index < 0) return;
+      pending.resolvers.splice(index, 1);
+      complete({ approved: false, remember: false });
+      if (pending.resolvers.length === 0 && !pending.externallyOwned) {
+        // Retire synchronously so a new caller cannot join this dying ask while
+        // its durable cancellation is waiting for the broker's write queue.
+        pending.retired = true;
+        pending.promptController?.abort();
+        void deps.cancel(id).catch((error: unknown) => logger.warn('Approval consumer retirement failed', {
+          approvalId: id, error: error instanceof Error ? error.message : String(error),
+        }));
+      }
+    };
+    pending.resolvers.push(complete);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+  });
+}
+
 /**
  * Raise an ask through the shared broker.
  *
@@ -91,7 +130,10 @@ export async function raiseSharedApproval(
   input: RequestSharedApprovalInput,
   deps: RaiseApprovalDeps,
 ): Promise<RaisedApproval> {
+  const signal = input.signal;
+  assertPermissionActive(signal);
   await deps.start();
+  assertPermissionActive(signal);
   const now = Date.now();
 
   // Duplicate in-flight asks coalesce on (session, tool, args): the second
@@ -102,13 +144,11 @@ export async function raiseSharedApproval(
     if ((existing.status === 'pending' || existing.status === 'claimed')
       && deps.coalesceKey(existing.sessionId, existing.request.tool, existing.request.args) === coalesceKey) {
       const pending = deps.pendingResolvers.get(existing.id);
-      if (pending) {
+      if (pending && !pending.retired) {
         return {
           approval: existing,
           coalesced: true,
-          decision: new Promise<PermissionPromptDecision>((resolve) => {
-            pending.resolvers.push(resolve);
-          }),
+          decision: joinApproval(existing.id, pending, deps, signal),
         };
       }
     }
@@ -127,8 +167,7 @@ export async function raiseSharedApproval(
     metadata: input.metadata ?? {},
     audit: [deps.buildAudit('created', 'approval-broker', 'service')],
   };
-  const pendingDecision = new Promise<PermissionPromptDecision>((resolve) => {
-    const timer = input.timeoutMs && input.timeoutMs > 0
+  const timer = input.timeoutMs && input.timeoutMs > 0
       ? setTimeout(() => {
         void deps.expire(approval.id, `timed out after ${input.timeoutMs}ms`).catch((error: unknown) => {
           logger.warn('Approval expiration failed', {
@@ -138,9 +177,10 @@ export async function raiseSharedApproval(
         });
       }, input.timeoutMs)
       : undefined;
-    timer?.unref?.();
-    deps.pendingResolvers.set(approval.id, { resolvers: [resolve], timer });
-  });
+  timer?.unref?.();
+  const pending: PendingApprovalEntry = { resolvers: [], timer, promptController: new AbortController() };
+  deps.pendingResolvers.set(approval.id, pending);
+  const pendingDecision = joinApproval(approval.id, pending, deps, signal);
   deps.approvals.set(approval.id, approval);
   try {
     await deps.persist();
@@ -148,6 +188,7 @@ export async function raiseSharedApproval(
     const pending = deps.pendingResolvers.get(approval.id);
     if (pending) {
       if (pending.timer) clearTimeout(pending.timer);
+      for (const resolve of pending.resolvers) resolve({ approved: false, remember: false });
       deps.pendingResolvers.delete(approval.id);
     }
     deps.approvals.delete(approval.id);
@@ -164,7 +205,9 @@ export async function raiseSharedApproval(
     await deps.persist().catch(() => undefined);
     throw error;
   }
-  deps.publish(approval);
+  // Cancellation may have replaced this record during its initial persist.
+  // A coalesced live consumer still owns publication if the creator left.
+  if (!pending.retired && deps.approvals.get(approval.id) === approval) deps.publish(approval);
 
-  return { approval, decision: pendingDecision, coalesced: false };
+  return { approval: deps.approvals.get(approval.id) ?? approval, decision: pendingDecision, coalesced: false };
 }

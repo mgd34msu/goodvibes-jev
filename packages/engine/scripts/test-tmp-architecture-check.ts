@@ -86,24 +86,25 @@ checkPackageJsonScripts(resolve(repoRoot, 'package.json'));
  */
 const EXCLUDED_FROM_SWEEP_CHECK = new Set(['stale-tmp-sweep.ts', 'test-run-tmp.ts', 'test-tmp-architecture-check.ts']);
 
-const scriptsDir = resolve(repoRoot, 'scripts');
-for (const entry of readdirSync(scriptsDir, { withFileTypes: true })) {
-  if (!entry.isFile() || !entry.name.endsWith('.ts')) continue;
-  if (EXCLUDED_FROM_SWEEP_CHECK.has(entry.name)) continue;
-  const path = join(scriptsDir, entry.name);
-  const source = readFileSync(path, 'utf8');
-  if (!/\btmpdir\(\)/.test(source)) continue; // doesn't touch the real system temp dir at all
-  if (!/sweepStaleTmpDirs\(/.test(source)) {
-    failures.push(
-      `scripts/${entry.name}: calls tmpdir() but never calls sweepStaleTmpDirs() (from ` +
-        `scripts/stale-tmp-sweep.ts) anywhere in the file, a directory this script creates under ` +
-        `the real system temp dir will accumulate forever if the process is ever killed before its ` +
-        `own cleanup runs. Sweep your own prefix before creating a new directory, the same way ` +
-        `scripts/verdaccio-dry-run.ts and scripts/build-whisper-bundle.ts do.`,
-    );
+for (const directory of ['scripts', 'toolchain/src/test-runner']) {
+  const scriptsDir = resolve(repoRoot, directory);
+  for (const entry of readdirSync(scriptsDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.ts')) continue;
+    if (EXCLUDED_FROM_SWEEP_CHECK.has(entry.name)) continue;
+    const path = join(scriptsDir, entry.name);
+    const source = readFileSync(path, 'utf8');
+    if (!/\btmpdir\(\)/.test(source)) continue; // doesn't touch the real system temp dir at all
+    if (!/sweepStaleTmpDirs\(/.test(source)) {
+      failures.push(
+        `${directory}/${entry.name}: calls tmpdir() but never calls sweepStaleTmpDirs() (from ` +
+          `scripts/stale-tmp-sweep.ts) anywhere in the file, a directory this script creates under ` +
+          `the real system temp dir will accumulate forever if the process is ever killed before its ` +
+          `own cleanup runs. Sweep your own prefix before creating a new directory, the same way ` +
+          `scripts/verdaccio-dry-run.ts and scripts/build-whisper-bundle.ts do.`,
+      );
+    }
   }
 }
-
 // ─── report ─────────────────────────────────────────────────────────────────
 
 if (failures.length > 0) {

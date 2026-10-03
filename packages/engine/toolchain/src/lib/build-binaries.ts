@@ -132,14 +132,14 @@ export function runBuildBinaries(options: RunBuildOptions): BuildOutcome[] {
     if (!selection.daemonOnly) {
       const outfile = `${config.outDir}/${target.appArtifact}`;
       const args = buildCompileArgs(config.appEntrypoint, target.bunTarget, outfile, externals);
-      const res = exec('bun', args, { cwd });
+      const res = exec('bun', config.compileDriver ? [config.compileDriver, ...args.slice(1)] : args, { cwd });
       if (res.status !== 0) { ok = false; detail = `app compile failed (${res.status})`; }
     }
 
     if (ok && config.daemonEntrypoint && target.daemonArtifact) {
       const outfile = `${config.outDir}/${target.daemonArtifact}`;
       const args = buildCompileArgs(config.daemonEntrypoint, target.bunTarget, outfile, externals);
-      const res = exec('bun', args, { cwd });
+      const res = exec('bun', config.compileDriver ? [config.compileDriver, ...args.slice(1)] : args, { cwd });
       if (res.status !== 0) { ok = false; detail = `daemon compile failed (${res.status})`; }
     }
 

@@ -1,3 +1,6 @@
+import { getContractInputAuthority, assertContractInputAuthority, isCapturedInputPath, authorizeContractInputPath, assertContractInputReadAccess, type ContractInputAuthority } from '../contract/input-authority.js';
+import { capturedInputTool, capturedInputReadFilter } from '../tools/shared/captured-input-tools.js';
+import { randomUUID } from 'node:crypto';
 import { ToolRegistry } from '../tools/registry.js';
 import type { Tool } from '../types/tools.js';
 import type { ConfigManager } from '../config/manager.js';
@@ -382,7 +385,7 @@ export class AgentOrchestrator {
    * shared session's: those are scoped to the default cwd and would
    * otherwise silently index/search the wrong directory.
    */
-  private getFullRegistry(workingDirectory?: string): ToolRegistry {
+  private getFullRegistry(workingDirectory?: string, authority?: ContractInputAuthority, signal?: AbortSignal, runKey?: string, delivered = new Set<string>(), capturedOwnerRead?: import('../tools/shared/read-access.js').ReadAccessFilter): ToolRegistry {
     const channelVersion = this.channelRegistry?.getVersion() ?? -1;
     if (this.fullRegistryChannelVersion !== channelVersion) {
       // Dropping the registries drops the only references to the indexes built
@@ -394,7 +397,9 @@ export class AgentOrchestrator {
     }
     const defaultCwd = this.toolDeps?.workingDirectory ?? '';
     const cwd = workingDirectory ?? defaultCwd;
-    let registry = this.fullRegistries.get(cwd);
+    if (!authority && isCapturedInputPath(cwd)) throw new Error('captured view has no construction-owned input authority');
+    const key = runKey ?? cwd;
+    let registry = this.fullRegistries.get(key);
     if (!registry) {
       if (!this.toolDeps?.configManager || !this.toolDeps?.providerRegistry || !this.toolDeps?.toolLLM) {
         throw new Error('AgentOrchestrator requires configManager, providerRegistry, and toolLLM dependencies before tool registration');
@@ -407,24 +412,31 @@ export class AgentOrchestrator {
       // through grep/glob/repo_map. Reads live config each call, so mode changes
       // apply immediately. Absent a permission manager, tools default to allow-all.
       const permissionManager = this.toolDeps.permissionManager;
-      const readAccessFilter = permissionManager
+      const ownerReadAccess = authority ? capturedOwnerRead : permissionManager
         ? async (absolutePath: string): Promise<boolean> => (await permissionManager.readAccess(absolutePath)) === 'allow'
         : undefined;
+      const readAccessFilter = authority ? capturedInputReadFilter(authority, cwd, ownerReadAccess, signal, delivered) : ownerReadAccess;
       const registered = registerAllTools(registry, {
         ...this.toolDeps,
         contractRunner: this.toolDeps.contractRunner,
         projectRoot: defaultCwd,
         workingDirectory: cwd,
-        fileCache: isDefaultCwd ? this.toolDeps.fileCache : undefined,
-        projectIndex: isDefaultCwd ? this.toolDeps.projectIndex : undefined,
+        fileCache: isDefaultCwd && !authority ? this.toolDeps.fileCache : undefined,
+        projectIndex: isDefaultCwd && !authority ? this.toolDeps.projectIndex : undefined,
         readAccessFilter,
+        ...(authority ? { capturedReadAccess: readAccessFilter, diagnosticsProvider: null } : {}),
       });
       // Keep the index registerAllTools built for us. Only for a non-default
       // cwd: for the default one it hands back the very object the composition
       // root passed in, which this class borrows and must not dispose.
-      if (!isDefaultCwd) this.ownedProjectIndexes.set(cwd, registered.projectIndex);
+      if (!isDefaultCwd || authority) this.ownedProjectIndexes.set(key, registered.projectIndex);
       registerChannelAgentTools(registry, this.toolDeps?.channelRegistry ?? this.channelRegistry);
-      this.fullRegistries.set(cwd, registry);
+      if (authority) {
+        const guarded = new ToolRegistry();
+        for (const tool of registry.list()) guarded.register(capturedInputTool(tool, authority, cwd, ownerReadAccess, signal));
+        registry = guarded;
+      }
+      this.fullRegistries.set(key, registry);
     }
     return registry;
   }
@@ -644,8 +656,12 @@ export class AgentOrchestrator {
    * Absent ⇒ `this.toolDeps.workingDirectory`, byte-identical to every run
    * context built before this parameter existed.
    */
-  private createRunContext(workingDirectory?: string): AgentOrchestratorRunContext {
+  private createRunContext(workingDirectory?: string, authority?: ContractInputAuthority, signal?: AbortSignal, runKey?: string): AgentOrchestratorRunContext {
     const cwd = workingDirectory ?? this.toolDeps?.workingDirectory ?? '';
+    const delivered = new Set<string>();
+    const originalPermissionManager = this.toolDeps?.permissionManager;
+    if (authority && !originalPermissionManager) throw new Error('captured agent requires original-owner read authorization');
+    const ownerReadAccess = originalPermissionManager ? async (path: string): Promise<boolean> => await originalPermissionManager.readAccess(path) === 'allow' : undefined;
     const configManager = this.toolDeps?.configManager;
     // Defensive getter: a config snapshot predating the atRest section must fall
     // back to the honest default, never throw out of an agent run.
@@ -654,6 +670,11 @@ export class AgentOrchestrator {
       : undefined;
     return {
       workingDirectory: cwd,
+      ...(authority ? { beforeProviderRequest: async () => {
+        await assertContractInputAuthority(authority, cwd, signal);
+        await assertContractInputReadAccess(authority, ownerReadAccess, signal);
+        for (const path of delivered) await authorizeContractInputPath(authority, path, ownerReadAccess, signal);
+      } } : {}),
       surfaceRoot: this.toolDeps?.surfaceRoot ?? '',
       atRestPolicy: resolveAtRestPolicy(atRestGet),
       ...(configManager ? { configManager } : {}),
@@ -680,11 +701,11 @@ export class AgentOrchestrator {
       messageBus: this.messageBus,
       knowledgeService: this.toolDeps?.knowledgeService,
       memoryRegistry: this.toolDeps?.memoryRegistry,
-      codeIndex: this.toolDeps?.codeIndex,
+      codeIndex: authority ? undefined : this.toolDeps?.codeIndex,
       isCodeInjectionSettingEnabled: this.toolDeps?.isCodeInjectionSettingEnabled,
       onToolExecuted: (this.toolDeps?.codeIndexReindexScheduler || this.toolDeps?.toolExecutionObserver)
         ? (toolName, args, success) => {
-          this.toolDeps?.codeIndexReindexScheduler?.onToolExecuted(toolName, args, success);
+          if (!authority) this.toolDeps?.codeIndexReindexScheduler?.onToolExecuted(toolName, args, success);
           this.toolDeps?.toolExecutionObserver?.(toolName, args, success);
         }
         : undefined,
@@ -693,7 +714,7 @@ export class AgentOrchestrator {
       providerOptimizer: this.toolDeps?.providerOptimizer,
       providerRegistry: this.toolDeps!.providerRegistry!,
       ...(this.toolDeps?.permissionManager ? { permissionManager: this.toolDeps.permissionManager } : {}),
-      getFullRegistry: () => this.getFullRegistry(cwd),
+      getFullRegistry: () => this.getFullRegistry(cwd, authority, signal, runKey, delivered, ownerReadAccess),
       buildScopedRegistry: (allowedNames, fullRegistry, captureAuthority) => this.buildScopedRegistry(allowedNames, fullRegistry, captureAuthority),
       resolveProviderForRecord: (providerRegistry, record, currentModel) =>
         this.resolveProviderForRecord(providerRegistry, record, currentModel),
@@ -709,6 +730,20 @@ export class AgentOrchestrator {
    * the orchestrator's default.
    */
   async runAgent(record: AgentRecord): Promise<void> {
-    await runAgentTask(this.createRunContext(record.workingDirectory), record);
+    const authority = getContractInputAuthority(record);
+    const cwd = record.workingDirectory ?? this.toolDeps?.workingDirectory ?? '';
+    if (!authority && isCapturedInputPath(cwd)) throw new Error('captured view has no construction-owned input authority');
+    const signal = this.cancellationSource?.get(record.id);
+    const runKey = authority ? `${cwd}:captured-run:${randomUUID()}` : undefined;
+    if (authority) await assertContractInputAuthority(authority, cwd, signal);
+    try {
+      await runAgentTask(this.createRunContext(cwd, authority, signal, runKey), record);
+    } finally {
+      if (runKey) {
+        this.fullRegistries.delete(runKey);
+        await this.ownedProjectIndexes.get(runKey)?.dispose();
+        this.ownedProjectIndexes.delete(runKey);
+      }
+    }
   }
 }

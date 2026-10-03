@@ -49,7 +49,7 @@ import type { CommitExclusion, GateOutcome, Phase, PhaseCommitOutcome, PhaseResu
 export type PhaseRunnerAgentManagerLike = Pick<
   AgentManager,
   'spawn' | 'getStatus' | 'cancel' | 'registerCancellationSignal' | 'releaseCancellationSignal'
->;
+> & Partial<Pick<AgentManager, 'join'>>;
 
 /** Structural pick of AgentWorktree's surface: the worktree operations a phase needs (merge, cleanup, commit, head), so tests can pass a stub. */
 export interface WorktreeOps {
@@ -101,6 +101,7 @@ export type ContractPreSpawn =
   | { readonly kind: 'settled'; readonly outcome: ContractUnitOutcome };
 
 export interface PhaseRunnerDeps {
+  readonly prepareInputAuthority?: import('../contract/group-runner.js').ContractEngineInput['prepareInputAuthority'];
   readonly agentManager: PhaseRunnerAgentManagerLike;
   readonly configManager: Pick<ConfigManager, 'get' | 'getCategory'>;
   readonly runtimeBus: RuntimeEventBus;
@@ -108,6 +109,8 @@ export interface PhaseRunnerDeps {
   readonly sessionId: string;
   readonly createWorktree?: (() => WorktreeOps) | undefined;
   readonly cancellation: CancellationRegistry;
+  /** Engine-owned phase signal, registered before worktree setup or any spawn callback. */
+  readonly cancellationSignal?: AbortSignal | undefined;
   readonly priceUsage?: ((model: string | undefined, usage: WorkItemUsage) => number | null) | undefined;
   /** Provenance for the same resolution priceUsage prices with, stamped onto the committed usage record at pricing time. */
   readonly priceProvenance?: PriceProvenanceFn | undefined;
@@ -172,21 +175,40 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-function awaitAgentTermination(
-  runtimeBus: RuntimeEventBus,
-  agentManager: PhaseRunnerAgentManagerLike,
-  agentId: string,
-): Promise<{ status: 'completed' | 'failed' | 'cancelled'; record: AgentRecord | null }> {
-  return new Promise((resolve) => {
-    const unsubscribe = runtimeBus.onDomain('agents', (envelope) => {
-      const event = envelope.payload as { type: string; agentId?: string };
-      if (event.agentId !== agentId) return;
-      if (event.type !== 'AGENT_COMPLETED' && event.type !== 'AGENT_FAILED' && event.type !== 'AGENT_CANCELLED') return;
-      unsubscribe();
-      const status = event.type === 'AGENT_COMPLETED' ? 'completed' : event.type === 'AGENT_CANCELLED' ? 'cancelled' : 'failed';
-      resolve({ status, record: agentManager.getStatus(agentId) });
-    });
+type AgentOutcome = { status: 'completed' | 'failed' | 'cancelled'; record: AgentRecord | null };
+
+/** Subscribe before spawn: terminal events may be emitted reentrantly from spawn listeners. */
+function observeAgentTermination(runtimeBus: RuntimeEventBus, agentManager: PhaseRunnerAgentManagerLike): {
+  wait(agentId: string, signal: AbortSignal): Promise<AgentOutcome>;
+  dispose(): void;
+} {
+  const terminal = new Map<string, AgentOutcome['status']>();
+  let notify: (() => void) | undefined;
+  let removeAbort: (() => void) | undefined;
+  const unsubscribe = runtimeBus.onDomain('agents', (envelope) => {
+    const event = envelope.payload as { type: string; agentId?: string };
+    if (!event.agentId) return;
+    if (event.type !== 'AGENT_COMPLETED' && event.type !== 'AGENT_FAILED' && event.type !== 'AGENT_CANCELLED') return;
+    terminal.set(event.agentId, event.type === 'AGENT_COMPLETED' ? 'completed' : event.type === 'AGENT_CANCELLED' ? 'cancelled' : 'failed');
+    notify?.();
   });
+  return {
+    wait: (agentId, signal) => new Promise((resolve) => {
+      notify = () => {
+        const status = signal.aborted ? 'cancelled' : terminal.get(agentId);
+        if (status) resolve({ status, record: agentManager.getStatus(agentId) });
+      };
+      signal.addEventListener('abort', notify, { once: true });
+      const onAbort = notify;
+      removeAbort = () => signal.removeEventListener('abort', onAbort);
+      notify();
+    }),
+    dispose: () => {
+      unsubscribe();
+      removeAbort?.();
+      notify = undefined;
+    },
+  };
 }
 
 /**
@@ -449,63 +471,97 @@ export async function runPhase(
   priorReports: readonly PhaseResult[],
   deps: PhaseRunnerDeps,
 ): Promise<PhaseRunOutcome> {
+  // Own the cancellation registration before invoking callbacks: spawn and
+  // beforeSpawn can synchronously re-enter kill/requeue/dispose.
+  const signal = deps.cancellationSignal ?? deps.cancellation.start(item.id);
+  try {
+    return await runPhaseWithSignal(workstream, item, phase, priorReports, { ...deps, cancellationSignal: signal });
+  } finally {
+    if (deps.cancellationSignal === undefined) deps.cancellation.release(item.id, signal);
+  }
+}
+
+async function runPhaseWithSignal(
+  workstream: Workstream,
+  item: WorkItem,
+  phase: Phase,
+  priorReports: readonly PhaseResult[],
+  deps: PhaseRunnerDeps & { readonly cancellationSignal: AbortSignal },
+): Promise<PhaseRunOutcome> {
   const startedAt = Date.now();
+  const signal = deps.cancellationSignal;
   const createWorktree = deps.createWorktree ?? (() => new AgentWorktree(deps.projectRoot));
   const worktree = createWorktree();
+  if (signal.aborted) return settleWithoutAgent(item, phase, 'cancelled', startedAt, worktree, deps);
 
   // A contract unit's item spawns its agent bound to the unit, with the unit
   // brief (item.task) verbatim, the route's model and the item's tool contract.
   if (contractUnitSpawn(item)) {
     if (!deps.contractUnitSettlement) throw new Error(`work item ${item.id} is a contract unit, but the engine has no contract unit settlement`);
-    const gateSignal = deps.cancellation.start(item.id);
-    let decided: ContractPreSpawn;
-    try {
-      decided = await deps.contractUnitSettlement.beforeSpawn(item, gateSignal);
-    } finally {
-      deps.cancellation.release(item.id, gateSignal);
-    }
+    const decided = await deps.contractUnitSettlement.beforeSpawn(item, signal);
+    if (signal.aborted) return settleWithoutAgent(item, phase, 'cancelled', startedAt, worktree, deps);
     if (decided.kind === 'settled') return settleWithoutAgent(item, phase, decided.outcome, startedAt, worktree, deps);
     if (decided.task !== undefined && decided.task.trim().length > 0) item.task = decided.task;
     // The engine owns the item: the unit's next agent runs on the runner's route.
     if (decided.route !== undefined) Object.assign(item, { route: decided.route });
   }
   const unitSpawn = contractUnitSpawn(item);
-  const record = deps.agentManager.spawn({
-    mode: 'spawn',
-    task: unitSpawn ? item.task : buildPhaseTask(item, phase, priorReports),
-    template: templateForPhase(phase),
-    outsideContract: true,
-    ...unitSpawn?.input,
-    // Worktree mode: run the agent's tools with their working directory set to
-    // the item's isolated worktree, so its file edits land there instead of the
-    // shared projectRoot. Omitted (undefined) in shared mode ⇒ agent uses the
-    // orchestrator's default working directory exactly as before.
-    ...(deps.itemWorktree ? { workingDirectory: deps.itemWorktree.path } : {}),
-  } as Parameters<PhaseRunnerAgentManagerLike['spawn']>[0], unitSpawn?.binding);
-
-  record.workItemId = item.id;
-  item.agentId = record.id;
-  item.allAgentIds.push(record.id);
-  item.branch ??= `agent/${item.id}`;
-
-  const signal = deps.cancellation.start(item.id);
-  deps.agentManager.registerCancellationSignal(record.id, signal);
-  deps.onAgentSpawned?.(record.id);
-
-  let outcome: { status: 'completed' | 'failed' | 'cancelled'; record: AgentRecord | null };
+  const inputReadAuthority = deps.prepareInputAuthority && deps.itemWorktree
+    ? await deps.prepareInputAuthority({ path: deps.itemWorktree.path, branch: item.worktreeBranch ?? '' }, signal)
+    : undefined;
+  if (deps.prepareInputAuthority && !deps.itemWorktree) throw new Error('captured contract member requires its isolated workspace');
+  if (signal.aborted) return settleWithoutAgent(item, phase, 'cancelled', startedAt, worktree, deps);
+  const termination = observeAgentTermination(deps.runtimeBus, deps.agentManager);
+  let record: AgentRecord | undefined;
+  let outcome: AgentOutcome;
+  let receivedOutcome = false;
   try {
-    if (unitSpawn) {
+    record = deps.agentManager.spawn({
+      mode: 'spawn',
+      task: unitSpawn ? item.task : buildPhaseTask(item, phase, priorReports),
+      template: templateForPhase(phase),
+      outsideContract: true,
+      ...unitSpawn?.input,
+      // An isolated item's tools run inside its own worktree.
+      ...(deps.itemWorktree ? { workingDirectory: deps.itemWorktree.path } : {}),
+    } as Parameters<PhaseRunnerAgentManagerLike['spawn']>[0], unitSpawn ? { ...unitSpawn.binding, ...(inputReadAuthority ? { inputReadAuthority } : {}) } : undefined);
+
+    record.workItemId = item.id;
+    if (!signal.aborted) item.agentId = record.id;
+    item.allAgentIds.push(record.id);
+    item.branch ??= `agent/${item.id}`;
+    deps.agentManager.registerCancellationSignal(record.id, signal);
+    deps.onAgentSpawned?.(record.id);
+    // kill/requeue may have run inside spawn, before the id was available.
+    if (signal.aborted) deps.agentManager.cancel(record.id, 'kill');
+
+    if (signal.aborted) {
+      outcome = { status: 'cancelled', record: deps.agentManager.getStatus(record.id) };
+    } else if (unitSpawn) {
       if (!deps.contractUnitSettlement) throw new Error(`work item ${item.id} is a contract unit, but the engine has no contract unit settlement`);
       const status = await deps.contractUnitSettlement.settle(item, record.id, signal);
       outcome = { status, record: deps.agentManager.getStatus(record.id) };
     } else {
-      outcome = await awaitAgentTermination(deps.runtimeBus, deps.agentManager, record.id);
+      outcome = await termination.wait(record.id, signal);
     }
+    receivedOutcome = true;
+  } catch (error) {
+    if (record) deps.agentManager.cancel(record.id, 'kill');
+    throw error;
   } finally {
-    deps.agentManager.releaseCancellationSignal(record.id);
-    deps.cancellation.release(item.id, signal);
+    termination.dispose();
+    if (record) {
+      try {
+        // Terminal events and contract verdicts are semantic outcomes, never
+        // proof that the executor's asynchronous finally has finished.
+        if (deps.agentManager.join) await deps.agentManager.join(record.id);
+      } finally {
+        deps.agentManager.releaseCancellationSignal(record.id, signal);
+        if (!receivedOutcome) await worktree.cleanup(record.id).catch(() => undefined);
+      }
+    }
   }
-
+  if (signal.aborted) outcome = { status: 'cancelled', record: deps.agentManager.getStatus(record.id) };
   const usage = usageFromRecord(outcome.record, deps.priceUsage, deps.priceProvenance);
 
   if (outcome.status === 'cancelled') {

@@ -1,3 +1,4 @@
+import type { ReadAccessFilter } from '../shared/read-access.js';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, unlinkSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -347,6 +348,7 @@ export function createWriteTool(options?: {
   toolLLM?: Pick<ToolLLM, 'chat'> | undefined;
   changeTracker?: Pick<SessionChangeTracker, 'recordChange'> | undefined;
   diagnosticsProvider?: DiagnosticsProvider | undefined;
+  capturedReadAccess?: ReadAccessFilter | undefined;
 }): Tool {
   if (typeof options?.projectRoot !== 'string' || options.projectRoot.trim().length === 0) {
     throw new Error('createWriteTool requires projectRoot');
@@ -388,6 +390,11 @@ export function createWriteTool(options?: {
       for (const fileInput of input.files) {
         if (!fileInput.path || typeof fileInput.path !== 'string') {
           errors.push(`Invalid file entry: missing or invalid 'path' field.`);
+          continue;
+        }
+
+        if (options.capturedReadAccess && !await options.capturedReadAccess(resolveAndValidatePath(fileInput.path, projectRoot))) {
+          errors.push('Captured write path is access-restricted');
           continue;
         }
 
@@ -491,7 +498,8 @@ export function createWriteTool(options?: {
               );
             }
           }
-          if (autoHealEnabled) {
+          if (autoHealEnabled && options.capturedReadAccess) appendWarning(warnings, 'Captured input auto-heal is unavailable until its backend enforces original-owner authority.');
+          if (autoHealEnabled && !options.capturedReadAccess) {
             const ext = extname(outcome.result.resolved_path).toLowerCase();
             const isJsTs = ['.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs'].includes(ext);
             if (isJsTs) {

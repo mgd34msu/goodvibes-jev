@@ -1,3 +1,4 @@
+import type { TurnHookOwner } from '../hooks/turn-ownership.js';
 import type { PermissionCategory, PermissionRequestAnalysis } from './types.js';
 import type { RememberTier, RememberTierOption } from './approval-rules.js';
 
@@ -130,8 +131,16 @@ export interface PermissionPromptDecision {
   modifiedArgs?: Record<string, unknown> | undefined;
 }
 
+/** In-process lifetime only; never stored in a prompt or sent over the wire. */
+export interface PermissionExecutionOptions {
+  /** Trusted in-process turn owner; never included in a prompt payload. */
+  readonly hookOwner?: TurnHookOwner | undefined;
+  readonly signal?: AbortSignal | undefined;
+}
+
 export type PermissionRequestHandler = (
   request: PermissionPromptRequest,
+  options?: PermissionExecutionOptions,
 ) => Promise<PermissionPromptDecision>;
 
 export interface PermissionRequest extends PermissionPromptRequest {

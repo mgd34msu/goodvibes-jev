@@ -1,0 +1,157 @@
+{
+  "purpose": "Reviewed TUI source runner lifecycle qualification; no product runtime or planning changes",
+  "sourceCommit": "f276eaf460287b22653d0276aa98f8efae91b3f9",
+  "sourceTree": "c6280ea7bfe73a72b4c05d7153c602397d85c466",
+  "baseline": "27e1f60ebf11aca7ff225cf646ffa8df0674167a",
+  "sharedDependencies": [
+    {
+      "source": "8e4228434f3d365c70f8c749fe5c107033d4ba2b",
+      "local": "e441a74a"
+    },
+    {
+      "source": "9cd0cf152e33fe4a4a4867fdd73634163540c3d8",
+      "local": "aa5923f6"
+    },
+    {
+      "source": "9e8c56b140fb456a99f7e679bd61e53e2b3a7783",
+      "local": "f92c58e7"
+    },
+    {
+      "source": "29e7a113d82deb1fd6371ac85f85e36595fcb4e2",
+      "local": "f276eaf460287b22653d0276aa98f8efae91b3f9"
+    }
+  ],
+  "changedFileSha256": {
+    "packages/engine/scripts/owned-test-child.ts": "8b715b95202258ab8c4d5b269191965c1791a1251991d48c2d9d6a0e3ba4b080",
+    "packages/engine/scripts/product-workspaces.ts": "5b0dc5d6bf03548bcb65db53f3661246bd9c6643a327564838f9dccf9a107276",
+    "packages/engine/test/product-workspace-contract.test.ts": "446a4a88809f4a3897a699309b41df2f251191a691f469e0f11529cc8b9b0245",
+    "packages/engine/test/test-runner-output.test.ts": "d69bd92a0562bb03f527e49c4337cce0b195283ab8578f705916d51fd9a4d4b0",
+    "products/tui/docs/testing-and-validation.md": "ad6b1992bb265794c2b2250b002d643f67facef5f60dfa8ee2f14353cabcb697",
+    "products/tui/scripts/run-tests.ts": "f4adc3575e05b0ad48400ccf41eeb60eaed1cfe900d6b26528da1ad0034495af",
+    "products/tui/scripts/test-file-ceiling.ts": "bd813d02260e001a7ecbc3af5a36947b53786f3d53c3e41a4e07bfb6268cc868",
+    "products/tui/src/test/scripts/test-file-ceiling.test.ts": "348f5bc220103e2348760e87171e1ec4ba3252bab722a93e58955855f196325b",
+    "products/tui/src/test/scripts/test-runner-lifecycle.test.ts": "c1eff8e526fb70fd420383929caba07d5a8800218294a177cb0977d4fa7d27e3"
+  },
+  "productReview": "Independently accepted Linux/POSIX candidate; 41 tests /145 assertions",
+  "actualRunner": {
+    "startedAt": "2026-10-02T16:26:51.838Z",
+    "finishedAt": "2026-10-02T16:32:48.030Z",
+    "command": [
+      "bun",
+      "--no-env-file",
+      "scripts/run-tests.ts",
+      "--jobs",
+      "2"
+    ],
+    "cwd": "/workspace/shared/gv-tui-runner-lifecycle-20261002/products/tui",
+    "exitCode": 1,
+    "signalCode": null,
+    "canonicalWorkspaceLock": true,
+    "timeoutOverrides": false,
+    "sourceFilters": false
+  },
+  "aggregate": {
+    "files": 519,
+    "passedFiles": 518,
+    "failedFiles": [
+      {
+        "file": "src/test/views/modals/planning-modal-store.test.ts",
+        "failed": true,
+        "pass": null,
+        "fail": null,
+        "skip": 0,
+        "assertions": 0,
+        "completeSummary": false
+      }
+    ],
+    "completedSummaries": 518,
+    "completedSummaryCounts": {
+      "pass": 6249,
+      "fail": 0,
+      "skip": 5,
+      "assertions": 29213
+    },
+    "networkViolationReports": 0,
+    "logSha256": "272a299e68cf02fbbb7b8beb72e733da4f22225a14d3418660f0811935985c2f"
+  },
+  "types": {
+    "initial2048MiB": {
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--max-old-space-size=2048",
+        "node_modules/typescript/bin/tsc",
+        "--noEmit",
+        "-p",
+        "products/tui/tsconfig.test.json"
+      ],
+      "exit": -6,
+      "seconds": 53.851200176010025,
+      "maxRssKiB": 2238796,
+      "heapMiB": 2048
+    },
+    "retry2560MiB": {
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--max-old-space-size=2560",
+        "node_modules/typescript/bin/tsc",
+        "--noEmit",
+        "-p",
+        "products/tui/tsconfig.test.json"
+      ],
+      "exit": 2,
+      "seconds": 44.20874552600435,
+      "maxRssKiB": 2500948,
+      "heapMiB": 2560
+    },
+    "diagnostics": 15,
+    "diagnosticsExactlyMatchPrior7ffBaseline": true
+  },
+  "limits": {
+    "perTestDefaultMs": 60000,
+    "ordinaryPerFileDefaultMs": 120000,
+    "sharedInvocationCeilingMs": 720000,
+    "queueWideTwelveMinuteTimer": false,
+    "directProductCommandAcquiresCanonicalLock": false,
+    "qualificationAcquiresCanonicalLock": true,
+    "configuredLongFileAllowancesMs": {
+      "launchAutoUpdate": 780000,
+      "sessionSpine": 540000,
+      "memorySpine": 900000,
+      "compiledHtml": 480000
+    },
+    "precedence": "Shared720000ms cap is applied per invocation/file; earlier file/environment limits win. CI job limit bounds overall CI job."
+  },
+  "qualifications": {
+    "platform": "Linux/POSIX only; Windows child-tree cleanup remains unresolved and explicitly documented",
+    "fullSourceRunByThisWorker": false,
+    "binaryCompilerInvokedByThisWorker": false,
+    "externalProviderCalls": false,
+    "sourceExclusionsAdded": false,
+    "dependenciesInstalled": false,
+    "directDependencyLinks": 104,
+    "unexplainedEarlierSharedTimeout": "An earlier independent shared-helper qualification timed out after76s. Monitored final isolated and full-suite backpressure cases both completed in6.04s; the earlier timeout is not proven fixed by the separate cancellation-hook correction.",
+    "ownedProcessGroupLimit": "Owns POSIX descendants that stay in the dedicated process group; deliberately detached descendants are outside that group."
+  },
+  "migration": {
+    "mapped": 1095,
+    "unresolved": 523,
+    "changed": false
+  },
+  "runtimeProof": "Inherited exact parser ce235 source/build/package/compiled terminal proof; follow-up modifies only test tooling/tests/docs, no runtime rebuild claimed",
+  "evidence": {
+    "actual-product.log": "272a299e68cf02fbbb7b8beb72e733da4f22225a14d3418660f0811935985c2f",
+    "actual-product-result.json": "13a6779d5aff9d69f241948aee81aab900862e0bf62154358c3ccd2db74e5e37",
+    "actual-product-summary.json": "dfe4a18b58ba482a7c3d018f132f8062b4d2043134aa945176330f1ea0a245af",
+    "test-types-stderr.log": "0abafe6d6ae6bb553022d74d2ac7d8f71ddb6375f567e25753c4a051ca5ea439",
+    "test-types-resource.json": "76666732f6b44cf936dbdccc95628c3c6a3f5c49ad619d731f95d581a98f78e9",
+    "test-types-2560.log": "413d516cff44ef3bceb71a83f8db05522181b06c8b2275dc75e7cb8c7846eaff",
+    "test-types-2560-resource.json": "3a42bc47ea58cfb7b740dc994df9e7cc49428877f078111da2033d9c56b75f5d"
+  },
+  "productsCheck": {
+    "exit": 1,
+    "remainingDiagnostic": "products/tui/scripts/run-tests.ts: cross-workspace relative import ../../../packages/engine/scripts/owned-test-child.ts; use a public engine subpath",
+    "generatedFixtureDiagnostics": 6,
+    "fixtureTreesPreservedIntactOutsideSource": 2,
+    "status": "Requires supported public tooling boundary; no waiver or duplicate implementation"
+  }
+}

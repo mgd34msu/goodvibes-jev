@@ -1,0 +1,475 @@
+/**
+ * status-line.ts, the one row directly under the composer.
+ *
+ * Left end: the chips that must always be visible, never dropped for lack of
+ * room: the approval mode (muted, plan in the info color), or "! auto-approve"
+ * in the error color while everything is auto-approved; "sleep disabled"; the
+ * live microphone. Optional chips after them (attachments, orchestration) are
+ * dropped first when the row is short. 2 columns between chips.
+ *
+ * Then, one of (first match wins):
+ *   - a notice the user must see now (the "press Ctrl+C again" exit guard, a
+ *     copy receipt);
+ *   - the working directory and branch, plus a background-work summary
+ *     while agents or processes run (highlighted with its keys while it owns
+ *     keyboard focus). While a main turn runs, an `esc` keycap with
+ *     "interrupt" (or "clear input") leads them. What the turn is doing (the
+ *     spinner, the phrase, the elapsed time) is the throbber's, the row above
+ *     the input area (throbber.ts); the status line keeps session state.
+ *
+ * Right side, built right to left from width-4 and stopping where the left
+ * side really ends (3 columns between pieces, 1 between a key and its
+ * action): the `ctrl+p` keycap with "menu", the context bar, the cost.
+ *
+ * A long directory is shortened before anything else is given up: ~ for the
+ * home directory (the caller does that), then a middle ellipsis that keeps the
+ * first segment and as many trailing segments as fit (~/…/demo-proj). Only
+ * when even that does not leave the right side its full room is it dropped.
+ *
+ * Inside an agent or process view the left side is that view's keys (esc back
+ * to main, ctrl+x stop, …) followed by a short trailing piece that keeps main
+ * in sight (◐ main · working).
+ *
+ * Narrow screens: below 100 columns the directory goes first, then the cost,
+ * then the bar narrows from 16 cells toward 6, then the "used / total" label
+ * goes, then the word "context"; the bar is dropped only when even the bare
+ * 6 cells and percent do not fit. From the warning level up the left side
+ * yields room for that bare bar, so a filling window is never hidden. The
+ * kept chips at the left end are never dropped.
+ *
+ * The background summary shares the row with the cost and the context bar at
+ * every width: the right side's room is reserved before it is drawn
+ * (reserveRight), giving way in the same order, and it is truncated into
+ * what remains. It never pushes the bar off the row.
+ */
+
+import { type Line, createEmptyLine } from '@goodvibes-jev/engine/sdk/platform/types';
+import { getDisplayWidth, interpolateColor, truncateDisplay } from '../utils/terminal-width.ts';
+import { abbreviateCount } from '../utils/format-number.ts';
+import { activeTokens } from './theme.ts';
+import { keycapHintsWidth, paintKeycapHints } from './surface-kit-parts.ts';
+import type { KitHint } from './surface-kit.ts';
+
+/** The bar's cell count when there is room, and the least it narrows to. */
+const CONTEXT_BAR_CELLS = 16;
+const CONTEXT_BAR_MIN_CELLS = 6;
+/** From this fraction of the window the bar turns to the warning color. */
+const CONTEXT_WARN_FRACTION = 0.65;
+/** Directory is shown only from this width up. */
+const DIRECTORY_MIN_WIDTH = 100;
+/** Pieces on the status line sit this far apart. */
+const GAP = 3;
+/** Left edge of the status line (the fill column of the composer above). */
+const LEFT_X = 3;
+/** Columns between the chips at the left end. */
+const CHIP_GAP = 2;
+/**
+ * Room the background summary keeps before the right side gives anything up
+ * for it: a readable start of the summary. Past that the summary is
+ * truncated; the context bar never is.
+ */
+const LEFT_TEXT_MIN = 26;
+
+/** A chip at the left end of the status line. */
+export interface StatusChip {
+  readonly text: string;
+  readonly fg: string;
+  readonly bold?: boolean;
+  /** A filled chip (the wake indicator's banner prominence); no fill otherwise. */
+  readonly bg?: string;
+  /** Never dropped for lack of room (the mode, auto-approve, microphone, sleep). */
+  readonly keep?: boolean;
+}
+
+/** A main turn is running: the status line leads with what Esc does now. */
+export interface StatusBusyState {
+  /** What the next Esc does, when not "interrupt" (the composer has text: "clear input"). */
+  readonly escAction?: string;
+}
+
+export interface StatusBackgroundState {
+  readonly agents: number;
+  readonly processes: number;
+  /** True while the background summary owns keyboard focus. */
+  readonly focused: boolean;
+  /** Optional one-line progress of the running agents. */
+  readonly progress?: string;
+}
+
+export interface StatusContextState {
+  /** Tokens in the last request (0 while unknown). */
+  readonly usedTokens: number;
+  /**
+   * The model's context window, or null when nothing states it (a guessed
+   * window, or one a larger accepted request disproved). An unknown window
+   * draws "context 29.9k / unknown": no bar and no percent, since neither can
+   * be computed.
+   */
+  readonly windowTokens: number | null;
+  /** Compaction threshold as a fraction [0..1]. */
+  readonly compactFraction: number;
+}
+
+export interface StatusLineOptions {
+  readonly width: number;
+  /** Chips at the left end, drawn left to right; see the file header. */
+  readonly chips?: readonly StatusChip[];
+  readonly notice?: { readonly text: string; readonly tone: 'error' | 'info' } | null;
+  readonly busy?: StatusBusyState | null;
+  readonly directory?: string;
+  readonly branch?: string;
+  readonly background?: StatusBackgroundState | null;
+  /** Formatted cost text ("$0.246", "you $0.25 · fleet $0.47"); omitted when unknown. */
+  readonly cost?: string | null;
+  readonly context?: StatusContextState | null;
+  /**
+   * Keys of the view the keyboard is in, shown in place of the esc hint
+   * or directory (the conversation work tree: move, fold, open, copy, back).
+   */
+  readonly keys?: readonly KitHint[] | null;
+  /** A piece drawn after the keys (an agent view keeps main in sight: "◐ main · working"). */
+  readonly trail?: { readonly text: string; readonly fg: string } | null;
+}
+
+interface Piece {
+  readonly text: string;
+  readonly fg: string;
+  readonly bold?: boolean;
+  readonly bg?: string;
+}
+
+function putText(line: Line, x: number, endX: number, piece: Piece): number {
+  let cx = x;
+  for (const ch of piece.text) {
+    const w = getDisplayWidth(ch);
+    if (w <= 0) continue;
+    if (cx + w > endX || cx >= line.length) break;
+    line[cx] = { char: ch, fg: piece.fg, bg: piece.bg ?? '', bold: piece.bold ?? false, dim: false, underline: false, italic: false, strikethrough: false };
+    if (w === 2 && cx + 1 < line.length) line[cx + 1] = { ...line[cx]!, char: '' };
+    cx += w;
+  }
+  return cx;
+}
+
+function piecesWidth(pieces: readonly Piece[]): number {
+  return pieces.reduce((sum, p) => sum + getDisplayWidth(p.text), 0);
+}
+
+/** "13.2k / 1.0M", "— / 1.0M" before the first count arrives, "13.2k / unknown" with no known window. */
+function contextUsageLabel(usedTokens: number, windowTokens: number | null): string {
+  const used = usedTokens > 0 ? abbreviateCount(usedTokens, { bSuffix: true }) : '—';
+  return `${used} / ${windowTokens === null ? 'unknown' : abbreviateCount(windowTokens, { bSuffix: true })}`;
+}
+
+function contextFraction(state: StatusContextState): number {
+  if (state.windowTokens === null || !(state.windowTokens > 0)) return 0;
+  return Math.max(0, Math.min(1, state.usedTokens / state.windowTokens));
+}
+
+/** Which optional parts of the context piece are drawn. */
+interface ContextBarForm {
+  readonly cells: number;
+  readonly word: boolean;
+  readonly label: boolean;
+}
+
+/** Width of the context bar piece in a given form. */
+function contextBarWidth(state: StatusContextState, form: ContextBarForm): number {
+  if (state.windowTokens === null) {
+    // Unknown window: the word and the label only ("context 29.9k / unknown").
+    return (form.word ? getDisplayWidth('context') + 1 : 0) + getDisplayWidth(contextUsageLabel(state.usedTokens, null));
+  }
+  const pct = `${Math.round(contextFraction(state) * 100)}%`;
+  return (form.word ? getDisplayWidth('context') + 1 : 0) + form.cells + 1 + getDisplayWidth(pct)
+    + (form.label ? 1 + getDisplayWidth(contextUsageLabel(state.usedTokens, state.windowTokens)) : 0);
+}
+
+/** The bare form: minimum cells and the percent, nothing else. */
+const BARE_CONTEXT_FORM: ContextBarForm = { cells: CONTEXT_BAR_MIN_CELLS, word: false, label: false };
+
+/**
+ * The widest form that fits `room`: 16 cells narrowing to 6 with the word and
+ * label, then without the label, then without the word. Null when even the
+ * bare form does not fit.
+ */
+function fitContextForm(state: StatusContextState, room: number): ContextBarForm | null {
+  const full: ContextBarForm = { cells: CONTEXT_BAR_CELLS, word: true, label: true };
+  if (state.windowTokens === null) {
+    // No bar to narrow: the word goes first, then the whole piece.
+    for (const form of [full, { ...full, word: false }] satisfies ContextBarForm[]) {
+      if (contextBarWidth(state, form) <= room) return form;
+    }
+    return null;
+  }
+  const fullW = contextBarWidth(state, full);
+  if (fullW <= room) return full;
+  const narrowed = CONTEXT_BAR_CELLS - (fullW - room);
+  if (narrowed >= CONTEXT_BAR_MIN_CELLS) return { ...full, cells: narrowed };
+  for (const form of [
+    { cells: CONTEXT_BAR_MIN_CELLS, word: true, label: false },
+    BARE_CONTEXT_FORM,
+  ] satisfies ContextBarForm[]) {
+    if (contextBarWidth(state, form) <= room) return form;
+  }
+  return null;
+}
+
+/**
+ * Draw "context ███░░│░░ 34% 340K / 1.0M" at x. Filled cells carry the brand
+ * gradient while healthy, the warning color from 65%, the error color at or
+ * past the compaction threshold; the track is the border color and an amber
+ * tick marks the threshold. Returns the column after the label.
+ */
+function drawContextBar(line: Line, x: number, state: StatusContextState, form: ContextBarForm): number {
+  const cells = form.cells;
+  const t = activeTokens();
+  if (state.windowTokens === null) {
+    const cx = form.word ? putText(line, x, line.length, { text: 'context', fg: t.textMuted }) + 1 : x;
+    return putText(line, cx, line.length, { text: contextUsageLabel(state.usedTokens, null), fg: t.textMuted });
+  }
+  const used = contextFraction(state);
+  const threshold = Math.max(0, Math.min(1, state.compactFraction > 0 ? state.compactFraction : 1));
+  const hot = used >= threshold ? t.error : used >= CONTEXT_WARN_FRACTION ? t.warning : null;
+  const filled = used > 0 ? Math.max(1, Math.round(cells * used)) : 0;
+  const tick = threshold < 1 ? Math.min(cells - 1, Math.round(cells * threshold)) : -1;
+  let cx = form.word ? putText(line, x, line.length, { text: 'context', fg: t.textMuted }) + 1 : x;
+  for (let q = 0; q < cells; q++) {
+    if (q === tick) {
+      putText(line, cx + q, line.length, { text: '│', fg: t.warning, bold: true });
+      continue;
+    }
+    const isFilled = q < filled;
+    const fg = isFilled ? (hot ?? interpolateColor(t.brand, t.brandEnd, cells > 1 ? q / (cells - 1) : 0)) : t.border;
+    putText(line, cx + q, line.length, { text: isFilled ? '█' : '░', fg });
+  }
+  cx += cells + 1;
+  cx = putText(line, cx, line.length, { text: `${Math.round(used * 100)}%`, fg: hot ?? t.text, bold: true });
+  if (!form.label) return cx;
+  return putText(line, cx + 1, line.length, { text: contextUsageLabel(state.usedTokens, state.windowTokens), fg: t.textMuted });
+}
+
+function backgroundSummary(bg: StatusBackgroundState): string {
+  const parts: string[] = [];
+  if (bg.agents > 0) parts.push(`${bg.agents} agent${bg.agents === 1 ? '' : 's'} running`);
+  if (bg.processes > 0) parts.push(`${bg.processes} process${bg.processes === 1 ? '' : 'es'} running`);
+  if (parts.length === 0) return 'no background work';
+  return parts.join(' · ');
+}
+
+/**
+ * Draw the left side from `startX`; returns the column where it really ends.
+ * `textMax` bounds the background summary: the room the right side's
+ * reservation left it (reserveRight).
+ */
+function drawLeft(line: Line, options: StatusLineOptions, startX: number, maxX: number, textMax: number, withDirectory: boolean, cut: { summary: boolean }): number {
+  const t = activeTokens();
+  const width = options.width;
+  if (options.notice) {
+    return putText(line, startX, maxX, { text: options.notice.text, fg: options.notice.tone === 'error' ? t.error : t.info, bold: true });
+  }
+  if (options.keys && options.keys.length > 0) {
+    // As many whole keys as fit, in order.
+    const keys: KitHint[] = [];
+    for (const key of options.keys) {
+      if (keycapHintsWidth([...keys, key]) > maxX - startX) break;
+      keys.push(key);
+    }
+    let x = keys.length > 0 ? paintKeycapHints(line, startX, maxX, keys, { fg: t.textFaint }) : startX;
+    const trail = options.trail;
+    if (trail && keys.length === options.keys.length && x + GAP + getDisplayWidth(trail.text) <= maxX) {
+      x = putText(line, x + GAP, maxX, { text: trail.text, fg: trail.fg });
+    }
+    return x;
+  }
+  let x = startX;
+  let lead = false; // the esc hint was drawn: what follows keeps a GAP from it
+  if (options.busy) {
+    // A running turn: Esc's action first, then the at-rest pieces after it.
+    const hints: KitHint[] = [['esc', options.busy.escAction ?? 'interrupt']];
+    if (x + keycapHintsWidth(hints) > maxX) return x;
+    x = paintKeycapHints(line, x, maxX, hints, { fg: t.textFaint });
+    lead = true;
+  }
+  const place: Piece[] = [];
+  if (withDirectory && options.directory && width >= DIRECTORY_MIN_WIDTH) place.push({ text: options.directory, fg: t.textFaint });
+  if (options.branch) place.push({ text: options.branch, fg: t.textFaint });
+  if (place.length > 0) {
+    const joined = place.map((p) => p.text).join(' · ');
+    const from = lead ? x + GAP : x;
+    const shown = truncateDisplay(joined, Math.max(0, maxX - from));
+    if (shown.length > 0) x = putText(line, from, maxX, { text: shown, fg: t.textFaint });
+  }
+  const bg = options.background;
+  if (bg && (bg.focused || bg.agents + bg.processes > 0)) {
+    const start = place.length > 0 || lead ? x + GAP : x;
+    const summary = backgroundSummary(bg) + (bg.progress ? ` · ${bg.progress}` : '');
+    const hints: KitHint[] = bg.focused
+      ? (bg.agents + bg.processes > 0 ? [['⏎', 'open'], ['esc', 'back']] : [['esc', 'back']])
+      : [['⏎', 'view']];
+    const end = Math.min(maxX, textMax);
+    // The directory yields to the summary: a cut summary makes the caller
+    // try a shorter directory, then none (renderStatusLine).
+    cut.summary = getDisplayWidth(`◐ ${summary}`) > Math.max(0, end - start - (bg.focused ? keycapHintsWidth(hints) + GAP : 0));
+    if (bg.focused) {
+      const text = truncateDisplay(`▸ ${summary}`, Math.max(0, end - start - keycapHintsWidth(hints) - GAP));
+      x = putText(line, start, end, { text, fg: t.text, bold: true, bg: t.backgroundSelected });
+      x = paintKeycapHints(line, x + GAP, end, hints, { fg: t.textFaint });
+    } else {
+      const text = truncateDisplay(`◐ ${summary}`, Math.max(0, end - start));
+      x = putText(line, start, end, { text, fg: t.brand, bold: true });
+    }
+  }
+  return x;
+}
+
+/**
+ * Columns the right side (left of the menu) keeps from the background
+ * summary, `avail` being the room both share. Pieces give way in
+ * the Measurements table's order until LEFT_TEXT_MIN is left for the text:
+ * the cost first, then the bar narrows from 16 cells to 6, then its label
+ * goes, then the word "context". The bare bar and its percent are always
+ * kept (when they fit on the row at all): the summary never hides the
+ * context bar. Each kept piece counts its GAP.
+ */
+function reserveRight(ctx: StatusContextState | null, cost: string | null, avail: number): number {
+  const costW = cost ? GAP + getDisplayWidth(cost) : 0;
+  const leaves = (w: number): boolean => avail - w >= LEFT_TEXT_MIN;
+  if (!ctx) return cost && leaves(costW) ? costW : 0;
+  const full: ContextBarForm = { cells: CONTEXT_BAR_CELLS, word: true, label: true };
+  const barW = (form: ContextBarForm): number => GAP + contextBarWidth(ctx, form);
+  if (leaves(barW(full) + costW) && cost) return barW(full) + costW;
+  const forms: ContextBarForm[] = ctx.windowTokens === null
+    ? [full, { ...full, word: false }]
+    : [
+        ...Array.from({ length: CONTEXT_BAR_CELLS - CONTEXT_BAR_MIN_CELLS + 1 }, (_, k) => ({ ...full, cells: CONTEXT_BAR_CELLS - k })),
+        { cells: CONTEXT_BAR_MIN_CELLS, word: true, label: false },
+        BARE_CONTEXT_FORM,
+      ];
+  for (const form of forms) if (leaves(barW(form))) return barW(form);
+  const last = forms[forms.length - 1]!;
+  return barW(last) <= avail ? barW(last) : 0;
+}
+
+/**
+ * Draw the left-end chips; returns the column after the last one (LEFT_X when
+ * none). Optional chips that would run past `maxX` are dropped, last first; a
+ * kept chip is always drawn, up to the row's right edge.
+ */
+function drawChips(line: Line, chips: readonly StatusChip[], maxX: number, rightEdge: number): number {
+  const shown = [...chips];
+  const width = (list: readonly StatusChip[]): number => list.reduce((s, c, i) => s + (i > 0 ? CHIP_GAP : 0) + getDisplayWidth(c.text), 0);
+  while (shown.length > 0 && LEFT_X + width(shown) > maxX) {
+    const idx = shown.map((c) => c.keep === true).lastIndexOf(false);
+    if (idx < 0) break;
+    shown.splice(idx, 1);
+  }
+  let x = LEFT_X;
+  shown.forEach((chip, i) => {
+    if (i > 0) x += CHIP_GAP;
+    x = putText(line, x, rightEdge, { text: chip.text, fg: chip.fg, bold: chip.bold, bg: chip.bg });
+  });
+  return x;
+}
+
+/** Render the status line. */
+export function renderStatusLine(options: StatusLineOptions): Line {
+  // The directory is the first thing to shorten, then to go: when it would
+  // cost the cost or the full context bar their room, the row is laid out
+  // again with a shorter form of it, and finally without it.
+  const withDirectory = layoutStatusLine(options, true);
+  if (withDirectory.fullFit || !options.directory) return withDirectory.line;
+  for (const shorter of abbreviatedDirectories(options.directory)) {
+    const attempt = layoutStatusLine({ ...options, directory: shorter }, true);
+    if (attempt.fullFit) return attempt.line;
+  }
+  const withoutDirectory = layoutStatusLine(options, false);
+  // While a turn runs the esc hint leads the row: when even without the
+  // directory the background summary is cut, the branch gives way too.
+  if (!withoutDirectory.summaryCut || !options.busy || !options.branch) return withoutDirectory.line;
+  return layoutStatusLine({ ...options, branch: undefined }, false).line;
+}
+
+/**
+ * Shorter forms of a directory, longest first: the first segment kept, the
+ * middle replaced by …, as many trailing segments as the form allows
+ * (~/Projects/…/app/demo-proj, then ~/…/demo-proj).
+ */
+function abbreviatedDirectories(directory: string): string[] {
+  const absolute = directory.startsWith('/');
+  const segments = directory.split('/').filter((s) => s.length > 0);
+  if (segments.length < 3) return [];
+  const head = absolute ? `/${segments[0]}` : segments[0]!;
+  const out: string[] = [];
+  for (let keep = segments.length - 2; keep >= 1; keep--) {
+    const form = `${head}/…/${segments.slice(segments.length - keep).join('/')}`;
+    if (form.length < directory.length && !out.includes(form)) out.push(form);
+  }
+  return out;
+}
+
+function layoutStatusLine(options: StatusLineOptions, withDirectory: boolean): { line: Line; fullFit: boolean; summaryCut: boolean } {
+  const t = activeTokens();
+  const width = options.width;
+  const line = createEmptyLine(width);
+  for (const cell of line) cell.bg = '';
+  const rightEdge = width - 3; // exclusive: right-aligned text ends at width-4
+  const menu: KitHint[] = [['ctrl+p', 'menu']];
+  const menuW = keycapHintsWidth(menu);
+
+  const ctx = options.context && (options.context.windowTokens === null || options.context.windowTokens > 0) ? options.context : null;
+  // From the warning level up the bare bar is reserved before the left side
+  // is laid out, so the left side truncates instead of hiding a filling window.
+  const reserve = ctx && contextFraction(ctx) >= CONTEXT_WARN_FRACTION
+    ? contextBarWidth(ctx, BARE_CONTEXT_FORM) + GAP
+    : 0;
+
+  // The left side is drawn first so the right side knows where it really ends.
+  // It may use everything left of the menu keycap (and the reserve).
+  const leftMax = Math.max(LEFT_X, rightEdge - menuW - GAP - reserve);
+  const chipsEnd = drawChips(line, options.chips ?? [], leftMax, rightEdge);
+  const leftStart = chipsEnd > LEFT_X ? chipsEnd + GAP : LEFT_X;
+  // The background summary shares the row: the right side's
+  // room is reserved first and the summary is truncated into what is left.
+  // A running turn's esc hint leads the left side; the summary's room is what follows it.
+  const leadW = options.busy && !options.notice && !(options.keys && options.keys.length > 0)
+    ? keycapHintsWidth([['esc', options.busy.escAction ?? 'interrupt']]) + GAP
+    : 0;
+  const avail = Math.max(0, rightEdge - menuW - GAP - leftStart - leadW);
+  const textMax = leftStart + leadW + Math.max(0, avail - reserveRight(ctx, options.cost ?? null, avail));
+  const cut = { summary: false };
+  const drawn = drawLeft(line, options, leftStart, Math.max(leftStart, leftMax), Math.max(leftStart, Math.min(leftMax, textMax)), withDirectory, cut);
+  const leftEnd = drawn > leftStart ? drawn : chipsEnd;
+
+  const cost = options.cost ?? null;
+  const costW = cost ? getDisplayWidth(cost) : 0;
+  const full: ContextBarForm = { cells: CONTEXT_BAR_CELLS, word: true, label: true };
+  const fullRightW = menuW
+    + (ctx ? GAP + contextBarWidth(ctx, full) : 0)
+    + (cost ? GAP + costW : 0);
+  const fullFit = leftEnd + GAP + fullRightW <= rightEdge && !cut.summary;
+
+  let rx = rightEdge;
+  if (rx - menuW >= leftEnd + GAP) {
+    paintKeycapHints(line, rx - menuW, rx, menu, { fg: t.textFaint });
+    rx -= menuW + GAP;
+  } else {
+    return { line, fullFit, summaryCut: cut.summary };
+  }
+
+  const room = rx - leftEnd - GAP;
+  let form: ContextBarForm | null = null;
+  let showCost = false;
+  if (ctx) {
+    if (cost && contextBarWidth(ctx, full) + GAP + costW <= room) { form = full; showCost = true; }
+    else form = fitContextForm(ctx, room);
+  } else if (cost && costW <= room) {
+    showCost = true;
+  }
+  if (ctx && form) {
+    const w = contextBarWidth(ctx, form);
+    drawContextBar(line, rx - w, ctx, form);
+    rx -= w + GAP;
+  }
+  if (showCost && cost) putText(line, rx - costW, rx, { text: cost, fg: t.textMuted });
+  return { line, fullFit, summaryCut: cut.summary };
+}

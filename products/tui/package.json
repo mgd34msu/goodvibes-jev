@@ -1,0 +1,89 @@
+{
+  "name": "@goodvibes-jev/tui",
+  "version": "2.1.0",
+  "description": "Terminal-native GoodVibes client for coding, operations, knowledge and channel workflows; a pure client of the GoodVibes daemon.",
+  "type": "module",
+  "main": "src/main.ts",
+  "bin": {
+    "goodvibes": "bin/goodvibes"
+  },
+  "files": [
+    "bin",
+    ".goodvibes/agents",
+    ".goodvibes/skills",
+    ".goodvibes/GOODVIBES.md",
+    "src",
+    "!src/test",
+    "!src/**/*.test.ts",
+    "!src/**/__tests__",
+    "scripts/check-bun.sh",
+    "scripts/postinstall.js",
+    "README.md",
+    "CHANGELOG.md",
+    "docs/foundation-artifacts"
+  ],
+  "scripts": {
+    "dev": "bun run src/main.ts",
+    "dev:watch": "bun --watch src/main.ts",
+    "build": "bun scripts/run-toolchain.ts build",
+    "build:linux-x64": "bun scripts/run-toolchain.ts build --target linux-x64",
+    "build:linux-arm64": "bun scripts/run-toolchain.ts build --target linux-arm64",
+    "build:macos-x64": "bun scripts/run-toolchain.ts build --target darwin-x64",
+    "build:macos-arm64": "bun scripts/run-toolchain.ts build --target darwin-arm64",
+    "smoke:tui": "bun scripts/run-toolchain.ts smoke",
+    "build:windows": "bun scripts/run-toolchain.ts build --target windows-x64",
+    "build:all-shell": "bun run build:linux-x64 && bun run build:linux-arm64 && bun run build:macos-x64 && bun run build:macos-arm64 && bun run build:windows",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
+    "test": "bun scripts/run-tests.ts",
+    "test:changed": "bun run scripts/run-tests.ts --changed=origin/main",
+    "test:e2e": "bun ../../packages/engine/scripts/test.ts --cwd ../../products/tui --timeout=300000 src/test/e2e",
+    "test:e2e:fast": "bun ../../packages/engine/scripts/test.ts --cwd ../../products/tui --timeout=120000 src/test/e2e/startup.e2e.test.ts src/test/e2e/first-turn.e2e.test.ts",
+    "test:e2e:release": "bun ../../packages/engine/scripts/test.ts --cwd ../../products/tui --timeout=300000 src/test/e2e/daemon-adoption.e2e.test.ts src/test/e2e/wrfc-chain.e2e.test.ts src/test/e2e/turn-notification.e2e.test.ts src/test/e2e/resize.e2e.test.ts",
+    "package:install-check": "bun run scripts/package-install-check.ts",
+    "build:prod": "bun scripts/run-toolchain.ts build",
+    "build:all": "bun scripts/run-toolchain.ts build --all",
+    "perf:check": "bun run scripts/perf-check.ts",
+    "perf:baseline": "GOODVIBES_PERF_SAVE_BASELINE=1 bun run scripts/perf-check.ts",
+    "architecture:check": "bun run scripts/check-architecture.ts",
+    "workflows:check": "bun run scripts/check-workflows.ts",
+    "audit:home": "bun run scripts/audit-goodvibes-home.ts",
+    "foundation:artifacts": "bun run scripts/export-foundation-artifacts.ts",
+    "docs:commands": "bun run scripts/generate-command-reference.ts",
+    "verification:live": "bun run scripts/verify-live.ts",
+    "prepare:build": "bun run scripts/prebuild.ts"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mgd34msu/goodvibes-jev.git",
+    "directory": "products/tui"
+  },
+  "bugs": {
+    "url": "https://github.com/mgd34msu/goodvibes-jev/issues"
+  },
+  "homepage": "https://github.com/mgd34msu/goodvibes-jev/tree/main/products/tui",
+  "keywords": [
+    "goodvibes",
+    "tui",
+    "bun",
+    "ai"
+  ],
+  "engines": {
+    "node": ">=20",
+    "bun": ">=1.3.10"
+  },
+  "dependencies": {
+    "@goodvibes-jev/engine": "workspace:*",
+    "@goodvibes-jev/daemon": "workspace:*",
+    "fuse.js": "^7.1.0",
+    "onnxruntime-web": "^1.27.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "typescript": "6.0.3",
+    "@goodvibes-jev/judgment": "workspace:*"
+  },
+  "trustedDependencies": [],
+  "private": true
+}

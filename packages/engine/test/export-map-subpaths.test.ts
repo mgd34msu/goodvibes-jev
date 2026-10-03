@@ -39,6 +39,9 @@ const SUBPATH_SURFACE: Record<string, readonly string[]> = {
  * services.ts, absent from the map).
  */
 const DIR_SUBPATH_SURFACE: Record<string, readonly string[]> = {
+  // Host-only ledger composition is intentionally a narrow nested subpath,
+  // not a root SDK or workflow-barrel export.
+  './platform/workflow/work-ledger': ['createWorkLedger', 'createEmptyWorkLedgerState', 'WorkLedgerAccessError', 'workLedgerCommandSchema', 'workLedgerStateSchema'],
   './platform/power': ['PowerManager', 'wireRuntimePower', 'createLinuxLogindSeam', 'bindPowerWorkSignals', 'createUnavailablePowerSeam'],
   './platform/relay': ['StepUpService', 'createRelayReachability', 'buildDaemonRelayReachability', 'evaluateStepUp', 'isMutatingMethod'],
   // The consolidation driver rides the existing ./platform/state barrel, a

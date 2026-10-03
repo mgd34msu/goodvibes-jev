@@ -1,5 +1,5 @@
 import * as LSP from 'vscode-languageserver/node';
-import { SyntaxNode } from 'web-tree-sitter';
+import { SyntaxNode } from '@goodvibes-jev/bash-web-tree-sitter';
 /**
  * Recursively iterate over all nodes in a tree.
  *

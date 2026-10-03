@@ -1,3 +1,4 @@
+import { assertCapturedInputPathContext } from '../../contract/input-authority.js';
 // repo_map, a model-invoked, token-budgeted repository map.
 //
 // STANDING RULE: this is a tool the model CALLS, not passive always-on context
@@ -131,6 +132,7 @@ export function createRepoMapTool(options: {
    * require reading the file, are withheld and the line is flagged.
    */
   readAccessFilter?: ReadAccessFilter;
+  capturedReadAccess?: ReadAccessFilter;
 }): Tool {
   const projectRoot = options.projectRoot;
   const readAccessFilter = options.readAccessFilter;
@@ -159,7 +161,7 @@ export function createRepoMapTool(options: {
       const root = requested === projectRoot || requested.startsWith(projectRoot + sep) ? requested : projectRoot;
 
       const graph = new ImportGraph();
-      await graph.build(root);
+      await graph.build(root, options.capturedReadAccess);
       const relGraph = graph.toRelativeGraph(root);
       const stats = graph.stats();
       const ranked = rankFiles(relGraph, root);
@@ -200,6 +202,8 @@ export function createRepoMapTool(options: {
           block = `\n  ${file.rel}  (dependents: ${file.dependents}, ${formatBytes(file.bytes)}) [access-restricted]`;
         } else {
           try {
+            if (options.capturedReadAccess && !await options.capturedReadAccess(absolute)) throw new Error('captured map path is access-restricted');
+            assertCapturedInputPathContext(absolute);
             const exports = extractTopLevelExports(readFileSync(absolute, 'utf-8')).slice(0, MAX_EXPORTS_PER_FILE);
             const exportsLine = exports.length > 0 ? `\n    exports: ${exports.join(', ')}` : '';
             block = `\n  ${file.rel}  (dependents: ${file.dependents}, ${formatBytes(file.bytes)})${exportsLine}`;

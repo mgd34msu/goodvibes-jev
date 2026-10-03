@@ -17,12 +17,13 @@
  * closes them by running BEFORE both.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import ts from 'typescript';
 import { DaemonSurfaceActionHelper } from '../sdk/src/platform/daemon/surface-actions.ts';
 import { handleNtfySurfacePayload } from '../sdk/src/platform/adapters/ntfy/index.ts';
-import { WorkProposalStore } from '../sdk/src/platform/agents/work-proposal-store.ts';
+import { WorkProposalStore, type WorkProposalRecord } from '../sdk/src/platform/agents/work-proposal-store.ts';
 import { logger } from '../sdk/src/platform/utils/logger.ts';
 import { trackDisposables } from './_helpers/disposables.ts';
 import { useApprovalReadings } from './helpers/approval-readings.ts';
@@ -116,7 +117,16 @@ function buildHarness(options: HarnessOptions = {}) {
   /** Everything put on the channel. */
   const notices: Array<{ routeId: string | undefined; text: string }> = [];
 
-  const proposals = disposables.add(new WorkProposalStore({ now: options.proposalNow }));
+  const proposalDir = mkdtempSync(join(tmpdir(), 'surface-card-gate-'));
+  const proposalPath = join(proposalDir, 'work-proposals.json');
+  const proposals = disposables.add(
+    new WorkProposalStore({ now: options.proposalNow, storePath: proposalPath }),
+    async (store) => {
+      store.dispose();
+      await store.flush();
+      rmSync(proposalDir, { recursive: true, force: true });
+    },
+  );
   if (options.pendingProposal) {
     const proposal = proposals.create({
       surfaceKind: 'ntfy',
@@ -187,6 +197,7 @@ function buildHarness(options: HarnessOptions = {}) {
       },
       getPolicy: () => policyRecord,
     },
+    // Event-emission coverage is separate from this persisted-store fixture.
     controlPlaneGateway: { publishEvent: () => undefined },
     runtimeBus: { emit: () => undefined, on: () => () => undefined },
     companionChatManager: null,
@@ -232,13 +243,20 @@ function buildHarness(options: HarnessOptions = {}) {
     stages,
     notices,
     proposals,
+    proposalPath,
     /** Each durable tier, captured separately so a test can assert against it by name. */
     tiers: {
       config: () => JSON.stringify([...configStore.entries()]),
       secrets: () => JSON.stringify([...secretsStore.entries()]),
       policyAudit: () => JSON.stringify(policyAudit),
       approvalStore: () => JSON.stringify(approvalResolutions),
-      workProposals: () => JSON.stringify(proposals.listPending()),
+      // Inspect the persisted bytes after admitted writes finish. listPending()
+      // hides undelivered/resolved rows and can reap expired rows as a side
+      // effect, making it unsuitable for a no-storage-change assertion.
+      workProposals: async () => {
+        await proposals.flush();
+        return existsSync(proposalPath) ? readFileSync(proposalPath, 'utf8') : '';
+      },
       transcript: () => JSON.stringify({ spawnTasks, submittedBodies }),
       notices: () => JSON.stringify(notices),
       logs: () => JSON.stringify(loggedText),
@@ -274,20 +292,20 @@ function expectTierClean(label: string, contents: string): void {
 }
 
 /** Refusal must leave these entire stores unchanged, including generated metadata. */
-function snapshotStoredTiers(harness: ReturnType<typeof buildHarness>) {
+async function snapshotStoredTiers(harness: ReturnType<typeof buildHarness>) {
   return {
     config: harness.tiers.config(),
     secrets: harness.tiers.secrets(),
     policyAudit: harness.tiers.policyAudit(),
     approvalStore: harness.tiers.approvalStore(),
-    workProposals: harness.tiers.workProposals(),
+    workProposals: await harness.tiers.workProposals(),
     transcript: harness.tiers.transcript(),
   };
 }
 
 function expectStoredTiersUnchanged(
-  before: ReturnType<typeof snapshotStoredTiers>,
-  after: ReturnType<typeof snapshotStoredTiers>,
+  before: Awaited<ReturnType<typeof snapshotStoredTiers>>,
+  after: Awaited<ReturnType<typeof snapshotStoredTiers>>,
 ): void {
   for (const tier of Object.keys(before) as Array<keyof typeof before>) {
     expect(after[tier], `${tier} changed during refusal`).toBe(before[tier]);
@@ -323,7 +341,7 @@ describe('a card number on a remote channel is refused', () => {
     ['a timestamp without a card fragment', 1700000000000],
   ])('the refused digits reach no durable tier with %s', async (_label, now) => {
     const harness = buildHarness({ pendingApproval: true, pendingProposal: true, proposalNow: () => now });
-    const before = snapshotStoredTiers(harness);
+    const before = await snapshotStoredTiers(harness);
     expect(harness.proposals.listPending()).toHaveLength(1);
     expect(harness.proposals.listPending()[0]).toMatchObject({
       createdAt: now, expiresAt: now + 10 * 60_000,
@@ -336,34 +354,92 @@ describe('a card number on a remote channel is refused', () => {
     // detects new records and changes to every field, without mistaking an
     // existing timestamp or random UUID containing "4111" for refused content.
     // The approval store includes the steering note a veto could otherwise write.
-    expectStoredTiersUnchanged(before, snapshotStoredTiers(harness));
+    expectStoredTiersUnchanged(before, await snapshotStoredTiers(harness));
     // Logs and notices DO receive new refusal output, which must still contain
     // none of the protected digits, even a partial or truncated card number.
     expectTierClean('the logs', harness.tiers.logs());
     expectTierClean('the delivered notices', harness.tiers.notices());
   });
 
-  test('the old substring check rejects ordinary proposal metadata before any ingress', () => {
+  test('the old substring check rejects ordinary proposal metadata before any ingress', async () => {
     const harness = buildHarness({ pendingProposal: true, proposalNow: () => 1790826411125 });
     const proposal = harness.proposals.listPending()[0]!;
     expect(proposal.task).toBe('refactor the parser');
     expect(proposal.summary).toBe('refactor the parser');
     expect(() => expectTierClean('generated timestamp', JSON.stringify({ createdAt: proposal.createdAt })))
       .toThrow('contains the card fragment "4111"');
-    expect(() => expectTierClean('the existing proposal', harness.tiers.workProposals()))
+    const persisted = await harness.tiers.workProposals();
+    expect(() => expectTierClean('the existing proposal', persisted))
       .toThrow('contains the card fragment "4111"');
   });
 
-  test.each(CARD_FRAGMENTS)('the store snapshot check catches newly persisted card material %s', (fragment) => {
+  test.each(CARD_FRAGMENTS)('the store snapshot check catches newly persisted card material %s', async (fragment) => {
     const harness = buildHarness({ pendingProposal: true, proposalNow: () => 1790826411125 });
-    const before = snapshotStoredTiers(harness);
+    const before = await snapshotStoredTiers(harness);
     const leaked = harness.proposals.create({
       surfaceKind: 'ntfy', task: `use ${fragment}`, summary: `use ${fragment}`, ttlMs: 10 * 60_000,
     });
     harness.proposals.markDelivered(leaked.id);
-    expect(() => expectStoredTiersUnchanged(before, snapshotStoredTiers(harness)))
+    const after = await snapshotStoredTiers(harness);
+    expect(() => expectStoredTiersUnchanged(before, after))
       .toThrow('workProposals changed during refusal');
   });
+
+  test.each(['undelivered', 'accepted', 'declined', 'expired'] as const)(
+    'the store snapshot catches card material in a hidden %s proposal',
+    async (state) => {
+      let now = 1790826411125;
+      const harness = buildHarness({ proposalNow: () => now });
+      const before = await snapshotStoredTiers(harness);
+      const leaked = harness.proposals.create({
+        surfaceKind: 'ntfy', task: `use ${CARD}`, summary: `use ${CARD}`, ttlMs: 60_000,
+      });
+      if (state === 'accepted' || state === 'declined') {
+        harness.proposals.markDelivered(leaked.id);
+        harness.proposals.resolve(leaked.id, state);
+      } else if (state === 'expired') {
+        // Advance only the injected store clock. No query should reap this
+        // still-persisted row before the boundary assertion can inspect it.
+        now += 60_001;
+      }
+      const after = await snapshotStoredTiers(harness);
+      const persisted = JSON.parse(readFileSync(harness.proposalPath, 'utf8')) as { proposals: WorkProposalRecord[] };
+      expect(persisted.proposals).toHaveLength(1);
+      expect(persisted.proposals[0]).toMatchObject({
+        id: leaked.id, task: `use ${CARD}`, summary: `use ${CARD}`,
+        status: state === 'accepted' || state === 'declined' ? state : 'pending',
+        delivered: state === 'accepted' || state === 'declined',
+      });
+      expect(() => expectStoredTiersUnchanged(before, after))
+        .toThrow('workProposals changed during refusal');
+      // Repeated observation must neither mutate the file nor reap the store.
+      expectStoredTiersUnchanged(after, await snapshotStoredTiers(harness));
+      expect(harness.proposals.disclose().tracked).toBe(1);
+    },
+  );
+
+  test.each(['task', 'summary', 'routeId'] as const)(
+    'the store snapshot catches card material replacing an existing hidden proposal %s',
+    async (field) => {
+      const harness = buildHarness({ proposalNow: () => 1790826411125 });
+      const proposal = harness.proposals.create({
+        surfaceKind: 'ntfy', task: 'original task', summary: 'original summary',
+        routeId: 'original route', ttlMs: 60_000,
+      });
+      const before = await snapshotStoredTiers(harness);
+      const persisted = JSON.parse(readFileSync(harness.proposalPath, 'utf8')) as { proposals: WorkProposalRecord[] };
+      expect(persisted.proposals).toHaveLength(1);
+      expect(persisted.proposals[0]).toMatchObject({ id: proposal.id, delivered: false });
+      // Synthetic fault at the existing persistence seam, without adding a
+      // production mutation API or relying on access to the private map.
+      const changed = { ...persisted.proposals[0]!, [field]: CARD };
+      writeFileSync(harness.proposalPath, JSON.stringify({ ...persisted, proposals: [changed] }, null, 2));
+      const after = await snapshotStoredTiers(harness);
+      expect(JSON.parse(readFileSync(harness.proposalPath, 'utf8')).proposals).toEqual([changed]);
+      expect(() => expectStoredTiersUnchanged(before, after))
+        .toThrow('workProposals changed during refusal');
+    },
+  );
 
   test('the logs record the refusal but never the message', async () => {
     const harness = buildHarness();

@@ -361,14 +361,14 @@ describe('the suite dies with the process that started it', () => {
     // which would then carry a lifecycle hook of its own into every run. The
     // shared env names live in their own import-free module for this reason.
     // Invisible at runtime until something odd happens, so it is scanned for.
-    const parentSide = readFileSync(resolve(SDK_ROOT, 'scripts/owned-test-child.ts'), 'utf8');
+    const parentSide = readFileSync(resolve(SDK_ROOT, 'toolchain/src/test-runner/owned-test-child.ts'), 'utf8');
     const imports = [...parentSide.matchAll(/^\s*import[^;]*?from\s+'([^']+)'/gm)].map((m) => m[1]);
     expect(imports).not.toContain('bun:test');
-    expect(imports).toContain('./test-child-watchdog-env.ts');
-    expect(imports).not.toContain('./test-child-watchdog.ts');
+    expect(imports).toContain('./test-child-watchdog-env.js');
+    expect(imports).not.toContain('./test-child-watchdog.js');
     // And the module it does import must stay import-free itself, or the
     // separation is undone one edit later.
-    const envModule = readFileSync(resolve(SDK_ROOT, 'scripts/test-child-watchdog-env.ts'), 'utf8');
+    const envModule = readFileSync(resolve(SDK_ROOT, 'toolchain/src/test-runner/test-child-watchdog-env.ts'), 'utf8');
     expect(envModule).not.toMatch(/^\s*import\s/m);
   });
 });

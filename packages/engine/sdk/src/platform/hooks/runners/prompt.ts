@@ -2,6 +2,7 @@ import type { HookDefinition, HookResult, HookEvent } from '../types.js';
 import { logger } from '../../utils/logger.js';
 import type { ToolLLM } from '../../config/tool-llm.js';
 import { summarizeError } from '../../utils/error-display.js';
+import { createHookExecution, type HookExecutionOptions } from '../execution.js';
 
 /**
  * Prompt hook runner, sends event data to an LLM via ToolLLM.
@@ -16,6 +17,7 @@ export async function run(
   hook: HookDefinition,
   event: HookEvent,
   toolLLM: Pick<ToolLLM, 'chat'> | null,
+  options?: HookExecutionOptions,
 ): Promise<HookResult> {
   if (!toolLLM) {
     return { ok: false, error: 'prompt hook runner is not configured in this runtime' };
@@ -34,20 +36,28 @@ export async function run(
   });
 
   let timerId: ReturnType<typeof setTimeout> | undefined;
+  const execution = options === undefined ? undefined : createHookExecution(options, hook.timeout ?? 30, 'prompt');
 
   try {
-    const timeoutPromise = new Promise<never>((_resolve, reject) => {
-      timerId = setTimeout(() => {
-        reject(new Error(`prompt hook timed out after ${hook.timeout ?? 30}s`));
-      }, timeoutMs);
-      timerId.unref?.();
-    });
-
     let response: string;
-    try {
-      response = await Promise.race([toolLLM.chat(resolvedPrompt), timeoutPromise]);
-    } finally {
-      clearTimeout(timerId);
+    if (execution) {
+      execution.signal.throwIfAborted();
+      // A provider may need time to unwind, or may ignore cancellation. The
+      // owned invocation remains pending until that provider actually settles.
+      response = await toolLLM.chat(resolvedPrompt, { signal: execution.signal });
+      execution.signal.throwIfAborted();
+    } else {
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        timerId = setTimeout(() => {
+          reject(new Error(`prompt hook timed out after ${hook.timeout ?? 30}s`));
+        }, timeoutMs);
+        timerId.unref?.();
+      });
+      try {
+        response = await Promise.race([toolLLM.chat(resolvedPrompt), timeoutPromise]);
+      } finally {
+        clearTimeout(timerId);
+      }
     }
 
     const trimmed = response.trim();
@@ -66,5 +76,7 @@ export async function run(
     const message = summarizeError(err);
     logger.error('prompt hook error', { event: event.path, error: message });
     return { ok: false, error: message };
+  } finally {
+    execution?.dispose();
   }
 }

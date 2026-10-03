@@ -1,0 +1,25 @@
+# Daemon boot task ownership
+
+This is the bounded controller and explicit composition seam tracked by [THE-98](https://linear.app/the-artificery/issue/THE-98/own-daemon-boot-task-acquisition-and-shutdown). It does not install the default production boot factory or complete the daemon executable.
+
+The upstream daemon's `src/runtime/boot-tasks.ts` at `254699bf5d834cdca41436211ada1ae32bf89258` starts memory folding, provider watching, webhook and queue notification subscriptions, configured-service synchronization, and plugins after the facade initializes memory. Those effects need an owner before an entrypoint starts them. In particular, an asynchronous notifier acquisition can finish after shutdown, and detaching a subscription alone does not prove an outbound operation has drained.
+
+`RuntimeServicesOptions.createBootOperations` is an explicit synchronous construction seam. It supplies all six operations; it does not start them. The runtime constructs and owns a `DaemonBootController` before publication, and its caller starts the controller only after the facade has initialized memory. `bootTasks` is absent when the host has not provided this composition. A factory that throws is cleaned up with the acquired graph. A factory that reenters graph shutdown cannot publish a partially retired runtime.
+
+The controller owns its start promise before invoking an operation. Repeated start calls share it. Close synchronously fences new steps, starts retirement of existing owners, then waits for admitted acquisition and a final owner drain. A notification owner is registered before attachment; if acquisition finishes after close, it is closed without being attached. Failed attachment retires the partial owner before later steps proceed. An uncancellable memory fold, credential read, attachment, or plugin initialization keeps close pending, with the active step visible in the snapshot. Cleanup failures remain failures after the remaining owners have been attempted.
+
+Boot failure recognition compares only a private sentinel identity, so an arbitrary rejection value cannot execute a getter or prototype trap while the controller handles failure. Reporting is deliberately generic: it receives only the failed step, with no raw rejection or configuration values, and does not preserve detailed failure diagnostics. The failed step remains represented in the snapshot, and cleanup failures still reject close after the other owners are attempted. The reporting result is awaited and its synchronous or asynchronous rejection is contained; a held report remains owned by start/close instead of becoming a detached rejection or allowing shutdown to finish early.
+
+The outer graph drains boot work before its handler and base dependencies. Existing plugin and browser ownership remain intact; idempotent plugin close can be requested by both the boot owner and the base graph. This layer does not manufacture cancellation for arbitrary plugin background work.
+
+The plugin composition uses the graph's actual gateway, channel, delivery and provider registries. It preserves the upstream host boundary for slash commands and ordinary plugin tools: those registrations are explicitly logged as unserved by this daemon registry rather than silently represented as runnable. Changing that host boundary is separate work.
+
+## Evidence and remaining installation
+
+Owned temporary fixtures cover held acquisition, late arrival, failed attachment, reentrant construction close, memory-fold and plugin-initialization drain, failure aggregation and fresh-instance retry. The actual runtime graph test proves boot cleanup precedes base process ownership cleanup. A temporary enabled plugin is initialized with the product's real loader dependencies, serves its response through the actual daemon HTTP route, and is removed during graph shutdown while its saved enabled preference remains set. No provider endpoint or real user plugin directory is used.
+
+Deleting only the runtime's boot-owner registration makes the two intended graph ownership assertions fail. The original source is restored after that controlled omission; no production assertion or timeout is relaxed.
+
+Default installation remains dependent on the live notification privacy behavior in THE-89 and the awaited `WebhookNotifier.close()` / async-disposal contract in THE-92. The later production factory must use the same webhook notifier as the operator methods, inject a live metadata-only reader, and await acquired queue/webhook owners. No compatibility fallback may silently turn a missing close method into a detached subscription or successful empty boot step.
+
+The executable must still start the facade, start this controller, expose real degraded/pending status, and await facade/controller/graph shutdown on termination. Built-in intake composition and its explicit judgment dependencies remain incomplete; the separately tooling-denied legacy IMAP task THE-49 stays paused. Inbound-mail expectation/housekeeping timers also need an explicit composition disposal owner without changing ordinary supervisor stop/restart semantics.

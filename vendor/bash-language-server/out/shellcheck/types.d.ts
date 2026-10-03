@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@goodvibes-jev/bash-zod';
 declare const ReplacementSchema: z.ZodObject<{
     precedence: z.ZodNumber;
     line: z.ZodNumber;

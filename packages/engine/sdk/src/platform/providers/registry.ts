@@ -72,7 +72,11 @@ export class ProviderRegistry {
   /** Provider-sourced models, see registry-live-model-discovery.ts. */
   private providerNativeModels: ModelDefinition[] = [];
   private readonly runtimeCatalogSuppressedRegistryKeys = new Map<string, readonly string[]>();
-  private _watcher: { close: () => void } | undefined;
+  private _watcher: ReturnType<typeof watchCustomProviders> | undefined;
+  private readonly _watcherDrains = new Set<Promise<void>>();
+  private _watcherFailed = false;
+  private _watcherGeneration = 0;
+  private _watchingClosed: Promise<void> | undefined;
   private _readyPromise: Promise<void> | null = null;
   private readonly startupDiscovery = new StartupModelDiscovery();
   private readonly configManager: Pick<ConfigManager, 'get' | 'getCategory' | 'getControlPlaneConfigDir'>;
@@ -714,7 +718,12 @@ export class ProviderRegistry {
    * Safe to call multiple times, stops the previous watcher first.
    */
   startWatching(runtimeBus: RuntimeEventBus | null = null): void {
-    this.stopWatching();
+    if (this._watchingClosed) throw new Error('Provider watcher ownership is closed.');
+    const generation = ++this._watcherGeneration;
+    this.stopWatcher();
+    const providersDir = this.getCustomProvidersDir();
+    if (this._watchingClosed) throw new Error('Provider watcher ownership is closed.');
+    if (generation !== this._watcherGeneration) return;
     this._watcher = watchCustomProviders(runtimeBus, async () => {
       const result = await this.loadCustomProviders();
       for (const msg of result.warnings) {
@@ -737,15 +746,49 @@ export class ProviderRegistry {
           updated: result.updated,
         });
       }
-    }, this.getCustomProvidersDir());
+    }, providersDir);
   }
 
-  /** Stop the file watcher started by startWatching(). */
+  /** Stop admission without waiting for reloads. A later startWatching() may restart. */
   stopWatching(): void {
-    if (this._watcher) {
-      this._watcher.close();
-      this._watcher = undefined;
-    }
+    ++this._watcherGeneration;
+    this.stopWatcher();
+  }
+
+  private stopWatcher(): void {
+    const watcher = this._watcher;
+    this._watcher = undefined;
+    if (!watcher) return;
+    let settled!: () => void;
+    const drain = new Promise<void>((resolve) => { settled = resolve; });
+    // Publish the old generation before native close can reenter the registry.
+    this._watcherDrains.add(drain);
+    void watcher.closeAndDrain().then(settled, () => {
+      this._watcherFailed = true;
+      settled();
+    });
+    void drain.then(() => { this._watcherDrains.delete(drain); });
+  }
+
+  /**
+   * Terminal watcher shutdown: fence restart and await all admitted reloads,
+   * including generations previously stopped by stopWatching(). Failures reject
+   * after settlement; repeated calls return the same promise. Does not close
+   * other registry services or own direct loadCustomProviders() calls.
+   * A reload callback may request shutdown, but must not await its own drain.
+   */
+  closeWatching(): Promise<void> {
+    if (this._watchingClosed) return this._watchingClosed;
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    this._watchingClosed = new Promise<void>((ok, no) => { resolve = ok; reject = no; });
+    this.stopWatching();
+    void Promise.all([...this._watcherDrains]).then(() => {
+      if (this._watcherFailed) {
+        reject(new Error('Provider registry watcher drain failed.'));
+      } else resolve();
+    }, reject);
+    return this._watchingClosed;
   }
 
   /**

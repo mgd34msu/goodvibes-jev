@@ -20,6 +20,15 @@ function bundledCommandPath(command: string, workingDirectory: string): string |
     if (parent === current) break;
     current = parent;
   }
+  if (command === 'bash-language-server') {
+    // Bun 1.3.14 can omit the optional file: package link from an engine
+    // tarball. Its reviewed source and declared runtime leaves still ship.
+    // Preserve installed .bin precedence, then use only our embedded copies.
+    candidates.push(resolve(SDK_PACKAGE_ROOT, '../vendor/bash-language-server/out/cli.js'));
+    if (fileURLToPath(import.meta.url).endsWith(join('sdk', 'src', 'platform', 'intelligence', 'lsp', 'service.ts'))) {
+      candidates.push(resolve(SDK_PACKAGE_ROOT, '../../../vendor/bash-language-server/out/cli.js'));
+    }
+  }
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate;
   }

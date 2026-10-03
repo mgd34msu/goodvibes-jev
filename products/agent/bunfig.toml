@@ -1,0 +1,6 @@
+[test]
+# Preload provides globalThis.fetch and other test environment globals so that
+# `bun test src/test` works out-of-the-box for contributors without the custom
+# run-tests.ts harness. The official runner (bun run scripts/run-tests.ts) also
+# picks this up automatically.
+preload = ["./src/test/helpers/preload.ts"]

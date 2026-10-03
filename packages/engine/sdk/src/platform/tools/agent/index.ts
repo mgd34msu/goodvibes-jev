@@ -14,8 +14,8 @@ import {
   isChildFailureTerminal,
   type ChildFailureEnvelope,
 } from './child-failure-envelope.js';
-export type { AgentExecutor, AgentRecord } from './manager.js';
-export { AGENT_TEMPLATES, AgentManager } from './manager.js';
+export type { AgentContractRunner, AgentExecutor, AgentRecord, OwnedAgentExecution } from './manager.js';
+export { AGENT_TEMPLATES, AgentManager, OwnedAgentExecutionUnavailableError } from './manager.js';
 export { isActiveAgent } from './predicates.js';
 export { cancelAllAgentRuns, type CancellableAgentRuns } from './cancel-all.js';
 

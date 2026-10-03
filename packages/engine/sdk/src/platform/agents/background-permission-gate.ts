@@ -9,6 +9,7 @@ import type { PermissionAttribution } from '../permissions/prompt.js';
 import { buildToolDenial, buildDenialErrorMessage } from '../permissions/denial.js';
 import type { ToolDenial } from '../types/tools.js';
 import type { AgentRecord } from '../tools/agent/index.js';
+import { assertPermissionActive, awaitPermission } from '../permissions/cancellation.js';
 
 /** The narrow slice of PermissionManager the background gate consults. */
 export type BackgroundPermissionManager = Pick<
@@ -50,17 +51,20 @@ export async function gateBackgroundToolCall(
   record: Pick<AgentRecord, 'id'> & { readonly template?: AgentRecord['template'] | undefined },
   toolName: string,
   args: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<BackgroundPermissionOutcome> {
+  assertPermissionActive(signal);
   const manager = context.permissionManager;
   if (!manager) return { approved: true };
-  if (manager.getBackgroundAgentsMode() === 'allow-all' && await manager.passesBoundary(toolName, args)) return { approved: true };
+  if (manager.getBackgroundAgentsMode() === 'allow-all'
+    && await awaitPermission(() => manager.passesBoundary(toolName, args, { signal }), signal)) return { approved: true };
 
   const attribution: PermissionAttribution = {
     kind: 'background-agent',
     agentId: record.id,
     ...(record.template ? { template: record.template } : {}),
   };
-  const result = await manager.checkDetailed(toolName, args, attribution);
+  const result = await awaitPermission(() => manager.checkDetailed(toolName, args, attribution, { signal }), signal);
   if (result.approved) {
     return result.modifiedArgs ? { approved: true, modifiedArgs: result.modifiedArgs } : { approved: true };
   }
