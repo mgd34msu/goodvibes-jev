@@ -72,6 +72,14 @@ test('authenticated HTTP preparation/import/replay and bounded existing read tra
   expect(JSON.stringify(snapshotOnly.body)).not.toContain('PRIVATE_SOURCE_PAYLOAD_DO_NOT_DISCLOSE');
   expect(snapshotOnly.status).toBe(200); expect(JSON.stringify(snapshotOnly.body)).not.toContain('executionApproved');
 });
+test('read-only scoped admin can prepare but protected provenance still requires read knowledge', async () => {
+  const host = await fixture(); const body = { projectId: 'project', sourceIds: ['source'] };
+  const context = { admin: true, principalId: 'shared-token', principalKind: 'token' as const, scopes: ['read:work-ledger', 'read:knowledge'] };
+  const prepared = await host.helper.invokeGatewayMethodCall({ authToken: 'owner-token', methodId: 'workLedger.prepareLegacyImport', body, context });
+  expect(prepared.status).toBe(200); expect(prepared.body).toMatchObject({ kind: 'prepared' });
+  const denied = await host.helper.invokeGatewayMethodCall({ authToken: 'owner-token', methodId: 'workLedger.prepareLegacyImport', body, context: { ...context, scopes: ['read:work-ledger'] } });
+  expect(denied.status).toBe(403); expect(JSON.stringify(denied.body)).not.toContain('PRIVATE_SOURCE_PAYLOAD_DO_NOT_DISCLOSE');
+});
 test('read token, non-owner, scope attenuation, forged payload authority and stale auth refuse before writes', async () => {
   const host = await fixture(); const request = await host.prepared(); const bytes = readFileSync(host.file);
   expect((await host.request('/api/work-ledger/legacy-import', request, 'reader-token')).status).toBe(403);

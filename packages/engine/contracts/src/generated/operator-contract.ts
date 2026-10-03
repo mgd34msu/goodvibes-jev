@@ -116988,7 +116988,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "ws"
         ],
         "scopes": [
-          "write:work-ledger-import",
+          "read:work-ledger",
           "read:knowledge"
         ],
         "http": {

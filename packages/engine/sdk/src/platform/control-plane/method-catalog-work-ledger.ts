@@ -40,7 +40,7 @@ export const builtinGatewayWorkLedgerMethodDescriptors: readonly GatewayMethodDe
   methodDescriptor({
     id: 'workLedger.prepareLegacyImport', title: 'Prepare Legacy Work Import', category: 'work-ledger',
     description: 'Capture bounded complete legacy sources on the selected authoritative host. Preparation does not write or grant execution authority.',
-    access: 'admin', scopes: [WORK_LEDGER_IMPORT_SCOPE, 'read:knowledge'], metadata: { requiresFreshOperatorAuth: true },
+    access: 'admin', scopes: [WORK_LEDGER_READ_SCOPE, 'read:knowledge'], metadata: { requiresFreshOperatorAuth: true },
     http: { method: 'POST', path: '/api/work-ledger/legacy-import/prepare' },
     inputSchema: json(strictObject({ projectId, sourceIds: array(string().min(1).max(200)).min(1).max(500) })),
     outputSchema: json(union([
