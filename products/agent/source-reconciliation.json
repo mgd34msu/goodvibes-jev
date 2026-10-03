@@ -7734,7 +7734,7 @@
       "target": "products/agent/src/runtime/bootstrap-agent-tools.ts",
       "upstreamBlob": "a6f01e8bf7bf93ed494f18df6e3dcdd534d57f1e",
       "present": true,
-      "recoveredBlob": "27845ba7474014d5d80810a8585c7a8a4cef67f5",
+      "recoveredBlob": "42392d1c7335d1ee67dc5122762669401dee3f05",
       "materialization": "workspace-adapted"
     },
     {
@@ -14134,7 +14134,7 @@
       "target": "products/agent/src/test/tools/agent-route-tool.test.ts",
       "upstreamBlob": "c4cd5fbefa87c4a5af5dfefa0d22252268746c94",
       "present": true,
-      "recoveredBlob": "a7e99b15b5cf11ff452a0cd1a842fc2fdd7ef23d",
+      "recoveredBlob": "c9a7c5dbe01bedeabfcd3b94cac7f19f4defbd9a",
       "materialization": "workspace-adapted"
     },
     {
@@ -14990,7 +14990,7 @@
       "target": "products/agent/src/tools/agent-harness-memory-external-providers.ts",
       "upstreamBlob": "d7babae76375860ccb55d3480e68e15534ed1da6",
       "present": true,
-      "recoveredBlob": "2b295a43f753da44ac7695a925a0a19282c723c4",
+      "recoveredBlob": "e70b8471214e3062eac4f0510476e0a8cd469199",
       "materialization": "workspace-adapted"
     },
     {
@@ -15454,7 +15454,7 @@
       "target": "products/agent/src/tools/agent-harness-tool-types.ts",
       "upstreamBlob": "736e6ae410b7e8cba5d34560efbae20979878b33",
       "present": true,
-      "recoveredBlob": "bcf501c3122582d3541b7f2b19806f97a785426b",
+      "recoveredBlob": "48f388bf7e47d2027b096b8ad5f3cebd1cab0b31",
       "materialization": "workspace-adapted"
     },
     {
@@ -15470,7 +15470,7 @@
       "target": "products/agent/src/tools/agent-harness-tool.ts",
       "upstreamBlob": "23a50c3fb1af70c0357b1899301fcb0bb01ed4b2",
       "present": true,
-      "recoveredBlob": "89e646016f57bab690f5b59e6b4b8467d3064c20",
+      "recoveredBlob": "9a7596a84e7608431a68b05292a52a47613b03da",
       "materialization": "workspace-adapted"
     },
     {
@@ -15910,15 +15910,15 @@
       "target": "products/agent/src/tools/agent-route-planner.ts",
       "upstreamBlob": "b6ab30df8b45e3afd36458c1f18f96486ac4a9e2",
       "present": true,
-      "recoveredBlob": "b6ab30df8b45e3afd36458c1f18f96486ac4a9e2",
-      "materialization": "byte-identical"
+      "recoveredBlob": "09017b85a02e8112dce93d38a10d0cde2ab97be7",
+      "materialization": "workspace-adapted"
     },
     {
       "source": "src/tools/agent-route-tool.ts",
       "target": "products/agent/src/tools/agent-route-tool.ts",
       "upstreamBlob": "5514887dcb41b1a236f808cdf77faee1b2cd8224",
       "present": true,
-      "recoveredBlob": "229110a58fe5ece5fd2037b2ee913051bb0024e2",
+      "recoveredBlob": "bb3c0906dda5797c9f3e56761e4febe2c6663854",
       "materialization": "workspace-adapted"
     },
     {
@@ -16227,8 +16227,8 @@
     }
   ],
   "materializationSummary": {
-    "byte-identical": 822,
-    "workspace-adapted": 828
+    "byte-identical": 821,
+    "workspace-adapted": 829
   },
   "limits": [
     "Materialization hashes account for source retention, not semantic disposition completion.",
@@ -18291,42 +18291,6 @@
       "status": "public-engine-successor-accounting-pending"
     },
     {
-      "source": "src/tools/agent-route-planner-candidates-setup.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/tools/agent-route-planner-candidates-setup.ts",
-      "status": "public-engine-successor-accounting-pending"
-    },
-    {
-      "source": "src/tools/agent-route-planner-candidates-surfaces.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/tools/agent-route-planner-candidates-surfaces.ts",
-      "status": "public-engine-successor-accounting-pending"
-    },
-    {
-      "source": "src/tools/agent-route-planner-candidates-work.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/tools/agent-route-planner-candidates-work.ts",
-      "status": "public-engine-successor-accounting-pending"
-    },
-    {
-      "source": "src/tools/agent-route-planner-helpers.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/tools/agent-route-planner-helpers.ts",
-      "status": "public-engine-successor-accounting-pending"
-    },
-    {
-      "source": "src/tools/agent-route-planner.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/tools/agent-route-planner.ts",
-      "status": "public-engine-successor-accounting-pending"
-    },
-    {
-      "source": "src/tools/agent-route-tool.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/tools/agent-route-tool.ts",
-      "status": "public-engine-successor-accounting-pending"
-    },
-    {
       "source": "src/tools/agent-schedule-edit-tool.ts",
       "disposition": "HOIST",
       "retainedPath": "products/agent/src/tools/agent-schedule-edit-tool.ts",
@@ -18946,12 +18910,12 @@
     }
   ],
   "baselineMappingSummary": {
-    "mapped": 1151,
-    "unmapped": 451,
+    "mapped": 1157,
+    "unmapped": 445,
     "unmappedByDisposition": {
       "PORT": 176,
       "JEV": 44,
-      "HOIST": 231
+      "HOIST": 225
     }
   }
 }

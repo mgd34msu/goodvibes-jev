@@ -9030,6 +9030,71 @@
       "status": "retained-source"
     },
     {
+      "source": "src/tools/agent-route-planner-candidates-setup.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/routing/task-routes/catalog-setup.ts",
+        "packages/engine/sdk/src/platform/routing/task-routes/route-selector.ts",
+        "packages/engine/sdk/src/platform/routing/task-routes/slots.ts"
+      ],
+      "status": "engine-task-route-consumer-adopted",
+      "evidence": "products/agent/docs/task-route-engine-adoption.md"
+    },
+    {
+      "source": "src/tools/agent-route-planner-candidates-surfaces.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/routing/task-routes/catalog-surfaces.ts",
+        "packages/engine/sdk/src/platform/routing/task-routes/route-selector.ts",
+        "packages/engine/sdk/src/platform/routing/task-routes/slots.ts"
+      ],
+      "status": "engine-task-route-consumer-adopted",
+      "evidence": "products/agent/docs/task-route-engine-adoption.md"
+    },
+    {
+      "source": "src/tools/agent-route-planner-candidates-work.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/routing/task-routes/catalog-work.ts",
+        "packages/engine/sdk/src/platform/routing/task-routes/route-selector.ts",
+        "packages/engine/sdk/src/platform/routing/task-routes/slots.ts"
+      ],
+      "status": "engine-task-route-consumer-adopted",
+      "evidence": "products/agent/docs/task-route-engine-adoption.md"
+    },
+    {
+      "source": "src/tools/agent-route-planner-helpers.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/routing/task-routes/named-ids.ts",
+        "packages/engine/sdk/src/platform/routing/task-routes/slots.ts",
+        "packages/engine/sdk/src/platform/routing/task-routes/text.ts"
+      ],
+      "status": "engine-task-route-consumer-adopted",
+      "evidence": "products/agent/docs/task-route-engine-adoption.md"
+    },
+    {
+      "source": "src/tools/agent-route-planner.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/routing/task-routes/planner.ts",
+        "packages/engine/sdk/src/platform/routing/task-routes/route-selector.ts",
+        "packages/engine/sdk/src/platform/routing/task-routes/slots.ts"
+      ],
+      "status": "engine-task-route-consumer-adopted",
+      "evidence": "products/agent/docs/task-route-engine-adoption.md"
+    },
+    {
+      "source": "src/tools/agent-route-tool.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/routing/task-routes/tool.ts",
+        "packages/engine/sdk/src/platform/routing/task-routes/planner.ts"
+      ],
+      "status": "engine-task-route-consumer-adopted",
+      "evidence": "products/agent/docs/task-route-engine-adoption.md"
+    },
+    {
       "source": "src/tools/agent-session-write-ledger.ts",
       "disposition": "JEV",
       "targets": [

@@ -1,3 +1,4 @@
+import { builtinGatewayWorkLedgerMethodDescriptors } from './method-catalog-work-ledger.js';
 import { builtinBrowserJudgmentMethodDescriptors } from './method-catalog-browser-judgment.js';
 import {
   builtinGatewayAdminMethodDescriptors,
@@ -131,6 +132,7 @@ interface RegisteredGatewayEvent {
 const BUILTIN_GATEWAY_EVENTS: readonly GatewayEventDescriptor[] = builtinGatewayEventDescriptors;
 
 const BUILTIN_GATEWAY_METHODS: readonly GatewayMethodDescriptor[] = [
+  ...builtinGatewayWorkLedgerMethodDescriptors,
   ...builtinGatewayControlMethodDescriptors,
   ...builtinBrowserJudgmentMethodDescriptors,
   ...builtinGatewayChannelMethodDescriptors,

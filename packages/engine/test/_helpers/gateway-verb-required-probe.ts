@@ -1,3 +1,4 @@
+import { registerWorkLedgerGatewayMethods } from '../../sdk/src/platform/control-plane/routes/work-ledger.js';
 /**
  * _helpers/gateway-verb-required-probe.ts
  *
@@ -169,6 +170,7 @@ const ROUTE_REGISTRARS: ReadonlyArray<readonly [string, (catalog: GatewayMethodC
   ['tailscale', (catalog) => registerTailscaleGatewayMethods(catalog, stubDeps())],
   ['update', (catalog) => registerUpdateGatewayMethods(catalog, stubDeps())],
   ['voice-setup', (catalog) => registerVoiceSetupGatewayMethods(catalog, stubDeps())],
+  ['work-ledger', (catalog) => registerWorkLedgerGatewayMethods(catalog, { projectId: 'probe', async readSnapshot() { return { projectId: 'probe', revision: 1, cursor: 1, works: [] }; }, async history() { return []; }, subscribe() { return () => {}; }, dispose() {} })],
   ['workspaces', (catalog) => registerWorkspacesGatewayMethods(catalog, stubDeps())],
   ['worktree-setup', (catalog) => registerWorktreeSetupGatewayMethods(catalog, stubDeps())],
 ];
@@ -225,6 +227,7 @@ export const EXPECTED_ROUTE_REGISTRARS: readonly string[] = [
   'registerTailscaleGatewayMethods',
   'registerUpdateGatewayMethods',
   'registerVoiceSetupGatewayMethods',
+  'registerWorkLedgerGatewayMethods',
   'registerWorkspacesGatewayMethods',
   'registerWorktreeSetupGatewayMethods',
 ];
