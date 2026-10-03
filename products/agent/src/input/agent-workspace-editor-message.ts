@@ -7,6 +7,9 @@ export type EditorMessageState =
   | { readonly status: 'pending' | 'unavailable' | 'protected'; readonly revision: number }
   | { readonly status: 'read' | 'uncertain'; readonly revision: number; readonly reading: EditorMessageReading };
 
+interface ProtectedSpan { readonly length: number; readonly digest: string; }
+interface MessageOrigin { readonly messageHash: string; readonly spans: readonly ProtectedSpan[]; }
+
 /**
  * Owned by the input state, never by paint. Identity and relevant context bind
  * every completion; selecting a field or repainting cannot start another read.
@@ -17,50 +20,52 @@ export class WorkspaceEditorMessage {
   private revision = 0;
   private key: string | undefined;
   private controller: AbortController | undefined;
-  // Privacy provenance belongs to the message's origin, not today's edited
-  // form. Keep only local fingerprints of proven secret echoes for this
-  // workspace lifetime, including close/reopen and editor replacement. Neither
-  // these fingerprints nor secret field values enter a judgment or decision log.
-  private readonly protectedMessages = new Set<string>();
-  private readonly protectedSpans = new Map<number, Set<string>>();
+  // Message origin is immutable while its wording is unchanged. Field edits
+  // cannot make preexisting help secret-derived or make an old echo safe.
+  // Only the current message lineage is held strongly. Weak associations let
+  // an editor object carry its origin when reused without retaining old forms.
+  private origin: MessageOrigin | undefined;
+  private readonly editorOrigins = new WeakMap<AgentWorkspaceLocalEditor, MessageOrigin>();
 
   private fingerprint(value: string): string {
     return createHash('sha256').update(value).digest('hex');
   }
 
-  private isProtected(editor: AgentWorkspaceLocalEditor): boolean {
+  private contains(message: string, span: ProtectedSpan): boolean {
+    for (let start = 0; start + span.length <= message.length; start++) {
+      if (this.fingerprint(message.slice(start, start + span.length)) === span.digest) return true;
+    }
+    return false;
+  }
+
+  private messageOrigin(editor: AgentWorkspaceLocalEditor): MessageOrigin {
     const messageHash = this.fingerprint(editor.message);
-    // A known origin is immutable: later field edits cannot remove its taint
-    // or reinterpret shortened draft values as additional secret origins.
-    if (this.protectedMessages.has(messageHash)) return true;
-    let protectedMessage = false;
+    const retained = this.editorOrigins.get(editor);
+    if (retained?.messageHash === messageHash) return this.origin = retained;
+    if (this.origin?.messageHash === messageHash) {
+      this.editorOrigins.set(editor, this.origin);
+      return this.origin;
+    }
+    // A new message inherits only the proven origin spans it still contains.
+    // A genuinely new safe message ends the previous privacy lineage. Closing
+    // alone does not: a reopened/reworded current error must remain protected.
+    const spans = (this.origin?.spans ?? []).filter((span) => this.contains(editor.message, span));
     for (const field of editor.fields) {
       if (!field.redact || !field.value || !editor.message.includes(field.value)) continue;
-      const fingerprints = this.protectedSpans.get(field.value.length) ?? new Set<string>();
-      fingerprints.add(this.fingerprint(field.value));
-      this.protectedSpans.set(field.value.length, fingerprints);
-      protectedMessage = true;
-    }
-    if (!protectedMessage) {
-      // Exact byte-content containment is a security boundary, not a meaning
-      // classifier. A rewritten message must not launder a known secret echo.
-      for (const [length, fingerprints] of this.protectedSpans) {
-        for (let start = 0; start + length <= editor.message.length; start++) {
-          if (!fingerprints.has(this.fingerprint(editor.message.slice(start, start + length)))) continue;
-          protectedMessage = true;
-          break;
-        }
-        if (protectedMessage) break;
+      const digest = this.fingerprint(field.value);
+      if (!spans.some((span) => span.length === field.value.length && span.digest === digest)) {
+        spans.push(Object.freeze({ length: field.value.length, digest }));
       }
     }
-    if (protectedMessage) this.protectedMessages.add(messageHash);
-    return protectedMessage;
+    const origin = Object.freeze({ messageHash, spans: Object.freeze(spans) });
+    this.editorOrigins.set(editor, origin);
+    return this.origin = origin;
   }
   public state: EditorMessageState = { status: 'empty', revision: 0 };
 
   update(editor: AgentWorkspaceLocalEditor | null, requestRender: () => void): void {
     // Typed per-field redaction declarations are security metadata, not a prose classifier.
-    const protectedMessage = editor ? this.isProtected(editor) : false;
+    const protectedMessage = editor ? this.messageOrigin(editor).spans.length > 0 : false;
     const key = editor ? JSON.stringify([editor.kind, editor.mode, editor.recordId, editor.title, editor.message, protectedMessage]) : undefined;
     if (key === this.key) return;
     this.controller?.abort();

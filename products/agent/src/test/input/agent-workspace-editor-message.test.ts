@@ -3,6 +3,7 @@ import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort, JudgmentRequest, JudgmentResult, Questions } from '@goodvibes-jev/judgment/decisions';
 import { createSystemOnePort, PINNED_MODEL } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { createAgentWorkspaceProviderCommandEditor } from '../../input/agent-workspace-provider-command-editors.ts';
 import { AgentWorkspace } from '../../input/agent-workspace.ts';
 import type { AgentWorkspaceLocalEditor } from '../../input/agent-workspace-types.ts';
 import type { CommandContext } from '../../input/command-registry.ts';
@@ -149,7 +150,8 @@ describe('workspace editor message reading', () => {
     const { ws } = workspace();
     const marker = 'synthetic-private-echo-938d';
     const originalMessage = `Validation failed for ${marker}`;
-    ws.localEditor = { ...editor(originalMessage), fields: [{ ...editor('').fields[0]!, redact: true, value: marker }] };
+    const originalEditor = { ...editor(originalMessage), fields: [{ ...editor('').fields[0]!, redact: true, value: marker }] };
+    ws.localEditor = originalEditor;
     await flush(); expect(ws.editorMessageState.status).toBe('protected');
     ws.appendEditorText('X'); await flush();
     expect(ws.editorMessageState.status).toBe('protected'); expect(fake.requests).toHaveLength(0);
@@ -159,6 +161,7 @@ describe('workspace editor message reading', () => {
     await flush(); expect(ws.editorMessageState.status).toBe('protected'); expect(fake.requests).toHaveLength(0);
     // Editing the error wording does not make the original echoed value public.
     ws.localEditor = { ...editor(`Earlier error: ${marker}. Retry later.`), fields: [] };
+    const retainedProtectedEditor = ws.localEditor;
     await flush(); expect(ws.editorMessageState.status).toBe('protected'); expect(fake.requests).toHaveLength(0);
     ws.close(); ws.reopen(); ws.localEditor = editor(originalMessage);
     await flush(); expect(ws.editorMessageState.status).toBe('protected'); expect(fake.requests).toHaveLength(0);
@@ -170,9 +173,38 @@ describe('workspace editor message reading', () => {
     ws.localEditor = { ...editor('Ready to edit.'), fields: [{ ...editor('').fields[0]!, redact: true, value: 'unrelated-synthetic-private-293a' }] };
     await flush(); expect(ws.editorMessageState.status).toBe('read'); expect(fake.requests).toHaveLength(1);
     expect(JSON.stringify(fake.requests)).not.toContain('unrelated-synthetic-private-293a');
-    // Returning to an old protected message after a safe one is still protected.
-    ws.localEditor = editor(originalMessage); await flush();
+    // An old editor object retains its own immutable provenance without a
+    // global archive of every message or field value.
+    ws.localEditor = retainedProtectedEditor; await flush();
     expect(ws.editorMessageState.status).toBe('protected'); expect(fake.requests).toHaveLength(1); ws.close();
+  });
+
+  test('actual provider help never becomes secret-derived from later typed draft prefixes', async () => {
+    const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port);
+    const { ws } = workspace();
+    ws.localEditor = createAgentWorkspaceProviderCommandEditor('provider-add');
+    await flush(); expect(ws.editorMessageState.status).toBe('read'); expect(fake.requests).toHaveLength(1);
+    ws.moveEditorField(2); ws.appendEditorText('a'); await flush();
+    expect(ws.editorMessageState.status).toBe('read'); expect(fake.requests).toHaveLength(1);
+    ws.appendEditorText('bc-opaque-synthetic-key'); await flush();
+    expect(ws.editorMessageState.status).toBe('read'); expect(fake.requests).toHaveLength(1);
+    ws.close(); ws.reopen(); ws.localEditor = editor('Ready to edit.');
+    ws.submitEditorFieldOrForm(); await flush();
+    expect(ws.localEditor?.message).toBe('Name is required before saving.');
+    expect(ws.editorMessageState.status).toBe('read'); expect(fake.requests).toHaveLength(3);
+    expect(JSON.stringify(fake.requests)).not.toContain('abc-opaque-synthetic-key'); ws.close();
+  });
+
+  test('a genuinely new safe message ends the old origin rather than poisoning later forms', async () => {
+    const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port);
+    const { ws } = workspace();
+    // No minimum-length exception: a new message actually produced with a
+    // one-character secret is protected. This is not preexisting help text.
+    ws.localEditor = { ...editor('Rejected a'), fields: [{ ...editor('').fields[0]!, redact: true, value: 'a' }] };
+    await flush(); expect(ws.editorMessageState.status).toBe('protected'); expect(fake.requests).toHaveLength(0);
+    ws.localEditor = editor('OK'); await flush(); expect(ws.editorMessageState.status).toBe('read');
+    ws.close(); ws.reopen(); ws.localEditor = editor('Ready to edit.'); ws.submitEditorFieldOrForm(); await flush();
+    expect(ws.editorMessageState.status).toBe('read'); expect(fake.requests).toHaveLength(3); ws.close();
   });
 
   test('actual missing-field producer establishes a new safe message after a protected error', async () => {
