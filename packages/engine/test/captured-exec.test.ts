@@ -1,10 +1,13 @@
 import { afterEach, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { admitCapturedExecDependency } from '../sdk/src/platform/tools/exec/captured-exec-dependencies.js';
+import { useToolReadings } from './_helpers/tool-readings.js';
+useToolReadings([], [['CAPTURE_NETWORK_POLICY', { catastrophic: false, needsNetwork: true }]]);
 import { captureContractInput, materializeContractInput, contractInputPath } from '../sdk/src/platform/contract/input-snapshot.js';
-import { createContractInputAuthority, revokeContractInputAuthority } from '../sdk/src/platform/contract/input-authority.js';
+import { assertContractInputReadAccess, createContractInputAuthority, revokeContractInputAuthority } from '../sdk/src/platform/contract/input-authority.js';
 import type { Contract } from '../sdk/src/platform/contract/types.js';
 import { runCapturedCommand, probeCapturedExecAvailability, type CapturedExecAuthority } from '../sdk/src/platform/tools/exec/captured-exec.js';
 import { formatResult } from '../sdk/src/platform/tools/exec/result-format.js';
@@ -149,4 +152,95 @@ test('unsupported ABI has a typed availability refusal without executing a comma
     Object.defineProperty(process, 'platform', platform);
     Object.defineProperty(process, 'arch', arch);
   }
+});
+
+for (const policy of ['disabled', 'enabled', 'denied'] as const)
+  test.skipIf(!supported)(`captured exec preserves existing ${policy} sandbox network policy`, async () => {
+    const { createExecTool } = await import('../sdk/src/platform/tools/exec/runtime.js');
+    const { ProcessManager } = await import('../sdk/src/platform/tools/shared/process-manager.js');
+    const { OverflowHandler } = await import('../sdk/src/platform/tools/shared/overflow.js');
+    const binding = await fixture();
+    let escalations = 0;
+    const tool = createExecTool(new ProcessManager(), {
+      capturedInput: binding, defaultWorkingDirectory: binding.root, overflowHandler: new OverflowHandler({ baseDir: binding.root }),
+      sandbox: {
+        featureEnabled: true,
+        config: { enabled: true, egressAllowlist: policy === 'disabled' ? [] : ['*'], workspaceWritable: [] },
+        availability: { available: true, backend: 'bubblewrap', bwrapPath: '/usr/bin/bwrap', networkIsolationGuaranteed: true, reason: 'fixture uses actual captured capability probe' },
+        requestEscalation: async () => { escalations++; return policy !== 'denied'; },
+      },
+    });
+    const command = `bun -e '/* CAPTURE_NETWORK_POLICY */ try { const s=Bun.listen({hostname:"127.0.0.1",port:0,socket:{data(){}}});s.stop();console.log("SOCKET_ALLOWED") } catch { console.log("SOCKET_BLOCKED") }'`;
+    const result = await tool.execute({ commands: [{ cmd: command }] });
+    const output = JSON.parse(result.output ?? '{}') as { stdout?: string; denied?: boolean; sandbox_network?: string };
+    if (policy === 'denied') { expect(result.success).toBe(false); expect(output.denied).toBe(true); }
+    else {
+      expect(result.success).toBe(true);
+      expect(output.stdout).toBe(policy === 'enabled' ? 'SOCKET_ALLOWED' : 'SOCKET_BLOCKED');
+      expect(output.sandbox_network).toBe(policy);
+    }
+    expect(escalations).toBeGreaterThan(0);
+  });
+
+test.skipIf(!supported)('real ignored TypeScript dependency requires admitted immutable original and alias inputs', async () => {
+  const binding = await fixture((path) => !path.endsWith('/DENIED_RUNTIME_SENTINEL'));
+  const dependencies = join(binding.owner, 'node_modules');
+  mkdirSync(dependencies);
+  cpSync(dirname(require.resolve('typescript/package.json')), join(dependencies, 'typescript'), { recursive: true });
+  writeFileSync(join(dependencies, 'DENIED_RUNTIME_SENTINEL'), 'SYNTHETIC_RUNTIME_PRIVATE');
+  writeFileSync(join(binding.root, 'compile.ts'), 'export const value: number = 42;\n');
+  expect((await run(binding, 'bun node_modules/typescript/bin/tsc compile.ts --outDir dist --skipLibCheck')).success).toBe(false);
+  const admitted = await admitCapturedExecDependency(binding, { sourceRoot: dependencies, targetRelativePath: 'node_modules' });
+  expect(admitted).toBeDefined();
+  const authorized = { ...binding, dependencyInputs: [admitted!] };
+  const result = await run(authorized, 'test ! -e node_modules/DENIED_RUNTIME_SENTINEL && if echo BAD > node_modules/typescript/package.json; then exit 1; fi; bun node_modules/typescript/bin/tsc compile.ts --outDir dist --skipLibCheck && cat dist/compile.js');
+  expect(result.success).toBe(true);
+  expect(result.stdout).toContain('42');
+  expect(result.stdout).not.toContain('SYNTHETIC_RUNTIME_PRIVATE');
+  expect(readFileSync(join(binding.root, 'dist/compile.js'), 'utf8')).toContain('42');
+  expect(readFileSync(join(dependencies, 'typescript/package.json'), 'utf8')).not.toBe('BAD\n');
+  expect(existsSync(join(binding.root, 'node_modules/typescript/package.json'))).toBe(false);
+  // The admitted bytes cannot be silently replaced with a newer dependency.
+  writeFileSync(join(dependencies, 'typescript/package.json'), 'changed after admission');
+  const held = await run(authorized, 'echo SHOULD_BE_WITHHELD');
+  expect(held.denied).toBe(true); expect(held.stdout).toBe('');
+}, 60_000);
+
+for (const deniedSide of ['original', 'alias'] as const)
+  test.skipIf(!supported)(`dependency ${deniedSide} restriction cannot be bypassed by a declared runtime root`, async () => {
+    let forbidden = '';
+    const binding = await fixture((path) => path !== forbidden);
+    const dependencies = join(binding.owner, 'node_modules');
+    mkdirSync(join(dependencies, 'package'), { recursive: true });
+    writeFileSync(join(dependencies, 'package/index.js'), 'console.log("DEPENDENCY_PRIVATE_MARKER")');
+    forbidden = join(deniedSide === 'original' ? binding.owner : binding.root, 'node_modules/package/index.js');
+    const admitted = await admitCapturedExecDependency(binding, { sourceRoot: dependencies, targetRelativePath: 'node_modules' });
+    const result = await run({ ...binding, dependencyInputs: [admitted!] }, 'test ! -e node_modules/package/index.js');
+    expect(result.success).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('DEPENDENCY_PRIVATE_MARKER');
+  });
+
+test.skipIf(!supported)('dependency admission rejects escaped aliases and forged tokens', async () => {
+  const binding = await fixture();
+  const dependencies = join(binding.owner, 'node_modules');
+  mkdirSync(dependencies);
+  symlinkSync('../private.txt', join(dependencies, 'escape'));
+  await expect(admitCapturedExecDependency(binding, { sourceRoot: dependencies, targetRelativePath: 'node_modules' })).rejects.toThrow('escapes');
+  const forged = { ...binding, dependencyInputs: [{ kind: 'captured-exec-dependency-input' as const }] };
+  expect((await run(forged, 'echo FORGED_DEPENDENCY')).denied).toBe(true);
+});
+
+test.skipIf(!supported)('dependency permission revocation stops output and future provider delivery', async () => {
+  let allowed = true;
+  const binding = await fixture((path) => allowed || !path.includes('/node_modules/'));
+  const dependencies = join(binding.owner, 'node_modules');
+  mkdirSync(dependencies);
+  writeFileSync(join(dependencies, 'public.js'), 'export const value=42;');
+  const token = await admitCapturedExecDependency(binding, { sourceRoot: dependencies, targetRelativePath: 'node_modules' });
+  const pending = run({ ...binding, dependencyInputs: [token!] }, 'cat node_modules/public.js; sleep 1; echo late > late.txt');
+  setTimeout(() => { allowed = false; }, 200);
+  const result = await pending;
+  expect(result.success).toBe(false); expect(result.stdout).toBe('');
+  expect(existsSync(join(binding.root, 'late.txt'))).toBe(false);
+  await expect(assertContractInputReadAccess(binding.authority, binding.readAccessFilter)).rejects.toThrow('restricted');
 });

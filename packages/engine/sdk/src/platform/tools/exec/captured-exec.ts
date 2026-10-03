@@ -1,3 +1,4 @@
+import { projectCapturedExecDependencies, type CapturedExecDependencyInput } from './captured-exec-dependencies.js';
 /** Commands see a permission-filtered disposable copy, never the host workspace.
  * This is a filesystem boundary, not another command/risk/retry evaluator.
  */
@@ -17,6 +18,7 @@ import type { ReadAccessFilter } from '../shared/read-access.js';
 import type { ExecCommandInput, ExecCommandResult } from './schema.js';
 
 export interface CapturedExecAuthority {
+  readonly dependencyInputs?: readonly CapturedExecDependencyInput[] | undefined;
   readonly authority: ContractInputAuthority;
   readonly root: string;
   readonly readAccessFilter: ReadAccessFilter | undefined;
@@ -33,10 +35,10 @@ const MAX_OUTPUT = 2 * 1024 * 1024;
 /** No socket creation (including io_uring), no alternate ABI. Seccomp keeps
  * network isolation enforceable when bwrap's loopback setup is unavailable.
  */
-function socketFilter(): Buffer {
+function socketFilter(network: 'enabled' | 'disabled' = 'disabled'): Buffer {
   const architecture = process.arch === 'x64' ? 0xc000003e : process.arch === 'arm64' ? 0xc00000b7 : undefined;
   if (architecture === undefined) throw new Error('unsupported captured sandbox architecture');
-  const denied = process.arch === 'x64' ? [41, 53, 425] : [198, 199, 425];
+  const denied = network === 'enabled' ? [] : process.arch === 'x64' ? [41, 53, 425] : [198, 199, 425];
   const instructions: number[][] = [
     [0x20, 0, 0, 4], [0x15, 1, 0, architecture], [0x06, 0, 0, 0x80000000],
     [0x20, 0, 0, 0], [0x35, 0, 1, 0x40000000], [0x06, 0, 0, 0x80000000],
@@ -95,8 +97,9 @@ export async function runCapturedCommand(
   workingDirectory: string,
   timeoutMs: number,
   signal?: AbortSignal,
+  network: 'enabled' | 'disabled' = 'disabled',
 ): Promise<ExecCommandResult> {
-  binding = Object.freeze({ ...binding });
+  binding = Object.freeze({ ...binding, dependencyInputs: binding.dependencyInputs ? Object.freeze([...binding.dependencyInputs]) : undefined });
   input = structuredClone(input);
   const start = Date.now();
   const root = resolve(binding.root);
@@ -112,10 +115,12 @@ export async function runCapturedCommand(
   let validating = false;
   let stop = (): void => {};
   const paths = new Set<string>();
+  let checkDependencies = async (): Promise<void> => {};
   const check = async (): Promise<void> => {
     if (!binding.readAccessFilter) throw new Error('captured exec requires original-owner read authorization');
     await assertContractInputAuthority(binding.authority, root, combined);
     for (const path of paths) await authorizeContractInputPath(binding.authority, path, binding.readAccessFilter, combined);
+    await checkDependencies();
   };
   try {
     if (!within(root, resolve(workingDirectory)) || !within(root, cwd)) throw new Error('outside captured working directory');
@@ -155,13 +160,17 @@ export async function runCapturedCommand(
       }
     };
     await populate('');
+    const dependencies = await projectCapturedExecDependencies(binding, temporary, combined);
+    checkDependencies = dependencies.check;
     await check();
     const filterPath = join(temporary, 'sockets.bpf');
-    await writeFile(filterPath, socketFilter());
+    await writeFile(filterPath, socketFilter(network));
     const fd = openSync(filterPath, 'r');
     const argv = runtimeArgv();
     argv.push(contractInputAuthorityMutable(binding.authority) ? '--bind' : '--ro-bind', projection, root,
-      '--chdir', cwd, '--seccomp', '3', '--', '/bin/sh', '-c', command);
+      '--chdir', cwd, '--seccomp', '3');
+    for (const mount of dependencies.mounts) argv.push('--ro-bind', mount.source, mount.target);
+    argv.push('--', '/bin/sh', '-c', command);
     let child: ReturnType<typeof spawn>;
     try {
       combined?.throwIfAborted();
@@ -234,7 +243,7 @@ export async function runCapturedCommand(
     if (input.expect?.stdout_contains !== undefined && !stdout.includes(input.expect.stdout_contains)) failures.push('stdout expectation failed');
     if (input.expect?.stderr_contains !== undefined && !stderr.includes(input.expect.stderr_contains)) failures.push('stderr expectation failed');
     return { cmd: command, cwd, exit_code: exitCode, stdout, stderr, success: exitCode === 0 && failures.length === 0,
-      duration_ms: Date.now() - start, sandboxed: true, sandbox_boundary: 'captured authorized projection; isolated PID/mounts; socket creation blocked',
+      duration_ms: Date.now() - start, sandboxed: true, sandbox_boundary: `captured authorized projection; isolated PID/mounts; network ${network}`, sandbox_network: network,
       captured_exec_availability: availability, ...(failures.length ? { expectation_error: failures.join('; ') } : {}) };
   } catch {
     stop();

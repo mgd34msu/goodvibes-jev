@@ -257,7 +257,17 @@ async function runCommand(
   signal?: AbortSignal,
 ): Promise<ExecCommandResult> {
   if (policy.capturedInput) {
-    return runCapturedCommand(policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal);
+    // Preserve the existing trusted exec policy's network decision. Captured
+    // filesystem authority neither grants network access nor vetoes a grant.
+    const plan = await resolveRuntimeSandboxPlan(policy.sandbox, cmdStr, workingDirectory, resolveCwd(cmdInput.cwd, workingDirectory));
+    const escalation = await brokerSandboxEscalation(policy.sandbox, plan, cmdStr, workingDirectory);
+    signal?.throwIfAborted();
+    if (escalation) return {
+      cmd: cmdStr, exit_code: null, stdout: '', stderr: `Sandbox escalation denied: ${escalation.deniedEscalations.join('; ')}`,
+      success: false, denied: true,
+    };
+    return runCapturedCommand(policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal,
+      !plan || plan.network === 'enabled' ? 'enabled' : 'disabled');
   }
   const sandbox = policy.sandbox;
   const interaction = policy.interaction;
@@ -911,7 +921,7 @@ export function createExecTool(
   const featureFlags = options.featureFlags ?? null;
   const credentialEnvScrub = resolveCredentialEnvScrub(options.credentialEnvScrub);
   const policy: ExecRunPolicy = {
-    capturedInput: options.capturedInput ? Object.freeze({ ...options.capturedInput }) : undefined,
+    capturedInput: options.capturedInput ? Object.freeze({ ...options.capturedInput, dependencyInputs: options.capturedInput.dependencyInputs ? Object.freeze([...options.capturedInput.dependencyInputs]) : undefined }) : undefined,
     sandbox: options.sandbox ?? null,
     interaction: options.interaction ?? null,
     containment: options.containment ?? null,
