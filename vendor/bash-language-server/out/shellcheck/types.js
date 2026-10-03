@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ShellCheckResultSchema = void 0;
-const zod_1 = require("zod");
+const zod_1 = require("@goodvibes-jev/bash-zod");
 const ReplacementSchema = zod_1.z.object({
     precedence: zod_1.z.number(),
     line: zod_1.z.number(),
