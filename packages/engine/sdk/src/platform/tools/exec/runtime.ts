@@ -1,3 +1,4 @@
+import { runCapturedCommand, type CapturedExecAuthority } from './captured-exec.js';
 import { join, resolve, isAbsolute } from 'node:path';
 import { randomInt, randomUUID } from 'node:crypto';
 import type { Tool } from '../../types/tools.js';
@@ -255,6 +256,9 @@ async function runCommand(
   policy: ExecRunPolicy,
   signal?: AbortSignal,
 ): Promise<ExecCommandResult> {
+  if (policy.capturedInput) {
+    return runCapturedCommand(policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal);
+  }
   const sandbox = policy.sandbox;
   const interaction = policy.interaction;
   // The frozen catastrophic block ran in executeResolvedCommand, ahead of every
@@ -778,6 +782,8 @@ async function executeResolvedCommand(
   const terminalRefusal = await ownerTerminalRefusal(policy, cmdStr, signal);
   signal?.throwIfAborted();
   if (terminalRefusal) return terminalRefusal;
+  // A captured command never reaches the host ProcessManager's special commands.
+  if (policy.capturedInput) return runWithRetry(processManager, overflowHandler, featureFlags, cmdStr, cmdInput, workingDirectory, globalTimeout, scrub, policy, signal);
   const bgSpecial = handleBgSpecialCommand(processManager, cmdStr);
   if (bgSpecial) return bgSpecial;
   if (cmdInput.background) {
@@ -839,9 +845,17 @@ async function executeResolvedCommands(
   return results;
 }
 
+const capturedExecTools = new WeakMap<Tool, CapturedExecAuthority['authority']>();
+
+/** Tool names/model arguments cannot manufacture a captured backend binding. */
+export function isCapturedExecTool(tool: Tool, authority: CapturedExecAuthority['authority']): boolean {
+  return capturedExecTools.get(tool) === authority;
+}
+
 export function createExecTool(
   processManager: ProcessManager,
   options: {
+    readonly capturedInput?: CapturedExecAuthority | undefined;
     readonly featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined;
     readonly overflowHandler?: OverflowHandler | undefined;
     /**
@@ -897,13 +911,14 @@ export function createExecTool(
   const featureFlags = options.featureFlags ?? null;
   const credentialEnvScrub = resolveCredentialEnvScrub(options.credentialEnvScrub);
   const policy: ExecRunPolicy = {
+    capturedInput: options.capturedInput ? Object.freeze({ ...options.capturedInput }) : undefined,
     sandbox: options.sandbox ?? null,
     interaction: options.interaction ?? null,
     containment: options.containment ?? null,
     ownerTerminal: options.ownerTerminal ?? null,
   };
 
-  return {
+  const tool: Tool = {
     definition: {
       name: 'exec',
       description:
@@ -919,7 +934,8 @@ export function createExecTool(
     async execute(args: Record<string, unknown>, opts?: { readonly signal?: AbortSignal | undefined }) {
       let signal: AbortSignal | undefined;
       try {
-        signal = opts?.signal;
+        const lifecycleSignal = policy.capturedInput?.signal;
+        signal = lifecycleSignal && opts?.signal ? AbortSignal.any([lifecycleSignal, opts.signal]) : lifecycleSignal ?? opts?.signal;
         signal?.throwIfAborted();
         if (!Array.isArray(args['commands']) || (args['commands'] as unknown[]).length === 0) {
           return { success: false, error: 'commands must be a non-empty array' };
@@ -934,6 +950,9 @@ export function createExecTool(
         const failFast = input.fail_fast === true || input.stop_on_error === true;
         const projectRoot = resolve(workingDirectory);
 
+        if (policy.capturedInput && input.file_ops?.length) {
+          return { success: false, error: 'Captured exec file_ops require the guarded edit/write tools.' };
+        }
         const { fileOpResults, fileOpError, fileOpWarnings } = await executeFileOperations(input.file_ops, projectRoot);
         signal?.throwIfAborted();
         if (fileOpError) {
@@ -1002,4 +1021,6 @@ export function createExecTool(
       }
     },
   };
+  if (policy.capturedInput) capturedExecTools.set(tool, policy.capturedInput.authority);
+  return tool;
 }

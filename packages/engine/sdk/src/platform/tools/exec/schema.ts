@@ -1,3 +1,4 @@
+import type { CapturedExecAvailability } from './captured-exec.js';
 /**
  * JSON Schema definition for the `exec` tool.
  *
@@ -305,6 +306,7 @@ export interface ExecInput {
 // ─── Result interfaces ────────────────────────────────────────────────────────
 
 export interface ExecCommandResult {
+  captured_exec_availability?: CapturedExecAvailability | undefined;
   cmd: string;
   exit_code: number | null;
   stdout: string;
