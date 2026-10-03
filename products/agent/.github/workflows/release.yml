@@ -1,0 +1,431 @@
+name: Release
+
+# By-reference release (shared CI/CD design). Validation happened exactly once,
+# on the release commit's push-CI run (per-job green). This workflow VERIFIES
+# that run by reference (release-verify, ~2m via the shared
+# reusable-release-verify) instead of re-running the old hand-rolled 30-minute
+# CI poll, then builds the necessary binaries, assembles the exact release asset
+# set, cuts the GitHub Release, publishes to npm, and smokes the published
+# package from the registry. Tagging is gated on push-CI green, which
+# structurally retires the tag-redo dance.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (default; inspect only, never writes the registry) or release (publish the dispatched tag). The zero-touch auto-release job dispatches this with mode=release at the freshly-created tag."
+        required: false
+        type: choice
+        options:
+          - dry-run
+          - release
+        default: dry-run
+      ref:
+        description: "Git ref to inspect (ignored in release mode, which uses the dispatched tag ref)"
+        required: false
+        default: "main"
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  # Never cancel an in-progress release (push uses the tag; dispatch falls back
+  # to a unique run id so manual runs never cancel each other).
+  #
+  # A release-mode dispatch (the zero-touch auto-release path) is dispatched
+  # with `--ref refs/tags/vX.Y.Z`, which sets github.ref_name to the tag for
+  # that run, but does NOT populate the workflow_dispatch `ref` input (its
+  # default stays "main" unless a caller passes `-f ref=...`, which the
+  # auto-release job never does). Reading inputs.ref first therefore collapsed
+  # every release-mode dispatch into the constant group agent-release-main,
+  # letting a queued release evict an in-flight one. Check for release-mode
+  # dispatch first and use github.ref_name (the actual dispatched tag) before
+  # falling back to inputs.ref for a plain dry-run dispatch.
+  group: agent-release-${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release' && github.ref_name) || github.event.inputs.ref || github.ref_name || github.run_id }}
+  cancel-in-progress: false
+
+# Default read-only; the release-verify leg needs actions:read to inspect the
+# push-CI run's per-job conclusions, and github-release needs contents:write.
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify-tag-version:
+    name: Verify tag matches package version
+    # A release-mode dispatch (the zero-touch auto-release path) is a first-class
+    # publish trigger alongside a hand-pushed v* tag.
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ github.ref }}
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: Check git tag matches package.json version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          TAG_VERSION="${TAG#v}"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          test "$TAG_VERSION" = "$PACKAGE_VERSION"
+
+  # By-reference validation: verify the tagged commit's push-CI run concluded
+  # per-job green. Replaces the old hand-rolled `validate-release` poll ("Verify
+  # branch CI passed for release SHA" with a 30-minute gh-run loop). toolchain-
+  # source: registry, the Agent bunx-es the published @goodvibes-jev/engine/toolchain
+  # (it is a consumer of the SDK's toolchain, not its publisher).
+  release-verify:
+    name: Release verify (by reference)
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')
+    needs: [verify-tag-version]
+    # Caller permissions must be a superset of what the called workflow's jobs
+    # request, or GitHub rejects the whole workflow at startup (jobs: []).
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    uses: mgd34msu/goodvibes-sdk/.github/workflows/reusable-release-verify.yml@deccd4836763493f826b0d96edf8d3c9ef58f3f6 # sdk 2.1.0 release
+    with:
+      sha: ${{ github.sha }}
+      workflow: ci.yml
+      event: push
+      toolchain-source: registry
+      bun-version: "1.3.14"
+      toolchain-spec: "@goodvibes-jev/engine/toolchain@2.1.0"
+    secrets:
+      token: ${{ secrets.GITHUB_TOKEN }}
+
+  # npm tarball (Agent-specific: bundle the package runtime, then pack).
+  pack:
+    name: Pack release tarball
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')
+    needs: [release-verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ github.ref }}
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: Build package runtime
+        run: bun run build:package-runtime
+      - name: Pack package
+        id: pack
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          rm -f dist/*.tgz
+          PACK_OUTPUT="$(bun pm pack --destination dist 2>&1)"
+          printf '%s\n' "$PACK_OUTPUT"
+          mapfile -t TARBALLS < <(find dist -maxdepth 1 -type f -name '*.tgz' -printf '%f\n' | sort)
+          if [ "${#TARBALLS[@]}" -ne 1 ]; then
+            echo "Expected exactly one package tarball in dist; found ${#TARBALLS[@]}" >&2
+            find dist -maxdepth 1 -type f -print >&2
+            exit 1
+          fi
+          echo "tarball=${TARBALLS[0]}" >> "$GITHUB_OUTPUT"
+          test -f "dist/${TARBALLS[0]}"
+          # A runtime-less tarball must never even stage. 1.12.2 shipped exactly
+          # this defect: the publish lane packed from a bare checkout, so the
+          # npm tarball was missing the bundled runtime and `bun add -g` exited
+          # with "packaged runtime is missing". Assert the packaged runtime
+          # entrypoint is inside the tarball BEFORE it is uploaded as an artifact.
+          # NOTE: no `tar | grep -q`, under this step's pipefail, grep -q exits
+          # on first match and SIGPIPEs tar mid-listing, failing the pipeline
+          # even when the entry is present (this false-failed the first v1.12.3
+          # release run). List to a file, then grep the file.
+          tar -tzf "dist/${TARBALLS[0]}" > /tmp/tarball-listing.txt
+          if ! grep -q '^package/dist/package/main.js$' /tmp/tarball-listing.txt; then
+            echo "Packed tarball dist/${TARBALLS[0]} is MISSING package/dist/package/main.js (the bundled runtime). Refusing to stage a runtime-less tarball." >&2
+            echo "Tarball contents (dist/package entries):" >&2
+            grep -E '^package/dist/package/' /tmp/tarball-listing.txt >&2 || echo "  (no package/dist/package/ entries at all)" >&2
+            exit 1
+          fi
+          echo "Verified: dist/${TARBALLS[0]} contains package/dist/package/main.js (bundled runtime present)."
+      - name: Upload package tarball
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-tarball
+          path: dist/${{ steps.pack.outputs.tarball }}
+          retention-days: 7
+
+  # Browser driver companion asset.
+  #
+  # The compiled binary carries no node_modules, so `require('playwright-core')`
+  # resolves nothing inside it and the driver cannot be bundled either (it reads
+  # browsers.json and its own driver files by path at runtime). It therefore has
+  # to travel as its OWN release asset, exactly like the sqlite-vec addons ,
+  # 1.18.1 shipped without one and every downloaded binary reported the browser
+  # as unavailable, because the binary matrix builds through the toolchain and
+  # never ran scripts/stage-browser-driver.ts at all.
+  #
+  # One archive serves every platform: the driver is plain JavaScript, and the
+  # browser binaries it drives are downloaded separately into the managed cache.
+  # The interior layout is `playwright-core/…`, which extracts beside the binary
+  # into the first path driverSearchDirectories looks at
+  # (src/browser/browser-provision-io.ts).
+  browser-driver:
+    name: Package browser driver
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')
+    needs: [release-verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ github.ref }}
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: Stage the driver beside the binaries
+        run: bun run scripts/stage-browser-driver.ts
+      - name: Package browser-driver.tar.gz
+        run: |
+          set -euo pipefail
+          cd dist
+          test -f playwright-core/cli.js
+          test -f playwright-core/index.js
+          test -f playwright-core/package.json
+          tar -czf browser-driver.tar.gz playwright-core
+          # A driver archive missing cli.js is not a driver: the browser install
+          # step executes it. Assert the packaged bytes carry it BEFORE the
+          # archive is staged as a release asset.
+          tar -tzf browser-driver.tar.gz > /tmp/driver-listing.txt
+          for required in playwright-core/package.json playwright-core/index.js playwright-core/cli.js; do
+            if ! grep -qx "${required}" /tmp/driver-listing.txt; then
+              echo "browser-driver.tar.gz is MISSING ${required}. Refusing to stage an unusable driver archive." >&2
+              head -50 /tmp/driver-listing.txt >&2
+              exit 1
+            fi
+          done
+          echo "Verified: browser-driver.tar.gz carries the driver package.json, index.js, and cli.js."
+          ls -l browser-driver.tar.gz
+      - name: Upload browser driver archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-driver
+          path: dist/browser-driver.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  # Necessary binary builds only (the throwaway validate build is gone), via the
+  # shared reusable-binary-matrix: it runs `goodvibes-build-binaries --target
+  # <key>` per leg (matrix compile + sqlite-vec addon copy/cross-fetch into
+  # dist/lib/sqlite-vec-<os>-<arch>/vec0.<suffix>) and `goodvibes-post-build-smoke`
+  # on the executable legs. linux-x64 and darwin-arm64 smoke on native runners;
+  # linux-arm64 and darwin-x64 are cross-built and are exercised by SHA256SUMS.
+  binaries:
+    name: Build binaries
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')
+    needs: [release-verify]
+    uses: mgd34msu/goodvibes-sdk/.github/workflows/reusable-binary-matrix.yml@deccd4836763493f826b0d96edf8d3c9ef58f3f6 # sdk 2.1.0 release
+    with:
+      # Each smoke leg carries its own suffixed artifact as `binary` so the
+      # matrix smokes the binary that leg actually built (the reusable passes it
+      # to goodvibes-post-build-smoke --binary; toolchain.config smoke.binaryDefault
+      # is only the local-CLI fallback).
+      targets: >-
+        [{"key":"linux-x64","runner":"ubuntu-latest","smoke":true,"binary":"dist/goodvibes-agent-linux-x64"},
+         {"key":"linux-arm64","runner":"ubuntu-latest","smoke":false},
+         {"key":"darwin-x64","runner":"ubuntu-latest","smoke":false},
+         {"key":"darwin-arm64","runner":"macos-14","smoke":true,"binary":"dist/goodvibes-agent-macos-arm64"}]
+      # NOTE: upload-artifact `path:` splits patterns on NEWLINES only, a
+      # space-separated single line is one literal glob that matches nothing
+      # (if-no-files-found: error would fail every leg). Keep one glob per line.
+      artifact-glob: |
+        dist/goodvibes-agent-linux-x64
+        dist/goodvibes-agent-linux-arm64
+        dist/goodvibes-agent-macos-x64
+        dist/goodvibes-agent-macos-arm64
+        dist/lib
+      artifact-prefix: agent-binary
+      bun-version: "1.3.14"
+      toolchain-spec: "@goodvibes-jev/engine/toolchain@2.1.0"
+
+  # Merge every binary leg + the npm tarball, package the four per-platform
+  # sqlite-vec native addon archives (missing-addon-fatal), and publish a single
+  # release-assets artifact for the GitHub Release, alongside the browser driver
+  # archive built above. Each archive preserves the runtime resolver layout
+  # (lib/sqlite-vec-<os>-<arch>/vec0.<suffix> for the addons, playwright-core/…
+  # for the driver) so a directly-downloaded binary co-locates both in place.
+  assemble-release-assets:
+    name: Assemble release assets
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')
+    needs: [pack, binaries, browser-driver]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download all binary + npm artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist/
+          merge-multiple: true
+      - name: Package sqlite-vec native addons
+        run: |
+          set -euo pipefail
+          cd dist
+          for platform in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
+            addon_dir="lib/sqlite-vec-${platform}"
+            if [ ! -d "${addon_dir}" ] || [ -z "$(ls -A "${addon_dir}" 2>/dev/null)" ]; then
+              echo "Missing sqlite-vec native addon for ${platform} at dist/${addon_dir}" >&2
+              exit 1
+            fi
+            tar -czf "sqlite-vec-${platform}.tar.gz" "${addon_dir}"
+            echo "Packaged sqlite-vec-${platform}.tar.gz:"
+            tar -tzf "sqlite-vec-${platform}.tar.gz"
+          done
+      - name: Upload release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets
+          path: |
+            dist/goodvibes-agent-linux-x64
+            dist/goodvibes-agent-linux-arm64
+            dist/goodvibes-agent-macos-x64
+            dist/goodvibes-agent-macos-arm64
+            dist/sqlite-vec-linux-x64.tar.gz
+            dist/sqlite-vec-linux-arm64.tar.gz
+            dist/sqlite-vec-darwin-x64.tar.gz
+            dist/sqlite-vec-darwin-arm64.tar.gz
+            dist/browser-driver.tar.gz
+            dist/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  # GitHub Release via the shared reusable-gh-release: it downloads the
+  # release-assets artifact, extracts the tag's CHANGELOG excerpt, generates
+  # SHA256SUMS over the asset glob (missing-asset-fatal, toolchain sha256sums),
+  # and uploads the four binaries + four sqlite-vec addon archives + the browser
+  # driver archive + the npm tarball + SHA256SUMS with a pinned
+  # softprops/action-gh-release. The driver archive being IN this glob is what
+  # puts it in SHA256SUMS.txt, which is what lets the installer and /update
+  # verify it before extracting.
+  github-release:
+    name: Create GitHub Release
+    # The tag-ref guard holds for both a hand-pushed v* tag and a release-mode
+    # dispatch (auto-release dispatches release.yml at refs/tags/v<version>).
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release'))
+    needs: [assemble-release-assets]
+    permissions:
+      contents: write
+    uses: mgd34msu/goodvibes-sdk/.github/workflows/reusable-gh-release.yml@deccd4836763493f826b0d96edf8d3c9ef58f3f6 # sdk 2.1.0 release
+    with:
+      tag: ${{ github.ref_name }}
+      artifact-name: release-assets
+      # NOTE: softprops/action-gh-release `files:` splits patterns on NEWLINES
+      # only, a space-separated single line is one literal glob that matches
+      # nothing (fail_on_unmatched_files: true would fail the release). Keep one
+      # glob per line.
+      assets-glob: |
+        dist/goodvibes-agent-linux-x64
+        dist/goodvibes-agent-linux-arm64
+        dist/goodvibes-agent-macos-x64
+        dist/goodvibes-agent-macos-arm64
+        dist/sqlite-vec-linux-x64.tar.gz
+        dist/sqlite-vec-linux-arm64.tar.gz
+        dist/sqlite-vec-darwin-x64.tar.gz
+        dist/sqlite-vec-darwin-arm64.tar.gz
+        dist/browser-driver.tar.gz
+        dist/*.tgz
+      bun-version: "1.3.14"
+      toolchain-spec: "@goodvibes-jev/engine/toolchain@2.1.0"
+
+  # npm publish via the shared reusable-npm-publish (staged, provenance,
+  # empty-or-complete precheck, propagation poll, the toolchain publish-package
+  # owns idempotency + poll). Gated on push tags + the PUBLISH_NPM repo variable.
+  publish-npm:
+    name: Publish to npm
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')) && vars.PUBLISH_NPM == 'true'
+    needs: [github-release]
+    # The called workflow's job requests id-token:write (npm provenance).
+    permissions:
+      contents: read
+      id-token: write
+    uses: mgd34msu/goodvibes-sdk/.github/workflows/reusable-npm-publish.yml@deccd4836763493f826b0d96edf8d3c9ef58f3f6 # sdk 2.1.0 release
+    with:
+      package-name: "@pellux/goodvibes-agent"
+      environment: production
+      # Publish the STAGED pack-job tarball (runtime bundled + asserted present
+      # in the pack step), never a bare checkout. 1.12.2 published a runtime-less
+      # tarball precisely because the shared publish workflow packed from a bare
+      # checkout. The reusable downloads this named artifact into
+      # ./release-tarball/ before the publish-command runs; the `ls` in the
+      # command resolves the single staged .tgz.
+      tarball-artifact: npm-tarball
+      # The ./ prefix is load-bearing: npm parses a bare relative path like
+      # release-tarball/x.tgz as a GitHub owner/repo spec and tries to clone it.
+      publish-command: 'bunx @goodvibes-jev/engine/toolchain@2.1.0 goodvibes-publish-package --poll --tarball "./$(ls release-tarball/*.tgz)"'
+      bun-version: "1.3.14"
+    secrets:
+      npm-token: ${{ secrets.NPM_TOKEN }}
+
+  # Registry install smoke: install the just-published package from npm into an
+  # isolated HOME and exercise --version / --help / status --json, asserting the
+  # connected-host token sentinel never leaks. Preserved from the prior release
+  # lane; runs against the real published bytes.
+  registry-install-smoke:
+    name: Bun registry install smoke
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')) && vars.PUBLISH_NPM == 'true'
+    needs: [publish-npm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ github.ref }}
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: Install from the registry and smoke the CLI
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          TOKEN_SENTINEL="goodvibes-agent-registry-smoke-token-do-not-print-12b4e68d"
+          TMP_ROOT="$(mktemp -d)"
+          trap 'rm -rf "${TMP_ROOT}"' EXIT
+          mkdir -p "${TMP_ROOT}/home/.goodvibes/daemon" "${TMP_ROOT}/cache" "${TMP_ROOT}/bun" "${TMP_ROOT}/workspace"
+          printf '{"token":"%s"}\n' "${TOKEN_SENTINEL}" > "${TMP_ROOT}/home/.goodvibes/daemon/operator-tokens.json"
+          chmod 600 "${TMP_ROOT}/home/.goodvibes/daemon/operator-tokens.json"
+
+          export HOME="${TMP_ROOT}/home"
+          export XDG_CACHE_HOME="${TMP_ROOT}/cache"
+          export BUN_INSTALL="${TMP_ROOT}/bun"
+          export GOODVIBES_WORKING_DIR="${TMP_ROOT}/workspace"
+
+          bun add -g "@pellux/goodvibes-agent@${VERSION}" --registry https://registry.npmjs.org --minimum-release-age 0
+          export PATH="${TMP_ROOT}/bun/bin:${PATH}"
+
+          redact() { sed "s/${TOKEN_SENTINEL}/[redacted-connected-host-token]/g" "$1"; }
+
+          run_installed_agent() {
+            local label="$1"; local stdout_path="$2"; local stderr_path="$3"; shift 3
+            set +e
+            goodvibes-agent "$@" > "${stdout_path}" 2> "${stderr_path}"
+            local status="$?"
+            set -e
+            if grep -Fq "${TOKEN_SENTINEL}" "${stdout_path}" "${stderr_path}"; then
+              echo "installed ${label} printed the connected-host token sentinel" >&2
+              exit 1
+            fi
+            if [ "${status}" -ne 0 ]; then
+              echo "installed ${label} failed with exit ${status}" >&2
+              redact "${stdout_path}" >&2 || true
+              redact "${stderr_path}" >&2 || true
+              exit "${status}"
+            fi
+          }
+
+          run_installed_agent "--version" "${TMP_ROOT}/version.txt" "${TMP_ROOT}/version.err" --version
+          grep "goodvibes-agent ${VERSION}" "${TMP_ROOT}/version.txt"
+
+          run_installed_agent "--help" "${TMP_ROOT}/help.txt" "${TMP_ROOT}/help.err" --help
+          test -s "${TMP_ROOT}/help.txt"
+
+          run_installed_agent "status --json" "${TMP_ROOT}/status.json" "${TMP_ROOT}/status.err" status --json
+          grep -q '"title"' "${TMP_ROOT}/status.json"
+          grep -q 'GoodVibes Agent status' "${TMP_ROOT}/status.json"

@@ -1,0 +1,296 @@
+[
+  {
+    "state": {
+      "provider": "inceptionlabs",
+      "model_id": "mercury-2"
+    },
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "Which model family and generation is `model_id`, served by `provider`? Ignore gateway or vendor path prefixes, region prefixes, date or version suffixes and local tags.",
+        "criteria": {
+          "gemini": "Google Gemini 1.5, 2.0, 2.5, 3 or later, including the flash-latest and pro-latest aliases (not Gemma, not Gemini 1.0)",
+          "claude": "Anthropic Claude 3 or later: Haiku, Sonnet, Opus, Fable and Mythos models of any generation from 3 on",
+          "grok-4": "xAI Grok 4 or later (grok-4, grok-4-fast, grok-4.x, grok-code, grok-5); not Grok 3 or earlier",
+          "gpt-5-or-4-1": "OpenAI GPT-5 family (gpt-5, gpt-5.x and their mini, nano, codex variants) or GPT-4.1 family",
+          "openai-o-series": "OpenAI o1, o3 or o4 reasoning models and their mini variants",
+          "none": "None of these: another family (GPT-4o, GPT-4, Grok 3, Gemma, Llama, Qwen, Mistral and so on) or a model the id does not identify"
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "provider": "inceptionlabs",
+      "model_id": "mercury-edit"
+    },
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "Which model family and generation is `model_id`, served by `provider`? Ignore gateway or vendor path prefixes, region prefixes, date or version suffixes and local tags.",
+        "criteria": {
+          "gemini": "Google Gemini 1.5, 2.0, 2.5, 3 or later, including the flash-latest and pro-latest aliases (not Gemma, not Gemini 1.0)",
+          "claude": "Anthropic Claude 3 or later: Haiku, Sonnet, Opus, Fable and Mythos models of any generation from 3 on",
+          "grok-4": "xAI Grok 4 or later (grok-4, grok-4-fast, grok-4.x, grok-code, grok-5); not Grok 3 or earlier",
+          "gpt-5-or-4-1": "OpenAI GPT-5 family (gpt-5, gpt-5.x and their mini, nano, codex variants) or GPT-4.1 family",
+          "openai-o-series": "OpenAI o1, o3 or o4 reasoning models and their mini variants",
+          "none": "None of these: another family (GPT-4o, GPT-4, Grok 3, Gemma, Llama, Qwen, Mistral and so on) or a model the id does not identify"
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "provider": "openrouter",
+      "model_id": "openrouter/free"
+    },
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "Which model family and generation is `model_id`, served by `provider`? Ignore gateway or vendor path prefixes, region prefixes, date or version suffixes and local tags.",
+        "criteria": {
+          "gemini": "Google Gemini 1.5, 2.0, 2.5, 3 or later, including the flash-latest and pro-latest aliases (not Gemma, not Gemini 1.0)",
+          "claude": "Anthropic Claude 3 or later: Haiku, Sonnet, Opus, Fable and Mythos models of any generation from 3 on",
+          "grok-4": "xAI Grok 4 or later (grok-4, grok-4-fast, grok-4.x, grok-code, grok-5); not Grok 3 or earlier",
+          "gpt-5-or-4-1": "OpenAI GPT-5 family (gpt-5, gpt-5.x and their mini, nano, codex variants) or GPT-4.1 family",
+          "openai-o-series": "OpenAI o1, o3 or o4 reasoning models and their mini variants",
+          "none": "None of these: another family (GPT-4o, GPT-4, Grok 3, Gemma, Llama, Qwen, Mistral and so on) or a model the id does not identify"
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "provider": "openrouter",
+      "model_id": "arcee-ai/trinity-mini:free"
+    },
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "Which model family and generation is `model_id`, served by `provider`? Ignore gateway or vendor path prefixes, region prefixes, date or version suffixes and local tags.",
+        "criteria": {
+          "gemini": "Google Gemini 1.5, 2.0, 2.5, 3 or later, including the flash-latest and pro-latest aliases (not Gemma, not Gemini 1.0)",
+          "claude": "Anthropic Claude 3 or later: Haiku, Sonnet, Opus, Fable and Mythos models of any generation from 3 on",
+          "grok-4": "xAI Grok 4 or later (grok-4, grok-4-fast, grok-4.x, grok-code, grok-5); not Grok 3 or earlier",
+          "gpt-5-or-4-1": "OpenAI GPT-5 family (gpt-5, gpt-5.x and their mini, nano, codex variants) or GPT-4.1 family",
+          "openai-o-series": "OpenAI o1, o3 or o4 reasoning models and their mini variants",
+          "none": "None of these: another family (GPT-4o, GPT-4, Grok 3, Gemma, Llama, Qwen, Mistral and so on) or a model the id does not identify"
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "provider": "openrouter",
+      "model_id": "minimax/minimax-m2.5:free"
+    },
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "Which model family and generation is `model_id`, served by `provider`? Ignore gateway or vendor path prefixes, region prefixes, date or version suffixes and local tags.",
+        "criteria": {
+          "gemini": "Google Gemini 1.5, 2.0, 2.5, 3 or later, including the flash-latest and pro-latest aliases (not Gemma, not Gemini 1.0)",
+          "claude": "Anthropic Claude 3 or later: Haiku, Sonnet, Opus, Fable and Mythos models of any generation from 3 on",
+          "grok-4": "xAI Grok 4 or later (grok-4, grok-4-fast, grok-4.x, grok-code, grok-5); not Grok 3 or earlier",
+          "gpt-5-or-4-1": "OpenAI GPT-5 family (gpt-5, gpt-5.x and their mini, nano, codex variants) or GPT-4.1 family",
+          "openai-o-series": "OpenAI o1, o3 or o4 reasoning models and their mini variants",
+          "none": "None of these: another family (GPT-4o, GPT-4, Grok 3, Gemma, Llama, Qwen, Mistral and so on) or a model the id does not identify"
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "provider": "openrouter",
+      "model_id": "nvidia/nemotron-3-super-120b-a12b:free"
+    },
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "Which model family and generation is `model_id`, served by `provider`? Ignore gateway or vendor path prefixes, region prefixes, date or version suffixes and local tags.",
+        "criteria": {
+          "gemini": "Google Gemini 1.5, 2.0, 2.5, 3 or later, including the flash-latest and pro-latest aliases (not Gemma, not Gemini 1.0)",
+          "claude": "Anthropic Claude 3 or later: Haiku, Sonnet, Opus, Fable and Mythos models of any generation from 3 on",
+          "grok-4": "xAI Grok 4 or later (grok-4, grok-4-fast, grok-4.x, grok-code, grok-5); not Grok 3 or earlier",
+          "gpt-5-or-4-1": "OpenAI GPT-5 family (gpt-5, gpt-5.x and their mini, nano, codex variants) or GPT-4.1 family",
+          "openai-o-series": "OpenAI o1, o3 or o4 reasoning models and their mini variants",
+          "none": "None of these: another family (GPT-4o, GPT-4, Grok 3, Gemma, Llama, Qwen, Mistral and so on) or a model the id does not identify"
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "provider": "openrouter",
+      "model_id": "nvidia/nemotron-3-nano-30b-a3b:free"
+    },
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "Which model family and generation is `model_id`, served by `provider`? Ignore gateway or vendor path prefixes, region prefixes, date or version suffixes and local tags.",
+        "criteria": {
+          "gemini": "Google Gemini 1.5, 2.0, 2.5, 3 or later, including the flash-latest and pro-latest aliases (not Gemma, not Gemini 1.0)",
+          "claude": "Anthropic Claude 3 or later: Haiku, Sonnet, Opus, Fable and Mythos models of any generation from 3 on",
+          "grok-4": "xAI Grok 4 or later (grok-4, grok-4-fast, grok-4.x, grok-code, grok-5); not Grok 3 or earlier",
+          "gpt-5-or-4-1": "OpenAI GPT-5 family (gpt-5, gpt-5.x and their mini, nano, codex variants) or GPT-4.1 family",
+          "openai-o-series": "OpenAI o1, o3 or o4 reasoning models and their mini variants",
+          "none": "None of these: another family (GPT-4o, GPT-4, Grok 3, Gemma, Llama, Qwen, Mistral and so on) or a model the id does not identify"
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "provider": "openrouter",
+      "model_id": "nvidia/nemotron-nano-12b-v2-vl:free"
+    },
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "Which model family and generation is `model_id`, served by `provider`? Ignore gateway or vendor path prefixes, region prefixes, date or version suffixes and local tags.",
+        "criteria": {
+          "gemini": "Google Gemini 1.5, 2.0, 2.5, 3 or later, including the flash-latest and pro-latest aliases (not Gemma, not Gemini 1.0)",
+          "claude": "Anthropic Claude 3 or later: Haiku, Sonnet, Opus, Fable and Mythos models of any generation from 3 on",
+          "grok-4": "xAI Grok 4 or later (grok-4, grok-4-fast, grok-4.x, grok-code, grok-5); not Grok 3 or earlier",
+          "gpt-5-or-4-1": "OpenAI GPT-5 family (gpt-5, gpt-5.x and their mini, nano, codex variants) or GPT-4.1 family",
+          "openai-o-series": "OpenAI o1, o3 or o4 reasoning models and their mini variants",
+          "none": "None of these: another family (GPT-4o, GPT-4, Grok 3, Gemma, Llama, Qwen, Mistral and so on) or a model the id does not identify"
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "provider": "openai-subscriber",
+      "model_id": "gpt-5.6-sol"
+    },
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "Which model family and generation is `model_id`, served by `provider`? Ignore gateway or vendor path prefixes, region prefixes, date or version suffixes and local tags.",
+        "criteria": {
+          "gemini": "Google Gemini 1.5, 2.0, 2.5, 3 or later, including the flash-latest and pro-latest aliases (not Gemma, not Gemini 1.0)",
+          "claude": "Anthropic Claude 3 or later: Haiku, Sonnet, Opus, Fable and Mythos models of any generation from 3 on",
+          "grok-4": "xAI Grok 4 or later (grok-4, grok-4-fast, grok-4.x, grok-code, grok-5); not Grok 3 or earlier",
+          "gpt-5-or-4-1": "OpenAI GPT-5 family (gpt-5, gpt-5.x and their mini, nano, codex variants) or GPT-4.1 family",
+          "openai-o-series": "OpenAI o1, o3 or o4 reasoning models and their mini variants",
+          "none": "None of these: another family (GPT-4o, GPT-4, Grok 3, Gemma, Llama, Qwen, Mistral and so on) or a model the id does not identify"
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "provider": "openai-subscriber",
+      "model_id": "gpt-5.6-terra"
+    },
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "Which model family and generation is `model_id`, served by `provider`? Ignore gateway or vendor path prefixes, region prefixes, date or version suffixes and local tags.",
+        "criteria": {
+          "gemini": "Google Gemini 1.5, 2.0, 2.5, 3 or later, including the flash-latest and pro-latest aliases (not Gemma, not Gemini 1.0)",
+          "claude": "Anthropic Claude 3 or later: Haiku, Sonnet, Opus, Fable and Mythos models of any generation from 3 on",
+          "grok-4": "xAI Grok 4 or later (grok-4, grok-4-fast, grok-4.x, grok-code, grok-5); not Grok 3 or earlier",
+          "gpt-5-or-4-1": "OpenAI GPT-5 family (gpt-5, gpt-5.x and their mini, nano, codex variants) or GPT-4.1 family",
+          "openai-o-series": "OpenAI o1, o3 or o4 reasoning models and their mini variants",
+          "none": "None of these: another family (GPT-4o, GPT-4, Grok 3, Gemma, Llama, Qwen, Mistral and so on) or a model the id does not identify"
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "provider": "openai-subscriber",
+      "model_id": "gpt-5.6-luna"
+    },
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "Which model family and generation is `model_id`, served by `provider`? Ignore gateway or vendor path prefixes, region prefixes, date or version suffixes and local tags.",
+        "criteria": {
+          "gemini": "Google Gemini 1.5, 2.0, 2.5, 3 or later, including the flash-latest and pro-latest aliases (not Gemma, not Gemini 1.0)",
+          "claude": "Anthropic Claude 3 or later: Haiku, Sonnet, Opus, Fable and Mythos models of any generation from 3 on",
+          "grok-4": "xAI Grok 4 or later (grok-4, grok-4-fast, grok-4.x, grok-code, grok-5); not Grok 3 or earlier",
+          "gpt-5-or-4-1": "OpenAI GPT-5 family (gpt-5, gpt-5.x and their mini, nano, codex variants) or GPT-4.1 family",
+          "openai-o-series": "OpenAI o1, o3 or o4 reasoning models and their mini variants",
+          "none": "None of these: another family (GPT-4o, GPT-4, Grok 3, Gemma, Llama, Qwen, Mistral and so on) or a model the id does not identify"
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "provider": "openai-subscriber",
+      "model_id": "gpt-5.3-codex"
+    },
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "Which model family and generation is `model_id`, served by `provider`? Ignore gateway or vendor path prefixes, region prefixes, date or version suffixes and local tags.",
+        "criteria": {
+          "gemini": "Google Gemini 1.5, 2.0, 2.5, 3 or later, including the flash-latest and pro-latest aliases (not Gemma, not Gemini 1.0)",
+          "claude": "Anthropic Claude 3 or later: Haiku, Sonnet, Opus, Fable and Mythos models of any generation from 3 on",
+          "grok-4": "xAI Grok 4 or later (grok-4, grok-4-fast, grok-4.x, grok-code, grok-5); not Grok 3 or earlier",
+          "gpt-5-or-4-1": "OpenAI GPT-5 family (gpt-5, gpt-5.x and their mini, nano, codex variants) or GPT-4.1 family",
+          "openai-o-series": "OpenAI o1, o3 or o4 reasoning models and their mini variants",
+          "none": "None of these: another family (GPT-4o, GPT-4, Grok 3, Gemma, Llama, Qwen, Mistral and so on) or a model the id does not identify"
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "provider": "openai-subscriber",
+      "model_id": "gpt-5.4"
+    },
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "Which model family and generation is `model_id`, served by `provider`? Ignore gateway or vendor path prefixes, region prefixes, date or version suffixes and local tags.",
+        "criteria": {
+          "gemini": "Google Gemini 1.5, 2.0, 2.5, 3 or later, including the flash-latest and pro-latest aliases (not Gemma, not Gemini 1.0)",
+          "claude": "Anthropic Claude 3 or later: Haiku, Sonnet, Opus, Fable and Mythos models of any generation from 3 on",
+          "grok-4": "xAI Grok 4 or later (grok-4, grok-4-fast, grok-4.x, grok-code, grok-5); not Grok 3 or earlier",
+          "gpt-5-or-4-1": "OpenAI GPT-5 family (gpt-5, gpt-5.x and their mini, nano, codex variants) or GPT-4.1 family",
+          "openai-o-series": "OpenAI o1, o3 or o4 reasoning models and their mini variants",
+          "none": "None of these: another family (GPT-4o, GPT-4, Grok 3, Gemma, Llama, Qwen, Mistral and so on) or a model the id does not identify"
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "provider": "openai-subscriber",
+      "model_id": "gpt-5.4-mini"
+    },
+    "questions": {
+      "route": {
+        "type": "choice",
+        "instructions": "Which model family and generation is `model_id`, served by `provider`? Ignore gateway or vendor path prefixes, region prefixes, date or version suffixes and local tags.",
+        "criteria": {
+          "gemini": "Google Gemini 1.5, 2.0, 2.5, 3 or later, including the flash-latest and pro-latest aliases (not Gemma, not Gemini 1.0)",
+          "claude": "Anthropic Claude 3 or later: Haiku, Sonnet, Opus, Fable and Mythos models of any generation from 3 on",
+          "grok-4": "xAI Grok 4 or later (grok-4, grok-4-fast, grok-4.x, grok-code, grok-5); not Grok 3 or earlier",
+          "gpt-5-or-4-1": "OpenAI GPT-5 family (gpt-5, gpt-5.x and their mini, nano, codex variants) or GPT-4.1 family",
+          "openai-o-series": "OpenAI o1, o3 or o4 reasoning models and their mini variants",
+          "none": "None of these: another family (GPT-4o, GPT-4, Grok 3, Gemma, Llama, Qwen, Mistral and so on) or a model the id does not identify"
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  }
+]

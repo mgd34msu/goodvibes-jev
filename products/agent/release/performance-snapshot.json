@@ -1,0 +1,57 @@
+{
+  "surfacePerf": {
+    "revision": 24,
+    "lastUpdatedAt": 1780491600000,
+    "source": "release-ci-fixture",
+    "totalRenderCycles": 24,
+    "avgRenderMs": 9.8,
+    "maxRenderMs": 15.8,
+    "overBudgetCount": 0,
+    "budgetStatus": "ok",
+    "targetBudgetMs": 16,
+    "recentCycles": [
+      { "cycleId": 1, "requestedAt": 1780491600000, "completedAt": 1780491600007, "durationMs": 7.2, "overBudget": false },
+      { "cycleId": 2, "requestedAt": 1780491600020, "completedAt": 1780491600029, "durationMs": 8.8, "overBudget": false },
+      { "cycleId": 3, "requestedAt": 1780491600040, "completedAt": 1780491600049, "durationMs": 9.1, "overBudget": false },
+      { "cycleId": 4, "requestedAt": 1780491600060, "completedAt": 1780491600069, "durationMs": 8.6, "overBudget": false },
+      { "cycleId": 5, "requestedAt": 1780491600080, "completedAt": 1780491600090, "durationMs": 9.9, "overBudget": false },
+      { "cycleId": 6, "requestedAt": 1780491600100, "completedAt": 1780491600111, "durationMs": 10.7, "overBudget": false },
+      { "cycleId": 7, "requestedAt": 1780491600120, "completedAt": 1780491600130, "durationMs": 10.1, "overBudget": false },
+      { "cycleId": 8, "requestedAt": 1780491600140, "completedAt": 1780491600149, "durationMs": 9.4, "overBudget": false },
+      { "cycleId": 9, "requestedAt": 1780491600160, "completedAt": 1780491600172, "durationMs": 11.6, "overBudget": false },
+      { "cycleId": 10, "requestedAt": 1780491600180, "completedAt": 1780491600190, "durationMs": 10.2, "overBudget": false },
+      { "cycleId": 11, "requestedAt": 1780491600200, "completedAt": 1780491600213, "durationMs": 12.5, "overBudget": false },
+      { "cycleId": 12, "requestedAt": 1780491600220, "completedAt": 1780491600230, "durationMs": 9.7, "overBudget": false },
+      { "cycleId": 13, "requestedAt": 1780491600240, "completedAt": 1780491600254, "durationMs": 13.8, "overBudget": false },
+      { "cycleId": 14, "requestedAt": 1780491600260, "completedAt": 1780491600271, "durationMs": 10.9, "overBudget": false },
+      { "cycleId": 15, "requestedAt": 1780491600280, "completedAt": 1780491600292, "durationMs": 11.5, "overBudget": false },
+      { "cycleId": 16, "requestedAt": 1780491600300, "completedAt": 1780491600310, "durationMs": 9.8, "overBudget": false },
+      { "cycleId": 17, "requestedAt": 1780491600320, "completedAt": 1780491600335, "durationMs": 14.6, "overBudget": false },
+      { "cycleId": 18, "requestedAt": 1780491600340, "completedAt": 1780491600352, "durationMs": 11.9, "overBudget": false },
+      { "cycleId": 19, "requestedAt": 1780491600360, "completedAt": 1780491600375, "durationMs": 15.2, "overBudget": false },
+      { "cycleId": 20, "requestedAt": 1780491600380, "completedAt": 1780491600396, "durationMs": 15.8, "overBudget": false }
+    ],
+    "maxCycleBuffer": 60,
+    "avgInputLatencyMs": 12,
+    "maxInputLatencyMs": 24,
+    "recentInputLatency": [
+      { "keyEventAt": 1780491600400, "respondedAt": 1780491600410, "latencyMs": 10 },
+      { "keyEventAt": 1780491600420, "respondedAt": 1780491600433, "latencyMs": 13 },
+      { "keyEventAt": 1780491600440, "respondedAt": 1780491600456, "latencyMs": 16 },
+      { "keyEventAt": 1780491600460, "respondedAt": 1780491600484, "latencyMs": 24 }
+    ],
+    "heapUsedBytes": 54525952,
+    "rssBytes": 93323264
+  },
+  "extraMetrics": {
+    "event.queue.depth": 12,
+    "tool.executor.overhead.p95": 2.1,
+    "compaction.latency.p95": 84,
+    "slo.turn_start.p95": 780,
+    "slo.cancel.p95": 96,
+    "slo.reconnect_recovery.p95": 1230,
+    "slo.permission_decision.p95": 19,
+    "slo.integration.delivery_success_rate": 95,
+    "slo.integration.dlq_depth": 0
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "state": {
+    "context": {
+      "model": {
+        "id": "e2e-stub:stub-model"
+      }
+    },
+    "candidates": [
+      {
+        "id": "gemini-2.5-pro",
+        "content": {
+          "id": "gemini-2.5-pro"
+        }
+      },
+      {
+        "id": "mercury-2",
+        "content": {
+          "id": "mercury-2"
+        }
+      }
+    ]
+  },
+  "questions": {
+    "pick": {
+      "type": "choice",
+      "instructions": "Which candidate is the same model as `context.model`: the same weights, possibly served under a different id, a provider or vendor prefix, a date or version snapshot suffix, a \"latest\" alias or a region decoration? A different size, generation, or variant (mini, lite, flash, pro, turbo, instruct versus thinking) is not the same model.",
+      "criteria": {
+        "gemini-2.5-pro": null,
+        "mercury-2": null,
+        "none": "None of the candidates does what is needed."
+      }
+    },
+    "fits_0": {
+      "type": "noul",
+      "instructions": {
+        "question": "Is this candidate the same underlying model as `context.model`? Ignore provider or vendor prefixes, date or snapshot suffixes, \"latest\" aliases, region decorations and punctuation (4-5 and 4.5 are the same version); answer no only for a different size, generation or variant.",
+        "candidate": "`candidates[0]` (id \"gemini-2.5-pro\")"
+      }
+    },
+    "fits_1": {
+      "type": "noul",
+      "instructions": {
+        "question": "Is this candidate the same underlying model as `context.model`? Ignore provider or vendor prefixes, date or snapshot suffixes, \"latest\" aliases, region decorations and punctuation (4-5 and 4.5 are the same version); answer no only for a different size, generation or variant.",
+        "candidate": "`candidates[1]` (id \"mercury-2\")"
+      }
+    }
+  },
+  "model": "jev-1.13.0"
+}

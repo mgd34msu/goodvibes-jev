@@ -1,0 +1,17 @@
+{
+  "state": {
+    "request": "first words in a brand new workspace"
+  },
+  "questions": {
+    "route": {
+      "type": "choice",
+      "instructions": "What does the person ask for in `request`? Judge the whole message: what they want done, not the words it uses.",
+      "criteria": {
+        "converse": "Conversation, a question about the conversation, or a request needing no work on files or systems",
+        "answer": "A question answered from knowledge or by reading, with no change to anything",
+        "contract": "Work that produces or changes something: code, files, documents, configuration, or a multi-step task"
+      }
+    }
+  },
+  "model": "jev-1.13.0"
+}
