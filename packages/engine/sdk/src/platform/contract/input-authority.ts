@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 /** Construction-owned provenance. A captured path never grants permission by itself. */
 import { realpathSync } from 'node:fs';
 import { lstat, realpath } from 'node:fs/promises';
@@ -36,6 +37,7 @@ interface Authority {
 const admissions = new WeakMap<Contract, Admission>();
 const authorities = new WeakMap<ContractInputAuthority, Authority>();
 const bindings = new WeakMap<object, ContractInputAuthority>();
+const activeInputAuthority = new AsyncLocalStorage<ContractInputAuthority>();
 // Revocation never makes a previously captured root an ordinary live workspace.
 const capturedRoots = new Set<string>();
 const identity = (stat: { dev: bigint; ino: bigint }): string => `${stat.dev}:${stat.ino}`;
@@ -170,7 +172,9 @@ export async function assertContractInputAuthority(
   const state = stateOf(token);
   if (root !== undefined && resolve(root) !== state.root)
     throw new Error('captured input authority belongs to another view');
-  const source = await lstat(state.admission.receipt.sourceRoot, { bigint: true });
+  const source = await lstat(state.admission.receipt.sourceRoot, {
+    bigint: true,
+  });
   if (
     !source.isDirectory() ||
     source.isSymbolicLink() ||
@@ -259,4 +263,26 @@ export async function assertContractInputReadAccess(
 ): Promise<void> {
   if (!filter) throw new Error('captured input requires original-owner read authorization');
   for (const path of stateOf(token).reads) await authorizeContractInputPath(token, path, filter, signal);
+}
+
+/** Denial-only boundary for ordinary tools encountering retained captured paths. */
+export function assertCapturedInputPathContext(path: string): void {
+  if (!isCapturedInputPath(path)) return;
+  const token = activeInputAuthority.getStore();
+  if (!token) throw new Error('captured input path requires a construction-owned authority');
+  const state = stateOf(token);
+  let actual = resolve(path);
+  try {
+    actual = realpathSync(actual);
+  } catch {
+    /* New member files are checked by the guarded write path. */
+  }
+  const rel = relative(state.root, actual);
+  if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`))
+    throw new Error('captured input path belongs to another authority');
+}
+
+export function withContractInputAuthority<T>(token: ContractInputAuthority, operation: () => T): T {
+  stateOf(token);
+  return activeInputAuthority.run(token, operation);
 }

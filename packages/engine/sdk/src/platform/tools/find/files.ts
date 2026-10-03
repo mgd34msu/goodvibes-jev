@@ -1,3 +1,4 @@
+import { assertCapturedInputPathContext } from '../../contract/input-authority.js';
 import { join, relative } from 'node:path';
 import { statSync, lstatSync } from 'node:fs';
 import type { FilesQuery, OutputOptions } from './shared.js';
@@ -152,6 +153,7 @@ export async function executeFilesQuery(
       if (restrictedPaths.has(entry.path)) continue; // cannot read to verify content
       try {
         if (capturedReadAccess && !await capturedReadAccess(entry.path)) throw new Error('file read is access-restricted');
+        assertCapturedInputPathContext(entry.path);
         const text = await Bun.file(entry.path).text();
         if (safeRegExpTest(hasContentRegex, text, { operation: 'find files has_content', maxInputChars: 500_000 })) filtered.push(entry);
       } catch (err) {
@@ -200,6 +202,7 @@ export async function executeFilesQuery(
       let preview: string[] = [];
       try {
         if (capturedReadAccess && !await capturedReadAccess(entry.path)) throw new Error('file read is access-restricted');
+        assertCapturedInputPathContext(entry.path);
         const text = await Bun.file(entry.path).text();
         preview = text.split('\n').slice(0, previewLines);
       } catch (err) {

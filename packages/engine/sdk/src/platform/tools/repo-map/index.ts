@@ -1,3 +1,4 @@
+import { assertCapturedInputPathContext } from '../../contract/input-authority.js';
 // repo_map, a model-invoked, token-budgeted repository map.
 //
 // STANDING RULE: this is a tool the model CALLS, not passive always-on context
@@ -202,6 +203,7 @@ export function createRepoMapTool(options: {
         } else {
           try {
             if (options.capturedReadAccess && !await options.capturedReadAccess(absolute)) throw new Error('captured map path is access-restricted');
+            assertCapturedInputPathContext(absolute);
             const exports = extractTopLevelExports(readFileSync(absolute, 'utf-8')).slice(0, MAX_EXPORTS_PER_FILE);
             const exportsLine = exports.length > 0 ? `\n    exports: ${exports.join(', ')}` : '';
             block = `\n  ${file.rel}  (dependents: ${file.dependents}, ${formatBytes(file.bytes)})${exportsLine}`;

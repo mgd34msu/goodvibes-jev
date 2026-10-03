@@ -1,3 +1,4 @@
+import { assertCapturedInputPathContext } from '../../contract/input-authority.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { readdir } from 'node:fs/promises';
@@ -289,6 +290,7 @@ export async function walk(
 
 export function safeRead(filePath: string): string {
   try {
+    assertCapturedInputPathContext(filePath);
     return readFileSync(filePath, 'utf-8');
   } catch {
     return '';

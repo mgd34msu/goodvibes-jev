@@ -1,3 +1,4 @@
+import { assertCapturedInputPathContext } from '../contract/input-authority.js';
 import type { ReadAccessFilter } from '../tools/shared/read-access.js';
 /**
  * Import graph for TypeScript/JavaScript files.
@@ -158,6 +159,7 @@ export function resolveSpecifierForTest(
 
 function collectSourceFiles(dir: string, diagnostics: ImportGraphDiagnostics, results: string[] = []): string[] {
   if (results.length >= MAX_FILES) return results;
+  try { assertCapturedInputPathContext(dir); } catch { return results; }
 
   let entries: Dirent[];
   try {
@@ -238,6 +240,7 @@ export class ImportGraph {
       let content: string;
       try {
         if (readAccessFilter && !await readAccessFilter(filePath)) continue;
+        assertCapturedInputPathContext(filePath);
         content = readFileSync(filePath, 'utf-8');
       } catch (err) {
         logger.warn('[import-graph] Skipping unreadable file', { file: filePath, error: summarizeError(err) });

@@ -1,4 +1,4 @@
-import { createContractInputAuthority, bindContractInputAuthority, assertContractInputAdmission, pinContractInputAdmission, authorizeContractInputPath, assertContractInputReadAccess } from './input-authority.js';
+import { createContractInputAuthority, bindContractInputAuthority, assertContractInputAdmission, pinContractInputAdmission, authorizeContractInputPath, assertContractInputReadAccess, withContractInputAuthority } from './input-authority.js';
 /**
  * Planning (docs/design/contract-runner.md section 3): read the request's
  * shape, run the planning model as a read-only sub-agent, check its plan in
@@ -508,7 +508,8 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
     try { await authorizeContractInputPath(authority, path, filter, signal); return true; }
     catch { return false; }
   };
-  const repositoryMap = await (deps.repositoryMap === undefined ? defaultRepositoryMap(workingDirectory, readAccessFilter, authority ? readAccessFilter : undefined) : deps.repositoryMap(workingDirectory));
+  const map = () => deps.repositoryMap === undefined ? defaultRepositoryMap(workingDirectory, readAccessFilter, authority ? readAccessFilter : undefined) : deps.repositoryMap(workingDirectory);
+  const repositoryMap = await (authority ? withContractInputAuthority(authority, map) : map());
   if (authority) await assertContractInputReadAccess(authority, filter, signal);
   const bounds = readPlannerBounds(deps.configManager);
   const systemPrompt = buildContractPlannerPrompt();

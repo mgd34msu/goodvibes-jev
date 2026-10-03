@@ -148,7 +148,15 @@ test('independent tool argument mutation during permission await stays held', as
 import { createWriteTool } from '../sdk/src/platform/tools/write/index.js';
 test('independent write args remain pinned through permission callbacks', async () =>
   fixture(async ({ root, view, token }) => {
-    const args = { files: [{ path: 'a.txt', content: 'synthetic authorized write', mode: 'overwrite' }] };
+    const args = {
+      files: [
+        {
+          path: 'a.txt',
+          content: 'synthetic authorized write',
+          mode: 'overwrite',
+        },
+      ],
+    };
     let changed = false;
     const filter = async (p: string) => {
       if (!changed && p === join(root, 'a.txt')) {
@@ -182,3 +190,32 @@ test('same-root mutable leases keep their own cancellation signals', async () =>
     await expect(assertContractInputAuthority(second)).rejects.toThrow();
     await expect(authorizeContractInputPath(token, 'a.txt', async () => true)).resolves.toBe(join(view, 'a.txt'));
   }, true));
+
+test('captured invocation keeps the original per-call cancellation signal', async () =>
+  fixture(async ({ root, view, token }) => {
+    const stop = new AbortController();
+    const options: { signal?: AbortSignal } = { signal: stop.signal };
+    const filter = async (path: string) => {
+      if (path === join(root, 'a.txt')) {
+        stop.abort();
+        options.signal = new AbortController().signal;
+      }
+      return true;
+    };
+    const guarded = capturedInputReadFilter(token, view, filter, undefined, new Set());
+    const index = new ProjectIndex(view);
+    try {
+      const tool = capturedInputTool(
+        new ReadTool(index, undefined, undefined, guarded),
+        token,
+        view,
+        filter,
+        undefined,
+      );
+      const result = await tool.execute({ files: [{ path: 'a.txt' }] }, options);
+      expect(result.output ?? '').not.toContain('synthetic-owned');
+      expect(result.success).toBe(false);
+    } finally {
+      await index.dispose();
+    }
+  }));

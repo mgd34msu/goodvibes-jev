@@ -1,3 +1,4 @@
+import { assertCapturedInputPathContext } from '../../contract/input-authority.js';
 import { resolve, relative, join } from 'node:path';
 import { stat as statAsync } from 'node:fs/promises';
 import { statSync, lstatSync, existsSync, readFileSync, realpathSync, readdirSync, type Dirent } from 'node:fs';
@@ -188,6 +189,7 @@ export function shouldSkipRelativePath(relativePath: string, includeHidden: bool
 
 export async function isBinary(filePath: string, diagnostics?: FindDiagnostics): Promise<boolean> {
   try {
+    assertCapturedInputPathContext(filePath);
     const file = Bun.file(filePath);
     const size = file.size;
     if (size === 0) return false;
@@ -215,6 +217,7 @@ export async function collectTextFiles(dirPath: string, diagnostics?: FindDiagno
 
 export async function readTextFile(filePath: string, diagnostics?: FindDiagnostics): Promise<string | null> {
   try {
+    assertCapturedInputPathContext(filePath);
     return await Bun.file(filePath).text();
   } catch (err) {
     addFindWarning(diagnostics, `Skipped unreadable file '${filePath}': ${summarizeError(err)}`);
@@ -254,6 +257,7 @@ export async function collectGlobFiles(
           }
         }
 
+        try { assertCapturedInputPathContext(file); } catch { continue; }
         const rel = relative(basePath, file);
         if (shouldSkipRelativePath(rel, includeHidden)) continue;
         matchedFiles.add(file);
@@ -309,6 +313,7 @@ export function validateSearchPath(
   projectRoot: string,
 ): string | { error: string } {
   const resolved = path ? resolve(projectRoot, path) : projectRoot;
+  try { assertCapturedInputPathContext(resolved); } catch { return { error: 'captured input path requires a construction-owned authority' }; }
   if (!resolved.startsWith(projectRoot + '/') && resolved !== projectRoot) {
     return { error: `Path '${path}' resolves outside the project root.` };
   }
@@ -319,6 +324,7 @@ export function buildGitignoreMatcher(gitignorePath: string, diagnostics?: FindD
   if (!existsSync(gitignorePath)) return null;
   let raw: string;
   try {
+    assertCapturedInputPathContext(gitignorePath);
     raw = readFileSync(gitignorePath, 'utf8');
   } catch (err) {
     addFindWarning(diagnostics, `Could not read root .gitignore '${gitignorePath}': ${summarizeError(err)}`);
