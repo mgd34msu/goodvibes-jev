@@ -1,3 +1,4 @@
+import { installAgentMemoryInputGuard } from './agent-memory-input-guard.ts';
 /**
  * The `accounts` tool: the durable record of every account the agent created.
  *
@@ -30,7 +31,7 @@ import { evaluateOutwardEffect, getSessionUntrustedContentLedger } from '../trus
 
 const ACCOUNT_ACTIONS = ['list', 'alias', 'record', 'forget', 'sweep'] as const;
 
-type ToolOutput = { readonly success: true; readonly output: string } | { readonly success: false; readonly error: string };
+type ToolOutput = { readonly success: true; readonly output: string } | { readonly success: false; readonly error: string; readonly cancelled?: true };
 
 function failure(message: string): ToolOutput {
   return { success: false, error: message };
@@ -93,7 +94,9 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
         required: ['action'],
       },
     },
-    execute: async (rawArgs: Record<string, unknown>): Promise<ToolOutput> => {
+    execute: async (rawArgs: Record<string, unknown>, execution?: Parameters<Tool['execute']>[1]): Promise<ToolOutput> => {
+      const cancelled = (): ToolOutput => ({ success: false, cancelled: true, error: 'Account action cancelled.' });
+      if (execution?.signal?.aborted) return cancelled();
       const action = readString(rawArgs.action).toLowerCase();
       if (!ACCOUNT_ACTIONS.includes(action as (typeof ACCOUNT_ACTIONS)[number])) {
         return failure(`accounts needs one of: ${ACCOUNT_ACTIONS.join(', ')}.`);
@@ -156,13 +159,20 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
           // Recording is the visible half of an outward effect that already
           // happened, so it is gated the same way the signup itself is: page
           // text cannot drive the agent into registering an account.
+          const ledger = getSessionUntrustedContentLedger();
+          // The comparison context is also judgment input. Refuse, rather than
+          // erase evidence and accidentally authorize a tainted account write.
+          if ([...ledger.taintSourcesThisTurn(), ...ledger.exposuresThisTurn()]
+            .some((source) => Object.values(source).some(containsSecretLikeText))) {
+            return failure('Account safety cannot inspect protected values in untrusted context. No record was written.');
+          }
           const decision = await evaluateOutwardEffect({
             request: {
               toolName: 'accounts',
               action: 'accounts.record',
               description: `recording an account created at ${input.serviceDomain || 'a service'}`,
             },
-            ledger: getSessionUntrustedContentLedger(),
+            ledger,
             // Enumerated rather than left to the coarse rule. Every field of a
             // record is text a page could have supplied, the domain and the URL
             // most of all, since a record pointing at an attacker's host is how
@@ -182,9 +192,11 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
               // for this signup, so of course it appears in the mail that signup
               // provoked, and testing it would refuse every real record.
               exactMatchFields: ['serviceDomain', 'serviceUrl'],
+              signal: execution?.signal,
             },
             requestedBy: 'owner-direct',
           });
+          if (execution?.signal?.aborted) return cancelled();
           if (!decision.allowed) return failure(`${decision.reason} ${decision.fix}`);
 
           const account = registry.record(input);
@@ -201,6 +213,7 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
         }
 
         const known = options.knownSecretKeys ? await options.knownSecretKeys() : undefined;
+        if (execution?.signal?.aborted) return cancelled();
         const maxAgeDays = typeof rawArgs.maxAgeDays === 'number' ? rawArgs.maxAgeDays : undefined;
         const result = registry.sweep({
           ...(known === undefined ? {} : { knownSecretKeys: known }),
@@ -212,6 +225,7 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
             : `Reaped ${result.removed.length} record(s) whose credential was gone or which aged out: ${result.removed.map((entry) => entry.id).join(', ')}. ${result.remaining} remain.`,
         );
       } catch (error) {
+        if (execution?.signal?.aborted) return cancelled();
         return failure(error instanceof Error ? error.message : String(error));
       }
     },
@@ -219,5 +233,6 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
 }
 
 export function registerAgentAccountsTool(registry: ToolRegistry, options: AgentAccountsToolOptions): void {
+  installAgentMemoryInputGuard(registry);
   if (!registry.has('accounts')) registry.register(createAgentAccountsTool(options));
 }

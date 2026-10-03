@@ -119,3 +119,35 @@ Validation performed on this branch:
 
 These are scoped checks, not a full product/engine test suite or release gate.
 No model requests or real credentials are needed.
+
+## Composition repair after reciprocal review
+
+The first draft's valid-record preflight was too late for malformed tool calls:
+parameter auto-repair runs before a tool's execute wrapper. Account and local
+registry registration now install a registry-entry guard that snapshots the
+whole argument object and screens every nested string/key before repair can
+receive it. Spare arguments are included because they may become repair input.
+The same captured input continues into repair and the original tool wrappers;
+protected text is refused with value-free errors. Existing policy and durable
+registry checks are retained.
+
+Account derivation also carries retained untrusted source text and origin, not
+only the proposed record fields. Account recording refuses protected values in
+that context before asking a judgment. It does not redact the evidence and
+interpret the redacted context as permission. Ordinary untrusted context still
+runs the original derivation policy and retains both allow and refuse outcomes.
+
+Account execution now passes its AbortSignal into the additive, optional shared
+TaintOptions.signal. Derivation races pending provider work, checks before any
+queued ask, refuses late reading/action recording, and drains late completion.
+Already-cancelled checks fail even without retained sources. The account tool
+also checks cancellation immediately before persistence, reporting a static
+cancelled result without echoing the arbitrary abort reason.
+
+Five actual bootstrap regressions cover malformed account and memory arguments
+(including nested spare input), protected source text/origin, and cancellation
+while a provider is paused. All five fail with the previous production source
+and pass with the repair. Additional shared-engine tests cover already-aborted,
+late provider completion, queued work, recorder suppression and active-signal
+allow/refuse/uncertain behavior. These repairs do not replace semantic credential
+screening or expand the original claim beyond protected-format containment.
