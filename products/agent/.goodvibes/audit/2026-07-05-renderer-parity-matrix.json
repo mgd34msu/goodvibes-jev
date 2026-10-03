@@ -1,0 +1,426 @@
+{
+  "meta": {
+    "work_order": "W4-R1",
+    "title": "Renderer/input parity audit — agent vs TUI (frozen-fork diff)",
+    "generated": "2026-07-05",
+    "auditor": "goodvibes general-purpose (opus, high)",
+    "repo_state": {
+      "agent": "/home/buzzkill/Projects/goodvibes-agent main @ c5fa750c (renderer/input entirely stamped Jun 13 00:25 — frozen fork)",
+      "tui": "/home/buzzkill/Projects/goodvibes-tui main @ 736f9218 (current substrate; named fixes landed 2026-06-30 -> 2026-07-05)"
+    },
+    "verdict_legend": {
+      "PORT": "TUI carries a renderer/input correctness fix the agent lacks; assign to a port batch.",
+      "INTENTIONALLY-DIFFERENT": "Divergence is deliberate (single-surface/sidebar model, fleet-lessness, agent-only table) — no batch ports it.",
+      "OBSOLETE": "Neither repo should carry it. NONE surfaced in this audit."
+    },
+    "batching_rule": "One batch per fix-class cluster, each owning a DISJOINT owns_file set. compositor.ts is the one intentionally-shared file: R2 owns its caps/highlight region and lands FIRST; R4 owns its tone-read region and rebases. No other file is owns_file for two batches.",
+    "disjoint_ownership_invariant": "HOLDS. The only shared file is compositor.ts (R2 primary, R4 rebase — the pre-ruled serialization). terminal-escapes.ts is R2-owned and R3-consumed (import, no write). terminal-bg-probe.ts is R2-owned and R4-consumed (import). No write collisions.",
+    "totals": {
+      "PORT": 25,
+      "INTENTIONALLY_DIFFERENT": 8,
+      "OBSOLETE": 0,
+      "batch_sizes": { "R2": 8, "R3": 3, "R4": 14 }
+    }
+  },
+  "port_rows": [
+    {
+      "primitive": "width-table (getDisplayWidth cross family + stripAnsi + joinPrioritizedSegments)",
+      "fix_class": "WIDTH-TABLE",
+      "verdict": "PORT",
+      "batch": "R2",
+      "owns_file": "src/utils/terminal-width.ts",
+      "tui_anchor": "src/utils/terminal-width.ts:84-103 (0x2715/0x2716 width-1 override), :10-42 (stripAnsi), :187-212 (joinPrioritizedSegments/PrioritizedSegment)",
+      "agent_state": "src/utils/terminal-width.ts:32-44 stale subset — no 0x2715/0x2716 cross entries, no stripAnsi pass (:58 in TUI), no joinPrioritizedSegments; 191 vs 289 lines. Agent has a benign codepoint-progress guard at :151-155 (splitIdx===0) that TUI's index-based wrapText lacks — agent-local, DO NOT strip.",
+      "commit": "b98d3b91 (the ✕ glitch fix); 0ac2eabe (joinPrioritizedSegments priority)",
+      "risk": "Adding the cross entries + stripAnsi is low-risk; preserve the agent's local progress guard. joinPrioritizedSegments is footer-only.",
+      "notes": "The '✕t' grid-desync on the error line is the reproducible defect."
+    },
+    {
+      "primitive": "prompt-content-width",
+      "fix_class": "WIDTH-TABLE",
+      "verdict": "PORT",
+      "batch": "R2",
+      "owns_file": "src/renderer/prompt-content-width.ts (NEW)",
+      "tui_anchor": "src/renderer/prompt-content-width.ts:11-16 (computePromptContentWidth, floors at 1)",
+      "agent_state": "ABSENT — agent has no prompt-content-width module.",
+      "commit": "68bc13c3 (WO-203 correctness fixes)",
+      "risk": "Low; pure function. Confirm the agent footer input box uses the same margin(2)/padding(4)/prefix(3) geometry before adopting the constants.",
+      "notes": "TUI-only today."
+    },
+    {
+      "primitive": "terminal-escapes (control-sequence constants incl. FOCUS_ENABLE ?1004h)",
+      "fix_class": "CORRUPTION-GUARDS",
+      "verdict": "PORT",
+      "batch": "R2",
+      "owns_file": "src/renderer/terminal-escapes.ts (NEW)",
+      "tui_anchor": "src/renderer/terminal-escapes.ts:8-21 (ALT_SCREEN/MOUSE/PASTE/FOCUS enable/disable constants)",
+      "agent_state": "ABSENT — agent inlines its terminal mode sequences (no extracted module).",
+      "commit": "fa860ebd (DEBT-2 light theme e2e — OSC 11)",
+      "risk": "Low. FOCUS_ENABLE is also needed by R3's focus-tracker — R2 is the shared home; if R3 lands first it defines FOCUS_ENABLE locally and converges at integrate.",
+      "notes": "R2 owns the file; R3 imports FOCUS_ENABLE (read, no write collision)."
+    },
+    {
+      "primitive": "term-caps (probeTermCaps / downsampleColor / wrapSynced)",
+      "fix_class": "CORRUPTION-GUARDS",
+      "verdict": "PORT",
+      "batch": "R2",
+      "owns_file": "src/renderer/term-caps.ts (NEW)",
+      "tui_anchor": "src/renderer/term-caps.ts (TermColorCaps, probeTermCaps, downsampleColor, wrapSynced — DEC 2026 synchronized-output)",
+      "agent_state": "ABSENT — agent has no terminal-capability probe; colors are emitted as raw truecolor unconditionally.",
+      "commit": "c6eb004c (WO-206)",
+      "risk": "The value is realized only when wired into DiffEngine (see diff.ts + compositor rows). An unused caps module is dead code.",
+      "notes": "Feeds diff.ts and compositor.ts."
+    },
+    {
+      "primitive": "terminal-bg-probe (OSC-11 background query)",
+      "fix_class": "CORRUPTION-GUARDS",
+      "verdict": "PORT",
+      "batch": "R2",
+      "owns_file": "src/renderer/terminal-bg-probe.ts (NEW)",
+      "tui_anchor": "src/renderer/terminal-bg-probe.ts (OSC-11 probe driving auto light/dark)",
+      "agent_state": "ABSENT.",
+      "commit": "fa860ebd (DEBT-2)",
+      "risk": "R2 creates the file; R4 wires its result into theme-mode-config.ts (auto mode). Cross-batch dependency (R2 file -> R4 wiring), not a write collision.",
+      "notes": "Consumed by R4's theme system."
+    },
+    {
+      "primitive": "DiffEngine capability-aware color emission",
+      "fix_class": "CORRUPTION-GUARDS",
+      "verdict": "PORT",
+      "batch": "R2",
+      "owns_file": "src/renderer/diff.ts",
+      "tui_anchor": "src/renderer/diff.ts:1-25 (imports TermColorCaps/downsampleColor/wrapSynced; ctor takes caps and downsamples every SGR)",
+      "agent_state": "src/renderer/diff.ts:7 DiffEngine has NO caps constructor param — emits raw truecolor with no downsample and no DEC-2026 sync wrap.",
+      "commit": "(caps-aware DiffEngine landed with term-caps c6eb004c line)",
+      "risk": "HIGH — the DiffEngine is the byte-level differ on the render hot path; downsampleColor/wrapSynced change every emitted escape. A bug corrupts ALL output. Gate with a render replay.",
+      "notes": "NOT in the brief's named R2 owns list — SURFACED BY THIS AUDIT. Appended to R2 (render-path, same batch as term-caps/compositor)."
+    },
+    {
+      "primitive": "compositor DiffEngine caps wiring + hardcoded search-highlight hex",
+      "fix_class": "CORRUPTION-GUARDS",
+      "verdict": "PORT",
+      "batch": "R2",
+      "owns_file": "src/renderer/compositor.ts",
+      "tui_anchor": "src/renderer/compositor.ts:74-78 (probeTermCaps + new DiffEngine(this.caps)), :253-263 (search highlight via activeTheme() T.searchCurrentBg/Fg/searchMatchBg/Fg)",
+      "agent_state": "src/renderer/compositor.ts:46 new DiffEngine() (capless), :150-152 hardcoded '#ffff00'/'#000000'/'#806600'/'#ffffff' search-highlight hex, :89 sepFg='238' hardcoded.",
+      "commit": "(caps wiring + theme-driven highlight)",
+      "risk": "HIGH — changes DiffEngine construction on every frame. SHARED FILE: R2 owns the caps + highlight-hex region and lands FIRST; R4 owns the tone-read region (activeTheme/activeUiTones) and rebases onto R2's edits.",
+      "notes": "The one intentionally-shared file. R2 primary owner; R4 rebase."
+    },
+    {
+      "primitive": "noise-gate classifier + captured-write routing",
+      "fix_class": "NOISE-GATE",
+      "verdict": "PORT",
+      "batch": "R2",
+      "owns_file": "src/core/system-message-noise.ts (NEW) + src/runtime/terminal-output-guard.ts + src/main.ts (noise route site)",
+      "tui_anchor": "src/core/system-message-noise.ts:44-65 (classifyNoise emit/drop/foldProviderReplay), :80-87 (foldProviderReplayLines); wired at core/system-message-router.ts",
+      "agent_state": "src/runtime/terminal-output-guard.ts:227-232 bare 5s debounce -> notify -> src/main.ts systemMessageRouter.high; NO classifier. The '[Terminal] Captured N direct <src> write' notice reaches the transcript raw.",
+      "commit": "43bc4e09 (route transcript noise out at the message router)",
+      "risk": "The classifier must be SPECIFIC — port TUI regexes verbatim (provider-replay / [Agents] snapshot / stale-replay) and adapt ONLY the agent-specific '[Terminal] Captured' rule. Over-broad swallows real lifecycle messages. Drop-from-transcript, NOT delete — count must stay reachable (/health or activity log).",
+      "notes": "ABSORBS A8 papercut #3 (stdout-capture leak). A8 must NOT also touch terminal-output-guard.ts/main.ts."
+    },
+    {
+      "primitive": "panel-paste-flood-guard (unbracketed-paste burst)",
+      "fix_class": "PASTE/FOCUS",
+      "verdict": "PORT",
+      "batch": "R3",
+      "owns_file": "src/input/panel-paste-flood-guard.ts (NEW) + handler wiring",
+      "tui_anchor": "src/input/panel-paste-flood-guard.ts:38-39 (THRESHOLD=8/WINDOW_MS=120), :64-86 (trackPanelPasteFloodGuard sliding window)",
+      "agent_state": "ABSENT. Agent has paste plumbing (handler.ts:93/:208/:315 pasteRegistry/registerPaste) but no rate guard.",
+      "commit": "90eb3a26 (DEBT-5 item 5)",
+      "risk": "ADAPTATION — the TUI guard protects PANEL hotkeys via panelFocused; the agent has NO panels. In the agent the burst instead becomes command/keybinding dispatch, so the guard wires above the composer/command dispatch, not a panel-focus loop. Honest degrade: 'pasted N lines; M suppressed as a flood'.",
+      "notes": "Tokenizer-level paste parsing already at parity (tokenizer.test.ts IDENTICAL) — port only the higher-level guard."
+    },
+    {
+      "primitive": "delete-key-policy",
+      "fix_class": "PASTE/FOCUS",
+      "verdict": "PORT",
+      "batch": "R3",
+      "owns_file": "src/input/delete-key-policy.ts (NEW)",
+      "tui_anchor": "src/input/delete-key-policy.ts (unified confirm/cancel + delete-key contract)",
+      "agent_state": "ABSENT — no delete-key-policy module; agent handler-prompt-buffer.ts shows no explicit delete/backspace policy.",
+      "commit": "33033717 (2026-06-11 — predates the agent's Jun 13 file stamp yet absent in agent)",
+      "risk": "Low; match the TUI policy exactly so behavior is cross-product consistent.",
+      "notes": "Provenance note: TUI commit date is pre-fork-stamp; the file simply never reached the agent."
+    },
+    {
+      "primitive": "focus-tracker (OS window focus, DECSET ?1004h)",
+      "fix_class": "PASTE/FOCUS",
+      "verdict": "PORT",
+      "batch": "R3",
+      "owns_file": "src/core/focus-tracker.ts (NEW) + terminal-mode setup/teardown for ?1004h",
+      "tui_anchor": "src/core/focus-tracker.ts:18-41 (FocusTracker, shouldAlertWhenUnfocused honest-null fallback); enabled via terminal-escapes FOCUS_ENABLE",
+      "agent_state": "ABSENT as OS focus. Agent has indicatorFocused (handler.ts:90, handler-feed-routes.ts:24 handleIndicatorFocusToken) — that is INTERNAL process-indicator widget focus, a DIFFERENT concept, not the terminal ?1004h focus-in/out. Agent tokenizer DOES parse \\x1b[I/\\x1b[O (tokenizer.test.ts identical) but nothing consumes them as OS focus.",
+      "commit": "d6b44447 (W2.3 unfocused-user alerts)",
+      "risk": "HIGH-ish — ?1004h MUST be disabled on exit or the user's shell inherits focus-reporting garbage; assert teardown. FOCUS_ENABLE shared with R2's terminal-escapes.ts (converge). This is NET-NEW behavior, not a parity restore.",
+      "notes": "Drives awaiting-approval alerts on focus-out."
+    },
+    {
+      "primitive": "theme system (resolveTheme/resolveUiTones/activeTheme/activeUiTones + light palettes)",
+      "fix_class": "TONE/THEME/LIGHT",
+      "verdict": "PORT",
+      "batch": "R4",
+      "owns_file": "src/renderer/theme.ts (NEW)",
+      "tui_anchor": "src/renderer/theme.ts:80-101 (DARK), :127-148 (LIGHT), :156-158 (resolveTheme), :203-242 (UI_TONES_LIGHT/resolveUiTones), :283-305 (registerThemeRefresh/setActiveThemeMode/activeTheme/activeUiTones)",
+      "agent_state": "ABSENT — no theme.ts; agent has only the static UI_TONES subset and no mode dimension.",
+      "commit": "18ca2c5b (light-transcript)",
+      "risk": "Consumes S1 TONE_TOKENS/resolveTones. Live per-render reads must be memoized (mirror TUI activeUiTones caching).",
+      "notes": "Dark must stay byte-identical (S1 no-op-swap guarantee)."
+    },
+    {
+      "primitive": "theme-mode-config (display.themeMode auto/dark/light + OSC-11)",
+      "fix_class": "TONE/THEME/LIGHT",
+      "verdict": "PORT",
+      "batch": "R4",
+      "owns_file": "src/renderer/theme-mode-config.ts (NEW)",
+      "tui_anchor": "src/renderer/theme-mode-config.ts:24-67 (THEME_MODE_CONFIG_KEY, coerce/resolveConfiguredThemeMode)",
+      "agent_state": "ABSENT.",
+      "commit": "18ca2c5b / fa860ebd",
+      "risk": "Wires R2's terminal-bg-probe.ts for auto mode. Confirm the agent config surface has an equivalent display section.",
+      "notes": "Cross-batch: consumes R2's terminal-bg-probe."
+    },
+    {
+      "primitive": "UI_TONES tone-token table (chrome group + reasoning/empty/footer/border/brand/gradient)",
+      "fix_class": "TONE/THEME/LIGHT",
+      "verdict": "PORT",
+      "batch": "R4",
+      "owns_file": "src/renderer/ui-primitives.ts",
+      "tui_anchor": "src/renderer/ui-primitives.ts:65-138 (UI_TONES incl. chrome :124-137), :149-157 (DIFF_TONES), :160 (SPINNER_FRAMES)",
+      "agent_state": "src/renderer/ui-primitives.ts:59-94 stale subset — no chrome group, no reasoning/empty/footer/border/brand/gradient, no DIFF_TONES, no SPINNER_FRAMES.",
+      "commit": "(UI_TONES chrome expansion)",
+      "risk": "Replace with an import of S1 TONE_TOKENS — do NOT re-mint locally. Same file holds GLYPHS (also -> S1 STATUS_GLYPHS consume).",
+      "notes": "R4 consumes S1; grep-gate no local re-mint."
+    },
+    {
+      "primitive": "waiting-wording split + THINKING_PHRASES + computeStallInfo",
+      "fix_class": "WAITING-WORDING",
+      "verdict": "PORT",
+      "batch": "R4",
+      "owns_file": "src/renderer/ui-factory.ts",
+      "tui_anchor": "src/renderer/ui-factory.ts:554-584 (honest split: approval/reconnecting/pre-first-token 'Waiting for model Ns'/'Stalled Ns'/rotated phrase), :522-552 (computeStallInfo), :29 (THINKING_STALL_FREEZE_MS), :489-510 (THINKING_PHRASES)",
+      "agent_state": "src/renderer/ui-factory.ts:308-313 createThinkingFragment is ROTATING-ONLY (no stallInfo/approvalPending params), :239-240 a DISCONNECTED footer 'waiting for your approval' token, :281-302 local THINKING_PHRASES (verbatim-identical to TUI).",
+      "commit": "99ca4942 (honest pre-first-token wording)",
+      "risk": "Consumes S1 waitingPhrase() + THINKING_PHRASES. Needs stall/approval/reconnect SIGNALS the agent turn loop must surface — port computeStallInfo; if the signal is absent the wording can't be honest (resolve in-brief). Retire the footer-only token into the unified state.",
+      "notes": "R4 consumes S1."
+    },
+    {
+      "primitive": "thinking block live tone read",
+      "fix_class": "TONE/THEME/LIGHT",
+      "verdict": "PORT",
+      "batch": "R4",
+      "owns_file": "src/renderer/thinking.ts",
+      "tui_anchor": "src/renderer/thinking.ts:13 (activeUiTones() -> t.state.reasoning / t.chrome.faint per render)",
+      "agent_state": "src/renderer/thinking.ts:2 static BORDERS.THINKING.color + COLORS.DIM_TEXT from layout.ts — frozen dark, illegible on a light terminal.",
+      "commit": "(theme.ts live reads)",
+      "risk": "Low; convert two static reads to activeUiTones().",
+      "notes": "Paints on transparent bg -> must be live for light legibility."
+    },
+    {
+      "primitive": "STATE_GLYPHS status-glyph map",
+      "fix_class": "TONE/THEME/LIGHT (glyph reconcile)",
+      "verdict": "PORT",
+      "batch": "R4",
+      "owns_file": "src/renderer/status-glyphs.ts",
+      "tui_anchor": "src/renderer/status-glyphs.ts:18-23 (aliases GLYPHS.status.success/warn/failure/info)",
+      "agent_state": "src/renderer/status-glyphs.ts:16-21 HARDCODES \\u2713/\\u26a0/\\u2715/\\u25cb (info=○) — not aliased to GLYPHS; drifts from the registry.",
+      "commit": "(status-glyphs alias)",
+      "risk": "Adopt S1 STATUS_GLYPHS. The agent's idle/info glyphs VISIBLY converge to the reference (idle ○->◌, info •->○) — deliberate, note so it isn't read as a regression.",
+      "notes": "R4 consumes S1."
+    },
+    {
+      "primitive": "markdown transcript theme reads",
+      "fix_class": "TONE/THEME/LIGHT (transcript)",
+      "verdict": "PORT",
+      "batch": "R4",
+      "owns_file": "src/renderer/markdown.ts",
+      "tui_anchor": "src/renderer/markdown.ts (5 activeTheme/resolveTheme reads — heading/inline-code/link/blockquote/checkbox tokens)",
+      "agent_state": "src/renderer/markdown.ts — 0 theme reads; static dark hex. On a light terminal the transcript markdown is illegible.",
+      "commit": "18ca2c5b",
+      "risk": "HIGH (scope) — SURFACED BY THIS AUDIT, NOT in the brief's R4 named files. Required for light-mode transcript completeness; broad blast radius on the main transcript renderer.",
+      "notes": "R4 scope expansion #1."
+    },
+    {
+      "primitive": "tool-call theme reads",
+      "fix_class": "TONE/THEME/LIGHT (transcript)",
+      "verdict": "PORT",
+      "batch": "R4",
+      "owns_file": "src/renderer/tool-call.ts",
+      "tui_anchor": "src/renderer/tool-call.ts (3 activeTheme/activeUiTones reads)",
+      "agent_state": "0 theme reads; static.",
+      "commit": "18ca2c5b",
+      "risk": "Scope — SURFACED BY THIS AUDIT, not in brief's named files. Required for light-mode tool-call legibility.",
+      "notes": "R4 scope expansion #2."
+    },
+    {
+      "primitive": "system-message theme reads",
+      "fix_class": "TONE/THEME/LIGHT (transcript)",
+      "verdict": "PORT",
+      "batch": "R4",
+      "owns_file": "src/renderer/system-message.ts",
+      "tui_anchor": "src/renderer/system-message.ts (activeTheme reads)",
+      "agent_state": "0 theme reads; static.",
+      "commit": "18ca2c5b",
+      "risk": "Scope — SURFACED BY THIS AUDIT.",
+      "notes": "R4 scope expansion #3."
+    },
+    {
+      "primitive": "process-indicator theme reads",
+      "fix_class": "TONE/THEME/LIGHT (chrome)",
+      "verdict": "PORT",
+      "batch": "R4",
+      "owns_file": "src/renderer/process-indicator.ts",
+      "tui_anchor": "src/renderer/process-indicator.ts (activeTheme/activeUiTones reads)",
+      "agent_state": "0 theme reads; static.",
+      "commit": "18ca2c5b",
+      "risk": "Scope — SURFACED BY THIS AUDIT. Paints on transparent bg -> needs live tones for light legibility.",
+      "notes": "R4 scope expansion #4."
+    },
+    {
+      "primitive": "conversation-rendering theme reads (core transcript renderer)",
+      "fix_class": "TONE/THEME/LIGHT (transcript)",
+      "verdict": "PORT",
+      "batch": "R4",
+      "owns_file": "src/core/conversation-rendering.ts",
+      "tui_anchor": "src/core/conversation-rendering.ts (activeTheme reads)",
+      "agent_state": "0 theme reads; static.",
+      "commit": "18ca2c5b",
+      "risk": "HIGH (scope) — SURFACED BY THIS AUDIT. This is the main transcript renderer; the single largest light-mode blast radius. Not in the brief's R4 named files.",
+      "notes": "R4 scope expansion #5 (highest-blast)."
+    },
+    {
+      "primitive": "modal-factory / overlay-box / fullscreen-primitives theme reads (opaque-surface chrome)",
+      "fix_class": "TONE/THEME/LIGHT (opaque chrome, low priority)",
+      "verdict": "PORT",
+      "batch": "R4",
+      "owns_file": "src/renderer/modal-factory.ts + src/renderer/overlay-box.ts + src/renderer/fullscreen-primitives.ts",
+      "tui_anchor": "each reads activeUiTones() (dark values byte-identical; live for auto-mode coherence)",
+      "agent_state": "0 theme reads; static (byte-identical to dark tones today).",
+      "commit": "18ca2c5b",
+      "risk": "LOW priority — these paint OPAQUE dark modal/panel surfaces (bg fixed) whose fg.*/state.* tokens stay dark regardless of terminal mode (per theme.ts:112-123 doc), so in dark mode these reads are a no-op. Needed only for full light coherence, not for dark parity.",
+      "notes": "Grouped as one low-priority R4 append; can defer without breaking dark parity."
+    }
+  ],
+  "intentionally_different_rows": [
+    {
+      "primitive": "compositor sidebar-composite path (SidebarCompositeData + forceFullRedraw)",
+      "verdict": "INTENTIONALLY-DIFFERENT",
+      "reason": "Single-surface model. Agent compositor.ts:20-36 SidebarCompositeData + :63 forceFullRedraw is a coarse single-sidebar compositor; TUI's PanelCompositeData (:28-49) is fleet multi-panel/split-pane. Porting the TUI panel path into a fleet-less agent adds dead machinery.",
+      "tui_anchor": "src/renderer/compositor.ts:28-49,106-237 (PanelCompositeData, split-pane)",
+      "agent_state": "src/renderer/compositor.ts:20-36,74-129 (SidebarCompositeData, single separator+sidebar)",
+      "notes": "Only the caps/highlight REGION of compositor.ts is a PORT (separate row, R2); the composite PATH is intentional."
+    },
+    {
+      "primitive": "panel-composite.ts (mid-render generation race-guard, per-panel render cache)",
+      "verdict": "INTENTIONALLY-DIFFERENT",
+      "reason": "Fleet multi-panel machinery. panel-composite.ts:45-84 monkey-patches Panel.invalidate() to detect a mid-render invalidation race across many panels. The agent has NO src/panels dir and no PanelManager — nothing to guard.",
+      "tui_anchor": "src/renderer/panel-composite.ts:30-84 (PanelRenderCache/panelRenderGen race-guard)",
+      "agent_state": "ABSENT — agent has no panels/; a single activity-sidebar with coarse forceFullRedraw.",
+      "notes": "Pre-ruled intentional (markDirty/fleet-lessness). Do NOT port."
+    },
+    {
+      "primitive": "activity-sidebar.ts + surface-layout.ts (agent single-sidebar layout)",
+      "verdict": "INTENTIONALLY-DIFFERENT",
+      "reason": "The agent's deliberate single-sidebar model vs the TUI fleet model (fleet-tab-strip.ts, panel-workspace-bar.ts, layout-engine split-pane, panels/*). These are the agent's own layout engine, not a stale copy.",
+      "tui_anchor": "src/renderer/{panel-composite.ts,fleet-tab-strip.ts,panel-workspace-bar.ts,layout-engine.ts} + src/panels/*",
+      "agent_state": "src/renderer/{activity-sidebar.ts,surface-layout.ts} + compositor SidebarCompositeData path",
+      "notes": "Pre-ruled intentional per the brief. No batch touches these."
+    },
+    {
+      "primitive": "markDirty / frame-requesting compositor discipline",
+      "verdict": "INTENTIONALLY-DIFFERENT",
+      "reason": "Fleet-lessness (pre-ruled). The TUI's markDirty frame-request path serves multi-panel dirty tracking; the agent uses a coarse forceFullRedraw (compositor.ts:63-64,194) with a single surface.",
+      "tui_anchor": "TUI markDirty/frame-request path (multi-panel)",
+      "agent_state": "src/renderer/compositor.ts forceFullRedraw coarse redraw",
+      "notes": "Pre-ruled intentional per the brief."
+    },
+    {
+      "primitive": "terminal-width.ts codepoint-progress guard (splitIdx===0)",
+      "verdict": "INTENTIONALLY-DIFFERENT (agent-local, keep)",
+      "reason": "Agent terminal-width.ts:151-155 guarantees >=1 code point of progress in wrapText when a single grapheme exceeds width===1, preventing a hang. TUI's index-based wrapText loop doesn't need it. Agent-local correctness guard — DO NOT strip when porting the width table.",
+      "tui_anchor": "src/utils/terminal-width.ts:245-256 (index-based wrapText, no such guard)",
+      "agent_state": "src/utils/terminal-width.ts:151-155 (splitIdx===0 -> codePoints[0].length)",
+      "notes": "R2 must preserve this while adding the cross entries + stripAnsi."
+    },
+    {
+      "primitive": "status-token.ts (buildStatusToken glyph+color)",
+      "verdict": "INTENTIONALLY-DIFFERENT (agent-only)",
+      "reason": "Agent-only presentation module; TUI has no status-token.ts. Derives color from DEFAULT_PANEL_PALETTE (agent polish.ts). NOT cross-repo duplication — must NOT be hoisted to S1.",
+      "tui_anchor": "ABSENT in TUI",
+      "agent_state": "src/renderer/status-token.ts:1-30 (buildStatusToken over STATE_GLYPHS + STATE_COLORS)",
+      "notes": "Explicitly excluded from the S1 presentation contract."
+    },
+    {
+      "primitive": "tool-labels.ts (friendly tool-name map)",
+      "verdict": "INTENTIONALLY-DIFFERENT (agent-only)",
+      "reason": "Agent-only; TUI has no tool-labels.ts. Agent-specific tool vocabulary. NOT cross-repo duplication — must NOT be hoisted.",
+      "tui_anchor": "ABSENT in TUI",
+      "agent_state": "src/renderer/tool-labels.ts (TOOL_LABELS map)",
+      "notes": "Explicitly excluded from S1."
+    },
+    {
+      "primitive": "ansi-sanitize.ts",
+      "verdict": "INTENTIONALLY-DIFFERENT (already at parity — byte-identical)",
+      "reason": "Agent and TUI ansi-sanitize.ts are BYTE-IDENTICAL (diff -q confirms). Already ported; nothing to do. Recorded so no batch re-touches it.",
+      "tui_anchor": "src/renderer/ansi-sanitize.ts",
+      "agent_state": "src/renderer/ansi-sanitize.ts (identical)",
+      "notes": "No action. terminal-output-guard.ts is also already present in the agent (only the noise-gate wiring is the R2 delta)."
+    }
+  ],
+  "obsolete_rows": [],
+  "presentation_contract_candidates_for_S1": [
+    {
+      "table": "THINKING_PHRASES",
+      "status": "GENUINELY DUPLICATED — verbatim-identical",
+      "tui": "src/renderer/ui-factory.ts:489-510",
+      "agent": "src/renderer/ui-factory.ts:281-302",
+      "detail": "The same 20-phrase array ('Thinking...' ... 'In the zone...') exists byte-for-byte in both. Hoist as one exported constant.",
+      "hoist": true
+    },
+    {
+      "table": "GLYPHS",
+      "status": "GENUINELY DUPLICATED — DIVERGENT (drift already visible)",
+      "tui": "src/renderer/ui-primitives.ts:1-58",
+      "agent": "src/renderer/ui-primitives.ts:1-57",
+      "detail": "frame/surface/navigation/meter groups identical; status group DIVERGES: agent idle='○'(U+25CB) info='•'(U+2022) and NO warn key; TUI idle='◌'(U+25CC) info='○'(U+25CB) warn='⚠'(U+26A0). S1 picks ONE (TUI reference); agent idle/info VISIBLY converge.",
+      "hoist": true
+    },
+    {
+      "table": "UI_TONES",
+      "status": "GENUINELY DUPLICATED — agent is a stale SUBSET",
+      "tui": "src/renderer/ui-primitives.ts:65-138 (+ DIFF_TONES :149-157, SPINNER_FRAMES :160)",
+      "agent": "src/renderer/ui-primitives.ts:59-94",
+      "detail": "fg/bg/state/accent overlap; TUI adds fg.empty, bg.footer, state.reasoning, accent.brand/gradientStart/gradientEnd, top-level border, the whole chrome group, plus DIFF_TONES and SPINNER_FRAMES. Hoist the canonical shape + resolveTones(mode) for light.",
+      "hoist": true
+    },
+    {
+      "table": "STATE_GLYPHS",
+      "status": "GENUINELY DUPLICATED — different mechanism",
+      "tui": "src/renderer/status-glyphs.ts:18-23 (aliases GLYPHS.status.*)",
+      "agent": "src/renderer/status-glyphs.ts:16-21 (HARDCODES \\u2713/\\u26a0/\\u2715/\\u25cb)",
+      "detail": "Same 4-state good/warn/bad/info map; TUI derives from the GLYPHS registry, agent hardcodes literals. Hoist the reconciled single definition.",
+      "hoist": true
+    },
+    {
+      "table": "WAITING_WORDING (function contract, not a literal table)",
+      "status": "SHARED LOGIC to extract (TUI reference, agent lacks the split)",
+      "tui": "src/renderer/ui-factory.ts:554-584 (the state->phrase split) + :522-552 (computeStallInfo)",
+      "agent": "src/renderer/ui-factory.ts:308-313 (rotating-only; no split)",
+      "detail": "Mint a typed WaitingState + pure waitingPhrase(state,ctx) returning 'Waiting for your approval' / 'Reconnecting (attempt n/m)...' / 'Waiting for model Ns...' / 'Stalled Ns...' / a rotated THINKING_PHRASE. Extracted from the TUI split so both renderers call one contract.",
+      "hoist": true
+    },
+    {
+      "table": "status-token.ts",
+      "status": "AGENT-ONLY — DO NOT HOIST",
+      "agent": "src/renderer/status-token.ts",
+      "detail": "TUI has no status-token.ts. Agent-specific; hoisting would pull agent-only presentation into the SDK.",
+      "hoist": false
+    },
+    {
+      "table": "tool-labels.ts",
+      "status": "AGENT-ONLY — DO NOT HOIST",
+      "agent": "src/renderer/tool-labels.ts",
+      "detail": "TUI has no tool-labels.ts. Agent-specific tool vocabulary.",
+      "hoist": false
+    }
+  ]
+}

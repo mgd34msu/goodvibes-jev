@@ -128,7 +128,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     outputs:
       products: ${{ steps.product-matrix.outputs.products }}
     steps:
@@ -144,8 +144,17 @@ jobs:
           echo "products=$products" >> "$GITHUB_OUTPUT"
       - name: Build SDK
         run: bun run build
+      - name: Build Agent native E2E artifact
+        run: bun run --cwd products/agent build:binary --target linux-x64
+      - name: Record Agent artifact provenance
+        run: |
+          bun products/agent/scripts/ci-artifact.ts record "$GITHUB_SHA"
+          products/agent/dist/goodvibes-agent-linux-x64 --version
       - name: Archive workspace package output
-        run: tar -czf /tmp/workspace-build-output.tgz packages/engine/*/dist packages/judgment/dist
+        run: |
+          tar -czf /tmp/workspace-build-output.tgz packages/engine/*/dist packages/judgment/dist \
+            products/agent/dist/goodvibes-agent-linux-x64 products/agent/dist/lib \
+            products/agent/dist/ci-artifact.json
       - name: Upload dist artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -271,6 +280,17 @@ jobs:
         run: |
           tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
           find packages/engine/*/dist packages/judgment/dist -type f -exec touch {} +
+      - name: Verify restored Agent native artifact
+        if: matrix.product == 'agent'
+        run: |
+          bun products/agent/scripts/ci-artifact.ts verify "$GITHUB_SHA"
+          products/agent/dist/goodvibes-agent-linux-x64 --version
+          echo "GOODVIBES_E2E_BINARY=$GITHUB_WORKSPACE/products/agent/dist/goodvibes-agent-linux-x64" >> "$GITHUB_ENV"
+      - name: Install Agent terminal E2E prerequisite
+        if: matrix.product == 'agent'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y tmux
       - name: Configure git identity for product worktree tests
         run: |
           git config --global user.email "ci@goodvibes.local"
