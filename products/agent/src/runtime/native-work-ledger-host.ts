@@ -54,9 +54,13 @@ export function createNativeWorkLedgerView(
     if (selected && !same(host, selected.host)) selected = undefined;
     if (!selected) {
       const generation = epoch;
-      discovery = new AbortController();
+      const controller = new AbortController();
+      discovery = controller;
       model.loading(`Discovering daemon project on ${host.baseUrl}…`);
-      void discover(host, AbortSignal.any([discovery.signal, AbortSignal.timeout(5000)])).then(project => {
+      // Loading can synchronously render and sync, revoking the host or closing
+      // the view. Keep local ownership and recheck before admitting any request.
+      if (generation !== epoch || !active || controller.signal.aborted) return;
+      void discover(host, AbortSignal.any([controller.signal, AbortSignal.timeout(5000)])).then(project => {
         if (generation !== epoch || !active) return;
         const current = resolve();
         if ('reason' in current || !same(current, host)) { active = false; stop(); model.unavailable('Host changed during discovery. Reopen /work.'); return; }

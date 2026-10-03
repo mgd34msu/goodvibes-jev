@@ -259,7 +259,13 @@
       "targets": [
         "products/agent/docs/tools-and-commands.md"
       ],
-      "status": "retained-source"
+      "status": "adapted-native-read-only",
+      "provenance": {
+        "previousStatus": "retained-source",
+        "change": "THE-105 native read-only integration",
+        "description": "Documents /work discovery, explicit project selection, read-only display and lifecycle limits.",
+        "evidence": "products/agent/docs/native-work-ledger-validation.md"
+      }
     },
     {
       "source": "docs/voice-and-live-tts.md",
@@ -2123,7 +2129,13 @@
       "targets": [
         "products/agent/src/input/agent-workspace-token.ts"
       ],
-      "status": "retained-source"
+      "status": "adapted-native-read-only",
+      "provenance": {
+        "previousStatus": "retained-source",
+        "change": "THE-105 native read-only integration",
+        "description": "Adds PgUp/PgDn navigation for native Work details without changing legacy approval authority.",
+        "evidence": "products/agent/docs/native-work-ledger-validation.md"
+      }
     },
     {
       "source": "src/input/agent-workspace-types.ts",
@@ -2163,7 +2175,13 @@
       "targets": [
         "products/agent/src/input/agent-workspace.ts"
       ],
-      "status": "retained-source"
+      "status": "adapted-native-read-only",
+      "provenance": {
+        "previousStatus": "retained-source",
+        "change": "THE-105 native read-only integration",
+        "description": "Owns native reader open/close/reopen, refresh and project-bound display state.",
+        "evidence": "products/agent/docs/native-work-ledger-validation.md"
+      }
     },
     {
       "source": "src/input/at-model-switch.ts",
@@ -2195,7 +2213,13 @@
       "targets": [
         "products/agent/src/input/command-registry.ts"
       ],
-      "status": "retained-source"
+      "status": "adapted-native-read-only",
+      "provenance": {
+        "previousStatus": "retained-source",
+        "change": "THE-105 native read-only integration",
+        "description": "Adds optional native read-only view dependency to the command context.",
+        "evidence": "products/agent/docs/native-work-ledger-validation.md"
+      }
     },
     {
       "source": "src/input/commands.ts",
@@ -2235,7 +2259,13 @@
       "targets": [
         "products/agent/src/input/commands/agent-workspace-runtime.ts"
       ],
-      "status": "retained-source"
+      "status": "adapted-native-read-only",
+      "provenance": {
+        "previousStatus": "retained-source",
+        "change": "THE-105 native read-only integration",
+        "description": "Registers /work [daemon-project-id] to inspect the authenticated host ledger.",
+        "evidence": "products/agent/docs/native-work-ledger-validation.md"
+      }
     },
     {
       "source": "src/input/commands/brief-runtime.ts",
@@ -3123,7 +3153,13 @@
       "targets": [
         "products/agent/src/renderer/agent-workspace-context-lines.ts"
       ],
-      "status": "retained-source"
+      "status": "adapted-native-read-only",
+      "provenance": {
+        "previousStatus": "retained-source",
+        "change": "THE-105 native read-only integration",
+        "description": "Renders native work separately from legacy operator work and approvals.",
+        "evidence": "products/agent/docs/native-work-ledger-validation.md"
+      }
     },
     {
       "source": "src/renderer/agent-workspace-result-rows.ts",
@@ -9229,6 +9265,13 @@
     "The reviewed union has exact-head build, type, API, packaging and guarded interaction evidence. Full Agent aggregate retains seven canonical tmux/bubblewrap environment failures and one existing skip; no containment bypass or pass claim is permitted.",
     "Compiled first-turn/exit is proven with strict local model/judgment fixtures; canonical tmux interaction and actual registry-to-exec cancellation remain environment-blocked. Hosted Stop still requires the separately reviewed engine turn-cancellation route and truthful client acknowledgment.",
     "Process-completion and typed host-setting SDK prerequisites are integrated from current main; stopped PR56 captured-view/pre-access authority work remains outside this recovery.",
-    "Native work/intent/attention/evidence adoption remains a user-selected follow-on to the reviewed native-ledger foundation and its owned persistence work; legacy status/owner metadata is not verification or authority."
-  ]
+    "Native work/intent/attention/evidence read-only adoption is implemented in the separately identified nativeReadIntegration revision, with focused rendering/transport/lifecycle evidence only. Current production typecheck, full Agent suite and package build remain resource-blocked; test typecheck was not run. No whole-product parity, mutation or ledger-to-runner admission is claimed; legacy status/owner metadata is not verification or authority."
+  ],
+  "nativeReadIntegration": {
+    "implementationRevision": "ea3f6e3818616675be86f256afe4444614631cf8",
+    "implementationTree": "ac1ad1d1b0fe2ebd6a49f19da48d8761608fb3fa",
+    "baseRevision": "1d7d8e301e3f4e1584def485b7b3b03cf7796476",
+    "evidence": "products/agent/docs/native-work-ledger-validation.md",
+    "status": "focused-verified-aggregate-incomplete"
+  }
 }

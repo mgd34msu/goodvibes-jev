@@ -708,7 +708,7 @@ function footerText(workspace: AgentWorkspace): string {
   if (workspace.actionSearchActive) {
     return 'Up/Down results · Enter open · Backspace edit search · Esc clear';
   }
-  return workspace.selectedActionCategory.id === 'work' ? 'PgUp/PgDn ledger · Up/Down actions · Enter open · Esc close · R refresh' : 'Up/Down move · Left/Right pane · Enter open · / search · Ctrl+] next area · R refresh';
+  return workspace.selectedActionCategory.id === 'work' ? (workspace.lastActionResult ? 'PgUp/PgDn result · Ctrl+PgUp/PgDn ledger · Esc close · R refresh' : 'PgUp/PgDn ledger · Up/Down actions · Enter open · Esc close · R refresh') : 'Up/Down move · Left/Right pane · Enter open · / search · Ctrl+] next area · R refresh';
 }
 
 export function renderAgentWorkspace(workspace: AgentWorkspace, width: number, height: number): SurfaceLayer {
@@ -734,7 +734,7 @@ export function renderAgentWorkspace(workspace: AgentWorkspace, width: number, h
     const count = Math.max(1, metrics.contextRows - 1);
     workspace.workContextScroll = Math.min(workspace.workContextScroll, Math.max(0, contextRows.length - count));
     shownContextRows = [
-      { text: `Ledger details ${workspace.workContextScroll + 1}–${Math.min(contextRows.length, workspace.workContextScroll + count)}/${contextRows.length} · PgUp/PgDn`, fg: PALETTE.muted },
+      { text: `Ledger details ${workspace.workContextScroll + 1}–${Math.min(contextRows.length, workspace.workContextScroll + count)}/${contextRows.length} · ${workspace.lastActionResult ? 'Ctrl+PgUp/PgDn' : 'PgUp/PgDn'}`, fg: PALETTE.muted },
       ...contextRows.slice(workspace.workContextScroll, workspace.workContextScroll + count),
     ];
   }

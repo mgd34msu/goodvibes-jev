@@ -25,6 +25,7 @@ High-signal TUI routes:
 | Surface | Purpose |
 | --- | --- |
 | `/agent` | Open the fullscreen operator workspace. |
+| `/work [daemon-project-id]` | Inspect native work, intent, attention, evidence and history on the authenticated connected host; read only. |
 | `/help` and `/commands` | Discover registered slash commands. |
 | `/health`, `/compat`, `/auth` | Inspect runtime, connected-host, compatibility, and auth posture. |
 | `/model`, `/provider`, `/effort` | Inspect or change provider/model/reasoning routes. |
@@ -490,7 +491,9 @@ uses its local planning ID or configuration directory as a shared ledger store.
 
 The native section displays intent, stable work/attempt IDs, criteria revisions,
 reported state separately from verification, attention, evidence targets and
-references, and durable history. PgUp/PgDn scroll the Work detail pane; R retries
+references, and durable history. PgUp/PgDn scroll the Work detail pane when no action result is shown.
+When a task or approval result is present, PgUp/PgDn scroll that result and
+Ctrl+PgUp/PgDn independently scroll ledger details. R retries
 observation. Closing releases only this view's reader; reopening acquires a fresh
 reader and catches up durable history. Host, token, or workspace replacement
 invalidates the old binding and its pending responses. Disconnection, denial,

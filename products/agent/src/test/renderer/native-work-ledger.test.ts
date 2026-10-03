@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { InputTokenizer } from '@goodvibes-jev/engine/sdk/platform/core';
 import { AgentWorkspace } from '../../input/agent-workspace.ts';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { registerAgentWorkspaceRuntimeCommands } from '../../input/commands/agent-workspace-runtime.ts';
@@ -25,4 +26,32 @@ test('/work selects daemon project, opens real renderer and scrolls to stable ev
   for (let i = 0; i < 10; i++) { handleAgentWorkspaceToken(workspace, { type: 'key', logicalName: 'pagedown' } as Parameters<typeof handleAgentWorkspaceToken>[1], () => {}, () => {}); rendered += plain(workspace); }
   expect(rendered).toContain('Verification: stale'); expect(rendered).toContain('attempt-stable'); expect(rendered).toContain('evidence-stable'); expect(rendered).toContain('commit-abc'); expect(rendered).toContain('Legacy operator work');
   workspace.close(); workspace.reopen(); expect(calls.slice(-2)).toEqual(['close', 'open']); workspace.close();
+});
+
+test('Work result paging remains reachable while Ctrl+PageDown independently pages ledger details', () => {
+  const workspace = new AgentWorkspace();
+  const context = { print: () => {}, executeCommand: async () => true,
+    nativeWorkLedger: { state: { status: 'unavailable', reason: 'native ledger detail '.repeat(150) }, selectProject: () => {}, open: () => {}, close: () => {}, sync: () => {} },
+  } as unknown as CommandContext;
+  workspace.open(context, () => {}, 'work');
+  workspace.lastActionResult = { kind: 'refreshed', title: 'Task and approval report', detail: Array.from({ length: 60 }, (_, i) => `report line ${i}`).join('\n'), safety: 'read-only' };
+  const frame = () => renderAgentWorkspace(workspace, 132, 60).lines.map(line => line.map(cell => cell.char ?? ' ').join('')).join('\n');
+  const tokenizer = new InputTokenizer();
+  const page = (logicalName: 'pageup' | 'pagedown', ctrl = false) => {
+    const sequence = `\x1b[${logicalName === 'pageup' ? '5' : '6'}${ctrl ? ';5' : ''}~`;
+    for (const token of tokenizer.feed(sequence)) handleAgentWorkspaceToken(workspace, token, () => {}, () => { frame(); });
+  };
+  expect(frame()).not.toContain('report line 59');
+  for (let i = 0; i < 40; i++) page('pagedown');
+  expect(workspace.resultScroll).toBeGreaterThan(0);
+  expect(workspace.workContextScroll).toBe(0);
+  expect(frame()).toContain('report line 59');
+  const resultOffset = workspace.resultScroll;
+  page('pagedown', true);
+  expect(workspace.workContextScroll).toBeGreaterThan(0);
+  expect(workspace.resultScroll).toBe(resultOffset);
+  expect(frame()).toContain('report line 59');
+  for (let i = 0; i < 40; i++) page('pageup');
+  expect(frame()).toContain('report line 0');
+  workspace.close();
 });
