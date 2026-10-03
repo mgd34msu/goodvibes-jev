@@ -2,6 +2,7 @@
  * Shapes shared by the task route catalog, the planner and the route tool.
  * The candidate and plan shapes match the agent's planAgentTaskRoute output.
  */
+import type { Ranked, Reading, Selection } from '@goodvibes-jev/judgment';
 import type { NamedIdSources } from './named-ids.js';
 
 export interface TaskRouteArgs {
@@ -92,10 +93,24 @@ export interface TaskRouteEntry {
 }
 
 /**
- * Injected product catalogs; each returns the matching records, best first.
+ * Injected product catalogs return typed rankings, or already-resolved records.
+ * Judgment-backed callers must supply rankings to preserve uncertainty/provenance.
  * The agent passes its workspace action and harness mode catalogs; a host
  * without them gets empty match lists.
  */
+export interface TaskRouteCatalogRanking {
+  /** Records are keyed separately so unresolved readings are never actionable matches. */
+  readonly records: readonly Record<string, unknown>[];
+  readonly ranked: readonly Ranked[];
+}
+export type TaskRouteCatalogResult = readonly Record<string, unknown>[] | TaskRouteCatalogRanking;
+export interface TaskRouteJudgment {
+  readonly selection: Omit<Selection, 'recordAction'>;
+  readonly slots: { readonly readings: Readonly<Record<string, Reading>>; readonly decisionId: string | undefined };
+  readonly named: Readonly<Record<string, Omit<Selection, 'recordAction'>>>;
+  readonly workspace: readonly Ranked[];
+  readonly harness: readonly Ranked[];
+}
 export interface TaskRouteDeps {
   /**
    * The live listings named ids are read against (named-ids.ts): model
@@ -105,8 +120,8 @@ export interface TaskRouteDeps {
    * listing gets no reading and its generic route string.
    */
   namedIds?: NamedIdSources | undefined;
-  workspaceMatches?(request: string, limit: number): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>;
-  modeMatches?(request: string, limit: number): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>;
+  workspaceMatches?(request: string, limit: number): TaskRouteCatalogResult | Promise<TaskRouteCatalogResult>;
+  modeMatches?(request: string, limit: number): TaskRouteCatalogResult | Promise<TaskRouteCatalogResult>;
 }
 
 export interface MissingRequestPlan {
@@ -118,6 +133,7 @@ export interface MissingRequestPlan {
 
 export interface ReadyPlan {
   readonly status: 'ready';
+  readonly judgment: TaskRouteJudgment;
   readonly request: string;
   readonly preferred: TaskRouteCandidate;
   readonly alternatives: readonly TaskRouteCandidate[];
@@ -129,4 +145,11 @@ export interface ReadyPlan {
   readonly policy: string;
 }
 
-export type TaskRoutePlan = MissingRequestPlan | ReadyPlan;
+export interface UncertainPlan {
+  readonly status: 'uncertain';
+  readonly request: string;
+  readonly judgment: TaskRouteJudgment;
+  readonly nextAction: string;
+  readonly policy: string;
+}
+export type TaskRoutePlan = MissingRequestPlan | ReadyPlan | UncertainPlan;
