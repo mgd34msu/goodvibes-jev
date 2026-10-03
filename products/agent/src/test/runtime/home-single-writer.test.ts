@@ -144,7 +144,10 @@ afterEach(() => {
   for (const child of holders.splice(0)) child.kill('SIGKILL');
 });
 
-describe('a second agent booted onto a live agent\'s home', () => {
+// A bounded hosted sweep increases the chance of capturing the intermittent miss.
+// Each iteration retains the same live-process fixture and all original assertions.
+const DIAGNOSTIC_REPETITIONS = 25;
+for (let iteration = 0; iteration < DIAGNOSTIC_REPETITIONS; iteration += 1) describe(`a second agent booted onto a live agent's home [${iteration + 1}/${DIAGNOSTIC_REPETITIONS}]`, () => {
   test('is refused at boot, and the refusal names the pid that holds it', async () => {
     const home = makeProjectTempDir('agent-home-claim');
     const holder = await liveForeignProcess();
