@@ -17,6 +17,20 @@ const ISSUER_CREDENTIAL_PATTERNS: Array<{ pattern: RegExp; replacement: string }
 ];
 
 /**
+ * Whether text contains a canonical issuer-reserved credential format.
+ *
+ * A synchronous containment predicate for callers that refuse a write rather
+ * than redact it. Unlike redactIssuerCredentials, this does not consult owner
+ * profile values or account identity. Ambiguous candidate shapes are not
+ * issuer formats and no judgment request or remembered reading is consulted.
+ */
+export function containsIssuerCredential(text: string): boolean {
+  // String.search does not consume a global pattern's lastIndex, so repeated
+  // calls and interleaved redaction cannot change the answer.
+  return ISSUER_CREDENTIAL_PATTERNS.some(({ pattern }) => text.search(pattern) !== -1);
+}
+
+/**
  * Shapes that a credential often has but that ordinary text also has: an
  * `sk-` token of 20 or more characters, a `key-` token of 16 or more, and the
  * word after `Bearer`. `key-rotation-policy-for-tenants` and "the bearer of bad
