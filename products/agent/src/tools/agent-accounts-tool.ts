@@ -11,9 +11,9 @@
  * `AgentAccountRegistry` had all of this and no caller outside its own test, so
  * an account created today would leave no trace. This is the caller.
  *
- * The credential itself never reaches this tool. Only `credentialSecretKey`,
- * the NAME of the secret-store entry holding it, the registry rejects
- * secret-looking text in every field.
+ * Only the secret-store key NAME belongs in `credentialSecretKey`. Record
+ * fields are screened before the taint policy receives them, and the registry
+ * independently refuses protected values again at the durable boundary.
  *
  * The one boundary that does not move: an outward effect refused because
  * untrusted content was read this turn stays refused. A web page describing a
@@ -24,6 +24,7 @@ import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { AgentAccountRegistry, type AgentAccountRecord } from '@goodvibes-jev/engine/sdk/platform/google';
 import { mintAddressFor } from '@goodvibes-jev/engine/sdk/platform/google';
+import { containsSecretLikeText } from '../agent/memory-safety.ts';
 import { getSessionExpectationBook } from '../agent/signup/session-expectations.ts';
 import { evaluateOutwardEffect, getSessionUntrustedContentLedger } from '../trust/untrusted-content.ts';
 
@@ -138,6 +139,20 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
         }
 
         if (action === 'record') {
+          // Refuse protected values before the taint policy can send field text
+          // to judgment. Capture once so policy and persistence see identical
+          // inputs even across the awaited reading. The registry checks again
+          // at its durable boundary; this preflight does not grant authority.
+          const input = {
+            serviceDomain: readString(rawArgs.serviceDomain),
+            serviceUrl: readString(rawArgs.serviceUrl),
+            aliasAddress: readString(rawArgs.aliasAddress),
+            purpose: readString(rawArgs.purpose),
+            credentialSecretKey: readString(rawArgs.credentialSecretKey),
+          };
+          if (Object.values(input).some(containsSecretLikeText)) {
+            return failure('The account registry cannot store secret-looking values. Store the secret in the secret store and record only its key name.');
+          }
           // Recording is the visible half of an outward effect that already
           // happened, so it is gated the same way the signup itself is: page
           // text cannot drive the agent into registering an account.
@@ -145,7 +160,7 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
             request: {
               toolName: 'accounts',
               action: 'accounts.record',
-              description: `recording an account created at ${readString(rawArgs.serviceDomain) || 'a service'}`,
+              description: `recording an account created at ${input.serviceDomain || 'a service'}`,
             },
             ledger: getSessionUntrustedContentLedger(),
             // Enumerated rather than left to the coarse rule. Every field of a
@@ -155,10 +170,10 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
             // these, recording an account after reading any page was refused
             // outright, which is the friction that gets a check switched off.
             content: {
-              serviceDomain: readString(rawArgs.serviceDomain) || undefined,
-              serviceUrl: readString(rawArgs.serviceUrl) || undefined,
-              aliasAddress: readString(rawArgs.aliasAddress) || undefined,
-              purpose: readString(rawArgs.purpose) || undefined,
+              serviceDomain: input.serviceDomain || undefined,
+              serviceUrl: input.serviceUrl || undefined,
+              aliasAddress: input.aliasAddress || undefined,
+              purpose: input.purpose || undefined,
             },
             taintOptions: {
               // The domain and the URL are short and high-signal: the value
@@ -172,13 +187,7 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
           });
           if (!decision.allowed) return failure(`${decision.reason} ${decision.fix}`);
 
-          const account = registry.record({
-            serviceDomain: readString(rawArgs.serviceDomain),
-            serviceUrl: readString(rawArgs.serviceUrl),
-            aliasAddress: readString(rawArgs.aliasAddress),
-            purpose: readString(rawArgs.purpose),
-            credentialSecretKey: readString(rawArgs.credentialSecretKey),
-          });
+          const account = registry.record(input);
           return ok(`Recorded:\n${renderAccount(account)}`);
         }
 
