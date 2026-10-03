@@ -13,8 +13,27 @@ npm install @goodvibes-jev/judgment
 ## Entry points
 
 - `@goodvibes-jev/judgment`: the full foundation. It loads under Node and Bun; the SQLite decision log (`SqliteDecisionLog`) opens its database with `bun:sqlite`, so logging to SQLite runs under Bun.
-- `@goodvibes-jev/judgment/decisions`: the runtime-neutral part (batteries, readings, bands and the port's types) with no transport, decision log, Node or Bun module. Code that runs in browsers and Workers imports this subpath.
+- `@goodvibes-jev/judgment/decisions`: the runtime-neutral part (batteries, readings, bands, port types and the autonomous `JevDecision` schema/validation) with no transport, decision log, Node or Bun module. Code that runs in browsers and Workers imports this subpath.
 - `@goodvibes-jev/judgment/testing`: a fake port and answer builders for tests that must not call a model.
+
+## Current contract and migration status
+
+The [autonomous Jev decision contract](../../docs/design/autonomous-jev-decisions.md)
+is the target for every semantic decision. Consumers use `act`, `revise`, `defer`
+or `reject`, with no human runtime approval or escalation. Schema and binding
+validation are implemented; they are not a semantic evaluator, authorization
+service or atomic execution ledger. Historical band/log outcomes `confirm` and
+`escalate` remain readable and must never be converted into `act`.
+
+Transient outages must stay pending through one shared port-owned retry
+implementation until recovery, with backoff and responsive lifecycle
+cancellation. Products consume waiting progress, not a terminal outage decision,
+and must not wrap the port in local retry loops. Permanent request/authentication/
+format failures remain operational errors. This lifecycle and the legacy
+consumer migration are unfinished; the bounded transport documented below is
+the current implementation, not fulfillment of that requirement. See the
+[repository status](../../README.md#status) for the open admission and
+grant/revocation work. No live-provider proof is established by these interfaces.
 
 ## A port and a battery
 
@@ -40,13 +59,16 @@ const run = await battery.run(port, 'Question: ...\nReply: ...', { site: 'exampl
 
 Each check is read for what it actually decides: a check whose answer is its own definition (arithmetic, dates, counting, id equality, a grammar a program produced, a value the owner configured) stays code, and a check that answers a question of meaning is asked of the model, whatever its category, security checks included. Every battery keeps its questions and thresholds in one place, and `bun run calibrate --registry <module>` runs its fixtures live against the pinned model and fails when a battery falls below its floor.
 
-The decision log keeps every call with what the decision concluded (a `readings` note), what code did with it (an `action` note) and, once known, what was right (a `truth` note). Calibration records each fixture's expectations as truth on that fixture's call; an owner correction or an observed outcome is attached the same way. The engine's observe subsystem reads accuracy against confidence, threshold sweeps, drift and questions stuck in confirm or escalate from the log alone.
+The decision log keeps every call with what the decision concluded (a `readings` note), what code did with it (an `action` note) and, once known, what was right (a `truth` note). Calibration records each fixture's expectations as truth on that fixture's call; an owner correction or an observed outcome is attached the same way. The engine's observe subsystem reads accuracy against confidence, threshold sweeps, drift and historical questions stuck in `confirm` or `escalate` from the log alone. Those log values do not prescribe human approval in the autonomous contract.
 
 ## License
 
 MIT
 
 ## Explicit endpoint failover
+
+This section describes the current bounded transport, pending the shared
+retry-until-available lifecycle described above.
 
 `createSystemOnePort` still accepts the existing single `endpoint`, `model`,
 `timeoutMs` and `retry` configuration. Add `fallbacks: [{ endpoint, model }]` to

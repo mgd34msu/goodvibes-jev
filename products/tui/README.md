@@ -1,5 +1,18 @@
 # goodvibes-tui
 
+## Jev migration status
+
+This workspace is an unfinished port. The upstream installation instructions,
+screenshots and tour below are reference material, not proof of a published or
+fully autonomous Jev product. The [current decision contract](../../docs/design/autonomous-jev-decisions.md)
+supersedes runtime permission prompts and owner escalation: Jev makes semantic
+decisions, while the UI renders shared outcomes and the one judgment port's
+retry/waiting progress with cancellation. Legacy callers remain [migration gates](../../README.md#status).
+Account login, workspace provisioning/trust and explicit stop/quit controls remain
+legitimate interactions and do not replace deterministic authority enforcement.
+
+## Upstream product reference
+
 [![CI](https://github.com/mgd34msu/goodvibes-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/mgd34msu/goodvibes-tui/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/mgd34msu/goodvibes-tui)
