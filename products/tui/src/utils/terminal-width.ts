@@ -1,0 +1,345 @@
+/**
+ * Strip ANSI SGR/CSI escape sequences and OSC-8 hyperlink sequences
+ * from a string so that only visible characters remain for width measurement.
+ *
+ * Covers:
+ *   - CSI sequences: ESC [ ... <final byte 0x40-0x7E>  (includes SGR \x1b[...m)
+ *   - OSC sequences: ESC ] ... ST  where ST is ESC\\ or BEL (0x07)
+ *   - Simple ESC followed by a single non-bracket/non-] character (e.g. ESC c)
+ */
+function stripAnsi(text: string): string {
+  let result = '';
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] === '\x1b') {
+      const next = text[i + 1];
+      if (next === '[') {
+        // CSI: skip until final byte (0x40-0x7E)
+        i += 2;
+        while (i < text.length) {
+          const c = text.charCodeAt(i);
+          i++;
+          if (c >= 0x40 && c <= 0x7e) break;
+        }
+      } else if (next === ']') {
+        // OSC: skip until ST (ESC\\ or BEL)
+        i += 2;
+        while (i < text.length) {
+          if (text[i] === '\x07') { i++; break; }
+          if (text[i] === '\x1b' && text[i + 1] === '\\') { i += 2; break; }
+          i++;
+        }
+      } else {
+        // Simple two-byte escape (ESC + one char)
+        i += next !== undefined ? 2 : 1;
+      }
+    } else {
+      result += text[i];
+      i++;
+    }
+  }
+  return result;
+}
+
+/**
+ * Calculates the visual width of a string in the terminal.
+ * Handles CJK characters, emoji, and variation selectors correctly as
+ * double-width. ANSI escape sequences (SGR/CSI/OSC-8) are stripped before
+ * measurement.
+ *
+ * NOTE: Width is measured per Unicode scalar value (code point), not per
+ * grapheme cluster. ZWJ sequences (e.g. 👨‍👩‍👧‍👦) are handled component-by-component:
+ * each component's width is summed and ZWJ/VS chars contribute zero width,
+ * so the total is accurate. However, truncation (truncateDisplay) may split
+ * a ZWJ family mid-sequence, leaving dangling ZWJ/VS characters. This is a
+ * cosmetic degradation only, line widths remain correct.
+ */
+export function getDisplayWidth(text: string): number {
+  text = stripAnsi(text);
+  let width = 0;
+  let i = 0;
+  while (i < text.length) {
+    const code = text.codePointAt(i)!;
+    const charLen = code > 0xFFFF ? 2 : 1;
+
+    if (code < 32 || code === 127) {
+      i += charLen;
+      continue;
+    }
+
+    if (
+      code === 0x200d ||
+      code === 0xfe0f ||
+      code === 0xfe0e ||
+      (code >= 0x0300 && code <= 0x036f) ||
+      (code >= 0x1ab0 && code <= 0x1aff) ||
+      (code >= 0x20d0 && code <= 0x20ff) ||
+      (code >= 0xfe20 && code <= 0xfe2f) ||
+      (code >= 0xe0100 && code <= 0xe01ef)
+    ) {
+      i += charLen;
+      continue;
+    }
+
+    if (
+      code === 0x2713 ||
+      code === 0x2717 ||
+      code === 0x2714 ||
+      code === 0x2718 ||
+      // ✕ (0x2715) and ✖ (0x2716), the multiplication-X cross family used for
+      // the error-line prefix. Terminals draw them one cell wide, but they sit
+      // inside the 0x2600–0x27bf emoji block below and would otherwise be counted
+      // as width 2, desyncing the styled cell grid from the physical glyph and
+      // corrupting the following text (the "✕t" glitch on the steer error line).
+      code === 0x2715 ||
+      code === 0x2716 ||
+      // ✦ (0x2726, the splash star and the modal group marker), ⏎ (0x23ce)
+      // and ⌫ (0x232b, keycap glyphs) have no emoji presentation, so
+      // terminals draw them one cell wide too; the block rules below would
+      // otherwise count them as 2 and shift everything after them.
+      code === 0x2726 ||
+      code === 0x23ce ||
+      code === 0x232b ||
+      code === 0x2022 ||
+      code === 0x258d ||
+      (code >= 0x2500 && code <= 0x257f)
+    ) {
+      width += 1;
+      i += charLen;
+      continue;
+    }
+
+    if (
+      (code >= 0x1f300 && code <= 0x1f9ff) ||
+      (code >= 0x1fa00 && code <= 0x1faff) ||
+      (code >= 0x2600 && code <= 0x27bf) ||
+      (code >= 0x2300 && code <= 0x23ff) ||
+      (code >= 0x2b50 && code <= 0x2b55) ||
+      (code >= 0xfe00 && code <= 0xfe0f) ||
+      (code >= 0x1f000 && code <= 0x1f02f) ||
+      (code >= 0x1f680 && code <= 0x1f6ff) ||
+      code === 0x200d ||
+      (code >= 0xe000 && code <= 0xf8ff) ||
+      code === 0x2764 || code === 0x2763 ||
+      code === 0x270a || code === 0x270b || code === 0x270c ||
+      code === 0x261d || code === 0x2639 || code === 0x263a
+    ) {
+      width += 2;
+      i += charLen;
+      continue;
+    }
+
+    if (
+      (code >= 0x1100 && code <= 0x115f) ||
+      (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f) ||
+      (code >= 0xac00 && code <= 0xd7a3) ||
+      (code >= 0xf900 && code <= 0xfaff) ||
+      (code >= 0xff00 && code <= 0xff60) ||
+      (code >= 0x20000 && code <= 0x2fffd) ||
+      (code >= 0x30000 && code <= 0x3fffd)
+    ) {
+      width += 2;
+      i += charLen;
+      continue;
+    }
+
+    width += 1;
+    i += charLen;
+  }
+  return width;
+}
+
+export function center(text: string, width: number): string {
+  const displayWidth = getDisplayWidth(text);
+  if (displayWidth >= width) return text;
+  const left = Math.floor((width - displayWidth) / 2);
+  return ' '.repeat(left) + text;
+}
+
+export function truncateDisplay(text: string, width: number, ellipsis = '…'): string {
+  if (width <= 0) return '';
+  if (getDisplayWidth(text) <= width) return text;
+  const ellipsisWidth = getDisplayWidth(ellipsis);
+  if (ellipsisWidth >= width) return truncateDisplay(ellipsis, width, '');
+
+  let result = '';
+  let currentWidth = 0;
+  for (const char of text) {
+    const charWidth = getDisplayWidth(char);
+    if (currentWidth + charWidth + ellipsisWidth > width) break;
+    result += char;
+    currentWidth += charWidth;
+  }
+  return result + ellipsis;
+}
+
+/** A single footer/status-line segment plus its survival priority. */
+export interface PrioritizedSegment {
+  readonly text: string;
+  /** Lower number = higher priority = dropped LAST under width pressure. */
+  readonly priority: number;
+}
+
+/**
+ * Join segments left-to-right with `separator`, but when the joined line
+ * would exceed `width`, drop whole low-priority segments (highest `priority`
+ * number first) one at a time until it fits, rather than character-truncating
+ * the joined string, which can mangle a high-value segment mid-word (e.g. a
+ * `spine:online` daemon-liveness marker clipped to `spi…`).
+ *
+ * Only falls back to character truncation (via truncateDisplay) if the
+ * remaining highest-priority segments still don't fit at width, a rare,
+ * very-narrow-terminal case.
+ */
+export function joinPrioritizedSegments(
+  segments: readonly PrioritizedSegment[],
+  separator: string,
+  width: number,
+): string {
+  const join = (list: readonly PrioritizedSegment[]) => list.map(s => s.text).join(separator);
+  let kept = segments;
+  // Keep dropping whole segments while more than one remains; once a single
+  // segment is left, stop, an empty result would be a worse outcome than
+  // falling through to character truncation on that last segment below.
+  while (kept.length > 1 && getDisplayWidth(join(kept)) > width) {
+    // Drop the single lowest-priority (highest `priority` number) segment;
+    // ties broken toward the leftmost (earlier-declared) segment surviving,
+    // `>=` (not `>`) so that on equal priority the LATER index keeps winning
+    // as the drop candidate, leaving the earliest-declared segment of that
+    // priority tier intact (e.g. cwd survives over model when both are
+    // priority 0, since cwd is declared first).
+    let dropIdx = 0;
+    for (let i = 1; i < kept.length; i++) {
+      if (kept[i].priority >= kept[dropIdx].priority) dropIdx = i;
+    }
+    kept = kept.slice(0, dropIdx).concat(kept.slice(dropIdx + 1));
+  }
+  const joined = join(kept);
+  return getDisplayWidth(joined) > width ? truncateDisplay(joined, width) : joined;
+}
+
+export function padDisplayEnd(text: string, width: number): string {
+  const currentWidth = getDisplayWidth(text);
+  if (currentWidth >= width) return text;
+  return text + ' '.repeat(width - currentWidth);
+}
+
+export function fitDisplay(text: string, width: number, ellipsis = '…'): string {
+  return padDisplayEnd(truncateDisplay(text, width, ellipsis), width);
+}
+
+export function wrapText(text: string, width: number): string[] {
+  if (width <= 0) return [text];
+  const lines: string[] = [];
+  const paragraphs = text.split('\n');
+
+  for (const paragraph of paragraphs) {
+    if (paragraph.length === 0) {
+      lines.push('');
+      continue;
+    }
+
+    const words = paragraph.split(' ');
+    let currentLine = '';
+
+    for (const word of words) {
+      const wordWidth = getDisplayWidth(word);
+      const currentLineWidth = getDisplayWidth(currentLine);
+
+      if (wordWidth > width) {
+        if (currentLine) lines.push(currentLine);
+        let remaining = word;
+        while (getDisplayWidth(remaining) > width) {
+          let splitIdx = 0;
+          let currentWidth = 0;
+          for (let i = 0; i < remaining.length; i++) {
+            const charWidth = getDisplayWidth(remaining[i]!);
+            if (currentWidth + charWidth > width) break;
+            currentWidth += charWidth;
+            splitIdx = i + 1;
+          }
+          lines.push(remaining.slice(0, splitIdx));
+          remaining = remaining.slice(splitIdx);
+        }
+        currentLine = remaining;
+        continue;
+      }
+
+      if ((currentLineWidth + wordWidth + (currentLine ? 1 : 0)) <= width) {
+        currentLine += `${currentLine ? ' ' : ''}${word}`;
+      } else {
+        lines.push(currentLine);
+        currentLine = word;
+      }
+    }
+
+    if (currentLine) lines.push(currentLine);
+  }
+
+  return lines;
+}
+
+/** Columns one tab takes in a drawn body; the same two spaces a diff body uses (changes-modal.ts wrapTokens). */
+export const BODY_TAB_WIDTH = 2;
+
+/** Replace every tab with BODY_TAB_WIDTH spaces, so width math and drawing agree. */
+export function expandTabs(text: string): string {
+  return text.includes('\t') ? text.replace(/\t/g, ' '.repeat(BODY_TAB_WIDTH)) : text;
+}
+
+/**
+ * Wrap one body line (a file line, command output) to `width` cells without
+ * losing its layout: tabs expand to spaces, a line that fits is returned
+ * exactly as it is (leading indentation and inner runs of spaces kept), and a
+ * longer line wraps at spaces with every continuation row indented like the
+ * first. A word wider than the room left is cut hard. Every returned row is
+ * at most `width` cells.
+ */
+export function wrapPreservingIndent(text: string, width: number): string[] {
+  const out: string[] = [];
+  for (const raw of expandTabs(text).split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    if (getDisplayWidth(line) <= width) { out.push(line); continue; }
+    const indentText = /^ */.exec(line)![0];
+    // Deep indentation leaves no room: continuation rows start at the left edge.
+    const indent = indentText.length <= Math.floor(width / 2) ? indentText : '';
+    let rest = Array.from(line.slice(indentText.length));
+    let prefix = indentText.length <= width - 1 ? indentText : '';
+    while (rest.length > 0) {
+      const avail = Math.max(1, width - prefix.length);
+      // Longest run of `rest` that fits, preferring to break after a space.
+      let cut = 0;
+      let used = 0;
+      let lastSpace = -1;
+      for (let i = 0; i < rest.length; i++) {
+        const w = getDisplayWidth(rest[i]!);
+        if (used + w > avail) break;
+        used += w;
+        cut = i + 1;
+        if (rest[i] === ' ') lastSpace = i + 1;
+      }
+      const at = cut === rest.length ? cut : lastSpace > 0 ? lastSpace : Math.max(1, cut);
+      out.push((prefix + rest.slice(0, at).join('')).replace(/\s+$/, ''));
+      rest = rest.slice(at);
+      while (rest[0] === ' ') rest.shift();
+      prefix = indent;
+    }
+  }
+  return out;
+}
+
+export function interpolateColor(startHex: string, endHex: string, factor: number): string {
+  const parse = (hex: string) => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return [r, g, b];
+  };
+
+  const [r1, g1, b1] = parse(startHex);
+  const [r2, g2, b2] = parse(endHex);
+  const r = Math.round(r1 + factor * (r2 - r1));
+  const g = Math.round(g1 + factor * (g2 - g1));
+  const b = Math.round(b1 + factor * (b2 - b1));
+  return `${r};${g};${b}`;
+}

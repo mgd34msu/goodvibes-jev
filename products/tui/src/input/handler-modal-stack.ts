@@ -1,0 +1,337 @@
+import {
+  closeModalByName,
+  getActiveModalName,
+  reopenModalByName,
+  type ActiveModalState,
+} from './handler-ui-state.ts';
+import type { SelectionResult } from './selection-modal.ts';
+
+export type ModalStackState = ActiveModalState & {
+  modalStack: string[];
+  modalReturnFocus?: 'prompt' | 'indicator';
+  indicatorFocused: boolean;
+};
+
+export function modalOpened(state: ModalStackState, name: string): void {
+  if (getActiveModalName(state) === null && state.modalStack.length > 0) {
+    state.modalStack.length = 0;
+  }
+  if (state.modalStack[state.modalStack.length - 1] === name) return;
+  if (state.modalStack.includes(name)) return;
+  if (state.modalStack.length === 0) {
+    state.modalReturnFocus = state.indicatorFocused ? 'indicator' : 'prompt';
+  }
+  state.modalStack.push(name);
+}
+
+export function clearModalStack(modalStack: string[]): void {
+  modalStack.length = 0;
+}
+
+export type EscapeState = ModalStackState & {
+  prompt: string;
+  cursorPos: number;
+  helpScrollOffset: number;
+  shortcutsScrollOffset: number;
+  requestRender: () => void;
+  saveUndoState: () => void;
+  cancelGeneration: (() => void) | undefined;
+  selectionCallback: ((result: SelectionResult | null) => void) | null;
+  bookmarkModal: ModalStackState['bookmarkModal'] & { open: () => void };
+  contextInspectorModal: ModalStackState['contextInspectorModal'] & { open: () => void };
+  settingsModal: ModalStackState['settingsModal'] & {
+    editingMode: boolean;
+    cancelEdit: () => void;
+  };
+  mcpWorkspace?: ModalStackState['mcpWorkspace'];
+  configModal: ModalStackState['configModal'] & { reopen: () => void };
+  selectionModal: ModalStackState['selectionModal'];
+  autocompleteReset: () => void;
+  autocompleteUpdate?: (query: string) => void;
+  /**
+   * An agent or process view (core/session-focus.ts). With no modal open and
+   * the composer empty, Esc there goes back up one level (closing the
+   * process view's search first) and never reaches cancelGeneration: leaving
+   * a view never stops the agent, the process or main.
+   */
+  sessionView?: { readonly active: boolean; escape(): void };
+  /**
+   * The main transcript's scroll. While it is scrolled away from the live
+   * bottom (and no modal, composer text or view took the Esc first), Esc
+   * returns to the bottom and re-locks there; it never reaches
+   * cancelGeneration then. At the bottom the next Esc interrupts as before.
+   */
+  transcriptScroll?: TranscriptScrollControls;
+  /** Kit modals: the top one (or its own sub-level) is the first thing Esc pops. */
+  surfaceModals?: { readonly active: boolean; escape(): boolean };
+  clearOnboardingModelPickerCancelState?: () => void;
+  restoreOnboardingModelPickerCancelState?: () => void;
+};
+
+/** What handleEscape needs of the main transcript's scroll. */
+export interface TranscriptScrollControls {
+  /** The main transcript is scrolled away from its live bottom. */
+  scrolledBack(): boolean;
+  /** Return to the live bottom and follow it again. */
+  toBottom(): void;
+}
+
+export function handleEscape(state: EscapeState): {
+  prompt: string;
+  cursorPos: number;
+  commandMode: boolean;
+  helpOverlayActive: boolean;
+  helpScrollOffset: number;
+  shortcutsOverlayActive: boolean;
+  shortcutsScrollOffset: number;
+  selectionCallback: ((result: SelectionResult | null) => void) | null;
+  indicatorFocused: boolean;
+  modalReturnFocus: NonNullable<ModalStackState['modalReturnFocus']>;
+} {
+  let prompt = state.prompt;
+  let cursorPos = state.cursorPos;
+  let commandMode = state.commandMode;
+  let helpOverlayActive = state.helpOverlayActive;
+  let helpScrollOffset = state.helpScrollOffset;
+  let shortcutsOverlayActive = state.shortcutsOverlayActive;
+  let shortcutsScrollOffset = state.shortcutsScrollOffset;
+  let selectionCallback = state.selectionCallback;
+  let indicatorFocused = state.indicatorFocused;
+  let modalReturnFocus: NonNullable<ModalStackState['modalReturnFocus']> = state.modalReturnFocus ?? 'prompt';
+
+  const restoreFocus = (): void => {
+    if (state.modalStack.length > 0 || getActiveModalName({
+      ...state,
+      helpOverlayActive,
+      shortcutsOverlayActive,
+      commandMode,
+    }) !== null) return;
+    indicatorFocused = modalReturnFocus === 'indicator';
+    modalReturnFocus = 'prompt';
+    state.modalReturnFocus = 'prompt';
+  };
+
+  // Kit modals are always on top: one Esc pops one of their levels and stops.
+  if (state.surfaceModals?.active) {
+    state.surfaceModals.escape();
+    state.requestRender();
+    return {
+      prompt,
+      cursorPos,
+      commandMode,
+      helpOverlayActive,
+      helpScrollOffset,
+      shortcutsOverlayActive,
+      shortcutsScrollOffset,
+      selectionCallback,
+      indicatorFocused,
+      modalReturnFocus,
+    };
+  }
+
+  if (state.settingsModal.active && state.settingsModal.editingMode) {
+    state.settingsModal.cancelEdit();
+    state.requestRender();
+    return {
+      prompt,
+      cursorPos,
+      commandMode,
+      helpOverlayActive,
+      helpScrollOffset,
+      shortcutsOverlayActive,
+      shortcutsScrollOffset,
+      selectionCallback,
+      indicatorFocused,
+      modalReturnFocus,
+    };
+  }
+
+  const closeModal = (name: string): void => {
+    closeModalByName(name, {
+      resetHelp: () => {
+        helpOverlayActive = false;
+        helpScrollOffset = 0;
+      },
+      resetShortcuts: () => {
+        shortcutsOverlayActive = false;
+        shortcutsScrollOffset = 0;
+      },
+      closeBookmark: () => state.bookmarkModal.close(),
+      closeSettings: () => state.settingsModal.close(),
+      closeMcpWorkspace: () => state.mcpWorkspace?.close(),
+      closeSessionPicker: () => state.sessionPickerModal.close(),
+      closeProfilePicker: () => state.profilePickerModal.close(),
+      closeConfigModal: () => state.configModal.close(),
+      closeContextInspector: () => state.contextInspectorModal.close(),
+      closeModelPicker: () => {
+        state.modelPicker.close();
+        state.restoreOnboardingModelPickerCancelState?.();
+      },
+      closeFilePicker: () => state.filePicker.close(),
+      closeBlockActions: () => state.blockActionsMenu.close(),
+      closeSelection: () => {
+        const cb = selectionCallback;
+        selectionCallback = null;
+        state.selectionModal.close();
+        cb?.(null);
+      },
+      closeOnboarding: () => {
+        state.onboardingWizard?.close();
+        state.clearOnboardingModelPickerCancelState?.();
+      },
+      closeCommandMode: () => {
+        commandMode = false;
+        for (let i = state.modalStack.length - 1; i >= 0; i--) {
+          if (state.modalStack[i] === 'command') state.modalStack.splice(i, 1);
+        }
+        state.autocompleteReset();
+        // Esc's palette-dismiss convention: a bare '/' with nothing typed
+        // after it IS the palette, so Esc clears it along with the slash
+        // (first Esc, one step, done, no lingering '/' to backspace out).
+        // Once the user has typed a command name (or anything else) past
+        // the slash, Esc's job is only to dismiss the ghost-suggestion
+        // overlay; the typed text is real composer content and stays put,
+        // just no longer treated as an in-progress command.
+        if (prompt === '/') {
+          prompt = '';
+          cursorPos = 0;
+        }
+      },
+    });
+  };
+
+  const reopenModal = (name: string): void => {
+    reopenModalByName(name, {
+      openHelp: () => { helpOverlayActive = true; },
+      openShortcuts: () => { shortcutsOverlayActive = true; },
+      openBookmark: () => state.bookmarkModal.open(),
+      openContextInspector: () => state.contextInspectorModal.open(),
+      openConfigModal: () => state.configModal.reopen(),
+      openMcpWorkspace: () => state.mcpWorkspace?.reopen(),
+      openOnboarding: () => state.onboardingWizard?.reopen(),
+      openCommandMode: () => {
+        commandMode = true;
+        prompt = '/';
+        cursorPos = 1;
+        state.autocompleteUpdate?.('');
+      },
+    });
+  };
+
+  if (state.modalStack.length > 0) {
+    const current = state.modalStack.pop()!;
+    const previous = state.modalStack[state.modalStack.length - 1];
+    closeModal(current);
+    if (previous) {
+      reopenModal(previous);
+    } else {
+      restoreFocus();
+    }
+    state.requestRender();
+    return {
+      prompt,
+      cursorPos,
+      commandMode,
+      helpOverlayActive,
+      helpScrollOffset,
+      shortcutsOverlayActive,
+      shortcutsScrollOffset,
+      selectionCallback,
+      indicatorFocused,
+      modalReturnFocus,
+    };
+  }
+
+  const active = getActiveModalName({
+    ...state,
+    helpOverlayActive,
+    shortcutsOverlayActive,
+    commandMode,
+  });
+  if (active) {
+    closeModal(active);
+    restoreFocus();
+    state.requestRender();
+    return {
+      prompt,
+      cursorPos,
+      commandMode,
+      helpOverlayActive,
+      helpScrollOffset,
+      shortcutsOverlayActive,
+      shortcutsScrollOffset,
+      selectionCallback,
+      indicatorFocused,
+      modalReturnFocus,
+    };
+  }
+
+  if (prompt.length > 0) {
+    state.saveUndoState();
+    prompt = '';
+    cursorPos = 0;
+    return {
+      prompt,
+      cursorPos,
+      commandMode,
+      helpOverlayActive,
+      helpScrollOffset,
+      shortcutsOverlayActive,
+      shortcutsScrollOffset,
+      selectionCallback,
+      indicatorFocused,
+      modalReturnFocus,
+    };
+  }
+
+  // Inside an agent or process view Esc goes up one level and stops here:
+  // interrupting belongs to main alone.
+  if (state.sessionView?.active) {
+    state.sessionView.escape();
+    state.requestRender();
+    return {
+      prompt,
+      cursorPos,
+      commandMode,
+      helpOverlayActive,
+      helpScrollOffset,
+      shortcutsOverlayActive,
+      shortcutsScrollOffset,
+      selectionCallback,
+      indicatorFocused,
+      modalReturnFocus,
+    };
+  }
+
+  // Scrolled back: Esc returns to the live output and never interrupts the turn.
+  if (state.transcriptScroll?.scrolledBack()) {
+    state.transcriptScroll.toBottom();
+    state.requestRender();
+    return {
+      prompt,
+      cursorPos,
+      commandMode,
+      helpOverlayActive,
+      helpScrollOffset,
+      shortcutsOverlayActive,
+      shortcutsScrollOffset,
+      selectionCallback,
+      indicatorFocused,
+      modalReturnFocus,
+    };
+  }
+
+  state.cancelGeneration?.();
+  return {
+    prompt,
+    cursorPos,
+    commandMode,
+    helpOverlayActive,
+    helpScrollOffset,
+    shortcutsOverlayActive,
+    shortcutsScrollOffset,
+    selectionCallback,
+    indicatorFocused,
+    modalReturnFocus,
+  };
+}

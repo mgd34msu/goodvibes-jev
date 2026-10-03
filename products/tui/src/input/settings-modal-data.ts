@@ -1,0 +1,762 @@
+/**
+ * settings-modal-data, pure data-assembly helpers for SettingsModal.
+ *
+ * All functions are stateless: they take dependencies as arguments and return
+ * derived data without mutating state. The class in settings-modal.ts delegates
+ * to these during open() and tab-switch operations.
+ */
+
+import { type ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
+import type { ConfigManager, ConfigSetting } from '@goodvibes-jev/engine/sdk/platform/config';
+import { getResolvedSettingLookup } from '@/runtime/index.ts';
+import type { FeatureFlagManager } from '@/runtime/index.ts';
+import type { McpRegistry } from '@goodvibes-jev/engine/sdk/platform/mcp';
+import { buildSubscriptionEntries } from './settings-modal-subscriptions.ts';
+import type { SubscriptionManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import type { ServiceInspectionQuery } from '@/runtime/index.ts';
+import { CODE_INDEX_ENABLED_CONFIG_KEY, NOTIFICATIONS_METADATA_ONLY_KEY } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
+import {
+  WORKTREE_SETUP_CARRY_OVER_GLOBS_CONFIG_KEY,
+  WORKTREE_SETUP_COMMANDS_CONFIG_KEY,
+  buildWorktreeSetupCarryOverGlobsSyntheticEntry,
+  buildWorktreeSetupCommandsSyntheticEntry,
+  isWorktreeSetupListConfigKey,
+  readWorktreeSetupList,
+} from './worktree-setup-config.ts';
+import { BUDGET_ALERT_USD_CONFIG_KEY, BUDGET_ALERT_USD_DEFAULT, readBudgetAlertUsd } from '@goodvibes-jev/engine/sdk/platform/providers';
+import { MEMORY_PROJECTION_DIR_CONFIG_KEY, buildMemoryProjectionDirSyntheticEntry } from './commands/recall-files-config.ts';
+import { MEMORY_SHOW_PROVENANCE_CONFIG_KEY, buildMemoryProvenanceSyntheticEntry } from '../core/memory-provenance.ts';
+import {
+  injectSandboxExecSyntheticEntries,
+  isSandboxExecListConfigKey,
+  readSandboxExecList,
+} from './sandbox-exec-config.ts';
+import {
+  injectExecEnvScrubSyntheticEntry,
+  isExecEnvScrubAllowlistConfigKey,
+  readExecEnvScrubAllowlist,
+} from './exec-env-scrub-config.ts';
+import {
+  SETTINGS_CATEGORIES,
+  type FlagEntry,
+  type HostSettingEntry,
+  type McpEntry,
+  type SettingEntry,
+  type SettingsCategory,
+  type SubscriptionEntry,
+} from './settings-modal-types.ts';
+import { enrichRelaySettingDescriptions } from './relay-settings-descriptions.ts';
+import { enrichDaemonOwnedSettingDescriptions } from './daemon-owned-settings-descriptions.ts';
+import { applyFeatureUnitLayout } from './feature-unit-layout.ts';
+import { FEATURE_SETTINGS_BY_ID } from '@goodvibes-jev/engine/terminal-shell';
+import {
+  buildPaymentsSyntheticEntries,
+  isPaymentsSyntheticConfigKey,
+  refreshPaymentsSyntheticEntry,
+} from './payments-config.ts';
+
+// ---------------------------------------------------------------------------
+// deepEqual, structural equality for isDefault comparisons
+// ---------------------------------------------------------------------------
+
+/**
+ * Structural equality for setting-default comparisons: scalars, arrays, and
+ * plain objects (config defaults are always JSON-safe; no circular refs).
+ */
+export function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  if (a === undefined || b === undefined) return false;
+  if (typeof a !== typeof b) return false;
+  if (typeof a !== 'object') return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!deepEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  const ao = a as Record<string, unknown>;
+  const bo = b as Record<string, unknown>;
+  const aKeys = Object.keys(ao);
+  const bKeys = Object.keys(bo);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (!Object.prototype.hasOwnProperty.call(bo, key)) return false;
+    if (!deepEqual(ao[key], bo[key])) return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// buildSettingGroups, loads the instance schema into per-category SettingEntry maps
+// ---------------------------------------------------------------------------
+
+const POLICY_METADATA_UNAVAILABLE = 'Managed policy metadata is unavailable. Editing is disabled until it can be read.';
+
+/** Refresh a host row exclusively through its validated public handle. */
+export function refreshHostSettingEntry(entry: SettingEntry, configManager: ConfigManager): void {
+  if (entry.kind !== 'host') return;
+  const handle = configManager.getHostBooleanSetting(entry.setting.key);
+  entry.currentValue = handle.get();
+  entry.isDefault = entry.currentValue === entry.setting.default;
+  try {
+    const resolved = handle.getResolved();
+    entry.currentValue = resolved.value;
+    entry.isDefault = resolved.value === resolved.defaultValue;
+    Object.assign(entry, {
+      effectiveSource: resolved.source,
+      locked: resolved.managedLock !== null,
+      conflict: false,
+      sourceLabel: undefined,
+      lockReason: resolved.managedLock ? `${resolved.managedLock.source}: ${resolved.managedLock.reason}` : undefined,
+      metadataUnavailable: undefined,
+    });
+  } catch {
+    // The SDK deliberately withholds lock metadata when policy cannot be read.
+    // Do not turn that absence into an unlocked/default provenance claim.
+    Object.assign(entry, {
+      effectiveSource: undefined,
+      locked: undefined,
+      conflict: undefined,
+      sourceLabel: undefined,
+      lockReason: undefined,
+      metadataUnavailable: POLICY_METADATA_UNAVAILABLE,
+    });
+  }
+}
+
+/**
+ * Best-effort UI preflight, not an atomic policy transaction or new authority.
+ * Host metadata reads are pure; defer legacy builtin recovery until they work.
+ */
+export function refreshSettingsPolicyAvailability(groups: Map<string, SettingEntry[]>, configManager: ConfigManager): boolean {
+  const schema = configManager.getHostSettingsSchema();
+  if (schema.length === 0) return true;
+  let unavailable = false;
+  for (const setting of schema) {
+    try { configManager.getHostBooleanSetting(setting.key).getResolved(); }
+    catch { unavailable = true; }
+  }
+  const entries = [...groups.values()].flat();
+  for (const entry of entries) {
+    if (entry.kind !== 'host') continue;
+    refreshHostSettingEntry(entry, configManager);
+    unavailable ||= entry.metadataUnavailable !== undefined;
+  }
+  for (const entry of entries) {
+    if (unavailable) {
+      Object.assign(entry, {
+        effectiveSource: undefined, locked: undefined, conflict: undefined,
+        sourceLabel: undefined, lockReason: undefined, metadataUnavailable: POLICY_METADATA_UNAVAILABLE,
+      });
+    } else if (entry.kind !== 'host' && entry.metadataUnavailable) {
+      const resolved = getResolvedSettingLookup(configManager, entry.setting.key)?.entry;
+      Object.assign(entry, {
+        effectiveSource: resolved?.effectiveSource, locked: resolved?.locked,
+        conflict: resolved?.conflict, sourceLabel: resolved?.sourceLabel, lockReason: resolved?.lockReason,
+        metadataUnavailable: undefined,
+      });
+    }
+  }
+  return !unavailable;
+}
+
+export function buildSettingGroups(
+  configManager: ConfigManager,
+  featureFlagManager?: FeatureFlagManager | null,
+): Map<SettingsCategory, SettingEntry[]> {
+  const groups = new Map<SettingsCategory, SettingEntry[]>();
+  // Every category starts empty and is filled from the instance schema below; the
+  // feature-unit layout pass then folds each capability's rows into one unit.
+  for (const cat of SETTINGS_CATEGORIES) groups.set(cat, []);
+
+  // Host descriptors are a separate readonly schema, not builtin ConfigKeys.
+  const hostEntries = configManager.getHostSettingsSchema().map(setting => {
+    const entry: HostSettingEntry = {
+      kind: 'host', setting, currentValue: setting.default, isDefault: true,
+    };
+    refreshHostSettingEntry(entry, configManager);
+    return entry;
+  });
+  const hostMetadataUnavailable = hostEntries.some(entry => entry.metadataUnavailable !== undefined);
+
+  // The legacy builtin governance reader can quarantine malformed policy.
+  // Keep that recovery out of this read pass when pure host metadata is
+  // unavailable; otherwise opening settings could erase the policy failure.
+  for (const setting of configManager.getSchema()) {
+    const rawCat = setting.key.split('.')[0] as string;
+    const cat = rawCat as SettingsCategory;
+    const currentValue = configManager.get(setting.key as ConfigKey);
+    const resolved = hostMetadataUnavailable ? undefined : getResolvedSettingLookup(configManager, setting.key)?.entry;
+    const entry: SettingEntry = {
+      setting,
+      currentValue,
+      isDefault: deepEqual(currentValue, setting.default),
+      effectiveSource: resolved?.effectiveSource,
+      locked: resolved?.locked,
+      conflict: resolved?.conflict,
+      sourceLabel: resolved?.sourceLabel,
+      lockReason: resolved?.lockReason,
+      metadataUnavailable: hostMetadataUnavailable ? POLICY_METADATA_UNAVAILABLE : undefined,
+    };
+    if (groups.has(cat)) groups.get(cat)!.push(entry);
+    if ((rawCat === 'controlPlane' || rawCat === 'httpListener' || rawCat === 'web') && groups.has('network')) {
+      groups.get('network')!.push(entry);
+    }
+    // fleet.maxSize (was orchestration.maxActiveAgents) surfaces under orchestration.
+    if (rawCat === 'fleet' && groups.has('orchestration')) groups.get('orchestration')!.push(entry);
+    // push.* configures the delivery side of the very notifications the
+    // notifications.* keys already shape (pushApproval, pushNeedsInput,
+    // pushCompletion), so the contact address and the subscription
+    // housekeeping bounds belong in that same category rather than in one of
+    // their own. Without this they match no category at all and would be
+    // dropped from the workspace entirely, reachable only by editing the
+    // config file by hand.
+    if (rawCat === 'push' && groups.has('notifications')) groups.get('notifications')!.push(entry);
+    // cluster.* decides which node on this network reads the inbox, and it is
+    // configured in the same terms the network category already speaks: a
+    // group address, a port, a shared phrase, a peer list. Given no category of
+    // its own it would match nothing and drop out of the workspace entirely,
+    // reachable only by hand-editing a settings file.
+    if (rawCat === 'cluster' && groups.has('network')) groups.get('network')!.push(entry);
+  }
+
+  for (const entry of hostEntries) {
+    groups.get(entry.setting.key.split('.')[0] as SettingsCategory)?.push(entry);
+  }
+
+  const uiEntries = groups.get('ui');
+  if (uiEntries) {
+    const uiPriority: Record<string, number> = {
+      'ui.systemMessages': 0,
+      'ui.operationalMessages': 1,
+      'ui.wrfcMessages': 2,
+      'ui.voiceEnabled': 3,
+    };
+    uiEntries.sort((a, b) => (uiPriority[a.setting.key] ?? 99) - (uiPriority[b.setting.key] ?? 99));
+  }
+
+  // Cross-list ui.voiceEnabled into the 'tts' category so that /config tts
+  // shows the always-speak toggle alongside the other TTS settings.
+  const ttsEntries = groups.get('tts');
+  if (ttsEntries && uiEntries) {
+    const voiceEnabledEntry = uiEntries.find((e) => e.setting.key === 'ui.voiceEnabled');
+    if (voiceEnabledEntry && !ttsEntries.some((e) => e.setting.key === 'ui.voiceEnabled')) {
+      ttsEntries.unshift(voiceEnabledEntry);
+    }
+  }
+
+  // Synthetic behavior.notifyAfterSeconds (TUI-local): long-task push threshold.
+  const behaviorEntries = groups.get('behavior');
+  if (behaviorEntries && !behaviorEntries.some((e) => e.setting.key === ('behavior.notifyAfterSeconds' as ConfigKey))) {
+    behaviorEntries.push(buildNotifyAfterSecondsSyntheticEntry(configManager));
+  }
+
+  // Synthetic behavior.budgetAlertUsd (TUI-local): no schema surface previously,
+  // never in /config; /settings-sync show rejects any key not
+  // in CONFIG_KEYS. The Usage modal's 'b' key and /cost budget <usd> remain
+  // the primary way to change it; this entry makes the current effective
+  // value (and whether it's still the "no budget configured" default)
+  // visible from /config behavior too, same rationale as notifyAfterSeconds.
+  if (behaviorEntries && !behaviorEntries.some((e) => e.setting.key === (BUDGET_ALERT_USD_CONFIG_KEY as ConfigKey))) {
+    behaviorEntries.push(buildBudgetAlertUsdSyntheticEntry(configManager));
+  }
+
+  // Inject the alert-class toggles + master focus gate. TUI-local
+  // synthetic settings, same rationale as notifyAfterSeconds above.
+  if (behaviorEntries) {
+    for (const entry of buildNotifyAlertSyntheticEntries(configManager)) {
+      if (!behaviorEntries.some((e) => e.setting.key === entry.setting.key)) {
+        behaviorEntries.push(entry);
+      }
+    }
+    // In-terminal (OSC 9) notification toggles + audible bell, same category,
+    // per-key defaults (see terminal-notifier.ts).
+    for (const entry of buildTerminalNotifySyntheticEntries(configManager)) {
+      if (!behaviorEntries.some((e) => e.setting.key === entry.setting.key)) {
+        behaviorEntries.push(entry);
+      }
+    }
+    // The TUI registers behavior.notificationsMetadataOnly on its manager.
+    // Keep the host-owned privacy control next to the notification toggles.
+    const privacyIndex = behaviorEntries.findIndex((e) => e.setting.key === NOTIFICATIONS_METADATA_ONLY_KEY);
+    if (privacyIndex >= 0) behaviorEntries.push(...behaviorEntries.splice(privacyIndex, 1));
+  }
+
+  // Inject the storage.codeIndexEnabled toggle into the
+  // storage category. TUI-local synthetic setting (not in the SDK ConfigKey
+  // union, see code-index-services.ts), same rationale as
+  // notifyAfterSeconds above: opt-in, default off, states its own bounds.
+  const storageEntries = groups.get('storage');
+  if (storageEntries && !storageEntries.some((e) => e.setting.key === (CODE_INDEX_ENABLED_CONFIG_KEY as ConfigKey))) {
+    storageEntries.push(buildCodeIndexEnabledSyntheticEntry(configManager));
+  }
+
+  // Inject the memory.projection.dir synthetic entry into the storage
+  // category (alongside codeIndexEnabled, both are local-storage posture
+  // settings). Not in the SDK ConfigKey union, same rationale as above.
+  if (storageEntries && !storageEntries.some((e) => e.setting.key === MEMORY_PROJECTION_DIR_CONFIG_KEY)) {
+    storageEntries.push(buildMemoryProjectionDirSyntheticEntry(configManager));
+  }
+
+  // Synthetic memory.showProvenance (TUI-local, default OFF, see memory-provenance.ts).
+  const memoryEntries = groups.get('memory');
+  if (memoryEntries && !memoryEntries.some((e) => e.setting.key === (MEMORY_SHOW_PROVENANCE_CONFIG_KEY as ConfigKey))) {
+    memoryEntries.push(buildMemoryProvenanceSyntheticEntry(configManager) as unknown as SettingEntry);
+  }
+
+  // Inject the worktree.setup.commands / worktree.setup.carryOverGlobs
+  // synthetic entries into the orchestration category (worktree isolation is
+  // an orchestration-engine concern, see WorkstreamIsolation 'worktree').
+  // Neither key is in the SDK ConfigKey union (see worktree-setup-config.ts),
+  // same rationale as the other synthetic settings above.
+  const orchestrationEntries = groups.get('orchestration');
+  if (orchestrationEntries) {
+    if (!orchestrationEntries.some((e) => e.setting.key === WORKTREE_SETUP_COMMANDS_CONFIG_KEY)) {
+      orchestrationEntries.push(buildWorktreeSetupCommandsSyntheticEntry(configManager));
+    }
+    if (!orchestrationEntries.some((e) => e.setting.key === WORKTREE_SETUP_CARRY_OVER_GLOBS_CONFIG_KEY)) {
+      orchestrationEntries.push(buildWorktreeSetupCarryOverGlobsSyntheticEntry(configManager));
+    }
+  }
+
+  // Inject the sandbox.egressAllowlist / sandbox.workspaceWritable and
+  // permissions.execEnvScrubAllowlist synthetic entries, see
+  // sandbox-exec-config.ts / exec-env-scrub-config.ts for why they are not in
+  // CONFIG_SCHEMA, same rationale as the other synthetic settings above.
+  injectSandboxExecSyntheticEntries(groups, configManager);
+  injectExecEnvScrubSyntheticEntry(groups, configManager);
+
+  // Payment card capability (see payments-config.ts): the CONFIG_SCHEMA loop
+  // above already populated 'payments' with the fourteen real SDK settings
+  // (enabled, defaultCardId, currency, cvvHandling, budgets, shipping,
+  // windows, notifyChannels). What's injected here are the four secret-tier
+  // card-material fields and the two ordinary address fields, which are
+  // TUI-local synthetic sub-keys under that real section (not yet SDK
+  // CONFIG_SCHEMA entries, see payments-config.ts's header comment), backed
+  // by the same real configManager as everything else in this group.
+  const paymentsEntries = groups.get('payments');
+  if (paymentsEntries && !paymentsEntries.some((e) => isPaymentsSyntheticConfigKey(e.setting.key))) {
+    paymentsEntries.push(...buildPaymentsSyntheticEntries(configManager));
+  }
+
+  // relay.* is a real SDK CONFIG_SCHEMA domain; append the threat-model note
+  // the SDK's own descriptions don't carry (see relay-settings-descriptions.ts).
+  enrichRelaySettingDescriptions(groups);
+
+  // Daemon-owned keys (e.g. surfaces.telegram.*) live only in the daemon's
+  // own config store, say so in the detail text (daemon-owned-settings-descriptions.ts).
+  enrichDaemonOwnedSettingDescriptions(groups, configManager);
+
+  // Feature-unit presentation: each capability becomes ONE unit (its real
+  // enablement row + the settings keys it tunes) in its settings domain,
+  // sourced from FEATURE_SETTINGS. Runs AFTER synthetic injection so
+  // non-feature-owned rows stay orphans; skipped on the featureless path.
+  if (featureFlagManager) applyFeatureUnitLayout(groups, buildFlagEntries(featureFlagManager));
+
+  // learning.consolidation.* is a real SDK config domain now, so its keys arrive
+  // through the CONFIG_SCHEMA loop above; the old TUI-local synthetic entries were
+  // removed for this reason.
+
+  // Synthetic and feature-header rows use the same guarded mutation paths.
+  // They must not remain editable while the shared policy read is suspended.
+  if (hostMetadataUnavailable) {
+    for (const entries of groups.values()) for (const entry of entries) {
+      Object.assign(entry, {
+        effectiveSource: undefined, locked: undefined, conflict: undefined,
+        sourceLabel: undefined, lockReason: undefined, metadataUnavailable: POLICY_METADATA_UNAVAILABLE,
+      });
+    }
+  }
+
+  return groups;
+}
+
+// ---------------------------------------------------------------------------
+// behavior.notifyAfterSeconds synthetic setting
+// ---------------------------------------------------------------------------
+
+/** Default threshold in seconds for the synthetic notifyAfterSeconds setting. */
+export const NOTIFY_AFTER_SECONDS_DEFAULT_SETTING = 60;
+
+/**
+ * The synthetic ConfigSetting descriptor for behavior.notifyAfterSeconds.
+ *
+ * This key is TUI-local and is not yet in the SDK ConfigKey union. The
+ * descriptor is injected into the behavior settings group so users can
+ * configure the long-task push notification threshold from /config behavior.
+ *
+ * 0 = off (no notifications). Any positive integer = threshold in seconds.
+ * Default 60s matches the default in long-task-notifier.ts.
+ *
+ * The key is cast to ConfigKey because ConfigSetting requires it. The cast
+ * is safe: configManager.get returns undefined for unknown keys rather than
+ * throwing.
+ */
+export const NOTIFY_AFTER_SECONDS_SYNTHETIC_SETTING: ConfigSetting = {
+  key: 'behavior.notifyAfterSeconds' as ConfigKey,
+  type: 'number',
+  default: NOTIFY_AFTER_SECONDS_DEFAULT_SETTING,
+  description: 'Seconds a turn must run before a push notification fires (0 = off). Delivers to desktop (notify-send/osascript) and configured ntfy/webhook URLs.',
+};
+
+/**
+ * Build the synthetic SettingEntry for behavior.notifyAfterSeconds.
+ *
+ * Reads the raw value from configManager using a cast key. Falls back to
+ * NOTIFY_AFTER_SECONDS_DEFAULT_SETTING when absent or invalid.
+ */
+export function buildNotifyAfterSecondsSyntheticEntry(configManager: Pick<ConfigManager, 'get'>): SettingEntry {
+  const raw = configManager.get('behavior.notifyAfterSeconds' as ConfigKey);
+  const parsed = typeof raw === 'number' ? raw : parseFloat(String(raw ?? ''));
+  const currentValue: number = Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : NOTIFY_AFTER_SECONDS_DEFAULT_SETTING;
+  return {
+    setting: NOTIFY_AFTER_SECONDS_SYNTHETIC_SETTING,
+    currentValue,
+    isDefault: currentValue === NOTIFY_AFTER_SECONDS_DEFAULT_SETTING,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// behavior.budgetAlertUsd synthetic setting
+// ---------------------------------------------------------------------------
+
+/**
+ * The synthetic ConfigSetting descriptor for behavior.budgetAlertUsd.
+ *
+ * This key is TUI-local and is not yet in the SDK ConfigKey union, it never
+ * appeared in CONFIG_SCHEMA, so it was invisible to every schema-driven
+ * inspection surface (/config, /settings-sync show <key>) even though the
+ * value round-trips correctly through configManager.get/set. The descriptor
+ * is injected into the behavior settings group so /config behavior shows the
+ * real current threshold, not just the behavior.notifyOnBudgetBreach gate.
+ *
+ * 0 = no budget configured (disabled). Any positive number = the USD
+ * threshold. Default matches BUDGET_ALERT_USD_DEFAULT in cost-utils.ts, the
+ * single source of truth the Usage modal and budget-breach-notifier.ts share.
+ */
+export const BUDGET_ALERT_USD_SYNTHETIC_SETTING: ConfigSetting = {
+  key: BUDGET_ALERT_USD_CONFIG_KEY as ConfigKey,
+  type: 'number',
+  default: BUDGET_ALERT_USD_DEFAULT,
+  description: 'Session cost-budget alert threshold in USD (0 = no budget configured). Set via the Usage modal\'s "b" key or /cost budget <usd>; this entry only displays the current effective value.',
+};
+
+/**
+ * Build the synthetic SettingEntry for behavior.budgetAlertUsd.
+ *
+ * Delegates parsing/fallback to readBudgetAlertUsd (cost-utils.ts) so this
+ * display entry can never disagree with what the Usage modal and the
+ * background budget-breach notifier actually read.
+ */
+export function buildBudgetAlertUsdSyntheticEntry(configManager: Pick<ConfigManager, 'get'>): SettingEntry {
+  const currentValue = readBudgetAlertUsd((key) => configManager.get(key as ConfigKey));
+  return {
+    setting: BUDGET_ALERT_USD_SYNTHETIC_SETTING,
+    currentValue,
+    isDefault: currentValue === BUDGET_ALERT_USD_DEFAULT,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// alert-class synthetic settings, behavior.notifyOn* + notifyOnlyWhenUnfocused
+// ---------------------------------------------------------------------------
+
+/**
+ * The five alert-gating booleans, all TUI-local (not yet in the SDK
+ * ConfigKey union), all defaulting to on. Read/written generically by
+ * core/alert-gating.ts (readBooleanConfig) and the per-alert-class modules
+ * (budget-breach-notifier.ts, approval-alert.ts, turn-event-wiring.ts,
+ * long-task-notifier.ts), this is only the settings-modal-visible surface.
+ */
+const NOTIFY_ALERT_SYNTHETIC_SETTINGS: ReadonlyArray<{ readonly key: string; readonly description: string }> = [
+  {
+    key: 'behavior.notifyOnBudgetBreach',
+    description: 'Alert when session cost crosses the configured budget (set via the Usage modal\'s "b" key).',
+  },
+  {
+    key: 'behavior.notifyOnAgentFailure',
+    description: 'Alert when a delegated or background agent fails.',
+  },
+  {
+    key: 'behavior.notifyOnChainFailure',
+    description: 'Alert when a WRFC review chain fails.',
+  },
+  {
+    key: 'behavior.notifyOnApprovalPending',
+    description: 'Alert when a tool call is waiting on your approval.',
+  },
+  {
+    key: 'behavior.notifyOnlyWhenUnfocused',
+    description: 'Master gate for the four alerts above: fire only when the terminal window is unfocused, or when focus state was never observed (terminal does not report focus). Turn off to always fire regardless of focus.',
+  },
+];
+
+function buildBooleanSyntheticEntry(
+  configManager: Pick<ConfigManager, 'get'>,
+  key: string,
+  description: string,
+  defaultValue: boolean,
+): SettingEntry {
+  const raw = configManager.get(key as ConfigKey);
+  const currentValue = typeof raw === 'boolean' ? raw : defaultValue;
+  return {
+    setting: { key: key as ConfigKey, type: 'boolean', default: defaultValue, description },
+    currentValue,
+    isDefault: currentValue === defaultValue,
+  };
+}
+
+/** Build the five synthetic SettingEntry rows for the behavior category. */
+export function buildNotifyAlertSyntheticEntries(configManager: Pick<ConfigManager, 'get'>): SettingEntry[] {
+  return NOTIFY_ALERT_SYNTHETIC_SETTINGS.map((spec) => buildBooleanSyntheticEntry(configManager, spec.key, spec.description, true));
+}
+
+// ---------------------------------------------------------------------------
+// In-terminal (OSC 9) notification settings, see core/terminal-notifier.ts
+// ---------------------------------------------------------------------------
+
+/**
+ * The OSC 9 in-terminal desktop-notification toggles + the audible bell.
+ * TUI-local synthetic booleans (not in the SDK ConfigKey union), each carrying
+ * its OWN default (unlike the always-on alert toggles above): approval-wait
+ * on, turn-end/agent-blocked off, bell off. Read generically by
+ * core/terminal-notifier.ts (readBooleanConfig); this is only the
+ * settings-modal-visible surface. These are independent of the master
+ * `notifyOnlyWhenUnfocused` gate, an in-terminal notification is always
+ * focus-gated on its own (only fires for an unfocused/unknown terminal).
+ */
+const TERMINAL_NOTIFY_SYNTHETIC_SETTINGS: ReadonlyArray<{ readonly key: string; readonly description: string; readonly defaultOn: boolean }> = [
+  {
+    key: 'behavior.terminalNotifyApprovalWait',
+    description: 'Send an in-terminal (OSC 9) desktop notification when a tool call is waiting on your approval. Fires only when the terminal window is unfocused. Works over SSH/tmux where OS notifications do not.',
+    defaultOn: true,
+  },
+  {
+    key: 'behavior.terminalNotifyTurnEnd',
+    description: 'Send an in-terminal (OSC 9) desktop notification when a turn finishes. Off by default. Fires only when the terminal window is unfocused.',
+    defaultOn: false,
+  },
+  {
+    key: 'behavior.terminalNotifyAgentBlocked',
+    description: 'Send an in-terminal (OSC 9) desktop notification when a delegated agent blocks waiting for your input. Off by default. Fires only when the terminal window is unfocused.',
+    defaultOn: false,
+  },
+  {
+    key: 'behavior.terminalBell',
+    description: 'Also ring the terminal bell alongside in-terminal notifications. Off by default.',
+    defaultOn: false,
+  },
+];
+
+/** Build the OSC 9 in-terminal notification SettingEntry rows for the behavior category. */
+export function buildTerminalNotifySyntheticEntries(configManager: Pick<ConfigManager, 'get'>): SettingEntry[] {
+  return TERMINAL_NOTIFY_SYNTHETIC_SETTINGS.map((spec) => buildBooleanSyntheticEntry(configManager, spec.key, spec.description, spec.defaultOn));
+}
+
+// ---------------------------------------------------------------------------
+// storage.codeIndexEnabled synthetic setting
+// ---------------------------------------------------------------------------
+
+/**
+ * The repo source-tree code index's auto-build-on-startup toggle
+ * (code-index-services.ts). TUI-local, default OFF: /codebase build is the
+ * explicit trigger unless a user opts in here. Honest bounds stated inline
+ * so enabling this isn't a surprise, see code-index-services.ts's
+ * CODE_INDEX_MAX_FILES/CODE_INDEX_MAX_FILE_BYTES for the numbers this
+ * description would otherwise duplicate as magic numbers.
+ */
+export function buildCodeIndexEnabledSyntheticEntry(configManager: Pick<ConfigManager, 'get'>): SettingEntry {
+  return buildBooleanSyntheticEntry(
+    configManager,
+    CODE_INDEX_ENABLED_CONFIG_KEY,
+    'Auto-build the repo source-tree code index on startup (bounded file/size scan; see /codebase status for bounds). Off by default: /codebase build indexes on demand.',
+    false,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// buildFlagEntries, snapshot of current feature flag states
+// ---------------------------------------------------------------------------
+
+export function buildFlagEntries(featureFlagManager: FeatureFlagManager | null): FlagEntry[] {
+  if (!featureFlagManager) return [];
+  const entries: FlagEntry[] = [];
+  for (const { flag, state, persistedState, pendingRestart } of featureFlagManager.getAll().values()) {
+    const feature = FEATURE_SETTINGS_BY_ID.get(flag.id);
+    if (!feature) continue; // gate with no settings surface (registry/binding drift is SDK test-guarded)
+    entries.push({ feature, flag, state, persistedState, pendingRestart });
+  }
+  return entries;
+}
+
+// ---------------------------------------------------------------------------
+// buildMcpEntries, snapshot of current MCP server security entries
+// ---------------------------------------------------------------------------
+
+export function buildMcpEntries(mcpRegistry: McpRegistry | null): McpEntry[] {
+  if (!mcpRegistry) return [];
+  return mcpRegistry.listServerSecurity().map((entry) => ({
+    name: entry.name,
+    connected: entry.connected,
+    role: entry.role,
+    trustMode: entry.trustMode,
+    allowedPaths: [...entry.allowedPaths],
+    allowedHosts: [...entry.allowedHosts],
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// buildSubscriptionEntries, re-export for use by SettingsModal
+// ---------------------------------------------------------------------------
+
+export { buildSubscriptionEntries };
+
+// ---------------------------------------------------------------------------
+// buildNetworkFilteredItems, applies host-mode visibility rules for 'network' tab
+// ---------------------------------------------------------------------------
+
+export function buildNetworkFilteredItems(
+  items: SettingEntry[],
+  configManager: ConfigManager | null,
+): SettingEntry[] {
+  return items.filter(entry => {
+    if (entry.setting.key === 'controlPlane.host') {
+      return configManager?.get('controlPlane.hostMode') === 'custom';
+    }
+    if (entry.setting.key === 'httpListener.host') {
+      return configManager?.get('httpListener.hostMode') === 'custom';
+    }
+    if (entry.setting.key === 'web.host') {
+      return configManager?.get('web.hostMode') === 'custom';
+    }
+    return true;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// refreshEntryValues, re-reads currentValue/isDefault for all loaded entries
+// ---------------------------------------------------------------------------
+
+export function refreshEntryValues(
+  groups: Map<SettingsCategory, SettingEntry[]>,
+  configManager: ConfigManager,
+): void {
+  refreshSettingsPolicyAvailability(groups, configManager);
+  for (const entries of groups.values()) {
+    for (const entry of entries) {
+      if (entry.kind === 'host') {
+        refreshHostSettingEntry(entry, configManager);
+        continue;
+      }
+      // worktree.setup.* read through a defensive array-normalizing helper (see worktree-setup-config.ts).
+      if (isWorktreeSetupListConfigKey(entry.setting.key)) {
+        entry.currentValue = readWorktreeSetupList(configManager, entry.setting.key);
+        entry.isDefault = (entry.currentValue as string[]).length === 0;
+        continue;
+      }
+      // sandbox.* list leaves normalize an unset undefined to [] (see sandbox-exec-config.ts).
+      if (isSandboxExecListConfigKey(entry.setting.key)) {
+        entry.currentValue = readSandboxExecList(configManager, entry.setting.key);
+        entry.isDefault = (entry.currentValue as string[]).length === 0;
+        continue;
+      }
+      // permissions.execEnvScrubAllowlist: same array-normalizing read (see exec-env-scrub-config.ts).
+      if (isExecEnvScrubAllowlistConfigKey(entry.setting.key)) {
+        entry.currentValue = readExecEnvScrubAllowlist(configManager);
+        entry.isDefault = (entry.currentValue as string[]).length === 0;
+        continue;
+      }
+      // 'memory' has no DEFAULT_CONFIG entry, its synthetic leaves read defensively below.
+      if (entry.setting.key === MEMORY_PROJECTION_DIR_CONFIG_KEY) {
+        const refreshed = buildMemoryProjectionDirSyntheticEntry(configManager);
+        entry.currentValue = refreshed.currentValue; entry.isDefault = refreshed.isDefault;
+        continue;
+      }
+      // memory.showProvenance: same 'memory'-has-no-DEFAULT_CONFIG trap, read defensively.
+      if (entry.setting.key === (MEMORY_SHOW_PROVENANCE_CONFIG_KEY as ConfigKey)) {
+        const refreshed = buildMemoryProvenanceSyntheticEntry(configManager);
+        entry.currentValue = refreshed.currentValue; entry.isDefault = refreshed.isDefault;
+        continue;
+      }
+      // payments.* synthetic sub-keys (card material + addresses, see
+      // payments-config.ts): real configManager-backed now, but still
+      // defensively normalized (undefined -> '') the same way the initial
+      // build does, so isDefault stays consistent between build and refresh.
+      if (isPaymentsSyntheticConfigKey(entry.setting.key)) {
+        refreshPaymentsSyntheticEntry(entry, configManager);
+        continue;
+      }
+      const raw = configManager.get(entry.setting.key as ConfigKey);
+      // Synthetic entries that have no SDK schema key return undefined from
+      // configManager; the schema-driven entries above already normalize on
+      // their own read paths, so the raw value is used as-is here.
+      entry.currentValue = raw;
+      entry.isDefault = deepEqual(entry.currentValue, entry.setting.default);
+      refreshHostSettingEntry(entry, configManager);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// updateEntryForKey, updates a single setting entry after a value change
+// ---------------------------------------------------------------------------
+
+export function updateEntryForKey(
+  groups: Map<SettingsCategory, SettingEntry[]>,
+  key: string,
+  configManager: ConfigManager,
+): void {
+  for (const entries of groups.values()) {
+    const entry = entries.find((candidate) => candidate.setting.key === key);
+    if (entry) {
+      if (entry.kind === 'host') {
+        refreshHostSettingEntry(entry, configManager);
+        continue;
+      }
+      if (key === MEMORY_PROJECTION_DIR_CONFIG_KEY) {
+        const refreshed = buildMemoryProjectionDirSyntheticEntry(configManager);
+        entry.currentValue = refreshed.currentValue; entry.isDefault = refreshed.isDefault;
+        continue;
+      }
+      if (key === (MEMORY_SHOW_PROVENANCE_CONFIG_KEY as ConfigKey)) {
+        const refreshed = buildMemoryProvenanceSyntheticEntry(configManager);
+        entry.currentValue = refreshed.currentValue; entry.isDefault = refreshed.isDefault;
+        continue;
+      }
+      if (isPaymentsSyntheticConfigKey(key)) {
+        refreshPaymentsSyntheticEntry(entry, configManager);
+        continue;
+      }
+      if (isSandboxExecListConfigKey(entry.setting.key)) {
+        entry.currentValue = readSandboxExecList(configManager, entry.setting.key);
+        entry.isDefault = (entry.currentValue as string[]).length === 0;
+        continue;
+      }
+      if (isExecEnvScrubAllowlistConfigKey(entry.setting.key)) {
+        entry.currentValue = readExecEnvScrubAllowlist(configManager);
+        entry.isDefault = (entry.currentValue as string[]).length === 0;
+        continue;
+      }
+      const raw = configManager.get(entry.setting.key);
+      entry.currentValue = raw;
+      entry.isDefault = deepEqual(entry.currentValue, entry.setting.default);
+      refreshHostSettingEntry(entry, configManager);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Ranked settings search (see settings-modal-search.ts)
+// ---------------------------------------------------------------------------
+
+export { fuzzyScoreSettingEntry, searchSettingEntries } from './settings-modal-search.ts';
+// ---------------------------------------------------------------------------
+// Re-export SubscriptionEntry for convenience
+// ---------------------------------------------------------------------------
+
+export type { SubscriptionEntry } from './settings-modal-types.ts';
+export type { SubscriptionManager };
+export type { ServiceInspectionQuery };

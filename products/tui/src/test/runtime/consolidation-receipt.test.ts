@@ -1,0 +1,65 @@
+import { describe, expect, test } from 'bun:test';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { FeatureAnnouncementStore } from '@goodvibes-jev/engine/sdk/platform/runtime/feature-announcements';
+import type { MemoryConsolidationRunReceipt } from '@goodvibes-jev/engine/sdk/platform/state';
+import { formatConsolidationReceipt } from '@goodvibes-jev/engine/sdk/platform/state';
+import { consumeDaemonAttachNotices } from '../../runtime/daemon-attach-notices.ts';
+import { makeProjectTempDir } from '../helpers/project-temp.ts';
+
+// ---------------------------------------------------------------------------
+// STEP 7, memory-consolidation receipts arriving through the attach-time queue
+// render as one-line notices like every other receipt.
+// ---------------------------------------------------------------------------
+
+function receipt(partial: Partial<MemoryConsolidationRunReceipt>): MemoryConsolidationRunReceipt {
+  return {
+    runId: 'run-1',
+    ranAt: new Date().toISOString(),
+    trigger: 'idle',
+    idle: true,
+    scanned: 42,
+    merged: [],
+    archived: [],
+    decayed: [],
+    proposed: [],
+    usageSignalAvailable: false,
+    note: '',
+    ...partial,
+  } as MemoryConsolidationRunReceipt;
+}
+
+describe('consolidation receipt through the attach-time queue (STEP 7)', () => {
+  test('a seeded consolidation receipt renders as a one-line attach notice, once', () => {
+    const dir = makeProjectTempDir('gv-consolidation');
+    try {
+      const storePath = join(dir, 'announcements.json');
+      // The scheduler's onReceipt records the formatted line into the file-backed
+      // attach-time queue.
+      const writer = new FeatureAnnouncementStore(storePath);
+      const text = formatConsolidationReceipt(receipt({ merged: [{}] as never, runId: 'run-xyz' }))!;
+      writer.record('run-xyz', text);
+
+      // On attach, a surface drains the SAME queue (a fresh store at the same
+      // path), the consolidation line comes out as a one-line notice, exactly
+      // like a crash/update/migration receipt does.
+      const reader = new FeatureAnnouncementStore(storePath);
+      const notices = consumeDaemonAttachNotices({
+        configManager: { getControlPlaneConfigDir: () => dir } as never,
+        collectReceipts: () => [],
+        announcementStore: reader,
+      });
+      expect(notices).toContain('Memory consolidation: 1 merged (scanned 42).');
+
+      // Exactly once: a second attach with nothing new shows nothing.
+      const second = consumeDaemonAttachNotices({
+        configManager: { getControlPlaneConfigDir: () => dir } as never,
+        collectReceipts: () => [],
+        announcementStore: new FeatureAnnouncementStore(storePath),
+      });
+      expect(second).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

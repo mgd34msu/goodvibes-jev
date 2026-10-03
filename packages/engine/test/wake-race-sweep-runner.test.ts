@@ -153,7 +153,8 @@ test('cancellation reaps the child and prevents the next suite even if it exits 
   suite(root, 'b-must-not-start', recordPaths(root, 'unexpected-paths'));
   const result = await run(root);
   expect(result.code, result.output).toBe(1);
-  expect(result.output).toContain('interrupted by SIGTERM');
+  expect(result.output).toContain('goodvibes: test runner received SIGTERM; ending its owned suite');
+  expect(result.output).toContain('FAIL  test/a-cancel.test.ts: interrupted: test runner received SIGTERM; ending its owned suite');
   expect(existsSync(join(root, 'unexpected-paths'))).toBe(false);
   expectCleaned(root, 'cancel-paths');
 }, 15_000);
