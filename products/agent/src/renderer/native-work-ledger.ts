@@ -1,7 +1,7 @@
 import type { NativeWorkLedgerState } from '../runtime/native-work-ledger.ts';
 
 /** Plain terminal text only; ledger content never becomes an action or terminal escape. */
-const safe = (text: string): string => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ');
+const safe = (text: string): string => text.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, ' ');
 export function nativeWorkLedgerLines(state: NativeWorkLedgerState): string[] {
   const lines = ['Native work ledger · read only'];
   if (state.status !== 'ready') return [...lines, `${state.status}: ${safe(state.reason)}`];
@@ -31,6 +31,20 @@ export function nativeWorkLedgerLines(state: NativeWorkLedgerState): string[] {
   }
   lines.push('Durable history (read only; no execution authority)');
   for (const event of state.history) {
+    if (event.type === 'import_legacy') {
+      lines.push(`#${event.sequence} import_legacy · ${event.works.length} work records · ${event.manifest ? `${event.manifest.sources.length} preserved sources` : 'protected source provenance'}`,
+        `  Actor ${safe(event.actorId)} · request ${safe(event.requestId)}`);
+      for (const work of event.works) lines.push(`  Work ${safe(work.id)} r${work.revision} · ${safe(work.title)} · reported ${work.reportedState} · imported unverified`);
+      if (!event.manifest) { lines.push('  Protected legacy provenance requires read:knowledge authorization.'); continue; }
+      lines.push(`  Legacy preparation ${safe(event.manifest.digest)} · historical approval is not execution authority`);
+      for (const entity of event.manifest.entities) {
+        lines.push(`  Legacy ${entity.kind} ${safe(entity.id)} · ${entity.fragments.length} source fragments`);
+        for (const fragment of entity.fragments) lines.push(`    Source ${safe(fragment.sourceId)} ${safe(fragment.pointer)}`);
+      }
+      for (const source of event.manifest.sources) lines.push(`  Preserved source ${safe(String(source.source.id))} · generation ${safe(source.generation)} · ${safe(JSON.stringify(source.source))}`);
+      for (const link of event.manifest.links) lines.push(`  Link ${safe(link.from)} · ${safe(link.relation)} · ${safe(link.to)}`);
+      continue;
+    }
     lines.push(`#${event.sequence} ${event.type} · work ${safe(event.workId)} r${event.work.revision} · criteria r${event.work.criteriaRevision} · attempt ${safe(event.attemptId ?? 'none')}`);
     lines.push(`  Actor ${safe(event.actorId)} · request ${safe(event.requestId)} · reported ${event.work.reportedState}`,
       `  Intent: ${safe(event.work.goal)}`);

@@ -88,9 +88,9 @@ test('subscribe before snapshot and cursor history recovers coalesced changes', 
 test('snapshot and history remain detached authoritative reads', async () => {
   const f = fixture(); const client = f.bind(); await f.create();
   const snapshot = await client.readSnapshot(); snapshot.works[0]!.work.title = 'changed';
-  const history = await client.history(0); history[0]!.work.title = 'changed';
+  const history = await client.history(0); const first = history[0]!; if (first.type === 'import_legacy') throw new Error('Unexpected import'); first.work.title = 'changed';
   expect((await client.readSnapshot()).works[0]?.work.title).toBe('Task');
-  expect((await client.history(0))[0]?.work.title).toBe('Task');
+  expect((await client.history(0))[0]).toMatchObject({ work: { title: 'Task' } });
   client.dispose(); await f.owner.service.close();
 });
 

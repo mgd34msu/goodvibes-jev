@@ -115649,6 +115649,13 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
               "minimum": 0,
               "maximum": 9007199254740991
             },
+            "provenance": {
+              "type": "string",
+              "enum": [
+                "available",
+                "requires_read_knowledge"
+              ]
+            },
             "hasMore": {
               "type": "boolean"
             },
@@ -115656,108 +115663,45 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
               "maxItems": 100,
               "type": "array",
               "items": {
-                "type": "object",
-                "properties": {
-                  "sequence": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "type": {
-                    "type": "string",
-                    "enum": [
-                      "create",
-                      "revise",
-                      "claim",
-                      "report",
-                      "release",
-                      "handoff",
-                      "cancel",
-                      "reopen",
-                      "record_evidence"
-                    ]
-                  },
-                  "actorId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 200
-                  },
-                  "requestId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 200
-                  },
-                  "workId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 200
-                  },
-                  "attemptId": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 200
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "at": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "work": {
+                "anyOf": [
+                  {
                     "type": "object",
                     "properties": {
-                      "id": {
+                      "sequence": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "create",
+                          "revise",
+                          "claim",
+                          "report",
+                          "release",
+                          "handoff",
+                          "cancel",
+                          "reopen",
+                          "record_evidence"
+                        ]
+                      },
+                      "actorId": {
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 200
                       },
-                      "title": {
+                      "requestId": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 20000
+                        "maxLength": 200
                       },
-                      "goal": {
+                      "workId": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 20000
+                        "maxLength": 200
                       },
-                      "criteria": {
-                        "minItems": 1,
-                        "maxItems": 100,
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 20000
-                        }
-                      },
-                      "revision": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      "criteriaRevision": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      "reportedState": {
-                        "type": "string",
-                        "enum": [
-                          "pending",
-                          "in_progress",
-                          "blocked",
-                          "complete",
-                          "cancelled"
-                        ]
-                      },
-                      "currentAttemptId": {
+                      "attemptId": {
                         "anyOf": [
                           {
                             "type": "string",
@@ -115769,130 +115713,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                           }
                         ]
                       },
-                      "createdAt": {
+                      "at": {
                         "type": "integer",
                         "minimum": 0,
                         "maximum": 9007199254740991
                       },
-                      "updatedAt": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      }
-                    },
-                    "required": [
-                      "id",
-                      "title",
-                      "goal",
-                      "criteria",
-                      "revision",
-                      "criteriaRevision",
-                      "reportedState",
-                      "currentAttemptId",
-                      "createdAt",
-                      "updatedAt"
-                    ],
-                    "additionalProperties": false
-                  },
-                  "attempts": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 200
-                        },
-                        "workId": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 200
-                        },
-                        "predecessorId": {
-                          "anyOf": [
-                            {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 200
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "ownerId": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 200
-                        },
-                        "revision": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "state": {
-                          "type": "string",
-                          "enum": [
-                            "active",
-                            "complete",
-                            "released",
-                            "cancelled"
-                          ]
-                        },
-                        "report": {
-                          "anyOf": [
-                            {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 20000
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "blocker": {
-                          "anyOf": [
-                            {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 20000
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "createdAt": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "updatedAt": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "workId",
-                        "predecessorId",
-                        "ownerId",
-                        "revision",
-                        "state",
-                        "report",
-                        "blocker",
-                        "createdAt",
-                        "updatedAt"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "evidence": {
-                    "anyOf": [
-                      {
+                      "work": {
                         "type": "object",
                         "properties": {
                           "id": {
@@ -115900,140 +115726,64 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             "minLength": 1,
                             "maxLength": 200
                           },
-                          "target": {
-                            "type": "object",
-                            "properties": {
-                              "workId": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 200
-                              },
-                              "workRevision": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 9007199254740991
-                              },
-                              "criteriaRevision": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 9007199254740991
-                              },
-                              "attemptId": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 200
-                              },
-                              "attemptRevision": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 9007199254740991
-                              }
-                            },
-                            "required": [
-                              "workId",
-                              "workRevision",
-                              "criteriaRevision",
-                              "attemptId",
-                              "attemptRevision"
-                            ],
-                            "additionalProperties": false
-                          },
-                          "outcome": {
-                            "type": "string",
-                            "enum": [
-                              "verified",
-                              "failed",
-                              "unavailable"
-                            ]
-                          },
-                          "reason": {
+                          "title": {
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 20000
                           },
-                          "references": {
-                            "maxItems": 100,
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "enum": [
-                                    "decision",
-                                    "artifact",
-                                    "test",
-                                    "commit"
-                                  ]
-                                },
-                                "ref": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 20000
-                                },
-                                "digest": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 200
-                                }
-                              },
-                              "required": [
-                                "kind",
-                                "ref"
-                              ],
-                              "additionalProperties": false
-                            }
-                          },
-                          "source": {
-                            "type": "string",
-                            "enum": [
-                              "host_check",
-                              "judgment"
-                            ]
-                          },
-                          "criteriaResults": {
-                            "maxItems": 100,
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "properties": {
-                                "criterionIndex": {
-                                  "type": "integer",
-                                  "minimum": 0,
-                                  "maximum": 9007199254740991
-                                },
-                                "status": {
-                                  "type": "string",
-                                  "enum": [
-                                    "satisfied",
-                                    "unsatisfied",
-                                    "unknown"
-                                  ]
-                                },
-                                "references": {
-                                  "maxItems": 100,
-                                  "type": "array",
-                                  "items": {
-                                    "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": 20000
-                                  }
-                                }
-                              },
-                              "required": [
-                                "criterionIndex",
-                                "status",
-                                "references"
-                              ],
-                              "additionalProperties": false
-                            }
-                          },
-                          "actorId": {
+                          "goal": {
                             "type": "string",
                             "minLength": 1,
-                            "maxLength": 200
+                            "maxLength": 20000
                           },
-                          "at": {
+                          "criteria": {
+                            "minItems": 1,
+                            "maxItems": 100,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 20000
+                            }
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "criteriaRevision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "reportedState": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "in_progress",
+                              "blocked",
+                              "complete",
+                              "cancelled"
+                            ]
+                          },
+                          "currentAttemptId": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "updatedAt": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991
@@ -116041,49 +115791,457 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         },
                         "required": [
                           "id",
-                          "target",
-                          "outcome",
-                          "reason",
-                          "references",
-                          "source",
-                          "criteriaResults",
-                          "actorId",
-                          "at"
+                          "title",
+                          "goal",
+                          "criteria",
+                          "revision",
+                          "criteriaRevision",
+                          "reportedState",
+                          "currentAttemptId",
+                          "createdAt",
+                          "updatedAt"
                         ],
                         "additionalProperties": false
                       },
-                      {
-                        "type": "null"
+                      "attempts": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "workId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "predecessorId": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "ownerId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "complete",
+                                "released",
+                                "cancelled"
+                              ]
+                            },
+                            "report": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 20000
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "blocker": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 20000
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "createdAt": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "updatedAt": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "workId",
+                            "predecessorId",
+                            "ownerId",
+                            "revision",
+                            "state",
+                            "report",
+                            "blocker",
+                            "createdAt",
+                            "updatedAt"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "evidence": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "target": {
+                                "type": "object",
+                                "properties": {
+                                  "workId": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "workRevision": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "criteriaRevision": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "attemptId": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "attemptRevision": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "workId",
+                                  "workRevision",
+                                  "criteriaRevision",
+                                  "attemptId",
+                                  "attemptRevision"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "verified",
+                                  "failed",
+                                  "unavailable"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 20000
+                              },
+                              "references": {
+                                "maxItems": 100,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "decision",
+                                        "artifact",
+                                        "test",
+                                        "commit"
+                                      ]
+                                    },
+                                    "ref": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 20000
+                                    },
+                                    "digest": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "ref"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "source": {
+                                "type": "string",
+                                "enum": [
+                                  "host_check",
+                                  "judgment"
+                                ]
+                              },
+                              "criteriaResults": {
+                                "maxItems": 100,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "criterionIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "status": {
+                                      "type": "string",
+                                      "enum": [
+                                        "satisfied",
+                                        "unsatisfied",
+                                        "unknown"
+                                      ]
+                                    },
+                                    "references": {
+                                      "maxItems": 100,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 20000
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "criterionIndex",
+                                    "status",
+                                    "references"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "actorId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "at": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "target",
+                              "outcome",
+                              "reason",
+                              "references",
+                              "source",
+                              "criteriaResults",
+                              "actorId",
+                              "at"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "reason": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 20000
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
-                    ]
+                    },
+                    "required": [
+                      "sequence",
+                      "type",
+                      "actorId",
+                      "requestId",
+                      "workId",
+                      "attemptId",
+                      "at",
+                      "work",
+                      "attempts",
+                      "evidence",
+                      "reason"
+                    ],
+                    "additionalProperties": false
                   },
-                  "reason": {
-                    "anyOf": [
-                      {
+                  {
+                    "type": "object",
+                    "properties": {
+                      "sequence": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "import_legacy"
+                        ]
+                      },
+                      "actorId": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 20000
+                        "maxLength": 200
                       },
-                      {
-                        "type": "null"
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "at": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "manifest": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "additionalProperties": true
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "works": {
+                        "maxItems": 5000,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 20000
+                            },
+                            "goal": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 20000
+                            },
+                            "criteria": {
+                              "minItems": 1,
+                              "maxItems": 100,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 20000
+                              }
+                            },
+                            "revision": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "criteriaRevision": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "reportedState": {
+                              "type": "string",
+                              "enum": [
+                                "pending",
+                                "in_progress",
+                                "blocked",
+                                "complete",
+                                "cancelled"
+                              ]
+                            },
+                            "currentAttemptId": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "createdAt": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "updatedAt": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "title",
+                            "goal",
+                            "criteria",
+                            "revision",
+                            "criteriaRevision",
+                            "reportedState",
+                            "currentAttemptId",
+                            "createdAt",
+                            "updatedAt"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "provenance": {
+                        "type": "string",
+                        "enum": [
+                          "requires_read_knowledge"
+                        ]
                       }
-                    ]
+                    },
+                    "required": [
+                      "sequence",
+                      "type",
+                      "actorId",
+                      "requestId",
+                      "at",
+                      "manifest",
+                      "works"
+                    ],
+                    "additionalProperties": false
                   }
-                },
-                "required": [
-                  "sequence",
-                  "type",
-                  "actorId",
-                  "requestId",
-                  "workId",
-                  "attemptId",
-                  "at",
-                  "work",
-                  "attempts",
-                  "evidence",
-                  "reason"
-                ],
-                "additionalProperties": false
+                ]
               }
             }
           },
@@ -116096,6 +116254,820 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
             "events"
           ],
           "additionalProperties": false
+        },
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
+      },
+      {
+        "id": "workLedger.importLegacy",
+        "title": "Import Legacy Work Atomically",
+        "description": "Import one reviewed versioned legacy manifest with durable exact-request replay. Preserves source records, grants no execution or verification authority.",
+        "category": "work-ledger",
+        "source": "builtin",
+        "access": "admin",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "write:work-ledger-import",
+          "read:knowledge"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/work-ledger/legacy-import"
+        },
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "requestId",
+            "expectedRevision",
+            "manifest"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "import_legacy"
+              ]
+            },
+            "requestId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "expectedRevision": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "manifest": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "accepted"
+                  ]
+                },
+                "replayed": {
+                  "type": "boolean"
+                },
+                "event": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "sequence": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "create",
+                            "revise",
+                            "claim",
+                            "report",
+                            "release",
+                            "handoff",
+                            "cancel",
+                            "reopen",
+                            "record_evidence"
+                          ]
+                        },
+                        "actorId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "requestId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "workId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "attemptId": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "at": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "work": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 20000
+                            },
+                            "goal": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 20000
+                            },
+                            "criteria": {
+                              "minItems": 1,
+                              "maxItems": 100,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 20000
+                              }
+                            },
+                            "revision": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "criteriaRevision": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "reportedState": {
+                              "type": "string",
+                              "enum": [
+                                "pending",
+                                "in_progress",
+                                "blocked",
+                                "complete",
+                                "cancelled"
+                              ]
+                            },
+                            "currentAttemptId": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "createdAt": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "updatedAt": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "title",
+                            "goal",
+                            "criteria",
+                            "revision",
+                            "criteriaRevision",
+                            "reportedState",
+                            "currentAttemptId",
+                            "createdAt",
+                            "updatedAt"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "attempts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "workId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "predecessorId": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "ownerId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "revision": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "state": {
+                                "type": "string",
+                                "enum": [
+                                  "active",
+                                  "complete",
+                                  "released",
+                                  "cancelled"
+                                ]
+                              },
+                              "report": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 20000
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "blocker": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 20000
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "updatedAt": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "workId",
+                              "predecessorId",
+                              "ownerId",
+                              "revision",
+                              "state",
+                              "report",
+                              "blocker",
+                              "createdAt",
+                              "updatedAt"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "evidence": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "target": {
+                                  "type": "object",
+                                  "properties": {
+                                    "workId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "workRevision": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "criteriaRevision": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "attemptId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "attemptRevision": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "workId",
+                                    "workRevision",
+                                    "criteriaRevision",
+                                    "attemptId",
+                                    "attemptRevision"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "verified",
+                                    "failed",
+                                    "unavailable"
+                                  ]
+                                },
+                                "reason": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 20000
+                                },
+                                "references": {
+                                  "maxItems": 100,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                          "decision",
+                                          "artifact",
+                                          "test",
+                                          "commit"
+                                        ]
+                                      },
+                                      "ref": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 20000
+                                      },
+                                      "digest": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "ref"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "source": {
+                                  "type": "string",
+                                  "enum": [
+                                    "host_check",
+                                    "judgment"
+                                  ]
+                                },
+                                "criteriaResults": {
+                                  "maxItems": 100,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "criterionIndex": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "status": {
+                                        "type": "string",
+                                        "enum": [
+                                          "satisfied",
+                                          "unsatisfied",
+                                          "unknown"
+                                        ]
+                                      },
+                                      "references": {
+                                        "maxItems": 100,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 20000
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "criterionIndex",
+                                      "status",
+                                      "references"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "actorId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "at": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "target",
+                                "outcome",
+                                "reason",
+                                "references",
+                                "source",
+                                "criteriaResults",
+                                "actorId",
+                                "at"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 20000
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "sequence",
+                        "type",
+                        "actorId",
+                        "requestId",
+                        "workId",
+                        "attemptId",
+                        "at",
+                        "work",
+                        "attempts",
+                        "evidence",
+                        "reason"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "sequence": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "import_legacy"
+                          ]
+                        },
+                        "actorId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "requestId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "at": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "manifest": {
+                          "type": "object",
+                          "additionalProperties": true
+                        },
+                        "works": {
+                          "maxItems": 5000,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "title": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 20000
+                              },
+                              "goal": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 20000
+                              },
+                              "criteria": {
+                                "minItems": 1,
+                                "maxItems": 100,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 20000
+                                }
+                              },
+                              "revision": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "criteriaRevision": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "reportedState": {
+                                "type": "string",
+                                "enum": [
+                                  "pending",
+                                  "in_progress",
+                                  "blocked",
+                                  "complete",
+                                  "cancelled"
+                                ]
+                              },
+                              "currentAttemptId": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "updatedAt": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "title",
+                              "goal",
+                              "criteria",
+                              "revision",
+                              "criteriaRevision",
+                              "reportedState",
+                              "currentAttemptId",
+                              "createdAt",
+                              "updatedAt"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "sequence",
+                        "type",
+                        "actorId",
+                        "requestId",
+                        "at",
+                        "manifest",
+                        "works"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "replayed",
+                "event"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "rejected"
+                  ]
+                },
+                "code": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "revision": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "code",
+                "reason",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "indeterminate"
+                  ]
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "actorId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "requestId",
+                "actorId",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
+      },
+      {
+        "id": "workLedger.prepareLegacyImport",
+        "title": "Prepare Legacy Work Import",
+        "description": "Capture bounded complete legacy sources on the selected authoritative host. Preparation does not write or grant execution authority.",
+        "category": "work-ledger",
+        "source": "builtin",
+        "access": "admin",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "write:work-ledger-import",
+          "read:knowledge"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/work-ledger/legacy-import/prepare"
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "projectId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "sourceIds": {
+              "minItems": 1,
+              "maxItems": 500,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            }
+          },
+          "required": [
+            "projectId",
+            "sourceIds"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "prepared"
+                  ]
+                },
+                "manifest": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "required": [
+                "kind",
+                "manifest"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "blocked"
+                  ]
+                },
+                "code": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "code",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          ]
         },
         "invokable": true,
         "metadata": {
@@ -116153,6 +117125,13 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991
+            },
+            "provenance": {
+              "type": "string",
+              "enum": [
+                "available",
+                "requires_read_knowledge"
+              ]
             },
             "works": {
               "type": "array",
@@ -119437,10 +120416,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       }
     ],
     "schemaCoverage": {
-      "methods": 516,
-      "typedInputs": 516,
+      "methods": 518,
+      "typedInputs": 518,
       "genericInputs": 0,
-      "typedOutputs": 516,
+      "typedOutputs": 518,
       "genericOutputs": 0
     },
     "eventCoverage": {
@@ -119449,8 +120428,8 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       "withWireEvents": 34
     },
     "validationCoverage": {
-      "methods": 516,
-      "validated": 508,
+      "methods": 518,
+      "validated": 510,
       "skippedGeneric": 0,
       "skippedUntyped": 8
     }

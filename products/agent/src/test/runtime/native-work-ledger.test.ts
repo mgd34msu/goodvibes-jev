@@ -5,7 +5,7 @@ import { nativeWorkLedgerLines } from '../../renderer/native-work-ledger.ts';
 import type { WorkLedgerReadClient, WorkLedgerReadSnapshot, WorkLedgerEvent } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
 const flush = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); };
 const snapshot = (cursor = 0, projectId = 'p'): WorkLedgerReadSnapshot => ({ projectId, revision: cursor, cursor, works: [] });
-const event = (sequence: number): WorkLedgerEvent => ({ sequence, type: 'create', actorId: 'owner', requestId: `r${sequence}`, workId: 'work-stable', attemptId: null, at: 1, attempts: [], evidence: null, reason: null, work: { id: 'work-stable', title: 'Ship', goal: 'Working feature', criteria: ['Tests pass'], revision: sequence, criteriaRevision: 1, reportedState: 'complete', currentAttemptId: null, createdAt: 1, updatedAt: 1 } });
+const event = (sequence: number): Exclude<WorkLedgerEvent, { type: 'import_legacy' }> => ({ sequence, type: 'create', actorId: 'owner', requestId: `r${sequence}`, workId: 'work-stable', attemptId: null, at: 1, attempts: [], evidence: null, reason: null, work: { id: 'work-stable', title: 'Ship', goal: 'Working feature', criteria: ['Tests pass'], revision: sequence, criteriaRevision: 1, reportedState: 'complete', currentAttemptId: null, createdAt: 1, updatedAt: 1 } });
 function fixture() {
   const calls: string[] = []; let listener: (s: WorkLedgerReadSnapshot) => void = () => {};
   let current = snapshot(); let history: readonly WorkLedgerEvent[] = [];

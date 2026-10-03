@@ -53,7 +53,7 @@ test('native owner uses one lazy project storage and exposes no actor authority 
   expect('issueActor' in fx.owner.service).toBe(false);
   const accepted = await fx.owner.service.execute(command, fx.actor);
   expect(accepted).toMatchObject({ kind: 'accepted', replayed: false });
-  if (accepted.kind === 'accepted') expect(accepted.event.workId).toMatch(/^work:[0-9a-f-]{36}$/);
+  if (accepted.kind === 'accepted' && accepted.event.type !== 'import_legacy') expect(accepted.event.workId).toMatch(/^work:[0-9a-f-]{36}$/);
   expect((await fx.owner.service.readSnapshot(fx.actor)).revision).toBe(1);
   expect(await fx.owner.service.history(0, fx.actor)).toHaveLength(1);
   expect(fx.events.filter(event => event.startsWith('open:'))).toEqual([`open:${projectId}`]);

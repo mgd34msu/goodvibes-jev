@@ -1,6 +1,7 @@
+import { readKnowledgeSourceSnapshot } from './store-source-generation.js';
 import type { SQLiteStore, SqlDatabase } from '../state/sqlite-store.js';
 import { createEmptyWorkLedgerState } from '../workflow/work-ledger/service.js';
-import { workLedgerStateSchema, type WorkLedgerDecision, type WorkLedgerState, type WorkLedgerStorage } from '../workflow/work-ledger/types.js';
+import { workLedgerStateSchema, type WorkLedgerDecision, type WorkLedgerState, type WorkLedgerStorage, type WorkLedgerTransactionContext } from '../workflow/work-ledger/types.js';
 
 export interface KnowledgeWorkLedgerStorage extends WorkLedgerStorage {
   /** Stop observations/admissions and drain admitted storage work. Does not close KnowledgeStore. */
@@ -58,10 +59,10 @@ export function createKnowledgeWorkLedgerStorage(sqlite: SQLiteStore, projectId:
       if (closed) return Promise.reject(new Error('Work ledger storage is closed'));
       return track(Promise.resolve().then(() => sqlite.readPersisted(db => readLedger(db, projectId))));
     },
-    transaction<T>(decide: (current: unknown) => WorkLedgerDecision<T>): Promise<T> {
+    transaction<T>(decide: (current: unknown, context?: WorkLedgerTransactionContext) => WorkLedgerDecision<T>): Promise<T> {
       if (closed) return Promise.reject(new Error('Work ledger storage is closed'));
       return track(sqlite.transactPersisted(db => {
-        const decision = decide(readLedger(db, projectId));
+        const decision = decide(readLedger(db, projectId), { readSource: id => readKnowledgeSourceSnapshot(db, { id }) });
         if (decision && typeof (decision as unknown as { then?: unknown }).then === 'function') {
           if (decision instanceof Promise) void decision.catch(() => {});
           throw new TypeError('Work ledger decision must be synchronous');
