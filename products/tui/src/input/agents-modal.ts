@@ -137,6 +137,7 @@ export class AgentsModal implements SurfaceModal {
   onClose(): void {
     this.closed = true;
     this.deps.spawn?.cancel();
+    this.deps.acts?.cancelPick();
     for (const unsub of this.unsubs) unsub();
     this.unsubs.length = 0;
     if (this.tickTimer !== null) clearInterval(this.tickTimer);
@@ -219,7 +220,9 @@ export class AgentsModal implements SurfaceModal {
     if (entries.length === 0) return;
     const current = entries.findIndex((entry) => this.entryId(entry) === this.selectedId);
     const next = Math.max(0, Math.min(entries.length - 1, (current < 0 ? 0 : current) + delta));
-    this.selectedId = this.entryId(entries[next]!);
+    const nextId = this.entryId(entries[next]!);
+    if (nextId !== this.selectedId) this.deps.acts?.cancelPick();
+    this.selectedId = nextId;
     this.follow = false;
   }
 
@@ -230,11 +233,15 @@ export class AgentsModal implements SurfaceModal {
       if (!isRunningProcessState(row.node.state)) continue;
       if (!best || (row.node.startedAt ?? 0) >= (best.node.startedAt ?? 0)) best = row;
     }
-    if (best) this.selectedId = best.node.id;
+    if (best) {
+      if (best.node.id !== this.selectedId) this.deps.acts?.cancelPick();
+      this.selectedId = best.node.id;
+    }
   }
 
   /** Select a specific process (a deep link from a notification, the work plan, /agents --target). */
   reveal(target: ViewTarget): boolean {
+    this.deps.acts?.cancelPick();
     const rows = this.deps.readModel.getSnapshot().rows;
     // A tool target (the keybindings modal's Tools tab) names a tool, not a
     // process: select the first process whose current step is that tool.
@@ -258,6 +265,7 @@ export class AgentsModal implements SurfaceModal {
 
   /** Open the hosted session's full view (after /hosted new or attach). */
   showHosted(): void {
+    this.deps.acts?.cancelPick();
     this.view = 'active';
     this.selectedId = HOSTED_ID;
     this.hostedFull = this.hostedAttached();
@@ -416,6 +424,7 @@ export class AgentsModal implements SurfaceModal {
     // Discovery owns no visible picker yet; Escape must invalidate it even
     // when another sub-level (filter/query/tab) consumes this key.
     if (!this.deps.spawn?.spawnModeActive()) this.deps.spawn?.cancel();
+    if (!this.deps.acts?.pickModeActive()) this.deps.acts?.cancelPick();
     if (this.steer) { this.steer = null; return true; }
     if (this.deps.acts?.observedSteerActive()) { this.deps.acts.handleObservedSteerInput('escape'); return true; }
     if (this.deps.acts?.pickModeActive()) { this.deps.acts.handlePickInput('escape'); return true; }
@@ -452,12 +461,15 @@ export class AgentsModal implements SurfaceModal {
       else if (name === 'pageup') this.move(-10);
       else if (name === 'pagedown') this.move(10);
       else if (name === 'enter') this.openFull(host);
-      else if (isTextBackspace(name) && this.query) this.query = this.query.slice(0, -1);
+      else if (isTextBackspace(name) && this.query) { this.deps.acts?.cancelPick(); this.query = this.query.slice(0, -1); }
       return;
     }
     if (token.type !== 'text' || token.value.length !== 1) return;
     this.status = null;
     const node = this.selectedNode();
+    // A newer list navigation or competing interaction owns the surface now.
+    // The active picker was handled above; this only revokes a pending list read.
+    if ('/sjknDbfvaA[]'.includes(token.value)) this.deps.acts?.cancelPick();
     switch (token.value) {
       case '/': this.filtering = true; break;
       case 'j': this.move(1); break;
@@ -492,13 +504,14 @@ export class AgentsModal implements SurfaceModal {
 
   private handleFilterToken(token: InputToken): void {
     if (token.type === 'text') {
+      this.deps.acts?.cancelPick();
       this.query += [...token.value].filter((ch) => ch >= ' ').join('');
       this.selectedId = null;
       return;
     }
     if (token.type !== 'key') return;
     const name = token.logicalName ?? '';
-    if (isTextBackspace(name)) { this.query = this.query.slice(0, -1); return; }
+    if (isTextBackspace(name)) { this.deps.acts?.cancelPick(); this.query = this.query.slice(0, -1); return; }
     if (name === 'enter') { this.filtering = false; return; }
     if (name === 'up' || name === 'down') { this.filtering = false; this.move(name === 'up' ? -1 : 1); }
   }
