@@ -7,6 +7,7 @@
 export * from './batteries/index.ts';
 export * from './readings/index.ts';
 export * from './port/types.ts';
+export * from './autonomy/index.ts';
 export { isPinnedJudgmentModel, validEndpointURL } from './port/endpoint-validation.ts';
 export { estimateTokens, LIMITS } from './port/limits.ts';
 export { NONE } from './batteries/decision.ts';
