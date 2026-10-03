@@ -5,6 +5,7 @@
  * locally. This is one of the four surfaces named in the A2 brief.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { PermissionManager, createPermissionConfigReader, forgetReadSecrets } from '@goodvibes-jev/engine/sdk/platform/permissions';
@@ -48,9 +49,31 @@ function registryWithWriteTool(): ToolRegistry {
 }
 
 describe('agent-policy-explanation: approval posture agreement', () => {
-  test('autoApprove=true, mode=prompt (the reproduced A2 bug): explanation posture honestly says auto-approve is on', () => {
+  let previous: ReturnType<typeof installJudgmentPort>;
+  beforeEach(() => { previous = installJudgmentPort(fakePort((name, question) => {
+    if (name !== 'kind') throw new Error(`Unexpected classification question: ${name}`);
+    return choiceAnswer(question, 'write', 0.99);
+  }).port); });
+  afterEach(() => { installJudgmentPort(previous); });
+  test('an uncertain category stays explicitly unevaluated and cannot imply approval', async () => {
+    installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, 'read', 0.4)).port);
+    const result = await explainAgentPolicyDecision(fakeContext({}), registryWithWriteTool(), { toolName: 'write' });
+    expect(result.status).toBe('found');
+    if (result.status !== 'found') throw new Error('Expected explanation');
+    expect(result.explanation).toMatchObject({
+      status: 'held', categoryConfident: false,
+      preflight: { approvedWithoutMoreInput: false, permissionOutcome: 'unknown', permissionEvaluated: false },
+    });
+  });
+
+  test('unavailable category judgment propagates instead of manufacturing an explanation', async () => {
+    installJudgmentPort(undefined);
+    await expect(explainAgentPolicyDecision(fakeContext({}), registryWithWriteTool(), { toolName: 'write' })).rejects.toThrow('judgment port');
+  });
+
+  test('autoApprove=true, mode=prompt (the reproduced A2 bug): explanation posture honestly says auto-approve is on', async () => {
     const context = fakeContext({ 'behavior.autoApprove': true, 'permissions.mode': 'prompt' });
-    const resolved = explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
+    const resolved = await explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
 
     expect(resolved.status).toBe('found');
     if (resolved.status !== 'found') return;
@@ -72,9 +95,9 @@ describe('agent-policy-explanation: approval posture agreement', () => {
     expect(resolved.explanation.status).toBe('held');
   });
 
-  test('default posture: a write is unevaluated while posture says Ask before powerful actions', () => {
+  test('default posture: a write is unevaluated while posture says Ask before powerful actions', async () => {
     const context = fakeContext({ 'behavior.autoApprove': false, 'permissions.mode': 'prompt' });
-    const resolved = explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
+    const resolved = await explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
 
     expect(resolved.status).toBe('found');
     if (resolved.status !== 'found') return;
@@ -84,9 +107,9 @@ describe('agent-policy-explanation: approval posture agreement', () => {
     expect(resolved.explanation.status).toBe('held');
   });
 
-  test('allow-all mode, autoApprove=false: posture exposes automatic approvals and the critical-stakes exception', () => {
+  test('allow-all mode, autoApprove=false: posture exposes automatic approvals and the critical-stakes exception', async () => {
     const context = fakeContext({ 'behavior.autoApprove': false, 'permissions.mode': 'allow-all' });
-    const resolved = explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
+    const resolved = await explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
 
     expect(resolved.status).toBe('found');
     if (resolved.status !== 'found') return;
@@ -99,9 +122,9 @@ describe('agent-policy-explanation: approval posture agreement', () => {
     expect(posture.detail).toContain('critical calls still ask');
   });
 
-  test('plan mode: configuration is observable without predicting an unexamined write', () => {
+  test('plan mode: configuration is observable without predicting an unexamined write', async () => {
     const context = fakeContext({ 'behavior.autoApprove': false, 'permissions.mode': 'plan' });
-    const resolved = explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
+    const resolved = await explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
 
     expect(resolved.status).toBe('found');
     if (resolved.status !== 'found') return;
@@ -116,9 +139,9 @@ describe('agent-policy-explanation: approval posture agreement', () => {
     expect(resolved.explanation.status).toBe('held');
   });
 
-  test('accept-edits mode: scoped allowance does not predict approval of an unexamined write', () => {
+  test('accept-edits mode: scoped allowance does not predict approval of an unexamined write', async () => {
     const context = fakeContext({ 'behavior.autoApprove': false, 'permissions.mode': 'accept-edits' });
-    const resolved = explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
+    const resolved = await explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });
 
     expect(resolved.status).toBe('found');
     if (resolved.status !== 'found') return;
@@ -205,12 +228,15 @@ describe('policy explain never substitutes configuration for a live gate decisio
         definition: { name: call.tool, description: 'Synthetic gate fixture', parameters: { type: 'object', additionalProperties: true } },
         execute: async () => { executions.push(call.tool); return { success: true, output: '' }; },
       });
-      const result = explainAgentPolicyDecision(fakeContext(values), registry, { toolName: call.tool, toolArgs: call.args });
+      const result = await explainAgentPolicyDecision(fakeContext(values), registry, { toolName: call.tool, toolArgs: call.args });
       expect(result.status).toBe('found');
       if (result.status !== 'found') throw new Error('Expected an explanation');
       // Serialization is part of the consumer-facing contract, not just prose.
       const body = JSON.parse(JSON.stringify(result.explanation));
-      expect(fixture.requests).toHaveLength(0);
+      expect(fixture.requests).toHaveLength(1);
+      expect(Object.keys(fixture.requests[0]!.questions)).toEqual(['kind']);
+      expect(fixture.requests[0]!.context?.site).toBe('agent.policy-explanation.category');
+      expect(body.categoryConfident).toBe(true);
       expect(prompts).toHaveLength(0);
       expect(executions).toHaveLength(0);
       const actual = await manager.checkDetailed(call.tool, call.args);

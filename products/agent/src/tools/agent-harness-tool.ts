@@ -156,6 +156,14 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           .slice(0, 5);
         return error(`Unknown agent_harness mode: ${String(args.mode)}. ${suggestions.length > 0 ? `Closest modes: ${suggestions.join(', ')}. ` : ''}Use mode:"modes" to list the full catalog.`);
       }
+      // Judgment stays pending or rejects with its typed outcome; the generic
+      // harness display catch must not turn unavailable judgment into tool text.
+      if (args.mode === 'policy_explain') {
+        const resolved = await explainAgentPolicyDecision(deps.commandContext, deps.toolRegistry, args, signal);
+        if (resolved.status === 'found') return output(resolved.explanation);
+        if (resolved.status === 'ambiguous') return error(`Ambiguous policy explanation target ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
+        return error(resolved.usage);
+      }
       try {
         if (args.mode === 'summary') {
           const channelReadiness = channelReadinessCatalogStatus(deps.commandContext);
@@ -557,12 +565,6 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           const resolved = describeHarnessSecurityFinding(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.finding);
           if (resolved.status === 'ambiguous') return error(`Ambiguous security finding ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
-          return error(resolved.usage);
-        }
-        if (args.mode === 'policy_explain') {
-          const resolved = explainAgentPolicyDecision(deps.commandContext, deps.toolRegistry, args);
-          if (resolved.status === 'found') return output(resolved.explanation);
-          if (resolved.status === 'ambiguous') return error(`Ambiguous policy explanation target ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
         if (args.mode === 'support_bundles') return output(supportBundleSummary(args));

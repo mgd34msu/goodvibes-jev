@@ -117,7 +117,7 @@ export function createAgentSecurityTool(deps: AgentSecurityToolDeps): Tool {
       sideEffects: [],
       concurrency: 'parallel',
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs: unknown, options) => {
       const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentSecurityToolArgs;
       const action = readAction(args);
       if (!action) return error('Unknown security action. Use action:"status" or action:"explain".');
@@ -125,7 +125,7 @@ export function createAgentSecurityTool(deps: AgentSecurityToolDeps): Tool {
       if (action === 'status') return harnessTool.execute(statusArgs(args));
       if (action === 'finding') return harnessTool.execute(findingArgs(args));
       if (action === 'explain') {
-        const resolved = explainAgentPolicyDecision(deps.commandContext, deps.toolRegistry, args);
+        const resolved = await explainAgentPolicyDecision(deps.commandContext, deps.toolRegistry, args, options?.signal);
         if (resolved.status === 'found') return output(resolved.explanation);
         if (resolved.status === 'ambiguous') return error(`Ambiguous security policy target ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
         return error(resolved.usage);
