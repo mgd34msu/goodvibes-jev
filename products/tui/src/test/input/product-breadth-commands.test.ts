@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { SurfaceModalHost } from '../../input/surface-modal-host.ts';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { CommandRegistry } from '../../input/command-registry.ts';
 import type { CommandContext } from '../../input/command-registry.ts';
@@ -39,6 +39,8 @@ import {
 } from '../helpers/runtime-services.ts';
 import { trackDisposables } from '../helpers/disposables.ts';
 import { makeTestShellViews } from '../helpers/shell-views.ts';
+import { makeProjectTempDir, PROJECT_TEST_TMP_ROOT } from '../helpers/project-temp.ts';
+import { registeredTempDirs } from '../helpers/temp-registry.ts';
 
 // Stop the shared test runtime graph when this file ends. Called here, not
 // registered inside the helper, for the reason its doc comment gives.
@@ -58,7 +60,6 @@ let productRemoteRunnerRegistry: RemoteRunnerRegistry;
 let productRemoteSupervisor: RemoteSupervisor;
 let localUserAuthManager: UserAuthManager;
 let runtimeServices: RuntimeServices;
-const TEST_TMP_ROOT = join(import.meta.dir, '../../../.tmp-tests');
 
 function createProductFeatureFlags() {
   const featureFlags = createFeatureFlagManager();
@@ -100,8 +101,7 @@ describe('product breadth commands', () => {
       delete process.env[key];
     }
     resetTestRuntimeServices();
-    mkdirSync(TEST_TMP_ROOT, { recursive: true });
-    root = mkdtempSync(join(TEST_TMP_ROOT, 'gv-product-commands-'));
+    root = makeProjectTempDir('gv-product-commands');
     process.env.HOME = root;
     process.chdir(root);
     localUserAuthManager = new UserAuthManager({
@@ -152,6 +152,11 @@ describe('product breadth commands', () => {
         delete process.env[key];
       }
     }
+  });
+
+  test('the fixture root belongs to post-teardown owned cleanup', () => {
+    expect(dirname(root)).toBe(PROJECT_TEST_TMP_ROOT);
+    expect(registeredTempDirs()).toContain(root);
   });
 
   function makeContext(out: string[]): CommandContext {
