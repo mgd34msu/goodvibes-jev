@@ -571,12 +571,47 @@ function preferLiveProviderRecord(
   return current;
 }
 
-export async function externalMemoryLiveProviderRecords(context: CommandContext): Promise<readonly MemoryExternalProviderLiveRecord[]> {
+/**
+ * The legacy snapshot sources expose no cancellation contract. Stop waiting on
+ * abort, but keep both handlers attached to observe eventual settlement. This
+ * does not stop the source's I/O; the caller discards its result and starts no
+ * subsequent snapshot. Remove the abort listener on every settlement path.
+ */
+function awaitExternalProviderSnapshot(work: Promise<unknown>, signal?: AbortSignal): Promise<unknown> {
+  if (!signal) return work;
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => {
+      signal.removeEventListener('abort', onAbort);
+      reject(signal.reason);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        if (signal.aborted) reject(signal.reason);
+        else resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(signal.aborted ? signal.reason : error);
+      },
+    );
+    if (signal.aborted) onAbort();
+  });
+}
+
+export async function externalMemoryLiveProviderRecords(
+  context: CommandContext,
+  options: { readonly signal?: AbortSignal } = {},
+): Promise<readonly MemoryExternalProviderLiveRecord[]> {
   const byProvider = new Map<string, MemoryExternalProviderLiveRecord>();
+  options.signal?.throwIfAborted();
   for (const entry of externalMemoryReadModelSources(context)) {
+    options.signal?.throwIfAborted();
     if (entry.source === undefined || entry.source === null) continue;
     try {
-      const snapshot = await readExternalProviderSnapshot(entry.source);
+      const snapshot = await awaitExternalProviderSnapshot(readExternalProviderSnapshot(entry.source), options.signal);
+      options.signal?.throwIfAborted();
       for (const value of externalProviderRecordsFromSnapshot(snapshot)) {
         const record = normalizeExternalProviderLiveRecord(value, entry.path);
         if (!record) continue;
@@ -584,6 +619,7 @@ export async function externalMemoryLiveProviderRecords(context: CommandContext)
         byProvider.set(record.providerId, current ? preferLiveProviderRecord(current, record) : record);
       }
     } catch {
+      options.signal?.throwIfAborted();
       // A broken host read model should not make Agent-local memory posture disappear.
     }
   }
