@@ -69,6 +69,8 @@ export interface ConfigModalTab {
 
 /** The whole surface view for one render tick. */
 export interface ConfigModalView {
+  /** Security boundary: changed identity immediately discards frozen host data. */
+  readonly bindingIdentity?: string;
   /** Live title (may change tick-to-tick; not structural). */
   readonly title: string;
   readonly tabs: readonly ConfigModalTab[];

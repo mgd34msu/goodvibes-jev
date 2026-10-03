@@ -1,3 +1,4 @@
+import { createNativeWorkLedgerHost, registerNativeWorkLedgerCommand } from './native-work-ledger-host.ts';
 import { join } from 'node:path';
 import { readBudgetAlertUsd, BUDGET_ALERT_USD_DEFAULT } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { refreshMemoryRecallSnapshot } from './orchestrator-core-services.ts';
@@ -48,6 +49,7 @@ export interface BootstrapShellState {
 }
 
 export interface BootstrapShellOptions {
+  readonly daemonHomeDirectory?: string;
   readonly configManager: ConfigManager;
   readonly runtimeBus: RuntimeEventBus;
   readonly runtimeStore: RuntimeStore;
@@ -171,7 +173,9 @@ export function createBootstrapShell(options: BootstrapShellOptions): BootstrapS
   }
 
   let commandContextRef: CommandContext | null = null;
+  const nativeWorkLedgerHost = createNativeWorkLedgerHost({ configManager, ...(options.daemonHomeDirectory ? { daemonHomeDirectory: options.daemonHomeDirectory } : {}), homeDirectory: uiServices.environment.shellPaths.homeDirectory, workspace: () => services.workingDirectory });
   const views = createShellViews({
+    nativeWorkLedgerSelection: nativeWorkLedgerHost.readSelection,
     providerRegistry: services.providerRegistry,
     uiServices,
     toolRegistry,
@@ -209,6 +213,7 @@ export function createBootstrapShell(options: BootstrapShellOptions): BootstrapS
 
   const commandRegistry = new CommandRegistry();
   registerBuiltinCommands(commandRegistry);
+  registerNativeWorkLedgerCommand(commandRegistry, nativeWorkLedgerHost.selectProject, nativeWorkLedgerHost.discoverProject);
   const remoteRuntime = createShellRemoteCommandService({
     readModels: uiServices.readModels,
     remoteRunnerRegistry: services.remoteRunnerRegistry,

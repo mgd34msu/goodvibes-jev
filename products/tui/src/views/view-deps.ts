@@ -1,3 +1,4 @@
+import type { NativeWorkLedgerSelectionReader } from '../runtime/native-work-ledger.ts';
 /**
  * view-deps.ts, what the built-in modals and views are built from.
  *
@@ -21,6 +22,7 @@ import type { UiRuntimeServices } from '../runtime/ui-services.ts';
 import type { PluginsModalManager } from './modals/plugins-modal.ts';
 
 export interface BuiltinViewDeps {
+  readonly nativeWorkLedgerSelection?: NativeWorkLedgerSelectionReader;
   readonly providerRegistry: ProviderRegistry;
   readonly uiServices: UiRuntimeServices;
   readonly toolRegistry?: ToolRegistry;

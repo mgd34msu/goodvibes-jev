@@ -422,6 +422,11 @@ export class ConfigModal {
     this.lastWrapWidth = labelWrapWidth;
     if (this.active && !this.interactedSinceOpen) this.syncStructure();
     const live = this.surface?.buildView() ?? null;
+    if (live && live.bindingIdentity !== this.frozenView?.bindingIdentity) {
+      this.frozenView = this._applyFilter(live);
+      this.statusMessage = ''; this.pendingConfirmKey = null; this.scrollOffset = 0;
+      this.selectedRowId = '';
+    }
     const frozen = this.frozenView;
     if (!frozen) {
       return { title: '', tabs: [], header: [], rows: [], hints: [], confirmPending: false, scroll: { offset: 0, total: 0, visible: this.visibleRows }, search: { query: this.filterQuery, matched: 0, total: 0 } };

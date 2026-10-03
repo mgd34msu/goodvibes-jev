@@ -280,6 +280,7 @@ export async function bootstrapRuntime(
   // session-pointer-surface.ts).
   const writeSessionPointer = bindWriteLastSessionPointerToSurface(services.surface);
   const shell = createBootstrapShell({
+    ...(options.daemonHomeDirectory ? { daemonHomeDirectory: options.daemonHomeDirectory } : {}),
     configManager,
     runtimeBus,
     runtimeStore: store,

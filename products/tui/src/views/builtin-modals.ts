@@ -1,3 +1,4 @@
+import { createNativeWorkLedgerModalSurface } from './modals/native-work-ledger-modal.ts';
 import type { ModalSurfaceRegistry } from './modal-surface-registry.ts';
 import type { ResolvedBuiltinViewDeps } from './view-deps.ts';
 import type { ConfigModalSurface, ConfigModalView } from '../input/config-modal-types.ts';
@@ -49,6 +50,8 @@ export function registerBuiltinModals(
   openMaskedEntry: (kind: 'add-user' | 'rotate-password', username?: string) => void,
 ): void {
   const ui = deps.uiServices;
+  manager.registerModalSurface(createNativeWorkLedgerModalSurface(deps.nativeWorkLedgerSelection ?? (() => ({ available: false, identity: 'unwired', reason: 'No authenticated native work host selected.' }))));
+  manager.registerModalRedirect('work', 'native-work-ledger-modal');
 
   // ── Providers & Connectivity ─────────────────────────────────────────────────
   manager.registerModalSurface(createServicesModalSurface(deps.serviceRegistry, deps.subscriptionManager));
@@ -194,6 +197,8 @@ export function registerBuiltinModals(
 function buildPairingConnectionInfo(deps: ResolvedBuiltinViewDeps): PairingModalConnectionInfo | null {
   try {
     const ui = deps.uiServices;
+  manager.registerModalSurface(createNativeWorkLedgerModalSurface(deps.nativeWorkLedgerSelection ?? (() => ({ available: false, identity: 'unwired', reason: 'No authenticated native work host selected.' }))));
+  manager.registerModalRedirect('work', 'native-work-ledger-modal');
     const configManager = deps.configManager;
     // Freeze a stable web origin once (never clobbering a user-set value).
     const webOrigin = ensurePublicBaseUrl(configManager);
