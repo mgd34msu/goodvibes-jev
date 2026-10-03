@@ -33,6 +33,7 @@ interface Authority {
   readonly assertView: () => Promise<void>;
   revoked: boolean;
   readonly reads: Set<string>;
+  readonly readAssertions: Set<() => Promise<void>>;
 }
 const admissions = new WeakMap<Contract, Admission>();
 const authorities = new WeakMap<ContractInputAuthority, Authority>();
@@ -119,6 +120,7 @@ export async function createContractInputAuthority(
     signal: options.signal,
     revoked: false,
     reads: new Set(),
+    readAssertions: new Set(),
   });
   capturedRoots.add(view);
   return token;
@@ -197,6 +199,10 @@ export async function assertContractInputAuthority(
 export function contractInputAuthorityRoot(token: ContractInputAuthority): string {
   return stateOf(token).root;
 }
+/** Original construction-owned provenance; this accessor grants no read permission. */
+export function contractInputAuthoritySourceRoot(token: ContractInputAuthority): string {
+  return stateOf(token).admission.receipt.sourceRoot;
+}
 export function contractInputAuthorityMutable(token: ContractInputAuthority): boolean {
   return stateOf(token).mutable;
 }
@@ -256,6 +262,11 @@ export async function authorizeContractInputPath(
 }
 
 /** Includes initial map provenance before the Agent's own tool readset exists. */
+export function registerContractInputReadAssertion(token: ContractInputAuthority, assertion: () => Promise<void>): void {
+  if (typeof assertion !== 'function') throw new Error('captured read assertion must be construction-owned code');
+  stateOf(token).readAssertions.add(assertion);
+}
+
 export async function assertContractInputReadAccess(
   token: ContractInputAuthority,
   filter: ReadAccessFilter | undefined,
@@ -263,6 +274,12 @@ export async function assertContractInputReadAccess(
 ): Promise<void> {
   if (!filter) throw new Error('captured input requires original-owner read authorization');
   for (const path of stateOf(token).reads) await authorizeContractInputPath(token, path, filter, signal);
+  for (const assertion of [...stateOf(token).readAssertions]) {
+    signal?.throwIfAborted();
+    await assertion();
+    stateOf(token);
+  }
+  signal?.throwIfAborted();
 }
 
 /** Denial-only boundary for ordinary tools encountering retained captured paths. */
