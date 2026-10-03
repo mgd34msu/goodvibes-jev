@@ -295,7 +295,7 @@ describe('cache-vs-cold equivalence', () => {
     assertCacheMatchesCold(cm);
   });
 
-  test('a tool call that completes while sibling calls in the same turn are still pending shows done immediately, not a stale pending glyph', () => {
+  test.each([true, false])('a tool call that completes while sibling calls in the same turn are still pending shows done immediately, not a stale pending glyph (unicode=%s)', (unicodeCapable) => {
     // Regression: the cache used to key an assistant message's pending state
     // on a single aggregate boolean ("does ANY call still lack a result").
     // With 3 calls, after only the first result arrives the aggregate is
@@ -304,6 +304,9 @@ describe('cache-vs-cold equivalence', () => {
     // 1 kept showing the pending glyph (◌) instead of flipping to done (✓)
     // until the LAST of the three results arrived.
     const cm = new ConversationManager(() => 100);
+    cm.setUnicodeCapable(unicodeCapable);
+    const doneGlyph = unicodeCapable ? '✓' : '*';
+    const pendingGlyphs = unicodeCapable ? '◐◓◑◒' : 'oO';
     cm.addUserMessage('run three tools');
     cm.addAssistantMessage('running now', {
       toolCalls: [
@@ -326,8 +329,8 @@ describe('cache-vs-cold equivalence', () => {
         .map((l) => l.map((c) => c.char).join(''))
         .filter((t) => /\.ts/.test(t));
       return {
-        done: beadRows.filter((t) => t[3] === '✓').length,
-        pending: beadRows.filter((t) => '◐◓◑◒'.includes(t[3] ?? ' ')).length,
+        done: beadRows.filter((t) => t[3] === doneGlyph).length,
+        pending: beadRows.filter((t) => pendingGlyphs.includes(t[3] ?? ' ')).length,
       };
     };
 

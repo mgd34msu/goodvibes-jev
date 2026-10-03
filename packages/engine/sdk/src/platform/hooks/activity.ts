@@ -3,6 +3,9 @@ import type { HookEvent, HookResult, HookType } from './types.js';
 export interface HookActivityRecord {
   readonly timestamp: number;
   readonly path: string;
+  readonly sessionId?: string | undefined;
+  readonly turnId?: string | undefined;
+  readonly code?: HookResult['code'] | undefined;
   readonly specific: string;
   readonly pattern: string;
   readonly hookName: string;
@@ -28,11 +31,15 @@ export class HookActivityTracker {
       result: HookResult;
       durationMs: number;
       async: boolean;
+      turnId?: string | undefined;
     },
   ): void {
     this.records.unshift({
       timestamp: Date.now(),
       path: event.path,
+      sessionId: event.sessionId,
+      turnId: params.turnId,
+      code: params.result.code,
       specific: event.specific,
       pattern: params.pattern,
       hookName: params.hookName ?? '(unnamed)',

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { enum as enumSchema, strictObject, string } from 'zod/v4';
 import {
   workLedgerCommandSchema, workLedgerStateSchema, WorkLedgerAccessError,
   type LedgerAttempt, type LedgerWork, type WorkEvidenceTarget,
@@ -9,10 +9,10 @@ import {
   type WorkLedgerStorage, type WorkLedgerView,
 } from './types.js';
 
-const identitySchema = z.strictObject({
-  actorId: z.string().min(1).max(200),
-  projectId: z.string().min(1).max(200),
-  role: z.enum(['coordinator', 'worker', 'verifier']),
+const identitySchema = strictObject({
+  actorId: string().min(1).max(200),
+  projectId: string().min(1).max(200),
+  role: enumSchema(['coordinator', 'worker', 'verifier']),
 });
 
 export function createEmptyWorkLedgerState(projectId: string): WorkLedgerState {
@@ -68,7 +68,7 @@ function readState(input: unknown, projectId: string): WorkLedgerState {
       || (event.type === 'record_evidence' && !equal(event.work, prior))) {
       throw new Error('Inconsistent work ledger event or receipt');
     }
-    const signature = z.strictObject({ role: identitySchema.shape.role, command: workLedgerCommandSchema }).parse(JSON.parse(receipt.signature));
+    const signature = strictObject({ role: identitySchema.shape.role, command: workLedgerCommandSchema }).parse(JSON.parse(receipt.signature));
     const command = signature.command;
     if (JSON.stringify(signature) !== receipt.signature || command.requestId !== event.requestId
       || command.type !== event.type || command.expectedRevision !== index

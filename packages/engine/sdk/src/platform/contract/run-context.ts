@@ -15,6 +15,7 @@ import type { OrchestrationEngine } from '../orchestration/engine.js';
 import type { AgentRecord } from '../tools/agent/index.js';
 import type { ContractPreSpawn, ContractUnitOutcome } from '../orchestration/phase-runner.js';
 import { summarizeError } from '../utils/error-display.js';
+import { OwnedWork } from '../utils/owned-work.js';
 import type { ContractHoldOutcome } from './agent-hooks.js';
 import type { ContractConfig } from './config.js';
 import type { ContractTurnRecord } from './evidence.js';
@@ -136,6 +137,10 @@ export interface RunControl {
 }
 
 export class ContractRun {
+  /** Real planning, checking, routing and completion work, including cleanup. */
+  readonly work = new OwnedWork();
+  /** An owned invocation cannot accept an engine without real work drainage. */
+  requireSettlement = false;
   /** The contract's orchestration engine, once its plan is accepted. */
   engine: OrchestrationEngine | null = null;
   /** Aborted when the contract ends: shaping, planning and waits for the shared tree stop. */
@@ -165,7 +170,7 @@ export class ContractRun {
   }
 
   get terminal(): boolean {
-    return isTerminalContractStatus(this.contract.status);
+    return isTerminalContractStatus(this.contract.status) || this.abort.signal.aborted;
   }
 
   /** A deep copy, for callers outside the runner. */

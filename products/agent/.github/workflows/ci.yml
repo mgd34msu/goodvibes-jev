@@ -1,0 +1,260 @@
+name: CI
+
+# Per-push CI: the checks that catch a regression in behavior, on every push
+# and every PR. Each suite runs once.
+#
+#   typecheck      tsc over src/ (tests included), scripts/ and bin/
+#                  (tsconfig.test.json), the import-cycle and layer-boundary
+#                  check, and the workflow structure check
+#   test           one run of the source suite (scripts/run-tests.ts)
+#   build          the linux-x64 binary and the toolchain's banner smoke,
+#                  uploaded so e2e-smoke drives these exact bytes
+#   e2e-smoke      the built binary in a real terminal: startup draws the main
+#                  screen, and a first turn against a scripted model is drawn
+#   package-gate   the SDK-pin agreement, the package.json publish shape, the
+#                  tarball contents, and a `bun add -g` of the packed tarball
+#                  whose installed command launches
+#
+# Release-only checks (the rest of the end-to-end set: daemon drop and
+# re-adoption) live in release-gates.yml. It runs nightly, on demand, and from
+# here before a push that releases. Version stamps, generated docs and workflow
+# pins are rewritten by `bun run release:prepare` at the version bump, never
+# checked per push. See docs/testing-and-validation.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  # cancel-in-progress on PRs only: a push run on main is never auto-cancelled,
+  # so its per-job-green verdict (which release-verify reads by reference) is
+  # never lost to an auto-cancel that later reads as red.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: Type check (source, tests, scripts and bin)
+        run: bun run typecheck:test --pretty false
+      - name: Import cycles and layer boundaries
+        run: bun run architecture:check
+      - name: Workflow structure
+        run: bun run workflows:check
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: Configure git for tests
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@test.com"
+      - name: Run tests
+        run: bun run test
+
+  # ---------------------------------------------------------------------------
+  # build: compile the linux-x64 binary and EXECUTE it through the toolchain's
+  # post-build smoke (version banner, packaging-failure sentinels from
+  # toolchain.config smoke.forbiddenStrings). e2e-smoke and the release gates
+  # drive the bytes it uploads.
+  # ---------------------------------------------------------------------------
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: Build (linux-x64)
+        run: bun run build:linux-x64
+      - name: Compiled binary smoke (banner, sentinels)
+        run: bun run scripts/post-build-smoke.ts --binary dist/goodvibes-agent-linux-x64
+      - name: Upload build output
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-build-linux-x64
+          path: |
+            dist/goodvibes-agent-linux-x64
+            dist/playwright-core
+          if-no-files-found: error
+          retention-days: 1
+
+  # ── The built binary in a real terminal (src/test/e2e): a fresh home with a
+  #    scripted OpenAI-compatible model draws the main screen through the
+  #    production render path, and a typed prompt reaches that model and its
+  #    reply is drawn. The slower scenarios run in release-gates. ────────────
+  e2e-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [build]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: Install tmux (the E2E terminal)
+        run: command -v tmux || (sudo apt-get update -q && sudo apt-get install -y -q tmux)
+      - name: Download build output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ci-build-linux-x64
+          path: dist/
+      - name: Restore executable bit
+        run: chmod +x dist/goodvibes-agent-linux-x64
+      - name: Startup, first turn and the first-start workspace question against the built binary
+        env:
+          GOODVIBES_E2E_BINARY: dist/goodvibes-agent-linux-x64
+        run: bun run test:e2e:fast
+
+  # ---------------------------------------------------------------------------
+  # Package gate: the pre-tag half of the publish path. publish:check runs the
+  # SDK-pin agreement (overlay absent, exact pin, installed == pin, lockfile
+  # resolves the pin, npm-only imports), the package.json publish shape, and the
+  # npm pack dry run against the required and forbidden tarball paths.
+  # package:install-check packs the tarball, installs it with `bun add -g` into
+  # an empty home, and runs the installed command: it caught the 1.12.2 tarball
+  # that shipped without its bundled runtime.
+  # ---------------------------------------------------------------------------
+  package-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: Publish check (SDK pin, package.json shape, tarball contents)
+        run: bun run publish:check
+      - name: Package install check (bun add -g of the packed tarball, then launch)
+        run: bun run package:install-check
+
+  # ── Does this push release? True for a push to main whose package.json
+  #    version has no tag yet: exactly the pushes auto-release tags. The release
+  #    gates and auto-release run only then, so an ordinary push pays for
+  #    neither. ────────────────────────────────────────────────────────────
+  release-intent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    outputs:
+      releasing: ${{ steps.intent.outputs.releasing }}
+      version: ${{ steps.intent.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - name: Is this version untagged?
+        id: intent
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          if git ls-remote --tags origin "refs/tags/v${VERSION}" | grep -q "refs/tags/v${VERSION}"; then
+            echo "v${VERSION} is already tagged; this push does not release."
+            echo "releasing=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v${VERSION} has no tag; this push releases it once every gate is green."
+            echo "releasing=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The release gates for THIS commit, only when it would release.
+  release-gates:
+    needs: [release-intent, build]
+    if: needs.release-intent.outputs.releasing == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-gates.yml
+    with:
+      ci-build-artifact: ci-build-linux-x64
+
+  # ---------------------------------------------------------------------------
+  # Zero-touch release. Runs only after EVERY gating job above is green (its
+  # `needs` covers all of them, including the release gates), and only for a
+  # push to main whose version has no tag yet. It creates the annotated tag at
+  # this SHA and dispatches release.yml at that tag with mode=release.
+  #
+  # Why the dispatch (not just the tag push): a tag pushed with GITHUB_TOKEN does
+  # NOT trigger workflows, so the tag alone would never start release.yml. The
+  # documented exception is that a workflow_dispatch API call made with
+  # GITHUB_TOKEN DOES create a run, so we push the tag (for provenance + the
+  # manual redo path) and then explicitly dispatch the release at that tag ref.
+  # ---------------------------------------------------------------------------
+  auto-release:
+    name: Auto-release (tag + dispatch on green)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.release-intent.outputs.releasing == 'true'
+    needs:
+      - typecheck
+      - test
+      - build
+      - e2e-smoke
+      - package-gate
+      - release-intent
+      - release-gates
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - name: Tag the release and dispatch release.yml (idempotent)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.release-intent.outputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          # A tag existing on the remote only proves a tag was pushed, not that
+          # release.yml ever ran for it: if every dispatch attempt in a prior
+          # run failed after the tag push landed, re-dispatch instead of
+          # treating the tag as done.
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}"; then
+            echo "Tag ${TAG} already exists on origin, checking whether release.yml already ran for it."
+            RUN_COUNT="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?branch=${TAG}&per_page=1" --jq '.workflow_runs | length' || echo "unknown")"
+            case "${RUN_COUNT}" in ''|*[!0-9]*)
+              echo "ERROR: could not determine whether release.yml has run for ${TAG}." >&2
+              exit 1 ;;
+            esac
+            if [ "${RUN_COUNT}" -gt 0 ]; then
+              echo "Found ${RUN_COUNT} release.yml run(s) for ${TAG}; nothing to do."
+              exit 0
+            fi
+            echo "Tag ${TAG} exists but no release.yml run was found for it; re-dispatching."
+          else
+            git config user.name "GoodVibes CI"
+            git config user.email "ci@goodvibes.local"
+            git tag -a "${TAG}" -m "release ${VERSION}" "${SHA}"
+            git push origin "refs/tags/${TAG}"
+            echo "Created and pushed ${TAG} at ${SHA}."
+          fi
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if gh workflow run release.yml --ref "refs/tags/${TAG}" -f mode=release; then
+              echo "Dispatched release.yml for ${TAG} (mode=release)."
+              exit 0
+            fi
+            echo "gh workflow run failed (attempt ${attempt}/8); retrying in 7s…" >&2
+            sleep 7
+          done
+          echo "ERROR: failed to dispatch release.yml for ${TAG} after 8 attempts." >&2
+          exit 1

@@ -176,6 +176,40 @@ describe('the product test runner owns every file through teardown', () => {
     } finally { cleanup(root); }
   });
 
+  test('registered fixture roots survive awaited teardown and are removed only for their owner', () => {
+    const preload = resolve(import.meta.dir, '../preload/temp-cleanup.ts');
+    const helper = resolve(import.meta.dir, '../helpers/project-temp.ts');
+    const root = fixture({
+      'src/test/preload/temp-cleanup.ts': `import ${JSON.stringify(preload)};`,
+      'src/owned.test.ts': `
+        import { afterAll, expect, test } from 'bun:test';
+        import { existsSync, writeFileSync } from 'node:fs';
+        import { join } from 'node:path';
+        import { makeProjectTempDir } from ${JSON.stringify(helper)};
+        const owned = makeProjectTempDir('gv-product-commands');
+        writeFileSync('owned-path', owned);
+        test('owned directory remains live during work', () => expect(existsSync(owned)).toBe(true));
+        afterAll(async () => {
+          await Bun.sleep(50);
+          expect(existsSync(owned)).toBe(true);
+          writeFileSync(join(owned, 'delayed-write'), 'settled');
+          writeFileSync('teardown-complete', 'settled');
+        });
+      `,
+    });
+    const sibling = join(root, '.test-tmp', 'unowned-sibling');
+    mkdirSync(sibling, { recursive: true });
+    writeFileSync(join(sibling, 'kept'), 'sibling');
+    try {
+      const result = run(root, ['owned.test.ts'], { GOODVIBES_TEST_FILE_TIMEOUT_MS: '5000' });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+      expect(readFileSync(join(root, 'teardown-complete'), 'utf8')).toBe('settled');
+      expect(existsSync(readFileSync(join(root, 'owned-path'), 'utf8'))).toBe(false);
+      expect(readFileSync(join(sibling, 'kept'), 'utf8')).toBe('sibling');
+    } finally { cleanup(root); }
+  });
+
   test('fails a successful test that catches a blocked external request', () => {
     const root = fixture({
       'src/network.test.ts': `

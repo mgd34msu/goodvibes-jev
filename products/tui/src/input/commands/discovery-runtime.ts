@@ -3,7 +3,7 @@ import { scan, persistProviders } from '@goodvibes-jev/engine/sdk/platform/disco
 import { requireProviderApi, requireShellPaths } from './runtime-services.ts';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 
-export function registerDiscoveryRuntimeCommands(registry: CommandRegistry): void {
+export function registerDiscoveryRuntimeCommands(registry: CommandRegistry, scanProviders: typeof scan = scan): void {
   registry.register({
     name: 'scan',
     aliases: [],
@@ -12,7 +12,7 @@ export function registerDiscoveryRuntimeCommands(registry: CommandRegistry): voi
       ctx.print('Scanning for local LLM servers...');
       ctx.renderRequest();
 
-      const result = await scan();
+      const result = await scanProviders();
 
       if (result.servers.length === 0) {
         ctx.print(

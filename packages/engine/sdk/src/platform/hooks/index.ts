@@ -1,3 +1,6 @@
+export { TurnHookOwner, bindTurnHookDispatcher } from './turn-ownership.js';
+export type { HookDispatchOptions, HookWorkAdmission, TurnHookDispatcher } from './turn-ownership.js';
+export type { HookExecutionOptions } from './execution.js';
 export { HookDispatcher } from './dispatcher.js';
 export { ChainEngine } from './chain-engine.js';
 export { HookActivityTracker } from './activity.js';
@@ -41,7 +44,7 @@ import { HookActivityTracker } from './activity.js';
 import { HookDispatcher } from './dispatcher.js';
 
 export function createHookDispatcher(config: {
-  readonly agentManager?: Pick<AgentManager, 'spawn' | 'getStatus' | 'cancel'> | undefined;
+  readonly agentManager?: (Pick<AgentManager, 'spawn' | 'getStatus' | 'cancel'> & Partial<Pick<AgentManager, 'spawnOwned'>>) | undefined;
   readonly activityTracker?: HookActivityTracker | undefined;
 } = {}): HookDispatcher {
   return new HookDispatcher(

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 const id = z.string().min(1).max(200);
 const text = z.string().trim().min(1).max(20_000);

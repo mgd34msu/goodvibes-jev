@@ -29,7 +29,7 @@ import type { SystemMessageRouter } from '../core/system-message-router.ts';
 import {
   fireSessionStart, createTaskManager, OpsControlPlane, AcpTaskAdapter,
   emitSessionReady, emitSessionStarted, loadLastConversation, leaveHostedSessionOnExit,
-  scheduleBackgroundMcpDiscovery, startBackgroundProviderRegistration, restoreSavedModel, startExternalServices,
+  scheduleBackgroundMcpDiscovery, restoreSavedModel, startExternalServices,
   type ExternalServicesHandle, type HostServiceStatus, createHttpTransport, createDeferredStartupCoordinator,
 } from '@/runtime/index.ts';
 import { bindWriteLastSessionPointerToSurface } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
@@ -56,6 +56,7 @@ import {
 import { relayReadAccessors } from './relay-reachability-bridge.ts';
 import { startMcpConfigAutoReload } from '../mcp/runtime-reload.ts';
 import { GOODVIBES_TUI_SURFACE_ROOT } from '../config/surface.ts';
+import { registerStartupProviders } from './startup-provider-registration.ts';
 
 type ExternalServiceFactories = NonNullable<Parameters<typeof startExternalServices>[4]>;
 
@@ -144,7 +145,7 @@ export type BootstrapContext = RuntimeContext & {
  *   8. Command registry + plugin init + CommandContext
  *   9. Input handler wiring
  *  10. Input history, splash options
- *  11. Background: provider auto-registration, persisted providers, scan
+ *  11. Provider auto-registration and persisted providers; discovery is explicit
  */
 export async function bootstrapRuntime(
   stdout: NodeJS.WriteStream,
@@ -594,10 +595,9 @@ export async function bootstrapRuntime(
     toolCount,
   };
 
-  // ── Phase 8: Background provider registration (non-blocking) ────────────
-  // These run after the initial render so they don't delay startup.
+  // ── Phase 8: Restore known providers; /scan owns network discovery ──────
 
-  startBackgroundProviderRegistration({
+  registerStartupProviders({
     configManager,
     providerRegistry,
     runtime,

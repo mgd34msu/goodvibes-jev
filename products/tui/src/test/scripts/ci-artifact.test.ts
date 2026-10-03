@@ -108,6 +108,9 @@ test('CI preserves the existing validation build and mandatorily archives its ex
   const upload = steps[validate + 2]!;
   expect(record.name).toBe('Record TUI native artifact provenance');
   expect(record.if).toBe("hashFiles('products/tui/package.json') != ''");
+  // The exact uploaded binary must pass the unchanged boot and namespace-read
+  // guard before provenance can attest to it. Building alone is not a smoke.
+  expect(record.run?.split('\n')[0]).toBe('bun run --cwd products/tui smoke:tui');
   expect(record.run).toContain('ci-artifact.ts record "$GITHUB_SHA" "$TUI_SOURCE_HEAD"');
   expect(record.run).toContain('ci-artifact.ts verify "$GITHUB_SHA" "$TUI_SOURCE_HEAD"');
   expect(record.run).toContain('products/tui/dist/goodvibes-linux-x64');

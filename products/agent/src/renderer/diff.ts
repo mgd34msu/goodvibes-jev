@@ -1,0 +1,169 @@
+import { TerminalBuffer } from './buffer.ts';
+import { type Cell } from '@goodvibes-jev/engine/sdk/platform/types';
+import { type TermColorCaps, downsampleColor, wrapSynced } from '@goodvibes-jev/engine/terminal-shell';
+
+/**
+ * DiffEngine - Generates minimal ANSI updates between two buffers.
+ *
+ * Accepts a TermColorCaps probe result so that color sequences are
+ * downsampled to the terminal's actual capability level (truecolor /
+ * ansi256 / basic16 / none), and frames are wrapped in DEC 2026
+ * synchronized-output markers when supported.
+ */
+export class DiffEngine {
+  private lastFg = '';
+  private lastBg = '';
+  private lastBold = false;
+  private lastDim = false;
+  private lastUnderline = false;
+  private lastItalic = false;
+  private lastStrikethrough = false;
+  private lastLink = '';
+  private caps: TermColorCaps;
+
+  constructor(caps: TermColorCaps = { capability: 'truecolor', syncedOutput: true }) {
+    this.caps = caps;
+  }
+
+  public reset(): void {
+    this.lastFg = '';
+    this.lastBg = '';
+    this.lastBold = false;
+    this.lastDim = false;
+    this.lastUnderline = false;
+    this.lastItalic = false;
+    this.lastStrikethrough = false;
+    this.lastLink = '';
+  }
+
+  public diff(oldBuffer: TerminalBuffer | null, newBuffer: TerminalBuffer): string {
+    let output = '';
+
+    for (let y = 0; y < newBuffer.height; y++) {
+      // Skip rows that were not written in either the old or new buffer.
+      // If neither side touched the row, both must match the prior frame:
+      // old row had no write this frame (clean) and new row is also
+      // clean, so the on-screen content is still correct. No diff needed.
+      const newDirty = newBuffer.dirtyRows[y] ?? false;
+      const oldDirty = oldBuffer ? (oldBuffer.dirtyRows[y] ?? false) : true;
+      if (!newDirty && !oldDirty) continue;
+
+      for (let x = 0; x < newBuffer.width; x++) {
+        const oldCell = oldBuffer?.getCell(x, y);
+        const newCell = newBuffer.cells[y]?.[x];
+        if (!newCell || newCell.char === '') continue;
+
+        if (this.isCellDifferent(oldCell, newCell)) {
+          output += `\x1b[${y + 1};${x + 1}H`;
+          output += this.applyStyles(newCell);
+          output += newCell.char;
+        }
+      }
+    }
+
+    // Close any open OSC 8 hyperlink at end of frame
+    if (this.lastLink) {
+      output += '\x1b]8;;\x1b\\';
+      this.lastLink = '';
+    }
+
+    return wrapSynced(output, this.caps);
+  }
+
+  private isCellDifferent(a: Cell | undefined, b: Cell): boolean {
+    if (!a) return true;
+    return a.char !== b.char || a.fg !== b.fg || a.bg !== b.bg || a.bold !== b.bold || a.dim !== b.dim ||
+      a.underline !== b.underline || a.italic !== b.italic || a.strikethrough !== b.strikethrough ||
+      (a.link ?? '') !== (b.link ?? '');
+  }
+
+  /**
+   * Convert a raw color string (hex or r;g;b) to the "r;g;b" form used for
+   * change-detection against lastFg/lastBg. Palette indices pass through as-is.
+   * Capability downsampling happens in applyStyles via downsampleColor.
+   */
+  private sanitizeColor(color: string): string {
+    if (color.startsWith('#')) {
+      const r = parseInt(color.slice(1, 3), 16);
+      const g = parseInt(color.slice(3, 5), 16);
+      const b = parseInt(color.slice(5, 7), 16);
+      return `${r};${g};${b}`;
+    }
+    return color;
+  }
+
+  private applyStyles(cell: Cell): string {
+    // Normalize hex → r;g;b (for change-detection against lastFg/lastBg)
+    const fg = this.sanitizeColor(cell.fg);
+    const bg = this.sanitizeColor(cell.bg);
+    const link = cell.link ?? '';
+
+    const changed = fg !== this.lastFg || bg !== this.lastBg ||
+      cell.bold !== this.lastBold || cell.dim !== this.lastDim ||
+      cell.underline !== this.lastUnderline || cell.italic !== this.lastItalic ||
+      cell.strikethrough !== this.lastStrikethrough;
+
+    let style = '';
+
+    if (changed) {
+      // Reset all attributes first (only when the terminal renders color/SGR).
+      if (this.caps.capability !== 'none') {
+        style += '\x1b[0m';
+        if (cell.bold) style += '\x1b[1m';
+        if (cell.dim) style += '\x1b[2m';
+        if (cell.italic) style += '\x1b[3m';
+        if (cell.underline) style += '\x1b[4m';
+        if (cell.strikethrough) style += '\x1b[9m';
+      }
+
+      // Foreground color, capability-downsampled (no raw hex leak on a
+      // truecolor-incapable terminal; null → emit nothing).
+      const fgOut = downsampleColor(fg, this.caps, 'fg');
+      if (fgOut !== null) {
+        if (this.caps.capability === 'basic16') {
+          style += `\x1b[${fgOut}m`;
+        } else {
+          const isRgb = fgOut.includes(';');
+          style += isRgb ? `\x1b[38;2;${fgOut}m` : `\x1b[38;5;${fgOut}m`;
+        }
+      }
+
+      // Background color, capability-downsampled
+      const bgOut = downsampleColor(bg, this.caps, 'bg');
+      if (bgOut !== null) {
+        if (this.caps.capability === 'basic16') {
+          style += `\x1b[${bgOut}m`;
+        } else {
+          const isRgb = bgOut.includes(';');
+          style += isRgb ? `\x1b[48;2;${bgOut}m` : `\x1b[48;5;${bgOut}m`;
+        }
+      }
+
+      this.lastFg = fg;
+      this.lastBg = bg;
+      this.lastBold = cell.bold;
+      this.lastDim = cell.dim;
+      this.lastUnderline = cell.underline;
+      this.lastItalic = cell.italic;
+      this.lastStrikethrough = cell.strikethrough;
+    }
+
+    // OSC 8 hyperlink: emit open/close/change sequences only when link changes.
+    // Suppressed in no-color mode (dumb/no-color terminals cannot render them).
+    if (link !== this.lastLink && this.caps.capability !== 'none') {
+      if (link) {
+        // Open new hyperlink (close previous if any was open)
+        style += `\x1b]8;;${link}\x1b\\`;
+      } else {
+        // Close hyperlink
+        style += '\x1b]8;;\x1b\\';
+      }
+      this.lastLink = link;
+    } else if (link !== this.lastLink) {
+      // capability === 'none': track state but emit nothing
+      this.lastLink = link;
+    }
+
+    return style;
+  }
+}

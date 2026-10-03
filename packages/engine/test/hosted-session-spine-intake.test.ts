@@ -47,7 +47,7 @@ interface SpineLog {
   readonly failed: { inputId: string; error: string }[];
 }
 
-function buildSpine(queued: Map<string, { id: string; body: string }[]>): HostedSessionSpine & { log: SpineLog } {
+function buildSpine(queued: Map<string, { id: string; body: string; correlationId?: string }[]>): HostedSessionSpine & { log: SpineLog } {
   const log: SpineLog = { delivered: [], consumed: [], failed: [] };
   return {
     log,
@@ -72,6 +72,60 @@ function buildSpine(queued: Map<string, { id: string; body: string }[]>): Hosted
 }
 
 describe('a delivery that failed is not a delivery that happened', () => {
+  test('captured input correlation survives a collection await and delivery retry', async () => {
+    const input = { id: 'input-1', body: 'answer me', correlationId: 'caller:first' };
+    const spine = buildSpine(new Map([['hosted-1', [input]]]));
+    const mark = spine.markInputDelivered;
+    spine.markInputDelivered = async (...args) => {
+      const result = await mark(...args);
+      input.correlationId = 'later mutation';
+      return result;
+    };
+    const observed: (string | undefined)[] = [];
+    const intake = new HostedSessionSpineIntake({
+      spine, liveSessions: () => [record()], now: () => 1,
+      deliver: async (_sessionId, _body, correlationId) => {
+        observed.push(correlationId);
+        if (observed.length === 1) throw new Error('composition is not ready');
+      },
+    });
+    await intake.tick();
+    await intake.drainDeliveries();
+    await intake.tick();
+    await intake.drainDeliveries();
+    expect(observed).toEqual(['caller:first', 'caller:first']);
+    expect(spine.log.consumed).toEqual(['input-1']);
+  });
+
+  test('each queued input retains its correlation within its own session lane', async () => {
+    const spine = buildSpine(new Map([
+      ['a', [{ id: 'same-id', body: 'same prompt', correlationId: 'a:first' },
+        { id: 'next', body: 'same prompt', correlationId: 'a:next' }]],
+      ['b', [{ id: 'same-id', body: 'same prompt', correlationId: 'b:first' },
+        { id: 'legacy', body: 'uncorrelated' }]],
+    ]));
+    const observed = new Map<string, (string | undefined)[]>();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const intake = new HostedSessionSpineIntake({
+      spine, liveSessions: () => [record('a'), record('b')], now: () => 1,
+      deliver: async (sessionId, _body, correlationId) => {
+        observed.set(sessionId, [...(observed.get(sessionId) ?? []), correlationId]);
+        if (correlationId === 'a:first') await held;
+      },
+    });
+    try {
+      await intake.tick();
+      await intake.tick();
+      expect(observed.get('a')).toEqual(['a:first']);
+      expect(observed.get('b')).toEqual(['b:first', undefined]);
+      release();
+      await intake.drainDeliveries();
+      expect(observed.get('a')).toEqual(['a:first', 'a:next']);
+      expect(spine.log.consumed).toHaveLength(4);
+    } finally { release(); intake.stop(); await intake.drainDeliveries(); }
+  });
+
   test('a transient failure is retried on the next tick and then completes', async () => {
     const queued = new Map([['hosted-1', [{ id: 'input-1', body: 'answer me' }]]]);
     const spine = buildSpine(queued);
