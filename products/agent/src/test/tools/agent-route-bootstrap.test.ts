@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
+import { actionOf, readingsOf, withDecisionLog } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { RuntimeEventBus } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
@@ -43,6 +44,33 @@ test('actual Agent service composition and bootstrap register both consumers aga
       const plan = JSON.parse(result.output!);
       expect(plan).toMatchObject({ status: 'ready', request: query, preferred: { id: 'channel-delivery-boundary', modelRoute: 'channels action:"channel" target:"msteams" includeParameters:true', requiresConfirmation: true }, alternatives: [], routesConsidered: 1, workspaceMatches: [], harnessModeMatches: [] });
     }
+    // Exercise the real registered tools with an uncertain catalog judgment.
+    // Any attempted downstream dispatch fails and is counted.
+    let dispatched = 0;
+    for (const tool of toolRegistry.list()) {
+      if (tool.definition.name === 'route' || tool.definition.name === 'agent_harness') continue;
+      tool.execute = async () => { dispatched++; throw new Error('unauthorized downstream dispatch'); };
+    }
+    const uncertain = taskRoutePort({ [query]: {
+      pick: 'channels', choices: { channelTask: 'send' },
+      named: { channelTarget: 'msteams', modelProvider: 'openrouter' },
+      catalogFits: { document_ops: 0.5 },
+    } });
+    services.judgment.port.ask = withDecisionLog(uncertain.port, services.judgment.decisionLog).ask;
+    for (const name of ['route', 'agent_harness']) {
+      const result = await toolRegistry.execute(`uncertain-${name}`, name, { action: 'plan', mode: 'route_decision', query });
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error(result.error);
+      const plan = JSON.parse(result.output!);
+      expect(plan.status).toBe('uncertain');
+      expect(plan.preferred).toBeUndefined();
+      expect(plan.harnessModeMatches).toBeUndefined();
+      const ranked = plan.judgment.harness.find((entry: { id: string }) => entry.id === 'document_ops');
+      const entry = services.judgment.decisionLog.get(ranked.decisionId)!;
+      expect(readingsOf(entry)).toMatchObject({ candidate: 'document_ops', match: { verdict: 'uncertain', probability: 0.5 } });
+      expect(actionOf(services.judgment.decisionLog.get(plan.judgment.selection.decisionId)!)).toBe('uncertain: no route published');
+    }
+    expect(dispatched).toBe(0);
     expect(judgmentPort('routing.task-route.plan')).toBe(services.judgment.port);
     expect(fake.requests.filter(request => (request.state as { context?: { kind?: string } }).context?.kind === 'model provider')).toHaveLength(2);
     expect(fake.requests.filter(request => (request.state as { context?: { kind?: string } }).context?.kind === 'messaging channel or notification target')).toHaveLength(2);
