@@ -63,7 +63,7 @@ export async function planAgentTaskRoute(
   if (!request) return planTaskRoute(args);
   options.signal?.throwIfAborted();
   const providers = context.provider?.providerRegistry;
-  const memory = externalMemoryProviderCatalog(await externalMemoryLiveProviderRecords(context), externalMemoryReceiptEvidence(context));
+  const memory = externalMemoryProviderCatalog(await externalMemoryLiveProviderRecords(context, options), externalMemoryReceiptEvidence(context));
   options.signal?.throwIfAborted();
   const matchLimit = args.includeParameters === true ? 6 : 3;
   const modes = listHarnessModes({ limit: 1000 }).modes as readonly Record<string, unknown>[];

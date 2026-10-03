@@ -151,6 +151,54 @@ for (const kind of ['route', 'harness'] as const) describe(`${kind} engine task-
     else expect(await pending).toMatchObject({ success: false });
   });
 
+  test.each(['resolve', 'reject'] as const)('abort stops waiting for a live catalog; late %s is discarded and no later source starts', async (late) => {
+    const fake = fixture(); installJudgmentPort(fake.port);
+    let started!: () => void;
+    const began = new Promise<void>(resolve => { started = resolve; });
+    let release!: (value: unknown) => void;
+    let fail!: (error: Error) => void;
+    const snapshot = new Promise<unknown>((resolve, reject) => { release = resolve; fail = reject; });
+    let laterReads = 0;
+    const commandContext = {
+      ...context,
+      platform: { ...context.platform, readModels: {
+        externalMemoryProviders: () => { started(); return snapshot; },
+        memoryProviders: () => { laterReads++; return []; },
+      } },
+    } as unknown as CommandContext;
+    const controller = new AbortController();
+    let settled = false;
+    const pending = caller(kind, undefined, commandContext).execute(args, { signal: controller.signal })
+      .then(value => { settled = true; return value; }, error => { settled = true; return error; });
+    await began; controller.abort();
+    // The regression must finish before releasing the non-cancellable source.
+    for (let tick = 0; tick < 20 && !settled; tick++) await Promise.resolve();
+    expect(settled).toBe(true);
+    const result = await pending;
+    if (kind === 'route') expect(result).toBeInstanceOf(Error);
+    else expect(result).toMatchObject({ success: false });
+    expect(laterReads).toBe(0);
+    expect(fake.requests).toHaveLength(0);
+    if (late === 'resolve') release([{ providerId: 'late-provider', status: 'available' }]);
+    else fail(new Error('late snapshot failure is observed'));
+    await snapshot.catch(() => undefined);
+    for (let tick = 0; tick < 20; tick++) await Promise.resolve();
+    expect(laterReads).toBe(0);
+    expect(fake.requests).toHaveLength(0);
+  });
+
+  test('pre-aborted catalog access starts no source read', async () => {
+    let reads = 0;
+    const commandContext = { ...context, platform: { ...context.platform, readModels: {
+      externalMemoryProviders: () => { reads++; return []; },
+    } } } as unknown as CommandContext;
+    const controller = new AbortController(); controller.abort();
+    const pending = caller(kind, undefined, commandContext).execute(args, { signal: controller.signal });
+    if (kind === 'route') await expect(pending).rejects.toThrow();
+    else expect(await pending).toMatchObject({ success: false });
+    expect(reads).toBe(0);
+  });
+
   test('an already-aborted plan starts no readings or effects', async () => {
     const fake = fixture();
     installJudgmentPort(fake.port);

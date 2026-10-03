@@ -86,3 +86,28 @@ list: 1,157 mapped / 445 unresolved, including 197 retained HOIST rows and 248
 upstream-deleted rows. No upstream-deleted file is marked DROP. Other JEV/HOIST
 obligations, native UI work, PR56, and ledger-to-runner admission are outside
 this change. No command execution or permission policy changed.
+
+## Cancellation review repair (2026-10-03)
+
+Independent review found that an asynchronous external-memory catalog snapshot
+could leave either tool pending after caller cancellation, before the engine
+readings had begun. The adapter now passes its signal into the existing memory
+catalog reader. That reader stops waiting on abort, removes its abort listener,
+checks cancellation before each source and after each snapshot, and rethrows
+cancellation rather than treating it as an ordinary unavailable source.
+
+These legacy snapshot APIs do not expose a cancellation option. This change
+cancels the planning wait, **not the underlying source I/O**. Its eventual result
+or rejection remains observed and discarded, with no subsequent source reads,
+route readings, or successful plan publication after cancellation. The public
+engine named-ID listing is synchronous, so dynamic catalog materialization
+still precedes planning; no keyword gate or heuristic shortlist was added.
+
+Both callers have pre-aborted-source and held-source regressions, including
+late fulfillment and late rejection. The four held-source tests fail with the
+old no-signal planner call (negative-control exit 1) and pass with the repair.
+The final guarded run passed **97 tests, 0 failures, 337 assertions** across the
+route adapter, engine integration, actual bootstrap, mode catalog, and existing
+memory-tool suites. Syntax/unbound and whitespace checks also pass. This repair
+does not change the six successor mappings or reduce unresolved accounting.
+Full type/build/aggregate/CI verification limitations above remain unchanged.
