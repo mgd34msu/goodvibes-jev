@@ -1,3 +1,4 @@
+import { nativeWorkLedgerLines } from './native-work-ledger.ts';
 import type { AgentWorkspace, AgentWorkspaceCategory, AgentWorkspaceLocalEditor, AgentWorkspaceRuntimeSnapshot } from '../input/agent-workspace.ts';
 import { buildAssistantCockpitFromWorkspaceSnapshot, type AssistantCockpitLane, type AssistantCockpitLaneState, type AssistantCockpitStatus } from '../agent/assistant-cockpit.ts';
 import { formatAgentRecordReviewState } from '../agent/record-labels.ts';
@@ -597,6 +598,8 @@ export function snapshotLines(workspace: AgentWorkspace, category: AgentWorkspac
       { text: 'Scheduling requires a confirmed action.', fg: PALETTE.warn },
     );
   } else if (category.id === 'work') {
+    base.push(...nativeWorkLedgerLines(workspace.nativeWorkLedgerState).map(text => ({ text, fg: PALETTE.info })));
+    base.push({ text: 'Legacy operator work and approvals', fg: PALETTE.title, bold: true });
     const processSupervision = snapshot.processSupervision;
     base.push(
       { text: 'Work plans and approvals are read or explicitly confirmed.', fg: PALETTE.info },

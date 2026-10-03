@@ -21,6 +21,14 @@ export interface CommandExecutionPolicy {
 export function describeCommandPolicy(commandName: string): CommandExecutionPolicy {
   const root = commandName.replace(/^\//, '').trim().toLowerCase();
   const confirmation = 'agent_harness mode:"run_command" requires confirm:true and explicitUserRequest for every slash command invocation.';
+  if (root === 'work') {
+    return {
+      effect: 'ui-navigation',
+      confirmation,
+      preferredModelTool: `${agentHarnessModes('run_command')} commandName:"work"`,
+      boundary: '/work [daemon-project-id] opens the native read-only work ledger in the visible Agent workspace. Project discovery, snapshots, history, and live updates use the selected authenticated host and its existing read permissions. Explicit project selection is view-local; this command does not create or mutate work, change credentials, grant trust, or broaden scopes. Host, credential, workspace changes and access revocation invalidate the view.',
+    };
+  }
   if (root === 'agent' || root === 'agent-workspace' || root === 'workspace') {
     return {
       effect: 'ui-navigation',
