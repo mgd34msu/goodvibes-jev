@@ -28,6 +28,7 @@ import { registerQrcodeRuntimeCommands } from './commands/qrcode-runtime.ts';
 import { registerOnboardingRuntimeCommands } from './commands/onboarding-runtime.ts';
 import { registerTtsRuntimeCommands } from './commands/tts-runtime.ts';
 import { registerAgentWorkspaceRuntimeCommands } from './commands/agent-workspace-runtime.ts';
+import { registerLegacyWorkLedgerImportCommands } from './commands/legacy-work-ledger-import-runtime.ts';
 import { registerAgentRuntimeProfileRuntimeCommands } from './commands/agent-runtime-profile-runtime.ts';
 import { registerDelegationRuntimeCommands } from './commands/delegation-runtime.ts';
 import { registerPersonasRuntimeCommands } from './commands/personas-runtime.ts';
@@ -67,6 +68,7 @@ function registerAgentMemoryCommand(registry: CommandRegistry): void {
 export function registerBuiltinCommands(registry: CommandRegistry): void {
   registerShellCoreCommands(registry);
   registerAgentWorkspaceRuntimeCommands(registry);
+  registerLegacyWorkLedgerImportCommands(registry);
   registerBriefRuntimeCommands(registry);
   registerSupportBundleRuntimeCommands(registry);
   registerCompatRuntimeCommands(registry);

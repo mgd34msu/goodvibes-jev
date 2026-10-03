@@ -1,4 +1,5 @@
 import { createNativeWorkLedgerHost, registerNativeWorkLedgerCommand } from './native-work-ledger-host.ts';
+import { registerTuiLegacyImportCommands } from '../input/commands/legacy-work-ledger-import-runtime.ts';
 import { join } from 'node:path';
 import { readBudgetAlertUsd, BUDGET_ALERT_USD_DEFAULT } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { refreshMemoryRecallSnapshot } from './orchestrator-core-services.ts';
@@ -214,6 +215,7 @@ export function createBootstrapShell(options: BootstrapShellOptions): BootstrapS
   const commandRegistry = new CommandRegistry();
   registerBuiltinCommands(commandRegistry);
   registerNativeWorkLedgerCommand(commandRegistry, nativeWorkLedgerHost.selectProject, nativeWorkLedgerHost.discoverProject);
+  registerTuiLegacyImportCommands(commandRegistry, options.daemonHomeDirectory);
   const remoteRuntime = createShellRemoteCommandService({
     readModels: uiServices.readModels,
     remoteRunnerRegistry: services.remoteRunnerRegistry,
