@@ -1,5 +1,5 @@
 import * as LSP from 'vscode-languageserver';
-import * as Parser from 'web-tree-sitter';
+import * as Parser from '@goodvibes-jev/bash-web-tree-sitter';
 export type SourceCommand = {
     range: LSP.Range;
     uri: string | null;
