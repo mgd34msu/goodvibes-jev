@@ -76,41 +76,38 @@ export function stakesFromFacts(facts: GateFacts): Stakes {
   return 'low';
 }
 
-/** How long a string argument may be before the reading shows only its head. */
-const MAX_STRING_CHARS = 4000;
-
-/** Already privacy-checked JSON, with long strings cut to a head and a dropped-length marker. */
-function boundedArguments(value: unknown): JsonValue {
-  if (typeof value === 'string') {
-    return value.length <= MAX_STRING_CHARS ? value : `${value.slice(0, MAX_STRING_CHARS)} [${value.length - MAX_STRING_CHARS} more characters]`;
-  }
+/** Complete, already inspected JSON; a prefix cannot authorize the full action. */
+function completeArguments(value: unknown): JsonValue {
+  if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean' || value === null) return value;
   if (Array.isArray(value)) {
     const projected: JsonValue[] = new Array(value.length);
     for (let index = 0; index < value.length; index++) {
-      if (Object.hasOwn(value, index)) projected[index] = boundedArguments(value[index]);
+      if (Object.hasOwn(value, index)) projected[index] = completeArguments(value[index]);
     }
+    Object.freeze(projected);
     return projected;
   }
   if (typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([, v]) => v !== undefined).map(([k, v]) => [k, boundedArguments(v)]));
+    return Object.freeze(Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined).map(([k, v]) => [k, completeArguments(v)])));
   }
   return String(value);
 }
 
-/** Privacy-checked arguments; scan the complete input before applying size caps. */
+/** Full owned arguments. Existing input bounds refuse oversize data rather than shortening it. */
 export function readingArguments(value: unknown): JsonValue {
-  return boundedArguments(snapshotJudgmentInput(value));
+  return completeArguments(snapshotJudgmentInput(value));
 }
 
 /** The state a gate battery reads: the tool, its arguments and the working directory. */
 export function readingState(toolName: string, args: Record<string, unknown>, workingDirectory?: string): { [key: string]: JsonValue } {
   const snapshot = snapshotJudgmentInput({ args, workingDirectory }, toolName) as { args: unknown; workingDirectory?: string };
-  return {
+  return Object.freeze({
     tool: toolName,
-    arguments: boundedArguments(snapshot.args),
+    arguments: completeArguments(snapshot.args),
     ...(snapshot.workingDirectory ? { workingDirectory: snapshot.workingDirectory } : {}),
-  };
+  });
 }
 
 /** A yes/no fact as code uses it: true unless the reading is a no. */
@@ -132,10 +129,14 @@ export const GATE_SITE = 'engine.gate';
 
 /** Reads one tool call through the gate's two batteries, in parallel. */
 export async function readToolCall(input: ReadToolCallInput, site: string = GATE_SITE): Promise<GateReading> {
-  const state = readingState(input.toolName, input.args, input.workingDirectory);
+  const { toolName, args, workingDirectory, signal: abortSignal, askKind = false, askObfuscated = false } = input;
+  const state = readingState(toolName, args, workingDirectory);
+  const shell = askObfuscated === true;
+  // Bind cache publication to the owned input actually sent, not borrowed
+  // arguments or options that may change while the readings are in flight.
+  const judgedCommands = shell ? shellCommandsIn(state.arguments as Record<string, unknown>) : [];
   const port = judgmentPort(site);
-  const signal = input.signal === undefined ? {} : { signal: input.signal };
-  const shell = input.askObfuscated === true;
+  const signal = abortSignal === undefined ? {} : { signal: abortSignal };
   const [effect, risk, edge] = await Promise.all([
     sideEffect.run(port, state, {
       site,
@@ -143,16 +144,17 @@ export async function readToolCall(input: ReadToolCallInput, site: string = GATE
         'mutates',
         'outward',
         'secrets',
-        ...(input.askKind ? (['kind'] as const) : []),
-        ...(input.askObfuscated ? (['obfuscated'] as const) : []),
+        ...(askKind ? (['kind'] as const) : []),
+        ...(askObfuscated ? (['obfuscated'] as const) : []),
       ],
       ...signal,
     }),
     riskFamily.run(port, state, { site, ...signal }),
     boundaryReading.run(port, state, { site, only: shell ? ['catastrophic', 'cardDetails'] : ['cardDetails'], ...signal }),
   ]);
+  abortSignal?.throwIfAborted();
   const catastrophic = shell ? edge.readings.catastrophic.verdict : undefined;
-  if (catastrophic !== undefined) rememberCatastrophic(input.args, catastrophic);
+  if (catastrophic !== undefined) rememberCatastrophic(judgedCommands, catastrophic);
   const yesNo: Partial<Record<GateFactName, YesNoReading>> = {
     mutates: effect.readings.mutates,
     outward: effect.readings.outward,
@@ -160,7 +162,7 @@ export async function readToolCall(input: ReadToolCallInput, site: string = GATE
     irreversible: risk.readings.irreversible,
     beyondProject: risk.readings.beyondProject,
     weakensSecurity: risk.readings.weakensSecurity,
-    ...(input.askObfuscated ? { obfuscated: effect.readings.obfuscated } : {}),
+    ...(askObfuscated ? { obfuscated: effect.readings.obfuscated } : {}),
   };
   const facts = {
     obfuscated: false,
@@ -168,7 +170,7 @@ export async function readToolCall(input: ReadToolCallInput, site: string = GATE
     catastrophicUncertain: catastrophic === 'uncertain',
   } as GateFacts;
   const uncertain = (Object.keys(yesNo) as GateFactName[]).filter((name) => yesNo[name]!.verdict === 'uncertain');
-  const kindReading = input.askKind ? effect.readings.kind : undefined;
+  const kindReading = askKind ? effect.readings.kind : undefined;
   return {
     ...facts,
     family: risk.readings.family.choice,
@@ -251,8 +253,7 @@ export function shellCommandsIn(args: Record<string, unknown>): string[] {
 const CATASTROPHIC_SEEN = new Map<string, YesNoReading['verdict']>();
 const CATASTROPHIC_SEEN_LIMIT = 256;
 
-function rememberCatastrophic(args: Record<string, unknown>, verdict: YesNoReading['verdict']): void {
-  const commands = shellCommandsIn(args);
+function rememberCatastrophic(commands: readonly string[], verdict: YesNoReading['verdict']): void {
   if (commands.length !== 1) return;
   CATASTROPHIC_SEEN.delete(commands[0]!);
   CATASTROPHIC_SEEN.set(commands[0]!, verdict);
