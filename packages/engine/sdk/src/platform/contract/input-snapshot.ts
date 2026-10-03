@@ -1,3 +1,4 @@
+import { markCapturedInputPath } from './input-authority.js';
 /** Local, content-addressed contract input. Membership grants no read or transmission permission. */
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -307,6 +308,7 @@ export function assertContractInputObjects(snapshot: ContractInputSnapshot, proj
 
 /** Materialize a no-checkout worktree with exact blobs: no smudge filters, checkout hooks or setup. */
 export async function materializeContractInput(snapshot: ContractInputSnapshot, worktreePath: string, signal?: AbortSignal): Promise<void> {
+  markCapturedInputPath(worktreePath);
   assertContractInputObjects(snapshot, snapshot.sourceRoot);
   await materializeFiles(snapshot.sourceRoot, snapshot.files, snapshot.inputCommit, worktreePath, signal);
 }
@@ -366,6 +368,7 @@ export async function assertContractInputView(snapshot: ContractInputSnapshot, s
 
 /** Member worktrees inherit the contract's current exact Git tree, without owner checkout filters/hooks. */
 export async function initializeContractMemberWorktree(sourceRoot: string, worktree: { readonly path: string; create(startPoint?: string, checkout?: boolean): Promise<void> }): Promise<void> {
+  markCapturedInputPath(worktree.path);
   const commit = gitText(sourceRoot, ['rev-parse', 'HEAD']);
   const entries = git(sourceRoot, ['ls-tree', '-r', '-z', commit]).toString().split('\0').filter(Boolean);
   if (entries.length > MAX_FILES) throw new Error('contract member input exceeds file-count bound');

@@ -310,6 +310,7 @@ export function makeHarness(options: HarnessOptions): Harness {
       runtimeBus: bus,
       projectRoot: input.projectRoot,
       initializeWorktree: input.initializeWorktree,
+      prepareInputAuthority: input.prepareInputAuthority,
       stateRoot: input.stateRoot,
       stateNamespace: input.stateNamespace,
       contractUnitSettlement: input.contractUnitSettlement,
@@ -324,6 +325,7 @@ export function makeHarness(options: HarnessOptions): Harness {
     ...(options.steps === undefined ? {} : { steps: options.steps }),
     ...(options.workPlanService === undefined ? {} : { workPlanService: options.workPlanService }),
     ...(options.planManager === undefined ? {} : { planManager: options.planManager }),
+    readAccessFilter: async () => true, // Owned synthetic fixtures have no denied source paths.
     repositoryMap: options.repositoryMap ?? (async () => 'README.md'),
   });
   runner.on((event) => events.push(event));

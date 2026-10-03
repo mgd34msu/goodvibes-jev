@@ -220,6 +220,7 @@ export function composeContractRunner(options: ContractRunnerCompositionOptions)
       runtimeBus: options.runtimeBus,
       projectRoot: input.projectRoot,
       initializeWorktree: input.initializeWorktree,
+      prepareInputAuthority: input.prepareInputAuthority,
       stateRoot: input.stateRoot,
       stateNamespace: input.stateNamespace,
       contractUnitSettlement: input.contractUnitSettlement,

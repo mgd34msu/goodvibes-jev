@@ -1,3 +1,4 @@
+import { bindContractInputAuthority } from './input-authority.js';
 /**
  * Correction when nudging stalls (docs/design/contract-runner.md section 5):
  * stall routing, planned-fix groups and fresh agents, for units, groups and
@@ -209,7 +210,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     let repair: { problems: readonly PlanProblem[]; previousPlan: string } | undefined;
     for (let attempt = 0; ; attempt += 1) {
       await input.assertCurrent();
-      const result = await context.decompositionRunner.run({
+      const result = await context.decompositionRunner.run(bindContractInputAuthority({
         goal: contract.ask,
         workingDir: input.workingDirectory,
         systemPrompt: buildFixPlannerPrompt(),
@@ -218,7 +219,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
         attempt: attempt === 0 ? 'initial' : 'repair',
         route,
         signal: run.abort.signal,
-      });
+      }, input.authority));
       if (result.agentId !== undefined) contract.plannerAgentIds.push(result.agentId);
       if (run.terminal) return;
       await input.assertCurrent();

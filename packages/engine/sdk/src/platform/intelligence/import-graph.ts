@@ -1,3 +1,4 @@
+import type { ReadAccessFilter } from '../tools/shared/read-access.js';
 /**
  * Import graph for TypeScript/JavaScript files.
  *
@@ -216,8 +217,8 @@ export class ImportGraph {
    * Build (or rebuild) the import graph by scanning all source files under
    * `projectRoot`. Idempotent when not dirty and root hasn't changed.
    */
-  async build(projectRoot: string): Promise<void> {
-    if (!this.dirty && this.scannedRoot === projectRoot) return;
+  async build(projectRoot: string, readAccessFilter?: ReadAccessFilter): Promise<void> {
+    if (!readAccessFilter && !this.dirty && this.scannedRoot === projectRoot) return;
 
     const diagnostics: ImportGraphDiagnostics = { warnings: [] };
     const files = collectSourceFiles(projectRoot, diagnostics);
@@ -236,6 +237,7 @@ export class ImportGraph {
     for (const filePath of files) {
       let content: string;
       try {
+        if (readAccessFilter && !await readAccessFilter(filePath)) continue;
         content = readFileSync(filePath, 'utf-8');
       } catch (err) {
         logger.warn('[import-graph] Skipping unreadable file', { file: filePath, error: summarizeError(err) });
@@ -269,7 +271,7 @@ export class ImportGraph {
     this.imports = imports;
     this.dependents = dependents;
     this.scannedRoot = projectRoot;
-    this.dirty = false;
+    this.dirty = readAccessFilter !== undefined;
     this.warnings = diagnostics.warnings;
   }
 

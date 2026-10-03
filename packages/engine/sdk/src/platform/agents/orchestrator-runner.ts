@@ -553,6 +553,7 @@ export async function runAgentTask(
             context.emitStreamDelta(record.id, delta.content ?? '', streamAccumulated);
           };
 
+          await context.beforeProviderRequest?.();
           try {
             // Thread the agent's cancellation signal into the in-flight LLM
             // request so a cancel/kill aborts the provider call mid-stream, not

@@ -62,6 +62,7 @@ import { summarizeError } from '../utils/error-display.js';
 import { OwnedWork } from '../utils/owned-work.js';
 
 export interface OrchestrationEngineDeps {
+  readonly prepareInputAuthority?: import('../contract/group-runner.js').ContractEngineInput['prepareInputAuthority'];
   readonly agentManager: PhaseRunnerAgentManagerLike;
   readonly configManager: Pick<ConfigManager, 'get' | 'getCategory'>;
   readonly runtimeBus: RuntimeEventBus;
@@ -450,6 +451,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     const priorReports = getPhaseResults(workstream.id).filter((r) => r.itemId === item.id);
     const outcome = await runPhase(workstream, item, phase, priorReports, {
       agentManager: deps.agentManager,
+      prepareInputAuthority: deps.prepareInputAuthority,
       configManager: deps.configManager,
       runtimeBus: deps.runtimeBus,
       projectRoot: deps.projectRoot,

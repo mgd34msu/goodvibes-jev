@@ -5,10 +5,18 @@
 import { setAgentProgress } from '../../agents/progress-audience.js';
 import { emitAgentProgress, emitAgentRunning } from '../../runtime/emitters/index.js';
 import type { RuntimeEventBus } from '../../runtime/events/index.js';
+import type { ContractInputAuthority } from '../../contract/input-authority.js';
 import type { AgentRecord } from './record.js';
 
 /** Binds a spawn to a contract unit: the turn loop calls the contract hooks for it. */
+export interface ContractPlannerBinding {
+  readonly inputReadAuthority: ContractInputAuthority;
+}
+
+export type AgentConstructionBinding = ContractUnitBinding | ContractOwnerBinding | ContractPlannerBinding;
+
 export interface ContractUnitBinding {
+  readonly inputReadAuthority?: ContractInputAuthority | undefined;
   readonly contractId: string;
   readonly contractUnitId: string;
   /** The route selector's reason for the unit's model, copied to AgentRecord.routeReason. */
@@ -30,12 +38,12 @@ export interface ContractOwnerBinding {
 }
 
 /** Which of the two bindings a spawn carries, if any. */
-export function splitContractBinding(binding: ContractUnitBinding | ContractOwnerBinding | undefined): {
+export function splitContractBinding(binding: AgentConstructionBinding | undefined): {
   readonly unit: ContractUnitBinding | undefined;
   readonly owner: ContractOwnerBinding | undefined;
 } {
   if (binding !== undefined && 'contractRole' in binding) return { unit: undefined, owner: binding };
-  return { unit: binding, owner: undefined };
+  return { unit: binding !== undefined && 'contractUnitId' in binding ? binding : undefined, owner: undefined };
 }
 
 /** Marks a freshly spawned owner record running, announces it, and returns it without running an executor. */

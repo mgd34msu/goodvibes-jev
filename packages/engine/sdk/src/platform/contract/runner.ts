@@ -1,3 +1,4 @@
+import { pinContractInputAdmission } from './input-authority.js';
 /**
  * The contract runner (docs/design/contract-runner.md sections 1, 2.2, 6.5
  * and 7.3): `createContractRunner(deps)` owns every contract's lifecycle.
@@ -583,6 +584,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
   async function prepareInput(run: ContractRun): Promise<void> {
     const { contract } = run;
     if (contract.inputSnapshot !== undefined) {
+      pinContractInputAdmission(contract, run.abort.signal);
       await assertContractInputView(contract.inputSnapshot, run.abort.signal);
       if (contract.isolation === 'worktree') assertContractExecutionView(contract.inputSnapshot, contract.worktreePath!, contract.branch!);
       return;
@@ -591,6 +593,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     if (contract.schemaVersion < 2) throw new Error('legacy worktree contract has no recorded input receipt; manual recovery is required');
     const snapshot = await captureContractInput(contract.projectRoot, { signal: run.abort.signal });
     contract.inputSnapshot = snapshot;
+    pinContractInputAdmission(contract, run.abort.signal);
     // Persist provenance before any workspace/model admission. Partial creation is retained and holds recovery.
     if (!deps.store.write(contract.id)) throw new Error('contract input receipt could not be persisted');
     run.abort.signal.throwIfAborted();

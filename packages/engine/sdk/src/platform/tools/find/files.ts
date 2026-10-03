@@ -22,6 +22,7 @@ export async function executeFilesQuery(
   output: OutputOptions,
   projectRoot: string,
   readAccessFilter?: ReadAccessFilter,
+  capturedReadAccess?: ReadAccessFilter,
 ): Promise<Record<string, unknown>> {
   const validatedPath = validateSearchPath(query.path, projectRoot);
   if (typeof validatedPath === 'object') return validatedPath;
@@ -51,6 +52,9 @@ export async function executeFilesQuery(
     return { error: `Invalid modified_before date: ${query.modified_before}` };
   }
 
+  // In a captured view this filter also validates original-owner authority
+  // before the synchronous matcher opens .gitignore.
+  if (respectGitignore && capturedReadAccess && !await capturedReadAccess(join(projectRoot, '.gitignore'))) throw new Error('root ignore-file read is access-restricted');
   const gitignoreMatcher = respectGitignore
     ? buildGitignoreMatcher(join(projectRoot, '.gitignore'), diagnostics)
     : null;
@@ -147,6 +151,7 @@ export async function executeFilesQuery(
     for (const entry of entries) {
       if (restrictedPaths.has(entry.path)) continue; // cannot read to verify content
       try {
+        if (capturedReadAccess && !await capturedReadAccess(entry.path)) throw new Error('file read is access-restricted');
         const text = await Bun.file(entry.path).text();
         if (safeRegExpTest(hasContentRegex, text, { operation: 'find files has_content', maxInputChars: 500_000 })) filtered.push(entry);
       } catch (err) {
@@ -194,6 +199,7 @@ export async function executeFilesQuery(
       }
       let preview: string[] = [];
       try {
+        if (capturedReadAccess && !await capturedReadAccess(entry.path)) throw new Error('file read is access-restricted');
         const text = await Bun.file(entry.path).text();
         preview = text.split('\n').slice(0, previewLines);
       } catch (err) {

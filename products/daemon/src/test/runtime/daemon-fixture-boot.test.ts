@@ -85,6 +85,8 @@ test('failed inbox acquisition releases the real base graph and the same owned r
 test('runtime shutdown cancels contract work, flushes its pending store and detaches new admission', async () => {
   const discovery = spyOn(ProviderRegistry.prototype, 'refreshLiveModelDiscovery').mockResolvedValue([]);
   const signals: AbortSignal[] = [];
+  let markReadingStarted!: () => void;
+  const readingStarted = new Promise<void>((resolve) => { markReadingStarted = resolve; });
   const events: string[] = [];
   const heldReading: JudgmentPort = {
     model: 'fixture-held-reading',
@@ -94,6 +96,7 @@ test('runtime shutdown cancels contract work, flushes its pending store and deta
       }
       const signal = request.signal;
       signals.push(signal);
+      markReadingStarted();
       return new Promise((_resolve, reject) => {
         const abort = () => reject(new DOMException('Fixture reading cancelled', 'AbortError'));
         if (signal.aborted) abort();
@@ -124,6 +127,14 @@ test('runtime shutdown cancels contract work, flushes its pending store and deta
       projectRoot: fixture.workingDirectory, isolation: 'shared' });
     globalThis.setTimeout = schedule;
     expect(events).toContain('CONTRACT_CREATED');
+    // Admission may await input preparation before requesting its first reading.
+    // Observe that owned request rather than assuming start() runs it synchronously.
+    let readinessTimeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([readingStarted, new Promise<never>((_, reject) => {
+        readinessTimeout = schedule(() => reject(new Error('contract request-shape never became ready')), 5_000);
+      })]);
+    } finally { if (readinessTimeout) clearTimeout(readinessTimeout); }
     expect(signals).toHaveLength(1);
     expect(delayedWrites.length).toBeGreaterThan(0);
     expect(signals[0]!.aborted).toBe(false);

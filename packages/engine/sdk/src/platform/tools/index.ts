@@ -346,6 +346,7 @@ export function registerAllTools(
      * never leaks its content through a search. Omitted → all files allowed.
      */
     readAccessFilter?: import('./shared/read-access.js').ReadAccessFilter | undefined;
+    capturedReadAccess?: import('./shared/read-access.js').ReadAccessFilter | undefined;
     /**
      * Settable holder for the context_accounting tool's session source. The tool
      * is always registered (consumers inherit it like repo_map); the interactive
@@ -490,7 +491,7 @@ export function registerAllTools(
       },
     }));
   }
-  registerTool(new ReadTool(projectIndex, fileCache));
+  registerTool(new ReadTool(projectIndex, fileCache, undefined, deps.capturedReadAccess));
   // One post-edit diagnostics provider shared by write and edit. Default: the
   // in-process tree-sitter syntax provider (no process spawn). `null` disables.
   const diagnosticsProvider = deps.diagnosticsProvider === null
@@ -500,6 +501,7 @@ export function registerAllTools(
     projectRoot: workingDirectory,
     fileCache,
     projectIndex,
+    capturedReadAccess: deps.capturedReadAccess,
     fileUndoManager,
     configManager: deps.configManager,
     toolLLM: deps.toolLLM,
@@ -513,7 +515,7 @@ export function registerAllTools(
     changeTracker: deps?.changeTracker,
     diagnosticsProvider,
   }));
-  registerTool(createFindTool(workingDirectory, deps.featureFlags, undefined, deps.readAccessFilter));
+  registerTool(createFindTool(workingDirectory, deps.featureFlags, undefined, deps.readAccessFilter, deps.capturedReadAccess));
   registerTool(createRepoMapTool({ projectRoot: workingDirectory, ...(deps.readAccessFilter ? { readAccessFilter: deps.readAccessFilter } : {}) }));
   registerTool(createContextAccountingTool(deps.contextAccountingHolder ?? new ContextAccountingHolder()));
   // Per-command exec sandbox: only probe the host (a bwrap spawn) when the
