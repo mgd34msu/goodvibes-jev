@@ -15,7 +15,8 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { bootstrap as runtimeComposition } from '@goodvibes-jev/engine/sdk/platform/runtime';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -82,6 +83,56 @@ function writeClaim(home: string, claim: { pid: number; identity: string }): voi
   writeFileSync(path, JSON.stringify({ ...claim, claimedAt: Date.now() }), { mode: 0o600 });
 }
 
+/** Observe a missed refusal after it happens, without delaying the holder/boot race. */
+function missedRefusalDetails(home: string, holder: { pid: number; identity: string }): string {
+  const describeError = (error: unknown): object => ({
+    name: error instanceof Error ? error.name : 'unknown',
+    code: typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+      && /^E[A-Z0-9_]+$/.test(error.code) ? error.code : undefined,
+  });
+  const inspect = (read: () => unknown): unknown => {
+    try { return read(); }
+    catch (error) { return describeError(error); }
+  };
+  // A recycled PID could point at an unrelated process. Never print raw argv.
+  const describeIdentity = (identity: string | null): object | null => identity === null ? null : ({
+    expectedSleep: identity === 'sleep 120',
+    matchesRecorded: identity === holder.identity,
+    matchesTestProcessProcIdentity: identity === runtimeComposition.readProcessIdentity(process.pid),
+    matchesTestProcessClaimIdentity: identity === runtimeComposition.currentProcessIdentity(),
+    sha256: createHash('sha256').update(identity).digest('hex'),
+  });
+  let liveness: string | object = 'alive';
+  try { process.kill(holder.pid, 0); }
+  catch (error) { liveness = describeError(error); }
+  const child = holders.find((candidate) => candidate.pid === holder.pid);
+  const claimPath = runtimeComposition.surfaceHomeClaimPath(home, GOODVIBES_AGENT_SURFACE_ROOT);
+  return JSON.stringify({
+    testPid: process.pid,
+    expectedHolder: { pid: holder.pid, identity: describeIdentity(holder.identity) },
+    liveness,
+    identityNow: describeIdentity(runtimeComposition.readProcessIdentity(holder.pid)),
+    cmdlineNow: inspect(() => describeIdentity(readFileSync(`/proc/${holder.pid}/cmdline`, 'utf-8').split('\0').filter(Boolean).join(' ').slice(0, 512))),
+    executableNow: inspect(() => ({ expectedSleep: readlinkSync(`/proc/${holder.pid}/exe`).endsWith('/sleep') })),
+    claimPath,
+    claimNow: inspect(() => {
+      const value: unknown = JSON.parse(readFileSync(claimPath, 'utf-8'));
+      if (typeof value !== 'object' || value === null) return { validRecord: false };
+      const claim = value as Record<string, unknown>;
+      return {
+        pid: typeof claim.pid === 'number' && Number.isFinite(claim.pid) ? claim.pid : null,
+        claimedAt: typeof claim.claimedAt === 'number' && Number.isFinite(claim.claimedAt) ? claim.claimedAt : null,
+        isTestProcess: claim.pid === process.pid,
+        identity: typeof claim.identity === 'string' ? describeIdentity(claim.identity) : null,
+      };
+    }),
+    bootedHome: built.at(-1)?.shellPaths.homeDirectory,
+    childExitCode: child?.exitCode,
+    childSignalCode: child?.signalCode,
+    childKilled: child?.killed,
+  });
+}
+
 afterEach(() => {
   for (const services of built.splice(0)) {
     try {
@@ -106,7 +157,8 @@ describe('a second agent booted onto a live agent\'s home', () => {
       refusal = error;
     }
 
-    expect(refusal).toBeInstanceOf(runtimeComposition.SurfaceHomeInUseError);
+    expect(refusal, refusal === undefined ? missedRefusalDetails(home, holder) : undefined)
+      .toBeInstanceOf(runtimeComposition.SurfaceHomeInUseError);
     const error = refusal as InstanceType<typeof runtimeComposition.SurfaceHomeInUseError>;
     // Naming the pid is the whole difference between a boot that stops for a
     // reason a person can act on and one that stops without saying why.
