@@ -1,5 +1,5 @@
 import type { WorkLedgerReadBinding, WorkLedgerReadSnapshot } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
-import type { WorkLedgerEvent } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
+import type { WorkLedgerReadEvent } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
 import { createOperatorWorkLedgerReadClient } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/operator-read-client';
 import type { OperatorRemoteClient } from '@goodvibes-jev/engine/operator-sdk';
 
@@ -18,7 +18,7 @@ export function operatorWorkLedgerSelection(identity: string, projectId: string,
 /** Owns only this surface's reader. Never a store, authority or execution capability. */
 export class NativeWorkLedgerModel {
   snapshot: WorkLedgerReadSnapshot | null = null;
-  history: readonly WorkLedgerEvent[] = [];
+  history: readonly WorkLedgerReadEvent[] = [];
   reason = 'Native work ledger is closed.';
   identity = 'closed';
   private epoch = 0;
@@ -79,6 +79,19 @@ export class NativeWorkLedgerModel {
       this.release = cleanup;
       if (client.projectId !== selection.projectId) throw new Error('Selected host project mismatch.');
       let busy = false; let pending = false; let cursor = 0;
+      let provenance: WorkLedgerReadSnapshot['provenance']; let projectionEpoch = 0;
+      const protect = (events: readonly WorkLedgerReadEvent[]): WorkLedgerReadEvent[] => events.map(event => event.type === 'import_legacy' && provenance === 'requires_read_knowledge'
+        ? { type: event.type, sequence: event.sequence, actorId: event.actorId, requestId: event.requestId, at: event.at, works: event.works, manifest: null, provenance: 'requires_read_knowledge' } : event);
+      const observe = (snapshot: WorkLedgerReadSnapshot): void => {
+        if (!current() || snapshot.projectId !== selection.projectId || snapshot.provenance === undefined || snapshot.provenance === provenance) return;
+        const prior = provenance; provenance = snapshot.provenance; projectionEpoch += 1;
+        if (provenance === 'requires_read_knowledge') this.history = protect(this.history);
+        else if (prior === 'requires_read_knowledge') { this.history = []; cursor = 0; this.reason = 'Refreshing authorized legacy provenance…'; }
+        if (this.snapshot) this.snapshot = { ...this.snapshot, provenance };
+        // A permission boundary must purge interaction-frozen source rows now.
+        this.identity = `native:${epoch}:projection:${projectionEpoch}`;
+        this.changed();
+      };
       const catchUp = async (): Promise<void> => {
         if (!current()) return;
         if (busy) { pending = true; return; }
@@ -89,8 +102,11 @@ export class NativeWorkLedgerModel {
             const snapshot = await client.readSnapshot();
             if (!current()) return;
             if (snapshot.projectId !== selection.projectId || snapshot.cursor < cursor) throw new Error('Selected host project or cursor changed.');
+            observe(snapshot);
+            const projection = projectionEpoch;
             const events = await client.history(cursor);
             if (!current()) return;
+            if (projection !== projectionEpoch) { pending = true; continue; }
             let next = cursor;
             for (const event of events) {
               if (event.sequence !== next + 1) throw new Error('Native work history has a cursor gap.');
@@ -98,7 +114,7 @@ export class NativeWorkLedgerModel {
             }
             if (next < snapshot.cursor) throw new Error('Native work history is behind the snapshot.');
             cursor = next;
-            this.history = [...this.history, ...events].slice(-500);
+            this.history = [...this.history, ...protect(events)].slice(-500);
             // A newer durable event landed during the snapshot read: catch up again
             // before presenting it. Notifications themselves never advance cursor.
             if (cursor > snapshot.cursor) { pending = true; continue; }
@@ -113,7 +129,7 @@ export class NativeWorkLedgerModel {
         finally { busy = false; }
       };
       // Subscribe before initial snapshot, including synchronous subscription callbacks.
-      unsubscribe = client.subscribe(() => { void catchUp(); });
+      unsubscribe = client.subscribe(snapshot => { observe(snapshot); void catchUp(); });
       if (!current()) { cleanup(); return; }
       void catchUp();
     } catch (error) { fail(error); }

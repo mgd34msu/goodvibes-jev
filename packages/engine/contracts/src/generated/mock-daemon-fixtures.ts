@@ -22007,6 +22007,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "afterSequence": 0,
       "cursor": 0,
       "throughSequence": 0,
+      "provenance": "available",
       "hasMore": false,
       "events": [
         {
@@ -22081,6 +22082,99 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       ]
     }
   },
+  "workLedger.importLegacy": {
+    "methodId": "workLedger.importLegacy",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/legacy-import"
+    },
+    "status": 200,
+    "body": {
+      "kind": "accepted",
+      "replayed": false,
+      "event": {
+        "sequence": 0,
+        "type": "create",
+        "actorId": "sample",
+        "requestId": "sample",
+        "workId": "sample",
+        "attemptId": "sample",
+        "at": 0,
+        "work": {
+          "id": "sample",
+          "title": "sample",
+          "goal": "sample",
+          "criteria": [
+            "sample"
+          ],
+          "revision": 0,
+          "criteriaRevision": 0,
+          "reportedState": "pending",
+          "currentAttemptId": "sample",
+          "createdAt": 0,
+          "updatedAt": 0
+        },
+        "attempts": [
+          {
+            "id": "sample",
+            "workId": "sample",
+            "predecessorId": "sample",
+            "ownerId": "sample",
+            "revision": 0,
+            "state": "active",
+            "report": "sample",
+            "blocker": "sample",
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        ],
+        "evidence": {
+          "id": "sample",
+          "target": {
+            "workId": "sample",
+            "workRevision": 0,
+            "criteriaRevision": 0,
+            "attemptId": "sample",
+            "attemptRevision": 0
+          },
+          "outcome": "verified",
+          "reason": "sample",
+          "references": [
+            {
+              "kind": "decision",
+              "ref": "sample",
+              "digest": "sample"
+            }
+          ],
+          "source": "host_check",
+          "criteriaResults": [
+            {
+              "criterionIndex": 0,
+              "status": "satisfied",
+              "references": [
+                "sample"
+              ]
+            }
+          ],
+          "actorId": "sample",
+          "at": 0
+        },
+        "reason": "sample"
+      }
+    }
+  },
+  "workLedger.prepareLegacyImport": {
+    "methodId": "workLedger.prepareLegacyImport",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/legacy-import/prepare"
+    },
+    "status": 200,
+    "body": {
+      "kind": "prepared",
+      "manifest": {}
+    }
+  },
   "workLedger.snapshot": {
     "methodId": "workLedger.snapshot",
     "http": {
@@ -22092,6 +22186,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "projectId": "sample",
       "revision": 0,
       "cursor": 0,
+      "provenance": "available",
       "works": [
         {
           "work": {
