@@ -309,6 +309,7 @@ Importing any path not in this table will produce an `ERR_PACKAGE_PATH_NOT_EXPOR
 | `platform/personal-capture` | Capture authority (whether a turn may write to the owner profile) and the narrow store/service surface a conversational capture tool calls | beta |
 | `platform/plugins` | Plugin API, loader, and manager | beta |
 | `platform/power` | Sleep ownership: automatic work inhibition, sleep-edge handling, and the owner's keep-awake toggle | beta |
+| `platform/presentation/editor-message` | Typed editor-message blocking battery and privacy-checked asynchronous reader; presentation only | beta |
 | `platform/presentation` | The shared presentation contract used by both the TUI and the agent renderer: glyphs, tone tokens, thinking phrases, and waiting-state wording | beta |
 | `platform/profiles` | Profile manager and profile shape helpers | beta |
 | `platform/providers` | LLM provider registry, catalog, capabilities; includes `inferFallbackContextWindow` and `FALLBACK_CONTEXT_WINDOW` (added in 0.35.0), plus the shared bare-model-id resolver (`resolveModelReference`, `findClosestModelIds`, `ModelIdCandidate`, `ModelIdResolutionOptions`) so consumers stop vendoring it | beta |
