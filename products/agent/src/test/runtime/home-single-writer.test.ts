@@ -15,8 +15,7 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { bootstrap as runtimeComposition } from '@goodvibes-jev/engine/sdk/platform/runtime';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -29,6 +28,22 @@ import { makeProjectTempDir } from '../helpers/project-temp.ts';
 const holders: ChildProcess[] = [];
 const built: RuntimeServices[] = [];
 
+async function waitForHolderIdentity(
+  pid: number,
+  expectedIdentity: string,
+  readIdentity: (pid: number) => string | null = runtimeComposition.readProcessIdentity,
+  now: () => number = Date.now,
+): Promise<string> {
+  const deadline = now() + 10_000;
+  let identity = readIdentity(pid);
+  while (identity !== expectedIdentity && now() < deadline) {
+    await Bun.sleep(10);
+    identity = readIdentity(pid);
+  }
+  if (identity !== expectedIdentity) throw new Error(`the holder pid ${pid} did not report expected identity ${expectedIdentity} before the deadline`);
+  return identity;
+}
+
 /**
  * A process that is genuinely alive and genuinely some OTHER program, so the
  * liveness check has a real pid to read and a real argv to compare against. A
@@ -36,21 +51,16 @@ const built: RuntimeServices[] = [];
  * exists precisely because it reads `/proc/<pid>/cmdline` for real.
  */
 async function liveForeignProcess(): Promise<{ pid: number; identity: string }> {
-  const child = spawn('sleep', ['120'], { stdio: 'ignore' });
+  const command = 'sleep';
+  const args = ['120'];
+  const child = spawn(command, args, { stdio: 'ignore' });
   holders.push(child);
   const pid = child.pid;
   if (typeof pid !== 'number') throw new Error('could not start a holder process');
-  // `spawn` hands back a pid before the child has finished replacing itself
-  // with `sleep`, and `/proc/<pid>/cmdline` is empty until it has. Waiting for
-  // the argv is waiting for the holder to BE the program it claims to be,
-  // reading it a moment too early is what made this flaky under a loaded run.
-  const deadline = Date.now() + 10_000;
-  let identity = runtimeComposition.readProcessIdentity(pid);
-  while (identity === null && Date.now() < deadline) {
-    await Bun.sleep(10);
-    identity = runtimeComposition.readProcessIdentity(pid);
-  }
-  if (identity === null) throw new Error(`the holder pid ${pid} reported no identity`);
+  // Before exec finishes, /proc can be empty OR still contain the inherited
+  // parent argv. Only the exact program/arguments we spawned establish readiness.
+  // Recording that transient parent identity would correctly look stale at boot.
+  const identity = await waitForHolderIdentity(pid, [command, ...args].join(' '));
   return { pid, identity };
 }
 
@@ -83,56 +93,6 @@ function writeClaim(home: string, claim: { pid: number; identity: string }): voi
   writeFileSync(path, JSON.stringify({ ...claim, claimedAt: Date.now() }), { mode: 0o600 });
 }
 
-/** Observe a missed refusal after it happens, without delaying the holder/boot race. */
-function missedRefusalDetails(home: string, holder: { pid: number; identity: string }): string {
-  const describeError = (error: unknown): object => ({
-    name: error instanceof Error ? error.name : 'unknown',
-    code: typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
-      && /^E[A-Z0-9_]+$/.test(error.code) ? error.code : undefined,
-  });
-  const inspect = (read: () => unknown): unknown => {
-    try { return read(); }
-    catch (error) { return describeError(error); }
-  };
-  // A recycled PID could point at an unrelated process. Never print raw argv.
-  const describeIdentity = (identity: string | null): object | null => identity === null ? null : ({
-    expectedSleep: identity === 'sleep 120',
-    matchesRecorded: identity === holder.identity,
-    matchesTestProcessProcIdentity: identity === runtimeComposition.readProcessIdentity(process.pid),
-    matchesTestProcessClaimIdentity: identity === runtimeComposition.currentProcessIdentity(),
-    sha256: createHash('sha256').update(identity).digest('hex'),
-  });
-  let liveness: string | object = 'alive';
-  try { process.kill(holder.pid, 0); }
-  catch (error) { liveness = describeError(error); }
-  const child = holders.find((candidate) => candidate.pid === holder.pid);
-  const claimPath = runtimeComposition.surfaceHomeClaimPath(home, GOODVIBES_AGENT_SURFACE_ROOT);
-  return JSON.stringify({
-    testPid: process.pid,
-    expectedHolder: { pid: holder.pid, identity: describeIdentity(holder.identity) },
-    liveness,
-    identityNow: describeIdentity(runtimeComposition.readProcessIdentity(holder.pid)),
-    cmdlineNow: inspect(() => describeIdentity(readFileSync(`/proc/${holder.pid}/cmdline`, 'utf-8').split('\0').filter(Boolean).join(' ').slice(0, 512))),
-    executableNow: inspect(() => ({ expectedSleep: readlinkSync(`/proc/${holder.pid}/exe`).endsWith('/sleep') })),
-    claimPath,
-    claimNow: inspect(() => {
-      const value: unknown = JSON.parse(readFileSync(claimPath, 'utf-8'));
-      if (typeof value !== 'object' || value === null) return { validRecord: false };
-      const claim = value as Record<string, unknown>;
-      return {
-        pid: typeof claim.pid === 'number' && Number.isFinite(claim.pid) ? claim.pid : null,
-        claimedAt: typeof claim.claimedAt === 'number' && Number.isFinite(claim.claimedAt) ? claim.claimedAt : null,
-        isTestProcess: claim.pid === process.pid,
-        identity: typeof claim.identity === 'string' ? describeIdentity(claim.identity) : null,
-      };
-    }),
-    bootedHome: built.at(-1)?.shellPaths.homeDirectory,
-    childExitCode: child?.exitCode,
-    childSignalCode: child?.signalCode,
-    childKilled: child?.killed,
-  });
-}
-
 afterEach(() => {
   for (const services of built.splice(0)) {
     try {
@@ -144,10 +104,31 @@ afterEach(() => {
   for (const child of holders.splice(0)) child.kill('SIGKILL');
 });
 
-// A bounded hosted sweep increases the chance of capturing the intermittent miss.
-// Each iteration retains the same live-process fixture and all original assertions.
-const DIAGNOSTIC_REPETITIONS = 25;
-for (let iteration = 0; iteration < DIAGNOSTIC_REPETITIONS; iteration += 1) describe(`a second agent booted onto a live agent's home [${iteration + 1}/${DIAGNOSTIC_REPETITIONS}]`, () => {
+describe('live holder identity readiness', () => {
+  test('ignores inherited parent argv and empty transitions until the expected program appears', async () => {
+    const identities = ['bun parent-agent-tests.ts', null, 'bun parent-agent-tests.ts', 'sleep 120'];
+    const probedPids: number[] = [];
+    const identity = await waitForHolderIdentity(4242, 'sleep 120', (pid) => {
+      probedPids.push(pid);
+      return identities.shift() ?? null;
+    });
+    expect(identity).toBe('sleep 120');
+    expect(identities).toEqual([]);
+    expect(probedPids).toEqual([4242, 4242, 4242, 4242]);
+  });
+
+  test('rejects a nonmatching nonempty identity at the existing deadline', async () => {
+    let reads = 0;
+    let clockReads = 0;
+    await expect(waitForHolderIdentity(4242, 'sleep 120', () => {
+      reads += 1;
+      return 'bun parent-agent-tests.ts';
+    }, () => clockReads++ * 10_000)).rejects.toThrow('did not report expected identity sleep 120');
+    expect(reads).toBe(1);
+  });
+});
+
+describe('a second agent booted onto a live agent\'s home', () => {
   test('is refused at boot, and the refusal names the pid that holds it', async () => {
     const home = makeProjectTempDir('agent-home-claim');
     const holder = await liveForeignProcess();
@@ -160,8 +141,7 @@ for (let iteration = 0; iteration < DIAGNOSTIC_REPETITIONS; iteration += 1) desc
       refusal = error;
     }
 
-    expect(refusal, refusal === undefined ? missedRefusalDetails(home, holder) : undefined)
-      .toBeInstanceOf(runtimeComposition.SurfaceHomeInUseError);
+    expect(refusal).toBeInstanceOf(runtimeComposition.SurfaceHomeInUseError);
     const error = refusal as InstanceType<typeof runtimeComposition.SurfaceHomeInUseError>;
     // Naming the pid is the whole difference between a boot that stops for a
     // reason a person can act on and one that stops without saying why.
