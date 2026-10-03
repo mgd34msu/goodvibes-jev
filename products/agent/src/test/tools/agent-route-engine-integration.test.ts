@@ -7,6 +7,8 @@ import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/test
 import type { CommandContext, CommandRegistry } from '../../input/command-registry.ts';
 import { createAgentRouteTool } from '../../tools/agent-route-tool.ts';
 import { createAgentHarnessTool } from '../../tools/agent-harness-tool.ts';
+import { taskRoutePort } from '../helpers/task-route-readings.ts';
+import { createTestProviderRegistry } from '../helpers/test-managers.ts';
 import { listWorkspaceActions } from '../../tools/agent-harness-workspace-actions.ts';
 import { listHarnessModes } from '../../tools/agent-harness-mode-catalog.ts';
 
@@ -15,12 +17,12 @@ let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); });
 
-function fixture(pick = 'host-runtime-diagnostics', named = 'none') {
+function fixture(pick = 'host-runtime-diagnostics', named = 'none', namedKind = 'messaging channel or notification target') {
   return fakePort((name, question, rawState) => {
     const state = rawState as unknown as { context?: { kind?: string }; candidates?: { id: string }[]; candidate?: { id: string } };
     if (state.candidate) return noulAnswer(0.95);
     if (state.candidates) {
-      const chosen = state.context?.kind ? (state.context.kind === 'messaging channel or notification target' ? named : 'none') : pick;
+      const chosen = state.context?.kind ? (state.context.kind === namedKind ? named : 'none') : pick;
       if (name === 'pick') return choiceAnswer(question, chosen, 0.9);
       return noulAnswer(state.candidates[Number(name.slice(5))]?.id === chosen ? 0.94 : 0.01);
     }
@@ -28,10 +30,10 @@ function fixture(pick = 'host-runtime-diagnostics', named = 'none') {
     return noulAnswer(0.01);
   });
 }
-function caller(kind: 'route' | 'harness', channels = new ChannelPluginRegistry()) {
+function caller(kind: 'route' | 'harness', channels = new ChannelPluginRegistry(), commandContext = context) {
   return kind === 'route'
-    ? createAgentRouteTool(context, { channelRegistry: channels })
-    : createAgentHarnessTool({ commandContext: context, commandRegistry: {} as CommandRegistry, toolRegistry: new ToolRegistry(), taskRouteSources: { channelRegistry: channels } });
+    ? createAgentRouteTool(commandContext, { channelRegistry: channels })
+    : createAgentHarnessTool({ commandContext, commandRegistry: {} as CommandRegistry, toolRegistry: new ToolRegistry(), taskRouteSources: { channelRegistry: channels } });
 }
 const args = { action: 'plan', mode: 'route_decision', query: 'change the theme setting', includeParameters: true, limit: 1 };
 
@@ -52,6 +54,19 @@ for (const kind of ['route', 'harness'] as const) describe(`${kind} engine task-
     expect(body.harnessModeMatches.every((record: { id: string }) => modeIds.has(record.id))).toBe(true);
     expect(fake.requests.some(request => Object.keys(request.questions).length === TASK_ROUTES.length + 1)).toBe(true);
     expect(fake.requests.some(request => request.context?.site === 'agent.task-route.catalog')).toBe(true);
+  });
+
+  test('catalog matches follow reading probabilities rather than local substring or registry order', async () => {
+    installJudgmentPort(taskRoutePort({ [args.query]: {
+      pick: 'host-runtime-diagnostics',
+      catalogFits: { 'document-run-compare': 0.92, document_ops: 0.91, route_decision: 0.83 },
+    } }).port);
+    const result = await caller(kind).execute(args);
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error(result.error);
+    const body = JSON.parse(result.output!);
+    expect(body.workspaceMatches.map((record: { id: string }) => record.id)).toEqual(['document-run-compare']);
+    expect(body.harnessModeMatches.map((record: { id: string }) => record.id)).toEqual(['document_ops', 'route_decision']);
   });
 
   test('waits for asynchronous readings, and passes the caller cancellation signal', async () => {
@@ -107,6 +122,33 @@ for (const kind of ['route', 'harness'] as const) describe(`${kind} engine task-
     // The same tool closure must read the changed registry on the next call.
     if (kind === 'route') await expect(tool.execute(args)).rejects.toThrow();
     else expect(await tool.execute(args)).toMatchObject({ success: false });
+  });
+
+  test('reads provider IDs from the real ProviderRegistry, not its query text', async () => {
+    const providerRegistry = createTestProviderRegistry();
+    const fake = fixture('model-provider-account-posture', 'openrouter', 'model provider');
+    installJudgmentPort(fake.port);
+    const result = await caller(kind, undefined, { ...context, provider: { providerRegistry } }).execute({ ...args, query: 'check Anthropic access' });
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error(result.error);
+    expect(JSON.parse(result.output!).preferred.modelRoute).toBe('models action:"provider" providerId:"openrouter" includeParameters:true');
+    const providerRead = fake.requests.find(request => (request.state as { context?: { kind?: string } }).context?.kind === 'model provider');
+    expect(providerRead).toBeDefined();
+    const ids = (providerRead!.state as { candidates: { id: string }[] }).candidates.map(candidate => candidate.id);
+    const actual = [...new Set([...providerRegistry.listProviders().map(provider => provider.name), ...providerRegistry.getConfiguredProviderIds()])].sort();
+    expect(ids).toEqual(actual);
+  });
+
+  test('cancellation while a reading is pending never publishes a completed plan', async () => {
+    const fake = fixture();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    installJudgmentPort({ ...fake.port, ask: async request => { await gate; return fake.port.ask(request); } });
+    const controller = new AbortController();
+    const pending = caller(kind).execute(args, { signal: controller.signal });
+    await Bun.sleep(10); controller.abort(); release();
+    if (kind === 'route') await expect(pending).rejects.toThrow();
+    else expect(await pending).toMatchObject({ success: false });
   });
 
   test('an already-aborted plan starts no readings or effects', async () => {
