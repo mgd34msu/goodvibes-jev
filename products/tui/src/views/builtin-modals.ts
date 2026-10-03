@@ -194,11 +194,9 @@ export function registerBuiltinModals(
  * degrades to an honest "unavailable" modal instead of throwing at startup.
  * Mirrors the retired Qr view factory's construction.
  */
-function buildPairingConnectionInfo(deps: ResolvedBuiltinViewDeps): PairingModalConnectionInfo | null {
+export function buildPairingConnectionInfo(deps: ResolvedBuiltinViewDeps): PairingModalConnectionInfo | null {
   try {
     const ui = deps.uiServices;
-  manager.registerModalSurface(createNativeWorkLedgerModalSurface(deps.nativeWorkLedgerSelection ?? (() => ({ available: false, identity: 'unwired', reason: 'No authenticated native work host selected.' }))));
-  manager.registerModalRedirect('work', 'native-work-ledger-modal');
     const configManager = deps.configManager;
     // Freeze a stable web origin once (never clobbering a user-set value).
     const webOrigin = ensurePublicBaseUrl(configManager);
