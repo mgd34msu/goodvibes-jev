@@ -63,3 +63,38 @@ test('a failed batch must not launch queued role requests after disposal', async
     expect(requests).toHaveLength(before);
   } finally { release(); ledger.dispose(); installJudgmentPort(previous); forgetLedgerArgRoles(); }
 });
+
+test('a recordAction callback that disposes the ledger cannot publish its role into the next ledger cache', async () => {
+  forgetLedgerArgRoles();
+  const fixture = fakePort((name, question) => name === 'kind' ? choiceAnswer(question, 'other', 0.99) : noulAnswer(0.001));
+  const requests: JudgmentRequest<Questions>[] = [];
+  const firstBus = new RuntimeEventBus();
+  const first = new AgentExecutionLedger(firstBus);
+  let second: AgentExecutionLedger | undefined;
+  const previous = installJudgmentPort({
+    model: fixture.port.model,
+    async ask(request) {
+      requests.push(request as JudgmentRequest<Questions>);
+      return { ...await fixture.port.ask(request), decisionId: `callback-fixture-${requests.length}` };
+    },
+    recorder: {
+      recordReadings() {},
+      recordAction() { first.dispose(); },
+    },
+  });
+  try {
+    emitToolReceived(firstBus, ctx, { ...call('callback-first'), args: { ordinary: 'harmless' } });
+    await first.settled();
+    await tick();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.signal?.aborted).toBe(true);
+    const secondBus = new RuntimeEventBus();
+    second = new AgentExecutionLedger(secondBus);
+    emitToolReceived(secondBus, ctx, { ...call('callback-second'), args: { ordinary: 'harmless' } });
+    await second.settled();
+    expect(requests.filter((request) => (request.state as { argument?: string }).argument === 'ordinary')).toHaveLength(2);
+    expect(second.getSnapshot().records[0]?.argsPreview).toContain('harmless');
+  } finally {
+    first.dispose(); second?.dispose(); installJudgmentPort(previous); forgetLedgerArgRoles();
+  }
+});

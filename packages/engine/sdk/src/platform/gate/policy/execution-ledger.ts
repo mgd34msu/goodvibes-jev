@@ -154,6 +154,8 @@ async function readArgRoles(tool: string, args: Record<string, unknown>, signal:
       const credential = !(run.readings.holds_credential.verdict === 'no' && run.readings.holds_credential.outcome === 'act');
       const target = run.readings.is_target.verdict === 'yes' && run.readings.is_target.outcome === 'act';
       run.recordAction(credential ? 'redact' : target ? 'target' : 'show');
+      // Recording can synchronously dispose the owning ledger.
+      batchSignal.throwIfAborted();
       ARG_ROLES.set(roleKey(tool, argument), { credential, target });
       if (ARG_ROLES.size > ARG_ROLES_LIMIT) ARG_ROLES.delete(ARG_ROLES.keys().next().value!);
     } catch (error) {

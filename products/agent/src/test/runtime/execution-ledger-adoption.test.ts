@@ -1,12 +1,12 @@
 import type { JevDecision } from '@goodvibes-jev/judgment/decisions';
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { executeToolCalls } from '@goodvibes-jev/engine/sdk/platform/core';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { AgentExecutionLedger, forgetLedgerArgRoles } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
 import { emitToolReceived, emitToolPermissioned, emitToolSucceeded, emitToolCancelled } from '@goodvibes-jev/engine/sdk/platform/runtime/emitters';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { getTestRuntimeServices } from '../helpers/runtime-services.ts';
+import { getTestRuntimeServices, resetTestRuntimeServices } from '../helpers/runtime-services.ts';
 import { AgentExecutionLedger as CompatibilityLedger } from '../../runtime/execution-ledger.ts';
 import type { RuntimeServices } from '../../runtime/services.ts';
 import { executionHistorySummary } from '../../tools/agent-harness-execution-history.ts';
@@ -21,6 +21,10 @@ const decision: JevDecision = {
 const call = { callId: 'call', turnId: 'turn', tool: 'read_local' };
 let previous: ReturnType<typeof installJudgmentPort>;
 let services: RuntimeServices | undefined;
+// An imported helper's hooks belong to the first importing test file. Full
+// suite order can therefore reuse this cached module without its reset hook.
+// This file owns the fresh graph it disposes after each composition probe.
+beforeEach(resetTestRuntimeServices);
 function compose() {
   services = getTestRuntimeServices();
   forgetLedgerArgRoles();
@@ -38,6 +42,7 @@ function compose() {
 }
 afterEach(async () => {
   if (services) { await services.processManager.close(); services.dispose(); services = undefined; }
+  resetTestRuntimeServices();
   installJudgmentPort(previous); forgetLedgerArgRoles();
 });
 

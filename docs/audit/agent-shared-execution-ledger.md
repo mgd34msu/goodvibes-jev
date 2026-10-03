@@ -98,3 +98,27 @@ The unchanged external probes show aborted sibling signals, a fresh subsequent
 role request, and a queued request count remaining 8 rather than growing to 10.
 Restoring the pre-fix ledger makes all three regressions fail. The combined
 post-fix tests pass 101 engine/input-boundary and 126 Agent tests.
+
+## Callback lifetime and full-suite fixture isolation
+
+A second review probe disposes the ledger synchronously from the decision
+recorder's `recordAction` callback. An additional post-callback abort check now
+precedes role-cache insertion. The regression expects two name readings across
+the disposed first ledger and a fresh second ledger; pre-fix code made only one.
+
+The first PR CI run's sole Agent failure was test-fixture reuse: the runtime
+helper module had already been imported by an earlier file, so its module-level
+reset hook was not registered for the ledger test file. That file disposed the
+runtime but left the helper's memo pointing at it. The next protected-input
+probe therefore saw the previous succeeded record. Running fleet-attention
+before ledger adoption reproduces the exact failure. Local beforeEach ownership
+of a fresh runtime and afterEach release of the memo fix the issue without
+weakening any lifecycle or privacy assertion.
+
+The repaired full Agent run reports 6157 pass, 1 skip, and 10 failures locally.
+A same-host full run of published head 4190a217 reports the same failures plus
+the ledger fixture regression (6156 pass, 1 skip, 11 failures). Seven remaining
+failures are explicit missing-tmux/bubblewrap host limits; the other three
+child/profile assertions also occur on that unchanged baseline. Both profile
+assertions pass in isolation. This is not a claim of a green full local suite;
+the targeted before/after reproduction and fresh remote CI remain distinct.
