@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import { writeFileSync } from 'node:fs';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
@@ -8,6 +8,12 @@ import { registerLocalRuntimeCommands } from '../../input/commands/local-runtime
 import { registerProviderAccountsRuntimeCommands } from '../../input/commands/provider-accounts-runtime.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 function makeContext(out: string[], opened: string[]): CommandContext {
   return {
     print: (text: string) => { out.push(text); },
@@ -16,6 +22,30 @@ function makeContext(out: string[], opened: string[]): CommandContext {
 }
 
 describe('experience runtime commands', () => {
+  // Bun's test timeout does not unwind an async test's finally block. Own
+  // fixture releases and diagnostic timers outside the test continuation.
+  const fixtureCleanups = new Set<() => void | Promise<void>>();
+  afterEach(async () => {
+    const cleanups = [...fixtureCleanups];
+    fixtureCleanups.clear();
+    await Promise.all(cleanups.map((cleanup) => cleanup()));
+  });
+
+  async function awaitFixtureSignal(signal: Promise<void>, label: string): Promise<void> {
+    let timer!: ReturnType<typeof setTimeout>;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`timed out waiting for ${label}`)), 5_000);
+    });
+    const clearDeadline = () => { clearTimeout(timer); };
+    fixtureCleanups.add(clearDeadline);
+    try {
+      await Promise.race([signal, deadline]);
+    } finally {
+      clearDeadline();
+      fixtureCleanups.delete(clearDeadline);
+    }
+  }
+
   test('approval open is guidance-only in Agent and does not open copied panels', async () => {
     const registry = new CommandRegistry();
     registerExperienceRuntimeCommands(registry);
@@ -503,18 +533,31 @@ describe('experience runtime commands', () => {
     registerExperienceRuntimeCommands(registry);
     const command = registry.get('voice');
     const out: string[] = [];
-    // A slow install (resolves after ~700ms) whose status() serves an
-    // evolving installInProgress section while it runs, the same contract a
-    // live daemon composition provides (sdk 5357f09e).
+    // Keep the install active until the poller has observed both snapshots.
+    // A wall-clock install deadline races the recursively scheduled polls on
+    // a busy CI runner; elapsed time does not prove a status read happened.
+    const finishInstall = deferred();
+    const progressObserved = deferred();
+    const receiptPrinted = deferred();
+    const installFinished = deferred();
     let installRunning = false;
     let statusReads = 0;
+    fixtureCleanups.add(() => {
+      const stopped = installRunning ? installFinished.promise : Promise.resolve();
+      finishInstall.resolve();
+      return stopped;
+    });
     const context = {
-      print: (text: string) => { out.push(text); },
+      print: (text: string) => {
+        out.push(text);
+        if (text.startsWith('Managed Local-Voice Setup')) receiptPrinted.resolve();
+      },
       platform: {
         configManager: { get: () => null },
         voiceSetup: {
           status: () => {
             statusReads += 1;
+            if (statusReads === 3) progressObserved.resolve();
             return {
               platform: 'linux',
               state: 'not-provisioned',
@@ -525,7 +568,7 @@ describe('experience runtime commands', () => {
                 ? {
                   installInProgress: {
                     startedAt: Date.now(),
-                    components: statusReads < 2
+                    components: statusReads < 3
                       ? [{ component: 'piper-engine', phase: 'download', bytesTotal: 12_582_912 }]
                       : [
                         { component: 'piper-engine', phase: 'done', bytesTotal: 12_582_912, bytesDone: 12_582_912 },
@@ -538,8 +581,9 @@ describe('experience runtime commands', () => {
           },
           install: async () => {
             installRunning = true;
-            await new Promise((resolve) => setTimeout(resolve, 700));
+            await finishInstall.promise;
             installRunning = false;
+            installFinished.resolve();
             return {
               provisioned: true,
               platform: 'linux',
@@ -559,9 +603,19 @@ describe('experience runtime commands', () => {
       clients: {},
     } as unknown as CommandContext;
 
-    await command!.handler(['setup', '--yes'], context);
-    // Let the install and its polling loop run to completion.
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    try {
+      await command!.handler(['setup', '--yes'], context);
+      await awaitFixtureSignal(progressObserved.promise, 'three voice install progress polls');
+      // Returning control to the prompt and rendering live progress must both
+      // happen before settlement. The duplicate download snapshot exercises
+      // deduplication across polls rather than relying on a timing window.
+      expect(installRunning).toBe(true);
+      expect(statusReads).toBe(3);
+      expect(out.join('\n')).not.toContain('Managed Local-Voice Setup');
+    } finally {
+      finishInstall.resolve();
+    }
+    await awaitFixtureSignal(receiptPrinted.promise, 'voice install receipt');
 
     const text = out.join('\n');
     // Live progress rendered WHILE the install ran, then the final receipt.
@@ -572,6 +626,8 @@ describe('experience runtime commands', () => {
     expect(text).toContain('result: voice.local.* configured');
     // The receipt comes after the progress lines.
     expect(text.indexOf('piper-engine: download')).toBeLessThan(text.indexOf('Managed Local-Voice Setup'));
+    expect(text.indexOf('piper-engine: done')).toBeLessThan(text.indexOf('Managed Local-Voice Setup'));
+    expect(text.indexOf('piper-voice: download')).toBeLessThan(text.indexOf('Managed Local-Voice Setup'));
     // A changed component line prints once per change, not once per poll.
     const downloadLineCount = out.filter((line) => line === '  piper-engine: download (12.0 MB)').length;
     expect(downloadLineCount).toBe(1);
