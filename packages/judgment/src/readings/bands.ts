@@ -6,6 +6,7 @@
  * - confirm: proceed only after the owner or caller confirms.
  * - escalate: do not act; hand the case to a person or a stronger model.
  */
+/** @deprecated Historical reading vocabulary. Autonomous consumers use JevDecision, not confirmation or owner escalation. */
 export type Outcome = 'act' | 'confirm' | 'escalate';
 
 /**
