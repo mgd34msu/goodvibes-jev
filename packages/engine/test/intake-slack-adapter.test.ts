@@ -6,7 +6,7 @@ import { InboxCursorStore } from '../sdk/src/platform/intake/cursor-store.ts';
 import { InboundPoller } from '../sdk/src/platform/intake/poller.ts';
 import { aggregateInbox } from '../sdk/src/platform/intake/aggregator.ts';
 import * as publicIntake from '../sdk/src/platform/intake/index.ts';
-import type { AdapterContext, ProviderPollResult } from '../sdk/src/platform/intake/provider-adapter.ts';
+import type { AdapterContext, ProviderPollOptions, ProviderPollResult } from '../sdk/src/platform/intake/provider-adapter.ts';
 import { createSlackInboxAdapter, type SlackInboxHttp, type SlackInboxMapper, type SlackInboxPorts } from '../sdk/src/platform/intake/providers/slack.ts';
 import { makeProjectTempDir } from './_helpers/project-temp.ts';
 
@@ -463,6 +463,47 @@ describe('honest failures and owned cancellation', () => {
     expect(poller.snapshotStatuses()[0]!.state).toBe('ready');
     expect(store.listItems({ limit: 1 })[0]).not.toHaveProperty('routeId');
     expect(JSON.stringify(poller.snapshotStatuses())).not.toContain(RAW);
+  });
+  test.each([
+    ['options-signal', 'direct'], ['signal-aborted', 'direct'],
+    ['options-signal', 'poller'], ['signal-aborted', 'poller'],
+  ] as const)('throwing %s getter stays contained through %s', async (mode, path) => {
+    const f = fixture();
+    const hostileOptions = (opts: ProviderPollOptions): ProviderPollOptions => {
+      const throwing = { get() { throw new Error(`${TOKEN} ${RAW}`); } };
+      if (mode === 'options-signal') return Object.defineProperty({ ...opts }, 'signal', throwing);
+      return { ...opts, signal: Object.defineProperty({}, 'aborted', throwing) as AbortSignal };
+    };
+    if (path === 'direct') {
+      expectUnavailable(await f.adapter.poll(hostileOptions({ limit: 1 })), undefined);
+    } else {
+      const adapter = f.adapter;
+      f.adapter = { ...adapter, poll: opts => adapter.poll(hostileOptions(opts)) };
+      const { store, poller } = await integrated(f);
+      await poller.pollOnce();
+      expect(store.countItems()).toBe(0);
+      expect(store.getCursor('slack')).toBe(0);
+      expect(poller.snapshotStatuses()[0]!.state).toBe('unavailable');
+      expect(poller.snapshotStatuses()[0]).not.toHaveProperty('configured');
+      expect(JSON.stringify([poller.snapshotStatuses(), f.logs])).not.toContain(RAW);
+      expect(JSON.stringify([poller.snapshotStatuses(), f.logs])).not.toContain(TOKEN);
+    }
+    expect(f.keys).toEqual([]); expect(f.calls).toEqual([]); expect(f.logs).toEqual([]);
+  });
+  test('poll option accessors are sampled once before owned work', async () => {
+    const f = fixture();
+    const signal = new AbortController().signal;
+    const reads = { signal: 0, limit: 0, since: 0 };
+    const opts = {
+      get signal() { if (++reads.signal > 1) throw new Error(`${TOKEN} ${RAW}`); return signal; },
+      get limit() { reads.limit += 1; return reads.limit === 1 ? 1 : NaN; },
+      get since() { reads.since += 1; return reads.since === 1 ? 0 : NOW; },
+    };
+    const result = await f.adapter.poll(opts);
+    expect(result.state).toBe('ready'); expect(result.items).toHaveLength(1);
+    expect(reads).toEqual({ signal: 1, limit: 1, since: 1 });
+    expect(f.calls.every(call => call.request.signal === signal)).toBe(true);
+    expect(f.calls.find(call => call.method === 'conversations.history')!.params.get('oldest')).toBe('0.000000');
   });
   test('pre-aborted poll performs no credential or HTTP work', async () => {
     const f = fixture(); const controller = new AbortController(); controller.abort();

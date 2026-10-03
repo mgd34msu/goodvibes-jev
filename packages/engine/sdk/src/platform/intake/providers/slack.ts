@@ -138,30 +138,35 @@ export function createSlackInboxAdapter(ctx: AdapterContext, ports: SlackInboxPo
     async poll(opts: ProviderPollOptions): Promise<ProviderPollResult> {
       let configured: boolean | undefined;
       let stage = 'Slack poll failed';
+      let signal: AbortSignal | undefined;
       try {
-        checkActive(opts.signal);
+        // Options can be supplied by hosts with accessors. Capture them once
+        // inside the boundary; never reread them while handling a failure.
+        signal = opts.signal;
+        const { limit, since } = opts;
+        checkActive(signal);
         const cutoff = Math.floor((ports.now ?? Date.now)());
-        if (!Number.isSafeInteger(cutoff) || cutoff <= 0 || !Number.isSafeInteger(opts.limit)
-          || opts.limit < 1 || opts.limit > MAX_ITEMS || (opts.since !== undefined
-            && (!Number.isSafeInteger(opts.since) || opts.since < 0))) fail('Slack poll bounds invalid');
+        if (!Number.isSafeInteger(cutoff) || cutoff <= 0 || !Number.isSafeInteger(limit)
+          || limit < 1 || limit > MAX_ITEMS || (since !== undefined
+            && (!Number.isSafeInteger(since) || since < 0))) fail('Slack poll bounds invalid');
         stage = 'Slack credential lookup failed';
         const token = await ctx.credentials.resolveConfigSecret(CREDENTIAL_KEY);
-        checkActive(opts.signal);
+        checkActive(signal);
         if (!token || !token.trim()) return unavailable('missing surfaces.slack.botToken', false);
         if (!token.startsWith('xoxb-') && !token.startsWith('xoxp-')) {
           return unavailable('surfaces.slack.botToken is not a Slack bot/user token', false);
         }
         configured = true;
         const get = async (method: 'auth.test' | 'conversations.list' | 'conversations.history', params: Record<string, string>) => {
-          checkActive(opts.signal);
+          checkActive(signal);
           stage = `Slack ${method} request failed`;
           const url = new URL(`https://slack.com/api/${method}`);
           for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
           const response = await ports.http(url, {
             method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-            ...(opts.signal === undefined ? {} : { signal: opts.signal }),
+            ...(signal === undefined ? {} : { signal }),
           });
-          checkActive(opts.signal);
+          checkActive(signal);
           if (!response.ok) fail(`Slack ${method} HTTP failure`);
           stage = `Slack ${method} response unreadable`;
           const body = record(response.body);
@@ -199,7 +204,7 @@ export function createSlackInboxAdapter(ctx: AdapterContext, ports: SlackInboxPo
             totalHistoryPages += 1;
             const history = await get('conversations.history', {
               channel: channelId, limit: '50', latest: (cutoff / 1_000).toFixed(6),
-              ...(opts.since === undefined ? {} : { oldest: (opts.since / 1_000).toFixed(6) }),
+              ...(since === undefined ? {} : { oldest: (since / 1_000).toFixed(6) }),
               ...(historyCursor ? { cursor: historyCursor } : {}),
             });
             if (history.is_limited === true) fail('Slack history is limited');
@@ -212,14 +217,14 @@ export function createSlackInboxAdapter(ctx: AdapterContext, ports: SlackInboxPo
               const { ts, receivedAt } = timestamp(message.ts);
               // Exclude the cutoff's entire rounded-ms bucket. A later poll
               // will see it whole, including arrivals during this scan.
-              if (receivedAt <= (opts.since ?? 0) || receivedAt >= cutoff) continue;
+              if (receivedAt <= (since ?? 0) || receivedAt >= cutoff) continue;
               const text = optionalString(message.text, 40_000) ?? '';
               const senderId = optionalString(message.user, 200) || channelUser || channelId;
               const key = `${channelId}:${ts}`;
               if (candidates.some(candidate => candidate.key === key)) continue;
               candidates.push({ key, channelId, senderId, text, ts, receivedAt, kind: classify(message, self, text, ts) });
               candidates.sort(compare);
-              if (candidates.length > opts.limit + 1) candidates.pop();
+              if (candidates.length > limit + 1) candidates.pop();
             }
             historyCursor = nextCursor(history);
             if (history.has_more !== undefined && typeof history.has_more !== 'boolean') fail('Slack response shape invalid');
@@ -232,17 +237,17 @@ export function createSlackInboxAdapter(ctx: AdapterContext, ports: SlackInboxPo
             historyCursors.add(historyCursor);
           }
         }
-        let selected = candidates.slice(0, opts.limit);
-        const omitted = candidates[opts.limit];
+        let selected = candidates.slice(0, limit);
+        const omitted = candidates[limit];
         if (omitted) selected = selected.filter(candidate => candidate.receivedAt < omitted.receivedAt);
         if (candidates.length > 0 && selected.length === 0) fail('Slack item budget cannot cover timestamp group');
         const items: InboundChannelItem[] = [];
         for (const candidate of selected) {
-          checkActive(opts.signal);
+          checkActive(signal);
           stage = 'Slack item mapping failed';
           const mapped = await ports.mapItem({ senderId: candidate.senderId, channelId: candidate.channelId,
-            subject: 'Direct message', text: candidate.text }, opts.signal);
-          checkActive(opts.signal);
+            subject: 'Direct message', text: candidate.text }, signal);
+          checkActive(signal);
           if (!mapped) fail('Slack item mapping withheld or invalid');
           // Snapshot host accessors exactly once. Validation and projection
           // must use the same immutable primitive values, never later reads.
@@ -260,23 +265,27 @@ export function createSlackInboxAdapter(ctx: AdapterContext, ports: SlackInboxPo
             stage = 'Slack route resolution failed';
             try {
               const route = await ctx.resolveRouteId({ provider: PROVIDER, fromDigest: item.fromDigest, kind: item.kind });
-              checkActive(opts.signal);
+              checkActive(signal);
               if (typeof route === 'string' && route.length > 0) item.routeId = route;
             } catch {
-              checkActive(opts.signal);
+              checkActive(signal);
               // Optional routing cannot poison the item. Never echo exceptions.
               try { await ctx.logger.warn('Slack route resolution failed'); } catch { /* Reporting is optional. */ }
-              checkActive(opts.signal);
+              checkActive(signal);
             }
           }
           items.push(item);
         }
-        checkActive(opts.signal);
+        checkActive(signal);
         return { items, state: items.length ? 'ready' : 'empty', configured: true };
       } catch (error) {
         // No external exception, Slack error field, raw response, identifier,
         // credential, or message content is rendered in a result or log.
-        return unavailable(opts.signal?.aborted ? 'Slack poll cancelled' : diagnostic(error) ?? stage, configured);
+        let cancelled = false;
+        // An untyped host may also supply a throwing aborted getter. Failure
+        // reporting must not invoke it outside a protected boundary.
+        try { cancelled = signal?.aborted === true; } catch { /* Keep the fixed stage diagnostic. */ }
+        return unavailable(cancelled ? 'Slack poll cancelled' : diagnostic(error) ?? stage, configured);
       }
     },
   };
