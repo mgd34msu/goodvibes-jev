@@ -144,6 +144,52 @@ describe('workspace editor message reading', () => {
     expect(messageColor(ws, 'Cannot save.')).toBe(WORKSPACE_PALETTE.muted); ws.close();
   });
 
+  test('protected message origins survive real field edits, replacements and close/reopen', async () => {
+    const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port);
+    const { ws } = workspace();
+    const marker = 'synthetic-private-echo-938d';
+    const originalMessage = `Validation failed for ${marker}`;
+    ws.localEditor = { ...editor(originalMessage), fields: [{ ...editor('').fields[0]!, redact: true, value: marker }] };
+    await flush(); expect(ws.editorMessageState.status).toBe('protected');
+    ws.appendEditorText('X'); await flush();
+    expect(ws.editorMessageState.status).toBe('protected'); expect(fake.requests).toHaveLength(0);
+    ws.editorBackspace(); ws.editorBackspace(); await flush();
+    expect(ws.editorMessageState.status).toBe('protected'); expect(fake.requests).toHaveLength(0);
+    ws.localEditor = { ...editor(originalMessage), title: 'Replacement editor', recordId: 'replacement', mode: 'update' };
+    await flush(); expect(ws.editorMessageState.status).toBe('protected'); expect(fake.requests).toHaveLength(0);
+    // Editing the error wording does not make the original echoed value public.
+    ws.localEditor = { ...editor(`Earlier error: ${marker}. Retry later.`), fields: [] };
+    await flush(); expect(ws.editorMessageState.status).toBe('protected'); expect(fake.requests).toHaveLength(0);
+    ws.close(); ws.reopen(); ws.localEditor = editor(originalMessage);
+    await flush(); expect(ws.editorMessageState.status).toBe('protected'); expect(fake.requests).toHaveLength(0);
+    ws.open({ executeCommand: async () => true, print() {} } as unknown as CommandContext, () => {});
+    ws.localEditor = editor(originalMessage); await flush();
+    expect(ws.editorMessageState.status).toBe('protected'); expect(fake.requests).toHaveLength(0);
+    // A genuinely new safe message is readable, including when an unrelated
+    // redacted field remains populated. Fields still never enter model evidence.
+    ws.localEditor = { ...editor('Ready to edit.'), fields: [{ ...editor('').fields[0]!, redact: true, value: 'unrelated-synthetic-private-293a' }] };
+    await flush(); expect(ws.editorMessageState.status).toBe('read'); expect(fake.requests).toHaveLength(1);
+    expect(JSON.stringify(fake.requests)).not.toContain('unrelated-synthetic-private-293a');
+    // Returning to an old protected message after a safe one is still protected.
+    ws.localEditor = editor(originalMessage); await flush();
+    expect(ws.editorMessageState.status).toBe('protected'); expect(fake.requests).toHaveLength(1); ws.close();
+  });
+
+  test('actual missing-field producer establishes a new safe message after a protected error', async () => {
+    const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port);
+    const { ws } = workspace();
+    const marker = 'synthetic-private-producer-72ba';
+    ws.localEditor = { ...editor(`Invalid ${marker}`), fields: [{ ...editor('').fields[0]!, redact: true, value: marker }] };
+    for (let i = 0; i < marker.length; i++) ws.editorBackspace();
+    await flush(); expect(fake.requests).toHaveLength(0);
+    expect(ws.editorMessageState.status).toBe('protected');
+    ws.submitEditorFieldOrForm(); await flush();
+    expect(ws.localEditor?.message).toBe('Name is required before saving.');
+    expect(ws.editorMessageState.status).toBe('read'); expect(fake.requests).toHaveLength(1);
+    expect(messageColor(ws, 'Name is required before saving.')).toBe(WORKSPACE_PALETTE.warn);
+    expect(JSON.stringify(fake.requests)).not.toContain(marker); ws.close();
+  });
+
   test('shared privacy boundary and declared secret containment prevent model transmission', async () => {
     const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port);
     const { ws } = workspace();
