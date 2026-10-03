@@ -20822,7 +20822,7 @@
     {
       "name": "ownerReply",
       "kind": "const",
-      "text": "ownerReply: import(\"@goodvibes-jev/judgment\").ReplyReader<\"amend\" | \"approve\" | \"reject\" | \"unclear\">"
+      "text": "ownerReply: import(\"@goodvibes-jev/judgment\").ReplyReader<\"approve\" | \"amend\" | \"reject\" | \"unclear\">"
     },
     {
       "name": "parseAmendment",
