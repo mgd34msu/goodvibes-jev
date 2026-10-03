@@ -20822,7 +20822,7 @@
     {
       "name": "ownerReply",
       "kind": "const",
-      "text": "ownerReply: import(\"@goodvibes-jev/judgment\").ReplyReader<\"approve\" | \"reject\" | \"amend\" | \"unclear\">"
+      "text": "ownerReply: import(\"@goodvibes-jev/judgment\").ReplyReader<\"amend\" | \"approve\" | \"reject\" | \"unclear\">"
     },
     {
       "name": "parseAmendment",
@@ -65030,7 +65030,7 @@
     {
       "name": "TaintOptions",
       "kind": "interface",
-      "text": "export interface TaintOptions { readonly exactMatchFields?: readonly string[] | undefined; readonly replyToEnvelopeSenders?: readonly string[] | undefined; readonly stripQuotedFields?: readonly string[] | undefined; }"
+      "text": "export interface TaintOptions { readonly signal?: AbortSignal | undefined; readonly exactMatchFields?: readonly string[] | undefined; readonly replyToEnvelopeSenders?: readonly string[] | undefined; readonly stripQuotedFields?: readonly string[] | undefined; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; }"
     },
     {
       "name": "TaintSource",
@@ -70146,6 +70146,11 @@
       "name": "configureActivityLogger",
       "kind": "function",
       "text": "export declare function configureActivityLogger(logDir: string, options?: ActivityLoggerOptions): void;"
+    },
+    {
+      "name": "containsIssuerCredential",
+      "kind": "function",
+      "text": "export declare function containsIssuerCredential(text: string): boolean;"
     },
     {
       "name": "createTimeoutController",

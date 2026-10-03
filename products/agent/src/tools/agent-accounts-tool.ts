@@ -1,3 +1,4 @@
+import { installAgentMemoryInputGuard } from './agent-memory-input-guard.ts';
 /**
  * The `accounts` tool: the durable record of every account the agent created.
  *
@@ -11,9 +12,9 @@
  * `AgentAccountRegistry` had all of this and no caller outside its own test, so
  * an account created today would leave no trace. This is the caller.
  *
- * The credential itself never reaches this tool. Only `credentialSecretKey`,
- * the NAME of the secret-store entry holding it, the registry rejects
- * secret-looking text in every field.
+ * Only the secret-store key NAME belongs in `credentialSecretKey`. Record
+ * fields are screened before the taint policy receives them, and the registry
+ * independently refuses protected values again at the durable boundary.
  *
  * The one boundary that does not move: an outward effect refused because
  * untrusted content was read this turn stays refused. A web page describing a
@@ -24,12 +25,13 @@ import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { AgentAccountRegistry, type AgentAccountRecord } from '@goodvibes-jev/engine/sdk/platform/google';
 import { mintAddressFor } from '@goodvibes-jev/engine/sdk/platform/google';
+import { containsSecretLikeText } from '../agent/memory-safety.ts';
 import { getSessionExpectationBook } from '../agent/signup/session-expectations.ts';
 import { evaluateOutwardEffect, getSessionUntrustedContentLedger } from '../trust/untrusted-content.ts';
 
 const ACCOUNT_ACTIONS = ['list', 'alias', 'record', 'forget', 'sweep'] as const;
 
-type ToolOutput = { readonly success: true; readonly output: string } | { readonly success: false; readonly error: string };
+type ToolOutput = { readonly success: true; readonly output: string } | { readonly success: false; readonly error: string; readonly cancelled?: true };
 
 function failure(message: string): ToolOutput {
   return { success: false, error: message };
@@ -92,7 +94,9 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
         required: ['action'],
       },
     },
-    execute: async (rawArgs: Record<string, unknown>): Promise<ToolOutput> => {
+    execute: async (rawArgs: Record<string, unknown>, execution?: Parameters<Tool['execute']>[1]): Promise<ToolOutput> => {
+      const cancelled = (): ToolOutput => ({ success: false, cancelled: true, error: 'Account action cancelled.' });
+      if (execution?.signal?.aborted) return cancelled();
       const action = readString(rawArgs.action).toLowerCase();
       if (!ACCOUNT_ACTIONS.includes(action as (typeof ACCOUNT_ACTIONS)[number])) {
         return failure(`accounts needs one of: ${ACCOUNT_ACTIONS.join(', ')}.`);
@@ -138,16 +142,37 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
         }
 
         if (action === 'record') {
+          // Refuse protected values before the taint policy can send field text
+          // to judgment. Capture once so policy and persistence see identical
+          // inputs even across the awaited reading. The registry checks again
+          // at its durable boundary; this preflight does not grant authority.
+          const input = {
+            serviceDomain: readString(rawArgs.serviceDomain),
+            serviceUrl: readString(rawArgs.serviceUrl),
+            aliasAddress: readString(rawArgs.aliasAddress),
+            purpose: readString(rawArgs.purpose),
+            credentialSecretKey: readString(rawArgs.credentialSecretKey),
+          };
+          if (Object.values(input).some(containsSecretLikeText)) {
+            return failure('The account registry cannot store secret-looking values. Store the secret in the secret store and record only its key name.');
+          }
           // Recording is the visible half of an outward effect that already
           // happened, so it is gated the same way the signup itself is: page
           // text cannot drive the agent into registering an account.
+          const ledger = getSessionUntrustedContentLedger();
+          // The comparison context is also judgment input. Refuse, rather than
+          // erase evidence and accidentally authorize a tainted account write.
+          if ([...ledger.taintSourcesThisTurn(), ...ledger.exposuresThisTurn()]
+            .some((source) => Object.values(source).some(containsSecretLikeText))) {
+            return failure('Account safety cannot inspect protected values in untrusted context. No record was written.');
+          }
           const decision = await evaluateOutwardEffect({
             request: {
               toolName: 'accounts',
               action: 'accounts.record',
-              description: `recording an account created at ${readString(rawArgs.serviceDomain) || 'a service'}`,
+              description: `recording an account created at ${input.serviceDomain || 'a service'}`,
             },
-            ledger: getSessionUntrustedContentLedger(),
+            ledger,
             // Enumerated rather than left to the coarse rule. Every field of a
             // record is text a page could have supplied, the domain and the URL
             // most of all, since a record pointing at an attacker's host is how
@@ -155,10 +180,10 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
             // these, recording an account after reading any page was refused
             // outright, which is the friction that gets a check switched off.
             content: {
-              serviceDomain: readString(rawArgs.serviceDomain) || undefined,
-              serviceUrl: readString(rawArgs.serviceUrl) || undefined,
-              aliasAddress: readString(rawArgs.aliasAddress) || undefined,
-              purpose: readString(rawArgs.purpose) || undefined,
+              serviceDomain: input.serviceDomain || undefined,
+              serviceUrl: input.serviceUrl || undefined,
+              aliasAddress: input.aliasAddress || undefined,
+              purpose: input.purpose || undefined,
             },
             taintOptions: {
               // The domain and the URL are short and high-signal: the value
@@ -167,18 +192,14 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
               // for this signup, so of course it appears in the mail that signup
               // provoked, and testing it would refuse every real record.
               exactMatchFields: ['serviceDomain', 'serviceUrl'],
+              signal: execution?.signal,
             },
             requestedBy: 'owner-direct',
           });
+          if (execution?.signal?.aborted) return cancelled();
           if (!decision.allowed) return failure(`${decision.reason} ${decision.fix}`);
 
-          const account = registry.record({
-            serviceDomain: readString(rawArgs.serviceDomain),
-            serviceUrl: readString(rawArgs.serviceUrl),
-            aliasAddress: readString(rawArgs.aliasAddress),
-            purpose: readString(rawArgs.purpose),
-            credentialSecretKey: readString(rawArgs.credentialSecretKey),
-          });
+          const account = registry.record(input);
           return ok(`Recorded:\n${renderAccount(account)}`);
         }
 
@@ -192,6 +213,7 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
         }
 
         const known = options.knownSecretKeys ? await options.knownSecretKeys() : undefined;
+        if (execution?.signal?.aborted) return cancelled();
         const maxAgeDays = typeof rawArgs.maxAgeDays === 'number' ? rawArgs.maxAgeDays : undefined;
         const result = registry.sweep({
           ...(known === undefined ? {} : { knownSecretKeys: known }),
@@ -203,6 +225,7 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
             : `Reaped ${result.removed.length} record(s) whose credential was gone or which aged out: ${result.removed.map((entry) => entry.id).join(', ')}. ${result.remaining} remain.`,
         );
       } catch (error) {
+        if (execution?.signal?.aborted) return cancelled();
         return failure(error instanceof Error ? error.message : String(error));
       }
     },
@@ -210,5 +233,6 @@ export function createAgentAccountsTool(options: AgentAccountsToolOptions): Tool
 }
 
 export function registerAgentAccountsTool(registry: ToolRegistry, options: AgentAccountsToolOptions): void {
+  installAgentMemoryInputGuard(registry);
   if (!registry.has('accounts')) registry.register(createAgentAccountsTool(options));
 }
