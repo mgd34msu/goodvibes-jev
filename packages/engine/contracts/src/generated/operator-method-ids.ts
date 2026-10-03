@@ -507,6 +507,8 @@ export const OPERATOR_METHOD_IDS = [
   "web_search.providers.list",
   "web_search.query",
   "workLedger.history",
+  "workLedger.importLegacy",
+  "workLedger.prepareLegacyImport",
   "workLedger.snapshot",
   "workspaces.registrations.add",
   "workspaces.registrations.list",

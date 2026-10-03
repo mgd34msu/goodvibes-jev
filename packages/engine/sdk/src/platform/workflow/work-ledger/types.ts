@@ -1,4 +1,5 @@
 import { z } from 'zod/v4';
+import { LEGACY_IMPORT_MAX_BYTES, validateLegacyWorkLedgerManifest, type LegacyMigrationManifest } from './legacy-import.js';
 
 const id = z.string().min(1).max(200);
 const text = z.string().trim().min(1).max(20_000);
@@ -80,9 +81,17 @@ export const ledgerEvidenceSchema = z.strictObject({
 });
 export type LedgerEvidence = z.infer<typeof ledgerEvidenceSchema>;
 
+export const legacyWorkLedgerManifestSchema = z.unknown().superRefine((input, context) => {
+  try { validateLegacyWorkLedgerManifest(input); } catch {
+    context.addIssue({ code: 'custom', message: 'Invalid or oversized legacy import manifest' });
+  }
+}) as unknown as z.ZodType<LegacyMigrationManifest>;
+
+
 const envelope = { requestId: id, expectedRevision: revision };
 const workEnvelope = { ...envelope, workId: id };
 export const workLedgerCommandSchema = z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('import_legacy'), ...envelope, manifest: legacyWorkLedgerManifestSchema }),
   z.strictObject({ type: z.literal('create'), ...envelope, title: text, goal: text, criteria: z.array(text).min(1).max(100) }),
   z.strictObject({ type: z.literal('revise'), ...workEnvelope, title: text, goal: text, criteria: z.array(text).min(1).max(100) }),
   z.strictObject({ type: z.literal('claim'), ...workEnvelope }),
@@ -92,11 +101,15 @@ export const workLedgerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('cancel'), ...workEnvelope, reason: text }),
   z.strictObject({ type: z.literal('reopen'), ...workEnvelope, reason: text }),
   z.strictObject({ type: z.literal('record_evidence'), ...envelope, target: evidenceTargetSchema, outcome: z.enum(['verified', 'failed', 'unavailable']), reason: text, references: z.array(evidenceReferenceSchema).max(100), source: ledgerEvidenceSchema.shape.source, criteriaResults: ledgerEvidenceSchema.shape.criteriaResults }),
-]);
+]).superRefine((command, context) => {
+  if (command.type === 'import_legacy' && new TextEncoder().encode(JSON.stringify(command)).byteLength > LEGACY_IMPORT_MAX_BYTES) {
+    context.addIssue({ code: 'custom', message: 'Complete import command exceeds 256 KiB' });
+  }
+});
 export type WorkLedgerCommand = z.infer<typeof workLedgerCommandSchema>;
 export type WorkLedgerAction = WorkLedgerCommand['type'];
 
-export const ledgerEventSchema = z.strictObject({
+const ordinaryLedgerEventSchema = z.strictObject({
   sequence: revision,
   type: z.enum(['create', 'revise', 'claim', 'report', 'release', 'handoff', 'cancel', 'reopen', 'record_evidence']),
   actorId: id,
@@ -110,7 +123,22 @@ export const ledgerEventSchema = z.strictObject({
   evidence: ledgerEvidenceSchema.nullable(),
   reason: text.nullable(),
 });
+export const ledgerImportEventSchema = z.strictObject({
+  sequence: revision, type: z.literal('import_legacy'), actorId: id, requestId: id, at: stamp,
+  manifest: legacyWorkLedgerManifestSchema, works: z.array(ledgerWorkSchema).max(5000),
+});
+export const ledgerEventSchema = z.union([ordinaryLedgerEventSchema, ledgerImportEventSchema]);
 export type WorkLedgerEvent = z.infer<typeof ledgerEventSchema>;
+/** Permission-aware public history, preserving cursor continuity without disclosing raw sources. */
+export const workLedgerReadEventSchema = z.union([ordinaryLedgerEventSchema,
+  ledgerImportEventSchema.extend({ manifest: legacyWorkLedgerManifestSchema.nullable(), provenance: z.literal('requires_read_knowledge').optional() }),
+]);
+export type WorkLedgerReadEvent = z.infer<typeof workLedgerReadEventSchema>;
+export function projectWorkLedgerReadEvent(event: WorkLedgerEvent, allowLegacyProvenance: boolean): WorkLedgerReadEvent {
+  if (event.type !== 'import_legacy' || allowLegacyProvenance) return event;
+  return { type: event.type, sequence: event.sequence, actorId: event.actorId, requestId: event.requestId, at: event.at,
+    works: event.works, manifest: null, provenance: 'requires_read_knowledge' };
+}
 
 const receiptSchema = z.strictObject({
   actorId: id,
@@ -160,7 +188,7 @@ export interface WorkLedgerActor {
 
 export type WorkLedgerRejection =
   | 'invalid_command' | 'forbidden' | 'conflict' | 'stale_evidence'
-  | 'not_found' | 'invalid_transition' | 'request_conflict'
+  | 'stale_source' | 'not_found' | 'invalid_transition' | 'request_conflict'
   | 'cancelled' | 'closed' | 'invalid_state' | 'host_error';
 
 export type WorkLedgerResult = {
@@ -204,9 +232,13 @@ export interface WorkLedgerDecision<T> {
  * reconnect, not delivery count. Cross-process auth must route through this
  * authority owner or enforce durable revocation epochs in the adapter.
  */
+/** Available only inside the owning store's durable transaction. No cache reads. */
+export interface WorkLedgerTransactionContext {
+  readSource(id: string): { readonly source: unknown; readonly generation: string | null };
+}
 export interface WorkLedgerStorage {
   read(): Promise<unknown>;
-  transaction<T>(decide: (current: unknown) => WorkLedgerDecision<T>): Promise<T>;
+  transaction<T>(decide: (current: unknown, context?: WorkLedgerTransactionContext) => WorkLedgerDecision<T>): Promise<T>;
   subscribe(listener: (state: WorkLedgerState) => void): () => void;
 }
 
@@ -229,7 +261,7 @@ export interface WorkLedgerService {
   history(afterSequence: number, actor: WorkLedgerActor): Promise<readonly WorkLedgerEvent[]>;
   /** Delta notification; readSnapshot is the authoritative initial view. */
   subscribe(actor: WorkLedgerActor, listener: (snapshot: WorkLedgerSnapshot) => void): () => void;
-  execute(command: unknown, trustedHostActor: WorkLedgerActor, options?: { readonly signal?: AbortSignal }): Promise<WorkLedgerResult>;
+  execute(command: unknown, trustedHostActor: WorkLedgerActor, options?: { readonly signal?: AbortSignal | undefined; readonly isAuthorized?: (() => boolean) | undefined }): Promise<WorkLedgerResult>;
   /** Stop new admissions and notifications; drain already admitted commands. */
   close(): Promise<void>;
 }

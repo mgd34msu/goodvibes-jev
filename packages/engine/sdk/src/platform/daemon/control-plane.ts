@@ -616,6 +616,7 @@ export class DaemonControlPlaneHelper {
   async invokeGatewayMethodCall(input: {
     readonly authToken: string;
     readonly methodId: string;
+    readonly signal?: AbortSignal | undefined;
     readonly query?: Record<string, unknown> | undefined;
     readonly body?: unknown | undefined;
     readonly context?: {
@@ -709,6 +710,16 @@ export class DaemonControlPlaneHelper {
         const body = await this.context.gatewayMethods.invoke(input.methodId, {
           body: input.body,
           query: input.query,
+          signal: input.signal,
+          isAuthorized: (requiredScopes = []) => {
+            if (descriptor.metadata?.requiresFreshOperatorAuth !== true) return true;
+            const fresh = this.describeAuthenticatedPrincipal(input.authToken);
+            return fresh !== null && fresh.principalId === context?.principalId
+              && requiredScopes.every(scope => (fresh.scopes.includes('*') || fresh.scopes.includes(scope))
+                && (context?.scopes?.includes('*') || context?.scopes?.includes(scope)))
+              && this.validateGatewayInvocation(descriptor, fresh) === null
+              && this.validateGatewayInvocation(descriptor, context) === null;
+          },
           context: {
             authToken: input.authToken,
             principalId: context?.principalId,

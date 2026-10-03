@@ -6,3 +6,5 @@ export type {
   LocalWorkLedgerReadBindingOptions, WorkLedgerReadBinding,
   WorkLedgerReadClient, WorkLedgerReadSnapshot,
 } from './read-client.js';
+
+export * from './legacy-import.js';

@@ -12,6 +12,7 @@ import {
 
 /** Trusted native composition only. Never copy authority onto RuntimeServices. */
 export interface NativeWorkLedgerOwner {
+  readonly importHostId: string;
   readonly service: WorkLedgerService;
   readonly authority: WorkLedgerAuthority;
   close(): Promise<void>;
@@ -62,7 +63,9 @@ export function createNativeWorkLedgerOwner(options: {
       return () => { listeners.delete(listener); };
     },
   };
+  const importHostId = randomUUID();
   const core = createWorkLedger({
+    importHostId,
     projectId: options.projectId,
     storage: forwarding,
     clock: options.clock ?? { now: Date.now, newId: (kind) => `${kind}:${randomUUID()}` },
@@ -87,5 +90,5 @@ export function createNativeWorkLedgerOwner(options: {
     return closing;
   }
 
-  return { service: { ...core.service, close }, authority: core.authority, close };
+  return { importHostId, service: { ...core.service, close }, authority: core.authority, close };
 }
