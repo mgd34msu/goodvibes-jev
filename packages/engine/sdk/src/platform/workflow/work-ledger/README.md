@@ -181,3 +181,13 @@ files or facade restart fence. The drain contract here is exercised through
 `RuntimeServices.close()` and the existing acquisition/disposal scopes. A process
 host must await that close before process teardown. Combined process-host proofs
 are separate evidence and are not claimed as main-only integration acceptance.
+
+
+Remote reads are available through the separate supported
+`@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/operator-read-client`
+subpath. It exports `createOperatorWorkLedgerReadClient` and
+`OperatorWorkLedgerReadOptions`, and consumes an existing authenticated operator
+client. Its return type is the same `WorkLedgerReadClient` used by local bindings.
+The local ledger barrel does not import this transport. The SDK's existing
+operator-sdk dependency remains one-way; no operator-sdk-to-SDK reference or
+copied reader authority/type contract is introduced.

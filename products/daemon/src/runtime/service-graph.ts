@@ -1,3 +1,5 @@
+import { createLocalWorkLedgerReadBinding } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
+import { registerWorkLedgerGatewayMethods } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import { join } from 'node:path';
 import { ServiceRegistry, SubscriptionManager, ToolLLM, sharedSubscriptionsPath } from '@goodvibes-jev/engine/sdk/platform/config';
 import { AutomationDeliveryManager, AutomationManager } from '@goodvibes-jev/engine/sdk/platform/automation';
@@ -74,7 +76,7 @@ export type { RuntimeServicesOptions, RuntimeServices } from './runtime-services
 /** Construct the daemon's base owners before the outer async handler boundary.
  * Adapted from pinned daemon 443e5ee; shared capabilities use canonical factories.
  */
-export async function createRuntimeBaseServices(options: RuntimeServicesOptions): Promise<{ services: Omit<RuntimeServices, 'daemonHandlers'>; handlerOptions: Omit<DaemonHandlerCompositionOptions, 'distributedRuntimeReady'> }> {
+export async function createRuntimeBaseServices(options: RuntimeServicesOptions): Promise<{ services: Omit<RuntimeServices, 'daemonHandlers'>; handlerOptions: Omit<DaemonHandlerCompositionOptions, 'distributedRuntimeReady'>; closeWorkLedger: () => Promise<void> }> {
   // The SDK's disposal scope and its all-required poller list, plus the four
   // pollers only the daemon has, see disposal-wiring.ts.
   const disposalScope = createRuntimeAcquisitionScope('RuntimeServices');
@@ -331,7 +333,19 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       knowledgeService, agentKnowledgeService, homeGraphService,
       projectPlanningService, projectPlanningProjectId, workPlanStore, workLedgerOwner,
     } = createKnowledgeServices({ ownership: disposalScope, configManager, providerRegistry, artifactStore, memoryRegistry, runtimeBus: options.runtimeBus, workingDirectory, homeDirectory, isBackgroundPaused: isKnowledgeBackgroundPaused, admitExpensiveWork });
-    fenceWorkLedger = workLedgerOwner.close;
+    // This daemon's existing owner and host-selected project are authoritative.
+    // Request payloads can only verify this binding, never select a store or actor.
+    const workLedgerReadBinding = createLocalWorkLedgerReadBinding({
+      available: true, projectId: projectPlanningProjectId, actorId: 'host:operator-ledger-read',
+      service: workLedgerOwner.service, authority: workLedgerOwner.authority,
+    });
+    if (!workLedgerReadBinding.available) throw new Error(workLedgerReadBinding.reason);
+    const workLedgerReader = workLedgerReadBinding.client;
+    disposalScope.registry.add('native work ledger reader', () => workLedgerReader.dispose());
+    fenceWorkLedger = async () => {
+      try { workLedgerReader.dispose(); } finally { await workLedgerOwner.close(); }
+    };
+    registerWorkLedgerGatewayMethods(gatewayMethods, workLedgerReader);
     const voiceProviders = new VoiceProviderRegistry();
     ensureBuiltinVoiceProviders(voiceProviders, { readConfig: (key) => configManager.get(key as Parameters<typeof configManager.get>[0]) });
     const voiceService = new VoiceService(voiceProviders);
@@ -808,7 +822,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       clusterCoordinator,
       checkoutSeam: browserCheckoutSeam.get, channelDeliveryRouter, inboxFactory: options.inboxFactory,
     };
-    return { services, handlerOptions };
+    return { services, handlerOptions, closeWorkLedger: fenceWorkLedger };
   } catch (startupError) {
     try { await close(); }
     catch (cleanupError) { throw new AggregateError([startupError, cleanupError], 'Runtime graph construction and cleanup failed'); }

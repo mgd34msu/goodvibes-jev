@@ -20,7 +20,7 @@ exports.untildify = untildify;
 exports.getFilePaths = getFilePaths;
 const os = require("node:os");
 const node_url_1 = require("node:url");
-const fastGlob = require("fast-glob");
+const fastGlob = require("../../vendor/fast-glob/out/index.js");
 // from https://github.com/sindresorhus/untildify/blob/f85a087418aeaa2beb56fe2684fe3b64fc8c588d/index.js#L11
 function untildify(pathWithTilde) {
     const homeDirectory = os.homedir();

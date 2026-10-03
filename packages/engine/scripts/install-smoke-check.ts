@@ -1,4 +1,4 @@
-import { rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { retryTransientInstall } from './install-retry.ts';
@@ -9,6 +9,7 @@ import {
   getAuthToken,
   getPublishRegistryOverride,
   getRootVersion,
+  inspectPackedManifest,
   packageNameForDir as manifestPackageName,
   packStage,
   publicPackageDirs,
@@ -147,6 +148,46 @@ if (typeof judgmentRoot.createSystemOnePort !== 'function') throw new Error('jud
 if (typeof engineErrors.readFailure !== 'function' || typeof engineErrors.installJudgmentPort !== 'function') throw new Error('engine errors judgment reading export missing');
 if (require.resolve('${JUDGMENT_PACKAGE_NAME}/package.json').includes(join('${ENGINE_PACKAGE_NAME}', 'node_modules'))) throw new Error('judgment installed nested under the engine instead of beside it');
 const packageRoot = dirname(require.resolve('${ENGINE_PACKAGE_NAME}/package.json'));
+const engineRequire = createRequire(join(packageRoot, 'package.json'));
+let bashManifest;
+try { bashManifest = engineRequire.resolve('bash-language-server/package.json'); }
+catch { bashManifest = join(packageRoot, 'vendor/bash-language-server/package.json'); }
+const bashRequire = createRequire(bashManifest);
+if (bashRequire('@goodvibes-jev/bash-zod/package.json').version !== '3.24.2' ||
+    bashRequire('@goodvibes-jev/bash-web-tree-sitter/package.json').version !== '0.24.5') {
+  throw new Error('packaged Bash dependency aliases resolved the wrong versions');
+}
+const discovered = await bashRequire('./out/util/fs.js').getFilePaths({
+  globPattern: 'package.json', rootPath: process.cwd(), maxItems: 1,
+});
+if (discovered.length !== 1) throw new Error('packaged Bash file discovery failed');
+const braces = bashRequire('./vendor/fast-glob/vendor/micromatch/vendor/braces');
+let nestingRejected = false;
+try { braces.compile('{'.repeat(128) + 'fixture' + '}'.repeat(128)); }
+catch (error) { nestingRejected = error instanceof SyntaxError && error.message.includes('maximum AST depth'); }
+if (!nestingRejected) throw new Error('packaged Bash brace depth guard is missing');
+const savedFetch = globalThis.fetch;
+try {
+  const parser = await bashRequire('./out/parser.js').initializeParser();
+  try {
+    const tree = parser.parse('echo packaged-fixture');
+    try {
+      if (tree.rootNode.type !== 'program' || tree.rootNode.hasError) throw new Error('packaged Bash wasm parser failed');
+    } finally { tree.delete(); }
+  } finally { parser.delete(); }
+} finally { globalThis.fetch = savedFetch; }
+if (typeof Bun !== 'undefined') {
+  const { LspService } = await import('${PUBLIC_PACKAGE_NAME}/platform/intelligence');
+  const lsp = new LspService({
+    workingDirectory: process.cwd(),
+    resolveProjectPath: (...parts) => join(process.cwd(), ...parts),
+  });
+  try {
+    lsp.registerServer('bash', { command: 'bash-language-server', args: ['start'] });
+    if (!await lsp.isAvailable('bash')) throw new Error('packaged Bash LSP is unavailable');
+    if (!(await lsp.getClient('bash'))?.isRunning) throw new Error('packaged Bash LSP handshake failed');
+  } finally { await lsp.shutdown(); }
+}
 const nestedInternalRoot = join(packageRoot, 'node_modules', '@goodvibes-jev');
 if (existsSync(nestedInternalRoot)) {
   const leaked = readdirSync(nestedInternalRoot);
@@ -208,6 +249,15 @@ async function installWithBun(specs: readonly string[]): Promise<void> {
   const projectDir = createSdkTempDir('goodvibes-sdk-bun-smoke-');
   try {
     writeConsumerFiles(projectDir);
+    if (!REGISTRY_MODE) {
+      // A tarball-only test has no published judgment version to resolve.
+      // Bind the exact packed dependency instead of querying its registry.
+      const judgmentTarball = specs.find((spec) => inspectPackedManifest(spec).name === JUDGMENT_PACKAGE_NAME);
+      if (!judgmentTarball) throw new Error('Bun tarball smoke requires the packed judgment dependency');
+      const manifestPath = resolve(projectDir, 'package.json');
+      const consumer = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+      writeFileSync(manifestPath, `${JSON.stringify({ ...consumer, overrides: { [JUDGMENT_PACKAGE_NAME]: `file:${judgmentTarball}` } }, null, 2)}\n`);
+    }
     // Pin zod@^4 explicitly so Bun resolves the dist's `zod/v4` subpath import
     // even when another dependency tree brings an older zod.
     const bunSpecs = [...specs, 'zod@^4'];
@@ -249,6 +299,7 @@ if (REGISTRY_MODE) {
   const packDir = firstSpec !== undefined ? resolve(firstSpec, '..') : null;
   try {
     await installWithNpm(specs);
+    await installWithBun(specs);
     console.log('tarball install smoke passed');
   } finally {
     cleanupStage(tempRoot);

@@ -1,7 +1,7 @@
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../input/command-registry.ts';
-import { planAgentTaskRoute } from './agent-route-planner.ts';
+import { planAgentTaskRoute, type AgentTaskRouteSources } from './agent-route-planner.ts';
 
 type AgentRouteAction = 'plan' | 'status';
 
@@ -67,7 +67,7 @@ function status(): Record<string, unknown> {
   };
 }
 
-export function createAgentRouteTool(commandContext: CommandContext): Tool {
+export function createAgentRouteTool(commandContext: CommandContext, sources: AgentTaskRouteSources = {}): Tool {
   return {
     definition: {
       name: 'route',
@@ -91,15 +91,15 @@ export function createAgentRouteTool(commandContext: CommandContext): Tool {
       sideEffects: [],
       concurrency: 'parallel',
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs: unknown, options) => {
       const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentRouteToolArgs;
       const action = readAction(args);
       if (action === 'status') return output(status());
-      return output(planAgentTaskRoute(commandContext, args));
+      return output(await planAgentTaskRoute(commandContext, args, sources, { ...(options?.signal ? { signal: options.signal } : {}) }));
     },
   };
 }
 
-export function registerAgentRouteTool(registry: ToolRegistry, commandContext: CommandContext): void {
-  if (!registry.has('route')) registry.register(createAgentRouteTool(commandContext));
+export function registerAgentRouteTool(registry: ToolRegistry, commandContext: CommandContext, sources: AgentTaskRouteSources = {}): void {
+  if (!registry.has('route')) registry.register(createAgentRouteTool(commandContext, sources));
 }

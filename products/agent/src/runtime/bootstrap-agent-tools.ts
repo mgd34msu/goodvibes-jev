@@ -66,7 +66,7 @@ export interface AgentToolRegistrationDeps {
 
 export function registerAgentTools(deps: AgentToolRegistrationDeps): void {
   const { toolRegistry, commandRegistry, commandContext, configManager, services } = deps;
-  registerAgentHarnessTool(toolRegistry, commandRegistry, commandContext);
+  registerAgentHarnessTool(toolRegistry, commandRegistry, commandContext, { channelRegistry: services.channelPlugins });
   registerAgentAuditTool(toolRegistry, commandRegistry, commandContext);
   registerAgentAutonomyTool(toolRegistry, commandRegistry, commandContext);
   registerAgentChannelsTool(toolRegistry, commandRegistry, commandContext);
@@ -132,7 +132,7 @@ export function registerAgentTools(deps: AgentToolRegistrationDeps): void {
     }),
   });
   registerAgentResearchTool(toolRegistry, commandRegistry, commandContext);
-  registerAgentRouteTool(toolRegistry, commandContext);
+  registerAgentRouteTool(toolRegistry, commandContext, { channelRegistry: services.channelPlugins });
   registerAgentSecurityTool(toolRegistry, commandRegistry, commandContext);
   registerAgentSessionsTool(toolRegistry, commandRegistry, commandContext);
   registerAgentSetupTool(toolRegistry, commandRegistry, commandContext);
