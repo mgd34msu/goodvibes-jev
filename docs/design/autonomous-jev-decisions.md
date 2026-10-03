@@ -94,3 +94,9 @@ The old `Outcome = act | confirm | escalate` remains readable for historical bat
 - TUI, Agent and Web UI: render the shared decisions and port progress, remove semantic human approval wait paths only when their engine/native owners are migrated and proven.
 
 The presence of this additive contract does not mean those paths are already autonomous. Their migration is a release gate, not a fallback mode.
+
+### Settings evidence migration seam
+
+`gate/policy/settings-write-evidence.ts` exposes `readSettingsWriteEvidence(args, port, signal)` for the central admission owner. It asks the existing settings-hazard battery about a protected-format-checked, immutable, complete invocation and returns the hazard/request observations plus the actual recorded call ID when the port supplies one. The observations do not grant permission. The autonomous owner must require recorded provenance, bind that evidence to its current prepared action/authority/scope, and claim a fresh semantic `act` before execution.
+
+The legacy settings policy now requires both `requested.verdict === 'yes'` and `requested.outcome === 'act'`; a yes/confirm observation at probability 0.75 cannot allow a hazardous setting. Its wrapper also executes the immutable arguments it checked, rather than rereading borrowed arguments after the asynchronous judgment. This closes the historical confidence and argument-mutation bypasses; it does not itself supply the autonomous capability/claim protocol. The legacy denial text and standalone policy explanation remain historical consumers until the central admission capability is wired through them. They must not be presented as an autonomous settings workflow or used as a human-approval fallback in that workflow.

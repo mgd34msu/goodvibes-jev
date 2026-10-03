@@ -60,7 +60,11 @@ describe('composed Agent policy execution options', () => {
     const options = { signal: new AbortController().signal };
     expect((await registry.execute('call', name, args, options)).success).toBe(true);
     expect(receivedOptions).toBe(options);
-    if (normalized) expect(receivedArgs).toEqual(normalized);
+    if (name === 'goodvibes_settings') {
+      expect(receivedArgs).toEqual(args);
+      expect(receivedArgs).not.toBe(args);
+      expect(Object.isFrozen(receivedArgs)).toBe(true);
+    } else if (normalized) expect(receivedArgs).toEqual(normalized);
     else expect(receivedArgs).toBe(args);
   });
 
