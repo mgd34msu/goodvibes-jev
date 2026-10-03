@@ -93,6 +93,7 @@ export interface AgentHarnessToolArgs {
 }
 
 export interface AgentHarnessToolDeps {
+  readonly taskRouteSources?: import('./agent-route-planner.ts').AgentTaskRouteSources;
   readonly commandRegistry: CommandRegistry;
   readonly commandContext: CommandContext;
   readonly toolRegistry: ToolRegistry;

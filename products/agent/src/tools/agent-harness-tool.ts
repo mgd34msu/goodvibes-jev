@@ -281,7 +281,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (mode.status === 'missing_lookup') return error(String(mode.usage));
           return output(mode.mode);
         }
-        if (args.mode === 'route_decision') return output(planAgentTaskRoute(deps.commandContext, args));
+        if (args.mode === 'route_decision') return output(await planAgentTaskRoute(deps.commandContext, args, deps.taskRouteSources, { ...(signal ? { signal } : {}) }));
         if (args.mode === 'cli_commands') {
           const commands = listHarnessCliCommands(args);
           return output({
@@ -786,6 +786,7 @@ export function registerAgentHarnessTool(
   registry: ToolRegistry,
   commandRegistry: CommandRegistry,
   commandContext: CommandContext,
+  taskRouteSources?: import('./agent-route-planner.ts').AgentTaskRouteSources,
 ): void {
-  registry.register(createAgentHarnessTool({ commandRegistry, commandContext, toolRegistry: registry }));
+  registry.register(createAgentHarnessTool({ commandRegistry, commandContext, toolRegistry: registry, ...(taskRouteSources ? { taskRouteSources } : {}) }));
 }
