@@ -43,6 +43,7 @@
  * write here, so "read a stranger's page, then send mail" is visible to the
  * outward-effect guard as ONE composition rather than two unrelated acts.
  */
+import { JudgmentError } from '@goodvibes-jev/judgment';
 import { findContentTaint, describeContentTaint, type TaintFinding, type TaintOptions, type TaintSource } from './content-taint.js';
 import {
   checkOwnerApproval,
@@ -473,6 +474,7 @@ export async function evaluateOutwardEffect(input: {
   readonly ownerRemedy?: OwnerRemedy | undefined;
   readonly now?: () => Date;
 }): Promise<OutwardEffectDecision> {
+  if (input.taintOptions?.signal?.aborted) throw new JudgmentError('aborted', 'the judgment call was cancelled');
   const origins = input.ledger.originsThisTurn();
   if (origins.length === 0) {
     return { allowed: true, reason: null, fix: null, untrustedOrigins: [], taint: [] };
@@ -486,6 +488,7 @@ export async function evaluateOutwardEffect(input: {
   // repeats what was just read.
   if (input.content !== undefined && input.ledger.hasTaintSourcesThisTurn()) {
     const taint = await findContentTaint(input.content, input.ledger.taintSourcesThisTurn(), input.taintOptions);
+    if (input.taintOptions?.signal?.aborted) throw new JudgmentError('aborted', 'the judgment call was cancelled');
     if (taint.length === 0) {
       // The allowed case this whole mechanism exists to protect: exposure in
       // the turn, but nothing of it in what is about to leave. It proceeds

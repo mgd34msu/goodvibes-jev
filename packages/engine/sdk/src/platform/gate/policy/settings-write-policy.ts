@@ -57,9 +57,14 @@
  */
 
 import { executePolicyCheck } from '../execute-policy-check.js';
+import { snapshotJudgmentInput } from '../judgment-input.js';
 import type { Tool } from '../../types/tools.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { settingsHazard, type SettingsHazard } from '../batteries/settings-hazard.js';
+import type { SettingsHazard } from '../batteries/settings-hazard.js';
+import {
+  AGENT_SETTINGS_CONFIRMATION_PROPERTY, SETTINGS_HAZARD_SITE, readSettingsWriteEvidence, type SettingsToolArgs,
+} from './settings-write-evidence.js';
+export { AGENT_SETTINGS_CONFIRMATION_PROPERTY, SETTINGS_HAZARD_SITE, type SettingsToolArgs } from './settings-write-evidence.js';
 
 /** Why an unattended write in each hazard class is the hazard, in the user's language. */
 const HAZARD_BECAUSE: Readonly<Record<Exclude<SettingsHazard, 'none'>, string>> = {
@@ -67,12 +72,6 @@ const HAZARD_BECAUSE: Readonly<Record<Exclude<SettingsHazard, 'none'>, string>> 
   'exec-containment': 'it changes the sandbox that contains commands run from here',
   'host-exposure': 'it changes how this machine is exposed to the network or which hosts are trusted or reachable',
 };
-
-/** The decision site settings-write readings are logged under. */
-export const SETTINGS_HAZARD_SITE = 'engine.gate.settings-write';
-
-/** Parameter carrying the user's own words when a gated key is being set. */
-export const AGENT_SETTINGS_CONFIRMATION_PROPERTY = 'explicitUserRequest';
 
 /** Loud, self-explaining denial. Never returned as, or alongside, a success. */
 export function describeConfirmationRequiredDenial(hazard: Exclude<SettingsHazard, 'none'>, key: string): string {
@@ -85,13 +84,6 @@ export function describeConfirmationRequiredDenial(hazard: Exclude<SettingsHazar
   ].join(' ');
 }
 
-export type SettingsToolArgs = {
-  readonly mode?: unknown;
-  readonly key?: unknown;
-  readonly explicitUserRequest?: unknown;
-  readonly [name: string]: unknown;
-};
-
 /**
  * Deny a hazardous write that the user's own words do not ask for. Returns
  * null, meaning "let it through", for a key with no key, a write Jev reads as
@@ -101,27 +93,25 @@ export type SettingsToolArgs = {
  */
 export async function validateSettingsToolInvocationForAgentPolicy(args: SettingsToolArgs, signal?: AbortSignal): Promise<string | null> {
   signal?.throwIfAborted();
-  const key = typeof args.key === 'string' ? args.key.trim() : '';
-  if (!key) return null;
-  const request = args[AGENT_SETTINGS_CONFIRMATION_PROPERTY];
-  const hasRequest = typeof request === 'string' && request.trim().length > 0;
-  const run = await settingsHazard.run(
-    judgmentPort(SETTINGS_HAZARD_SITE),
-    { key, value: JSON.stringify(args['value'] ?? null), ...(hasRequest ? { request: (request as string).trim() } : {}) },
-    { site: SETTINGS_HAZARD_SITE, ...(signal === undefined ? {} : { signal }), only: hasRequest ? ['hazard', 'requested'] : ['hazard'] },
-  );
-  signal?.throwIfAborted();
-  const reading = run.readings.hazard;
+  const invocation = snapshotJudgmentInput(args, 'goodvibes_settings') as SettingsToolArgs;
+  if (typeof invocation.key !== 'string' || !invocation.key.trim()) return null;
+  const port = judgmentPort(SETTINGS_HAZARD_SITE);
+  const evidence = await readSettingsWriteEvidence(invocation, port, signal);
+  if (!evidence) return null;
+  const { key, hazard: reading, requested, judgmentDecisionId } = evidence;
+  const recordAction = (action: string): void => {
+    if (judgmentDecisionId !== undefined) port.recorder?.recordAction(judgmentDecisionId, action);
+  };
   if (reading.choice === 'none' && reading.outcome === 'act') {
-    run.recordAction('no-hazard');
+    recordAction('no-hazard');
     return null;
   }
   const hazard: Exclude<SettingsHazard, 'none'> = reading.choice === 'none' ? 'approval-gate' : reading.choice;
-  if (hasRequest && run.readings.requested.verdict === 'yes') {
-    run.recordAction(`requested:${hazard}`);
+  if (requested?.verdict === 'yes' && requested.outcome === 'act') {
+    recordAction(`requested:${hazard}`);
     return null;
   }
-  run.recordAction(`deferred:${hazard}`);
+  recordAction(`deferred:${hazard}`);
   return describeConfirmationRequiredDenial(hazard, key);
 }
 
@@ -162,9 +152,10 @@ export function wrapSettingsToolForAgentPolicy(tool: Tool): void {
   const originalExecute = tool.execute.bind(tool);
   tool.execute = async (args, options) => {
     options?.signal?.throwIfAborted();
-    const denial = await executePolicyCheck(() => validateSettingsToolInvocationForAgentPolicy(args as SettingsToolArgs, options?.signal), options?.signal);
+    const invocation = snapshotJudgmentInput(args, 'goodvibes_settings') as Record<string, unknown>;
+    const denial = await executePolicyCheck(() => validateSettingsToolInvocationForAgentPolicy(invocation, options?.signal), options?.signal);
     if (denial) return { success: false, error: denial };
     options?.signal?.throwIfAborted();
-    return originalExecute(args, options);
+    return originalExecute(invocation, options);
   };
 }

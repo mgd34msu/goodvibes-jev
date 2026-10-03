@@ -1,3 +1,4 @@
+import { WorkspaceEditorMessage } from './agent-workspace-editor-message.ts';
 import type { MemoryApi } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import type { MemoryRecord } from '@goodvibes-jev/engine/sdk/platform/state';
 import type { AgentConfigSetting } from '../config/settings-catalog.ts';
@@ -44,7 +45,14 @@ export class AgentWorkspace {
   public status = 'Ready. Choose an operator flow; ordinary assistant work stays in the main conversation.';
   public runtimeSnapshot: AgentWorkspaceRuntimeSnapshot | null = null;
   public lastActionResult: AgentWorkspaceActionResult | null = null;
-  public localEditor: AgentWorkspaceLocalEditor | null = null;
+  private _localEditor: AgentWorkspaceLocalEditor | null = null;
+  private readonly editorMessage = new WorkspaceEditorMessage();
+  get editorMessageState() { return this.editorMessage.state; }
+  get localEditor(): AgentWorkspaceLocalEditor | null { return this._localEditor; }
+  set localEditor(editor: AgentWorkspaceLocalEditor | null) {
+    this._localEditor = editor;
+    this.editorMessage.update(editor, () => this.context?.renderRequest?.());
+  }
   public actionSearchActive = false;
   public actionSearchQuery = '';
   /** Scroll offset into the action-result block, and the result it belongs to. */

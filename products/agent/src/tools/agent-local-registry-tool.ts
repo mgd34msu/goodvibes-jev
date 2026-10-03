@@ -1,3 +1,4 @@
+import { installAgentMemoryInputGuard } from './agent-memory-input-guard.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { ShellPathService } from '@/runtime/index.ts';
@@ -575,5 +576,6 @@ export function createAgentLocalRegistryTool(shellPaths: ShellPathService, memor
 }
 
 export function registerAgentLocalRegistryTool(registry: ToolRegistry, shellPaths: ShellPathService, memoryRegistry: MemoryRegistry, memorySpine: MemoryAccess): void {
+  installAgentMemoryInputGuard(registry);
   registry.register(createAgentLocalRegistryTool(shellPaths, memoryRegistry, memorySpine));
 }
