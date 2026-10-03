@@ -1,3 +1,5 @@
+CREATE TABLE IF NOT EXISTS work_ledgers (project_id TEXT PRIMARY KEY NOT NULL, format_version INTEGER NOT NULL, revision INTEGER NOT NULL, state_json TEXT NOT NULL);
+
 CREATE TABLE IF NOT EXISTS knowledge_sources (
       id TEXT PRIMARY KEY,
       connector_id TEXT NOT NULL,

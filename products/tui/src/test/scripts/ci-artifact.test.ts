@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { recordTuiCiArtifact, verifyTuiCiArtifact, type TuiArtifactSource } from '../../../scripts/ci-artifact.ts';
@@ -80,6 +81,19 @@ test('the CLI refuses another checkout or modified tracked source before recordi
   writeFileSync(join(root, 'source.txt'), 'uncommitted replacement\n');
   expect(() => run(revision)).toThrow();
   expect(readFileSync(join(root, 'dist/ci-artifact.json'), 'utf8')).toBe(recorded);
+}));
+
+test('the native build foundation artifacts match their committed source before provenance recording', () => fixture(async root => {
+  const { syncFoundationArtifacts } = await import('../../../scripts/project-surfaces.ts');
+  syncFoundationArtifacts(root);
+  const generated = join(root, 'docs/foundation-artifacts');
+  const committed = resolve(import.meta.dir, '../../../docs/foundation-artifacts');
+  const files = readdirSync(generated).sort();
+  expect(files).toEqual(['knowledge-graphql.graphql', 'knowledge-store.sql', 'operator-contract.json', 'peer-contract.json']);
+  for (const file of files) {
+    const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');
+    expect({ file, sha256: hash(join(committed, file)) }).toEqual({ file, sha256: hash(join(generated, file)) });
+  }
 }));
 
 test('CI preserves the existing validation build and mandatorily archives its exact native payload', () => {
