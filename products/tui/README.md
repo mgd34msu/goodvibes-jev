@@ -271,7 +271,7 @@ src/
 
 ## Stability
 
-From 1.0.0 the project follows semver: incompatible changes to CLI flags, config keys, slash commands, key bindings, daemon routes, and on-disk layouts land only in major releases, and deprecations are noted in [CHANGELOG.md](CHANGELOG.md) first. Documentation always describes the **current** behavior, not historical behavior.
+The upstream product follows semver from 1.0.0: incompatible changes to CLI flags, config keys, slash commands, key bindings, daemon routes, and on-disk layouts land only in major releases, and deprecations are noted in [CHANGELOG.md](CHANGELOG.md) first. The product reference above describes inherited upstream behavior; the Jev migration status and current decision contract take precedence for this workspace.
 
 ## License
 
