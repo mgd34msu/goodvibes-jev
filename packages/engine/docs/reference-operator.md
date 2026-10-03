@@ -4,7 +4,7 @@ Generated from the synced GoodVibes operator contract artifact.
 
 ## Summary
 
-- Methods: `515`
+- Methods: `516`
 - Events: `34`
 - Auth modes: `shared-bearer`, `session-login`
 - HTTP status path: `/status`
@@ -110015,6 +110015,75 @@ Cancel a single running tool call by its callId, leaving the turn and any other 
     "sessionId",
     "callId",
     "cancelled"
+  ],
+  "additionalProperties": false
+}
+```
+
+#### `sessions.turns.cancel`
+
+Atomically compare expectedTurnId and request cancellation of that live turn, preserving the session and future queued work. Acceptance does not establish settlement: observe the existing runtime turn terminal event for the same sessionId and turnId. Settlement covers this turn's owned provider, tool, hook and hook-Agent work; independent workflow-trigger automations and already-committed external effects are excluded. Repeated requests are idempotent. Known recently ended IDs report already-ended; unknown or expired IDs report stale-turn when another turn is active, otherwise turn-not-found. Missing local sessions return SESSION_NOT_LOCAL. Requires write:sessions.
+
+- Title: `Request Cancellation of an Expected Turn`
+- Source: `builtin`
+- Access: `authenticated`
+- Transport: `http`, `ws`
+- HTTP: `POST /api/sessions/{sessionId}/turns/cancel`
+- Scopes: `write:sessions`
+- Emits events: `runtime.turn`
+- Dangerous: `no`
+- Invokable: `yes`
+
+##### Input schema
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string"
+    },
+    "expectedTurnId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "expectedTurnId"
+  ],
+  "additionalProperties": false
+}
+```
+
+##### Output schema
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string"
+    },
+    "expectedTurnId": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "cancellation-requested",
+        "already-ended",
+        "stale-turn",
+        "turn-not-found"
+      ]
+    },
+    "activeTurnId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "expectedTurnId",
+    "status"
   ],
   "additionalProperties": false
 }

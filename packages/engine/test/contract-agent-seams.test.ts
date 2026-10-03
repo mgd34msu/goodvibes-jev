@@ -377,10 +377,10 @@ describe('waking a stopped unit agent', () => {
       () => ({ kind: 'continue', message: 'not used: the budget ends the loop first', nudgeId: 'u1.n1' }),
       () => ({ kind: 'release' }),
     ]);
-    const { manager, runs } = managerRunningLoop({ provider, hooks, runtimeBus: new RuntimeEventBus(), taps, maxTurns: 1, workingDirectory: workDir() });
+    const { manager } = managerRunningLoop({ provider, hooks, runtimeBus: new RuntimeEventBus(), taps, maxTurns: 1, workingDirectory: workDir() });
 
     const record = manager.spawn({ mode: 'spawn', task: 'implement the parser', template: 'engineer', outsideContract: true }, { contractId: 'ctr-00000001', contractUnitId: 'u1' });
-    await runs[0];
+    await manager.join(record.id);
 
     // A continue on the budget's last turn lets the loop hit its limit and fail.
     expect(record.status).toBe('failed');
@@ -390,7 +390,7 @@ describe('waking a stopped unit agent', () => {
 
     const wake = manager.wakeWithSteer(record.id, NUDGE_TEXT);
     expect(wake.woke).toBe(true);
-    await runs[1];
+    await manager.join(record.id);
 
     expect(provider.requests).toHaveLength(2);
     expect(userMessages(provider.requests[1])).toContain(NUDGE_TEXT);
@@ -424,25 +424,25 @@ describe('waking a stopped unit agent', () => {
           () => ({ kind: 'release' }),
           () => ({ kind: 'release' }),
         ]);
-        const { manager, runs } = managerRunningLoop({ provider, hooks, runtimeBus, taps, maxTurns: 1, workingDirectory: workDir(), emitLifecycle: true });
+        const { manager } = managerRunningLoop({ provider, hooks, runtimeBus, taps, maxTurns: 1, workingDirectory: workDir(), emitLifecycle: true });
         tracker = new CostTracker({ maxAgents, price: (input) => input, getAgentStatus: (id) => manager.getStatus(id) });
         const detach = tracker.attach(events.turns, events.agents, () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }));
         try {
           target = manager.spawn({ mode: 'spawn', task: 'unit fixture', template: 'engineer', outsideContract: true }, { contractId: 'ctr-wake', contractUnitId: 'u1' });
-          await runs[0];
+          await manager.join(target.id);
           expect(target.status).toBe(firstOutcome);
           expect(tracker.agentsCost()).toBe(10);
-          manager.spawn({ mode: 'spawn', task: 'separate fixture', template: 'engineer', outsideContract: true });
-          await runs[1];
+          const separate = manager.spawn({ mode: 'spawn', task: 'separate fixture', template: 'engineer', outsideContract: true });
+          await manager.join(separate.id);
           expect(tracker.agentsCost()).toBe(20);
           expect(tracker.agents().some((row) => row.agentId === target.id)).toBe(maxAgents === 2);
           expect(manager.wakeWithSteer(target.id, NUDGE_TEXT, { allowCompleted: true }).woke).toBe(true);
-          await runs[2];
+          await manager.join(target.id);
           expect(target.usage?.inputTokens).toBe(20);
           expect(tracker.agentsCost()).toBe(30);
           expect(tracker.agents().length).toBeLessThanOrEqual(maxAgents);
           expect(manager.wakeWithSteer(target.id, NUDGE_TEXT, { allowCompleted: true }).woke).toBe(true);
-          await runs[3];
+          await manager.join(target.id);
           expect(target.usage?.inputTokens).toBe(30);
           expect(tracker.agentsCost()).toBe(40);
           expect(liveStates).toEqual(['running', 'running']);
@@ -476,7 +476,7 @@ describe('waking a stopped unit agent', () => {
     const { manager, runs } = managerRunningLoop({ provider, hooks, runtimeBus: new RuntimeEventBus(), taps, maxTurns: 5, workingDirectory: workDir() });
 
     const record = manager.spawn({ mode: 'spawn', task: 'implement the parser', template: 'engineer', outsideContract: true }, { contractId: 'ctr-00000001', contractUnitId: 'u1' });
-    await runs[0];
+    await manager.join(record.id);
     expect(record.status).toBe('completed');
 
     expect(manager.wakeWithSteer(record.id, NUDGE_TEXT).woke).toBe(false);
@@ -484,7 +484,7 @@ describe('waking a stopped unit agent', () => {
 
     const wake = manager.wakeWithSteer(record.id, NUDGE_TEXT, { allowCompleted: true });
     expect(wake).toEqual({ woke: true, reason: 're-triggered from completed state with steer' });
-    await runs[1];
+    await manager.join(record.id);
 
     expect(userMessages(provider.requests[1])).toContain(NUDGE_TEXT);
     expect(record.status).toBe('completed');

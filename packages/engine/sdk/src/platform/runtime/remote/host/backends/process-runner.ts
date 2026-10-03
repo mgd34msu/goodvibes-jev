@@ -1,5 +1,6 @@
 // Owned subprocess runner for the daemon's local/docker/ssh/cloud backends.
 // Credential material is supplied by callers via files or env, never argv.
+import { readdir, readFile } from 'node:fs/promises';
 
 export interface RunOptions {
   args: string[];
@@ -8,6 +9,8 @@ export interface RunOptions {
   stdin?: string;
   timeoutMs: number;
   signal?: AbortSignal;
+  /** Join all I/O and the owned POSIX group, including on normal leader exit. */
+  ownedProcessGroup?: boolean;
 }
 
 export interface RunResult {
@@ -15,6 +18,14 @@ export interface RunResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+}
+
+export class OwnedProcessGroupUnsupportedError extends Error {
+  readonly code = 'OWNED_PROCESS_GROUP_UNSUPPORTED';
+  constructor(platform: string) {
+    super(`Owned process-group cleanup is unavailable on ${platform}; command was not started.`);
+    this.name = 'OwnedProcessGroupUnsupportedError';
+  }
 }
 
 interface BunSubprocessLike {
@@ -98,6 +109,116 @@ function stopOwnedProcess(child: BunSubprocessLike): void {
   try { child.kill('SIGKILL'); } catch {}
 }
 
+/** Whether the entire owned group has stopped executing (not just its leader). */
+async function ownedGroupStopped(pid: number): Promise<boolean> {
+  try {
+    process.kill(-pid, 0);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true;
+    // A permission/probe failure does not prove that the group stopped.
+    return false;
+  }
+  if (process.platform !== 'linux') return false;
+
+  // Orphaned grandchildren can remain zombies until their new parent reaps
+  // them. They cannot execute or retain descriptors. /proc lets Linux prove
+  // that a group has no live members without claiming we reaped non-children.
+  try {
+    const entries = await readdir('/proc');
+    for (const entry of entries) {
+      if (!/^\d+$/.test(entry)) continue;
+      let stat: string;
+      try {
+        stat = await readFile(`/proc/${entry}/stat`, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        return false;
+      }
+      const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+      if (Number(fields[2]) === pid && fields[0] !== 'Z' && fields[0] !== 'X') return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function joinOwnedGroup(child: BunSubprocessLike, stopping: () => boolean): Promise<void> {
+  // Bun supplies a pid for every successfully spawned child. If an adapter
+  // cannot supply one, group ownership cannot be proved: remain pending.
+  for (;;) {
+    if (stopping()) stopOwnedProcess(child);
+    if (typeof child.pid === 'number' && child.pid > 0 && await ownedGroupStopped(child.pid)) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+/**
+ * Strict opt-in ownership for scoped hooks. Cancellation requests shutdown;
+ * only real process/I/O settlement completes the invocation. No timeout race
+ * discards stdin or stream work. Deliberate new-session escape is not contained.
+ */
+async function runOwnedProcess(options: RunOptions): Promise<RunResult> {
+  if (process.platform === 'win32') {
+    throw new OwnedProcessGroupUnsupportedError('Windows');
+  }
+  const child = getBunSpawn()(options.args, {
+    ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+    env: { ...process.env, ...(options.env ?? {}) },
+    stdin: options.stdin !== undefined ? 'pipe' : 'ignore',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    detached: true,
+  });
+  let interrupted: 'abort' | 'timeout' | undefined;
+  const stop = () => stopOwnedProcess(child);
+  const onAbort = () => {
+    interrupted ??= 'abort';
+    stop();
+  };
+  const timer = setTimeout(() => {
+    interrupted ??= 'timeout';
+    stop();
+  }, options.timeoutMs);
+  options.signal?.addEventListener('abort', onAbort, { once: true });
+  if (options.signal?.aborted) onAbort();
+
+  // A leader's normal exit is not a reason to kill valid descendants. Join
+  // their group below, under the same cancellation/deadline as the leader.
+  const exit = child.exited;
+  const operations: Promise<unknown>[] = [exit];
+  let failed = false;
+  let result: [string, string, number, void];
+  try {
+    const stdout = captureStream(child.stdout);
+    operations.push(stdout.result);
+    const stderr = captureStream(child.stderr);
+    operations.push(stderr.result);
+    const input = (async () => {
+      if (options.stdin !== undefined && child.stdin) {
+        child.stdin.write(options.stdin);
+        await child.stdin.end();
+      }
+    })();
+    operations.push(input);
+    result = await Promise.all([stdout.result, stderr.result, exit, input]);
+  } catch (error) {
+    failed = true;
+    stop();
+    throw error;
+  } finally {
+    // Attach handlers and join every admitted operation, even if another one
+    // failed first. An uncooperative I/O adapter honestly keeps us pending.
+    await Promise.allSettled(operations);
+    await joinOwnedGroup(child, () => failed || interrupted !== undefined);
+    clearTimeout(timer);
+    options.signal?.removeEventListener('abort', onAbort);
+  }
+  if (interrupted === 'abort') throw new DOMException('Process execution aborted.', 'AbortError');
+  const [stdout, stderr, exitCode] = result;
+  return { stdout, stderr, exitCode, timedOut: interrupted === 'timeout' };
+}
+
 /**
  * Capture a command's output/status. Nonzero command exits are returned; spawn
  * and I/O failures reject. The deadline covers stdin, exit and output draining.
@@ -110,6 +231,7 @@ export async function runProcess(options: RunOptions): Promise<RunResult> {
     throw new Error('runProcess requires at least one argument (the executable).');
   }
   if (options.signal?.aborted) throw new DOMException('Process execution aborted.', 'AbortError');
+  if (options.ownedProcessGroup) return runOwnedProcess(options);
   const spawn = getBunSpawn();
   const child = spawn(options.args, {
     ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),

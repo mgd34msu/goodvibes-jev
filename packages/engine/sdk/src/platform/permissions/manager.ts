@@ -1,3 +1,4 @@
+import { bindTurnHookDispatcher, type TurnHookOwner } from '../hooks/turn-ownership.js';
 import { getConfigSnapshot, isAutoApproveEnabled } from '../config/index.js';
 import type { PermissionAction, PermissionsToolConfig, PermissionMode, BackgroundAgentsMode } from '../config/schema.js';
 import type { PermissionAttribution, PermissionExecutionOptions, PermissionRequestHandler } from './prompt.js';
@@ -241,7 +242,7 @@ export class PermissionManager {
   /** Resolves to true when the gate approves the call. */
   async check(toolName: string, args: Record<string, unknown>, attribution?: PermissionAttribution, options?: PermissionExecutionOptions): Promise<boolean> {
     const signal = options?.signal;
-    const result = await this.checkDetailed(toolName, args, attribution, { signal });
+    const result = await this.checkDetailed(toolName, args, attribution, options);
     assertPermissionActive(signal);
     return result.approved;
   }
@@ -254,10 +255,14 @@ export class PermissionManager {
    */
   async checkDetailed(toolName: string, args: Record<string, unknown>, attribution?: PermissionAttribution, options?: PermissionExecutionOptions): Promise<PermissionCheckResult> {
     const signal = options?.signal;
-    return awaitPermission(() => this.checkActive(toolName, args, attribution, signal), signal);
+    const owner = options?.hookOwner;
+    const check = () => this.checkActive(toolName, args, attribution, signal, owner);
+    // The cancellation race may release the permission caller, but the owning
+    // turn still joins the actual check and any admitted hook/approval cleanup.
+    return awaitPermission(() => owner ? owner.admit(check) : check(), signal);
   }
 
-  private async checkActive(toolName: string, args: Record<string, unknown>, attribution: PermissionAttribution | undefined, signal?: AbortSignal): Promise<PermissionCheckResult> {
+  private async checkActive(toolName: string, args: Record<string, unknown>, attribution: PermissionAttribution | undefined, signal?: AbortSignal, hookOwner?: TurnHookOwner): Promise<PermissionCheckResult> {
     assertPermissionActive(signal);
     const privacy = judgmentInputBoundary(toolName, args, this.configReader.getWorkingDirectory() ?? undefined);
     if (!privacy.passed) {
@@ -271,10 +276,10 @@ export class PermissionManager {
     let category = this.getCategory(toolName, args);
     let analysis = analyzePermissionRequest(toolName, args, category);
     const callId = crypto.randomUUID();
-    await this.fireHook('Pre:permission:request', 'Pre', 'permission', 'request', { callId, toolName, category, analysis });
+    await this.fireHook('Pre:permission:request', 'Pre', 'permission', 'request', { callId, toolName, category, analysis }, hookOwner);
     assertPermissionActive(signal);
     this.policyRuntimeState.recordPermissionRequest({ callId, tool: toolName, category, analysis });
-    const done = (result: PermissionCheckResult): PermissionCheckResult => { assertPermissionActive(signal); return this.emitAndReturn(callId, toolName, category, result); };
+    const done = (result: PermissionCheckResult): PermissionCheckResult => { assertPermissionActive(signal); return this.emitAndReturn(callId, toolName, category, result, hookOwner); };
     const permsConfig = this.configReader.getSnapshot().permissions;
     const mode = permsConfig?.mode ?? 'prompt';
     const preset = presetForMode(mode);
@@ -322,7 +327,7 @@ export class PermissionManager {
     // 4. A known read-only tool that touches no secrets runs.
     if (reading === null) {
       if (!forceAsk) return done(this.result(true, false, 'config_policy', 'config_allow', analysis, base));
-      return done(await this.ask(callId, toolName, args, category, analysis, key, attribution, base, signal));
+      return done(await this.ask(callId, toolName, args, category, analysis, key, attribution, base, signal, hookOwner));
     }
 
     // 5. The preset decides on the stakes.
@@ -342,7 +347,7 @@ export class PermissionManager {
     }
 
     // 6. Ask the owner.
-    return done(await this.ask(callId, toolName, args, category, analysis, key, attribution, withPreset, signal));
+    return done(await this.ask(callId, toolName, args, category, analysis, key, attribution, withPreset, signal, hookOwner));
   }
 
   /**
@@ -465,6 +470,7 @@ export class PermissionManager {
     attribution: PermissionAttribution | undefined,
     extra: Partial<PermissionCheckResult>,
     signal?: AbortSignal,
+    hookOwner?: TurnHookOwner,
   ): Promise<PermissionCheckResult> {
     let decision: Awaited<ReturnType<PermissionRequestHandler>>;
     try {
@@ -481,7 +487,7 @@ export class PermissionManager {
       assertPermissionActive(signal);
     } catch (error) {
       assertPermissionActive(signal);
-      void this.fireHook('Fail:permission:request', 'Fail', 'permission', 'request', { callId, toolName, category, analysis, error: summarizeError(error) });
+      void this.fireHook('Fail:permission:request', 'Fail', 'permission', 'request', { callId, toolName, category, analysis, error: summarizeError(error) }, hookOwner);
       throw error;
     }
     // Project a borrowed decision before admitting any grant: evaluating a
@@ -689,6 +695,7 @@ export class PermissionManager {
     toolName: string,
     category: PermissionCategory,
     result: PermissionCheckResult,
+    hookOwner?: TurnHookOwner,
   ): PermissionCheckResult {
     this.policyRuntimeState.recordPermissionDecision({
       callId,
@@ -710,7 +717,7 @@ export class PermissionManager {
       stakes: result.reading?.stakes,
       preset: result.preset?.preset,
       boundaryRefusedBy: result.boundary?.refusedBy,
-    });
+    }, hookOwner);
     return { ...result, category };
   }
 
@@ -720,15 +727,16 @@ export class PermissionManager {
     category: HookCategory,
     specific: string,
     payload: Record<string, unknown>,
+    hookOwner?: TurnHookOwner,
   ): Promise<void> {
     if (!this.hookDispatcher) return;
     try {
-      await this.hookDispatcher.fire({
+      await bindTurnHookDispatcher(this.hookDispatcher, hookOwner ?? null)!.fire({
         path,
         phase,
         category,
         specific,
-        sessionId: 'permissions',
+        sessionId: hookOwner?.sessionId ?? 'permissions',
         timestamp: Date.now(),
         payload,
       });

@@ -10,7 +10,7 @@ import type { OperatorMethodId } from './operator-method-ids.js';
  * call sites) hand-written on top of these generated primitives.
  *
  * Contract product version: 2.0.23
- * Methods: 515 total, 443 REST-routed, 72 ws-only invoke.
+ * Methods: 516 total, 444 REST-routed, 72 ws-only invoke.
  */
 
 export type WebuiHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -1628,6 +1628,10 @@ export const WEBUI_METHOD_ROUTES: Readonly<Record<string, WebuiRouteDefinition>>
     "method": "POST",
     "path": "/api/sessions/{sessionId}/tool-calls/{callId}/cancel"
   },
+  "sessions.turns.cancel": {
+    "method": "POST",
+    "path": "/api/sessions/{sessionId}/turns/cancel"
+  },
   "security.settings": {
     "method": "GET",
     "path": "/api/security-settings"
@@ -2360,6 +2364,7 @@ export const WEBUI_METHOD_DISPOSITION: Readonly<Record<string, WebuiMethodDispos
   "sessions.search": "ws-invoke",
   "sessions.steer": "rest",
   "sessions.toolCalls.cancel": "rest",
+  "sessions.turns.cancel": "rest",
   "security.settings": "rest",
   "settings.snapshot": "rest",
   "skills.create": "rest",
@@ -23313,6 +23318,18 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "sessionId": "sample",
       "callId": "sample",
       "cancelled": false
+    }
+  },
+  "sessions.turns.cancel": {
+    "input": {
+      "sessionId": "sample",
+      "expectedTurnId": "sample"
+    },
+    "output": {
+      "sessionId": "sample",
+      "expectedTurnId": "sample",
+      "status": "cancellation-requested",
+      "activeTurnId": "sample"
     }
   },
   "security.settings": {

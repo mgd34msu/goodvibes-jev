@@ -46,6 +46,10 @@ function assertBundledBashLspMitigationManifest(manifest: PackageManifestLike, l
   if (manifest.dependencies?.['bash-language-server'] !== undefined) {
     throw new Error(`${label} must not duplicate bash-language-server in dependencies`);
   }
+  if (manifest.optionalDependencies?.['@goodvibes-jev/bash-zod'] !== 'npm:zod@3.24.2' ||
+      manifest.optionalDependencies?.['@goodvibes-jev/bash-web-tree-sitter'] !== 'npm:web-tree-sitter@0.24.5') {
+    throw new Error(`${label} must preserve Bash's dependency aliases at the installable engine layer`);
+  }
 }
 
 function assertBundledBashLspPatchManifest(tarball: string): void {
@@ -81,6 +85,9 @@ function assertSecurityMitigationAssets(tarball: string, files: readonly string[
     'package/vendor/bash-language-server/GOODVIBES_PATCH.md',
     'package/vendor/bash-language-server/out/cli.js',
     'package/vendor/bash-language-server/tree-sitter-bash.wasm',
+    'package/vendor/bash-language-server/vendor/fast-glob/out/index.js',
+    'package/vendor/bash-language-server/vendor/fast-glob/vendor/micromatch/index.js',
+    'package/vendor/bash-language-server/vendor/fast-glob/vendor/micromatch/vendor/braces/lib/nesting.js',
   ];
   const missing = requiredEntries.filter((entry) => !files.includes(entry));
   if (missing.length > 0) {

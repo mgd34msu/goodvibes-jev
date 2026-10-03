@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ConfigSchema = void 0;
 exports.getConfigFromEnvironmentVariables = getConfigFromEnvironmentVariables;
 exports.getDefaultConfiguration = getDefaultConfiguration;
-const zod_1 = require("zod");
+const zod_1 = require("@goodvibes-jev/bash-zod");
 const logger_1 = require("./util/logger");
 exports.ConfigSchema = zod_1.z.object({
     // Maximum number of files to analyze in the background. Set to 0 to disable background analysis.

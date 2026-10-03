@@ -58,6 +58,10 @@ async function interrupt(options: Options, until: (contract: ContractView) => bo
     await sleep(300);
   } finally {
     first.dispose();
+    // A restarted process has no surviving local cleanup. Model that barrier
+    // before reusing its tree. The deliberately never-answering planner has
+    // no engine/tree work and intentionally cannot provide a cleanup receipt.
+    if (options.planner !== stuckPlanner) await Promise.all(ids.map((id) => first.runner.join(id)));
   }
   return { root, ids };
 }

@@ -322,6 +322,12 @@ export function createDaemonControlRouteHandlers(
         : {};
       const query: Record<string, unknown> = { ...params };
       for (const [key, value] of new URL(req.url).searchParams) query[key] = value;
+      // An expected-turn request names an exact URL target. Reject conflicting
+      // duplicates rather than allowing the JSON/query merge to retarget it.
+      if (methodId === 'sessions.turns.cancel' &&
+          ((bodyRecord.sessionId !== undefined && bodyRecord.sessionId !== params.sessionId) || query.sessionId !== params.sessionId)) {
+        return jsonErrorResponse({ error: 'sessionId must match the route target', code: 'INVALID_ARGUMENT' }, { status: 400 });
+      }
       const response = await context.invokeGatewayMethodCall({
         authToken: context.extractAuthToken(req),
         methodId,
