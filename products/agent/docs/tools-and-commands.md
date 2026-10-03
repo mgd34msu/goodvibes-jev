@@ -25,6 +25,7 @@ High-signal TUI routes:
 | Surface | Purpose |
 | --- | --- |
 | `/agent` | Open the fullscreen operator workspace. |
+| `/work [daemon-project-id]` | Inspect native work, intent, attention, evidence and history on the authenticated connected host; read only. |
 | `/help` and `/commands` | Discover registered slash commands. |
 | `/health`, `/compat`, `/auth` | Inspect runtime, connected-host, compatibility, and auth posture. |
 | `/model`, `/provider`, `/effort` | Inspect or change provider/model/reasoning routes. |
@@ -477,3 +478,27 @@ Routine promotion is an explicit scheduling route. Local routines stay local unt
 - [Knowledge, artifacts, and multimodal](knowledge-artifacts-and-multimodal.md)
 - [Channels, remote access, and API](channels-remote-and-api.md)
 - [Release and publishing](release-and-publishing.md)
+
+## Native work ledger (read only)
+
+`/work` opens Work & Approvals and reads the configured, authenticated connected
+host. With no selected project, Agent asks `projectPlanning.status` with empty
+input for the host's project identity. That passive discovery requires
+`read:knowledge`; it does not grant it. If discovery is unavailable, use
+`/work <daemon-project-id>` to explicitly select a project. The daemon still
+checks project identity and `read:work-ledger` on every ledger read. Agent never
+uses its local planning ID or configuration directory as a shared ledger store.
+
+The native section displays intent, stable work/attempt IDs, criteria revisions,
+reported state separately from verification, attention, evidence targets and
+references, and durable history. PgUp/PgDn scroll the Work detail pane when no action result is shown.
+When a task or approval result is present, PgUp/PgDn scroll that result and
+Ctrl+PgUp/PgDn independently scroll ledger details. R retries
+observation. Closing releases only this view's reader; reopening acquires a fresh
+reader and catches up durable history. Host, token, or workspace replacement
+invalidates the old binding and its pending responses. Disconnection, denial,
+closed view, loading, and an authenticated empty project remain distinct states.
+
+The legacy operator work/approvals section remains available with its existing
+identities and confirmations. Native ledger inspection supplies no execution
+permission and exposes no claim, report, revise, approve, or other ledger writes.

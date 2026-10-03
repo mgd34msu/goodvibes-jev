@@ -293,6 +293,7 @@ export interface ConsolidationProposalsClient {
 export interface CommandContext
   extends CommandUiActions,
     CommandShellUiOpeners {
+  nativeWorkLedger?: import('../runtime/native-work-ledger.ts').NativeWorkLedgerView;
   readonly session: CommandSessionServices;
   readonly provider: CommandProviderServices;
   readonly workspace: CommandWorkspaceServices;
