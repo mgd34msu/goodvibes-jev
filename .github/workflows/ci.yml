@@ -41,6 +41,7 @@ jobs:
         env:
           TUI_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
+          bun run --cwd products/tui smoke:tui
           bun products/tui/scripts/ci-artifact.ts record "$GITHUB_SHA" "$TUI_SOURCE_HEAD"
           bun products/tui/scripts/ci-artifact.ts verify "$GITHUB_SHA" "$TUI_SOURCE_HEAD"
           tar -czf /tmp/tui-native-linux-x64.tgz \

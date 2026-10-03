@@ -133,19 +133,37 @@ describe('custom provider watcher ownership', () => {
 
   test('close cancels debounce and fences already-captured native and timer callbacks', async () => {
     let calls = 0; const timers: Array<() => void> = [];
-    const nativeTimeout = globalThis.setTimeout;
-    const timerSpy = spyOn(globalThis, 'setTimeout').mockImplementation(((callback: () => void, delay?: number) => {
-      if (delay === 300) timers.push(callback);
-      return nativeTimeout(callback, delay);
-    }) as typeof setTimeout);
-    restores.push(() => timerSpy.mockRestore());
     const handle = watching(() => { calls++; });
-    await ready(1); write(); await until(() => timers.length > 0, 'native debounce');
-    await handle.closeAndDrain();
-    for (const timer of timers) timer();
-    callbacks[0]!('change', 'late.json');
+    await ready(1);
+    const nativeTimeout = globalThis.setTimeout;
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+    const timerSpy = spyOn(globalThis, 'setTimeout').mockImplementation(((callback: () => void, delay?: number) => {
+      const timer = nativeTimeout(callback, delay);
+      if (delay === 300) { timers.push(callback); debounceTimer = timer; }
+      return timer;
+    }) as typeof setTimeout);
+    const clearSpy = spyOn(globalThis, 'clearTimeout');
+    let closing!: Promise<void>;
+    try {
+      // Drive the callback captured from the real watcher deterministically:
+      // one write may produce multiple native events on different platforms.
+      // Keep global timer interception synchronous so unrelated work is excluded.
+      callbacks[0]!('rename', 'native.json');
+      const firstTimer = debounceTimer;
+      callbacks[0]!('change', 'native.json');
+      expect(timers).toHaveLength(2);
+      expect(clearSpy).toHaveBeenCalledWith(firstTimer);
+      clearSpy.mockClear();
+      closing = handle.closeAndDrain();
+      expect(clearSpy).toHaveBeenCalledWith(debounceTimer);
+      for (const timer of timers) timer();
+      callbacks[0]!('change', 'late.json');
+      expect(timers).toHaveLength(2);
+    } finally {
+      timerSpy.mockRestore(); clearSpy.mockRestore();
+    }
+    await closing;
     await flush(); expect(calls).toBe(0);
-    expect(timers).toHaveLength(1);
   });
 
   test('reentrant close sees the already-admitted callback obligation', async () => {

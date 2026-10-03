@@ -12,7 +12,7 @@ import type { SimpleGit } from 'simple-git';
 import { SqliteDecisionLog } from '@goodvibes-jev/judgment';
 import type { Stakes } from '@goodvibes-jev/judgment';
 import type { StoreApi } from 'zustand';
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 // Warning: (ae-forgotten-export) The symbol "SessionEvent" needs to be exported by the entry point embed.d.ts
 // Warning: (ae-forgotten-export) The symbol "TurnEvent" needs to be exported by the entry point embed.d.ts
