@@ -32,7 +32,14 @@ const contained = (root: string, path: string): boolean => {
   return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`);
 };
 
-/** Configured home is a host declaration, not a grant; every file still uses the pinned host filter. */
+/**
+ * Configured home is a host declaration, not a grant; every file uses the pinned host filter.
+ * Capture only .goodvibes/{skills,agents} below the admitted owner/configured home.
+ * Other .goodvibes paths and symlinks remain unavailable. Included files may have
+ * any extension, but an excluded/restricted/out-of-scope include holds content.
+ * Each context is bounded to 2,048 files/directories, depth 16, 1 MiB per file and
+ * 8 MiB total; a larger context fails admission rather than returning partial data.
+ */
 export async function admitCapturedRegistryContext(
   binding: CapturedRegistryBinding,
   roots: { readonly homeDirectory?: string | undefined } = {},
@@ -49,6 +56,7 @@ export async function admitCapturedRegistryContext(
   const directories = new Map<string, readonly string[]>();
   const directoryIdentities = new Map<string, string>();
   const used = new Set<string>();
+  const withheld = new Set<string>();
   let bytes = 0;
   const inScope = (path: string): boolean => declared.some((root) => contained(root, path) &&
     !relative(root, path).split(sep).some((part) => CONTRACT_INPUT_EXCLUSIONS.includes(part as typeof CONTRACT_INPUT_EXCLUSIONS[number])));
@@ -81,12 +89,12 @@ export async function admitCapturedRegistryContext(
     for (const path of used) await checkRead(path, signal);
   };
   const visit = async (path: string, depth: number): Promise<void> => {
-    if (!inScope(path)) return;
+    if (!inScope(path)) { withheld.add(path); return; }
     let stat;
     try { stat = lstatSync(path, { bigint: true }); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
-    if (stat.isSymbolicLink() || realpathSync(path) !== path) return;
-    if (!await filter(path)) return;
+    if (stat.isSymbolicLink() || realpathSync(path) !== path) { withheld.add(path); return; }
+    if (!await filter(path)) { withheld.add(path); return; }
     await checkAuthority();
     checkPath(path);
     if (stat.isDirectory()) {
@@ -116,17 +124,24 @@ export async function admitCapturedRegistryContext(
   for (const directory of declared) await visit(directory, 0);
   await checkAuthority();
   const token = Object.freeze({ kind: 'captured-registry-context' as const });
-  admissions.set(token, {
+  admissions.set(token, Object.freeze({
     authority: binding.authority, workingDirectory, homeDirectory,
     source: (signal) => ({
+      signal: binding.signal && signal ? AbortSignal.any([binding.signal, signal]) : (binding.signal ?? signal),
       exists: async (raw) => { await checkAuthority(signal); return files.has(resolve(raw)) || directories.has(resolve(raw)); },
+      includeExists: async (raw) => {
+        await checkAuthority(signal);
+        const path = resolve(raw);
+        if (!inScope(path) || [...withheld].some((blocked) => contained(blocked, path)))
+          throw new Error('registry include was not admitted; content is withheld');
+        return files.has(path) || directories.has(path);
+      },
       list: async (raw) => {
         const path = resolve(raw);
         used.add(path);
         await checkRead(path, signal);
         const entries = directories.get(path);
         if (!entries) throw new Error('registry directory was not admitted');
-        used.add(path);
         return entries;
       },
       read: async (raw) => {
@@ -139,7 +154,7 @@ export async function admitCapturedRegistryContext(
       },
       assertCurrent: () => checkUsed(signal),
     }),
-  });
+  }));
   // Cached registry-derived messages are checked before every later model request.
   registerContractInputReadAssertion(binding.authority, () => checkUsed());
   return token;

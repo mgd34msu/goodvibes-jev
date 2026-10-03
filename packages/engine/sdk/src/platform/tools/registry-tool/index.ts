@@ -138,15 +138,26 @@ async function rankAgainst(
   const byId = new Map(items.map((item) => [`${item.type}:${item.name}`, item]));
   const candidates = Array.from(byId, ([id, item]) => ({ id, content: registryCandidateView(item) }));
   const port = judgmentPort(REGISTRY_RANK_SITE);
+  // Captured candidates are dispatched one at a time so a revocation during one
+  // judgment cannot leave another queued candidate carrying stale authorization.
+  let priorJudgment = Promise.resolve();
   const guardedPort: typeof port = {
     model: port.model,
     ...(port.recorder === undefined ? {} : { recorder: port.recorder }),
     ...(port.health === undefined ? {} : { health: port.health }),
     ask: async (request) => {
-      await source.assertCurrent();
-      const result = await port.ask(request);
-      await source.assertCurrent();
-      return result;
+      if (source === liveRegistrySource) return port.ask(request);
+      const previous = priorJudgment;
+      let release!: () => void;
+      priorJudgment = new Promise<void>((resolve) => { release = resolve; });
+      await previous;
+      try {
+        await source.assertCurrent();
+        const signal = source.signal && request.signal ? AbortSignal.any([source.signal, request.signal]) : (source.signal ?? request.signal);
+        const result = await port.ask({ ...request, ...(signal === undefined ? {} : { signal }) });
+        await source.assertCurrent();
+        return result;
+      } finally { release(); }
     },
   };
   const { ranked } = await registryRank.rerank(guardedPort, query, candidates, { site: REGISTRY_RANK_SITE });

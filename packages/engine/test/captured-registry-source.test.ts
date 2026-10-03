@@ -1,6 +1,7 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
+import * as fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -142,6 +143,46 @@ test('admission and invocation own caller roots, permission closure, paths and c
   expect(cancelled.output).toBeUndefined();
 });
 
+test('denied and excluded files are never opened during admission; invocation owns its original signal', async () => {
+  const f = await fixture();
+  const opened: string[] = [];
+  const open = fs.openSync;
+  const tap = spyOn(fs, 'openSync').mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
+    opened.push(String(args[0]));
+    return open(...args);
+  }) as typeof fs.openSync);
+  try {
+    const context = await admitCapturedRegistryContext(f.binding, { homeDirectory: f.home });
+    expect(opened).toContain(f.allowed);
+    expect(opened).toContain(f.global);
+    for (const path of [f.denied, f.deniedGlobal, f.outside, join(f.root, '.goodvibes/skills/alias.md'), join(f.root, '.goodvibes/skills/.git/config.md')])
+      expect(opened).not.toContain(path);
+    const tool = createRegistryTool(new ToolRegistry(), { workingDirectory: f.view, capturedInput: context });
+    const controller = new AbortController();
+    const options = { signal: controller.signal };
+    const pending = tool.execute({ mode: 'content', path: f.allowed }, options);
+    options.signal = new AbortController().signal;
+    controller.abort();
+    const result = await pending;
+    expect(result.success).toBe(false);
+    expect(result.output).toBeUndefined();
+  } finally { tap.mockRestore(); }
+});
+
+test('unadmitted includes hold the whole content result instead of silently dropping context', async () => {
+  const f = await fixture();
+  const escape = put(f.root, '.goodvibes/skills/escape.md', 'ESCAPE_BODY\n@../unregistered.md');
+  const blocked = put(f.root, '.goodvibes/skills/blocked.md', 'BLOCKED_BODY\n@denied.md');
+  const context = await admitCapturedRegistryContext(f.binding);
+  const tool = createRegistryTool(new ToolRegistry(), { workingDirectory: f.view, capturedInput: context });
+  for (const path of [escape, blocked]) {
+    const result = await tool.execute({ mode: 'content', path });
+    expect(result.success).toBe(false);
+    expect(result.output).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain('BODY');
+  }
+});
+
 test('revocation during registry judgment withholds results and prevents later judgment disclosure', async () => {
   const f = await fixture();
   const context = await admitCapturedRegistryContext(f.binding);
@@ -152,7 +193,7 @@ test('revocation during registry judgment withholds results and prevents later j
     const result = await tool.execute({ mode: 'search', query: 'registry context' });
     expect(result.success).toBe(false);
     expect(result.output).toBeUndefined();
-    expect(requests).toBeGreaterThan(0);
+    expect(requests).toBe(1);
     const before = requests;
     await tool.execute({ mode: 'recommend', task: 'registry context' });
     expect(requests).toBe(before);

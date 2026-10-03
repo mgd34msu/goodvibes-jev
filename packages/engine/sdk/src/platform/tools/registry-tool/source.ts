@@ -7,13 +7,16 @@ import {
 } from '../../utils/markdown-disclosure.js';
 
 export interface RegistryToolSource {
+  readonly signal?: AbortSignal | undefined;
   exists(path: string): Promise<boolean>;
+  includeExists(path: string): Promise<boolean>;
   list(path: string): Promise<readonly string[]>;
   read(path: string): Promise<string>;
   assertCurrent(): Promise<void>;
 }
 export const liveRegistrySource: RegistryToolSource = {
   exists: async (path) => existsSync(path),
+  includeExists: async (path) => existsSync(path),
   list: async (path) => readdirSync(path),
   read: async (path) => readFileSync(path, 'utf8'),
   assertCurrent: async () => undefined,
@@ -45,7 +48,7 @@ export async function materializeRegistryMarkdown(
     const include = line.trim().match(/^@([A-Za-z0-9_./#-]+)\s*$/);
     if (!include) { result.push(line); continue; }
     const target = resolve(dirname(path), include[1]!.split('#')[0]!);
-    if (!await source.exists(target)) continue;
+    if (!await source.includeExists(target)) continue;
     const disclosure = await registryMarkdown(source, target);
     const content = await materializeRegistryMarkdown(source, target, disclosure.body, visited, depth + 1);
     if (content) result.push(content);
