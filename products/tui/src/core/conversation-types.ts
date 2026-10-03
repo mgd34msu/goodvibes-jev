@@ -1,0 +1,85 @@
+/**
+ * conversation-types.ts, shared TUI extension types for ConversationManager.
+ *
+ * Extracted from conversation.ts so that conversation-rendering.ts can import
+ * BlockMeta without creating a circular dependency:
+ *   conversation.ts ↔ conversation-rendering.ts
+ *
+ * Both files import from this module; conversation.ts re-exports BlockMeta for
+ * backward compatibility of all existing importers.
+ */
+
+import type { BlockMeta as SdkBlockMeta } from '@goodvibes-jev/engine/sdk/platform/core';
+
+/**
+ * TUI extends the SDK BlockMeta with rendering position fields, plus a
+ * TUI-only block type: 'tool_group' is the synthetic header block that folds
+ * a run of >=2 consecutive tool-result messages under one collapsible header
+ * (see conversation-tool-groups.ts). Defined as an intersection rather than
+ * `interface X extends SdkBlockMeta` because TypeScript requires an extending
+ * interface's members to be subtypes of the base interface's, widening the
+ * `type` union that way is a compile error. Omit + intersection adds the new
+ * variant without touching the SDK's published type.
+ */
+export type BlockMeta = Omit<SdkBlockMeta, 'type'> & {
+  type: SdkBlockMeta['type'] | 'assistant_turn';
+  /** Index of this block (increments per renderable block). */
+  blockIndex: number;
+  /** First rendered line index in the history buffer. */
+  startLine: number;
+  /** Number of rendered lines (when not collapsed). */
+  lineCount: number;
+  /** Stable key for collapse state persistence across rebuilds (e.g. msg_N). */
+  collapseKey: string;
+  /**
+   * Absolute message indexes of every tool result hanging under an
+   * 'assistant_turn' header. A row hidden by a collapsed turn pushes no
+   * BlockMeta of its own, so this list is what lets /expand reopen each
+   * result's own collapse key in the same pass, and what lets search reach
+   * content that is currently hidden.
+   */
+  groupMemberIndexes?: readonly number[];
+  /**
+   * The tool call's name, when this block renders a 'tool' result (or is an
+   * 'assistant_turn' header whose calls all share one label). Used to name the block honestly in action
+   * receipts (e.g. "tool result: exec"), see describeBlockForReceipt in
+   * handler-content-actions.ts. Undefined for non-tool block types and for
+   * standalone tool results with no recorded name.
+   */
+  toolName?: string;
+  /**
+   * The collapse key that reveals each entry of groupMemberIndexes (same
+   * order): the bead body the result sits behind (work-tree-model.ts
+   * beadKeyOf). /expand opens them in the same pass that unfolds the turn,
+   * and search reveals a hit by opening exactly its bead.
+   */
+  groupMemberKeys?: readonly string[];
+  /**
+   * The work-tree row this block is, when it is one: 'turn' (a turn header),
+   * 'bead' (a tool call) or 'lane' (an agent lane's spawn or folded row). The
+   * keyboard moves between these rows (see ConversationManager focus methods).
+   */
+  workTree?: {
+    readonly kind: 'turn' | 'bead' | 'lane';
+    /** Focus identity, stable across rebuilds. */
+    readonly id: string;
+    /** The bead has a body to open (then ▸ shows). */
+    readonly hasBody: boolean;
+    /** The body is open. */
+    readonly open: boolean;
+    /** The body shows its first rows only ("… N more"). */
+    readonly capped: boolean;
+    /** Collapse key of the body's "… N more" (bead only). */
+    readonly moreKey?: string;
+    /** Whether the lane has finished (lane only). */
+    readonly finished?: boolean;
+    /** The lane this row sits on (bead rows inside an agent lane carry that lane's collapse key). */
+    readonly laneKey?: string;
+    /** The agent a lane row draws (Enter opens it full screen). */
+    readonly agentId?: string;
+    /** A lane row's color index (lane-graph/paint.ts laneColor): the agent's own color. */
+    readonly colorIndex?: number;
+    /** The background process a ▶ bead started (Enter opens its output). */
+    readonly processId?: string;
+  };
+};
