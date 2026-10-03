@@ -1,4 +1,6 @@
 import { z } from 'zod/v4';
+import { workExecutionSchema, type WorkExecutionView } from './execution-types.js';
+import type { NativeExecutionDecisionContext } from './execution-admission.js';
 
 const id = z.string().min(1).max(200);
 const text = z.string().trim().min(1).max(20_000);
@@ -129,10 +131,13 @@ export const workLedgerStateSchema = z.strictObject({
   evidence: z.array(ledgerEvidenceSchema),
   history: z.array(ledgerEventSchema),
   receipts: z.array(receiptSchema),
+  executions: z.array(workExecutionSchema).default([]),
+  executionRevision: revision.default(0),
 });
 export type WorkLedgerState = z.infer<typeof workLedgerStateSchema>;
 
 export interface WorkLedgerView {
+  readonly execution?: WorkExecutionView;
   readonly work: LedgerWork;
   readonly attempt: LedgerAttempt | null;
   readonly verification: {
@@ -146,6 +151,7 @@ export interface WorkLedgerView {
 }
 
 export interface WorkLedgerSnapshot {
+  readonly executionRevision?: number;
   readonly projectId: string;
   readonly revision: number;
   readonly cursor: number;
@@ -236,6 +242,9 @@ export interface WorkLedgerService {
 
 /** Keep in trusted host composition; never expose to editable product data. */
 export interface WorkLedgerAuthority {
+  authenticateActor(actor: WorkLedgerActor): Readonly<WorkLedgerHostIdentity>;
+  onActorRevoked(actor: WorkLedgerActor, listener: () => void): () => void;
+  publishExecution(executionId: string, actor: WorkLedgerActor, options: { readonly current: NativeExecutionDecisionContext; readonly signal?: AbortSignal }): Promise<WorkLedgerResult>;
   issueActor(identity: WorkLedgerHostIdentity): WorkLedgerActor;
   revokeActor(actor: WorkLedgerActor): void;
 }

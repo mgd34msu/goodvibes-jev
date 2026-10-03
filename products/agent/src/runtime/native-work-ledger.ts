@@ -14,6 +14,7 @@ export class NativeWorkLedgerModel {
   private draining = false;
   private cursor = 0;
   private highestSnapshotCursor = -1;
+  private highestExecutionRevision = -1;
   private history: WorkLedgerEvent[] = [];
   state: NativeWorkLedgerState = { status: 'closed', reason: 'Native work ledger view is closed.' };
   constructor(private readonly changed: () => void = () => {}) {}
@@ -22,7 +23,7 @@ export class NativeWorkLedgerModel {
     ++this.epoch;
     const unsubscribe = this.unsubscribe; const client = this.client;
     this.unsubscribe = undefined; this.client = undefined; this.pending = undefined;
-    this.draining = false; this.cursor = 0; this.highestSnapshotCursor = -1; this.history = [];
+    this.draining = false; this.cursor = 0; this.highestSnapshotCursor = -1; this.highestExecutionRevision = -1; this.history = [];
     // Independent cleanup: a throwing observer must not retain the reader.
     try { unsubscribe?.(); } catch { /* best effort */ }
     try { client?.dispose(); } catch { /* best effort */ }
@@ -50,14 +51,16 @@ export class NativeWorkLedgerModel {
   private accept(snapshot: WorkLedgerReadSnapshot, epoch: number): void {
     if (epoch !== this.epoch || !this.client) return;
     if (snapshot.projectId !== this.client.projectId) { this.fail(new Error('Host project binding changed.'), epoch); return; }
-    if (snapshot.cursor < this.highestSnapshotCursor) return;
+    if (snapshot.cursor < this.highestSnapshotCursor || (snapshot.executionRevision ?? 0) < this.highestExecutionRevision) return;
+    this.highestExecutionRevision = snapshot.executionRevision ?? 0;
     this.highestSnapshotCursor = snapshot.cursor;
     this.pending = snapshot;
     if (!this.draining) void this.drain(epoch);
   }
   private enqueue(snapshot: WorkLedgerReadSnapshot): void {
     this.highestSnapshotCursor = Math.max(this.highestSnapshotCursor, snapshot.cursor);
-    if (!this.pending || this.pending.cursor < snapshot.cursor) this.pending = snapshot;
+    this.highestExecutionRevision = Math.max(this.highestExecutionRevision, snapshot.executionRevision ?? 0);
+    if (!this.pending || this.pending.cursor < snapshot.cursor || (this.pending.cursor === snapshot.cursor && (this.pending.executionRevision ?? 0) < (snapshot.executionRevision ?? 0))) this.pending = snapshot;
   }
   private async drain(epoch: number): Promise<void> {
     this.draining = true;
@@ -79,6 +82,8 @@ export class NativeWorkLedgerModel {
           if (snapshot.projectId !== this.client.projectId || snapshot.cursor < cursor) throw new Error('Native ledger snapshot is behind durable history. Reopen to reload.');
           if (snapshot.cursor > cursor) { this.enqueue(snapshot); continue; }
         }
+        const pending = this.pending as WorkLedgerReadSnapshot | undefined;
+        if (pending && (pending.executionRevision ?? 0) > (snapshot.executionRevision ?? 0)) continue;
         this.publish({ status: 'ready', snapshot, history: [...this.history], cursor });
       }
     } catch (error) { this.fail(error, epoch); }

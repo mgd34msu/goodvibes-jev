@@ -1,4 +1,8 @@
-import { enum as enumSchema, strictObject, string } from 'zod/v4';
+import { readWorkLedgerState as readState, workEvidenceTargetMatches as targetMatches, workLedgerIdentitySchema as identitySchema } from './state.js';
+import { workExecutionViewSchema } from './execution-types.js';
+import { executionIsCurrent } from './execution-state.js';
+import { validateNativeExecutionDecision } from './execution-admission.js';
+import { parseJevDecision } from '@goodvibes-jev/judgment/decisions';
 import {
   workLedgerCommandSchema, workLedgerStateSchema, WorkLedgerAccessError,
   type LedgerAttempt, type LedgerWork, type WorkEvidenceTarget,
@@ -9,109 +13,10 @@ import {
   type WorkLedgerStorage, type WorkLedgerView,
 } from './types.js';
 
-const identitySchema = strictObject({
-  actorId: string().min(1).max(200),
-  projectId: string().min(1).max(200),
-  role: enumSchema(['coordinator', 'worker', 'verifier']),
-});
-
 export function createEmptyWorkLedgerState(projectId: string): WorkLedgerState {
   return workLedgerStateSchema.parse({
     version: 1, projectId, revision: 0, works: [], attempts: [], evidence: [], history: [], receipts: [],
   });
-}
-
-/** Fail closed on malformed or inconsistent host data; never reset it to empty. */
-function readState(input: unknown, projectId: string): WorkLedgerState {
-  const state = workLedgerStateSchema.parse(input);
-  if (state.projectId !== projectId) throw new Error('Work ledger project mismatch');
-  const unique = (ids: string[]) => new Set(ids).size === ids.length;
-  if (!unique(state.works.map(w => w.id)) || !unique(state.attempts.map(a => a.id))
-    || !unique(state.evidence.map(e => e.id))
-    || !unique(state.receipts.map(r => JSON.stringify([r.actorId, r.requestId])))
-    || state.history.length !== state.revision || state.receipts.length !== state.revision
-    || state.history.some((event, index) => event.sequence !== index + 1)) {
-    throw new Error('Inconsistent work ledger identities or history');
-  }
-  for (const work of state.works) {
-    const attempt = state.attempts.find(a => a.id === work.currentAttemptId);
-    if (work.revision > state.revision || work.criteriaRevision > work.revision
-      || (work.currentAttemptId !== null && (!attempt || attempt.workId !== work.id))
-      || (work.reportedState === 'cancelled' && attempt?.state !== 'cancelled' && attempt !== undefined)
-      || state.attempts.some(a => a.workId === work.id && a.state === 'active' && a.id !== work.currentAttemptId)) {
-      throw new Error('Inconsistent work ledger current attempt');
-    }
-  }
-  for (const attempt of state.attempts) {
-    const predecessor = state.attempts.find(a => a.id === attempt.predecessorId);
-    if (!state.works.some(w => w.id === attempt.workId)
-      || (attempt.predecessorId !== null && (!predecessor || predecessor.workId !== attempt.workId || predecessor.id === attempt.id))) {
-      throw new Error('Inconsistent work ledger ownership chain');
-    }
-  }
-  // Replay the immutable record images to detect rollback, orphan records and
-  // receipts detached from the history they claim to acknowledge.
-  const works = new Map<string, LedgerWork>();
-  const attempts = new Map<string, LedgerAttempt>();
-  const evidence = new Map<string, WorkLedgerEvent['evidence']>();
-  const equal = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
-  for (const [index, event] of state.history.entries()) {
-    const prior = works.get(event.workId);
-    const receipt = state.receipts[index];
-    if (!receipt || receipt.actorId !== event.actorId || receipt.requestId !== event.requestId
-      || !equal(receipt.event, event) || event.work.id !== event.workId
-      || event.attemptId !== event.work.currentAttemptId
-      || (event.type === 'create') !== !prior
-      || event.work.revision !== (prior?.revision ?? 0) + (event.type === 'record_evidence' ? 0 : 1)
-      || event.work.criteriaRevision !== (prior?.criteriaRevision ?? 0) + (event.type === 'create' || event.type === 'revise' ? 1 : 0)
-      || (prior && (event.work.createdAt !== prior.createdAt || event.at < prior.updatedAt))
-      || (event.type === 'record_evidence' && !equal(event.work, prior))) {
-      throw new Error('Inconsistent work ledger event or receipt');
-    }
-    const signature = strictObject({ role: identitySchema.shape.role, command: workLedgerCommandSchema }).parse(JSON.parse(receipt.signature));
-    const command = signature.command;
-    if (JSON.stringify(signature) !== receipt.signature || command.requestId !== event.requestId
-      || command.type !== event.type || command.expectedRevision !== index
-      || (command.type !== 'create' && (command.type === 'record_evidence' ? command.target.workId : command.workId) !== event.workId)) {
-      throw new Error('Inconsistent work ledger receipt command');
-    }
-    for (const attempt of event.attempts) {
-      const previous = attempts.get(attempt.id);
-      const predecessor = attempt.predecessorId === null ? null : attempts.get(attempt.predecessorId);
-      if (attempt.workId !== event.workId || attempt.revision !== (previous?.revision ?? 0) + 1
-        || (previous && (attempt.ownerId !== previous.ownerId || attempt.predecessorId !== previous.predecessorId || attempt.createdAt !== previous.createdAt))
-        || (attempt.predecessorId !== null && (!predecessor || predecessor.workId !== attempt.workId))
-        || (attempt.createdAt > attempt.updatedAt) || attempt.updatedAt !== event.at) {
-        throw new Error('Inconsistent work ledger attempt history');
-      }
-      attempts.set(attempt.id, attempt);
-    }
-    works.set(event.workId, event.work);
-    if ((event.type === 'record_evidence') !== (event.evidence !== null)) throw new Error('Inconsistent evidence event');
-    if (event.evidence) {
-      const item = event.evidence;
-      if (evidence.has(item.id) || item.actorId !== event.actorId || item.at !== event.at
-        || !targetMatches(item.target, event.work, attempts.get(event.attemptId ?? '') ?? null)
-        || event.work.reportedState !== 'complete' || signature.role !== 'verifier'
-        || (item.outcome === 'verified' && (item.source !== 'host_check'
-          || item.criteriaResults.length !== event.work.criteria.length
-          || new Set(item.criteriaResults.map(result => result.criterionIndex)).size !== event.work.criteria.length
-          || item.criteriaResults.some(result => result.criterionIndex >= event.work.criteria.length || result.status !== 'satisfied'
-            || result.references.length === 0 || result.references.some(ref => !item.references.some(reference => reference.ref === ref && reference.digest)))))) {
-        throw new Error('Inconsistent work ledger evidence history');
-      }
-      evidence.set(item.id, item);
-    }
-  }
-  if (!equal([...works.values()], state.works) || !equal([...attempts.values()], state.attempts)
-    || !equal([...evidence.values()], state.evidence)) throw new Error('Work ledger state differs from committed history');
-  return state;
-}
-
-function targetMatches(target: WorkEvidenceTarget, work: LedgerWork, attempt: LedgerAttempt | null): boolean {
-  return target.workId === work.id && target.workRevision === work.revision
-    && target.criteriaRevision === work.criteriaRevision && target.attemptId === attempt?.id
-    && target.attemptRevision === attempt.revision;
 }
 
 function actions(work: LedgerWork, attempt: LedgerAttempt | null, actor: WorkLedgerHostIdentity): WorkLedgerAction[] {
@@ -130,7 +35,7 @@ function actions(work: LedgerWork, attempt: LedgerAttempt | null, actor: WorkLed
 
 function snapshot(state: WorkLedgerState, actor: WorkLedgerHostIdentity): WorkLedgerSnapshot {
   return {
-    projectId: state.projectId, revision: state.revision, cursor: state.revision,
+    projectId: state.projectId, revision: state.revision, cursor: state.revision, ...(state.executionRevision ? { executionRevision: state.executionRevision } : {}),
     works: state.works.map(work => {
       const attempt = state.attempts.find(a => a.id === work.currentAttemptId) ?? null;
       const evidence = [...state.evidence].reverse().find(e => e.target.workId === work.id) ?? null;
@@ -142,7 +47,8 @@ function snapshot(state: WorkLedgerState, actor: WorkLedgerHostIdentity): WorkLe
       const attention: { kind: 'blocked' | 'verification'; reason: string }[] = [];
       if (work.reportedState === 'blocked') attention.push({ kind: 'blocked', reason: attempt?.blocker ?? 'Work is blocked.' });
       if (work.reportedState === 'complete' && verification.state !== 'verified') attention.push({ kind: 'verification', reason: verification.reason });
-      return { work, attempt, verification, attention, allowedActions: actions(work, attempt, actor) };
+      const execution = state.executions.find(entry => entry.target.attemptId === attempt?.id);
+      return { work, attempt, verification, attention, ...(execution ? { execution: workExecutionViewSchema.parse({ id: execution.id, contractId: execution.contractId, target: execution.target, status: execution.status, reason: execution.reason, decisionIds: execution.decisionIds, evidenceId: execution.evidenceId }) } : {}), allowedActions: actions(work, attempt, actor) };
     }),
   };
 }
@@ -191,7 +97,74 @@ export function createWorkLedger(options: {
     if (!trusted || trusted.projectId !== projectId) throw new WorkLedgerAccessError('forbidden', 'Invalid or revoked work ledger actor');
     return trusted;
   }
+  const revocations = new Map<WorkLedgerActor, Set<() => void>>();
+  function notifyRevoked(actor: WorkLedgerActor): void {
+    const listeners = revocations.get(actor);
+    revocations.delete(actor);
+    for (const listener of listeners ?? []) { try { listener(); } catch { /* Finish revoking all listeners. */ } }
+  }
   const authority: WorkLedgerAuthority = {
+    authenticateActor(actor) {
+      if (closed) throw new WorkLedgerAccessError('closed', 'Work ledger is closed');
+      return Object.freeze({ ...requireIdentity(actor) });
+    },
+    onActorRevoked(actor, listener) {
+      if (closed) throw new WorkLedgerAccessError('closed', 'Work ledger is closed');
+      requireIdentity(actor);
+      const listeners = revocations.get(actor) ?? new Set<() => void>();
+      listeners.add(listener); revocations.set(actor, listeners);
+      return () => { listeners.delete(listener); if (listeners.size === 0) revocations.delete(actor); };
+    },
+    publishExecution(id, actor, publishOptions) {
+      if (closed) return Promise.resolve(rejected('closed', 'Work ledger is closed.', null));
+      return admit<WorkLedgerResult>(() => {
+        if (!identity(actor)) return rejected('forbidden', 'Invalid or revoked host actor.', null);
+        const actorId = requireIdentity(actor).actorId;
+        const { current, signal } = publishOptions;
+        return storage.transaction(raw => {
+          let state: WorkLedgerState;
+          try { state = readState(raw, projectId); } catch { return { next: null, value: rejected('invalid_state', 'Authoritative ledger state is invalid.', null) }; }
+          const initialRevision = state.revision;
+          if (!identity(actor)) return { next: null, value: rejected('forbidden', 'Host actor was revoked.', initialRevision) };
+          const entry = state.executions.find(item => item.id === id && item.actorId === actorId);
+          if (!entry || !entry.contractId || !entry.publication) return { next: null, value: rejected('invalid_transition', 'Native publication is not prepared.', initialRevision) };
+          const requestId = `native:${entry.contractId}:evidence`;
+          if (entry.status === 'settled') {
+            const receipt = state.receipts.find(item => item.actorId === actorId && item.requestId === requestId);
+            if (!receipt) return { next: null, value: rejected('invalid_state', 'Missing native publication receipt.', initialRevision) };
+            return { next: null, value: { kind: 'accepted', replayed: true, event: receipt.event } as WorkLedgerResult };
+          }
+          if (signal?.aborted) return { next: null, value: rejected('cancelled', 'Native publication cancelled.', initialRevision) };
+          if (!executionIsCurrent(state, entry) || !['running', 'dispatching'].includes(entry.status)) return { next: null, value: rejected('stale_evidence', 'Native execution target is no longer current.', initialRevision) };
+          if (state.revision !== entry.publication.expectedRevision) return { next: null, value: rejected('conflict', 'Native publication aggregate revision changed.', initialRevision) };
+          let result: WorkLedgerResult;
+          let next: WorkLedgerState;
+          try {
+            const decision = parseJevDecision(entry.admissions.at(-1));
+            if (decision.outcome !== 'act') throw new Error('Native publication requires act');
+            validateNativeExecutionDecision(entry, decision, current);
+            const report = workLedgerCommandSchema.parse({ type: 'report', requestId: `native:${entry.contractId}:report`, expectedRevision: state.revision, workId: entry.target.workId, attemptId: entry.target.attemptId, state: 'complete', report: entry.publication.report });
+            result = reduce(state, report, requireIdentity(actor));
+            if (result.kind !== 'accepted') return { next: null, value: result };
+            const attestation = entry.publication.attestation;
+            if (!attestation || typeof attestation !== 'object' || Array.isArray(attestation)) throw new Error('Invalid attestation');
+            const evidence = workLedgerCommandSchema.parse({ ...attestation, type: 'record_evidence', requestId, expectedRevision: state.revision, target: { ...entry.target, workRevision: entry.target.workRevision + 1, attemptRevision: entry.target.attemptRevision + 1 } });
+            result = reduce(state, evidence, { ...requireIdentity(actor), role: 'verifier' });
+            if (result.kind !== 'accepted' || !result.event.evidence) return { next: null, value: result };
+            entry.status = 'settled'; entry.evidenceId = result.event.evidence.id;
+            state.executionRevision++;
+            next = readState(state, projectId);
+            // The live context may synchronously cancel or revoke. It precedes
+            // the final signal and actor checks, after every host hook.
+            validateNativeExecutionDecision(entry, decision, current);
+          } catch { return { next: null, value: rejected('host_error', 'Native publication validation failed before commit.', initialRevision) }; }
+          const aborted = signal?.aborted;
+          if (!identity(actor)) return { next: null, value: rejected('forbidden', 'Host actor was revoked before commit.', initialRevision) };
+          if (aborted) return { next: null, value: rejected('cancelled', 'Native publication cancelled before commit.', initialRevision) };
+          return { next, value: result };
+        }).catch((): WorkLedgerResult => ({ kind: 'indeterminate', requestId: id, actorId, reason: 'Native publication storage outcome is unknown; reconcile by exact retry.' }));
+      });
+    },
     issueActor(input) {
       if (closed) throw new WorkLedgerAccessError('closed', 'Work ledger is closed');
       const trusted = identitySchema.parse(input);
@@ -202,6 +175,7 @@ export function createWorkLedger(options: {
     },
     revokeActor(actor) {
       identities.delete(actor);
+      notifyRevoked(actor);
       for (const unsubscribe of actorSubscriptions.get(actor) ?? []) {
         try { unsubscribe(); } catch { /* Continue revoking every subscription. */ }
       }
@@ -374,6 +348,7 @@ export function createWorkLedger(options: {
       const admission = reserve<void>();
       let active = true;
       let cursor = -1;
+      let executionCursor = -1;
       let cleanup: (() => void) | undefined;
       let cleaned = false;
       const cleanupOnce = () => {
@@ -402,7 +377,8 @@ export function createWorkLedger(options: {
             if (!active || closed || !identity(actor)) return;
             try {
               const state = readState(notification, projectId);
-              if (state.revision <= cursor) return;
+              if (state.revision <= cursor && state.executionRevision <= executionCursor) return;
+              executionCursor = state.executionRevision;
               cursor = state.revision;
               const returned: unknown = listener(snapshot(state, requireIdentity(actor)));
               void Promise.resolve(returned).catch(() => {});
@@ -471,6 +447,7 @@ export function createWorkLedger(options: {
       let finish!: () => void;
       // Reentrant cleanup must observe this exact promise, not start a new drain.
       closePromise = new Promise<void>(resolve => { finish = resolve; });
+      for (const actor of [...revocations.keys()]) notifyRevoked(actor);
       for (const unsubscribe of [...subscriptions]) {
         try { unsubscribe(); } catch { /* Cleanup failures must not strand drains. */ }
       }

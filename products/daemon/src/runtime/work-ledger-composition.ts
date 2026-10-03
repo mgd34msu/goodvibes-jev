@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { KnowledgeStore } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import {
   createWorkLedger,
+  createWorkExecutionJournal,
+  type WorkExecutionJournal,
   type KnowledgeWorkLedgerStorage,
   type WorkLedgerAuthority,
   type WorkLedgerClock,
@@ -14,6 +16,7 @@ import {
 export interface NativeWorkLedgerOwner {
   readonly service: WorkLedgerService;
   readonly authority: WorkLedgerAuthority;
+  readonly executionJournal: WorkExecutionJournal;
   close(): Promise<void>;
 }
 
@@ -68,12 +71,14 @@ export function createNativeWorkLedgerOwner(options: {
     clock: options.clock ?? { now: Date.now, newId: (kind) => `${kind}:${randomUUID()}` },
   });
 
+  const executionJournal = createWorkExecutionJournal({ projectId: options.projectId, storage: forwarding, authority: core.authority });
+
   function close(): Promise<void> {
     if (closing) return closing;
     closed = true;
     // This is deliberately outside any await: product admission and observers
     // are fenced at invocation, even while older graph owners are draining.
-    const drained = core.service.close();
+    const drained = Promise.all([executionJournal.close(), core.service.close()]);
     closing = (async () => {
       await drained;
       const failures: unknown[] = [];
@@ -87,5 +92,5 @@ export function createNativeWorkLedgerOwner(options: {
     return closing;
   }
 
-  return { service: { ...core.service, close }, authority: core.authority, close };
+  return { service: { ...core.service, close }, authority: core.authority, executionJournal, close };
 }

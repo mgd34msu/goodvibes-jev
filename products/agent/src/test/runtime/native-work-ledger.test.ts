@@ -87,3 +87,22 @@ test('interactive native host wiring preserves executable entrypoint syntax', as
   expect(source.startsWith('#!/usr/bin/env bun\n')).toBe(true);
   expect(() => new Bun.Transpiler({ loader: 'ts' }).transformSync(source)).not.toThrow();
 });
+
+test('journal-only revisions advance and delayed snapshots cannot regress them', async () => {
+  let notify!: (value: WorkLedgerReadSnapshot) => void;
+  const model = new NativeWorkLedgerModel();
+  model.open({ available: true, client: { projectId: 'p', readSnapshot: async () => snapshot(), history: async () => [], subscribe: listener => { notify = listener; return () => {}; }, dispose: () => {} } });
+  await flush();
+  notify({ ...snapshot(), executionRevision: 2 }); await flush();
+  expect(model.state.status === 'ready' && model.state.snapshot.executionRevision).toBe(2);
+  notify({ ...snapshot(), executionRevision: 1 }); await flush();
+  expect(model.state.status === 'ready' && model.state.snapshot.executionRevision).toBe(2);
+  model.close();
+});
+
+test('execution deferral is presented separately from verification', () => {
+  const view = { work: event(1).work, attempt: null, verification: { state: 'unverified' as const, reason: 'No evidence', evidence: null }, attention: [],
+    execution: { id: 'execution', contractId: null, target: { workId: 'work-stable', workRevision: 1, criteriaRevision: 1, attemptId: 'attempt', attemptRevision: 1 }, status: 'deferred' as const, reason: 'Waiting for a condition', decisionIds: ['reading'], evidenceId: null } };
+  const text = nativeWorkLedgerLines({ status: 'ready', cursor: 0, history: [], snapshot: { ...snapshot(), works: [view] } }).join('\n');
+  expect(text).toContain('Execution: deferred'); expect(text).toContain('Verification: unverified'); expect(text).not.toContain('awaiting owner');
+});

@@ -35,7 +35,7 @@ export type LocalWorkLedgerReadBindingOptions =
     readonly projectId: string;
     readonly actorId: string;
     readonly service: Pick<WorkLedgerService, 'readSnapshot' | 'history' | 'subscribe'>;
-    readonly authority: WorkLedgerAuthority;
+    readonly authority: Pick<WorkLedgerAuthority, 'issueActor' | 'revokeActor'>;
   };
 
 /**

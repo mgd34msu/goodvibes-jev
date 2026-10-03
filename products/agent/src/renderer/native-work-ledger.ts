@@ -9,6 +9,10 @@ export function nativeWorkLedgerLines(state: NativeWorkLedgerState): string[] {
   if (!state.snapshot.works.length) lines.push('No native work recorded for this project.');
   for (const view of state.snapshot.works) {
     const { work, attempt, verification } = view;
+    if (view.execution) {
+      const execution = view.execution;
+      lines.push(`Execution: ${execution.status === 'pending' ? 'waiting for Jev' : execution.status} · ${safe(execution.reason)}`, `Runner: ${safe(execution.contractId ?? 'not bound')}`);
+    }
     lines.push(`Work ${safe(work.id)} · revision ${work.revision} · ${safe(work.title)}`,
       `Intent: ${safe(work.goal)}`,
       `Reported: ${work.reportedState} · Verification: ${verification.state}`,
