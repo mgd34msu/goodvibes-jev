@@ -494,7 +494,9 @@ describe('routines CLI command', () => {
     globalThis.fetch = mockFetch(async (input, init) => {
       const url = inputUrl(input);
       requests.push({ url, method: init?.method ?? 'GET' });
-      throw new Error('Route not found: /api/automation/schedules (404)');
+      // An HTTP 404 is a response. Throwing from fetch instead models a
+      // transport failure, which the browser SDK correctly marks as network.
+      return new Response('Route not found: /api/automation/schedules (404)', { status: 404 });
     });
 
     try {
@@ -525,6 +527,44 @@ describe('routines CLI command', () => {
       expect(Object.prototype.hasOwnProperty.call(payload as object, 'daemonVersion')).toBe(false);
       expect(payload.receipt?.connectedHostBaseUrl).toBe('http://127.0.0.1:3421');
       expect(payload.receipt?.failureKind).toBe('connected_host_route_unavailable');
+      expect(Object.prototype.hasOwnProperty.call(payload.receipt as object, 'daemonBaseUrl')).toBe(false);
+      expect(result.output).not.toContain('daemon_');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test.each([
+    'Route not found: /api/automation/schedules (404)',
+    'Unauthorized auth 401 while fetching /api/automation/schedules (404)',
+  ])('records thrown transport failures without inferring status from wording: %s', async (message) => {
+    const requests: Array<{ readonly url: string; readonly method: string }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch(async (input, init) => {
+      requests.push({ url: inputUrl(input), method: init?.method ?? 'GET' });
+      throw new Error(message);
+    });
+
+    try {
+      const result = await handleRoutinesCommand(runtime([
+        'promote', 'daily-operations-sweep', '--cron', '0 8 * * *', '--yes', '--json',
+      ]));
+      const payload = JSON.parse(result.output) as {
+        readonly kind?: unknown;
+        readonly receipt?: {
+          readonly connectedHostBaseUrl?: unknown;
+          readonly failureKind?: unknown;
+          readonly failureError?: unknown;
+        };
+      };
+
+      expect(result.exitCode).toBe(1);
+      expect(requests).toEqual([{ url: 'http://127.0.0.1:3421/api/automation/schedules', method: 'POST' }]);
+      expect(payload.kind).toBe('connected_host_unavailable');
+      expect(payload.receipt?.connectedHostBaseUrl).toBe('http://127.0.0.1:3421');
+      expect(payload.receipt?.failureKind).toBe('connected_host_unavailable');
+      expect(payload.receipt?.failureError).toBe(message);
+      expect(Object.prototype.hasOwnProperty.call(payload as object, 'daemonVersion')).toBe(false);
       expect(Object.prototype.hasOwnProperty.call(payload.receipt as object, 'daemonBaseUrl')).toBe(false);
       expect(result.output).not.toContain('daemon_');
     } finally {
