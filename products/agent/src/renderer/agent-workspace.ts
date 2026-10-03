@@ -708,7 +708,7 @@ function footerText(workspace: AgentWorkspace): string {
   if (workspace.actionSearchActive) {
     return 'Up/Down results · Enter open · Backspace edit search · Esc clear';
   }
-  return 'Up/Down move · Left/Right pane · Enter open · / search · Ctrl+] next area · R refresh';
+  return workspace.selectedActionCategory.id === 'work' ? 'PgUp/PgDn ledger · Up/Down actions · Enter open · Esc close · R refresh' : 'Up/Down move · Left/Right pane · Enter open · / search · Ctrl+] next area · R refresh';
 }
 
 export function renderAgentWorkspace(workspace: AgentWorkspace, width: number, height: number): SurfaceLayer {
@@ -729,6 +729,15 @@ export function renderAgentWorkspace(workspace: AgentWorkspace, width: number, h
   const contextRows = buildContextRows(workspace, category, action, contextWidth);
   const layoutOptions = { ...baseOptions, contextNeed: contextRows.length };
   const metrics = getFullscreenWorkspaceMetrics(layoutOptions);
+  let shownContextRows = contextRows;
+  if (category.id === 'work') {
+    const count = Math.max(1, metrics.contextRows - 1);
+    workspace.workContextScroll = Math.min(workspace.workContextScroll, Math.max(0, contextRows.length - count));
+    shownContextRows = [
+      { text: `Ledger details ${workspace.workContextScroll + 1}–${Math.min(contextRows.length, workspace.workContextScroll + count)}/${contextRows.length} · PgUp/PgDn`, fg: PALETTE.muted },
+      ...contextRows.slice(workspace.workContextScroll, workspace.workContextScroll + count),
+    ];
+  }
 
   return renderFullscreenWorkspace({
     width,
@@ -740,7 +749,7 @@ export function renderAgentWorkspace(workspace: AgentWorkspace, width: number, h
       ? `Search actions · ${workspace.actions.length} result${workspace.actions.length === 1 ? '' : 's'}`
       : `${category.label} · ${workspace.actions.length} action${workspace.actions.length === 1 ? '' : 's'}`,
     leftRows: buildLeftRows(workspace, metrics.bodyRows),
-    contextRows,
+    contextRows: shownContextRows,
     controlRows: buildActionRows(workspace, metrics.contextWidth, metrics.controlRows),
     footer,
     leftWidth: layoutOptions.leftWidth,

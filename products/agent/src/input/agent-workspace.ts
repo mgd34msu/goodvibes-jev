@@ -49,6 +49,7 @@ export class AgentWorkspace {
   public actionSearchQuery = '';
   /** Scroll offset into the action-result block, and the result it belongs to. */
   public resultScroll = 0;
+  public workContextScroll = 0;
   public resultScrollFor: AgentWorkspaceActionResult | null = null;
   public readonly selectedLibraryItemIndexes: AgentWorkspaceLocalSelectionIndexes = { memory: 0, note: 0, persona: 0, skill: 0, routine: 0, profile: 0 };
   private context: CommandContext | null = null;
@@ -60,7 +61,10 @@ export class AgentWorkspace {
   private _awaitingRecapDismiss = false; // true while showing recap before final close
 
   open(context: CommandContext, dispatchCommand: AgentWorkspaceCommandDispatcher, categoryId?: string, dispatchPrompt?: AgentWorkspacePromptDispatcher, onlyGroup?: AgentWorkspaceCategoryGroup): void {
+    this.context?.nativeWorkLedger?.close();
     this.context = context;
+    this.workContextScroll = 0;
+    context.nativeWorkLedger?.open();
     this.dispatchCommand = dispatchCommand;
     this.dispatchPrompt = dispatchPrompt ?? null;
     this._onlyGroup = onlyGroup ?? null;
@@ -101,18 +105,25 @@ export class AgentWorkspace {
   }
 
   reopen(): void {
+    this.context?.nativeWorkLedger?.open();
     this.active = true;
     this.clampSelection();
   }
 
   close(): void {
     this.active = false;
+    this.context?.nativeWorkLedger?.close();
     this.localEditor = null;
     this.actionSearchActive = false;
     this.actionSearchQuery = '';
     this._onlyGroup = null;
     this._onboardingState = null;
     this._awaitingRecapDismiss = false;
+  }
+
+  get nativeWorkLedgerState(): import('../runtime/native-work-ledger.ts').NativeWorkLedgerState {
+    this.context?.nativeWorkLedger?.sync();
+    return this.context?.nativeWorkLedger?.state ?? { status: 'unavailable', reason: 'No authenticated daemon work ledger binding is installed.' };
   }
 
   get categories(): readonly AgentWorkspaceCategory[] {
@@ -214,6 +225,7 @@ export class AgentWorkspace {
   jumpEnd(): void { jumpAgentWorkspaceSelection(this, 'end'); }
 
   refreshRuntimeSnapshot(): void {
+    if (this.selectedActionCategory.id === 'work') this.context?.nativeWorkLedger?.open();
     if (!this.context) {
       this.status = 'Runtime context is unavailable.';
       this.lastActionResult = {

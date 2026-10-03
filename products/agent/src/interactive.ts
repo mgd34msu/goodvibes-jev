@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { createNativeWorkLedgerView } from './runtime/native-work-ledger-host.ts';
+import { resolveConnectedHostConnection as resolveNativeLedgerHost } from './runtime/client/daemon-verbs.ts';
 import { homedir } from 'node:os';
 import { settleInteractiveExit } from './shell/exit-completion.ts';
 import { Compositor } from './renderer/compositor.ts';
@@ -253,6 +255,11 @@ async function main() {
   const scrollToEnd = (vHeight: number) => transcript.followTail(conversation.history.getLineCount(), vHeight);
 
   const unsubs: Array<() => void> = [];
+  commandContext.nativeWorkLedger = createNativeWorkLedgerView(() => {
+    const host = resolveNativeLedgerHost({ configManager, homeDirectory: ctx.services.shellPaths.homeDirectory });
+    return 'reason' in host ? host : { ...host, workspace: ctx.services.workingDirectory };
+  }, () => render());
+  unsubs.push(() => commandContext.nativeWorkLedger?.close());
   unsubs.push(() => input.settingsModal.close());
   // The work tree's live facts: call/turn timings, agent lanes, the call a permission prompt holds, fold persistence (work-tree-wiring.ts).
   const workTreeWiring = wireWorkTree({ conversation, events: uiServices.events, agentManager, listContracts: () => ctx.services.contractRunner.list({ sessionId: runtime.sessionId, includeTerminal: true }), onContractsChanged: (listener) => ctx.services.runtimeBus.onDomain('contracts', listener), fleetNodes: () => ctx.services.processRegistry.query().nodes, pendingCallId: () => pendingPermission?.callId, turnActive: () => orchestrator.isThinking, sessionsDir: ctx.services.surface.sessionsDir, sessionId: () => runtime.sessionId, requestRender: () => render() });
