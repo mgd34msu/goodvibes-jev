@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { createNativeWorkLedgerHost } from '../../../runtime/native-work-ledger-host.ts';
 import { NativeWorkLedgerModel } from '../../../runtime/native-work-ledger.ts';
+import { createNativeWorkLedgerModalSurface } from '../../../views/modals/native-work-ledger-modal.ts';
+import { ConfigModal } from '../../../input/config-modal.ts';
+import { handleConfigModalToken } from '../../../input/handler-modal-routes.ts';
+import { renderConfigModal } from '../../../renderer/config-modal.ts';
+import { frameFromLayer } from '../../helpers/surface-frame.ts';
 const tick = () => new Promise(resolve => setTimeout(resolve, 10));
 function setup(handler: (request: Request) => Response | Promise<Response>) {
   const home = mkdtempSync(join(tmpdir(), 'native-tui-host-'));
@@ -59,4 +64,35 @@ test('token replacement fences identity, missing token never mints credentials, 
     rmSync(join(f.home, 'operator-tokens.json')); expect(f.host.readSelection().available).toBe(false);
     f.endpoint('http://localhost:1'); expect(f.host.readSelection().available).toBe(false);
   } finally { f.close(); }
+});
+
+test('authenticated public read transport renders both suffix-colliding work IDs after keyboard interaction', async () => {
+  const works = ['work', 'work:states'].map((id, index) => ({
+    work: { id, title: index ? 'AUTH_SECOND_TITLE' : 'AUTH_FIRST_TITLE', goal: 'Read safely', criteria: ['Distinct visible facts'], revision: 1, criteriaRevision: 1, reportedState: 'pending', currentAttemptId: null, createdAt: 1, updatedAt: 1 },
+    attempt: null, verification: { state: 'unverified', reason: index ? 'AUTH_SECOND_STATE' : 'AUTH_FIRST_STATE', evidence: null }, attention: [],
+  }));
+  const events = works.map((view, index) => ({ sequence: index + 1, type: 'create', actorId: 'host', requestId: `create-${index}`, workId: view.work.id, attemptId: null, at: 1, work: view.work, attempts: [], evidence: null, reason: null }));
+  let authenticatedReads = 0;
+  const f = setup(request => {
+    if (request.headers.get('authorization') !== 'Bearer fixture-auth-only') return new Response('denied', { status: 403 });
+    authenticatedReads++;
+    const url = new URL(request.url);
+    if (url.pathname.endsWith('/snapshot')) return Response.json({ projectId: 'daemon-owned-project', revision: 2, cursor: 2, works });
+    if (url.pathname.endsWith('/history')) {
+      const afterSequence = Number(url.searchParams.get('afterSequence') ?? 0);
+      return Response.json({ projectId: 'daemon-owned-project', afterSequence, cursor: 2, throughSequence: 2, hasMore: false, events: events.filter(event => event.sequence > afterSequence) });
+    }
+    return new Response('missing', { status: 404 });
+  });
+  const modal = new ConfigModal();
+  try {
+    f.host.selectProject('daemon-owned-project');
+    const surface = createNativeWorkLedgerModalSurface(f.host.readSelection); modal.open(surface);
+    for (let i = 0; i < 100 && surface.buildView().degraded; i++) await tick();
+    expect(surface.buildView().degraded).toBeUndefined(); expect(authenticatedReads).toBeGreaterThanOrEqual(2);
+    handleConfigModalToken({ configModal: modal, requestRender: () => {}, handleEscape: () => modal.close() }, { type: 'key', logicalName: 'down' } as never);
+    const text = frameFromLayer(renderConfigModal(modal, 180, 45), 180, 45).map(line => line.map(cell => cell.char).join('')).join('\n');
+    expect(text).toContain('AUTH_FIRST_TITLE'); expect(text).toContain('AUTH_SECOND_TITLE');
+    expect(text.split('AUTH_FIRST_STATE')).toHaveLength(2); expect(text.split('AUTH_SECOND_STATE')).toHaveLength(2);
+  } finally { modal.close(); f.close(); }
 });

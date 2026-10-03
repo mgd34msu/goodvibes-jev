@@ -186,3 +186,44 @@ test('long native goals, reports and evidence tails remain reachable through rea
   key('right'); key('right'); reach('EVIDENCE_TAIL', 48);
   key('escape'); expect(modal.active).toBe(false); expect(f.disposed()).toBe(1);
 }, 15_000);
+
+test('valid work and work:states IDs retain distinct titles and states in the actual frozen modal renderer', async () => {
+  const f = fixture(); const base = snapshot(); const original = base.works[0]!;
+  const value: WorkLedgerReadSnapshot = { ...base, works: ['work', 'work:states'].map((id, index) => ({
+    ...original, work: { ...original.work, id, title: index ? 'SECOND_WORK_TITLE' : 'FIRST_WORK_TITLE' },
+    verification: { ...original.verification, reason: index ? 'SECOND_STATE_ONLY' : 'FIRST_STATE_ONLY' },
+  })) };
+  f.update(value); const surface = createNativeWorkLedgerModalSurface(() => f.selection);
+  const modal = new ConfigModal(); modal.open(surface); await tick();
+  const route = { configModal: modal, requestRender: () => {}, handleEscape: () => modal.close() };
+  handleConfigModalToken(route, { type: 'key', logicalName: 'down' } as never);
+  const before = render(modal);
+  expect(before).toContain('FIRST_WORK_TITLE'); expect(before).toContain('SECOND_WORK_TITLE');
+  expect(before.split('FIRST_STATE_ONLY')).toHaveLength(2); expect(before.split('SECOND_STATE_ONLY')).toHaveLength(2);
+  const ids = surface.buildView().tabs[0]!.rows.map(row => row.id);
+  f.update({ ...value, works: value.works.map(view => ({ ...view, work: { ...view.work, title: `${view.work.title}_UPDATED` } })) }); await tick();
+  expect(surface.buildView().tabs[0]!.rows.map(row => row.id)).toEqual(ids);
+  const after = render(modal); expect(after).toContain('SECOND_WORK_TITLE_UPDATED'); expect(after).toContain('FIRST_WORK_TITLE_UPDATED');
+  handleConfigModalToken(route, { type: 'key', logicalName: 'escape' } as never); expect(f.disposed()).toBe(1);
+});
+
+test('native row namespaces isolate suffix-like work, criterion, attention and evidence identities', async () => {
+  const f = fixture(); const base = snapshot(); const original = base.works[0]!;
+  const ids = ['work', 'work:states', 'work:attempt', 'work:0', 'work:line:0', 'evidence', 'evidence:0', '["work","work","states"]'];
+  f.update({ ...base, works: ids.map((id, index) => ({ ...original,
+    work: { ...original.work, id, title: `TITLE_${index}`, goal: `GOAL_${index}`, criteria: [`CRITERION_${index}`] },
+    attention: [{ kind: 'verification', reason: `ATTENTION_${index}` }],
+    verification: { ...original.verification, evidence: { id, target: { workId: id, workRevision: 3, criteriaRevision: 2, attemptId: 'attempt-1', attemptRevision: 2 }, outcome: 'verified', reason: `PROOF_${index}`, references: [{ kind: 'artifact', ref: `REFERENCE_${index}` }], source: 'host_check', criteriaResults: [], actorId: 'v', at: 1 } },
+  })) });
+  const surface = createNativeWorkLedgerModalSurface(() => f.selection); const modal = new ConfigModal(); modal.open(surface); await tick();
+  const view = surface.buildView(); const all = view.tabs.flatMap(tab => tab.rows.map(row => row.id));
+  expect(new Set(all).size).toBe(all.length);
+  const route = { configModal: modal, requestRender: () => {}, handleEscape: () => modal.close() };
+  for (const prefixes of [['TITLE_'], ['GOAL_', 'CRITERION_'], ['ATTENTION_'], ['PROOF_', 'REFERENCE_']]) {
+    let frames = '';
+    for (let i = 0; i < 35; i++) { frames += render(modal); handleConfigModalToken(route, { type: 'key', logicalName: 'down' } as never); }
+    for (const prefix of prefixes) for (let i = 0; i < ids.length; i++) expect(frames).toContain(`${prefix}${i}`);
+    handleConfigModalToken(route, { type: 'key', logicalName: 'right' } as never);
+  }
+  handleConfigModalToken(route, { type: 'key', logicalName: 'escape' } as never); expect(f.disposed()).toBe(1);
+});
