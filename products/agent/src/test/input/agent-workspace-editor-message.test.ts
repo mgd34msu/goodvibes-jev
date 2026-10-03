@@ -34,7 +34,7 @@ function delayedPort() {
   const actions: string[] = [];
   const port: JudgmentPort = { model: 'jev-1.13.0', recorder: { recordReadings() {}, recordAction(_id, action) { actions.push(action); } },
     ask: ((request: JudgmentRequest<Questions>) => new Promise<JudgmentResult<Questions>>((resolve) => jobs.push({ request, resolve }))) as JudgmentPort['ask'] };
-  const finish = (index: number, probability: number) => jobs[index]!.resolve({ answers: { blocking: noulAnswer(probability) }, requestedModel: port.model, model: port.model,
+  const finish = (index: number, probability: number) => jobs[index]!.resolve({ answers: { blocking: { type: 'noul', noul: probability } }, requestedModel: port.model, model: port.model,
     usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1, requestId: `request-${index}`, decisionId: `decision-${index}` });
   return { port, jobs, finish, actions };
 }
