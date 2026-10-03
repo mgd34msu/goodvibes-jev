@@ -13,6 +13,16 @@ export function registerAgentWorkspaceRuntimeCommands(registry: CommandRegistry)
   }
 
   registry.register({
+    name: 'work',
+    description: 'Inspect the native read-only work ledger on the selected daemon host',
+    usage: '[daemon-project-id]',
+    handler(args, ctx) {
+      if (args.length > 1) { ctx.print('Usage: /work [daemon-project-id]'); return; }
+      if (args[0]) ctx.nativeWorkLedger?.selectProject(args[0]);
+      openAgentWorkspace(ctx, 'work');
+    },
+  });
+  registry.register({
     name: 'agent',
     aliases: ['home', 'operator'],
     description: 'Open the GoodVibes Agent operator workspace',
