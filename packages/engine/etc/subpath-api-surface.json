@@ -42363,6 +42363,33 @@
       "text": "export declare function waitingPhrase(state: WaitingState, ctx?: WaitingPhraseContext): string;"
     }
   ],
+  "./platform/presentation/editor-message": [
+    {
+      "name": "EditorMessageInput",
+      "kind": "interface",
+      "required": [
+        "kind",
+        "message",
+        "mode"
+      ],
+      "text": "export interface EditorMessageInput { readonly message: string; readonly kind: string; readonly mode: string; }"
+    },
+    {
+      "name": "EditorMessageReading",
+      "kind": "type",
+      "text": "export type EditorMessageReading = BatteryRun<typeof editorMessageBlocking.items>; ;; via BatteryRun = export interface BatteryRun<Items extends BatteryItems> { readonly readings: { readonly [K in keyof Items]: ReadingFor<Items[K]>; }; readonly result: Omit<JudgmentResult<Questions>, 'answers'>; recordAction(action: string): void; }"
+    },
+    {
+      "name": "editorMessageBlocking",
+      "kind": "const",
+      "text": "editorMessageBlocking: import(\"@goodvibes-jev/judgment/decisions\").Battery<{ readonly blocking: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; }>"
+    },
+    {
+      "name": "readEditorMessage",
+      "kind": "function",
+      "text": "export declare function readEditorMessage(input: EditorMessageInput, signal: AbortSignal): Promise<EditorMessageReading>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    }
+  ],
   "./platform/profiles": [
     {
       "name": "ProfileData",
