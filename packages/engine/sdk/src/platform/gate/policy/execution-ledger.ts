@@ -142,15 +142,27 @@ async function readArgRoles(tool: string, args: Record<string, unknown>, signal:
   const names = [...argumentNames(args)];
   const unread = names.filter((name) => !ARG_ROLES.has(roleKey(tool, name)));
   const port = unread.length > 0 ? judgmentPort(EXECUTION_LEDGER_SITE) : undefined;
+  // mapLimit is fail-fast: its rejected promise does not wait for sibling
+  // workers. Keep their lifetime owned after the caller has observed failure.
+  const batch = new AbortController();
+  const batchSignal = AbortSignal.any([signal, batch.signal]);
   await mapLimit(unread, ARG_READ_CONCURRENCY, async (argument) => {
-    signal.throwIfAborted();
-    const run = await ledgerArg.run(port!, { tool, argument }, { site: EXECUTION_LEDGER_SITE, signal });
-    signal.throwIfAborted();
-    const credential = !(run.readings.holds_credential.verdict === 'no' && run.readings.holds_credential.outcome === 'act');
-    const target = run.readings.is_target.verdict === 'yes' && run.readings.is_target.outcome === 'act';
-    run.recordAction(credential ? 'redact' : target ? 'target' : 'show');
-    ARG_ROLES.set(roleKey(tool, argument), { credential, target });
-    if (ARG_ROLES.size > ARG_ROLES_LIMIT) ARG_ROLES.delete(ARG_ROLES.keys().next().value!);
+    try {
+      batchSignal.throwIfAborted();
+      const run = await ledgerArg.run(port!, { tool, argument }, { site: EXECUTION_LEDGER_SITE, signal: batchSignal });
+      batchSignal.throwIfAborted();
+      const credential = !(run.readings.holds_credential.verdict === 'no' && run.readings.holds_credential.outcome === 'act');
+      const target = run.readings.is_target.verdict === 'yes' && run.readings.is_target.outcome === 'act';
+      run.recordAction(credential ? 'redact' : target ? 'target' : 'show');
+      ARG_ROLES.set(roleKey(tool, argument), { credential, target });
+      if (ARG_ROLES.size > ARG_ROLES_LIMIT) ARG_ROLES.delete(ARG_ROLES.keys().next().value!);
+    } catch (error) {
+      // Abort immediately at the failing worker, before aggregate rejection
+      // retires the ledger's pending entry. Non-cooperative late readers hit
+      // the post-await guard; queued workers hit the pre-ask guard.
+      batch.abort();
+      throw error;
+    }
   });
   return new Map(names.map((name) => [name, ARG_ROLES.get(roleKey(tool, name))!]));
 }

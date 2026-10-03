@@ -66,7 +66,7 @@ after delivery, out-of-order completions, retention, cancellation in both
 judgment phases, late completion, no late cache refill, disposal, subscribers,
 exact cache keys, detached receipts, and real Agent runtime/history/execution.
 
-Fresh checks on the recovered main479ab70f-based source pass 98 shared-ledger/
+Fresh checks on the recovered main479ab70f-based source pass 101 shared-ledger/
 input-boundary tests and 126 Agent composition/history/disposal tests. Negative
 controls against main479ab70f fail all 12 new shared lifetime/privacy probes and
 all 3 Agent composition probes. Prior pre-replacement results are not used as
@@ -78,3 +78,23 @@ these warnings did not fail extraction. The subpath snapshot also reflects a
 semantically identical inferred ownerReply union-order change.
 Heavy TypeScript/API checks use the shared compiler lock and an explicit
 4096 MiB Node heap ceiling instead of the aggregate wrapper's 16384 MiB override.
+
+
+## Independent review: failed argument batches
+
+Review exposed an additional lifetime case: `mapLimit` rejects promptly when
+one argument fails, while sibling requests may remain pending. Retiring the
+call's pending entry at that point previously orphaned those siblings, allowing
+late role-cache writes or queued requests after cancellation/disposal.
+
+Each argument batch now owns an abort controller linked to its call's signal.
+A failing worker aborts the batch before propagating the failure. Pre-ask and
+post-await checks use the batch signal, so non-cooperative siblings cannot
+publish late readings and queued workers cannot start requests. Settlement
+remains prompt; no retry or manual-approval fallback is introduced.
+
+All three independent reviewer probes are preserved as typed regressions.
+The unchanged external probes show aborted sibling signals, a fresh subsequent
+role request, and a queued request count remaining 8 rather than growing to 10.
+Restoring the pre-fix ledger makes all three regressions fail. The combined
+post-fix tests pass 101 engine/input-boundary and 126 Agent tests.
