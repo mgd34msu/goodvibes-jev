@@ -28,6 +28,22 @@ import { makeProjectTempDir } from '../helpers/project-temp.ts';
 const holders: ChildProcess[] = [];
 const built: RuntimeServices[] = [];
 
+async function waitForHolderIdentity(
+  pid: number,
+  expectedIdentity: string,
+  readIdentity: (pid: number) => string | null = runtimeComposition.readProcessIdentity,
+  now: () => number = Date.now,
+): Promise<string> {
+  const deadline = now() + 10_000;
+  let identity = readIdentity(pid);
+  while (identity !== expectedIdentity && now() < deadline) {
+    await Bun.sleep(10);
+    identity = readIdentity(pid);
+  }
+  if (identity !== expectedIdentity) throw new Error(`the holder pid ${pid} did not report expected identity ${expectedIdentity} before the deadline`);
+  return identity;
+}
+
 /**
  * A process that is genuinely alive and genuinely some OTHER program, so the
  * liveness check has a real pid to read and a real argv to compare against. A
@@ -35,21 +51,16 @@ const built: RuntimeServices[] = [];
  * exists precisely because it reads `/proc/<pid>/cmdline` for real.
  */
 async function liveForeignProcess(): Promise<{ pid: number; identity: string }> {
-  const child = spawn('sleep', ['120'], { stdio: 'ignore' });
+  const command = 'sleep';
+  const args = ['120'];
+  const child = spawn(command, args, { stdio: 'ignore' });
   holders.push(child);
   const pid = child.pid;
   if (typeof pid !== 'number') throw new Error('could not start a holder process');
-  // `spawn` hands back a pid before the child has finished replacing itself
-  // with `sleep`, and `/proc/<pid>/cmdline` is empty until it has. Waiting for
-  // the argv is waiting for the holder to BE the program it claims to be,
-  // reading it a moment too early is what made this flaky under a loaded run.
-  const deadline = Date.now() + 10_000;
-  let identity = runtimeComposition.readProcessIdentity(pid);
-  while (identity === null && Date.now() < deadline) {
-    await Bun.sleep(10);
-    identity = runtimeComposition.readProcessIdentity(pid);
-  }
-  if (identity === null) throw new Error(`the holder pid ${pid} reported no identity`);
+  // Before exec finishes, /proc can be empty OR still contain the inherited
+  // parent argv. Only the exact program/arguments we spawned establish readiness.
+  // Recording that transient parent identity would correctly look stale at boot.
+  const identity = await waitForHolderIdentity(pid, [command, ...args].join(' '));
   return { pid, identity };
 }
 
@@ -91,6 +102,30 @@ afterEach(() => {
     }
   }
   for (const child of holders.splice(0)) child.kill('SIGKILL');
+});
+
+describe('live holder identity readiness', () => {
+  test('ignores inherited parent argv and empty transitions until the expected program appears', async () => {
+    const identities = ['bun parent-agent-tests.ts', null, 'bun parent-agent-tests.ts', 'sleep 120'];
+    const probedPids: number[] = [];
+    const identity = await waitForHolderIdentity(4242, 'sleep 120', (pid) => {
+      probedPids.push(pid);
+      return identities.shift() ?? null;
+    });
+    expect(identity).toBe('sleep 120');
+    expect(identities).toEqual([]);
+    expect(probedPids).toEqual([4242, 4242, 4242, 4242]);
+  });
+
+  test('rejects a nonmatching nonempty identity at the existing deadline', async () => {
+    let reads = 0;
+    let clockReads = 0;
+    await expect(waitForHolderIdentity(4242, 'sleep 120', () => {
+      reads += 1;
+      return 'bun parent-agent-tests.ts';
+    }, () => clockReads++ * 10_000)).rejects.toThrow('did not report expected identity sleep 120');
+    expect(reads).toBe(1);
+  });
 });
 
 describe('a second agent booted onto a live agent\'s home', () => {
