@@ -215,7 +215,7 @@ import {
 import { PolicyRuntimeState } from '@/runtime/index.ts';
 import type { WorkflowServices } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { WorkPlanStore } from '@goodvibes-jev/engine/sdk/platform/workflow';
-import { AgentExecutionLedger } from './execution-ledger.ts';
+import { AgentExecutionLedger } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
 import { attachAgentSessionWriteLedger, clearAgentSessionWrites } from '../tools/agent-session-write-ledger.ts';
 import { VERSION } from '../version.ts';
 import { ClientBuildGuard } from './client-build-compatibility.ts';
