@@ -3,6 +3,7 @@ import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/en
 import { ChannelPluginRegistry } from '@goodvibes-jev/engine/sdk/platform/channels';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { TASK_ROUTES } from '@goodvibes-jev/engine/sdk/platform/routing';
+import { actionOf, readingsOf, SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
 import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import type { CommandContext, CommandRegistry } from '../../input/command-registry.ts';
 import { createAgentRouteTool } from '../../tools/agent-route-tool.ts';
@@ -54,6 +55,57 @@ for (const kind of ['route', 'harness'] as const) describe(`${kind} engine task-
     expect(body.harnessModeMatches.every((record: { id: string }) => modeIds.has(record.id))).toBe(true);
     expect(fake.requests.some(request => Object.keys(request.questions).length === TASK_ROUTES.length + 1)).toBe(true);
     expect(fake.requests.some(request => request.context?.site === 'agent.task-route.catalog')).toBe(true);
+  });
+
+  test.each([0.5, 0.57])('catalog reading %s stays typed and never publishes a ready route', async probability => {
+    using log = new SqliteDecisionLog(':memory:');
+    const fake = taskRoutePort({ [args.query]: {
+      pick: 'host-runtime-diagnostics', catalogFits: { 'document-run-compare': probability, document_ops: probability },
+    } });
+    installJudgmentPort(withDecisionLog(fake.port, log));
+    const result = await caller(kind).execute(args);
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error(result.error);
+    const body = JSON.parse(result.output!);
+    expect(body.status).toBe('uncertain');
+    expect(body.preferred).toBeUndefined();
+    expect(body.workspaceMatches).toBeUndefined();
+    expect(body.harnessModeMatches).toBeUndefined();
+    const ranked = body.judgment.workspace.find((entry: { id: string }) => entry.id === 'document-run-compare');
+    expect(ranked.probability).toBe(probability);
+    expect(ranked.reading.outcome).not.toBe('act');
+    const entry = log.get(ranked.decisionId)!;
+    expect(entry.status).toBe('answered');
+    expect(readingsOf(entry)).toMatchObject({ candidate: ranked.id, match: ranked.reading });
+    expect(actionOf(log.get(body.judgment.selection.decisionId)!)).toBe('uncertain: no route published');
+    expect(body.nextAction).not.toMatch(/human|approval|confirm|escalat/i);
+  });
+
+  test('uncertain effect slots cannot become an authorized or ordinary route', async () => {
+    using log = new SqliteDecisionLog(':memory:');
+    const fake = taskRoutePort({ [args.query]: { pick: 'host-runtime-diagnostics', slots: { changes: 0.5 } } });
+    installJudgmentPort(withDecisionLog(fake.port, log));
+    const result = await caller(kind).execute(args);
+    if (!result.success) throw new Error(result.error);
+    const body = JSON.parse(result.output!);
+    expect(body.status).toBe('uncertain');
+    expect(body.preferred).toBeUndefined();
+    expect(body.judgment.slots.readings.changes).toMatchObject({ verdict: 'uncertain', probability: 0.5 });
+    expect(actionOf(log.get(body.judgment.slots.decisionId)!)).toBe('uncertain: no route published');
+  });
+
+  test('an uncertain selector cannot disguise itself as main conversation', async () => {
+    const fake = fakePort((name, question, state) => {
+      if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, 0.5);
+      return noulAnswer(0.5);
+    });
+    installJudgmentPort(fake.port);
+    const result = await caller(kind).execute(args);
+    if (!result.success) throw new Error(result.error);
+    const body = JSON.parse(result.output!);
+    expect(body.status).toBe('uncertain');
+    expect(body.preferred).toBeUndefined();
+    expect(body.judgment.selection.outcome).not.toBe('act');
   });
 
   test('catalog matches follow reading probabilities rather than local substring or registry order', async () => {
@@ -122,6 +174,23 @@ for (const kind of ['route', 'harness'] as const) describe(`${kind} engine task-
     // The same tool closure must read the changed registry on the next call.
     if (kind === 'route') await expect(tool.execute(args)).rejects.toThrow();
     else expect(await tool.execute(args)).toMatchObject({ success: false });
+  });
+
+  test('a registry change during pending readings cannot publish a stale target', async () => {
+    const channels = new ChannelPluginRegistry();
+    channels.register({ id: 'fixture-teams-adapter', surface: 'msteams', displayName: 'Microsoft Teams', capabilities: [] });
+    const fake = fixture('channels', 'msteams');
+    let started!: () => void;
+    const began = new Promise<void>(resolve => { started = resolve; });
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    installJudgmentPort({ ...fake.port, ask: async request => { started(); await gate; return fake.port.ask(request); } });
+    const pending = caller(kind, channels).execute(args);
+    await began;
+    channels.unregister('fixture-teams-adapter');
+    release();
+    if (kind === 'route') await expect(pending).rejects.toThrow('context changed');
+    else expect(await pending).toMatchObject({ success: false, error: expect.stringContaining('context changed') });
   });
 
   test('reads provider IDs from the real ProviderRegistry, not its query text', async () => {
