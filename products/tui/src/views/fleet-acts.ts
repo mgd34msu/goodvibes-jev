@@ -117,6 +117,29 @@ function contractGroupTarget(node: ProcessNode): string | null {
 
 export class FleetActs {
   private pick: PickMode | null = null;
+  private pickRequest: { readonly nodeId: string } | null = null;
+  private pickBusy = false;
+  private pickPreviewOpen = false;
+
+  /** Revoke this modal's pending read/preview ownership, without undoing an admitted apply. */
+  public cancelPick(): void {
+    const closePreview = this.pickPreviewOpen;
+    this.pickRequest = null;
+    this.pick = null;
+    this.pickBusy = false;
+    this.pickPreviewOpen = false;
+    if (closePreview) this.deps.diffSurface.close();
+  }
+
+  private currentPick(nodeId: string, groupId: string, workstreamId: string) {
+    const node = this.deps.findNode(nodeId);
+    const data = node ? contractUnitData(node) : null;
+    const selection = data?.unit.attemptSelection;
+    return data && selection && selection.pickedId === undefined && !isTerminalContractStatus(data.contract.status)
+      && `${data.contract.id}:${selection.engineGroupId}` === groupId
+      && `${data.contract.id}:${data.unit.groupId}` === workstreamId
+      ? { data, selection } : null;
+  }
   /** Live observed-agent steer composer: the row being steered + its draft. Drill-in only. */
   private observedSteer: { readonly nodeId: string; draft: string } | null = null;
   /** Per-workstream-node graph snapshot cache (null = fetched, unavailable). undefined = not fetched. */
@@ -247,6 +270,7 @@ export class FleetActs {
 
   /** Open the candidate picker for a flagged contract plan-unit row. */
   public async beginPick(node: ProcessNode): Promise<void> {
+    if (this.pickRequest?.nodeId === node.id) return;
     const data = contractUnitData(node);
     const selection = data?.unit.attemptSelection;
     if (!data || !selection || selection.pickedId !== undefined || isTerminalContractStatus(data.contract.status)) {
@@ -254,20 +278,28 @@ export class FleetActs {
     }
     const workstreamId = `${data.contract.id}:${data.unit.groupId}`;
     const groupId = `${data.contract.id}:${selection.engineGroupId}`;
-    const allowedCandidates = new Set(selection.candidateIds.map(id => `${data.contract.id}:${id}`));
     const gateway = this.requireGateway();
     if (!gateway) return;
+    this.cancelPick();
+    const request = { nodeId: node.id };
+    this.pickRequest = request;
     let group: FleetHeldMergeGroup | undefined;
     try {
       const { groups } = await gateway.listAttempts(workstreamId);
+      if (this.pickRequest !== request) return;
+      const current = this.currentPick(node.id, groupId, workstreamId);
+      if (!current) { this.cancelPick(); return; }
+      const allowedCandidates = new Set(current.selection.candidateIds.map(id => `${current.data.contract.id}:${id}`));
       const recorded = groups.find(g => g.groupId === groupId && g.workstreamId === workstreamId && g.ready);
       if (recorded) group = { ...recorded, candidates: recorded.candidates.filter(candidate => allowedCandidates.has(candidate.itemId)) };
       if (group && heldCandidates(group).length === 0) group = undefined;
     } catch (err) {
+      if (this.pickRequest !== request) return;
+      this.cancelPick();
       this.deps.notify(`Could not read the best-of-N candidates: ${summarizeError(err)}`);
       return;
     }
-    if (!group) { this.deps.notify('No ready best-of-N group for this contract unit; every attempt must settle first.'); return; }
+    if (!group) { this.cancelPick(); this.deps.notify('No ready best-of-N group for this contract unit; every attempt must settle first.'); return; }
     this.pick = { workstreamNodeId: node.id, group, selectedHeldIndex: 0 };
     this.deps.markDirty();
   }
@@ -276,7 +308,8 @@ export class FleetActs {
   public handlePickInput(key: string): boolean {
     if (!this.pick) return false;
     const held = heldCandidates(this.pick.group);
-    if (key === 'escape' || key === 'esc') { this.pick = null; this.deps.markDirty(); return true; }
+    if (key === 'escape' || key === 'esc') { this.cancelPick(); this.deps.markDirty(); return true; }
+    if (this.pickBusy) return true;
     if (key === 'up' || key === 'k') {
       this.pick.selectedHeldIndex = (this.pick.selectedHeldIndex - 1 + held.length) % held.length;
       this.deps.markDirty();
@@ -297,35 +330,44 @@ export class FleetActs {
    * the winner item id both come from the picker state.
    */
   private async confirmSelectedPick(): Promise<void> {
-    if (!this.pick) return;
+    if (!this.pick || this.pickBusy || !this.pickRequest) return;
+    const request = this.pickRequest;
     const { group, workstreamNodeId } = this.pick;
     const cand = heldCandidates(group)[this.pick.selectedHeldIndex];
     if (!cand) return;
     const gateway = this.requireGateway();
     if (!gateway) return;
+    this.pickBusy = true;
     // Preview: confirm:false returns the group WITHOUT applying (the honest
     // "here is what you are about to merge"). A refusal to even preview surfaces.
     try {
       await gateway.pick({ groupId: group.groupId, winnerItemId: cand.itemId, confirm: false });
     } catch (err) {
+      if (this.pickRequest !== request) return;
+      this.pickBusy = false;
       this.deps.notify(`Pick preview failed: ${summarizeError(err)}`);
       return;
     }
+    if (this.pickRequest !== request) return;
+    const current = this.currentPick(workstreamNodeId, group.groupId, group.workstreamId);
+    if (!current || !current.selection.candidateIds.some(id => `${current.data.contract.id}:${id}` === cand.itemId)) {
+      this.cancelPick(); this.deps.markDirty(); return;
+    }
     const losers = heldCandidates(group).length - 1;
+    this.pickPreviewOpen = true;
+    let answered = false;
     this.deps.diffSurface.show(cand.title, cand.diff?.unifiedDiff?.trim() ? cand.diff.unifiedDiff : '@@ pick @@\n (no diff to preview for this candidate)');
     this.deps.diffSurface.armConfirm({
       id: `${group.groupId}:${cand.itemId}`,
       verb: 'Pick',
       label: `Pick attempt ${cand.attemptIndex + 1} ("${cand.title}"): merge it, clean the ${losers} other worktree(s)`,
       onConfirm: async () => {
-        const current = this.deps.findNode(workstreamNodeId);
-        const data = current ? contractUnitData(current) : null;
-        const selection = data?.unit.attemptSelection;
-        if (!data || !selection || selection.pickedId !== undefined || isTerminalContractStatus(data.contract.status)
-          || `${data.contract.id}:${selection.engineGroupId}` !== group.groupId
-          || !selection.candidateIds.some(id => `${data.contract.id}:${id}` === cand.itemId)) {
+        if (answered || this.pickRequest !== request) return;
+        answered = true;
+        const current = this.currentPick(workstreamNodeId, group.groupId, group.workstreamId);
+        if (!current || !current.selection.candidateIds.some(id => `${current.data.contract.id}:${id}` === cand.itemId)) {
           this.deps.notify('Pick no longer available: inspect the current contract unit before choosing again.');
-          this.deps.diffSurface.close(); this.pick = null; this.deps.markDirty(); return;
+          this.cancelPick(); this.deps.markDirty(); return;
         }
         try {
           const result = await gateway.pick({ groupId: group.groupId, winnerItemId: cand.itemId, confirm: true });
@@ -338,13 +380,14 @@ export class FleetActs {
         } catch (err) {
           this.deps.notify(`Pick failed: ${summarizeError(err)}`);
         }
-        this.deps.diffSurface.close();
-        this.pick = null;
-        this.deps.markDirty();
+        // A confirmed request may finish after close/reopen: keep its receipt,
+        // but never close or clear the newer modal's preview/picker.
+        if (this.pickRequest === request) { this.cancelPick(); this.deps.markDirty(); }
       },
       onCancel: () => {
-        this.deps.diffSurface.close();
-        this.pick = null;
+        if (answered || this.pickRequest !== request) return;
+        answered = true;
+        this.cancelPick();
         this.deps.notify('Pick cancelled: nothing merged, no worktree cleaned.');
         this.deps.markDirty();
       },
