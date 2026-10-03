@@ -178,7 +178,7 @@ export interface HostedSessionRuntime {
    * a message submitted while a turn is running is QUEUED by the orchestrator
    * and this resolves immediately, which is the same contract a terminal has.
    */
-  submit(text: string): Promise<void>;
+  submit(text: string, correlationId?: string): Promise<void>;
   /** Interrupt the in-flight turn. Returns whether one was running. */
   cancel(): boolean;
   dispose(): void;
@@ -311,35 +311,36 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
     },
   });
 
-  let running = false;
   const runtime: HostedSessionRuntime = {
     sessionId,
     conversation,
     toolRegistry,
     orchestrator,
     liveTurnControls: {
+      cancelTurn: (expectedTurnId: string) => orchestrator.cancelTurn(expectedTurnId),
       cancelToolCall: (callId: string) => orchestrator.cancelToolCall(callId),
       listQueuedMessages: () => orchestrator.listQueuedMessages(),
       editQueuedMessage: (id: string, text: string) => orchestrator.editQueuedMessage(id, text),
       deleteQueuedMessage: (id: string) => orchestrator.deleteQueuedMessage(id),
     },
-    isRunning: () => running,
-    submit: async (text: string): Promise<void> => {
-      running = true;
-      try {
-        // `ownerDirect` is deliberately unset. It attests that the transport
-        // authenticated the OWNER himself, and a verb call carrying an operator
-        // token cannot honestly claim that, leaving it unset keeps the
-        // untrusted-content window open, which is the safe direction.
-        await orchestrator.handleUserInput(text, undefined, {
-          origin: { source: 'hosted-session', surface: 'service' },
-        });
-      } finally {
-        running = false;
-      }
+    isRunning: () => orchestrator.isTurnInFlight,
+    submit: async (text: string, correlationId?: string): Promise<void> => {
+      // `ownerDirect` is deliberately unset. It attests that the transport
+      // authenticated the OWNER himself, and a verb call carrying an operator
+      // token cannot honestly claim that, leaving it unset keeps the
+      // untrusted-content window open, which is the safe direction.
+      await orchestrator.handleUserInput(text, undefined, {
+        origin: {
+          source: 'hosted-session',
+          surface: 'service',
+          // Carry only the broker's correlation identity. It associates this
+          // actual turn with its submitting input; it conveys no authority.
+          ...(correlationId === undefined ? {} : { metadata: { correlationId } }),
+        },
+      });
     },
     cancel: (): boolean => {
-      if (!orchestrator.isThinking) return false;
+      if (!orchestrator.isTurnInFlight) return false;
       orchestrator.abort();
       return true;
     },

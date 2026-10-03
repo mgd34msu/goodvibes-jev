@@ -31,15 +31,42 @@ available. Current non-vendored overrides are declared in the root
 The published SDK keeps Bash LSP bundled as a first-class feature. The
 `bash-language-server@5.6.0 -> editorconfig@2.0.1 -> minimatch@10.0.1` chain is
 handled as a graph-level vendor patch: `vendor/bash-language-server` copies the
-upstream `bash-language-server@5.6.0` package and changes only
+upstream `bash-language-server@5.6.0` package and changes
 `dependencies.editorconfig` to `3.0.2`, whose dependency range resolves to the
 fixed `minimatch@~10.2.4` line (the root `overrides.minimatch` separately pins
 `^10.2.5` for source-workspace installs). Release staging rewrites the published SDK
-dependency to `file:vendor/bash-language-server`, so consumer lockfiles and
-`npm audit` see the patched graph directly.
+dependency to `file:vendor/bash-language-server` and projects its runtime leaves
+into the installable engine manifest, because npm does not install dependencies
+of that linked directory. Explicit Bash zod/tree-sitter aliases preserve the
+engine's existing versions. Fresh packed-engine smoke checks exercise discovery,
+the brace guard and wasm parsing; consumers do not rely on root-only overrides
+for these vendored patches.
+
+Bun 1.3.14 may omit that optional local-directory package link even though the
+reviewed Bash files are present in the engine tarball. The existing LSP service
+therefore falls back to the engine's embedded Bash CLI after its normal `.bin`
+lookup; no download or replacement server is used. Tarball install smoke now
+checks both npm and Bun, including the real Bash LSP initialize/shutdown flow
+under Bun. The public LSP API and normal installed-binary precedence are unchanged.
 
 No install-time minimatch mutation is used. The Bash LSP mitigation is carried
 by the published dependency graph itself.
+
+The unpatched `braces@3.0.3` advisory `GHSA-vfj7-8cjw-p6xm` is addressed with
+a finite parser/AST depth guard in a source-vendored fast-glob/micromatch/braces
+chain inside the Bash LSP package. Original versions, licenses and source
+integrities are recorded alongside the code. Ordinary matching is unchanged;
+excessive nesting is rejected before recursive walkers. Tests cover original
+matching semantics, nesting boundaries, direct AST entry points and installed
+source identity. Root overrides alone are insufficient for shipped consumers.
+
+The development-only Verdaccio `http-cache-semantics@4.2.0` chain is patched
+for `GHSA-ch52-4w7c-c8xp` with explicit cache-reuse security guards. The source
+keeps its original version/license and is covered by actual-consumer resolution,
+red/green behavioral regressions, ordinary-cache compatibility and loopback
+HTTP-client tests. There is no upstream patched release for either advisory as
+of 2026-10-03. The high-severity audit stays enabled without advisory exceptions;
+an audit pass does not replace review of these maintained local source patches.
 
 The `uuid` advisory `GHSA-w5hq-g745-h8pq` is also handled with a vendor patch
 because Verdaccio's current stable release still depends on `@cypress/request@3.0.10`,

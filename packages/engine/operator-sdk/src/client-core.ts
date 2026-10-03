@@ -102,6 +102,9 @@ export interface OperatorRemoteClient {
     ...args: KnownStreamArgs<TMethodId>
   ): Promise<() => void>;
   readonly sessions: {
+    turns: {
+      cancel(...args: KnownMethodArgs<'sessions.turns.cancel'>): Promise<OperatorMethodOutput<'sessions.turns.cancel'>>;
+    };
     create(...args: KnownMethodArgs<'sessions.create'>): Promise<OperatorMethodOutput<'sessions.create'>>;
     get(sessionId: string, ...args: KnownPathMethodArgs<'sessions.get', 'sessionId'>): Promise<OperatorMethodOutput<'sessions.get'>>;
     list(...args: KnownMethodArgs<'sessions.list'>): Promise<OperatorMethodOutput<'sessions.list'>>;
@@ -288,6 +291,7 @@ export function createOperatorRemoteClient(
     invoke: invokeTyped,
     stream: streamTyped,
     sessions: {
+      turns: { cancel: (...args) => invokeTyped('sessions.turns.cancel', ...args) },
       create: (...args) => invokeTyped('sessions.create', ...args),
       get: (sessionId, ...args) => {
         const [input, options] = splitClientArgs<WithoutKeys<OperatorMethodInput<'sessions.get'>, 'sessionId'>, OperatorRemoteClientInvokeOptions>(args);

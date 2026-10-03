@@ -1,3 +1,4 @@
+import { publishTurnTerminal } from './turn-cancellation.js';
 import type { ConversationManager } from './conversation.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { ContentPart, LLMProvider } from '../providers/interface.js';
@@ -243,6 +244,7 @@ function attachAuthoritativeTaskToAgentCalls(toolCalls: readonly ToolCall[], use
 }
 
 export async function handleToolResponseOutcome(args: {
+  onTurnTerminal?: ((publish: () => void) => void) | undefined;
   conversation: ConversationManager;
   agentManager: Pick<AgentManager, 'list' | 'spawn'>;
   planManager: Pick<ExecutionPlanManager, 'getActive' | 'getSummary' | 'getNextItems' | 'updateItem'> | null;
@@ -347,12 +349,12 @@ export async function handleToolResponseOutcome(args: {
       return { continueLoop: true, results };
     }
     if (args.runtimeBus) {
-      emitTurnCompleted(args.runtimeBus, args.emitterContext(args.turnId), {
+      publishTurnTerminal(() => emitTurnCompleted(args.runtimeBus!, args.emitterContext(args.turnId), {
         turnId: args.turnId,
         response: args.response.content,
         stopReason: args.response.content.trim().length > 0 ? 'completed' : 'empty_response',
         memoryRecordIds: args.memoryRecordIds,
-      });
+      }), args.onTurnTerminal);
     }
     return { continueLoop: false, results };
   }
@@ -368,6 +370,7 @@ export async function handleToolResponseOutcome(args: {
 }
 
 export function handleFinalResponseOutcome(args: {
+  onTurnTerminal?: ((publish: () => void) => void) | undefined;
   conversation: ConversationManager;
   agentManager: Pick<AgentManager, 'list' | 'spawn'>;
   planManager: Pick<ExecutionPlanManager, 'parseFromMarkdown' | 'replaceItems' | 'load' | 'save' | 'getActive' | 'getNextItems' | 'updateItem'> | null;
@@ -393,12 +396,12 @@ export function handleFinalResponseOutcome(args: {
     provider: args.providerRegistry.getCurrentModel().provider,
   });
   if (args.runtimeBus) {
-    emitTurnCompleted(args.runtimeBus, args.emitterContext(args.turnId), {
+    publishTurnTerminal(() => emitTurnCompleted(args.runtimeBus!, args.emitterContext(args.turnId), {
       turnId: args.turnId,
       response: args.response.content,
       stopReason: args.response.content.trim().length > 0 ? 'completed' : 'empty_response',
       memoryRecordIds: args.memoryRecordIds,
-    });
+    }), args.onTurnTerminal);
   }
 
   const planManager = args.planManager;

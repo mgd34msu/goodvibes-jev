@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from '@goodvibes-jev/bash-zod';
 export declare const ConfigSchema: z.ZodObject<{
     backgroundAnalysisMaxFiles: z.ZodDefault<z.ZodNumber>;
     enableSourceErrorDiagnostics: z.ZodDefault<z.ZodBoolean>;

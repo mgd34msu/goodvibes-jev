@@ -10,7 +10,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.initializeParser = initializeParser;
-const Parser = require("web-tree-sitter");
+const Parser = require("@goodvibes-jev/bash-web-tree-sitter");
 const _global = global;
 function initializeParser() {
     return __awaiter(this, void 0, void 0, function* () {

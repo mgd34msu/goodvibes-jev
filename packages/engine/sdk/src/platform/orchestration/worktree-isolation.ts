@@ -50,9 +50,12 @@ import { GitService } from '../git/service.js';
 import { IsolatedWorktree, type CommitWorkingTreeResult } from '../agents/worktree.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
+import { OwnedWork } from '../utils/owned-work.js';
 import type { OrchestrationEvent, WorkItem, Workstream } from './types.js';
 
 export interface WorktreeIsolationManagerDeps {
+  /** Shared with the engine so nested eviction and resumed integration are owned. */
+  readonly ownedWork?: OwnedWork | undefined;
   readonly projectRoot: string;
   readonly emit: (event: OrchestrationEvent) => void;
   readonly now?: (() => number) | undefined;
@@ -76,6 +79,7 @@ export interface ItemWorktreeHandle {
 }
 
 export interface WorktreeIsolationManager {
+  join(): Promise<void>;
   /** Ensure this item has a dedicated worktree (idempotent, created once, at first claim). Only meaningful when workstream.isolation === 'worktree'. */
   ensureWorktree(workstream: Workstream, item: WorkItem): Promise<ItemWorktreeHandle>;
   /**
@@ -127,6 +131,7 @@ interface KeptEntry {
 
 export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDeps): WorktreeIsolationManager {
   const now = deps.now ?? ((): number => Date.now());
+  const ownedWork = deps.ownedWork ?? new OwnedWork();
   const keptCap = deps.keptWorktreeCap ?? 20;
   const rootGit = new GitService(deps.projectRoot);
   const instances = new Map<string, IsolatedWorktree>(); // itemId -> instance
@@ -193,7 +198,7 @@ export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDep
     while (kept.length > keptCap) {
       const oldest = kept.shift();
       if (!oldest) break;
-      void removeWorktree(oldest.workstream, oldest.item, oldest.instance, true).catch((error) => {
+      void ownedWork.run(() => removeWorktree(oldest.workstream, oldest.item, oldest.instance, true)).catch((error) => {
         logger.error('worktree-isolation: eviction of oldest kept worktree did not complete', {
           itemId: oldest.item.id, error: summarizeError(error),
         });
@@ -286,7 +291,7 @@ export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDep
   }
 
   function enqueueIntegration(workstream: Workstream, item: WorkItem): Promise<void> {
-    const run = integrationLane.then(() => integrateOne(workstream, item));
+    const run = ownedWork.run(() => integrationLane.then(() => integrateOne(workstream, item)));
     // Chain off a NEVER-REJECTING tail so one item's (already internally
     // caught) failure can't skip the lane forward for the next enqueue,
     // integrateOne never actually throws past its own try/catch, but this is
@@ -369,5 +374,12 @@ export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDep
     return instance.diff();
   }
 
-  return { ensureWorktree, enqueueIntegration, cleanupTerminated, reconcileOrphans, diffItem };
+  return {
+    ensureWorktree: (workstream, item) => ownedWork.run(() => ensureWorktree(workstream, item)),
+    enqueueIntegration,
+    cleanupTerminated: (workstream, item) => ownedWork.run(() => cleanupTerminated(workstream, item)),
+    reconcileOrphans,
+    diffItem: (item) => ownedWork.run(() => diffItem(item)),
+    join: () => ownedWork.join(),
+  };
 }

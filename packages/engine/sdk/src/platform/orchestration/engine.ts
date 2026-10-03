@@ -59,6 +59,7 @@ import { WorktreeRegistry } from '../runtime/worktree/registry.js';
 import { runWorktreeSetup, resolveEffectiveWorktreeSetup } from '../runtime/worktree/setup.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
+import { OwnedWork } from '../utils/owned-work.js';
 
 export interface OrchestrationEngineDeps {
   readonly agentManager: PhaseRunnerAgentManagerLike;
@@ -168,6 +169,8 @@ export interface OrchestrationEngine {
   resumeAllFromDisk(): number;
   on(listener: OrchestrationEventListener): () => void;
   dispose(): void;
+  /** Wait for admitted phase, integration, and cleanup work to actually settle. */
+  join(): Promise<void>;
 }
 
 function generateId(prefix: string): string {
@@ -189,6 +192,8 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
   const cancellation: CancellationRegistry = createCancellationRegistry();
   const listeners = new Set<OrchestrationEventListener>();
   let disposed = false;
+  const ownedWork = new OwnedWork();
+  const activeItems = new Map<string, Promise<void>>();
 
   function dispatch(event: OrchestrationEvent): void {
     for (const listener of listeners) {
@@ -240,6 +245,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
 
   const worktreeIsolation: WorktreeIsolationManager = createWorktreeIsolationManager({
     projectRoot: deps.projectRoot,
+    ownedWork,
     emit,
     now,
     keptWorktreeCap: deps.keptWorktreeCap,
@@ -253,10 +259,16 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
   // Best-of-N sibling attempts (attempts.ts): coordinator owns the groups;
   // its delegates reuse the same worktree lane as the ordinary path.
   const attempts: AttemptsCoordinator = createAttemptsCoordinator({
+    ownedWork,
     emit,
     getWorkstream,
-    enqueueIntegration: (workstream, item) => { void worktreeIsolation.enqueueIntegration(workstream, item); },
-    cleanupWorktree: (workstream, item) => worktreeIsolation.cleanupTerminated(workstream, item),
+    enqueueIntegration: (workstream, item) => worktreeIsolation.enqueueIntegration(workstream, item),
+    cleanupWorktree: async (workstream, item) => {
+      // A failed best-of-N sibling is semantically terminal before its real
+      // executor exits. Winner selection must not remove that live tree.
+      while (activeItems.has(item.id)) await activeItems.get(item.id);
+      await worktreeIsolation.cleanupTerminated(workstream, item);
+    },
     diffItem: (item) => worktreeIsolation.diffItem(item),
     judge: deps.judgeAttempts,
   });
@@ -384,7 +396,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     item.failureReason = reason;
     emit({ type: 'item-failed', workstreamId: workstream.id, itemId: item.id, reason });
     // Worktree fail/kill cleanup: remove only if clean, else KEEP (data safety).
-    if (workstream.isolation === 'worktree') {
+    if (workstream.isolation === 'worktree' && !activeItems.has(item.id)) {
       void worktreeIsolation.cleanupTerminated(workstream, item).catch((error) => {
         logger.error('orchestration engine: worktree cleanup after item failure did not complete', {
           itemId: item.id, error: summarizeError(error),
@@ -409,7 +421,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     return item.state;
   }
 
-  async function runItemPhase(workstream: Workstream, item: WorkItem, phase: Phase): Promise<void> {
+  async function runItemPhase(workstream: Workstream, item: WorkItem, phase: Phase, signal: AbortSignal): Promise<void> {
     recordVisit(item, phase.id);
     item.state = 'in-phase';
     item.currentPhaseId = phase.id;
@@ -425,10 +437,13 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
         itemWorktree = await worktreeIsolation.ensureWorktree(workstream, item);
       } catch (error) {
         logger.error('orchestration engine: failed to prepare item worktree', { itemId: item.id, error: summarizeError(error) });
-        failItem(workstream, item, `worktree isolation setup failed: ${summarizeError(error)}`);
+        if (!signal.aborted) failItem(workstream, item, `worktree isolation setup failed: ${summarizeError(error)}`);
         return;
       }
     }
+
+    // Setup may yield to kill/requeue. Never spawn work after its admission was cancelled.
+    if (signal.aborted) return;
 
     const priorReports = getPhaseResults(workstream.id).filter((r) => r.itemId === item.id);
     const outcome = await runPhase(workstream, item, phase, priorReports, {
@@ -439,6 +454,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
       sessionId,
       createWorktree: deps.createWorktree,
       cancellation,
+      cancellationSignal: signal,
       priceUsage: deps.priceUsage,
       priceProvenance: deps.priceProvenance,
       skipClaimVerification: deps.skipClaimVerification,
@@ -538,6 +554,9 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     const fleetProbe = isElastic(workstream) && deps.fleetCapacity ? deps.fleetCapacity() : null;
     let fleetActive = fleetProbe?.active ?? 0;
     for (const { item, phase } of claims) {
+      if (disposed) return;
+      // Reentrant ticks and deliberate requeues must not overlap two real runs.
+      if (activeItems.has(item.id) || item.state === 'passed' || item.state === 'failed') continue;
       if (item.orphaned) continue; // orphaned outcome already surfaced
       if (fleetProbe) {
         const decision = gateClaimAgainstFleet(workstream, item, { ...fleetProbe, active: fleetActive }, atCapNoted.has(workstreamId));
@@ -565,21 +584,41 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
         }
         continue;
       }
-      void runItemPhase(workstream, item, phase)
-        .catch((error) => {
-          // A rejection here means no phase outcome exists (the run threw
-          // before a verdict), failing the item is honest.
+      let releasePhase!: () => void;
+      activeItems.set(item.id, new Promise<void>((resolve) => { releasePhase = resolve; }));
+      // Reserve before invoking runItemPhase: spawn/events can synchronously
+      // call join(), dispose(), kill(), or requeue this very item.
+      void ownedWork.run(async () => {
+        const signal = cancellation.start(item.id);
+        try {
+          await runItemPhase(workstream, item, phase, signal);
+        } catch (error) {
           logger.error('orchestration engine: phase run threw before producing an outcome', {
             workstreamId, itemId: item.id, phaseId: phase.id, error: summarizeError(error),
           });
-          failItem(workstream, item, summarizeError(error));
-        })
-        .finally(() => {
-          if (disposed) return;
-          tick(workstreamId);
-          const retire = retirementEvent(workstream, item.agentId); // empty ready set + no imminent release = retire
-          if (retire) emit(retire);
-        });
+          if (!requeuedInFlight.has(item.id)) failItem(workstream, item, summarizeError(error));
+        } finally {
+          try {
+            // kill marks an item failed immediately, but its executor can still
+            // be unwinding. Only reclaim its tree after the actual phase exits.
+            if (workstream.isolation === 'worktree' && currentState(item) === 'failed') {
+              await worktreeIsolation.cleanupTerminated(workstream, item);
+            }
+          } finally {
+            cancellation.release(item.id, signal);
+            requeuedInFlight.delete(item.id);
+            activeItems.delete(item.id);
+            releasePhase();
+            if (!disposed) {
+              tick(workstreamId);
+              const retire = retirementEvent(workstream, item.agentId);
+              if (retire) emit(retire);
+            }
+          }
+        }
+      }).catch((error) => {
+        logger.error('orchestration engine: phase finalization failed', { itemId: item.id, error: summarizeError(error) });
+      });
     }
   }
 
@@ -627,6 +666,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     if (item.state !== 'failed') return false;
     const first = firstPhase(workstream);
     if (!first) return false;
+    if (activeItems.has(item.id)) requeuedInFlight.add(item.id);
     item.state = 'pending';
     item.currentPhaseId = first.id;
     item.failureReason = undefined;
@@ -775,14 +815,14 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
       found.item.conflictSessionId = sessionId;
       return true;
     },
-    retryItemIntegration: async (itemId) => {
+    retryItemIntegration: (itemId) => ownedWork.run(async () => {
       const found = findItemAndWorkstream(itemId);
       if (!found || found.item.mergeState !== 'conflict') return 'not-conflicted';
       // Same lane as first-pass integration; success clears markers + reclaims the tree.
       await worktreeIsolation.enqueueIntegration(found.workstream, found.item);
       const resulting: string | undefined = found.item.mergeState; // mutated by the lane
       return resulting === 'merged' ? 'merged' : 'conflict';
-    },
+    }),
     addDependency,
     requeueItem,
     getGraphSnapshot,
@@ -792,5 +832,6 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     resumeAllFromDisk,
     on,
     dispose,
+    join: () => ownedWork.join(),
   };
 }
