@@ -54,24 +54,24 @@ export async function executeInspectMode(
         const schemaPath = input.schemaPath
           ? requireExistingFilePath(projectRoot, input.schemaPath, 'Database schema not found at')
           : requireExistingFilePath(projectRoot, 'prisma/schema.prisma', 'Database schema not found at');
-        return createInspectSuccess(parsePrismaSchema(safeRead(schemaPath)), format, input.mode);
+        return createInspectSuccess(parsePrismaSchema(await safeRead(schemaPath)), format, input.mode);
       }
 
       case 'components': {
-        const file = readRequiredFile(projectRoot, input.file, 'components', 'File not found');
+        const file = await readRequiredFile(projectRoot, input.file, 'components', 'File not found');
         if ('success' in file) return file;
         const comps = inspectComponents(file.content);
         return createInspectSuccess({ components: comps, count: comps.length }, format, input.mode);
       }
 
       case 'layout': {
-        const file = readRequiredFile(projectRoot, input.file, 'layout', 'File not found');
+        const file = await readRequiredFile(projectRoot, input.file, 'layout', 'File not found');
         if ('success' in file) return file;
         return createInspectSuccess(inspectLayout(file.content, input.file!), format, input.mode);
       }
 
       case 'accessibility': {
-        const file = readRequiredFile(projectRoot, input.file, 'accessibility', 'File not found');
+        const file = await readRequiredFile(projectRoot, input.file, 'accessibility', 'File not found');
         if ('success' in file) return file;
         const a11yIssues = await inspectAccessibility(file.content, input.file!);
         return createInspectSuccess({ issues: a11yIssues, count: a11yIssues.length }, format, input.mode);
@@ -87,7 +87,12 @@ export async function executeInspectMode(
         if (!input.specPath) {
           return createInspectFailure('specPath is required for api_validate mode');
         }
-        const resolvedSpec = readRequiredFile(projectRoot, input.specPath, 'api_validate', 'Spec file not found at');
+        const resolvedSpec = await readRequiredFile(
+          projectRoot,
+          input.specPath,
+          'api_validate',
+          'Spec file not found at',
+        );
         if ('success' in resolvedSpec) return resolvedSpec;
         const framework: ApiFramework = (input.framework ?? 'auto') as ApiFramework;
         const routes = await inspectApi(projectRoot, framework);
@@ -104,71 +109,71 @@ export async function executeInspectMode(
           return createInspectFailure('moduleName is required for scaffold mode');
         }
         const dryRun = input.dryRun !== false;
-        return createInspectSuccess(buildScaffold(input.moduleName, projectRoot, dryRun), format, input.mode);
+        return createInspectSuccess(await buildScaffold(input.moduleName, projectRoot, dryRun), format, input.mode);
       }
 
       case 'component_state': {
-        const file = readRequiredFile(projectRoot, input.file, 'component_state', 'File not found');
+        const file = await readRequiredFile(projectRoot, input.file, 'component_state', 'File not found');
         if ('success' in file) return file;
         return createInspectSuccess(inspectComponentState(file.content, input.file!), format, input.mode);
       }
 
       case 'render_triggers': {
-        const file = readRequiredFile(projectRoot, input.file, 'render_triggers', 'File not found');
+        const file = await readRequiredFile(projectRoot, input.file, 'render_triggers', 'File not found');
         if ('success' in file) return file;
         return createInspectSuccess(inspectRenderTriggers(file.content, input.file!), format, input.mode);
       }
 
       case 'hooks': {
-        const file = readRequiredFile(projectRoot, input.file, 'hooks', 'File not found');
+        const file = await readRequiredFile(projectRoot, input.file, 'hooks', 'File not found');
         if ('success' in file) return file;
         return createInspectSuccess(await inspectHooks(file.content, input.file!), format, input.mode);
       }
 
       case 'overflow': {
-        const file = readRequiredFile(projectRoot, input.file, 'overflow', 'File not found');
+        const file = await readRequiredFile(projectRoot, input.file, 'overflow', 'File not found');
         if ('success' in file) return file;
         return createInspectSuccess(await inspectOverflow(file.content, input.file!), format, input.mode);
       }
 
       case 'sizing': {
-        const file = readRequiredFile(projectRoot, input.file, 'sizing', 'File not found');
+        const file = await readRequiredFile(projectRoot, input.file, 'sizing', 'File not found');
         if ('success' in file) return file;
         return createInspectSuccess(await inspectSizing(file.content, input.file!), format, input.mode);
       }
 
       case 'stacking': {
-        const file = readRequiredFile(projectRoot, input.file, 'stacking', 'File not found');
+        const file = await readRequiredFile(projectRoot, input.file, 'stacking', 'File not found');
         if ('success' in file) return file;
         return createInspectSuccess(await inspectStacking(file.content, input.file!), format, input.mode);
       }
 
       case 'responsive': {
-        const file = readRequiredFile(projectRoot, input.file, 'responsive', 'File not found');
+        const file = await readRequiredFile(projectRoot, input.file, 'responsive', 'File not found');
         if ('success' in file) return file;
         return createInspectSuccess(inspectResponsive(file.content, input.file!), format, input.mode);
       }
 
       case 'events': {
-        const file = readRequiredFile(projectRoot, input.file, 'events', 'File not found');
+        const file = await readRequiredFile(projectRoot, input.file, 'events', 'File not found');
         if ('success' in file) return file;
         return createInspectSuccess(inspectEvents(file.content, input.file!), format, input.mode);
       }
 
       case 'tailwind': {
-        const file = readRequiredFile(projectRoot, input.file, 'tailwind', 'File not found');
+        const file = await readRequiredFile(projectRoot, input.file, 'tailwind', 'File not found');
         if ('success' in file) return file;
         return createInspectSuccess(inspectTailwind(file.content, input.file!), format, input.mode);
       }
 
       case 'client_boundary': {
-        const file = readRequiredFile(projectRoot, input.file, 'client_boundary', 'File not found');
+        const file = await readRequiredFile(projectRoot, input.file, 'client_boundary', 'File not found');
         if ('success' in file) return file;
         return createInspectSuccess(await inspectClientBoundary(file.content, input.file!), format, input.mode);
       }
 
       case 'error_boundary': {
-        const file = readRequiredFile(projectRoot, input.file, 'error_boundary', 'File not found');
+        const file = await readRequiredFile(projectRoot, input.file, 'error_boundary', 'File not found');
         if ('success' in file) return file;
         return createInspectSuccess(inspectErrorBoundary(file.content, input.file!), format, input.mode);
       }

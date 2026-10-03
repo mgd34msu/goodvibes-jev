@@ -19,11 +19,7 @@ import { ContextAccountingHolder, createContextAccountingTool } from './context-
 import { createFindTool } from './find/index.js';
 import { createExecTool } from './exec/index.js';
 import type { CredentialEnvScrubConfig } from './exec/credential-env.js';
-import {
-  detectSandboxAvailability,
-  probeSandboxHost,
-  type ExecSandboxRuntime,
-} from './exec/sandbox.js';
+import { detectSandboxAvailability, probeSandboxHost, type ExecSandboxRuntime } from './exec/sandbox.js';
 import {
   detectPtyAvailability,
   probePtyHost,
@@ -68,10 +64,7 @@ import type { SecretsManager } from '../config/secrets.js';
 import { OverflowHandler } from './shared/overflow.js';
 import type { SessionChangeTracker } from '../sessions/change-tracker.js';
 import type { ArchetypeLoader } from '../agents/archetypes.js';
-import {
-  createGoodVibesContextTool,
-  createGoodVibesSettingsTool,
-} from './goodvibes-runtime/index.js';
+import { createGoodVibesContextTool, createGoodVibesSettingsTool } from './goodvibes-runtime/index.js';
 
 export {
   applyRoutedConfigWrite,
@@ -94,9 +87,7 @@ export { ProcessManager } from './shared/process-manager.js';
 export type { BackgroundProcess, BgCommandResult, SpawnOptions } from './shared/process-manager.js';
 export { AGENT_TEMPLATES, AgentManager } from './agent/index.js';
 export type { AgentExecutor, AgentRecord } from './agent/index.js';
-export {
-  AutoHealer,
-} from './shared/auto-heal.js';
+export { AutoHealer } from './shared/auto-heal.js';
 export {
   appendSchemaFingerprint,
   computeSchemaFingerprint,
@@ -106,12 +97,7 @@ export {
 } from './shared/schema-fingerprint.js';
 export type { SchemaFingerprintMeta } from './shared/schema-fingerprint.js';
 export { OverflowHandler, createSpillBackend } from './shared/overflow.js';
-export {
-  DiagnosticsBackend,
-  FileBackend,
-  LedgerBackend,
-  overflowCleanup,
-} from './shared/overflow.js';
+export { DiagnosticsBackend, FileBackend, LedgerBackend, overflowCleanup } from './shared/overflow.js';
 export type {
   OverflowHandlerConfig,
   OverflowOptions,
@@ -137,14 +123,8 @@ export { ReadTool } from './read/index.js';
 export { createWriteTool } from './write/index.js';
 export { createEditTool } from './edit/index.js';
 export { createRepoMapTool } from './repo-map/index.js';
-export {
-  ContextAccountingHolder,
-  createContextAccountingTool,
-} from './context-accounting/index.js';
-export type {
-  ContextAccountingSource,
-  ContextTokenState,
-} from './context-accounting/index.js';
+export { ContextAccountingHolder, createContextAccountingTool } from './context-accounting/index.js';
+export type { ContextAccountingSource, ContextTokenState } from './context-accounting/index.js';
 export type { EditToolOptions } from './edit/index.js';
 export type { EditItem, EditInput } from './edit/types.js';
 export { createFindTool } from './find/index.js';
@@ -179,18 +159,13 @@ export type {
 // (containment) and whether the owner's terminal is off limits. Both default to
 // the historical behaviour when a composition says nothing, so naming them here
 // is what lets a composition say something.
-export {
-  decideExecContainment,
-} from './exec/containment.js';
+export { decideExecContainment } from './exec/containment.js';
 export type {
   ExecContainmentPosture,
   ExecContainmentRequirement,
   ExecContainmentDecision,
 } from './exec/containment.js';
-export {
-  decideOwnerTerminalAccess,
-  PLATFORM_TMUX_SESSION_PREFIX,
-} from './exec/owner-terminal-guard.js';
+export { decideOwnerTerminalAccess, PLATFORM_TMUX_SESSION_PREFIX } from './exec/owner-terminal-guard.js';
 export type {
   OwnerTerminalGuard,
   OwnerTerminalGuardPosture,
@@ -211,11 +186,7 @@ export { controlTool } from './control/index.js';
 export { createFetchTool } from './fetch/index.js';
 export { applySanitizer, resolveSanitizeMode } from './fetch/sanitizer.js';
 export type { SanitizeMode } from './fetch/sanitizer.js';
-export {
-  TRUST_TIER_EVENTS,
-  classifyHostTrustTier,
-  extractHostname,
-} from './fetch/trust-tiers.js';
+export { TRUST_TIER_EVENTS, classifyHostTrustTier, extractHostname } from './fetch/trust-tiers.js';
 export type { TrustTierConfig } from './fetch/trust-tiers.js';
 export { repairToolCall } from './auto-repair.js';
 export { createMcpTool } from './mcp/index.js';
@@ -347,6 +318,8 @@ export function registerAllTools(
      */
     readAccessFilter?: import('./shared/read-access.js').ReadAccessFilter | undefined;
     capturedReadAccess?: import('./shared/read-access.js').ReadAccessFilter | undefined;
+    capturedExec?: import('./exec/captured-exec.js').CapturedExecAuthority | undefined;
+    capturedRegistry?: import('./registry-tool/captured-source.js').CapturedRegistryContext | undefined;
     /**
      * Settable holder for the context_accounting tool's session source. The tool
      * is always registered (consumers inherit it like repo_map); the interactive
@@ -361,13 +334,15 @@ export function registerAllTools(
      * runs. Wired at the composition root to the sandbox-escalation seam.
      * Omitted → escalations are not asked (today's behavior).
      */
-    sandboxEscalationHandler?: ((input: {
-      readonly command: string;
-      readonly escalations: readonly string[];
-      readonly boundary: string;
-      readonly policyReasons: readonly string[];
-      readonly workingDirectory?: string | undefined;
-    }) => Promise<boolean>) | undefined;
+    sandboxEscalationHandler?:
+      | ((input: {
+          readonly command: string;
+          readonly escalations: readonly string[];
+          readonly boundary: string;
+          readonly policyReasons: readonly string[];
+          readonly workingDirectory?: string | undefined;
+        }) => Promise<boolean>)
+      | undefined;
     /**
      * Broker the one-tap "allow localhost fetches for this project" ask through
      * the approval broker. Wired at the composition root (see
@@ -409,15 +384,24 @@ export function registerAllTools(
   },
 ): { fileCache: FileStateCache; projectIndex: ProjectIndex } {
   const fileCache = deps?.fileCache ?? new FileStateCache();
-  if (!deps?.fileUndoManager || !deps?.modeManager || !deps?.processManager || !deps?.agentMessageBus || !deps?.workflowServices) {
-    throw new Error('registerAllTools requires explicit fileUndoManager, modeManager, processManager, agentMessageBus, and workflowServices ownership.');
+  if (
+    !deps?.fileUndoManager ||
+    !deps?.modeManager ||
+    !deps?.processManager ||
+    !deps?.agentMessageBus ||
+    !deps?.workflowServices
+  ) {
+    throw new Error(
+      'registerAllTools requires explicit fileUndoManager, modeManager, processManager, agentMessageBus, and workflowServices ownership.',
+    );
   }
   const fileUndoManager = deps.fileUndoManager;
   const modeManager = deps.modeManager;
   const processManager = deps.processManager;
-  const agentManager = deps?.agentManager
-    ?? (deps?.remoteRunnerRegistry
-      ? (deps.remoteRunnerRegistry as unknown as { agentManager?: AgentManager | null }).agentManager ?? null
+  const agentManager =
+    deps?.agentManager ??
+    (deps?.remoteRunnerRegistry
+      ? ((deps.remoteRunnerRegistry as unknown as { agentManager?: AgentManager | null }).agentManager ?? null)
       : null);
   if (!agentManager) {
     throw new Error('registerAllTools requires agentManager');
@@ -457,66 +441,85 @@ export function registerAllTools(
     registerToolWithContractGate(registry, tool, deps.featureFlags);
   };
 
-  registerTool(createGoodVibesContextTool({
-    configManager: deps.configManager,
-    providerRegistry: deps.providerRegistry,
-    toolRegistry: registry,
-    channelRegistry,
-    serviceRegistry: deps.serviceRegistry as Pick<ServiceRegistry, 'getAll' | 'inspect'> | null | undefined,
-    secretsManager: deps.secretsManager ?? null,
-    workingDirectory,
-    homeDirectory: deps.configManager.getHomeDirectory() ?? undefined,
-    surfaceRoot: deps.surfaceRoot,
-    configRouting: deps.configRouting,
-  }));
-  registerTool(createGoodVibesSettingsTool({
-    configManager: deps.configManager,
-    configRouting: deps.configRouting,
-  }));
+  registerTool(
+    createGoodVibesContextTool({
+      configManager: deps.configManager,
+      providerRegistry: deps.providerRegistry,
+      toolRegistry: registry,
+      channelRegistry,
+      serviceRegistry: deps.serviceRegistry as Pick<ServiceRegistry, 'getAll' | 'inspect'> | null | undefined,
+      secretsManager: deps.secretsManager ?? null,
+      workingDirectory,
+      homeDirectory: deps.configManager.getHomeDirectory() ?? undefined,
+      surfaceRoot: deps.surfaceRoot,
+      configRouting: deps.configRouting,
+    }),
+  );
+  registerTool(
+    createGoodVibesSettingsTool({
+      configManager: deps.configManager,
+      configRouting: deps.configRouting,
+    }),
+  );
   if (deps.personalCapture) {
     const captureConfig = deps.configManager;
-    registerTool(createProfileTool({
-      holder: deps.personalCapture,
-      ...(captureConfig
-        ? { captureEnabled: (): boolean => captureConfig.get('profile.conversationalCapture') !== false }
-        : {}),
-      // A tool nobody re-bound is answering on a surface the owner is sitting
-      // at; the channel-bound case is produced per turn by bindCapture.
-      defaultAuthority: {
-        authority: 'owner-direct',
-        surface: 'agent',
-        canCapture: true,
-        source: 'local-surface',
-        reason: 'This turn came from a surface you are using directly, so it carries your authority.',
-      },
-    }));
+    registerTool(
+      createProfileTool({
+        holder: deps.personalCapture,
+        ...(captureConfig
+          ? { captureEnabled: (): boolean => captureConfig.get('profile.conversationalCapture') !== false }
+          : {}),
+        // A tool nobody re-bound is answering on a surface the owner is sitting
+        // at; the channel-bound case is produced per turn by bindCapture.
+        defaultAuthority: {
+          authority: 'owner-direct',
+          surface: 'agent',
+          canCapture: true,
+          source: 'local-surface',
+          reason: 'This turn came from a surface you are using directly, so it carries your authority.',
+        },
+      }),
+    );
   }
   registerTool(new ReadTool(projectIndex, fileCache, undefined, deps.capturedReadAccess));
   // One post-edit diagnostics provider shared by write and edit. Default: the
   // in-process tree-sitter syntax provider (no process spawn). `null` disables.
-  const diagnosticsProvider = deps.diagnosticsProvider === null
-    ? undefined
-    : deps.diagnosticsProvider ?? new TypeScriptSyntaxDiagnosticsProvider();
-  registerTool(createWriteTool({
-    projectRoot: workingDirectory,
-    fileCache,
-    projectIndex,
-    capturedReadAccess: deps.capturedReadAccess,
-    fileUndoManager,
-    configManager: deps.configManager,
-    toolLLM: deps.toolLLM,
-    changeTracker: deps?.changeTracker,
-    diagnosticsProvider,
-  }));
-  registerTool(createEditTool(fileCache, {
-    fileUndoManager,
-    configManager: deps.configManager,
-    toolLLM: deps.toolLLM,
-    changeTracker: deps?.changeTracker,
-    diagnosticsProvider,
-  }));
-  registerTool(createFindTool(workingDirectory, deps.featureFlags, undefined, deps.readAccessFilter, deps.capturedReadAccess));
-  registerTool(createRepoMapTool({ projectRoot: workingDirectory, ...(deps.readAccessFilter ? { readAccessFilter: deps.readAccessFilter } : {}) }));
+  const diagnosticsProvider =
+    deps.diagnosticsProvider === null
+      ? undefined
+      : (deps.diagnosticsProvider ?? new TypeScriptSyntaxDiagnosticsProvider());
+  registerTool(
+    createWriteTool({
+      projectRoot: workingDirectory,
+      fileCache,
+      projectIndex,
+      capturedReadAccess: deps.capturedReadAccess,
+      fileUndoManager,
+      configManager: deps.configManager,
+      toolLLM: deps.toolLLM,
+      changeTracker: deps?.changeTracker,
+      diagnosticsProvider,
+    }),
+  );
+  registerTool(
+    createEditTool(fileCache, {
+      cwd: workingDirectory,
+      fileUndoManager,
+      configManager: deps.configManager,
+      toolLLM: deps.toolLLM,
+      changeTracker: deps?.changeTracker,
+      diagnosticsProvider,
+    }),
+  );
+  registerTool(
+    createFindTool(workingDirectory, deps.featureFlags, undefined, deps.readAccessFilter, deps.capturedReadAccess),
+  );
+  registerTool(
+    createRepoMapTool({
+      projectRoot: workingDirectory,
+      ...(deps.readAccessFilter ? { readAccessFilter: deps.readAccessFilter } : {}),
+    }),
+  );
   registerTool(createContextAccountingTool(deps.contextAccountingHolder ?? new ContextAccountingHolder()));
   // Per-command exec sandbox: only probe the host (a bwrap spawn) when the
   // graduation-gated flag AND the sandbox.enabled config switch are both on, so
@@ -546,27 +549,32 @@ export function registerAllTools(
         requestPromptAnswer: deps.execPromptAnswerHandler,
       }
     : null;
-  registerTool(createExecTool(processManager, {
-    featureFlags: deps.featureFlags,
-    overflowHandler: deps.overflowHandler,
-    defaultWorkingDirectory: workingDirectory,
-    ...(deps.credentialEnvScrub ? { credentialEnvScrub: deps.credentialEnvScrub } : {}),
-    ...(execSandbox ? { sandbox: execSandbox } : {}),
-    ...(execInteraction ? { interaction: execInteraction } : {}),
-    ...(deps.execContainment ? { containment: deps.execContainment } : {}),
-    ...(deps.ownerTerminalGuard ? { ownerTerminal: deps.ownerTerminalGuard } : {}),
-  }));
+  registerTool(
+    createExecTool(processManager, {
+      ...(deps.capturedExec ? { capturedInput: deps.capturedExec } : {}),
+      featureFlags: deps.featureFlags,
+      overflowHandler: deps.overflowHandler,
+      defaultWorkingDirectory: workingDirectory,
+      ...(deps.credentialEnvScrub ? { credentialEnvScrub: deps.credentialEnvScrub } : {}),
+      ...(execSandbox ? { sandbox: execSandbox } : {}),
+      ...(execInteraction ? { interaction: execInteraction } : {}),
+      ...(deps.execContainment ? { containment: deps.execContainment } : {}),
+      ...(deps.ownerTerminalGuard ? { ownerTerminal: deps.ownerTerminalGuard } : {}),
+    }),
+  );
   registerTool(createAnalyzeTool(deps.toolLLM, deps.featureFlags, workingDirectory));
   registerTool(new InspectTool(deps.featureFlags, workingDirectory));
-  registerTool(createAgentTool({
-    manager: agentManager,
-    messageBus: agentMessageBus,
-    configManager: deps.configManager,
-    ...(archetypeLoader ? { archetypeLoader } : {}),
-    contractRunner: deps.contractRunner,
-    projectRoot: deps.projectRoot,
-    resolveSessionId: resolveContractSessionId,
-  }));
+  registerTool(
+    createAgentTool({
+      manager: agentManager,
+      messageBus: agentMessageBus,
+      configManager: deps.configManager,
+      ...(archetypeLoader ? { archetypeLoader } : {}),
+      contractRunner: deps.contractRunner,
+      projectRoot: deps.projectRoot,
+      resolveSessionId: resolveContractSessionId,
+    }),
+  );
   // Scoped under the surface (surfaceRoot is required above, so this is
   // always the scoped form); dual-reads the old unscoped .goodvibes/state
   // for a pre-existing session_*.json exactly once, then copies it forward
@@ -582,43 +590,54 @@ export function registerAllTools(
     legacyStateDir: join(workingDirectory, '.goodvibes', 'state'),
   });
   const hookDispatcher = new HookDispatcher();
-  registerTool(createStateTool(kvState, projectIndex, {
-    memoryDir: join(workingDirectory, '.goodvibes', 'memory'),
-    hookDispatcher,
-    modeManager,
-    ...(deps.memoryRegistry ? { memoryRegistry: deps.memoryRegistry } : {}),
-  }));
-  registerTool(createWorkflowTool(workflowServices, {
-    contractRunner: deps.contractRunner,
-    projectRoot: deps.projectRoot,
-    resolveSessionId: resolveContractSessionId,
-  }));
+  registerTool(
+    createStateTool(kvState, projectIndex, {
+      memoryDir: join(workingDirectory, '.goodvibes', 'memory'),
+      hookDispatcher,
+      modeManager,
+      ...(deps.memoryRegistry ? { memoryRegistry: deps.memoryRegistry } : {}),
+    }),
+  );
+  registerTool(
+    createWorkflowTool(workflowServices, {
+      contractRunner: deps.contractRunner,
+      projectRoot: deps.projectRoot,
+      resolveSessionId: resolveContractSessionId,
+    }),
+  );
   const fetchConfigManager = deps.configManager;
-  registerTool(createFetchTool({
-    serviceRegistry: deps.serviceRegistry,
-    featureFlags: deps.featureFlags,
-    defaultSanitizeMode: fetchConfigManager.get('fetch.sanitizeMode'),
-    defaultTrustedHosts: splitHostConfig(fetchConfigManager.get('fetch.trustedHosts')),
-    defaultBlockedHosts: splitHostConfig(fetchConfigManager.get('fetch.blockedHosts')),
-    // Live read: a persisted approval takes effect on the very next fetch.
-    isLocalhostAllowed: () => fetchConfigManager.get('fetch.allowLocalhost'),
-    ...(deps.localhostFetchApproval ? { approveLocalhostFetch: deps.localhostFetchApproval } : {}),
-  }));
+  registerTool(
+    createFetchTool({
+      serviceRegistry: deps.serviceRegistry,
+      featureFlags: deps.featureFlags,
+      defaultSanitizeMode: fetchConfigManager.get('fetch.sanitizeMode'),
+      defaultTrustedHosts: splitHostConfig(fetchConfigManager.get('fetch.trustedHosts')),
+      defaultBlockedHosts: splitHostConfig(fetchConfigManager.get('fetch.blockedHosts')),
+      // Live read: a persisted approval takes effect on the very next fetch.
+      isLocalhostAllowed: () => fetchConfigManager.get('fetch.allowLocalhost'),
+      ...(deps.localhostFetchApproval ? { approveLocalhostFetch: deps.localhostFetchApproval } : {}),
+    }),
+  );
   if (webSearchService) {
     registerTool(createWebSearchTool(webSearchService));
   }
-  registerTool(createRegistryTool(registry, {
-    workingDirectory,
-    homeDirectory: deps.configManager.getHomeDirectory() ?? undefined,
-  }));
+  registerTool(
+    createRegistryTool(registry, {
+      capturedInput: deps.capturedRegistry,
+      workingDirectory,
+      homeDirectory: deps.configManager.getHomeDirectory() ?? undefined,
+    }),
+  );
   // The task registry keys refs by owning session, and that key is now the
   // host's real runtime identity rather than a model-supplied tool argument.
   // Resolved per call, not captured here: accepting a crash-recovery snapshot
   // reassigns the runtime's sessionId in place, and a captured value would keep
   // writing refs under the session the user just left.
-  registerTool(createTaskTool(sessionOrchestration, {
-    ...(deps.resolveSessionId ? { resolveSessionId: deps.resolveSessionId } : {}),
-  }));
+  registerTool(
+    createTaskTool(sessionOrchestration, {
+      ...(deps.resolveSessionId ? { resolveSessionId: deps.resolveSessionId } : {}),
+    }),
+  );
   registerTool(createTeamTool({ surfaceRoot: deps.surfaceRoot }));
   registerTool(createWorklistTool({ surfaceRoot: deps.surfaceRoot }));
   if (mcpRegistry) {
@@ -629,9 +648,11 @@ export function registerAllTools(
   if (remoteRunnerRegistry) {
     registerTool(createRemoteTool(remoteRunnerRegistry));
   }
-  registerTool(createReplTool(deps.configManager, deps.sandboxSessionRegistry, {
-    surfaceRoot: deps.surfaceRoot,
-  }));
+  registerTool(
+    createReplTool(deps.configManager, deps.sandboxSessionRegistry, {
+      surfaceRoot: deps.surfaceRoot,
+    }),
+  );
   registerTool(controlTool);
   registerTool(createChannelTool(channelRegistry));
   return { fileCache, projectIndex };

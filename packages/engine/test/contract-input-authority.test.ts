@@ -19,7 +19,7 @@ import {
 } from '../sdk/src/platform/contract/input-authority.js';
 import type { Contract } from '../sdk/src/platform/contract/types.js';
 import { installJudgmentPort } from '../errors/src/index.js';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 
 function git(root: string, ...args: string[]): void {
   const result = spawnSync('git', ['-C', root, ...args]);
@@ -38,8 +38,17 @@ for (const viewKind of ['snapshot', 'member'] as const) {
     'policy-revoked',
     'concurrent',
   ] as const) {
-    for (const workflow of ['find', 'read', 'write-read'] as const) {
-      if (viewKind === 'snapshot' && workflow === 'write-read') continue;
+    for (const workflow of [
+      'find',
+      'find-content',
+      'find-symbols',
+      'read',
+      'read-symbols',
+      'write-read',
+      'edit-read',
+      'analyze',
+    ] as const) {
+      if (viewKind === 'snapshot' && (workflow === 'write-read' || workflow === 'edit-read')) continue;
       if (access === 'concurrent' && workflow !== 'read') continue;
       if (access !== 'denied' && access !== 'allowed' && access !== 'concurrent' && workflow !== 'find') continue;
       test(`actual ${viewKind} Agent ${workflow} preserves stored original-path ${access}`, async () => {
@@ -122,7 +131,16 @@ for (const viewKind of ['snapshot', 'member'] as const) {
           tier: 'path',
           tool: 'read',
         });
-        const previous = installJudgmentPort(fakePort(() => noulAnswer(0.01)).port);
+        const previous = installJudgmentPort(
+          fakePort((name, question) => {
+            if (question.type === 'choice') {
+              if (name !== 'family' || !('file-mutation' in question.criteria))
+                throw new Error('unexpected fixture choice');
+              return choiceAnswer(question, 'file-mutation', 0.99);
+            }
+            return noulAnswer(0.01);
+          }).port,
+        );
         expect(await runtime.permissionManager.readAccess(join(root, 'private.ts'))).toBe('restricted');
         expect(await runtime.permissionManager.readAccess(join(root, 'allowed.ts'))).toBe('allow');
         const requests: string[] = [];
@@ -156,45 +174,88 @@ for (const viewKind of ['snapshot', 'member'] as const) {
         const perRunCalls = { survivor: 0, cancelled: 0 };
         const target = access === 'denied' ? 'private.ts' : workflow === 'write-read' ? 'generated.ts' : 'allowed.ts';
         const toolSteps =
-          workflow === 'find'
+          workflow === 'find-content' || workflow === 'find-symbols'
             ? [
                 {
-                  id: 'find-file',
+                  id: 'find-code',
                   name: 'find',
                   arguments: {
-                    queries: [{ id: 'files', mode: 'files', patterns: [target] }],
-                    output: { format: 'with_preview', preview_lines: 5 },
+                    queries: [
+                      {
+                        id: 'code',
+                        mode: workflow === 'find-content' ? 'content' : 'symbols',
+                        pattern: 'SYNTHETIC_',
+                        query: 'SYNTHETIC_',
+                      },
+                    ],
+                    output: { format: 'matches' },
                   },
                 },
               ]
-            : workflow === 'read'
-              ? [
-                  {
-                    id: 'read-file',
-                    name: 'read',
-                    arguments: { files: [{ path: target }] },
-                  },
-                ]
-              : [
-                  {
-                    id: 'write-file',
-                    name: 'write',
-                    arguments: {
-                      files: [
-                        {
-                          path: target,
-                          mode: 'overwrite',
-                          content: 'export const SYNTHETIC_ALLOWED_MARKER = 1;\n',
-                        },
-                      ],
+            : workflow === 'read-symbols'
+              ? [{ id: 'read-symbols', name: 'read', arguments: { files: [{ path: target, extract: 'symbols' }] } }]
+              : workflow === 'analyze'
+                ? [
+                    {
+                      id: 'analyze-file',
+                      name: 'analyze',
+                      arguments: {
+                        mode: 'preview',
+                        projectRoot: '.',
+                        files: [target],
+                        find: 'fixture only',
+                        replace: 'analyzed fixture',
+                      },
                     },
-                  },
-                  {
-                    id: 'read-file',
-                    name: 'read',
-                    arguments: { files: [{ path: target }] },
-                  },
-                ];
+                  ]
+                : workflow === 'edit-read'
+                  ? [
+                      {
+                        id: 'edit-file',
+                        name: 'edit',
+                        arguments: { edits: [{ path: target, find: 'fixture only', replace: 'edited fixture' }] },
+                      },
+                      { id: 'read-edited', name: 'read', arguments: { files: [{ path: target }] } },
+                    ]
+                  : workflow === 'find'
+                    ? [
+                        {
+                          id: 'find-file',
+                          name: 'find',
+                          arguments: {
+                            queries: [{ id: 'files', mode: 'files', patterns: [target] }],
+                            output: { format: 'with_preview', preview_lines: 5 },
+                          },
+                        },
+                      ]
+                    : workflow === 'read'
+                      ? [
+                          {
+                            id: 'read-file',
+                            name: 'read',
+                            arguments: { files: [{ path: target }] },
+                          },
+                        ]
+                      : [
+                          {
+                            id: 'write-file',
+                            name: 'write',
+                            arguments: {
+                              files: [
+                                {
+                                  path: target,
+                                  mode: 'overwrite',
+                                  content: 'export const SYNTHETIC_ALLOWED_MARKER = 1;\n',
+                                },
+                              ],
+                            },
+                          },
+                          {
+                            id: 'read-file',
+                            name: 'read',
+                            arguments: { files: [{ path: target }] },
+                          },
+                        ];
         runtime.providerRegistry.registerRuntimeProvider({
           provider: {
             name: 'snapshot-fixture',
@@ -273,13 +334,22 @@ for (const viewKind of ['snapshot', 'member'] as const) {
             outsideContract: true,
             template: 'planner',
             task: 'Inspect the fixture using find',
-            tools: workflow === 'write-read' ? ['write', 'read'] : [workflow],
+            tools:
+              workflow === 'write-read'
+                ? ['write', 'read']
+                : workflow === 'edit-read'
+                  ? ['edit', 'read']
+                  : workflow === 'find-content' || workflow === 'find-symbols'
+                    ? ['find']
+                    : workflow === 'read-symbols'
+                      ? ['read']
+                      : [workflow],
             restrictTools: true,
             workingDirectory: access === 'alias' ? alias : view,
             model: 'snapshot-fixture:fixture',
             provider: 'snapshot-fixture',
             executionIntent: {
-              filesystemPolicy: workflow === 'write-read' ? 'workspace-write' : 'read-only',
+              filesystemPolicy: workflow === 'write-read' || workflow === 'edit-read' ? 'workspace-write' : 'read-only',
               networkPolicy: 'deny',
               riskClass: 'safe',
             },
@@ -337,7 +407,12 @@ for (const viewKind of ['snapshot', 'member'] as const) {
           if (access === 'policy-revoked')
             expect(requests.some((request) => request.includes('SYNTHETIC_ALLOWED_MARKER'))).toBe(false);
           if (access === 'allowed' || access === 'concurrent') {
-            if (workflow === 'find') expect(opened).toContain(join(view, 'allowed.ts'));
+            if (workflow === 'find' || workflow === 'edit-read' || workflow === 'analyze')
+              expect(opened).toContain(join(view, 'allowed.ts'));
+            if (workflow === 'edit-read') {
+              expect(fs.readFileSync(join(view, 'allowed.ts'), 'utf8')).toContain('edited fixture');
+              expect(fs.readFileSync(join(root, 'allowed.ts'), 'utf8')).toContain('fixture only');
+            }
             expect(requests.some((request) => request.includes('SYNTHETIC_ALLOWED_MARKER'))).toBe(true);
           }
         } finally {

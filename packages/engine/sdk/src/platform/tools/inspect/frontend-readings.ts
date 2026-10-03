@@ -1,3 +1,4 @@
+import { assertCapturedToolAccessCurrent } from '../shared/captured-input-tools.js';
 /**
  * The frontend analyzers whose findings are read by Jev
  * (`engine.tools.frontend-finding`, tools/batteries/frontend-finding.ts).
@@ -10,13 +11,36 @@
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { YesNoReading } from '@goodvibes-jev/judgment';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { frontendFinding, frontendLineView, MAX_JUDGED_HOOK_LINES, stackingView } from '../batteries/frontend-finding.js';
-import type { A11yIssue, ClientBoundaryInfo, HookDep, HooksInfo, OverflowInfo, OverflowIssue, SizingInfo, SizingItem, StackingConflict, StackingInfo, ZIndexItem } from './schema.js';
+import {
+  frontendFinding,
+  frontendLineView,
+  MAX_JUDGED_HOOK_LINES,
+  stackingView,
+} from '../batteries/frontend-finding.js';
+import type {
+  A11yIssue,
+  ClientBoundaryInfo,
+  HookDep,
+  HooksInfo,
+  OverflowInfo,
+  OverflowIssue,
+  SizingInfo,
+  SizingItem,
+  StackingConflict,
+  StackingInfo,
+  ZIndexItem,
+} from './schema.js';
 
 const SITE = 'tools.inspect.frontend-finding';
 const READ_CONCURRENCY = 8;
 
-type Question = 'a11y_violation' | 'omits_dependency' | 'overflow_problem' | 'fixed_size_problem' | 'server_only' | 'stacking_conflict';
+type Question =
+  | 'a11y_violation'
+  | 'omits_dependency'
+  | 'overflow_problem'
+  | 'fixed_size_problem'
+  | 'server_only'
+  | 'stacking_conflict';
 export type FindingReading = 'real' | 'uncertain';
 
 /** A yes is real, a no dismisses, anything else is shown as uncertain. */
@@ -26,6 +50,7 @@ function findingReading(reading: YesNoReading): FindingReading | 'dismissed' {
 }
 
 async function read(question: Question, state: Record<string, unknown>): Promise<FindingReading | 'dismissed'> {
+  await assertCapturedToolAccessCurrent();
   const run = await frontendFinding.run(judgmentPort(SITE), state as never, { site: SITE, only: [question] });
   const reading = findingReading(run.readings[question]);
   run.recordAction(`${question}: ${reading}`);
@@ -36,10 +61,26 @@ async function read(question: Question, state: Record<string, unknown>): Promise
 
 /** The WCAG rule each element kind is read against. */
 const A11Y_RULES = {
-  'img-alt': { rule: 'img-alt: images need an alt attribute', message: 'img element is missing an alt attribute', wcag: 'WCAG 1.1.1 (Level A)' },
-  'button-name': { rule: 'button-name: buttons need an accessible name', message: 'button element is missing an accessible name', wcag: 'WCAG 4.1.2 (Level A)' },
-  'click-events-have-key-events': { rule: 'click-events-have-key-events: clickable non-interactive elements need a role and keyboard handling', message: 'Non-interactive element has onClick without a role or keyboard handling', wcag: 'WCAG 4.1.2 (Level A)' },
-  label: { rule: 'label: form fields need a label', message: 'input element is missing an associated label', wcag: 'WCAG 1.3.1 (Level A)' },
+  'img-alt': {
+    rule: 'img-alt: images need an alt attribute',
+    message: 'img element is missing an alt attribute',
+    wcag: 'WCAG 1.1.1 (Level A)',
+  },
+  'button-name': {
+    rule: 'button-name: buttons need an accessible name',
+    message: 'button element is missing an accessible name',
+    wcag: 'WCAG 4.1.2 (Level A)',
+  },
+  'click-events-have-key-events': {
+    rule: 'click-events-have-key-events: clickable non-interactive elements need a role and keyboard handling',
+    message: 'Non-interactive element has onClick without a role or keyboard handling',
+    wcag: 'WCAG 4.1.2 (Level A)',
+  },
+  label: {
+    rule: 'label: form fields need a label',
+    message: 'input element is missing an associated label',
+    wcag: 'WCAG 1.3.1 (Level A)',
+  },
 } as const;
 type A11yCode = keyof typeof A11Y_RULES;
 
@@ -64,18 +105,23 @@ function a11yCandidate(lines: readonly string[], index: number): A11yCode | null
     // A hidden input is not shown, so it takes no label (HTML).
     return /type=['"]hidden['"]/.test(openingTag(lines, index)) ? null : 'label';
   }
-  if (/<(?:div|span)\b/i.test(line) && /\bonClick\b/.test(openingTag(lines, index))) return 'click-events-have-key-events';
+  if (/<(?:div|span)\b/i.test(line) && /\bonClick\b/.test(openingTag(lines, index)))
+    return 'click-events-have-key-events';
   return null;
 }
 
-export async function inspectAccessibility(content: string, file = ''): Promise<Array<A11yIssue & { reading: FindingReading }>> {
+export async function inspectAccessibility(
+  content: string,
+  file = '',
+): Promise<Array<A11yIssue & { reading: FindingReading }>> {
   const lines = content.split('\n');
   const candidates = lines.flatMap((_, index) => {
     const code = a11yCandidate(lines, index);
     return code === null ? [] : [{ index, code }];
   });
   const readings = await mapWithConcurrency(candidates, READ_CONCURRENCY, ({ index, code }) =>
-    read('a11y_violation', frontendLineView(file, lines, index, { rule: A11Y_RULES[code].rule })));
+    read('a11y_violation', frontendLineView(file, lines, index, { rule: A11Y_RULES[code].rule })),
+  );
   return candidates.flatMap(({ index, code }, i) => {
     const reading = readings[i]!;
     if (reading === 'dismissed') return [];
@@ -108,12 +154,24 @@ export async function inspectHooks(content: string, file: string): Promise<Hooks
     const m = hookRe.exec(line);
     return m ? [{ index, kind: m[1] as HookDep['hookKind'], code: hookCall(lines, index, m.index) }] : [];
   });
-  const readings = await mapWithConcurrency(calls, READ_CONCURRENCY, ({ code }) => read('omits_dependency', { file, code }));
+  const readings = await mapWithConcurrency(calls, READ_CONCURRENCY, ({ code }) =>
+    read('omits_dependency', { file, code }),
+  );
   const hooks: HookDep[] = calls.map(({ index, kind, code }, i) => {
     // The dependency array is the last array literal before the call closes (syntax).
-    const deps = /\[([^\]]*)\]\s*\)\s*;?\s*$/.exec(code)?.[1]?.split(',').map((dep) => dep.trim()).filter(Boolean) ?? [];
+    const deps =
+      /\[([^\]]*)\]\s*\)\s*;?\s*$/
+        .exec(code)?.[1]
+        ?.split(',')
+        .map((dep) => dep.trim())
+        .filter(Boolean) ?? [];
     const reading = readings[i]!;
-    return { hookKind: kind, line: index + 1, deps, omitsDependency: reading === 'dismissed' ? 'no' : reading === 'real' ? 'yes' : 'uncertain' };
+    return {
+      hookKind: kind,
+      line: index + 1,
+      deps,
+      omitsDependency: reading === 'dismissed' ? 'no' : reading === 'real' ? 'yes' : 'uncertain',
+    };
   });
   return { file, hooks, missingDepsCount: hooks.filter((hook) => hook.omitsDependency === 'yes').length };
 }
@@ -124,13 +182,18 @@ export async function inspectOverflow(content: string, file: string): Promise<Ov
   const lines = content.split('\n');
   const candidates = lines.flatMap((line, index): Array<{ index: number; kind: OverflowIssue['kind'] }> => {
     if (/\boverflow-hidden\b/.test(line) || /overflow\s*:\s*hidden/.test(line)) return [{ index, kind: 'hidden_clip' }];
-    if (/\boverflow-(?:x-|y-)?(?:scroll|auto)\b/.test(line) || /overflow(?:-y|-x)?\s*:\s*(?:scroll|auto)/.test(line)) return [{ index, kind: 'scroll_no_height' }];
+    if (/\boverflow-(?:x-|y-)?(?:scroll|auto)\b/.test(line) || /overflow(?:-y|-x)?\s*:\s*(?:scroll|auto)/.test(line))
+      return [{ index, kind: 'scroll_no_height' }];
     return [];
   });
-  const readings = await mapWithConcurrency(candidates, READ_CONCURRENCY, ({ index }) => read('overflow_problem', frontendLineView(file, lines, index)));
+  const readings = await mapWithConcurrency(candidates, READ_CONCURRENCY, ({ index }) =>
+    read('overflow_problem', frontendLineView(file, lines, index)),
+  );
   const issues: Array<OverflowIssue & { reading: FindingReading }> = candidates.flatMap(({ index, kind }, i) => {
     const reading = readings[i]!;
-    return reading === 'dismissed' ? [] : [{ line: index + 1, kind, snippet: lines[index]!.trim().slice(0, 80), reading }];
+    return reading === 'dismissed'
+      ? []
+      : [{ line: index + 1, kind, snippet: lines[index]!.trim().slice(0, 80), reading }];
   });
   return { file, issues, count: issues.length };
 }
@@ -156,7 +219,9 @@ export async function inspectSizing(content: string, file: string): Promise<Sizi
   });
   // Each line holding a fixed size is read once; its fixed items are flagged unless the reading is a no.
   const fixedLines = [...new Set(items.filter((item) => item.kind === 'fixed_px').map((item) => item.line))];
-  const readings = await mapWithConcurrency(fixedLines, READ_CONCURRENCY, (line) => read('fixed_size_problem', frontendLineView(file, lines, line - 1)));
+  const readings = await mapWithConcurrency(fixedLines, READ_CONCURRENCY, (line) =>
+    read('fixed_size_problem', frontendLineView(file, lines, line - 1)),
+  );
   const flaggedLines = new Set(fixedLines.filter((_, i) => readings[i] !== 'dismissed'));
   for (const item of items) item.flagged = item.kind === 'fixed_px' && flaggedLines.has(item.line);
   return { file, items, hardcodedCount: items.filter((item) => item.flagged).length };
@@ -185,8 +250,10 @@ export async function inspectStacking(content: string, file: string): Promise<St
   const lines = content.split('\n');
   const zIndexItems: ZIndexItem[] = [];
   lines.forEach((line, index) => {
-    for (const m of line.matchAll(/-?z-(?:\d+|auto)\b/g)) zIndexItems.push({ line: index + 1, value: m[0], context: line.trim().slice(0, 60) });
-    for (const m of line.matchAll(/z-index\s*:\s*-?\d+/g)) zIndexItems.push({ line: index + 1, value: m[0], context: line.trim().slice(0, 60) });
+    for (const m of line.matchAll(/-?z-(?:\d+|auto)\b/g))
+      zIndexItems.push({ line: index + 1, value: m[0], context: line.trim().slice(0, 60) });
+    for (const m of line.matchAll(/z-index\s*:\s*-?\d+/g))
+      zIndexItems.push({ line: index + 1, value: m[0], context: line.trim().slice(0, 60) });
   });
   const byIndex = new Map<string, { values: Set<string>; lines: Set<number> }>();
   for (const item of zIndexItems) {
@@ -195,9 +262,12 @@ export async function inspectStacking(content: string, file: string): Promise<St
     group.lines.add(item.line);
     byIndex.set(zIndexOf(item.value), group);
   }
-  const shared = [...byIndex.values()].filter((group) => group.lines.size > 1).map((group) => ({ values: [...group.values], lines: [...group.lines] }));
+  const shared = [...byIndex.values()]
+    .filter((group) => group.lines.size > 1)
+    .map((group) => ({ values: [...group.values], lines: [...group.lines] }));
   const readings = await mapWithConcurrency(shared, READ_CONCURRENCY, ({ values, lines: lineNumbers }) =>
-    read('stacking_conflict', stackingView(file, lines, values.join(' / '), lineNumbers)));
+    read('stacking_conflict', stackingView(file, lines, values.join(' / '), lineNumbers)),
+  );
   const potentialConflicts: StackingConflict[] = shared.flatMap((group, i) => {
     const reading = readings[i]!;
     return reading === 'dismissed' ? [] : [{ ...group, reading }];
@@ -232,7 +302,9 @@ export function forgetServerOnlyReadings(): void {
 export async function inspectClientBoundary(content: string, file: string): Promise<ClientBoundaryInfo> {
   const code = content.replace(/^(?:\s*(?:\/\/[^\n]*|\/\*[\s\S]*?\*\/))*\s*/, '');
   const directive = /^(['"])use (client|server)\1\s*;?/.exec(code);
-  const modules = [...new Set([...content.matchAll(/import\s+(?:[\s\S]*?from\s+)?['"]([^'"]+)['"]/g)].map((m) => m[1]!))];
+  const modules = [
+    ...new Set([...content.matchAll(/import\s+(?:[\s\S]*?from\s+)?['"]([^'"]+)['"]/g)].map((m) => m[1]!)),
+  ];
   const readings = await mapWithConcurrency(modules, READ_CONCURRENCY, readServerOnly);
   const serverOnlyImports = modules.filter((_, i) => readings[i] !== 'dismissed');
   return {

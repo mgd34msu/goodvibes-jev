@@ -1,3 +1,4 @@
+import { assertCapturedToolAccessCurrent, assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
 import { walk, safeRead, resolvePath } from './shared.js';
@@ -46,10 +47,24 @@ const LOCKFILES: ReadonlyArray<readonly [file: string, manager: Exclude<ProjectI
 ];
 
 type PackageManager = Exclude<ProjectInfo['packageManager'], 'none'>;
-const isPackageManager = (value: string): value is PackageManager => value === 'npm' || value === 'bun' || value === 'yarn' || value === 'pnpm';
+const isPackageManager = (value: string): value is PackageManager =>
+  value === 'npm' || value === 'bun' || value === 'yarn' || value === 'pnpm';
 
 /** Folders that hold dependencies or build output rather than the project's own source. */
-const SKIPPED_DIRS = new Set(['node_modules', '.git', 'target', 'dist', 'build', 'vendor', '.venv', 'venv', '__pycache__', '.next', 'out', 'coverage']);
+const SKIPPED_DIRS = new Set([
+  'node_modules',
+  '.git',
+  'target',
+  'dist',
+  'build',
+  'vendor',
+  '.venv',
+  'venv',
+  '__pycache__',
+  '.next',
+  'out',
+  'coverage',
+]);
 /** The walk that counts source files stops after this many files and this depth. */
 const MAX_COUNTED_FILES = 2_000;
 const MAX_COUNT_DEPTH = 4;
@@ -128,10 +143,19 @@ async function readEntryPoints(root: string, scripts: Record<string, string>): P
       return [];
     }
   };
-  const named = Object.values(scripts).flatMap((script) => script.split(/\s+/).map((token) => token.replace(/^['"]|['"]$/g, '').replace(/^\.\//, '')));
-  const candidates = [...new Set([...listed(''), ...listed('src'), ...named])].filter((file) => SCRIPT_FILE.test(file) && isFile(file));
+  const named = Object.values(scripts).flatMap((script) =>
+    script.split(/\s+/).map((token) => token.replace(/^['"]|['"]$/g, '').replace(/^\.\//, '')),
+  );
+  const candidates = [...new Set([...listed(''), ...listed('src'), ...named])].filter(
+    (file) => SCRIPT_FILE.test(file) && isFile(file),
+  );
   const readings = await mapWithConcurrency(candidates, ENTRY_POINT_CONCURRENCY, async (file) => {
-    const run = await projectTooling.run(judgmentPort(PROJECT_TOOLING_SITE), entryPointView(file, safeRead(join(root, file)), scripts), { site: PROJECT_TOOLING_SITE, only: ['entry_point'] });
+    const content = await safeRead(join(root, file));
+    await assertCapturedToolAccessCurrent();
+    const run = await projectTooling.run(judgmentPort(PROJECT_TOOLING_SITE), entryPointView(file, content, scripts), {
+      site: PROJECT_TOOLING_SITE,
+      only: ['entry_point'],
+    });
     const reading = run.readings.entry_point;
     const entry = reading.verdict === 'yes' && reading.outcome === 'act';
     run.recordAction(`${file}: ${entry ? 'entry point' : 'not listed'}`);
@@ -140,7 +164,11 @@ async function readEntryPoints(root: string, scripts: Record<string, string>): P
   return candidates.filter((_, i) => readings[i]);
 }
 
-const TEST_FRAMEWORK_LABELS: Readonly<Record<string, string | undefined>> = { bun: 'bun:test', node: 'node:test', none: undefined };
+const TEST_FRAMEWORK_LABELS: Readonly<Record<string, string | undefined>> = {
+  bun: 'bun:test',
+  node: 'node:test',
+  none: undefined,
+};
 
 /**
  * Inspect a project root. Files settle what they can: one ecosystem among the
@@ -171,7 +199,7 @@ export async function detectProject(root: string): Promise<ProjectInfo> {
   let declaredEntries: string[] = [];
 
   if (has('package.json')) {
-    const raw = safeRead(join(root, 'package.json'));
+    const raw = await safeRead(join(root, 'package.json'));
     if (raw) {
       try {
         const pkg = JSON.parse(raw);
@@ -180,7 +208,7 @@ export async function detectProject(root: string): Promise<ProjectInfo> {
         scripts = pkg.scripts ?? {};
         dependencies = Object.keys(pkg.dependencies ?? {}).length;
         devDependencies = Object.keys(pkg.devDependencies ?? {}).length;
-        isMonorepo = !!(pkg.workspaces);
+        isMonorepo = !!pkg.workspaces;
         dependencyNames = [...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.devDependencies ?? {})];
         const field = typeof pkg.packageManager === 'string' ? pkg.packageManager.split('@')[0] : undefined;
         if (field !== undefined && isPackageManager(field)) declaredManager = field;
@@ -201,10 +229,12 @@ export async function detectProject(root: string): Promise<ProjectInfo> {
   if (mayBeNode) asked.push('test_framework');
 
   let type: ProjectInfo['type'] = settledType ?? 'unknown';
-  let packageManager: ProjectInfo['packageManager'] = settledType === 'nodejs' && settledManager ? settledManager : 'none';
+  let packageManager: ProjectInfo['packageManager'] =
+    settledType === 'nodejs' && settledManager ? settledManager : 'none';
   let testFramework: string | undefined;
 
   if (asked.length > 0) {
+    await assertCapturedToolAccessCurrent();
     const run = await projectTooling.run(
       judgmentPort(PROJECT_TOOLING_SITE),
       {
@@ -306,11 +336,7 @@ function normalizeScaffoldModuleName(moduleName: string): { kebab: string; pasca
   return { kebab, pascal: identifier };
 }
 
-export function buildScaffold(
-  moduleName: string,
-  projectRoot: string,
-  dryRun: boolean,
-): ScaffoldPlan {
+export async function buildScaffold(moduleName: string, projectRoot: string, dryRun: boolean): Promise<ScaffoldPlan> {
   const { kebab, pascal } = normalizeScaffoldModuleName(moduleName);
 
   const files: ScaffoldFile[] = [
@@ -335,6 +361,7 @@ export function buildScaffold(
   if (!dryRun) {
     for (const f of files) {
       const absPath = resolvePath(projectRoot, f.path);
+      await assertCapturedToolReadAccess(absPath);
       mkdirSync(dirname(absPath), { recursive: true });
       writeFileSync(absPath, f.content, 'utf-8');
     }
@@ -360,7 +387,10 @@ export function generateApiSpec(routes: ApiRoute[], title = 'API', version = '1.
     if (!paths[openApiPath]) paths[openApiPath] = {};
 
     const method = route.method.toLowerCase();
-    const opId = `${method}_${openApiPath.replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')}`;
+    const opId = `${method}_${openApiPath
+      .replace(/[^a-zA-Z0-9]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '')}`;
     const parameters: OpenApiParameter[] = params.map((p) => ({
       name: p,
       in: 'path',
@@ -439,10 +469,12 @@ export function validateApiSpec(specContent: string, routes: ApiRoute[]): ApiVal
 }
 
 function normalizeUrlForMatch(url: string): string {
-  return url
-    .replace(/\/:\w+/g, '/:p')
-    .replace(/\/\{\w+\}/g, '/:p')
-    .replace(/\/$/, '') || '/';
+  return (
+    url
+      .replace(/\/:\w+/g, '/:p')
+      .replace(/\/\{\w+\}/g, '/:p')
+      .replace(/\/$/, '') || '/'
+  );
 }
 
 /**
@@ -456,7 +488,7 @@ async function findFetchCalls(root: string): Promise<FetchCall[]> {
   const files = await walk(root, (p) => /\.[tj]sx?$/.test(p));
   for (const file of files) {
     const relFile = relative(root, file);
-    safeRead(file).split('\n').forEach((line, i) => {
+    (await safeRead(file)).split('\n').forEach((line, i) => {
       for (const m of line.matchAll(FETCH_RE)) calls.push({ url: m[1]!, file: relFile, line: i + 1 });
     });
   }
@@ -464,10 +496,7 @@ async function findFetchCalls(root: string): Promise<FetchCall[]> {
 }
 
 export async function inspectApiSync(root: string, framework: ApiFramework): Promise<ApiSyncResult> {
-  const [routes, fetchCalls] = await Promise.all([
-    inspectApi(root, framework),
-    findFetchCalls(root),
-  ]);
+  const [routes, fetchCalls] = await Promise.all([inspectApi(root, framework), findFetchCalls(root)]);
 
   const normalizedRoutes = routes.map((r) => ({
     ...r,

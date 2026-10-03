@@ -1,3 +1,4 @@
+import { assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
 import { existsSync, statSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { dirname, extname, join, relative, resolve } from 'node:path';
@@ -12,6 +13,7 @@ export const ANALYZE_SUMMARY_SAMPLE_LIMIT = 5;
 
 export async function isBinary(filePath: string): Promise<boolean> {
   try {
+    await assertCapturedToolReadAccess(filePath);
     const file = Bun.file(filePath);
     if (file.size === 0) return false;
     const chunk = await file.slice(0, BINARY_CHECK_BYTES).arrayBuffer();
@@ -25,11 +27,7 @@ export async function isBinary(filePath: string): Promise<boolean> {
   }
 }
 
-export async function collectTextFiles(
-  dirPath: string,
-  limit = MAX_SCAN_FILES,
-  deadline?: number,
-): Promise<string[]> {
+export async function collectTextFiles(dirPath: string, limit = MAX_SCAN_FILES, deadline?: number): Promise<string[]> {
   const files: string[] = [];
   for await (const filePath of walkDir(dirPath)) {
     if (files.length >= limit) break;
@@ -60,6 +58,7 @@ export function validatePath(inputPath: string, root: string): string | { error:
 
 export async function readTextFile(filePath: string): Promise<string | null> {
   try {
+    await assertCapturedToolReadAccess(filePath);
     return await Bun.file(filePath).text();
   } catch {
     return null;
@@ -112,13 +111,19 @@ export function sampleArray<T>(value: unknown, limit = ANALYZE_SUMMARY_SAMPLE_LI
   return Array.isArray(value) ? (value as T[]).slice(0, limit) : [];
 }
 
-export function summarizeAnalyzeResult(mode: AnalyzeInput['mode'], result: Record<string, unknown>): Record<string, unknown> {
+export function summarizeAnalyzeResult(
+  mode: AnalyzeInput['mode'],
+  result: Record<string, unknown>,
+): Record<string, unknown> {
   switch (mode) {
     case 'dependencies':
       return {
         mode,
         has_cycles: result.has_cycles ?? false,
-        fileCount: result.graph && typeof result.graph === 'object' ? Object.keys(result.graph as Record<string, unknown>).length : 0,
+        fileCount:
+          result.graph && typeof result.graph === 'object'
+            ? Object.keys(result.graph as Record<string, unknown>).length
+            : 0,
         cycleCount: Array.isArray(result.cycles) ? result.cycles.length : 0,
         cycles: sampleArray<string[]>(result.cycles),
       };
@@ -202,11 +207,13 @@ export function summarizeAnalyzeResult(mode: AnalyzeInput['mode'], result: Recor
       return {
         mode,
         packageCount: Array.isArray(result.packages) ? result.packages.length : 0,
-        outdated: sampleArray<Record<string, unknown>>(result.packages).filter((pkg) => pkg.current !== pkg.latest).map((pkg) => ({
-          name: pkg.name ?? null,
-          current: pkg.current ?? null,
-          latest: pkg.latest ?? null,
-        })),
+        outdated: sampleArray<Record<string, unknown>>(result.packages)
+          .filter((pkg) => pkg.current !== pkg.latest)
+          .map((pkg) => ({
+            name: pkg.name ?? null,
+            current: pkg.current ?? null,
+            latest: pkg.latest ?? null,
+          })),
       };
     case 'permissions':
     case 'env_audit':
@@ -233,6 +240,7 @@ export function applyAnalyzeTokenBudget(output: string, maxTokens: number | unde
 
 export async function readJsonFile<T extends JsonObject = JsonObject>(filePath: string): Promise<T | null> {
   try {
+    await assertCapturedToolReadAccess(filePath);
     return (await Bun.file(filePath).json()) as T;
   } catch {
     return null;
@@ -347,7 +355,8 @@ export function parseEnvVariables(content: string): Map<string, boolean> {
  * `import('...')`, and `require('...')`.
  */
 export function importSpecifiers(content: string): Array<{ specifier: string; line: number }> {
-  const pattern = /\bfrom\s*['"]([^'"\n]+)['"]|\bimport\s*\(?\s*['"]([^'"\n]+)['"]|\brequire\s*\(\s*['"]([^'"\n]+)['"]\s*\)/g;
+  const pattern =
+    /\bfrom\s*['"]([^'"\n]+)['"]|\bimport\s*\(?\s*['"]([^'"\n]+)['"]|\brequire\s*\(\s*['"]([^'"\n]+)['"]\s*\)/g;
   const found: Array<{ specifier: string; line: number }> = [];
   for (const match of content.matchAll(pattern)) {
     const specifier = match[1] ?? match[2] ?? match[3];
@@ -358,7 +367,12 @@ export function importSpecifiers(content: string): Array<{ specifier: string; li
 
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
 /** TypeScript sources a compiled-extension specifier names (`./a.js` is written for `./a.ts`). */
-const TS_SOURCE_FOR: Record<string, readonly string[]> = { '.js': ['.ts', '.tsx'], '.jsx': ['.tsx'], '.mjs': ['.mts'], '.cjs': ['.cts'] };
+const TS_SOURCE_FOR: Record<string, readonly string[]> = {
+  '.js': ['.ts', '.tsx'],
+  '.jsx': ['.tsx'],
+  '.mjs': ['.mts'],
+  '.cjs': ['.cts'],
+};
 
 const isFile = (path: string): boolean => statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
 
@@ -373,6 +387,11 @@ export function resolveRelativeImport(fromFile: string, specifier: string): stri
   const base = resolve(dirname(fromFile), specifier);
   const compiled = extname(base);
   const tsSources = (TS_SOURCE_FOR[compiled] ?? []).map((ext) => base.slice(0, -compiled.length) + ext);
-  const tried = [base, ...SOURCE_EXTENSIONS.map((ext) => base + ext), ...tsSources, ...SOURCE_EXTENSIONS.map((ext) => join(base, `index${ext}`))];
+  const tried = [
+    base,
+    ...SOURCE_EXTENSIONS.map((ext) => base + ext),
+    ...tsSources,
+    ...SOURCE_EXTENSIONS.map((ext) => join(base, `index${ext}`)),
+  ];
   return tried.find(isFile) ?? null;
 }

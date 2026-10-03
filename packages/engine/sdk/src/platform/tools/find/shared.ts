@@ -1,3 +1,4 @@
+import { assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
 import { assertCapturedInputPathContext } from '../../contract/input-authority.js';
 import { resolve, relative, join } from 'node:path';
 import { stat as statAsync } from 'node:fs/promises';
@@ -6,7 +7,16 @@ import { walkDir, WALK_SKIP_DIRS as SKIP_DIRS } from '../../utils/walk-dir.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { logger } from '../../utils/logger.js';
 
-export type OutputFormat = 'count_only' | 'files_only' | 'locations' | 'matches' | 'context' | 'with_stats' | 'with_preview' | 'signatures' | 'full';
+export type OutputFormat =
+  | 'count_only'
+  | 'files_only'
+  | 'locations'
+  | 'matches'
+  | 'context'
+  | 'with_stats'
+  | 'with_preview'
+  | 'signatures'
+  | 'full';
 export type SymbolKind = 'function' | 'class' | 'interface' | 'type' | 'variable' | 'constant' | 'enum';
 
 export interface QueryBase {
@@ -148,10 +158,7 @@ export function addFindWarning(diagnostics: FindDiagnostics | undefined, warning
   if (!diagnostics.warnings.includes(cappedWarning)) diagnostics.warnings.push(cappedWarning);
 }
 
-export function withFindWarnings<T extends Record<string, unknown>>(
-  result: T,
-  warnings: readonly string[],
-): T {
+export function withFindWarnings<T extends Record<string, unknown>>(result: T, warnings: readonly string[]): T {
   if (warnings.length === 0) return result;
   const existingWarnings = Array.isArray(result.warnings)
     ? result.warnings.filter((warning): warning is string => typeof warning === 'string')
@@ -172,7 +179,11 @@ export function makeFilesResult(files: string[], count: number, source?: string)
   return { files, count, ...(source ? { source } : {}) };
 }
 
-export function makeLocationsResult<TLocation>(locations: TLocation[], count: number, source?: string): LocationsResult<TLocation> {
+export function makeLocationsResult<TLocation>(
+  locations: TLocation[],
+  count: number,
+  source?: string,
+): LocationsResult<TLocation> {
   return { locations, count, ...(source ? { source } : {}) };
 }
 
@@ -189,7 +200,7 @@ export function shouldSkipRelativePath(relativePath: string, includeHidden: bool
 
 export async function isBinary(filePath: string, diagnostics?: FindDiagnostics): Promise<boolean> {
   try {
-    assertCapturedInputPathContext(filePath);
+    await assertCapturedToolReadAccess(filePath);
     const file = Bun.file(filePath);
     const size = file.size;
     if (size === 0) return false;
@@ -217,7 +228,7 @@ export async function collectTextFiles(dirPath: string, diagnostics?: FindDiagno
 
 export async function readTextFile(filePath: string, diagnostics?: FindDiagnostics): Promise<string | null> {
   try {
-    assertCapturedInputPathContext(filePath);
+    await assertCapturedToolReadAccess(filePath);
     return await Bun.file(filePath).text();
   } catch (err) {
     addFindWarning(diagnostics, `Skipped unreadable file '${filePath}': ${summarizeError(err)}`);
@@ -257,7 +268,11 @@ export async function collectGlobFiles(
           }
         }
 
-        try { assertCapturedInputPathContext(file); } catch { continue; }
+        try {
+          assertCapturedInputPathContext(file);
+        } catch {
+          continue;
+        }
         const rel = relative(basePath, file);
         if (shouldSkipRelativePath(rel, includeHidden)) continue;
         matchedFiles.add(file);
@@ -308,19 +323,23 @@ export function groupByKey<T extends { file: string; kind: string }>(
   return grouped;
 }
 
-export function validateSearchPath(
-  path: string | undefined,
-  projectRoot: string,
-): string | { error: string } {
+export function validateSearchPath(path: string | undefined, projectRoot: string): string | { error: string } {
   const resolved = path ? resolve(projectRoot, path) : projectRoot;
-  try { assertCapturedInputPathContext(resolved); } catch { return { error: 'captured input path requires a construction-owned authority' }; }
+  try {
+    assertCapturedInputPathContext(resolved);
+  } catch {
+    return { error: 'captured input path requires a construction-owned authority' };
+  }
   if (!resolved.startsWith(projectRoot + '/') && resolved !== projectRoot) {
     return { error: `Path '${path}' resolves outside the project root.` };
   }
   return resolved;
 }
 
-export function buildGitignoreMatcher(gitignorePath: string, diagnostics?: FindDiagnostics): ((rel: string) => boolean) | null {
+export function buildGitignoreMatcher(
+  gitignorePath: string,
+  diagnostics?: FindDiagnostics,
+): ((rel: string) => boolean) | null {
   if (!existsSync(gitignorePath)) return null;
   let raw: string;
   try {
@@ -331,7 +350,10 @@ export function buildGitignoreMatcher(gitignorePath: string, diagnostics?: FindD
     return null;
   }
 
-  interface GitignoreRule { negate: boolean; glob: InstanceType<typeof Bun.Glob> }
+  interface GitignoreRule {
+    negate: boolean;
+    glob: InstanceType<typeof Bun.Glob>;
+  }
   const rules: GitignoreRule[] = [];
 
   for (const rawLine of raw.split('\n')) {
@@ -479,10 +501,7 @@ export class FindRuntimeService {
       const degradedGraph = {
         findImports: (file: string) => graph.findImports(file),
         findDependents: (file: string) => graph.findDependents(file),
-        getWarnings: () => [
-          warning,
-          ...(graph.getWarnings?.() ?? []),
-        ],
+        getWarnings: () => [warning, ...(graph.getWarnings?.() ?? [])],
       } satisfies ImportGraphLike;
       this.importGraph = degradedGraph;
       this.importGraphBuiltAt = now;

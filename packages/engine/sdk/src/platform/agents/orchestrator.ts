@@ -1,4 +1,18 @@
-import { getContractInputAuthority, assertContractInputAuthority, isCapturedInputPath, authorizeContractInputPath, assertContractInputReadAccess, type ContractInputAuthority } from '../contract/input-authority.js';
+import { admitCapturedRegistryContext, type CapturedRegistryContext } from '../tools/registry-tool/captured-source.js';
+import { join } from 'node:path';
+import {
+  admitCapturedExecDependency,
+  type CapturedExecDependencyInput,
+} from '../tools/exec/captured-exec-dependencies.js';
+import {
+  getContractInputAuthority,
+  contractInputAuthoritySourceRoot,
+  assertContractInputAuthority,
+  isCapturedInputPath,
+  authorizeContractInputPath,
+  assertContractInputReadAccess,
+  type ContractInputAuthority,
+} from '../contract/input-authority.js';
 import { capturedInputTool, capturedInputReadFilter } from '../tools/shared/captured-input-tools.js';
 import { randomUUID } from 'node:crypto';
 import { ToolRegistry } from '../tools/registry.js';
@@ -104,9 +118,13 @@ type AgentOrchestratorToolDeps = {
   readonly personalCapture?: import('../personal-capture/index.js').PersonalCaptureHolder | undefined;
   readonly codeIndex?: import('./turn-knowledge-injection.js').TurnCodeIndexSource | undefined;
   readonly isCodeInjectionSettingEnabled?: (() => boolean) | undefined;
-  readonly codeIndexReindexScheduler?: Pick<import('../state/code-index-reindex.js').CodeIndexReindexScheduler, 'onToolExecuted'> | undefined;
+  readonly codeIndexReindexScheduler?:
+    | Pick<import('../state/code-index-reindex.js').CodeIndexReindexScheduler, 'onToolExecuted'>
+    | undefined;
   /** Additional per-tool-execution tap (e.g. CI auto-watch minting); composed with the reindex scheduler, never blocking. */
-  readonly toolExecutionObserver?: ((toolName: string, args: Record<string, unknown>, success: boolean) => void) | undefined;
+  readonly toolExecutionObserver?:
+    | ((toolName: string, args: Record<string, unknown>, success: boolean) => void)
+    | undefined;
   /** The contract runner's agent-loop seams (`runner.hooks()`), passed into every run context; see AgentOrchestratorRunContext.contractHooks. */
   readonly contractHooks: import('../contract/agent-hooks.js').ContractAgentHooks;
   /** Starts the contracts the agent and workflow tools hand work to (registerAllTools). */
@@ -118,7 +136,10 @@ type AgentOrchestratorToolDeps = {
   readonly providerOptimizer?: import('../providers/optimizer.js').ProviderOptimizer | undefined;
   readonly toolLLM?: ToolLLM | undefined;
   readonly serviceRegistry?: import('../config/service-registry.js').ServiceRegistry | undefined;
-  readonly secretsManager?: Pick<import('../config/secrets.js').SecretsManager, 'get' | 'set' | 'getGlobalHome'> | null | undefined;
+  readonly secretsManager?:
+    | Pick<import('../config/secrets.js').SecretsManager, 'get' | 'set' | 'getGlobalHome'>
+    | null
+    | undefined;
   readonly featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined;
   readonly overflowHandler?: import('../tools/shared/overflow.js').OverflowHandler | undefined;
   readonly sandboxSessionRegistry: import('../runtime/sandbox/session-registry.js').SandboxSessionRegistry;
@@ -130,7 +151,10 @@ type AgentOrchestratorToolDeps = {
    * permission enforcement existed.
    */
   readonly permissionManager?:
-    | Pick<import('../permissions/manager.js').PermissionManager, 'checkDetailed' | 'check' | 'getBackgroundAgentsMode' | 'readAccess' | 'passesBoundary'>
+    | Pick<
+        import('../permissions/manager.js').PermissionManager,
+        'checkDetailed' | 'check' | 'getBackgroundAgentsMode' | 'readAccess' | 'passesBoundary'
+      >
     | undefined;
   /**
    * Settable holder for the context_accounting tool's session source. Threaded
@@ -144,13 +168,15 @@ type AgentOrchestratorToolDeps = {
    * the exec tool's sandbox raises named escalation asks. Omitted → escalations
    * are not asked (today's behavior).
    */
-  readonly sandboxEscalationHandler?: ((input: {
-    readonly command: string;
-    readonly escalations: readonly string[];
-    readonly boundary: string;
-    readonly policyReasons: readonly string[];
-    readonly workingDirectory?: string | undefined;
-  }) => Promise<boolean>) | undefined;
+  readonly sandboxEscalationHandler?:
+    | ((input: {
+        readonly command: string;
+        readonly escalations: readonly string[];
+        readonly boundary: string;
+        readonly policyReasons: readonly string[];
+        readonly workingDirectory?: string | undefined;
+      }) => Promise<boolean>)
+    | undefined;
   /**
    * Broker the one-tap "allow localhost fetches for this project" ask through
    * the approval broker. Threaded to registerAllTools so the fetch tool can
@@ -166,7 +192,11 @@ type AgentOrchestratorToolDeps = {
    * tool can answer prompts (host-key confirmations, credential asks) instead
    * of hanging to timeout. Omitted → the PTY path is not engaged.
    */
-  readonly execPromptAnswerHandler?: ((ask: import('../tools/exec/interactive.js').ExecPromptAsk) => Promise<import('../tools/exec/interactive.js').ExecPromptAnswer>) | undefined;
+  readonly execPromptAnswerHandler?:
+    | ((
+        ask: import('../tools/exec/interactive.js').ExecPromptAsk,
+      ) => Promise<import('../tools/exec/interactive.js').ExecPromptAnswer>)
+    | undefined;
 };
 
 /**
@@ -208,12 +238,14 @@ export class AgentOrchestrator {
   private readonly channelRegistry: ChannelPluginRegistry | null;
   private readonly messageBus: import('./message-bus.js').AgentMessageBus;
 
-  constructor(config: {
-    channelRegistry?: ChannelPluginRegistry | null | undefined;
-    messageBus: import('./message-bus.js').AgentMessageBus;
-  } = {
-    messageBus: new AgentMessageBus(),
-  }) {
+  constructor(
+    config: {
+      channelRegistry?: ChannelPluginRegistry | null | undefined;
+      messageBus: import('./message-bus.js').AgentMessageBus;
+    } = {
+      messageBus: new AgentMessageBus(),
+    },
+  ) {
     this.channelRegistry = config.channelRegistry ?? null;
     this.messageBus = config.messageBus;
   }
@@ -270,7 +302,6 @@ export class AgentOrchestrator {
     });
   }
 
-
   private emitAgentStarted(recordId: string): void {
     if (!this.runtimeBus) return;
     emitAgentRunning(this.runtimeBus, this.emitterContext(recordId), { agentId: recordId });
@@ -284,7 +315,6 @@ export class AgentOrchestrator {
     });
   }
 
-
   private emitAgentFailedEvent(recordId: string, error: string, durationMs: number): void {
     if (!this.runtimeBus) return;
     emitAgentFailed(this.runtimeBus, this.emitterContext(recordId), {
@@ -293,7 +323,6 @@ export class AgentOrchestrator {
       durationMs,
     });
   }
-
 
   private emitAgentCompletedEvent(
     recordId: string,
@@ -311,7 +340,6 @@ export class AgentOrchestrator {
       usage,
     });
   }
-
 
   private emitStreamDelta(recordId: string, content: string, accumulated: string): void {
     if (!this.runtimeBus || !content) return;
@@ -385,7 +413,16 @@ export class AgentOrchestrator {
    * shared session's: those are scoped to the default cwd and would
    * otherwise silently index/search the wrong directory.
    */
-  private getFullRegistry(workingDirectory?: string, authority?: ContractInputAuthority, signal?: AbortSignal, runKey?: string, delivered = new Set<string>(), capturedOwnerRead?: import('../tools/shared/read-access.js').ReadAccessFilter): ToolRegistry {
+  private getFullRegistry(
+    workingDirectory?: string,
+    authority?: ContractInputAuthority,
+    signal?: AbortSignal,
+    runKey?: string,
+    delivered = new Set<string>(),
+    capturedOwnerRead?: import('../tools/shared/read-access.js').ReadAccessFilter,
+    dependencyInputs: readonly CapturedExecDependencyInput[] = [],
+    capturedRegistry?: CapturedRegistryContext,
+  ): ToolRegistry {
     const channelVersion = this.channelRegistry?.getVersion() ?? -1;
     if (this.fullRegistryChannelVersion !== channelVersion) {
       // Dropping the registries drops the only references to the indexes built
@@ -397,12 +434,15 @@ export class AgentOrchestrator {
     }
     const defaultCwd = this.toolDeps?.workingDirectory ?? '';
     const cwd = workingDirectory ?? defaultCwd;
-    if (!authority && isCapturedInputPath(cwd)) throw new Error('captured view has no construction-owned input authority');
+    if (!authority && isCapturedInputPath(cwd))
+      throw new Error('captured view has no construction-owned input authority');
     const key = runKey ?? cwd;
     let registry = this.fullRegistries.get(key);
     if (!registry) {
       if (!this.toolDeps?.configManager || !this.toolDeps?.providerRegistry || !this.toolDeps?.toolLLM) {
-        throw new Error('AgentOrchestrator requires configManager, providerRegistry, and toolLLM dependencies before tool registration');
+        throw new Error(
+          'AgentOrchestrator requires configManager, providerRegistry, and toolLLM dependencies before tool registration',
+        );
       }
       registry = new ToolRegistry();
       const isDefaultCwd = cwd === defaultCwd;
@@ -412,10 +452,15 @@ export class AgentOrchestrator {
       // through grep/glob/repo_map. Reads live config each call, so mode changes
       // apply immediately. Absent a permission manager, tools default to allow-all.
       const permissionManager = this.toolDeps.permissionManager;
-      const ownerReadAccess = authority ? capturedOwnerRead : permissionManager
-        ? async (absolutePath: string): Promise<boolean> => (await permissionManager.readAccess(absolutePath)) === 'allow'
-        : undefined;
-      const readAccessFilter = authority ? capturedInputReadFilter(authority, cwd, ownerReadAccess, signal, delivered) : ownerReadAccess;
+      const ownerReadAccess = authority
+        ? capturedOwnerRead
+        : permissionManager
+          ? async (absolutePath: string): Promise<boolean> =>
+              (await permissionManager.readAccess(absolutePath)) === 'allow'
+          : undefined;
+      const readAccessFilter = authority
+        ? capturedInputReadFilter(authority, cwd, ownerReadAccess, signal, delivered)
+        : ownerReadAccess;
       const registered = registerAllTools(registry, {
         ...this.toolDeps,
         contractRunner: this.toolDeps.contractRunner,
@@ -424,7 +469,14 @@ export class AgentOrchestrator {
         fileCache: isDefaultCwd && !authority ? this.toolDeps.fileCache : undefined,
         projectIndex: isDefaultCwd && !authority ? this.toolDeps.projectIndex : undefined,
         readAccessFilter,
-        ...(authority ? { capturedReadAccess: readAccessFilter, diagnosticsProvider: null } : {}),
+        ...(authority
+          ? {
+              capturedReadAccess: readAccessFilter,
+              capturedExec: { authority, root: cwd, readAccessFilter: ownerReadAccess, signal, dependencyInputs },
+              capturedRegistry,
+              diagnosticsProvider: null,
+            }
+          : {}),
       });
       // Keep the index registerAllTools built for us. Only for a non-default
       // cwd: for the default one it hands back the very object the composition
@@ -433,7 +485,8 @@ export class AgentOrchestrator {
       registerChannelAgentTools(registry, this.toolDeps?.channelRegistry ?? this.channelRegistry);
       if (authority) {
         const guarded = new ToolRegistry();
-        for (const tool of registry.list()) guarded.register(capturedInputTool(tool, authority, cwd, ownerReadAccess, signal));
+        for (const tool of registry.list())
+          guarded.register(capturedInputTool(tool, authority, cwd, ownerReadAccess, signal));
         registry = guarded;
       }
       this.fullRegistries.set(key, registry);
@@ -489,11 +542,7 @@ export class AgentOrchestrator {
         requestedModelId: scopedModelId,
       };
     } catch (err) {
-      throw new Error(
-        `Cannot resolve provider for model '${scopedModelId}': ${
-          summarizeError(err)
-        }`,
-      );
+      throw new Error(`Cannot resolve provider for model '${scopedModelId}': ${summarizeError(err)}`);
     }
   }
 
@@ -557,39 +606,29 @@ export class AgentOrchestrator {
     if (record.provider && providerFromRegistryKey && providerFromRegistryKey !== record.provider) {
       throw new Error(`Agent model override '${record.model}' conflicts with provider '${record.provider}'.`);
     }
-    const fallbackModels = (
-      record.routing?.fallbackModels
-      ?? record.fallbackModels
-      ?? []
-    )
+    const fallbackModels = (record.routing?.fallbackModels ?? record.fallbackModels ?? [])
       .filter((model): model is string => typeof model === 'string' && model.trim().length > 0)
       .map((model) => resolveModelReference(model.trim(), modelRegistry));
-    const providerSelection = record.routing?.providerSelection ?? (
-      record.provider === 'synthetic'
-        ? 'synthetic'
-        : record.provider
-          ? 'concrete'
-          : 'inherit-current'
-    );
+    const providerSelection =
+      record.routing?.providerSelection ??
+      (record.provider === 'synthetic' ? 'synthetic' : record.provider ? 'concrete' : 'inherit-current');
     const providerId = record.provider;
-    const effectiveProviderId = providerSelection === 'synthetic'
-      ? undefined
-      : providerSelection === 'concrete'
-        ? (providerId ?? providerFromRegistryKey ?? currentModel.provider)
-        : (providerFromRegistryKey ?? currentModel.provider);
-    const providerOverride = effectiveProviderId !== 'synthetic'
-      ? effectiveProviderId
-      : undefined;
-    const providerFailurePolicy = record.routing?.providerFailurePolicy ?? (
-      fallbackModels.length > 0
-        ? 'ordered-fallbacks'
-        : 'fail'
-    );
+    const effectiveProviderId =
+      providerSelection === 'synthetic'
+        ? undefined
+        : providerSelection === 'concrete'
+          ? (providerId ?? providerFromRegistryKey ?? currentModel.provider)
+          : (providerFromRegistryKey ?? currentModel.provider);
+    const providerOverride = effectiveProviderId !== 'synthetic' ? effectiveProviderId : undefined;
+    const providerFailurePolicy =
+      record.routing?.providerFailurePolicy ?? (fallbackModels.length > 0 ? 'ordered-fallbacks' : 'fail');
     if (providerFailurePolicy === 'ordered-fallbacks' && fallbackModels.length === 0) {
       throw new Error('Agent ordered fallback routing requires at least one provider-qualified fallback model.');
     }
     if (providerFailurePolicy === 'fail' && fallbackModels.length > 0) {
-      throw new Error('Agent fail routing cannot include fallback models; use ordered-fallbacks to enable model failover.');
+      throw new Error(
+        'Agent fail routing cannot include fallback models; use ordered-fallbacks to enable model failover.',
+      );
     }
     return {
       requestedModelId,
@@ -612,9 +651,11 @@ export class AgentOrchestrator {
   ): string {
     const registry = providerRegistry.listModels();
     const def = providerOverride
-      ? registry.find((model) =>
-          model.provider === providerOverride &&
-          (model.registryKey === requestedModelId || model.id === requestedModelId))
+      ? registry.find(
+          (model) =>
+            model.provider === providerOverride &&
+            (model.registryKey === requestedModelId || model.id === requestedModelId),
+        )
       : registry.find((model) => model.registryKey === requestedModelId);
     if (def) return def.id;
     throw new Error(`Model '${requestedModelId}' is not in registry.`);
@@ -656,25 +697,66 @@ export class AgentOrchestrator {
    * Absent ⇒ `this.toolDeps.workingDirectory`, byte-identical to every run
    * context built before this parameter existed.
    */
-  private createRunContext(workingDirectory?: string, authority?: ContractInputAuthority, signal?: AbortSignal, runKey?: string): AgentOrchestratorRunContext {
+  private async createRunContext(
+    workingDirectory?: string,
+    authority?: ContractInputAuthority,
+    signal?: AbortSignal,
+    runKey?: string,
+    needsCapturedExec = false,
+    needsCapturedRegistry = false,
+  ): Promise<AgentOrchestratorRunContext> {
     const cwd = workingDirectory ?? this.toolDeps?.workingDirectory ?? '';
     const delivered = new Set<string>();
     const originalPermissionManager = this.toolDeps?.permissionManager;
-    if (authority && !originalPermissionManager) throw new Error('captured agent requires original-owner read authorization');
-    const ownerReadAccess = originalPermissionManager ? async (path: string): Promise<boolean> => await originalPermissionManager.readAccess(path) === 'allow' : undefined;
+    if (authority && !originalPermissionManager)
+      throw new Error('captured agent requires original-owner read authorization');
+    const ownerReadAccess = originalPermissionManager
+      ? async (path: string): Promise<boolean> => (await originalPermissionManager.readAccess(path)) === 'allow'
+      : undefined;
     const configManager = this.toolDeps?.configManager;
+    const homeDirectory = configManager?.getHomeDirectory() ?? undefined;
+    const dependency =
+      authority && needsCapturedExec
+        ? await admitCapturedExecDependency(
+            { authority, root: cwd, readAccessFilter: ownerReadAccess, signal },
+            {
+              sourceRoot: join(contractInputAuthoritySourceRoot(authority), 'node_modules'),
+              targetRelativePath: 'node_modules',
+            },
+          )
+        : undefined;
+    const dependencyInputs = Object.freeze(dependency ? [dependency] : []);
+    if (authority) await assertContractInputAuthority(authority, cwd, signal);
+    const capturedRegistry =
+      authority && needsCapturedRegistry
+        ? await admitCapturedRegistryContext(
+            { authority, root: cwd, readAccessFilter: ownerReadAccess, signal },
+            { homeDirectory },
+          )
+        : undefined;
+    if (authority) await assertContractInputAuthority(authority, cwd, signal);
     // Defensive getter: a config snapshot predating the atRest section must fall
     // back to the honest default, never throw out of an agent run.
     const atRestGet = configManager
-      ? (key: string): unknown => { try { return configManager.get(key as ConfigKey); } catch { return undefined; } }
+      ? (key: string): unknown => {
+          try {
+            return configManager.get(key as ConfigKey);
+          } catch {
+            return undefined;
+          }
+        }
       : undefined;
     return {
       workingDirectory: cwd,
-      ...(authority ? { beforeProviderRequest: async () => {
-        await assertContractInputAuthority(authority, cwd, signal);
-        await assertContractInputReadAccess(authority, ownerReadAccess, signal);
-        for (const path of delivered) await authorizeContractInputPath(authority, path, ownerReadAccess, signal);
-      } } : {}),
+      ...(authority
+        ? {
+            beforeProviderRequest: async () => {
+              await assertContractInputAuthority(authority, cwd, signal);
+              await assertContractInputReadAccess(authority, ownerReadAccess, signal);
+              for (const path of delivered) await authorizeContractInputPath(authority, path, ownerReadAccess, signal);
+            },
+          }
+        : {}),
       surfaceRoot: this.toolDeps?.surfaceRoot ?? '',
       atRestPolicy: resolveAtRestPolicy(atRestGet),
       ...(configManager ? { configManager } : {}),
@@ -694,28 +776,38 @@ export class AgentOrchestrator {
       releaseConversationSource: this.conversationSink
         ? (agentId) => this.conversationSink!.release(agentId)
         : undefined,
-      getCancellationSignal: this.cancellationSource
-        ? (agentId) => this.cancellationSource!.get(agentId)
-        : undefined,
+      getCancellationSignal: this.cancellationSource ? (agentId) => this.cancellationSource!.get(agentId) : undefined,
       processManager: this.toolDeps?.processManager,
       messageBus: this.messageBus,
       knowledgeService: this.toolDeps?.knowledgeService,
       memoryRegistry: this.toolDeps?.memoryRegistry,
       codeIndex: authority ? undefined : this.toolDeps?.codeIndex,
       isCodeInjectionSettingEnabled: this.toolDeps?.isCodeInjectionSettingEnabled,
-      onToolExecuted: (this.toolDeps?.codeIndexReindexScheduler || this.toolDeps?.toolExecutionObserver)
-        ? (toolName, args, success) => {
-          if (!authority) this.toolDeps?.codeIndexReindexScheduler?.onToolExecuted(toolName, args, success);
-          this.toolDeps?.toolExecutionObserver?.(toolName, args, success);
-        }
-        : undefined,
+      onToolExecuted:
+        this.toolDeps?.codeIndexReindexScheduler || this.toolDeps?.toolExecutionObserver
+          ? (toolName, args, success) => {
+              if (!authority) this.toolDeps?.codeIndexReindexScheduler?.onToolExecuted(toolName, args, success);
+              this.toolDeps?.toolExecutionObserver?.(toolName, args, success);
+            }
+          : undefined,
       contractHooks: this.toolDeps?.contractHooks,
       archetypeLoader: this.toolDeps?.archetypeLoader,
       providerOptimizer: this.toolDeps?.providerOptimizer,
       providerRegistry: this.toolDeps!.providerRegistry!,
       ...(this.toolDeps?.permissionManager ? { permissionManager: this.toolDeps.permissionManager } : {}),
-      getFullRegistry: () => this.getFullRegistry(cwd, authority, signal, runKey, delivered, ownerReadAccess),
-      buildScopedRegistry: (allowedNames, fullRegistry, captureAuthority) => this.buildScopedRegistry(allowedNames, fullRegistry, captureAuthority),
+      getFullRegistry: () =>
+        this.getFullRegistry(
+          cwd,
+          authority,
+          signal,
+          runKey,
+          delivered,
+          ownerReadAccess,
+          dependencyInputs,
+          capturedRegistry,
+        ),
+      buildScopedRegistry: (allowedNames, fullRegistry, captureAuthority) =>
+        this.buildScopedRegistry(allowedNames, fullRegistry, captureAuthority),
       resolveProviderForRecord: (providerRegistry, record, currentModel) =>
         this.resolveProviderForRecord(providerRegistry, record, currentModel),
       resolveFallbackModelRoutes: (providerRegistry, record, currentModel, primaryRequestedModelId) =>
@@ -732,12 +824,23 @@ export class AgentOrchestrator {
   async runAgent(record: AgentRecord): Promise<void> {
     const authority = getContractInputAuthority(record);
     const cwd = record.workingDirectory ?? this.toolDeps?.workingDirectory ?? '';
-    if (!authority && isCapturedInputPath(cwd)) throw new Error('captured view has no construction-owned input authority');
+    if (!authority && isCapturedInputPath(cwd))
+      throw new Error('captured view has no construction-owned input authority');
     const signal = this.cancellationSource?.get(record.id);
     const runKey = authority ? `${cwd}:captured-run:${randomUUID()}` : undefined;
     if (authority) await assertContractInputAuthority(authority, cwd, signal);
     try {
-      await runAgentTask(this.createRunContext(cwd, authority, signal, runKey), record);
+      await runAgentTask(
+        await this.createRunContext(
+          cwd,
+          authority,
+          signal,
+          runKey,
+          record.tools.includes('exec'),
+          record.tools.includes('registry'),
+        ),
+        record,
+      );
     } finally {
       if (runKey) {
         this.fullRegistries.delete(runKey);
