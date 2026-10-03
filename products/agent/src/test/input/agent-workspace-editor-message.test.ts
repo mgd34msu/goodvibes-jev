@@ -195,6 +195,21 @@ describe('workspace editor message reading', () => {
     expect(JSON.stringify(fake.requests)).not.toContain('abc-opaque-synthetic-key'); ws.close();
   });
 
+  test('a padded one-character submitted secret is protected without retroactively tainting help', async () => {
+    const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port);
+    const { ws } = workspace();
+    ws.localEditor = createAgentWorkspaceProviderCommandEditor('provider-add'); await flush();
+    ws.moveEditorField(2); ws.appendEditorText(' a '); await flush();
+    expect(ws.editorMessageState.status).toBe('read'); expect(fake.requests).toHaveLength(1);
+    ws.localEditor = { ...ws.localEditor!, message: 'Rejected a' }; await flush();
+    expect(ws.editorMessageState.status).toBe('protected'); expect(fake.requests).toHaveLength(1);
+    ws.editorBackspace(); ws.appendEditorText('X'); await flush();
+    expect(ws.editorMessageState.status).toBe('protected'); expect(fake.requests).toHaveLength(1);
+    ws.localEditor = editor('OK'); await flush(); expect(ws.editorMessageState.status).toBe('read');
+    ws.localEditor = editor('Name is required before saving.'); await flush();
+    expect(ws.editorMessageState.status).toBe('read'); expect(fake.requests).toHaveLength(3); ws.close();
+  });
+
   test('a genuinely new safe message ends the old origin rather than poisoning later forms', async () => {
     const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port);
     const { ws } = workspace();

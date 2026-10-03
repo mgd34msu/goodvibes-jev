@@ -51,10 +51,18 @@ export class WorkspaceEditorMessage {
     // alone does not: a reopened/reworded current error must remain protected.
     const spans = (this.origin?.spans ?? []).filter((span) => this.contains(editor.message, span));
     for (const field of editor.fields) {
-      if (!field.redact || !field.value || !editor.message.includes(field.value)) continue;
-      const digest = this.fingerprint(field.value);
-      if (!spans.some((span) => span.length === field.value.length && span.digest === digest)) {
-        spans.push(Object.freeze({ length: field.value.length, digest }));
+      if (!field.redact) continue;
+      const submittedValue = field.value.trim();
+      if (!submittedValue) continue;
+      // Workspace submission reads trim surrounding whitespace. Protect both
+      // the entered bytes and that submitted representation when an error
+      // echoes them; an empty trimmed field must never match every message.
+      for (const value of new Set([field.value, submittedValue])) {
+        if (!value || !editor.message.includes(value)) continue;
+        const digest = this.fingerprint(value);
+        if (!spans.some((span) => span.length === value.length && span.digest === digest)) {
+          spans.push(Object.freeze({ length: value.length, digest }));
+        }
       }
     }
     const origin = Object.freeze({ messageHash, spans: Object.freeze(spans) });
