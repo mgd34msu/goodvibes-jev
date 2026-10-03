@@ -4,7 +4,7 @@
   "forwardRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
   "currentSourceCheckpoint": "7f35938ad4dfaf6d8a1d5f4dc080d525274584fc",
   "testedSourceCheckpoint": "36db0c8f6052caf3446540f33630a626359e5b88",
-  "namespaceRule": "@pellux/goodvibes-<package> becomes @goodvibes-jev/engine/<package>; no other current/forward content difference in these40 candidates",
+  "namespaceRule": "Original rename-review checkpoints: @pellux/goodvibes-<package> becomes @goodvibes-jev/engine/<package>; no other current/forward content difference in those40 candidates at that review. Subsequent product changes are recorded per row and do not inherit that byte-equality claim.",
   "sourceReviews": [
     {
       "source": "src/panels/builtin-modals.ts",
@@ -12,17 +12,16 @@
       "status": "R088",
       "upstreamTarget": "src/views/builtin-modals.ts",
       "currentTargetExists": true,
-      "comparison": "Current equals exact forward-target source after only documented package namespace adaptation",
+      "comparison": "Original namespace-adapted PORT remains accounted for. Current bytes additionally register the native read-only work modal and export the existing pairing builder for direct regression testing; exact namespace-only equality no longer applies.",
       "inventoryPurpose": "Registers every config-modal surface (services, subscription, remote, providers, settings sync, local auth, sandbox, marketplace, plugins, skills, hooks, security, policy, knowledge, memory, work plan, keybindings, pairing, devices, planning) and the old panel ids that redirect to them, and builds the pairing connection info lazily. Checks: L99, L118, L129 presence of the plugin manager, hook dependencies and knowledge API decides the real surface or the honest unwired surface; choice: code (dependency presence). L200 `relay.enabled === true` decides whether the relay offer is included; choice: code (owner setting). L194-223 a thrown error returns null (the unavailable modal); choice: code. The work-plan and planning surfaces it composes are views of the contract tree in their own rows.",
       "forwardSourceBlob": "4dfc2b5a62db807bbf021a7dfafd8cabe52c79b5",
-      "currentBlob": "ef7e0b8e8f1e5972b512e2ec8ac665848cb1078d",
+      "currentBlob": "cd3908eb65cedecb6a0e0b26c69f73c37ae708cb",
       "reviewStatus": "Proven forward-target PORT after per-row purpose/diff/current-behavior review; mapping applied in this batch",
       "pinnedBlob": "05f3c8606f6cb41a3e4cf6f598a3dcb9b65a48a2",
       "pinnedSha256": "ef0d72c53964869b7ed58eefb342464974c6852ef854f23e61e0f7d5537bf90b",
       "forwardSha256": "159a522ed9ff47317c0928a67f3d1e94629a241c7c9771f73444398ee4d1fc93",
-      "currentSha256": "b6a804697416a85cf03f03646bbc34d8c69e51eb2c20d2b6f3e6eb02e4afdd54",
-      "namespaceNormalizedEqual": true,
-      "diffLines": 82,
+      "currentSha256": "d5bc9a7cd934ab5814742c1a642badaa4b1be4d4284b6e3e97aaf1e7306285ab",
+      "namespaceNormalizedEqual": false,
       "semanticReview": "Registry/redirect ownership moves from PanelManager to ModalSurfaceRegistry. Every prior redirect remains; local-auth now has a modal redirect and receives the masked-entry callback. Dependency-presence and pairing fallback branches remain. Registration proof does not claim held planning transactions work.",
       "ruling": "proven-forward-port",
       "mappingApplied": true,
@@ -45,7 +44,23 @@
           "receipt": "/workspace/shared/gv-tui-host-settings-proof/full-36db0c8/suite-logs/src__test__views__config-modal-surfaces-authbox.test.ts.json",
           "sourceCheckpoint": "36db0c8"
         }
-      ]
+      ],
+      "originalRenameReview": {
+        "comparison": "Current equals exact forward-target source after only documented package namespace adaptation",
+        "currentBlob": "ef7e0b8e8f1e5972b512e2ec8ac665848cb1078d",
+        "currentSha256": "b6a804697416a85cf03f03646bbc34d8c69e51eb2c20d2b6f3e6eb02e4afdd54",
+        "namespaceNormalizedEqual": true,
+        "diffLines": 82,
+        "currentSourceCheckpoint": "7f35938ad4dfaf6d8a1d5f4dc080d525274584fc",
+        "testedSourceCheckpoint": "36db0c8f6052caf3446540f33630a626359e5b88"
+      },
+      "subsequentProductChange": {
+        "sourceCheckpoint": "04da116065b567f9f8bf2b9ad93ca03d78c0bef5",
+        "scope": "THE105 native read-only modal registration; pairing builder preserved after removal of misplaced duplicate registration. No new mapping, DROP, retirement or completion disposition.",
+        "runtimeSourceTarget": "products/tui/src/views/builtin-modals.ts",
+        "validation": "87 affected tests passed with 530 assertions; actual pairing builder-to-renderer test verified red before correction and green afterward. Architecture and scoped syntax/unbound-name checks pass. Full production/test typechecking remains unverified.",
+        "preserved": "Pinned/forward source identities, original rename-review bytes and historical test receipts, all mapping dispositions and reconciliation counts remain unchanged."
+      }
     },
     {
       "source": "src/panels/confirm-state.ts",

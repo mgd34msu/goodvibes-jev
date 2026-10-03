@@ -7242,9 +7242,14 @@
         "pinnedSourceBlob": "05f3c8606f6cb41a3e4cf6f598a3dcb9b65a48a2",
         "upstreamRenameRevision": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
         "forwardSourceBlob": "4dfc2b5a62db807bbf021a7dfafd8cabe52c79b5",
-        "currentBlob": "ef7e0b8e8f1e5972b512e2ec8ac665848cb1078d",
+        "currentBlob": "cd3908eb65cedecb6a0e0b26c69f73c37ae708cb",
         "review": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
-        "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+        "verification": "Original forward-target PORT review is preserved in originalRenameReview. Current bytes add native read-only modal registration and export the existing pairing builder for direct regression coverage; they are no longer namespace-only adaptation. Pairing/config/native regressions pass; no full-product parity or completion claim.",
+        "originalRenameReview": {
+          "currentBlob": "ef7e0b8e8f1e5972b512e2ec8ac665848cb1078d",
+          "verification": "Per-row inventory purpose reconciled against authoritative forward target, exact namespace-adapted bytes and passing current behavior tests; no full-product parity claim."
+        },
+        "currentSourceCheckpoint": "04da116065b567f9f8bf2b9ad93ca03d78c0bef5"
       }
     },
     {
