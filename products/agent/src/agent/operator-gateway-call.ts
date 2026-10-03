@@ -1,17 +1,11 @@
 /**
- * A generic connected-host operator gateway call helper for CLI subcommands
- * that reach ci.*, principals.*, and channels.profiles.* over the daemon's
- * operator gateway. This mirrors the exact connection resolution and error
- * classification pattern established in routine-schedule-promotion.ts
- * (resolveAgentConnectedHostConnection + classifyScheduleError) so every
- * connected-host CLI command reports failures the same way: auth_required
- * when no token is on disk, connected_host_unavailable when the fetch itself
- * fails, connected_host_route_unavailable / connected_host_incompatible when
- * the method route answers 404, and connected_host_error otherwise.
+ * Typed connected-host operator gateway calls for CLI and Agent features.
+ * Failure reporting shares the engine contract used by schedule commands;
+ * classification never retries an operator mutation.
  */
 import { createBrowserGoodVibesSdk } from '@goodvibes-jev/engine/sdk/browser';
 import type { OperatorMethodId, OperatorMethodInput, OperatorMethodOutput } from '@goodvibes-jev/engine/sdk/contracts';
-import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { classifyConnectedHostError } from './connected-host-failure.ts';
 import type { AgentConnectedHostConnection } from './routine-schedule-promotion.ts';
 
 export type OperatorGatewayCallFailureKind =
@@ -38,59 +32,6 @@ export interface OperatorGatewayCallFailure {
 }
 
 export type OperatorGatewayCallResult<T> = OperatorGatewayCallSuccess<T> | OperatorGatewayCallFailure;
-
-async function fetchConnectedHostStatus(connection: AgentConnectedHostConnection): Promise<{
-  readonly ok: boolean;
-  readonly status: number;
-  readonly body: unknown;
-}> {
-  try {
-    const response = await fetch(`${connection.baseUrl}/status`, {
-      headers: connection.token ? { authorization: `Bearer ${connection.token}` } : undefined,
-    });
-    const text = await response.text();
-    let body: unknown = text;
-    try {
-      body = text.trim() ? JSON.parse(text) as unknown : {};
-    } catch {
-      body = text;
-    }
-    return { ok: response.ok, status: response.status, body };
-  } catch (error) {
-    return { ok: false, status: 0, body: summarizeError(error) };
-  }
-}
-
-async function classifyOperatorGatewayError(
-  error: unknown,
-  connection: AgentConnectedHostConnection,
-  methodId: OperatorMethodId,
-  route: string,
-): Promise<OperatorGatewayCallFailure> {
-  const message = summarizeError(error);
-  const lower = message.toLowerCase();
-  if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('auth')) {
-    return { ok: false, kind: 'auth_required', error: message, methodId, route, baseUrl: connection.baseUrl };
-  }
-  if (lower.includes('404') || lower.includes('not found')) {
-    const connectedHost = await fetchConnectedHostStatus(connection);
-    if (connectedHost.ok) {
-      return {
-        ok: false,
-        kind: 'connected_host_incompatible',
-        error: `Connected GoodVibes host compatibility does not satisfy Agent requirements; ${methodId} is unavailable.`,
-        methodId,
-        route,
-        baseUrl: connection.baseUrl,
-      };
-    }
-    return { ok: false, kind: 'connected_host_route_unavailable', error: message, methodId, route, baseUrl: connection.baseUrl };
-  }
-  if (lower.includes('fetch') || lower.includes('connect') || lower.includes('econnrefused')) {
-    return { ok: false, kind: 'connected_host_unavailable', error: message, methodId, route, baseUrl: connection.baseUrl };
-  }
-  return { ok: false, kind: 'connected_host_error', error: message, methodId, route, baseUrl: connection.baseUrl };
-}
 
 /**
  * Invoke one operator gateway method against the connected host, returning a
@@ -151,7 +92,12 @@ export async function invokeOperatorGatewayMethod<TMethodId extends OperatorMeth
     const data = await invokeTyped(methodId, payload);
     return { ok: true, data, methodId, route };
   } catch (error) {
-    return classifyOperatorGatewayError(error, connection, methodId, route);
+    const failure = await classifyConnectedHostError(error, connection, {
+      route,
+      incompatibleMessage: `Connected GoodVibes host compatibility does not satisfy Agent requirements; ${methodId} is unavailable.`,
+      site: 'agent.operator-gateway.failure',
+    });
+    return { ...failure, methodId };
   }
 }
 
