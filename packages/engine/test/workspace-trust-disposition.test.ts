@@ -1,27 +1,48 @@
 import { afterEach, expect, spyOn, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { ApprovalBroker, type SharedApprovalRecord } from '../sdk/src/platform/control-plane/approval-broker.js';
 import { WorkspaceTrustManager } from '../sdk/src/platform/runtime/workspace-trust.js';
 import { createWorkspaceTrustDecisionAsk, trustGatedApprovalRaiser } from '../sdk/src/platform/runtime/workspace-trust-approval.js';
 import type { PermissionPromptRequest } from '../sdk/src/platform/permissions/prompt.js';
+import { PersistentStore } from '../sdk/src/platform/state/persistent-store.js';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const WRITE: PermissionPromptRequest = { callId: 'fixture-write', tool: 'edit', args: { path: 'fixture.txt' }, category: 'write', analysis: { classification: 'file-write', riskLevel: 'medium', summary: 'Fixture write', reasons: ['fixture'] } };
-function fixture(timeoutMs = 5000) {
+function fixture(timeoutMs = 5000, delayPendingPersistUntilExpired = false) {
   const root = mkdtempSync(join(tmpdir(), 'workspace-trust-disposition-')); roots.push(root);
-  const broker = new ApprovalBroker({ storePath: join(root, 'approvals.json') });
+  const store = new PersistentStore<{ approvals: readonly SharedApprovalRecord[] }>(join(root, 'approvals.json'));
+  const broker = new ApprovalBroker({ store });
+  if (delayPendingPersistUntilExpired) {
+    const persist = store.persist.bind(store);
+    store.persist = async (snapshot) => {
+      const pending = snapshot.approvals.find((record) => record.status === 'pending');
+      if (pending) {
+        // Force expiry during the first write, before a pending event can be
+        // published. Wait for the actual broker transition, not a guessed sleep.
+        const deadline = Date.now() + 5000;
+        while (broker.getApproval(pending.id)?.status !== 'expired') {
+          if (Date.now() >= deadline) throw new Error('Fixture approval did not expire during persistence');
+          await delay(1);
+        }
+      }
+      await persist(snapshot);
+    };
+  }
   const paths = { projectGoodVibesRoot: join(root, '.goodvibes'), resolveProjectPath: (...parts: string[]) => join(root, '.goodvibes', ...parts) };
   const manager = new WorkspaceTrustManager({ shellPaths: paths, surfaceRoot: 'tui' });
+  const publishedStatuses: SharedApprovalRecord['status'][] = [];
+  broker.subscribe((record) => { publishedStatuses.push(record.status); });
   let report!: (record: SharedApprovalRecord) => void;
   const raised = new Promise<SharedApprovalRecord>((resolve) => { report = resolve; });
   const unsubscribe = broker.subscribe((record) => { if (record.status === 'pending') { unsubscribe(); report(record); } });
   const ask = createWorkspaceTrustDecisionAsk({ broker, workingDirectory: root, timeoutMs });
   const gate = trustGatedApprovalRaiser(manager, async () => ({ approved: true }), ask);
   const result = gate({ request: WRITE }).then((decision) => ({ decision, error: undefined }), (error: unknown) => ({ decision: undefined, error }));
-  return { root, broker, manager, raised, result, trustPath: paths.resolveProjectPath('tui', 'trust.json') };
+  return { root, broker, manager, raised, result, publishedStatuses, trustPath: paths.resolveProjectPath('tui', 'trust.json') };
 }
 
 for (const [approved, disposition, allowed] of [[true, 'approved', true], [false, 'denied', false]] as const) {
@@ -38,11 +59,11 @@ for (const [approved, disposition, allowed] of [[true, 'approved', true], [false
   });
 }
 
-for (const kind of ['legacy-approve', 'legacy-deny', 'amended', 'cancelled', 'expired'] as const) {
+for (const kind of ['legacy-approve', 'legacy-deny', 'amended', 'cancelled'] as const) {
   test(`${kind} refuses the current run and creates no persistent trust choice`, async () => {
-    const f = fixture(kind === 'expired' ? 20 : 5000); const pending = await f.raised;
+    const f = fixture(); const pending = await f.raised;
     if (kind === 'cancelled') await f.broker.cancelApproval(pending.id, 'fixture-owner');
-    else if (kind !== 'expired') await f.broker.resolveApproval(pending.id, {
+    else await f.broker.resolveApproval(pending.id, {
       approved: kind === 'legacy-approve', ...(kind === 'amended' ? { disposition: 'amended' as const } : {}),
       actor: 'fixture-owner', reason: 'I explicitly approve this workspace',
     });
@@ -51,6 +72,25 @@ for (const kind of ['legacy-approve', 'legacy-deny', 'amended', 'cancelled', 'ex
     expect(f.manager.isDecided()).toBe(false);
     expect(existsSync(f.trustPath)).toBe(false);
   });
+}
+
+for (const delayed of [false, true]) {
+  test(`expired refuses the current run without requiring a pending event (delayed persistence: ${delayed})`, async () => {
+    const f = fixture(20, delayed);
+    // Expiry can replace the record while its initial write is pending. The
+    // broker correctly suppresses that obsolete pending event, so waiting for
+    // f.raised here would hang even though the trust decision has settled.
+    const result = await f.result;
+    expect(result.error).toMatchObject({ code: 'WORKSPACE_TRUST_DECISION_UNSETTLED' });
+    expect(result.decision).toBeUndefined();
+    expect(f.manager.isDecided()).toBe(false);
+    expect(existsSync(f.trustPath)).toBe(false);
+    const snapshot = JSON.parse(readFileSync(join(f.root, 'approvals.json'), 'utf8')) as { approvals: SharedApprovalRecord[] };
+    expect(snapshot.approvals).toHaveLength(1);
+    expect(snapshot.approvals[0]?.status).toBe('expired');
+    expect(snapshot.approvals[0]?.decision).toMatchObject({ approved: false, remember: false, disposition: 'expired' });
+    if (delayed) expect(f.publishedStatuses).toEqual(['expired']);
+  }, 10000);
 }
 
 test('a remembered denial of another ask cannot permanently restrict this workspace', async () => {

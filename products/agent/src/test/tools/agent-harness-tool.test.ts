@@ -10582,6 +10582,7 @@ describe('agent_harness tool', () => {
         'settings',
         'tasks',
         'voice',
+        'work',
       ]));
       for (const hidden of [
         'bridge',
@@ -12155,6 +12156,41 @@ describe('agent_harness tool', () => {
       expect(executed.success).toBe(true);
       expect(executed.output).toContain('Command /brief completed.');
       expect(executed.output).toContain('briefing output');
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  test('describes native work navigation without bypassing slash command confirmation', async () => {
+    const fixture = makeFixture({ builtinCommands: true });
+    try {
+      const inspected = await fixture.tool.execute({ mode: 'command', command: '/work daemon-project' });
+      expect(inspected.success).toBe(true);
+      if (!inspected.success) throw new Error(inspected.error);
+      const payload = JSON.parse(inspected.output!) as {
+        readonly policy: { readonly effect: string; readonly preferredModelTool: string; readonly confirmation: string; readonly boundary: string };
+        readonly lookup: { readonly parsedArgs: readonly string[] };
+      };
+      expect(payload.policy.effect).toBe('ui-navigation');
+      expect(payload.policy.preferredModelTool).toBe('agent_harness mode:"run_command" commandName:"work"');
+      expect(payload.policy.confirmation).toContain('confirm:true and explicitUserRequest');
+      expect(payload.policy.boundary).toContain('native read-only work ledger');
+      expect(payload.policy.boundary).toContain('existing read permissions');
+      expect(payload.policy.boundary).toContain('access revocation invalidate the view');
+      expect(payload.lookup.parsedArgs).toEqual(['daemon-project']);
+      expect(fixture.openedSurfaces).toEqual([]);
+
+      for (const approval of [{ explicitUserRequest: 'Open the native work ledger.' }, { confirm: true }]) {
+        const refused = await fixture.tool.execute({ mode: 'run_command', command: '/work', ...approval });
+        expect(refused.success).toBe(false);
+        expect(fixture.openedSurfaces).toEqual([]);
+      }
+      const opened = await fixture.tool.execute({
+        mode: 'run_command', command: '/work', confirm: true,
+        explicitUserRequest: 'Open the native work ledger.',
+      });
+      expect(opened.success).toBe(true);
+      expect(fixture.openedSurfaces).toEqual([{ id: 'agent-workspace', detail: 'work' }]);
     } finally {
       fixture.cleanup();
     }

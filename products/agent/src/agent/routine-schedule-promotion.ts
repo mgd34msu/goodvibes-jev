@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { classifyConnectedHostError, type ConnectedHostFailure } from './connected-host-failure.ts';
 import { createBrowserGoodVibesSdk } from '@goodvibes-jev/engine/sdk/browser';
 import type { OperatorMethodInput, OperatorMethodOutput } from '@goodvibes-jev/engine/sdk/contracts';
-import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { connectedHostBaseUrl } from '../config/connected-host-dial.ts';
 import { formatAgentRecordReviewState } from './record-labels.ts';
 import type { AgentRoutineRecord } from './routine-registry.ts';
@@ -193,11 +193,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function readString(record: Record<string, unknown>, key: string): string | null {
-  const value = record[key];
-  return typeof value === 'string' ? value : null;
-}
-
 export function resolveAgentConnectedHostConnection(
   configManager: AgentConnectedHostConfigReader,
   homeDirectory: string,
@@ -311,73 +306,15 @@ export function buildRoutineSchedulePreview(
   };
 }
 
-/** Why a connected-host schedule call failed, in the shape every schedule command reports. */
-export interface ConnectedHostScheduleFailure<Route extends string> {
-  readonly ok: false;
-  readonly kind:
-    | 'auth_required'
-    | 'connected_host_unavailable'
-    | 'connected_host_incompatible'
-    | 'connected_host_route_unavailable'
-    | 'connected_host_error';
-  readonly error: string;
-  readonly route: Route;
-  readonly baseUrl?: string;
-}
+/** Schedule-facing compatibility export; gateway callers share the same classifier. */
+export type { ConnectedHostFailure as ConnectedHostScheduleFailure } from './connected-host-failure.ts';
 
-async function fetchConnectedHostStatus(connection: AgentConnectedHostConnection): Promise<{
-  readonly ok: boolean;
-  readonly status: number;
-  readonly body: unknown;
-}> {
-  try {
-    const response = await fetch(`${connection.baseUrl}/status`, {
-      headers: connection.token ? { authorization: `Bearer ${connection.token}` } : undefined,
-    });
-    const text = await response.text();
-    let body: unknown = text;
-    try {
-      body = text.trim() ? JSON.parse(text) as unknown : {};
-    } catch {
-      body = text;
-    }
-    return { ok: response.ok, status: response.status, body };
-  } catch (error) {
-    return { ok: false, status: 0, body: summarizeError(error) };
-  }
-}
-
-/**
- * Turn a thrown connected-host error into the failure a schedule command
- * reports, for every schedule command.
- *
- * A 404 is the one case that cannot be classified from the error alone: the
- * host may be absent, or present but too old to expose the method. That is
- * what the extra `/status` probe distinguishes, and why `incompatibleMessage`
- * is a parameter (it names the specific method the caller wanted).
- */
-export async function classifyConnectedHostScheduleError<Route extends string>(
+export function classifyConnectedHostScheduleError<Route extends string>(
   error: unknown,
   connection: AgentConnectedHostConnection,
   options: { readonly route: Route; readonly incompatibleMessage: string },
-): Promise<ConnectedHostScheduleFailure<Route>> {
-  const message = summarizeError(error);
-  const lower = message.toLowerCase();
-  const base = { ok: false, error: message, route: options.route, baseUrl: connection.baseUrl } as const;
-  if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('auth')) {
-    return { ...base, kind: 'auth_required' };
-  }
-  if (lower.includes('404') || lower.includes('not found')) {
-    const connectedHost = await fetchConnectedHostStatus(connection);
-    if (connectedHost.ok) {
-      return { ...base, kind: 'connected_host_incompatible', error: options.incompatibleMessage };
-    }
-    return { ...base, kind: 'connected_host_route_unavailable' };
-  }
-  if (lower.includes('fetch') || lower.includes('connect') || lower.includes('econnrefused')) {
-    return { ...base, kind: 'connected_host_unavailable' };
-  }
-  return { ...base, kind: 'connected_host_error' };
+): Promise<ConnectedHostFailure<Route>> {
+  return classifyConnectedHostError(error, connection, { ...options, site: 'agent.routine-schedule.failure' });
 }
 
 const SCHEDULE_CREATE_INCOMPATIBLE_MESSAGE =

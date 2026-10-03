@@ -17466,7 +17466,13 @@
       "source": "src/agent/routine-schedule-promotion.ts",
       "disposition": "HOIST",
       "retainedPath": "products/agent/src/agent/routine-schedule-promotion.ts",
-      "status": "public-engine-successor-accounting-pending"
+      "status": "public-engine-successor-accounting-pending",
+      "completedAspect": "Schedule failure classification uses the public @goodvibes-jev/engine/errors status, code and category contracts, then readFailure for unresolved wording; uncertainty or unavailable judgment preserves the original generic failure without heuristic fallback.",
+      "evidence": [
+        "products/agent/src/test/agent/routine-schedule-failure-contract.test.ts",
+        "products/agent/src/test/agent/routine-schedule-failure-bootstrap.test.ts"
+      ],
+      "remaining": "Only failure classification is accounted here. The file's payload, connection and scheduling responsibilities still require successor review; THE-63 and overall Agent parity remain open."
     },
     {
       "source": "src/agent/routine-schedule-receipts.ts",
