@@ -124,7 +124,7 @@ export async function admitCapturedRegistryContext(
   for (const directory of declared) await visit(directory, 0);
   await checkAuthority();
   const token = Object.freeze({ kind: 'captured-registry-context' as const });
-  admissions.set(token, Object.freeze({
+  const admission: Admission = {
     authority: binding.authority, workingDirectory, homeDirectory,
     source: (signal) => ({
       signal: binding.signal && signal ? AbortSignal.any([binding.signal, signal]) : (binding.signal ?? signal),
@@ -154,7 +154,8 @@ export async function admitCapturedRegistryContext(
       },
       assertCurrent: () => checkUsed(signal),
     }),
-  }));
+  };
+  admissions.set(token, Object.freeze(admission));
   // Cached registry-derived messages are checked before every later model request.
   registerContractInputReadAssertion(binding.authority, () => checkUsed());
   return token;
