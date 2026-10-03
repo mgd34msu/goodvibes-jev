@@ -63,6 +63,8 @@ Out of scope:
 - **After each part:** once a part closes, it is audited again for further places the foundation applies, and those are implemented before the next part starts.
 
 **Rules for judgment:**
+- **Autonomous decisions (2026-10-03 direction).** Jev makes the product's semantic decisions with no human approval or escalation loop. The shared `JevDecision` contract is `act`, `revise`, `defer` or `reject`, bound to current input, action, authority, scope and evidence. This supersedes older human-confirmation descriptions below; those legacy callers still require explicit migration. See [the autonomous decision contract](docs/design/autonomous-jev-decisions.md).
+- **One retry owner.** Transient Jev unavailability stays pending and retries with backoff through one shared implementation until recovery or lifecycle cancellation. Waiting is operational progress, never a fabricated semantic answer or approval.
 - **No fallbacks.** The judgment port is required everywhere, and no site keeps the old heuristic as a backup. Outage handling is the model provider failover chain.
 - **No vendor names.** Routing and tier rules describe the work, never a vendor or model. The route planner picks from the whole catalog of providers and models, with failover.
 - **Local option.** A configurable setting points the platform at a local System One model instead of the hosted Jev key, with the same wire protocol.
