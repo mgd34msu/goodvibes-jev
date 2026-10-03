@@ -4,7 +4,7 @@
 |                                                                                |
 |     ✦ Help                                                            esc      |
 |                                                                                |
-|     ▏Filter commands and shortcuts                              55 entries     |
+|     ▏Filter commands and shortcuts                              56 entries     |
 |                                                                                |
 |   ✦ core navigation                                                            |
 |     Scroll / history recall                                      Up / Down     |
@@ -19,7 +19,7 @@
 |     Toggle help                                                          ?     |
 |     Full keyboard shortcuts                                     /shortcuts     |
 |                                                                                |
-|      ↑↓  scroll    ?  close                                      47 more ↓     |
+|      ↑↓  scroll    ?  close                                      48 more ↓     |
 |                                                                                |
 | ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ |
 |                                                                                |
