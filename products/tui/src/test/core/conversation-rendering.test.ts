@@ -15,9 +15,11 @@ function textOf(cm: ConversationManager): string {
   return cm.history.getAllLines().map((line) => line.map((c) => c.char).join('')).join('\n');
 }
 
-describe('thinking block collapse', () => {
+describe.each([true, false])('thinking block collapse (unicode=%s)', (unicodeCapable) => {
+  const folded = unicodeCapable ? '▸' : '>';
   function buildWithThinking(): ConversationManager {
     const cm = new ConversationManager(() => 80);
+    cm.setUnicodeCapable(unicodeCapable);
     // showThinking defaults to false unless configManager says otherwise,
     // wire a stub that turns display.showThinking on, same as main.ts does
     // via setConfigManager() after construction.
@@ -35,7 +37,7 @@ describe('thinking block collapse', () => {
     // One row: the label and the ▸ size badge, the same collapse affordance
     // every other folded block carries. No preview, reasoning text stays
     // behind the toggle.
-    expect(text).toContain('thinking  ▸ 3 lines');
+    expect(text).toContain(`thinking  ${folded} 3 lines`);
     expect(text).not.toContain('step one');
   });
 
@@ -52,13 +54,14 @@ describe('thinking block collapse', () => {
     expect(text).toContain('step one');
     expect(text).toContain('step two');
     expect(text).toContain('step three');
-    expect(text).not.toContain('thinking  ▸ 3 lines');
+    expect(text).not.toContain(`thinking  ${folded} 3 lines`);
   });
 });
 
 describe('bead blocks count the rows they draw', () => {
-  test('a closed bead is one row; opened, its block spans the row and its whole body, never raw JSON', () => {
+  test.each([true, false])('a closed bead is one row; opened, its block spans the row and its whole body, never raw JSON (unicode=%s)', (unicodeCapable) => {
     const cm = new ConversationManager(() => 80);
+    cm.setUnicodeCapable(unicodeCapable);
     const padding: Record<string, number> = {};
     for (let i = 0; i < 20; i++) padding[`field_${i}`] = i;
     const jsonContent = JSON.stringify({ files_written: 1, bytes_written: 42, ...padding });
@@ -79,7 +82,7 @@ describe('bead blocks count the rows they draw', () => {
     // 22 fields: the first 12 rows show, then "… 10 more lines", inside padding rows.
     expect(opened.lineCount).toBe(1 + 1 + 12 + 1 + 1);
     expect(textOfBlock(lines, opened)).toContain('files_written  1');
-    expect(textOfBlock(lines, opened)).toContain('… 10 more lines');
+    expect(textOfBlock(lines, opened)).toContain(unicodeCapable ? '… 10 more lines' : '... 10 more lines');
     expect(textOfBlock(lines, opened)).not.toContain('{');
 
     // → on an open, capped body shows the rest.
