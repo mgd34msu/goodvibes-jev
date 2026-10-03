@@ -42394,6 +42394,33 @@
       "text": "export declare function waitingPhrase(state: WaitingState, ctx?: WaitingPhraseContext): string;"
     }
   ],
+  "./platform/presentation/editor-message": [
+    {
+      "name": "EditorMessageInput",
+      "kind": "interface",
+      "required": [
+        "kind",
+        "message",
+        "mode"
+      ],
+      "text": "export interface EditorMessageInput { readonly message: string; readonly kind: string; readonly mode: string; }"
+    },
+    {
+      "name": "EditorMessageReading",
+      "kind": "type",
+      "text": "export type EditorMessageReading = BatteryRun<typeof editorMessageBlocking.items>; ;; via BatteryRun = export interface BatteryRun<Items extends BatteryItems> { readonly readings: { readonly [K in keyof Items]: ReadingFor<Items[K]>; }; readonly result: Omit<JudgmentResult<Questions>, 'answers'>; recordAction(action: string): void; }"
+    },
+    {
+      "name": "editorMessageBlocking",
+      "kind": "const",
+      "text": "editorMessageBlocking: import(\"@goodvibes-jev/judgment/decisions\").Battery<{ readonly blocking: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; }>"
+    },
+    {
+      "name": "readEditorMessage",
+      "kind": "function",
+      "text": "export declare function readEditorMessage(input: EditorMessageInput, signal: AbortSignal): Promise<EditorMessageReading>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    }
+  ],
   "./platform/profiles": [
     {
       "name": "ProfileData",
@@ -45250,6 +45277,7 @@
       "required": [
         "alternatives",
         "harnessModeMatches",
+        "judgment",
         "nextAction",
         "policy",
         "preferred",
@@ -45258,7 +45286,7 @@
         "status",
         "workspaceMatches"
       ],
-      "text": "export interface ReadyPlan { readonly status: 'ready'; readonly request: string; readonly preferred: TaskRouteCandidate; readonly alternatives: readonly TaskRouteCandidate[]; readonly routesConsidered: number; readonly note?: string; readonly nextAction: string; readonly workspaceMatches: readonly Record<string, unknown>[]; readonly harnessModeMatches: readonly Record<string, unknown>[]; readonly policy: string; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export interface ReadyPlan { readonly status: 'ready'; readonly judgment: TaskRouteJudgment; readonly request: string; readonly preferred: TaskRouteCandidate; readonly alternatives: readonly TaskRouteCandidate[]; readonly routesConsidered: number; readonly note?: string; readonly nextAction: string; readonly workspaceMatches: readonly Record<string, unknown>[]; readonly harnessModeMatches: readonly Record<string, unknown>[]; readonly policy: string; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "ReasoningFamily",
@@ -45358,10 +45386,13 @@
       "name": "SlotRun",
       "kind": "interface",
       "required": [
+        "decisionId",
+        "named",
+        "readings",
         "recordAction",
         "slots"
       ],
-      "text": "export interface SlotRun { readonly slots: TaskRouteSlots; recordAction(action: string): void; }"
+      "text": "export interface SlotRun { readonly slots: TaskRouteSlots; readonly readings: SlotReadings; readonly decisionId: string | undefined; readonly named: Partial<Record<NamedIdKind, Selection>>; recordAction(action: string): void; } ;; via Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; Selection = export interface Selection { readonly chosen: string | undefined; readonly outcome: Outcome; readonly pick: ChoiceReading; readonly fits: Readonly<Record<string, YesNoReading>>; readonly decisionId: string | undefined; recordAction(action: string): void; } ;; SlotReadings = type SlotReadings = Awaited<ReturnType<typeof taskRouteSlots.run>>['readings'];"
     },
     {
       "name": "TASK_ROUTES",
@@ -45430,6 +45461,20 @@
       "text": "export interface TaskRouteCandidate { readonly id: string; readonly label: string; readonly confidence: TaskRouteConfidence; readonly userSurface: string; readonly userOutcome: string; readonly why: string; readonly modelRoute: string; readonly inspectRoute: string; readonly userRoute?: string; readonly requiresConfirmation: boolean; readonly missingFields?: readonly string[]; readonly nextQuestion?: string; readonly supportingRoutes?: readonly string[]; readonly policy?: string; readonly score?: number; }"
     },
     {
+      "name": "TaskRouteCatalogRanking",
+      "kind": "interface",
+      "required": [
+        "ranked",
+        "records"
+      ],
+      "text": "export interface TaskRouteCatalogRanking { readonly records: readonly Record<string, unknown>[]; readonly ranked: readonly Ranked[]; } ;; via Ranked = export interface Ranked { readonly id: string; readonly probability: number; readonly reading: YesNoReading; readonly decisionId: string | undefined; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "TaskRouteCatalogResult",
+      "kind": "type",
+      "text": "export type TaskRouteCatalogResult = readonly Record<string, unknown>[] | TaskRouteCatalogRanking; ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
       "name": "TaskRouteConfidence",
       "kind": "type",
       "text": "export type TaskRouteConfidence = 'high' | 'medium' | 'low';"
@@ -45437,7 +45482,7 @@
     {
       "name": "TaskRouteDeps",
       "kind": "interface",
-      "text": "export interface TaskRouteDeps { namedIds?: NamedIdSources | undefined; workspaceMatches?(request: string, limit: number): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>; modeMatches?(request: string, limit: number): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export interface TaskRouteDeps { namedIds?: NamedIdSources | undefined; workspaceMatches?(request: string, limit: number): TaskRouteCatalogResult | Promise<TaskRouteCatalogResult>; modeMatches?(request: string, limit: number): TaskRouteCatalogResult | Promise<TaskRouteCatalogResult>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "TaskRouteDraft",
@@ -45465,9 +45510,21 @@
       "text": "export interface TaskRouteEntry { readonly id: string; readonly description: string; build(request: string, slots: TaskRouteSlots): TaskRouteDraft; }"
     },
     {
+      "name": "TaskRouteJudgment",
+      "kind": "interface",
+      "required": [
+        "harness",
+        "named",
+        "selection",
+        "slots",
+        "workspace"
+      ],
+      "text": "export interface TaskRouteJudgment { readonly selection: Omit<Selection, 'recordAction'>; readonly slots: { readonly readings: Readonly<Record<string, Reading>>; readonly decisionId: string | undefined; }; readonly named: Readonly<Record<string, Omit<Selection, 'recordAction'>>>; readonly workspace: readonly Ranked[]; readonly harness: readonly Ranked[]; } ;; via Omit = type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>; ;; Ranked = export interface Ranked { readonly id: string; readonly probability: number; readonly reading: YesNoReading; readonly decisionId: string | undefined; } ;; Reading = export type Reading = YesNoReading | ChoiceReading | ScoreReading; ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; Selection = export interface Selection { readonly chosen: string | undefined; readonly outcome: Outcome; readonly pick: ChoiceReading; readonly fits: Readonly<Record<string, YesNoReading>>; readonly decisionId: string | undefined; recordAction(action: string): void; }"
+    },
+    {
       "name": "TaskRoutePlan",
       "kind": "type",
-      "text": "export type TaskRoutePlan = MissingRequestPlan | ReadyPlan;"
+      "text": "export type TaskRoutePlan = MissingRequestPlan | ReadyPlan | UncertainPlan;"
     },
     {
       "name": "TaskRouteSlots",
@@ -45502,6 +45559,18 @@
         "tier"
       ],
       "text": "export interface TierRecord { readonly tier: RouteTier | undefined; readonly frontier: number; readonly small: number; }"
+    },
+    {
+      "name": "UncertainPlan",
+      "kind": "interface",
+      "required": [
+        "judgment",
+        "nextAction",
+        "policy",
+        "request",
+        "status"
+      ],
+      "text": "export interface UncertainPlan { readonly status: 'uncertain'; readonly request: string; readonly judgment: TaskRouteJudgment; readonly nextAction: string; readonly policy: string; }"
     },
     {
       "name": "UserErrorReading",

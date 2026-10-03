@@ -6,6 +6,7 @@ import {
   planTaskRoute,
   type TaskRouteArgs,
   type TaskRouteCandidate,
+  type TaskRouteCatalogRanking,
   type TaskRouteDraft,
   type TaskRoutePlan,
 } from '@goodvibes-jev/engine/sdk/platform/routing';
@@ -36,9 +37,9 @@ function registryRank(): Rerank {
 async function rankCatalog(
   request: string,
   records: readonly Record<string, unknown>[],
-  limit: number,
+  _limit: number,
   signal?: AbortSignal,
-): Promise<readonly Record<string, unknown>[]> {
+): Promise<TaskRouteCatalogRanking> {
   const byId = new Map(records.map((record) => [String(record.id), record]));
   const site = 'agent.task-route.catalog';
   const result = await registryRank().rerank(judgmentPort(site), request, [...byId].map(([id, record]) => ({
@@ -49,7 +50,7 @@ async function rankCatalog(
       description: [record.label, record.summary, record.family, record.modelRoute].filter((value) => typeof value === 'string').join(' ').slice(0, 600),
     },
   })), { site, ...(signal ? { signal } : {}) });
-  return result.ranked.filter((entry) => entry.reading.verdict !== 'no').slice(0, limit).map((entry) => byId.get(entry.id)!);
+  return { records: [...byId.values()], ranked: result.ranked };
 }
 
 /** The installed runtime judgment port owns every reading; never install a fallback here. */
@@ -70,8 +71,7 @@ export async function planAgentTaskRoute(
   // List the whole catalog, with no local substring shortlist or hand-scored ranking.
   const workspace = rankCatalog(request, listWorkspaceActions(context, { limit: 1000 }), matchLimit, options.signal);
   const harness = rankCatalog(request, modes, matchLimit, options.signal);
-  // Await catalog readings ourselves too: the SDK deliberately treats optional catalog
-  // failures as empty matches, while this product must report unavailable readings.
+  // Keep every reading and its decision provenance through engine composition.
   const [plan] = await Promise.all([
     planTaskRoute(args, {
       namedIds: {
