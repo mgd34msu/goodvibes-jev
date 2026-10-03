@@ -70,7 +70,11 @@ Fresh checks on the recovered main479ab70f-based source pass 98 shared-ledger/
 input-boundary tests and 126 Agent composition/history/disposal tests. Negative
 controls against main479ab70f fail all 12 new shared lifetime/privacy probes and
 all 3 Agent composition probes. Prior pre-replacement results are not used as
-evidence for the recovered bytes. Final TypeScript/API checks are recorded
-separately after completion.
+evidence for the recovered bytes. Forced solution checks and both Agent source
+and test TypeScript projects pass on the recovered bytes. Official SDK asset
+preparation and all three API Extractor reports complete successfully. Extractor
+retains existing bundled-TypeScript/gaxios/duplicate sql.js declaration warnings;
+these warnings did not fail extraction. The subpath snapshot also reflects a
+semantically identical inferred ownerReply union-order change.
 Heavy TypeScript/API checks use the shared compiler lock and an explicit
 4096 MiB Node heap ceiling instead of the aggregate wrapper's 16384 MiB override.
