@@ -283,6 +283,9 @@ export function isolatedEnv(e2eHome: E2EHome, extra: Record<string, string> = {}
     LANG: 'C.UTF-8',
     LC_ALL: 'C.UTF-8',
     TMPDIR: join(e2eHome.root, 'tmp'),
+    // Supported air-gapped-install policy: a fresh test home has no wake assets.
+    // Keep the compiled network guard strict instead of attempting downloads.
+    GOODVIBES_SKIP_WAKE_MODEL_DOWNLOAD: '1',
     ...extra,
   };
 }

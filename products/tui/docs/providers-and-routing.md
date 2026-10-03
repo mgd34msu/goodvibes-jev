@@ -76,7 +76,7 @@ The runtime also supports a broad compatible/gateway layer. Each entry below is 
 
 ## Local discovery
 
-Run `/scan` to probe localhost and the LAN for local inference servers and register whatever answers as OpenAI-compatible providers; discovery is not run automatically at startup. The scan probes each candidate's `/v1/models` endpoint and identifies the server either by its well-known port or by fingerprinting its response headers. Servers with a dedicated adapter get server-specific capability traits (tool calling, streaming, and, for Ollama, LM Studio, and llama.cpp, a four-level `instant/low/medium/high` reasoning ladder); the rest register through the generic OpenAI-compatible adapter with no server-specific reasoning support.
+Run `/scan` to probe localhost and the LAN for local inference servers and register whatever answers as OpenAI-compatible providers; discovery is not run automatically at startup. Startup restores previously discovered providers from the local cache without probing their hosts or removing unavailable servers. The scan probes each candidate's `/v1/models` endpoint and identifies the server either by its well-known port or by fingerprinting its response headers. Servers with a dedicated adapter get server-specific capability traits (tool calling, streaming, and, for Ollama, LM Studio, and llama.cpp, a four-level `instant/low/medium/high` reasoning ladder); the rest register through the generic OpenAI-compatible adapter with no server-specific reasoning support.
 
 | Server | Identified by | Adapter |
 | --- | --- | --- |
