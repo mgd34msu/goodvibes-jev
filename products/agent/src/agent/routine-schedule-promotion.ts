@@ -1,5 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+  categoryForCode, categoryForStatus, GoodVibesSdkError, httpStatusOf,
+  isKnownErrorCode, readFailure, SDKErrorCodes, type ErrorCategory,
+} from '@goodvibes-jev/engine/errors';
 import { createBrowserGoodVibesSdk } from '@goodvibes-jev/engine/sdk/browser';
 import type { OperatorMethodInput, OperatorMethodOutput } from '@goodvibes-jev/engine/sdk/contracts';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
@@ -347,14 +351,49 @@ async function fetchConnectedHostStatus(connection: AgentConnectedHostConnection
   }
 }
 
+/** Structure is authoritative; only otherwise unclassified wording needs judgment. */
+async function scheduleFailureCategory(error: unknown, message: string): Promise<ErrorCategory> {
+  const record = isRecord(error) ? error : {};
+  const code = readString(record, 'code') ?? undefined;
+  const cause = isRecord(record.cause) ? record.cause : {};
+  // Cancellation is an explicit stop, never evidence of a dead host or permission to retry.
+  if (code === SDKErrorCodes.CANCELLED || record.name === 'AbortError'
+    || cause.code === SDKErrorCodes.CANCELLED || cause.name === 'AbortError') return 'unknown';
+  const status = httpStatusOf(error);
+  if (status !== undefined) return categoryForStatus(status) ?? 'unknown';
+  switch (code) {
+    case SDKErrorCodes.AUTH_REQUIRED:
+    case SDKErrorCodes.TOKEN_EXPIRED: return 'authentication';
+    case SDKErrorCodes.PERMISSION_DENIED: return 'authorization';
+    case SDKErrorCodes.NOT_FOUND:
+    case SDKErrorCodes.METHOD_NOT_FOUND: return 'not_found';
+    case SDKErrorCodes.NETWORK_UNREACHABLE: return 'network';
+    case SDKErrorCodes.TIMEOUT: return 'timeout';
+  }
+  if (error instanceof GoodVibesSdkError && error.category !== 'unknown') return error.category;
+  const errnoCategory = categoryForCode(code) ?? categoryForCode(readString(cause, 'code') ?? undefined);
+  if (errnoCategory !== undefined) return errnoCategory;
+  if (record.name === 'TimeoutError') return 'timeout';
+  // Other declared SDK failures (validation, billing, conflict, etc.) are not transport failures.
+  if (code !== undefined && isKnownErrorCode(code) && code !== SDKErrorCodes.UNKNOWN) return 'unknown';
+  if (!message.trim()) return 'unknown';
+  try {
+    return (await readFailure({
+      message,
+      code,
+      errorName: readString(record, 'name') ?? undefined,
+    }, 'agent.routine-schedule.failure')).category;
+  } catch {
+    // Reporting a failed schedule must still work before bootstrap or if judgment is unavailable.
+    // Keep the original failure observable; do not guess, retry or grant authority.
+    return 'unknown';
+  }
+}
+
 /**
- * Turn a thrown connected-host error into the failure a schedule command
- * reports, for every schedule command.
- *
- * A 404 is the one case that cannot be classified from the error alone: the
- * host may be absent, or present but too old to expose the method. That is
- * what the extra `/status` probe distinguishes, and why `incompatibleMessage`
- * is a parameter (it names the specific method the caller wanted).
+ * All schedule commands share typed engine failure classification. A missing
+ * route gets one read-only status probe to distinguish an old host from an
+ * unavailable route; no failure classification retries the mutation.
  */
 export async function classifyConnectedHostScheduleError<Route extends string>(
   error: unknown,
@@ -362,19 +401,19 @@ export async function classifyConnectedHostScheduleError<Route extends string>(
   options: { readonly route: Route; readonly incompatibleMessage: string },
 ): Promise<ConnectedHostScheduleFailure<Route>> {
   const message = summarizeError(error);
-  const lower = message.toLowerCase();
+  const category = await scheduleFailureCategory(error, message);
   const base = { ok: false, error: message, route: options.route, baseUrl: connection.baseUrl } as const;
-  if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('auth')) {
+  if (category === 'authentication' || category === 'authorization' || category === 'permission') {
     return { ...base, kind: 'auth_required' };
   }
-  if (lower.includes('404') || lower.includes('not found')) {
+  if (category === 'not_found') {
     const connectedHost = await fetchConnectedHostStatus(connection);
     if (connectedHost.ok) {
       return { ...base, kind: 'connected_host_incompatible', error: options.incompatibleMessage };
     }
     return { ...base, kind: 'connected_host_route_unavailable' };
   }
-  if (lower.includes('fetch') || lower.includes('connect') || lower.includes('econnrefused')) {
+  if (category === 'network' || category === 'timeout') {
     return { ...base, kind: 'connected_host_unavailable' };
   }
   return { ...base, kind: 'connected_host_error' };
