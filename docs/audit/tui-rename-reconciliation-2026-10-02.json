@@ -5018,5 +5018,24 @@
       "reviewed40CandidatesAllMapped": true
     },
     "meaning": "Blocked at original39-mapping checkpoint1024e810; closed only after current-boundary regression exposed and verified narrow production fix."
+  },
+  "subsequentImportIdentityReview": {
+    "sourceCheckpoint": "0c76080204d8060c8521a8ed62f69562bf916b1c",
+    "historicalReceiptScope": "All nested test-review import currentBlob fields remain the identities observed at their original review/test checkpoints. They are historical evidence, not claims of byte equality after subsequent native view changes.",
+    "changeScope": "Native-only loading-to-ready rendering, line-scrolling of complete informational facts, and explicit deferred-layout notice. Existing selectable/legacy layout guards remain enabled. No mapping or disposition changes.",
+    "currentImports": [
+      {
+        "target": "products/tui/src/input/config-modal.ts",
+        "currentBlob": "edc92cc0c6e08dcabb958f21efec63cb7ff124d1",
+        "currentSha256": "c5121309ed72016f5237f76f479c49543eb8287a99fb9a6f34dc0b17bf1dbfd9"
+      },
+      {
+        "target": "products/tui/src/input/config-modal-types.ts",
+        "currentBlob": "ac28f61fc97d4491e0e1d1d420f8ee3845c1e690",
+        "currentSha256": "0ebd0b9e99591b55d4a2b6e249fbf9769cc313b4295901a1793f33c678b337f8"
+      }
+    ],
+    "validation": "92 affected native/config/pairing/planning tests passed with 577 assertions; actual keyboard/render loading and long-text failures reproduced before fixes. Scoped syntax/unbound-name and architecture/workflow checks pass. Full production/test typechecking remains unverified.",
+    "preserved": "Original import inspection evidence, pinned/forward provenance, all retained-source dispositions and unresolved counts remain unchanged."
   }
 }

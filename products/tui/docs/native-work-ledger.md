@@ -4,6 +4,8 @@ Use `/work <exact-daemon-project-id>` to select the native project owned by the 
 
 The Work, Intent, Attention and Evidence tabs show native stable work/attempt IDs, work and criteria revisions, goals, criteria, attention reasons, evidence targets and references. `reportedState complete` and `verificationState verified` are different facts. Evidence history labels its historical outcome; current verification comes only from the host projection. Old planning approvals do not grant native execution authority.
 
+Visible status and cursor values update without a keypress. After a host/authentication replacement, the first ready snapshot replaces the loading view automatically. Later added or removed rows retain the interaction-frozen layout with an explicit notice; an arrow key reveals the new layout. Long native facts scroll line by line and rewrap on resize.
+
 This view uses the supported `WorkLedgerReadBinding` / `WorkLedgerReadClient` and public `operator-read-client` transport. It creates no ledger store, database, authority, mutation action or native runner. Existing Planning and contract surfaces and data are unchanged. Authentication uses the configured daemon's existing token record and honors the explicit daemon home; opening a reader never mints or repairs credentials.
 
 Host/workspace replacement requires a fresh explicit project selection. Token replacement invalidates the prior reader. Subscription starts before snapshot; coalesced notifications trigger durable history catch-up rather than advancing a cursor themselves. Errors clear displayed data; close and reopen reconnects. The modal's identity boundary also discards frozen rows immediately after disconnect, revocation or replacement.

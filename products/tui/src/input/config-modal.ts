@@ -145,7 +145,7 @@ export class ConfigModal {
     this.scrollOffset = 0;
     this.filterQuery = '';
     this.interactedSinceOpen = false;
-    const view = surface.buildView();
+    const view = this._readView(surface)!;
     this.frozenView = view;
     this.activeTabId = view.tabs[0]?.id ?? '';
     this.selectedRowId = this._firstSelectableId(this._frozenTab());
@@ -197,7 +197,7 @@ export class ConfigModal {
    */
   syncStructure(): void {
     if (!this.surface) return;
-    const view = this._applyFilter(this.surface.buildView());
+    const view = this._applyFilter(this._readView()!);
     this.frozenView = view;
     if (!view.tabs.some((t) => t.id === this.activeTabId)) {
       this.activeTabId = view.tabs[0]?.id ?? '';
@@ -419,9 +419,10 @@ export class ConfigModal {
     // Pre-first-interaction: async onOpen loads may restructure freely (the
     // user hasn't engaged a cursor yet), sync so "Loading…" is replaced by
     // real content on the load's own requestRender, not the next keypress.
+    const widthChanged = this.lastWrapWidth !== labelWrapWidth;
     this.lastWrapWidth = labelWrapWidth;
-    if (this.active && !this.interactedSinceOpen) this.syncStructure();
-    const live = this.surface?.buildView() ?? null;
+    if (this.active && (!this.interactedSinceOpen || (widthChanged && this.frozenView?.scrollInformationalLines))) this.syncStructure();
+    const live = this._readView();
     if (live && live.bindingIdentity !== this.frozenView?.bindingIdentity) {
       this.frozenView = this._applyFilter(live);
       this.statusMessage = ''; this.pendingConfirmKey = null; this.scrollOffset = 0;
@@ -439,6 +440,9 @@ export class ConfigModal {
 
     const frozenTab = frozen.tabs.find((t) => t.id === this.activeTabId) ?? frozen.tabs[0];
     const liveTab = live?.tabs.find((t) => t.id === this.activeTabId);
+    const deferred = live?.deferredStructureMessage && (frozenTab?.rows.length !== liveTab?.rows.length
+      || frozenTab?.rows.some((row, i) => row.id !== liveTab?.rows[i]?.id))
+      ? live.deferredStructureMessage : undefined;
 
     // Header: all-or-nothing live overlay. Same line count → use live values;
     // a count change is a structural change, deferred (keep frozen header).
@@ -473,7 +477,7 @@ export class ConfigModal {
       ...(frozenTab?.hints ?? []),
       ...this._actionHints(),
     ];
-    const unfilteredTab = this.surface?.buildView().tabs.find((t) => t.id === this.activeTabId);
+    const unfilteredTab = this._readView()?.tabs.find((t) => t.id === this.activeTabId);
     const countSelectable = (rows: readonly ConfigModalRow[] | undefined): number =>
       (rows ?? []).filter((r) => r.selectable !== false && r.header !== true).length;
 
@@ -482,8 +486,8 @@ export class ConfigModal {
       tabs,
       header,
       rows: windowed,
-      emptyText: frozenRows.length === 0 ? (frozenTab?.emptyText ?? 'Nothing to show.') : undefined,
-      degraded: live?.degraded ?? frozen.degraded,
+      emptyText: frozenRows.length === 0 ? (deferred ?? frozenTab?.emptyText ?? 'Nothing to show.') : undefined,
+      degraded: live?.degraded ?? deferred ?? frozen.degraded,
       status: this.statusMessage || undefined,
       confirmPending: this.pendingConfirmKey !== null,
       hints,
@@ -560,6 +564,18 @@ export class ConfigModal {
     return out;
   }
 
+  /** Native read-only facts opt in; ordinary selectable/legacy rows stay unchanged. */
+  private _readView(surface: ConfigModalSurface | null = this.surface): ConfigModalView | null {
+    if (!surface) return null;
+    const view = surface.buildView();
+    if (!view.scrollInformationalLines) return view;
+    return { ...view, tabs: view.tabs.map(tab => ({ ...tab, rows: tab.rows.flatMap(row =>
+      row.selectable === false && !row.header
+        ? wrapText(row.label, Math.max(1, this.lastWrapWidth)).map((label, index) => ({ ...row, id: `${row.id}:line:${index}`, label }))
+        : [row],
+    ) })) };
+  }
+
   /** Apply the active filter query to every tab's rows. A no-op passthrough when not filtering. */
   private _applyFilter(view: ConfigModalView): ConfigModalView {
     if (this.filterQuery === '') return view;
@@ -613,7 +629,7 @@ export class ConfigModal {
   }
 
   private _liveTab(id: string): ConfigModalTab | undefined {
-    return this.surface?.buildView().tabs.find((t) => t.id === id);
+    return this._readView()?.tabs.find((t) => t.id === id);
   }
 
   private _selectableIds(tab: ConfigModalTab | undefined): string[] {

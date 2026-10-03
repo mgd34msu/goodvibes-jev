@@ -31,7 +31,8 @@ export function createNativeWorkLedgerModalSurface(select: NativeWorkLedgerSelec
         evidence.push(row(e.id, `${e.id} · historical outcome ${e.outcome} · work ${t.workId}@${t.workRevision} · criteria revision ${t.criteriaRevision} · attempt ${t.attemptId}@${t.attemptRevision} · ${e.reason}`));
         e.references.forEach((ref, i) => evidence.push(row(`${e.id}:${i}`, `${ref.kind}: ${ref.ref}${ref.digest ? ` · digest ${ref.digest}` : ''}`)));
       }
-      return { title: 'Native Work (read-only)', bindingIdentity: model.identity,
+      return { title: 'Native Work (read-only)', bindingIdentity: model.identity, scrollInformationalLines: true,
+        deferredStructureMessage: 'Native rows changed; press an arrow key to show the current layout.',
         ...(model.reason ? { degraded: safe(model.reason) } : {}),
         tabs: [['work', 'Work', work], ['intent', 'Intent', intent], ['attention', 'Attention', attention], ['evidence', 'Evidence', evidence]].map(([id, label, rows]) => ({
           id: id as string, label: label as string, rows: rows as ConfigModalRow[],

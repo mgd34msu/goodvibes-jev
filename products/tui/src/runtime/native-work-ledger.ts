@@ -102,6 +102,11 @@ export class NativeWorkLedgerModel {
             // A newer durable event landed during the snapshot read: catch up again
             // before presenting it. Notifications themselves never advance cursor.
             if (cursor > snapshot.cursor) { pending = true; continue; }
+            // Retire this binding's loading-only structure once. ConfigModal may
+            // already be interaction-frozen after host/auth replacement (or a
+            // key pressed during loading); ready rows must paint without a key.
+            // Later live updates retain the identity and normal scroll guards.
+            if (!this.snapshot) this.identity = `native:${epoch}:ready`;
             this.snapshot = snapshot; this.reason = ''; this.changed();
           } while (pending && current());
         } catch (error) { fail(error); }

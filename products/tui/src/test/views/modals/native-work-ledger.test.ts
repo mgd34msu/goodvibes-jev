@@ -3,7 +3,9 @@ import type { WorkLedgerReadClient, WorkLedgerReadSnapshot, WorkLedgerEvent } fr
 import { NativeWorkLedgerModel, type NativeWorkLedgerSelection } from '../../../runtime/native-work-ledger.ts';
 import { createNativeWorkLedgerModalSurface } from '../../../views/modals/native-work-ledger-modal.ts';
 import { ConfigModal } from '../../../input/config-modal.ts';
+import { handleConfigModalToken } from '../../../input/handler-modal-routes.ts';
 import { renderConfigModal } from '../../../renderer/config-modal.ts';
+import { modalGeometry, MODAL_PAD_X } from '../../../renderer/surface-kit.ts';
 import { frameFromLayer } from '../../helpers/surface-frame.ts';
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 const snapshot = (projectId = 'host-project', cursor = 0): WorkLedgerReadSnapshot => ({ projectId, revision: cursor, cursor, works: [{
@@ -88,3 +90,99 @@ test('reentrant open during throwing cleanup keeps the newer lifecycle and callb
   model.open(() => {}); await tick(); model.close(); await tick();
   expect(model.snapshot?.projectId).toBe('host-project'); expect(repaints).toBeGreaterThan(0); expect(old.disposed()).toBe(1); model.close();
 });
+
+for (const replacement of ['host', 'authentication'] as const) {
+  test(`${replacement} replacement paints its awaited snapshot after real keyboard interaction without another keypress`, async () => {
+    const old = fixture(); const fresh = fixture();
+    let selected: NativeWorkLedgerSelection = old.selection;
+    const projectId = replacement === 'host' ? 'replacement-project' : 'host-project';
+    let resolve!: (value: WorkLedgerReadSnapshot) => void;
+    const client: WorkLedgerReadClient = { ...fresh.client, projectId, readSnapshot: () => new Promise(r => { resolve = r; }) };
+    const modal = new ConfigModal(); let paints = 0;
+    modal.open(createNativeWorkLedgerModalSurface(() => selected), () => { paints++; }); await tick();
+    const route = { configModal: modal, requestRender: () => { paints++; }, handleEscape: () => modal.close() };
+    handleConfigModalToken(route, { type: 'key', logicalName: 'down' } as never);
+    expect(render(modal)).toContain('Native title');
+    selected = { available: true, identity: `replacement-${replacement}`, projectId, bind: () => ({ available: true, client }) };
+    const loading = render(modal);
+    expect(loading).not.toContain('Native title'); expect(loading).toContain('Loading native work ledger');
+    // The user may navigate the new empty tabs while its snapshot is pending.
+    handleConfigModalToken(route, { type: 'key', logicalName: 'right' } as never);
+    expect(modal.getActiveTabId()).toBe('intent');
+    const next = snapshot(projectId); const paintBefore = paints;
+    resolve({ ...next, works: next.works.map(view => ({ ...view, work: { ...view.work, goal: 'Replacement intent now visible' } })) });
+    await tick();
+    expect(paints).toBeGreaterThan(paintBefore);
+    const ready = render(modal); // No input between settlement and rendering.
+    expect(ready).toContain('Replacement intent now visible');
+    expect(ready).not.toContain('Loading native work ledger');
+    expect(ready).not.toContain('Native title'); expect(modal.getActiveTabId()).toBe('intent');
+    handleConfigModalToken(route, { type: 'key', logicalName: 'escape' } as never);
+    expect(modal.active).toBe(false); expect(old.disposed()).toBe(1); expect(fresh.disposed()).toBe(1);
+  });
+}
+
+test('ready native updates preserve the established view identity and real-keyboard scroll position', async () => {
+  const f = fixture(); const base = snapshot();
+  const lots: WorkLedgerReadSnapshot = { ...base, works: Array.from({ length: 30 }, (_, i) => ({ ...base.works[0]!, work: { ...base.works[0]!.work, id: `work-${i}` } })) };
+  f.update(lots);
+  const surface = createNativeWorkLedgerModalSurface(() => f.selection); const modal = new ConfigModal(); modal.open(surface); await tick(); render(modal);
+  const route = { configModal: modal, requestRender: () => {}, handleEscape: () => modal.close() };
+  for (let i = 0; i < 6; i++) handleConfigModalToken(route, { type: 'key', logicalName: 'down' } as never);
+  const before = modal.getRenderModel(); const identity = surface.buildView().bindingIdentity;
+  expect(before.scroll.offset).toBeGreaterThan(0);
+  f.update({ ...lots, works: lots.works.map(view => ({ ...view, work: { ...view.work, title: 'Updated native title' } })) }); await tick();
+  expect(surface.buildView().bindingIdentity).toBe(identity);
+  const after = modal.getRenderModel(); expect(after.scroll.offset).toBe(before.scroll.offset);
+  expect(modal.getSelectedRowId()).toBe(''); expect(render(modal)).toContain('Updated native title'); modal.close();
+});
+
+test('ready status and cursor update without input; new evidence layout is explicitly deferred without resetting scroll', async () => {
+  const f = fixture(); const base = snapshot();
+  const proof = (id: string) => ({ id, target: { workId: 'work-1', workRevision: 3, criteriaRevision: 2, attemptId: 'attempt-1', attemptRevision: 2 }, outcome: 'verified' as const, reason: id, references: [{ kind: 'test' as const, ref: `${id}-reference` }], source: 'host_check' as const, criteriaResults: [], actorId: 'verifier', at: 1 });
+  const events: WorkLedgerEvent[] = [];
+  f.client.history = async cursor => events.filter(event => event.sequence > cursor);
+  const surface = createNativeWorkLedgerModalSurface(() => f.selection); const modal = new ConfigModal(); modal.open(surface); await tick();
+  const route = { configModal: modal, requestRender: () => {}, handleEscape: () => modal.close() };
+  const key = (logicalName: string) => handleConfigModalToken(route, { type: 'key', logicalName } as never);
+  key('down'); render(modal); const identity = surface.buildView().bindingIdentity;
+  const publish = (sequence: number) => {
+    const evidence = proof(`proof-${sequence}`); const work = { ...base.works[0]!.work, reportedState: 'blocked' as const };
+    events.push({ sequence, type: 'record_evidence', actorId: 'verifier', requestId: `request-${sequence}`, workId: work.id, attemptId: 'attempt-1', at: sequence, work, attempts: [], evidence, reason: null });
+    f.update({ ...base, cursor: sequence, revision: sequence, works: [{ ...base.works[0]!, work, verification: { state: 'verified', reason: 'Current evidence', evidence } }] });
+  };
+  publish(1); await tick(); const workText = render(modal);
+  expect(workText).toContain('reportedState blocked'); expect(workText).toContain('verificationState verified'); expect(workText).toContain('durable cursor 1');
+  expect(surface.buildView().bindingIdentity).toBe(identity);
+  key('right'); key('right'); key('right'); expect(render(modal)).toContain('proof-1-reference');
+  const wrapWidth = modalGeometry(180, 45).w - 2 * MODAL_PAD_X;
+  const offset = modal.getRenderModel(wrapWidth).scroll.offset;
+  publish(2); await tick(); const deferred = render(modal);
+  expect(deferred).toContain('durable cursor 2'); expect(deferred).toContain('Native rows changed');
+  expect(deferred).not.toContain('Loading native'); expect(modal.getRenderModel(wrapWidth).scroll.offset).toBe(offset);
+  key('down'); expect(render(modal)).toContain('proof-2-reference'); key('escape');
+});
+
+test('long native goals, reports and evidence tails remain reachable through real arrow input at 80x24, narrow width and resize', async () => {
+  const f = fixture(); const base = snapshot();
+  const text = (tail: string) => `${'long fact words '.repeat(180)} ${tail}`;
+  const view = base.works[0]!;
+  const evidence = { id: 'long-proof', target: { workId: 'work-1', workRevision: 3, criteriaRevision: 2, attemptId: 'attempt-1', attemptRevision: 2 }, outcome: 'verified' as const, reason: 'historical', references: [{ kind: 'artifact' as const, ref: text('EVIDENCE_TAIL') }], source: 'host_check' as const, criteriaResults: [], actorId: 'v', at: 1 };
+  f.update({ ...base, works: [{ ...view, work: { ...view.work, goal: text('GOAL_TAIL') }, attempt: { ...view.attempt!, report: text('REPORT_TAIL') }, verification: { ...view.verification, evidence } }] });
+  const modal = new ConfigModal(); modal.open(createNativeWorkLedgerModalSurface(() => f.selection)); await tick();
+  const route = { configModal: modal, requestRender: () => {}, handleEscape: () => modal.close() };
+  const key = (logicalName: string) => handleConfigModalToken(route, { type: 'key', logicalName } as never);
+  const frame = (width: number) => frameFromLayer(renderConfigModal(modal, width, 24), width, 24).map(line => line.map(cell => cell.char).join('')).join('\n');
+  const reach = (tail: string, width: number): void => {
+    let found = false;
+    for (let i = 0; i < 160; i++) { if (frame(width).includes(tail)) { found = true; break; } key('down'); }
+    expect(found).toBe(true);
+  };
+  reach('REPORT_TAIL', 80); key('right'); reach('GOAL_TAIL', 80);
+  key('right'); key('right'); reach('EVIDENCE_TAIL', 80);
+  key('left'); key('left'); frame(48); reach('GOAL_TAIL', 48);
+  // A resize after keyboard interaction must rewrap line rows, retaining reachability.
+  frame(100); frame(48); reach('GOAL_TAIL', 48);
+  key('right'); key('right'); reach('EVIDENCE_TAIL', 48);
+  key('escape'); expect(modal.active).toBe(false); expect(f.disposed()).toBe(1);
+}, 15_000);
