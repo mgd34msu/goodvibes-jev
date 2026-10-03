@@ -1,0 +1,17 @@
+#!/usr/bin/env bun
+import { resolveWorkspaceBinary } from '../src/cli/workspace-binary.ts';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const executable = resolveWorkspaceBinary(root);
+if (!executable) {
+  console.error('goodvibes: this private Jev workspace has no built TUI binary.');
+  console.error('Build the workspace engine, then run bun run --filter @goodvibes-jev/tui build from the workspace root.');
+  process.exit(1);
+}
+const child = spawnSync(executable, process.argv.slice(2), { stdio: 'inherit' });
+if (child.error) { console.error(`goodvibes: could not launch the workspace binary: ${child.error.message}`); process.exit(1); }
+if (child.signal) { process.kill(process.pid, child.signal); process.exit(1); }
+process.exit(child.status ?? 1);

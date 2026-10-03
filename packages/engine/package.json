@@ -1213,6 +1213,11 @@
       "types": "./toolchain/dist/index.d.ts",
       "import": "./toolchain/dist/index.js"
     },
+    "./toolchain/test-runner": {
+      "bun": "./toolchain/src/test-runner/index.ts",
+      "types": "./toolchain/dist/test-runner/index.d.ts",
+      "import": "./toolchain/dist/test-runner/index.js"
+    },
     "./toolchain/config": {
       "bun": "./toolchain/src/config.ts",
       "types": "./toolchain/dist/config.d.ts",
