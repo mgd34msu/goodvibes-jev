@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { array, boolean, enum as enumSchema, number, strictObject, string, toJSONSchema, type z } from 'zod/v4';
 import { ledgerWorkSchema, ledgerAttemptSchema, ledgerEvidenceSchema, ledgerEventSchema } from '../workflow/work-ledger/types.js';
 import { methodDescriptor, type GatewayMethodDescriptor } from './method-catalog-shared.js';
 
@@ -6,27 +6,27 @@ import { methodDescriptor, type GatewayMethodDescriptor } from './method-catalog
 export const WORK_LEDGER_READ_SCOPE = 'read:work-ledger';
 export const WORK_LEDGER_HISTORY_PAGE_SIZE = 100;
 export const WORK_LEDGER_READ_MAX_BYTES = 1_048_576;
-const sequence = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const projectId = z.string().min(1).max(200);
-const readView = z.strictObject({
+const sequence = number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const projectId = string().min(1).max(200);
+const readView = strictObject({
   work: ledgerWorkSchema,
   attempt: ledgerAttemptSchema.nullable(),
-  verification: z.strictObject({
-    state: z.enum(['unverified', 'verified', 'failed', 'unavailable', 'stale']),
-    reason: z.string(),
+  verification: strictObject({
+    state: enumSchema(['unverified', 'verified', 'failed', 'unavailable', 'stale']),
+    reason: string(),
     evidence: ledgerEvidenceSchema.nullable(),
   }),
-  attention: z.array(z.strictObject({ kind: z.enum(['blocked', 'verification']), reason: z.string() })),
+  attention: array(strictObject({ kind: enumSchema(['blocked', 'verification']), reason: string() })),
 });
-export const workLedgerReadSnapshotSchema = z.strictObject({
-  projectId, revision: sequence, cursor: sequence, works: z.array(readView),
+export const workLedgerReadSnapshotSchema = strictObject({
+  projectId, revision: sequence, cursor: sequence, works: array(readView),
 });
-export const workLedgerHistoryPageSchema = z.strictObject({
+export const workLedgerHistoryPageSchema = strictObject({
   projectId, afterSequence: sequence, cursor: sequence, throughSequence: sequence,
-  hasMore: z.boolean(), events: z.array(ledgerEventSchema).max(WORK_LEDGER_HISTORY_PAGE_SIZE),
+  hasMore: boolean(), events: array(ledgerEventSchema).max(WORK_LEDGER_HISTORY_PAGE_SIZE),
 });
 export type WorkLedgerHistoryPage = z.infer<typeof workLedgerHistoryPageSchema>;
-const json = (schema: z.ZodType): Record<string, unknown> => z.toJSONSchema(schema);
+const json = (schema: z.ZodType): Record<string, unknown> => toJSONSchema(schema);
 
 export const builtinGatewayWorkLedgerMethodDescriptors: readonly GatewayMethodDescriptor[] = [
   methodDescriptor({
@@ -35,7 +35,7 @@ export const builtinGatewayWorkLedgerMethodDescriptors: readonly GatewayMethodDe
     access: 'admin', scopes: [WORK_LEDGER_READ_SCOPE],
     metadata: { requiresFreshOperatorAuth: true },
     http: { method: 'GET', path: '/api/work-ledger/snapshot' },
-    inputSchema: json(z.strictObject({ projectId })), outputSchema: json(workLedgerReadSnapshotSchema),
+    inputSchema: json(strictObject({ projectId })), outputSchema: json(workLedgerReadSnapshotSchema),
   }),
   methodDescriptor({
     id: 'workLedger.history', title: 'Read Native Work Ledger History', category: 'work-ledger',
@@ -43,7 +43,7 @@ export const builtinGatewayWorkLedgerMethodDescriptors: readonly GatewayMethodDe
     access: 'admin', scopes: [WORK_LEDGER_READ_SCOPE],
     metadata: { requiresFreshOperatorAuth: true },
     http: { method: 'GET', path: '/api/work-ledger/history' },
-    inputSchema: json(z.strictObject({ projectId, afterSequence: sequence, throughSequence: sequence.optional() })),
+    inputSchema: json(strictObject({ projectId, afterSequence: sequence, throughSequence: sequence.optional() })),
     outputSchema: json(workLedgerHistoryPageSchema),
   }),
 ];
