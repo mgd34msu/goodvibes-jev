@@ -69,6 +69,12 @@ export interface ConfigModalTab {
 
 /** The whole surface view for one render tick. */
 export interface ConfigModalView {
+  /** Security boundary: changed identity immediately discards frozen host data. */
+  readonly bindingIdentity?: string;
+  /** Opt-in read-only facts: wrap informational text into individually scrollable lines. */
+  readonly scrollInformationalLines?: boolean;
+  /** Explain deferred row additions/removals without breaking interaction layout stability. */
+  readonly deferredStructureMessage?: string;
   /** Live title (may change tick-to-tick; not structural). */
   readonly title: string;
   readonly tabs: readonly ConfigModalTab[];
