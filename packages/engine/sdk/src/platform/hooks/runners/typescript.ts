@@ -4,15 +4,16 @@ import { realpathSync, statSync } from 'node:fs';
 import type { HookDefinition, HookResult, HookEvent } from '../types.js';
 import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
+import { createHookExecution, type HookExecutionOptions } from '../execution.js';
 
 /** Expected shape of a TypeScript hook module's default export */
-type TsHookHandler = (event: HookEvent) => Promise<HookResult> | HookResult;
+type TsHookHandler = (event: HookEvent, execution?: HookExecutionOptions) => Promise<HookResult> | HookResult;
 
 /**
  * TypeScript hook runner.
  * Dynamically imports the module at hook.path and calls its default export with the event.
  */
-export async function run(hook: HookDefinition, event: HookEvent, projectRoot: string): Promise<HookResult> {
+export async function run(hook: HookDefinition, event: HookEvent, projectRoot: string, options?: HookExecutionOptions): Promise<HookResult> {
   const path = hook.path;
   if (!path) {
     return { ok: false, error: 'ts hook missing "path" field' };
@@ -33,7 +34,9 @@ export async function run(hook: HookDefinition, event: HookEvent, projectRoot: s
     return { ok: false, error: `ts hook path '${path}' is outside the project directory` };
   }
 
+  const execution = options === undefined ? undefined : createHookExecution(options, hook.timeout ?? 30, 'ts');
   try {
+    execution?.signal.throwIfAborted();
     let moduleUrl = pathToFileURL(resolvedPath).href;
     try {
       const { mtimeMs } = statSync(resolvedPath);
@@ -43,17 +46,23 @@ export async function run(hook: HookDefinition, event: HookEvent, projectRoot: s
     }
 
     const mod = await import(moduleUrl);
+    execution?.signal.throwIfAborted();
     const handler = mod.default as TsHookHandler | undefined;
 
     if (typeof handler !== 'function') {
       return { ok: false, error: `ts hook at ${path} does not export a default function` };
     }
 
-    const result = await handler(event);
+    // In-process handlers cannot be forcibly stopped. Keep the invocation
+    // owned until its actual settlement, even if it ignores the signal.
+    const result = await (execution ? handler(event, { signal: execution.signal }) : handler(event));
+    execution?.signal.throwIfAborted();
     return result;
   } catch (err) {
     const message = summarizeError(err);
     logger.error('ts hook error', { path, error: message });
     return { ok: false, error: message };
+  } finally {
+    execution?.dispose();
   }
 }

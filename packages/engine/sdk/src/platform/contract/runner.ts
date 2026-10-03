@@ -52,7 +52,7 @@ import { createContractResume, type ResumeReport } from './resume.js';
 import { numberDraft } from './draft-plan.js';
 import { createContractFleetControls, type ContractFleetControls } from './fleet-controls.js';
 import { ContractRun, failureFromError, type RunEnv } from './run-context.js';
-import { createContractSteps, type ContractSteps } from './steps.js';
+import { createContractSteps, type ContractSteps, type ContractStepsWithReplies } from './steps.js';
 import type { ContractStore } from './store.js';
 import {
   CURRENT_CONTRACT_SCHEMA_VERSION,
@@ -68,9 +68,10 @@ import {
 import { createUnitFailureHandling } from './unit-failures.js';
 import { contractAgentIds, ownerRecordUsage, rollUpContractUsage, type PriceUsageFn } from './usage.js';
 import { createUnitWatchdog, type WatchedAgent } from './watchdog.js';
+import { logger } from '../utils/logger.js';
 
 export interface ContractRunnerDeps {
-  readonly agentManager: Pick<AgentManager, 'spawn' | 'getStatus' | 'list' | 'cancel' | 'wakeWithSteer'>;
+  readonly agentManager: Pick<AgentManager, 'spawn' | 'getStatus' | 'list' | 'cancel' | 'wakeWithSteer'> & Partial<Pick<AgentManager, 'join'>>;
   readonly messageBus: Pick<AgentMessageBus, 'send' | 'registerAgent'>;
   readonly runtimeBus: RuntimeEventBus;
   readonly configManager: ContractConfigReader;
@@ -102,9 +103,17 @@ export interface ContractRunnerDeps {
 }
 
 export interface StartedContract {
+  /** Actual admitted work and cleanup, independent of terminal record status. */
+  readonly settled?: Promise<void> | undefined;
   readonly contract: ContractView;
   /** The owner record parents wait on (design 6.5). */
   readonly owner: AgentRecord;
+}
+
+/** An owned start certifies real drainage and captures cancellation by contract id. */
+export interface OwnedStartedContract extends StartedContract {
+  readonly settled: Promise<void>;
+  cancel(reason: string): boolean;
 }
 
 /** The session a contract gets when an agent spawn starts it with no conversation session (AgentManager's own event session). */
@@ -125,6 +134,12 @@ export interface ContractRunner {
    * ask is its task. No executor runs for it.
    */
   startForOwner(ownerRecord: AgentRecord): StartedContract;
+  /** Checks owned-start prerequisites before AgentManager admits an owner record. */
+  assertOwnedExecution(): void;
+  /** Explicit capability for a scoped spawn; legacy custom runners may omit it. */
+  startOwnedForOwner(ownerRecord: AgentRecord): OwnedStartedContract;
+  /** Waits for the actual work admitted by this contract, after it ends. */
+  join(contractId: string): Promise<void>;
   get(contractId: string): ContractView | null;
   list(filter?: { readonly sessionId?: string | undefined; readonly includeTerminal?: boolean | undefined }): ContractView[];
   /** Stops a contract and everything it runs. False when it is unknown or already ended. */
@@ -179,6 +194,41 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
   const now = deps.now ?? Date.now;
   const listeners = new Set<(event: ContractEvent) => void>();
   const runs = new Map<string, ContractRun>();
+  const settlements = new Map<string, { readonly promise: Promise<void>; readonly resolve: () => void }>();
+  const settling = new Set<string>();
+
+  function reserveSettlement(contractId: string) {
+    let entry = settlements.get(contractId);
+    if (!entry) {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => { resolve = done; });
+      entry = { promise, resolve };
+      settlements.set(contractId, entry);
+    }
+    return entry;
+  }
+
+  // Separate from outward terminal events: an abort/status is never a join.
+  function settleWork(run: ContractRun): void {
+    if (settling.has(run.id)) return;
+    settling.add(run.id);
+    const entry = reserveSettlement(run.id);
+    void (async () => {
+      await run.work.join();
+      await run.engine?.join?.();
+      // Planning can publish its agent id while unwinding after cancellation.
+      // Engine phases independently join unit executors before their cleanup.
+      await Promise.all(contractAgentIds(run.contract).map((id) => deps.agentManager.join?.(id)));
+      for (const release of run.sharedTreeReleases.values()) release();
+      run.sharedTreeReleases.clear();
+      entry.resolve();
+      settlements.delete(run.id);
+      settling.delete(run.id);
+    })().catch((error: unknown) => {
+      // A failed join cannot certify settlement. Retain the pending barrier.
+      logger.warn('contract settlement could not be established', { contractId: run.id, error });
+    });
+  }
   /** Contracts holding an active slot: admitted past the queue and not yet ended. */
   const admitted = new Set<string>();
   const queue: ContractRun[] = [];
@@ -305,7 +355,14 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     continuePlanning: (run, outcome) => continuePlanning(run, outcome),
     ownerProgress: (run) => updateOwnerProgress(run),
   });
-  const steps = { ...ownSteps, ...deps.steps };
+  const untrackedSteps = { ...ownSteps, ...deps.steps };
+  // Every step, including host overrides, runs under the contract's real
+  // lifetime. Reserve before calling it: steps can end the contract inline.
+  const steps = Object.fromEntries(Object.entries(untrackedSteps).map(([key, step]) => [
+    key,
+    (run: ContractRun, ...args: unknown[]) => run.work.run(() =>
+      (step as (run: ContractRun, ...args: unknown[]) => Promise<unknown>)(run, ...args)),
+  ])) as unknown as ContractStepsWithReplies;
 
   const checks = createUnitCheckLoop({
     findRun: (contractId) => runs.get(contractId),
@@ -352,8 +409,9 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
 
   /** Takes a slot for the contract and starts it, or, for a resumed contract that waited, takes up its step. */
   function admit(run: ContractRun): void {
+    if (run.terminal || disposed) return;
     admitted.add(run.id);
-    void (run.contract.resumeFrom === undefined ? activate(run) : resume.continueResumed(run));
+    void run.work.run(() => run.contract.resumeFrom === undefined ? activate(run) : resume.continueResumed(run));
   }
 
   function dequeue(): void {
@@ -373,24 +431,27 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
   }
 
   function start(input: StartContractInput): StartedContract {
+    if (disposed) throw new Error('Contract runner is disposed');
     const id = newContractId();
     return create(input, id, spawnOwner(input, id), {});
   }
 
   function startFromPlan(input: StartFromPlanInput): StartedContract {
+    if (disposed) throw new Error('Contract runner is disposed');
     const { draft, ...rest } = input;
     const draftPlan = numberDraft(draft);
     const id = newContractId();
     return create(rest, id, spawnOwner(rest, id), { draftPlan });
   }
 
-  function startForOwner(record: AgentRecord): StartedContract {
+  function startForOwner(record: AgentRecord, requireSettlement = false): StartedContract {
+    if (disposed) throw new Error('Contract runner is disposed');
     if (record.contractId !== undefined) throw new Error(`agent ${record.id} already belongs to contract ${record.contractId}`);
     const id = newContractId();
     record.contractId = id;
     record.contractRole = 'owner';
     record.reviewMode = 'contract';
-    startContractOwner(record, { contractId: id, contractRole: 'owner', progress: `Contract ${id}: queued` }, deps.runtimeBus);
+    startContractOwner(record, { contractId: id, contractRole: 'owner', progress: `Contract ${id}: queued`, settled: reserveSettlement(id).promise }, deps.runtimeBus);
     const input: StartContractInput = {
       ask: record.task,
       sessionId: AGENT_MANAGER_SESSION_ID,
@@ -399,7 +460,25 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       ...(record.parentAgentId === undefined ? {} : { parentAgentId: record.parentAgentId }),
       ...(record.proposedUnits === undefined ? {} : { proposedUnits: record.proposedUnits }),
     };
-    return create(input, id, record, {});
+    return create(input, id, record, {}, requireSettlement);
+  }
+
+  function assertOwnedExecution(): void {
+    if (disposed) throw new Error('Contract runner is disposed');
+    if (typeof deps.agentManager.join !== 'function') throw new Error('Owned contract requires agent execution settlement');
+  }
+
+  function startOwnedForOwner(record: AgentRecord): OwnedStartedContract {
+    assertOwnedExecution();
+    const started = startForOwner(record, true);
+    return {
+      ...started,
+      settled: started.settled!,
+      cancel: (reason) => {
+        const run = runs.get(started.contract.id);
+        return run === undefined ? false : cancelRun(run, reason);
+      },
+    };
   }
 
   /** The owner record parents and surfaces wait on (design 6.5); it runs no executor. */
@@ -412,7 +491,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
         outsideContract: true,
         ...(input.parentAgentId === undefined ? {} : { parentAgentId: input.parentAgentId }),
       },
-      { contractId: id, contractRole: 'owner', progress: `Contract ${id}: queued` },
+      { contractId: id, contractRole: 'owner', progress: `Contract ${id}: queued`, settled: reserveSettlement(id).promise },
     );
   }
 
@@ -421,6 +500,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     id: string,
     owner: AgentRecord,
     extra: Pick<Contract, 'draftPlan'>,
+    requireSettlement = false,
   ): StartedContract {
     const config = env.config();
     const short = id.slice('ctr-'.length);
@@ -456,16 +536,20 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       createdAt: now(),
     };
     const run = newRun(contract);
+    run.requireSettlement = requireSettlement;
     deps.store.put(contract);
     run.decide('created', id, `origin ${input.origin}; ${isolation} isolation${extra.draftPlan === undefined ? '' : `; ${extra.draftPlan.units.length} drafted units`}`);
     run.emit({ type: 'CONTRACT_CREATED', contractId: id, sessionId: input.sessionId, origin: input.origin, ask: input.ask, ownerAgentId: owner.id });
-    if (admitted.size < config.maxActiveContracts) {
+    if (owner.status === 'cancelled') cancelRun(run, 'the owner was cancelled during spawn');
+    if (run.terminal) {
+      // Re-entrant creation/spawn listeners can stop the owner before admission.
+    } else if (admitted.size < config.maxActiveContracts) {
       admit(run);
     } else {
       queue.push(run);
       run.decide('queued', id, `${config.maxActiveContracts} contracts are active; waiting for a slot`);
     }
-    return { contract: run.view(), owner };
+    return { contract: run.view(), owner, settled: reserveSettlement(id).promise };
   }
 
   /** A run of this runner for the contract, registered by id. */
@@ -476,6 +560,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       fail: (kind, reason) => fail(run, kind, reason),
       cancel: (reason) => cancelRun(run, reason),
     }, contract.proposedUnits);
+    reserveSettlement(contract.id);
     runs.set(contract.id, run);
     return run;
   }
@@ -610,6 +695,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     const { contract } = run;
     if (!isTerminalContractStatus(contract.status) || run.ownerSettled) return;
     run.ownerSettled = true;
+    settleWork(run);
     run.abort.abort();
     groups.stopRun(run);
     rollUpContractUsage(contract, getStatus, pricing);
@@ -724,8 +810,8 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     groups,
     checks,
     steps,
-    activate,
-    plan: replan,
+    activate: (run) => run.work.run(() => activate(run)),
+    plan: (run) => run.work.run(() => replan(run)),
     sessionUnitPassed,
     ownerProgress: updateOwnerProgress,
   });
@@ -741,6 +827,9 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     start,
     startFromPlan,
     startForOwner,
+    startOwnedForOwner,
+    assertOwnedExecution,
+    join: (contractId) => settlements.get(contractId)?.promise ?? Promise.resolve(),
     get: (contractId) => {
       const contract = deps.store.get(contractId);
       return contract === null ? null : structuredClone(contract);
@@ -769,14 +858,23 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       disposed = true;
       watchdog.dispose();
       failures.dispose();
-      for (const run of runs.values()) {
-        run.abort.abort();
-        run.unsubscribeEngine?.();
-        run.engine?.dispose();
-        for (const release of run.sharedTreeReleases.values()) release();
-      }
+      // Disposal preserves a restart checkpoint; explicit cancel persists a
+      // terminal outcome instead. Flush and detach writers before in-memory
+      // cancellation can publish failed item states or late cleanup events.
       detachStore();
       detachPlanSync();
+      for (const run of runs.values()) {
+        run.unsubscribeEngine?.();
+        run.unsubscribeEngine = null;
+        run.engine?.dispose();
+        run.abort.abort();
+        for (const unit of run.allUnits()) {
+          run.unitRuntimes.get(unit.id)?.abort.abort();
+          run.releaseHold(unit);
+        }
+        groups.stopRun(run);
+        settleWork(run);
+      }
       listeners.clear();
     },
   };

@@ -166,12 +166,26 @@ function addUniqueFiles(files: unknown, entries: readonly string[]): readonly st
   return next;
 }
 
-function applySdkVendorMitigations(manifest: PackageManifest): PackageManifest {
+export function applySdkVendorMitigations(manifest: PackageManifest): PackageManifest {
+  // npm links an embedded file: directory without installing that directory's
+  // own dependencies. Declare the vendored Bash package's leaves at the real
+  // installable engine layer. Its version-conflicting zod/tree-sitter leaves
+  // use explicit aliases in both runtime and declaration imports.
+  const bashManifest = JSON.parse(readFileSync(resolve(REPO_ROOT, 'vendor/bash-language-server/package.json'), 'utf8')) as PackageManifest;
+  const optionalDependencies = { ...(manifest.optionalDependencies ?? {}) };
+  for (const [name, version] of Object.entries(bashManifest.dependencies ?? {})) {
+    for (const existing of [manifest.dependencies?.[name], optionalDependencies[name]]) {
+      if (existing !== undefined && existing !== version) {
+        throw new Error(`Vendored Bash dependency ${name}=${String(version)} conflicts with engine ${String(existing)}; use an explicit alias`);
+      }
+    }
+    if (manifest.dependencies?.[name] === undefined) optionalDependencies[name] = version;
+  }
   return {
     ...manifest,
     dependencies: omitPackageName(manifest.dependencies, 'bash-language-server'),
     optionalDependencies: {
-      ...(manifest.optionalDependencies ?? {}),
+      ...optionalDependencies,
       'bash-language-server': 'file:vendor/bash-language-server',
     },
     files: addUniqueFiles(manifest.files, [

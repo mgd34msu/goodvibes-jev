@@ -1,7 +1,9 @@
 import type { HookDefinition, HookResult, HookEvent } from '../types.js';
 import { logger } from '../../utils/logger.js';
 import type { AgentManager } from '../../tools/agent/index.js';
+import { OwnedAgentExecutionUnavailableError } from '../../tools/agent/manager.js';
 import { summarizeError } from '../../utils/error-display.js';
+import { createHookExecution, type HookExecutionOptions } from '../execution.js';
 
 /**
  * Agent hook runner, spawns a subagent via AgentManager and waits for
@@ -24,8 +26,10 @@ import { summarizeError } from '../../utils/error-display.js';
 export async function run(
   hook: HookDefinition,
   event: HookEvent,
-  manager: Pick<AgentManager, 'spawn' | 'getStatus' | 'cancel'>,
+  manager: Pick<AgentManager, 'spawn' | 'getStatus' | 'cancel'> & Partial<Pick<AgentManager, 'spawnOwned'>>,
+  options?: HookExecutionOptions,
 ): Promise<HookResult> {
+  if (options !== undefined) return runOwned(hook, event, manager, options);
   const promptTemplate = hook.prompt;
   if (promptTemplate == null) {
     return { ok: false, error: 'agent hook missing "prompt" field' };
@@ -95,4 +99,40 @@ export async function run(
   const timeoutSecs = hook.timeout ?? 60;
   logger.error('agent hook: timed out', { agentId, timeoutSecs });
   return { ok: false, error: `agent hook timed out after ${timeoutSecs}s (agentId: ${agentId})` };
+}
+
+
+/** A turn-owned hook waits for real executor/contract cleanup, never status polling. */
+async function runOwned(
+  hook: HookDefinition,
+  event: HookEvent,
+  manager: Pick<AgentManager, 'spawn' | 'getStatus' | 'cancel'> & Partial<Pick<AgentManager, 'spawnOwned'>>,
+  options: HookExecutionOptions,
+): Promise<HookResult> {
+  if (hook.prompt == null) return { ok: false, error: 'agent hook missing "prompt" field' };
+  if (options.signal?.aborted) return { ok: false, error: 'agent hook cancelled' };
+  if (!manager.spawnOwned) return { ok: false, code: 'OWNED_AGENT_EXECUTION_UNSUPPORTED', error: 'agent hook requires captured execution settlement' };
+  const execution = createHookExecution(options, hook.timeout ?? 60, 'agent');
+  try {
+    execution.signal.throwIfAborted();
+    const owned = manager.spawnOwned({
+      mode: 'spawn',
+      task: hook.prompt.replaceAll('$ARGUMENTS', JSON.stringify(event)),
+      template: 'general',
+      model: hook.model,
+    }, { signal: execution.signal });
+    const current = await owned.settled;
+    const agentId = current.id;
+    if (execution.signal.aborted) {
+      return { ok: false, error: options.signal?.aborted ? 'agent hook cancelled' : `agent hook timed out after ${hook.timeout ?? 60}s (agentId: ${agentId})` };
+    }
+    if (current.status === 'completed') return current.fullOutput ? { ok: true, additionalContext: current.fullOutput } : { ok: true };
+    if (current.status === 'cancelled') return { ok: false, error: `agent ${agentId} was cancelled before completing` };
+    return { ok: false, error: current.error ?? `agent ${agentId} settled without completing`, ...(current.failureReason === 'OWNED_AGENT_EXECUTION_UNSUPPORTED' ? { code: current.failureReason } : {}) };
+
+  } catch (error) {
+    return { ok: false, error: `agent hook failed: ${summarizeError(error)}`, ...(error instanceof OwnedAgentExecutionUnavailableError ? { code: error.code } : {}) };
+  } finally {
+    execution.dispose();
+  }
 }

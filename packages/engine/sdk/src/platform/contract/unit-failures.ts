@@ -140,7 +140,7 @@ export function createUnitFailureHandling(deps: UnitFailureDeps): UnitFailureHan
       void deps.checks.runCheck(run, unit, 'agent-failed');
       return;
     }
-    void retryOrFail(run, unit, record?.error?.trim() || error.trim() || 'the agent failed without an error message');
+    void run.work.run(() => retryOrFail(run, unit, record?.error?.trim() || error.trim() || 'the agent failed without an error message'));
   }
 
   async function retryOrFail(run: ContractRun, unit: ContractUnit, message: string): Promise<void> {

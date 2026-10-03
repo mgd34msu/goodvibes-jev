@@ -108138,6 +108138,74 @@
         "invokable": true
       },
       {
+        "id": "sessions.turns.cancel",
+        "title": "Request Cancellation of an Expected Turn",
+        "description": "Atomically compare expectedTurnId and request cancellation of that live turn, preserving the session and future queued work. Acceptance does not establish settlement: observe the existing runtime turn terminal event for the same sessionId and turnId. Settlement covers this turn's owned provider, tool, hook and hook-Agent work; independent workflow-trigger automations and already-committed external effects are excluded. Repeated requests are idempotent. Known recently ended IDs report already-ended; unknown or expired IDs report stale-turn when another turn is active, otherwise turn-not-found. Missing local sessions return SESSION_NOT_LOCAL. Requires write:sessions.",
+        "category": "sessions",
+        "source": "builtin",
+        "access": "authenticated",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "write:sessions"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/sessions/{sessionId}/turns/cancel"
+        },
+        "events": [
+          "runtime.turn"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string"
+            },
+            "expectedTurnId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "sessionId",
+            "expectedTurnId"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string"
+            },
+            "expectedTurnId": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "cancellation-requested",
+                "already-ended",
+                "stale-turn",
+                "turn-not-found"
+              ]
+            },
+            "activeTurnId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "sessionId",
+            "expectedTurnId",
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        "invokable": true
+      },
+      {
         "id": "security.settings",
         "title": "Security Settings Report",
         "description": "Return security-relevant settings, defaults, current state, and enablement tradeoffs.",
@@ -118366,10 +118434,10 @@
       }
     ],
     "schemaCoverage": {
-      "methods": 513,
-      "typedInputs": 513,
+      "methods": 514,
+      "typedInputs": 514,
       "genericInputs": 0,
-      "typedOutputs": 513,
+      "typedOutputs": 514,
       "genericOutputs": 0
     },
     "eventCoverage": {
@@ -118378,8 +118446,8 @@
       "withWireEvents": 34
     },
     "validationCoverage": {
-      "methods": 513,
-      "validated": 505,
+      "methods": 514,
+      "validated": 506,
       "skippedGeneric": 0,
       "skippedUntyped": 8
     }

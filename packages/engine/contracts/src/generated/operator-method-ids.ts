@@ -456,6 +456,7 @@ export const OPERATOR_METHOD_IDS = [
   "sessions.search",
   "sessions.steer",
   "sessions.toolCalls.cancel",
+  "sessions.turns.cancel",
   "settings.snapshot",
   "skills.create",
   "skills.delete",

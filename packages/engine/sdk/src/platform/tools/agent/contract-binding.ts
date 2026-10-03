@@ -23,6 +23,8 @@ export interface ContractUnitBinding {
 export interface ContractOwnerBinding {
   readonly contractId: string;
   readonly contractRole: 'owner';
+  /** Actual contract lifetime, reserved before the owner is published. */
+  readonly settled?: Promise<void> | undefined;
   /** The owner's first progress line, for operator surfaces. */
   readonly progress: string;
 }
@@ -38,6 +40,7 @@ export function splitContractBinding(binding: ContractUnitBinding | ContractOwne
 
 /** Marks a freshly spawned owner record running, announces it, and returns it without running an executor. */
 export function startContractOwner(record: AgentRecord, binding: ContractOwnerBinding, runtimeBus: RuntimeEventBus | null | undefined): AgentRecord {
+  if (record.status === 'cancelled') return record;
   record.status = 'running';
   setAgentProgress(record, binding.progress, 'operator');
   if (runtimeBus) {
