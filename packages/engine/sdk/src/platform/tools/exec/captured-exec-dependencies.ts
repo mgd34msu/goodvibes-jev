@@ -3,6 +3,7 @@ import { lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/pr
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   assertContractInputAuthority,
+  authorizeContractInputPath,
   contractInputAuthoritySourceRoot,
   registerContractInputReadAssertion,
 } from '../../contract/input-authority.js';
@@ -22,10 +23,20 @@ interface DependencyRead {
   readonly alias: string;
   readonly identity: string;
 }
+interface WorkspaceLink {
+  readonly source: string;
+  readonly canonical: string;
+  readonly captured: string;
+  readonly alias: string;
+  readonly path: string;
+  readonly identity: string;
+}
 interface Admission {
   readonly binding: Binding;
   readonly target: string;
   readonly files: readonly { path: string; data: Buffer; mode: number }[];
+  readonly workspaceLinks: readonly WorkspaceLink[];
+  readonly checkWorkspaceRead: (captured: string, originalAlias: string, projectedAlias: string) => Promise<void>;
   readonly check: () => Promise<void>;
 }
 const admissions = new WeakMap<CapturedExecDependencyInput, Admission>();
@@ -69,6 +80,14 @@ export async function admitCapturedExecDependency(
     if (!stat.isDirectory() || stat.isSymbolicLink() || await realpath(sourceRoot) !== sourceRoot || `${stat.dev}:${stat.ino}` !== rootIdentity)
       throw new Error('dependency source root changed');
   };
+  const workspaceLinks: WorkspaceLink[] = [];
+  const workspaceReads = new Map<string, readonly [string, string, string]>();
+  const checkWorkspaceRead = async (captured: string, originalAlias: string, projectedAlias: string): Promise<void> => {
+    await authorizeContractInputPath(binding.authority, captured, filter, binding.signal);
+    if (!await filter(originalAlias) || !await filter(projectedAlias)) throw new Error('workspace dependency alias is access-restricted');
+    await checkRoot();
+    workspaceReads.set(`${captured}\0${projectedAlias}`, [captured, originalAlias, projectedAlias]);
+  };
   const reads: DependencyRead[] = [];
   const files: { path: string; data: Buffer; mode: number }[] = [];
   const checkRead = async (read: DependencyRead): Promise<void> => {
@@ -81,11 +100,31 @@ export async function admitCapturedExecDependency(
   const check = async (): Promise<void> => {
     await checkRoot();
     for (const read of reads) await checkRead(read);
+    for (const link of workspaceLinks) {
+      if (fingerprint(await lstat(link.source, { bigint: true })) !== link.identity || await realpath(link.source) !== link.canonical)
+        throw new Error('workspace dependency link changed after admission');
+      await checkWorkspaceRead(link.captured, link.source, link.alias);
+    }
+    for (const read of workspaceReads.values()) await checkWorkspaceRead(...read);
   };
   let bytes = 0;
   const visit = async (source: string, alias: string, path: string, ancestors: ReadonlySet<string>): Promise<void> => {
     const canonical = await realpath(source);
-    if (!contained(sourceRoot, canonical) || excluded(relative(sourceRoot, canonical))) throw new Error('dependency alias escapes declared input');
+    if (!contained(sourceRoot, canonical)) {
+      const ownerRelative = relative(owner, canonical);
+      const linkStat = await lstat(source, { bigint: true });
+      if (!ownerRelative || !contained(owner, canonical) || excluded(ownerRelative) || !linkStat.isSymbolicLink())
+        throw new Error('dependency alias escapes declared input');
+      const captured = resolve(binding.root, ownerRelative);
+      // The original target supplies mapping metadata only. Its current bytes
+      // are never opened: the same authority must already hold a captured target.
+      await checkWorkspaceRead(captured, source, alias);
+      const capturedStat = await lstat(captured);
+      if (!capturedStat.isFile() && !capturedStat.isDirectory()) throw new Error('workspace dependency target is not captured');
+      workspaceLinks.push({ source, canonical, captured, alias, path, identity: fingerprint(linkStat) });
+      return;
+    }
+    if (excluded(relative(sourceRoot, canonical))) throw new Error('dependency alias escapes declared input');
     if (!await filter(source) || !await filter(canonical) || !await filter(alias)) return;
     await checkRoot();
     const stat = await lstat(canonical, { bigint: true });
@@ -112,7 +151,7 @@ export async function admitCapturedExecDependency(
   await visit(sourceRoot, target, '', new Set());
   await check();
   const token = Object.freeze({ kind: 'captured-exec-dependency-input' as const });
-  admissions.set(token, { binding, target, files, check });
+  admissions.set(token, { binding, target, files, workspaceLinks, checkWorkspaceRead, check });
   // Future provider delivery rechecks cached dependency-derived output too.
   registerContractInputReadAssertion(binding.authority, check);
   return token;
@@ -121,7 +160,8 @@ export async function admitCapturedExecDependency(
 export async function projectCapturedExecDependencies(
   binding: CapturedExecAuthority,
   temporary: string,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  capturedProjection: string,
 ): Promise<{ readonly mounts: readonly { source: string; target: string }[]; readonly check: () => Promise<void> }> {
   const states: Admission[] = [];
   for (const token of binding.dependencyInputs ?? []) {
@@ -148,6 +188,31 @@ export async function projectCapturedExecDependencies(
       await mkdir(dirname(destination), { recursive: true });
       await writeFile(destination, file.data, { mode: file.mode });
     }
+    let workspaceBytes = 0;
+    let workspaceCount = 0;
+    const copyWorkspace = async (link: WorkspaceLink, suffix: string): Promise<void> => {
+      signal?.throwIfAborted();
+      const captured = join(link.captured, suffix);
+      const originalAlias = join(link.source, suffix);
+      const projectedAlias = join(link.alias, suffix);
+      await state.checkWorkspaceRead(captured, originalAlias, projectedAlias);
+      const input = join(capturedProjection, relative(binding.root, captured));
+      const stat = await lstat(input);
+      const destination = join(staged, link.path, suffix);
+      if (stat.isDirectory() && !stat.isSymbolicLink()) {
+        await mkdir(destination, { recursive: true });
+        for (const entry of await readdir(input)) await copyWorkspace(link, join(suffix, entry));
+      } else if (stat.isFile() && !stat.isSymbolicLink()) {
+        if (++workspaceCount > 20_000 || stat.size > 32 * 1024 * 1024 || workspaceBytes + stat.size > 256 * 1024 * 1024)
+          throw new Error('workspace dependency exceeds resource limit');
+        const data = await readFile(input);
+        workspaceBytes += data.length;
+        await state.checkWorkspaceRead(captured, originalAlias, projectedAlias);
+        await mkdir(dirname(destination), { recursive: true });
+        await writeFile(destination, data, { mode: stat.mode & 0o777 });
+      } else throw new Error('workspace dependency projection contains an unsupported alias');
+    };
+    for (const link of state.workspaceLinks) await copyWorkspace(link, '');
     mounts.push({ source: staged, target: state.target });
   }
   await check();

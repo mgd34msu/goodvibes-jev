@@ -160,7 +160,7 @@ export async function runCapturedCommand(
       }
     };
     await populate('');
-    const dependencies = await projectCapturedExecDependencies(binding, temporary, combined);
+    const dependencies = await projectCapturedExecDependencies(binding, temporary, combined, projection);
     checkDependencies = dependencies.check;
     await check();
     const filterPath = join(temporary, 'sockets.bpf');

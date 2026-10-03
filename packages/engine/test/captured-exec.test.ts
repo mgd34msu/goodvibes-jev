@@ -224,7 +224,9 @@ test.skipIf(!supported)('dependency admission rejects escaped aliases and forged
   const binding = await fixture();
   const dependencies = join(binding.owner, 'node_modules');
   mkdirSync(dependencies);
-  symlinkSync('../private.txt', join(dependencies, 'escape'));
+  const outside = mkdtempSync(join(tmpdir(), 'outside-dependency-test-')); roots.push(outside);
+  writeFileSync(join(outside, 'synthetic.txt'), 'SYNTHETIC_OUTSIDE');
+  symlinkSync(join(outside, 'synthetic.txt'), join(dependencies, 'escape'));
   await expect(admitCapturedExecDependency(binding, { sourceRoot: dependencies, targetRelativePath: 'node_modules' })).rejects.toThrow('escapes');
   const forged = { ...binding, dependencyInputs: [{ kind: 'captured-exec-dependency-input' as const }] };
   expect((await run(forged, 'echo FORGED_DEPENDENCY')).denied).toBe(true);
@@ -243,4 +245,68 @@ test.skipIf(!supported)('dependency permission revocation stops output and futur
   expect(result.success).toBe(false); expect(result.stdout).toBe('');
   expect(existsSync(join(binding.root, 'late.txt'))).toBe(false);
   await expect(assertContractInputReadAccess(binding.authority, binding.readAccessFilter)).rejects.toThrow('restricted');
+});
+
+async function workspaceFixture(filter: (path: string) => Promise<boolean> = async () => true) {
+  const binding = await fixture(filter);
+  const originalPackage = join(binding.owner, 'packages/math');
+  const capturedPackage = join(binding.root, 'packages/math');
+  for (const directory of [originalPackage, capturedPackage]) {
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, 'package.json'), JSON.stringify({ name: 'workspace-math', type: 'module', exports: './index.ts' }));
+  }
+  writeFileSync(join(originalPackage, 'index.ts'), 'throw new Error("LIVE_OWNER_TARGET_MUST_NOT_RUN"); export const answer=999;');
+  writeFileSync(join(capturedPackage, 'index.ts'), 'export const answer=41;');
+  const dependencyRoot = join(binding.owner, 'node_modules');
+  mkdirSync(dependencyRoot);
+  symlinkSync('../packages/math', join(dependencyRoot, 'workspace-math'));
+  const token = await admitCapturedExecDependency(binding, { sourceRoot: dependencyRoot, targetRelativePath: 'node_modules' });
+  return { binding: { ...binding, dependencyInputs: [token!] }, capturedPackage, originalPackage };
+}
+
+test.skipIf(!supported)('workspace-linked dependency builds and tests current captured bytes, never live owner bytes', async () => {
+  const { binding, capturedPackage, originalPackage } = await workspaceFixture();
+  // A member edit after dependency admission must remain visible through the
+  // workspace package alias. Live owner changes must never supply its bytes.
+  writeFileSync(join(capturedPackage, 'index.ts'), 'export const answer=42;');
+  writeFileSync(join(originalPackage, 'index.ts'), 'throw new Error("LATER_LIVE_OWNER_TARGET_MUST_NOT_RUN"); export const answer=1000;');
+  writeFileSync(join(binding.root, 'entry.ts'), 'import {answer} from "workspace-math"; console.log(`WORKSPACE_ANSWER=${answer}`);');
+  writeFileSync(join(binding.root, 'entry.test.ts'), 'import {test,expect} from "bun:test";import {answer} from "workspace-math";test("workspace",()=>expect(answer).toBe(42));');
+  const result = await run(binding, 'bun build entry.ts --outdir dist && bun dist/entry.js && bun test entry.test.ts');
+  expect(result.success).toBe(true);
+  expect(result.stdout).toContain('WORKSPACE_ANSWER=42');
+  expect(result.stdout).not.toContain('LIVE_OWNER_TARGET');
+  expect(readFileSync(join(binding.root, 'dist/entry.js'), 'utf8')).toContain('42');
+});
+
+for (const deniedSide of ['original-alias', 'captured-alias', 'original-target'] as const)
+  test.skipIf(!supported)(`workspace remapping honors ${deniedSide} authorization`, async () => {
+    let denied = '';
+    const { binding, originalPackage } = await workspaceFixture(async (path) => path !== denied);
+    denied = deniedSide === 'original-target' ? join(originalPackage, 'index.ts')
+      : join(deniedSide === 'original-alias' ? binding.owner : binding.root, 'node_modules/workspace-math/index.ts');
+    const result = await run(binding, 'bun -e "import {answer} from \'workspace-math\'; console.log(answer)"');
+    expect(result.success).toBe(false);
+    expect(result.stdout).toBe('');
+    expect(JSON.stringify(result)).not.toContain('999');
+  });
+
+test.skipIf(!supported)('workspace remapping refuses an owner target absent from captured input', async () => {
+  const binding = await fixture();
+  mkdirSync(join(binding.owner, 'uncaptured'), { recursive: true });
+  writeFileSync(join(binding.owner, 'uncaptured/index.js'), 'SYNTHETIC_UNCAPTURED');
+  const dependencies = join(binding.owner, 'node_modules');
+  mkdirSync(dependencies);
+  symlinkSync('../uncaptured', join(dependencies, 'workspace-late'));
+  await expect(admitCapturedExecDependency(binding, { sourceRoot: dependencies, targetRelativePath: 'node_modules' })).rejects.toThrow();
+});
+
+test.skipIf(!supported)('workspace remapping refuses excluded owner targets', async () => {
+  const binding = await fixture();
+  mkdirSync(join(binding.owner, '.aws'), { recursive: true });
+  writeFileSync(join(binding.owner, '.aws/synthetic'), 'SYNTHETIC_EXCLUDED_WORKSPACE_TARGET');
+  const dependencies = join(binding.owner, 'node_modules');
+  mkdirSync(dependencies);
+  symlinkSync('../.aws', join(dependencies, 'excluded-workspace'));
+  await expect(admitCapturedExecDependency(binding, { sourceRoot: dependencies, targetRelativePath: 'node_modules' })).rejects.toThrow('escapes');
 });
