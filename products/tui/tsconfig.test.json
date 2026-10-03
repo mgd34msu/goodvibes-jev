@@ -11,6 +11,7 @@
     "src",
     "examples/**/*.ts",
     "scripts/**/*.ts",
+    "../../scripts/compiled-offline-pty/**/*.ts",
     "../../packages/engine/sdk/src/platform/types/*.d.ts"
   ],
   "exclude": []
