@@ -63,10 +63,11 @@ describe('the stakes rule (composed in code from the readings)', () => {
     expect(stakesFromFacts({ ...none, obfuscated: true })).toBe('critical');
   });
 
-  test('long argument strings reach the reading as a head plus the dropped length', () => {
-    const cut = readingArguments({ content: 'x'.repeat(5000) }) as { content: string };
-    expect(cut.content.startsWith('x'.repeat(4000))).toBe(true);
-    expect(cut.content).toContain('[1000 more characters]');
+  test('long argument strings reach the reading completely', () => {
+    const content = `${'x'.repeat(5000)} TAIL_SCOPE_SENTINEL`;
+    const complete = readingArguments({ content }) as { content: string };
+    expect(complete.content).toBe(content);
+    expect(Object.isFrozen(complete)).toBe(true);
   });
 });
 
