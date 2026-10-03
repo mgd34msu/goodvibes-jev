@@ -20822,7 +20822,7 @@
     {
       "name": "ownerReply",
       "kind": "const",
-      "text": "ownerReply: import(\"@goodvibes-jev/judgment\").ReplyReader<\"amend\" | \"approve\" | \"reject\" | \"unclear\">"
+      "text": "ownerReply: import(\"@goodvibes-jev/judgment\").ReplyReader<\"approve\" | \"reject\" | \"amend\" | \"unclear\">"
     },
     {
       "name": "parseAmendment",
@@ -26375,7 +26375,7 @@
     {
       "name": "readSideEffectKind",
       "kind": "function",
-      "text": "export declare function readSideEffectKind(toolName: string, args: Record<string, unknown>, site: string): Promise<{ readonly kind: SideEffectKind; readonly confident: boolean; }>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export declare function readSideEffectKind(toolName: string, args: Record<string, unknown>, site: string, signal?: AbortSignal): Promise<{ readonly kind: SideEffectKind; readonly confident: boolean; }>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "readToolCall",
@@ -26421,6 +26421,11 @@
       "name": "sideEffect",
       "kind": "const",
       "text": "sideEffect: import(\"@goodvibes-jev/judgment\").Battery<{ readonly mutates: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly outward: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly secrets: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly obfuscated: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly kind: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly read: \"Reads, lists, searches or inspects local files, state or records without changing them.\"; readonly write: \"Creates, edits, moves or deletes files, records or settings.\"; readonly shell: \"Runs a shell command, script or background process.\"; readonly network: \"Fetches from or sends to a web address or remote API.\"; readonly delegation: \"Starts, steers or hands work to another agent, workflow or remote runner.\"; readonly browser: \"Drives a browser, the desktop or a screen: navigating, clicking, typing, screenshots.\"; readonly other: \"None of the above.\"; }>; readonly capability: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly metadata: \"Describes the server itself: lists its tools, resources or prompts, or reports its status.\"; readonly read_fs: \"Reads, lists or searches files or directories.\"; readonly write_fs: \"Writes, edits, moves or deletes files.\"; readonly exec: \"Runs a command, script or process.\"; readonly network_read: \"Fetches from a URL or remote API without sending data that changes anything there.\"; readonly network_write: \"Sends, posts, submits or uploads data to a URL or remote API.\"; readonly secret_read: \"Reads secrets or credentials: keys, tokens, passwords, .env files, ssh keys.\"; readonly spawn_agent: \"Starts or delegates to another agent.\"; readonly config_mutation: \"Changes configuration or settings.\"; readonly system_mutation: \"Changes shared system or repository state: commits, pushes, merges, deploys, service restarts.\"; readonly generic: \"None of the above.\"; }>; }>"
+    },
+    {
+      "name": "snapshotJudgmentInput",
+      "kind": "function",
+      "text": "export declare function snapshotJudgmentInput(value: unknown, toolName?: string): unknown;"
     },
     {
       "name": "stakesFromFacts",
@@ -26838,7 +26843,7 @@
     {
       "name": "PermissionManagerLike",
       "kind": "type",
-      "text": "export type PermissionManagerLike = { check(toolName: string, args: Record<string, unknown>): Promise<boolean>; checkDetailed?: (toolName: string, args: Record<string, unknown>) => Promise<PermissionCheckResult>; getCategory(toolName: string, args?: Record<string, unknown>): PermissionCategory; }; ;; via PermissionCategory = export type PermissionCategory = 'read' | 'write' | 'execute' | 'delegate'; ;; PermissionCheckResult = export interface PermissionCheckResult { readonly approved: boolean; readonly persisted: boolean; readonly sourceLayer: PermissionDecisionSource; readonly reasonCode: PermissionDecisionReasonCode; readonly analysis: PermissionRequestAnalysis; readonly modifiedArgs?: Record<string, unknown> | undefined; readonly userReason?: string | undefined; readonly boundary?: GateBoundaryRecord | undefined; readonly reading?: GateReadingRecord | undefined; readonly preset?: GatePresetRecord | undefined; readonly detail?: string | undefined; readonly category?: PermissionCategory | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export type PermissionManagerLike = Pick<PermissionManager, 'check' | 'getCategory'> & Partial<Pick<PermissionManager, 'checkDetailed'>>; ;; via Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
     },
     {
       "name": "PermissionProvenance",
@@ -26984,7 +26989,7 @@
     {
       "name": "installPermissionManagerSafetyGuard",
       "kind": "function",
-      "text": "export declare function installPermissionManagerSafetyGuard(manager: PermissionManagerLike, site?: string): void;"
+      "text": "export declare function installPermissionManagerSafetyGuard(manager: PermissionManagerLike, _site?: string): void;"
     },
     {
       "name": "isBlockedReadPath",
@@ -27019,7 +27024,7 @@
     {
       "name": "readPermissionCategory",
       "kind": "function",
-      "text": "export declare function readPermissionCategory(toolName: string, args: Record<string, unknown>, site?: string): Promise<PermissionCategoryReading>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export declare function readPermissionCategory(toolName: string, args: Record<string, unknown>, site?: string, signal?: AbortSignal): Promise<PermissionCategoryReading>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "renderPermissionProvenance",
