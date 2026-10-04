@@ -1,3 +1,4 @@
+import { withCapturedAnalyzeInput } from '../analyze/captured-git.js';
 import { withCapturedPublication } from './captured-publication.js';
 import { isCapturedRegistryTool } from '../registry-tool/index.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -128,24 +129,6 @@ export function capturedInputTool(
                 if (requestedRoot !== root) await assertCapturedToolReadAccess(requestedRoot);
                 args = freezeInput({ ...args, projectRoot: requestedRoot });
               } else if (name === 'analyze') {
-                if (
-                  ![
-                    'impact',
-                    'dependencies',
-                    'dead_code',
-                    'coverage',
-                    'bundle',
-                    'surface',
-                    'preview',
-                    'security',
-                    'permissions',
-                    'env_audit',
-                    'test_find',
-                  ].includes(String(args.mode))
-                )
-                  throw new UnsupportedCapturedWorkflow(
-                    'captured Git history and remote upgrade analysis need an authorized backend',
-                  );
                 const requestedRoot =
                   typeof args.projectRoot === 'string' && args.projectRoot.trim().length > 0
                     ? resolve(root, args.projectRoot)
@@ -172,7 +155,9 @@ export function capturedInputTool(
               const publicationSignal = signal && options?.signal ? AbortSignal.any([signal, options.signal]) : signal ?? options?.signal;
               const result = name === 'write' || name === 'edit' || (name === 'inspect' && args.mode === 'scaffold' && args.dryRun === false)
                 ? await withCapturedPublication(authority, () => tool.execute(args, options), publicationSignal)
-                : await tool.execute(args, options);
+                : name === 'analyze'
+                  ? await withCapturedAnalyzeInput(authority, root, publicationSignal, () => tool.execute(args, options))
+                  : await tool.execute(args, options);
               await assertContractInputAuthority(authority, root, signal);
               options?.signal?.throwIfAborted();
               // No content, cached output, diagnostics or errors leave after revocation.

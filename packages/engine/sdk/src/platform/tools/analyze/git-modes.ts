@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { GitService } from '../../git/service.js';
+import { capturedAnalyzeSignal, createAnalyzeGitReader } from './captured-git.js';
+import { assertCapturedToolAccessCurrent, assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
 import type { ToolLLM } from '../../config/tool-llm.js';
 import type { AnalyzeInput, SemanticDiffSummary } from './types.js';
 import { summarizeError } from '../../utils/error-display.js';
@@ -118,7 +119,7 @@ export async function runDiff(
   const refError = validateGitRefs(before, after);
   if (refError) return refError;
 
-  const git = new GitService(projectRoot);
+  const git = await createAnalyzeGitReader(projectRoot, before, after);
 
   let statOutput: string;
   try {
@@ -137,6 +138,7 @@ export async function runDiff(
   return {
     before,
     after,
+    ...(git.comparisonInputs ? { comparison_inputs: git.comparisonInputs } : {}),
     stat: statOutput.trim(),
     files: parseDiffStats(statOutput),
     diff: fullDiff.slice(0, 10000),
@@ -197,7 +199,7 @@ export async function runBreaking(
   const refError = validateGitRefs(before, after);
   if (refError) return refError;
 
-  const git = new GitService(projectRoot);
+  const git = await createAnalyzeGitReader(projectRoot, before, after);
 
   let fullDiff: string;
   try {
@@ -226,6 +228,7 @@ export async function runBreaking(
 
   // Whether a changed declaration breaks its callers is read per export; safe is listed as safe, anything else as breaking.
   const verdicts = await mapWithConcurrency(changed, EXPORT_READ_CONCURRENCY, async (change) => {
+    await assertCapturedToolAccessCurrent();
     const run = await exportBreak.run(judgmentPort(EXPORT_BREAK_SITE), exportBreakView(change.name, change.before, change.after), { site: EXPORT_BREAK_SITE });
     const verdict = exportBreakVerdict(run.readings);
     run.recordAction(`listed as ${verdict}`);
@@ -247,6 +250,7 @@ export async function runBreaking(
   return {
     before,
     after,
+    ...(git.comparisonInputs ? { comparison_inputs: git.comparisonInputs } : {}),
     breaking_changes,
     additions,
     safe_modifications,
@@ -266,7 +270,7 @@ export async function runSemanticDiff(
   const refError = validateGitRefs(before, after);
   if (refError) return refError;
 
-  const git = new GitService(projectRoot);
+  const git = await createAnalyzeGitReader(projectRoot, before, after);
 
   let fullDiff: string;
   let statOutput: string;
@@ -280,6 +284,7 @@ export async function runSemanticDiff(
   const changedFiles = parseDiffStats(statOutput).map((file) => file.file);
   const range = `${before}..${after}`;
   const judgedDiff = truncateDiffAtBoundary(fullDiff, MAX_JUDGED_DIFF_CHARS);
+  await assertCapturedToolAccessCurrent();
   const run = await semanticDiff.run(
     judgmentPort(SEMANTIC_DIFF_SITE),
     semanticDiffView(range, changedFiles, judgedDiff),
@@ -298,12 +303,14 @@ Respond in JSON with fields: summary (string), impact (array of strings)
 Diff (${range}):
 ${truncateDiffAtBoundary(fullDiff, 6000)}`;
 
+  await assertCapturedToolAccessCurrent();
   const reply = await trySemanticDiffLlm(toolLLM, prompt);
   const prose = reply ? parseSemanticDiffProse(reply) : {};
 
   return {
     before,
     after,
+    ...(git.comparisonInputs ? { comparison_inputs: git.comparisonInputs } : {}),
     summary: prose.summary ?? summaryFromReadings(changedFiles, risk),
     impact: prose.impact ?? changedFiles.map((file) => `Changed file: ${file}`),
     risk,
@@ -321,6 +328,8 @@ export async function runUpgrade(
   projectRoot: string,
 ): Promise<Record<string, unknown>> {
   let packageNames: string[];
+  // Authorize the captured package, even when explicit package names skip dependency discovery.
+  await assertCapturedToolReadAccess(join(projectRoot, 'package.json'));
 
   if (input.packages && input.packages.length > 0) {
     packageNames = input.packages;
@@ -361,12 +370,14 @@ export async function runUpgrade(
   const batch = packageNames.slice(0, BATCH_SIZE);
   const results: Array<{ name: string; current: string; latest: string; breaking: boolean }> = [];
 
+  const invocationSignal = capturedAnalyzeSignal();
   await Promise.all(
     batch.map(async (name) => {
       const current = currentVersions[name]! ?? 'unknown';
+      await assertCapturedToolAccessCurrent();
       try {
         const res = await instrumentedFetch(`https://registry.npmjs.org/${encodeURIComponent(name)}/latest`, {
-          signal: AbortSignal.timeout(8000),
+          signal: invocationSignal ? AbortSignal.any([invocationSignal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000),
           headers: { Accept: 'application/json' },
         });
         if (!res.ok) {

@@ -7,6 +7,7 @@ import type { Contract } from './types.js';
 import {
   assertContractExecutionView,
   assertContractInputObjects,
+  assertContractInputGitIdentity,
   assertContractInputView,
   CONTRACT_INPUT_EXCLUSIONS,
   type ContractInputSnapshot,
@@ -196,6 +197,14 @@ export async function assertContractInputAuthority(
   signal?.throwIfAborted();
   stateOf(token);
 }
+/** Repository provenance for bounded historical-object readers; never a path/read grant. */
+export async function assertContractInputGitAuthority(token: ContractInputAuthority, signal?: AbortSignal): Promise<void> {
+  await assertContractInputAuthority(token, undefined, signal);
+  await assertContractInputGitIdentity(stateOf(token).admission.receipt);
+  signal?.throwIfAborted();
+  stateOf(token);
+}
+
 export function contractInputAuthorityRoot(token: ContractInputAuthority): string {
   return stateOf(token).root;
 }

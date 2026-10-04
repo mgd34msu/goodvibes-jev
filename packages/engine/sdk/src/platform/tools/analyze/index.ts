@@ -114,6 +114,7 @@ export function createAnalyzeTool(
         const shaped = outputFormat === 'summary'
           ? summarizeAnalyzeResult(input.mode, fingerprinted)
           : fingerprinted;
+        if (result.comparison_inputs !== undefined) shaped.comparison_inputs = result.comparison_inputs;
         const indent = outputFormat === 'json' ? 2 : 0;
         const serialized = JSON.stringify(shaped, null, indent);
         return { success: true, output: applyAnalyzeTokenBudget(serialized, input.output?.max_tokens) };

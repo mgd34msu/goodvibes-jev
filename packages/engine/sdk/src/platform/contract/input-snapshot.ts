@@ -294,6 +294,12 @@ export async function assertContractInputOwner(snapshot: ContractInputSnapshot, 
   if (await repositoryIdentity(root) !== snapshot.gitIdentity || directoryIdentity(await lstat(root, { bigint: true })) !== snapshot.sourceIdentity || indexFingerprint(root) !== snapshot.indexFingerprint || gitText(root, ['rev-parse', 'HEAD']) !== snapshot.ownerHead || gitText(root, ['rev-parse', '--abbrev-ref', 'HEAD']) !== snapshot.ownerRef || JSON.stringify(paths(root, snapshot.exclusions)) !== JSON.stringify(snapshot.files.map((file) => file.path))) throw new Error('contract input owner changed during recheck');
 }
 
+/** Historical readers retain the recorded repository identity without requiring live owner files/HEAD. */
+export async function assertContractInputGitIdentity(snapshot: ContractInputSnapshot): Promise<void> {
+  if (await repositoryIdentity(snapshot.sourceRoot) !== snapshot.gitIdentity)
+    throw new Error('contract input Git directory was replaced');
+}
+
 /** Verify persisted object provenance, without recapturing today's owner tree. */
 export function assertContractInputObjects(snapshot: ContractInputSnapshot, projectRoot: string): void {
   if (!snapshot.dirty && snapshot.inputCommit !== snapshot.ownerHead) throw new Error('clean contract input must name the recorded owner commit');
