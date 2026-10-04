@@ -198,6 +198,9 @@ test('generated snapshot paths preserve allowed repository maps through the unch
   const id = spyOn(crypto, 'randomUUID').mockReturnValue(rawId);
   let snapshot: Awaited<ReturnType<typeof captureContractInput>>;
   try { snapshot = await captureContractInput(root); } finally { id.mockRestore(); }
+  expect(isContractInputSnapshot(JSON.parse(JSON.stringify(snapshot)))).toBe(true);
+  expect(isContractInputSnapshot({ ...snapshot, id: rawId })).toBe(true);
+  expect(isContractInputSnapshot({ ...snapshot, id: '../outside' })).toBe(false);
   const frozen = await view(root, snapshot);
   const manager = new PermissionManager(async () => ({ approved: true }), {
     isAutoApproveEnabled: () => false,

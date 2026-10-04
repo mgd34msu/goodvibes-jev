@@ -714,7 +714,7 @@ The owner's reply arrives through `ContractRunner.reply` (from the CLI, the `con
 
 **Owner record.** Every contract has an owner `AgentRecord` spawned by the runner through `AgentManager.spawn` with `contractRole: 'owner'`, `template: 'orchestrator'`, `outsideContract: true`, and no executor run (the path `tools/agent/manager.ts:633-663` takes for a WRFC owner today, rewritten for contracts). Parents and surfaces wait on it exactly as they waited on a WRFC owner: its `status`, `fullOutput`, `AGENT_COMPLETED` and `AGENT_FAILED` are the contract's. The runner keeps it `running` until the contract is terminal and ignores premature completion or failure events for it, as `keepOwnerAgentActive` did.
 
-**Scoped commit.** In worktree mode the contract branch holds the admitted input plus the units' changes. The actions below apply only to a clean admission whose recorded owner HEAD/ref, index and readset remain current (7.4). Dirty input, stale owner state or an active owner Git operation holds automatic application with an explicit not-applied receipt and retained work. When the deliverable passes and those checks pass:
+**Scoped commit.** In worktree mode the contract branch holds the admitted input plus the units' changes. The actions below apply only to a clean admission whose recorded owner HEAD/ref, index and readset remain current (7.4). An unchanged dirty admission receives only its authorized result delta with an applied/uncommitted receipt, preserving owner HEAD and index; automatic commit is explicitly deferred. Stale owner state or an active owner Git operation holds application with an explicit not-applied receipt and retained work. When the deliverable passes and those checks pass:
 
 | Settings | Action |
 |---|---|

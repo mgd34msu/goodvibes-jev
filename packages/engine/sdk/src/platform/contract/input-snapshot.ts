@@ -340,7 +340,7 @@ async function materializeFiles(sourceRoot: string, files: readonly ContractInpu
 export function isContractInputSnapshot(value: unknown): value is ContractInputSnapshot {
   if (value === null || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
-  if (v['version'] !== 1 || typeof v['id'] !== 'string' || !/^[0-9a-f-]{36}$/.test(v['id']) || typeof v['sourceRoot'] !== 'string' || !isAbsolute(v['sourceRoot']) || typeof v['sourceIdentity'] !== 'string' || typeof v['gitIdentity'] !== 'string' || typeof v['ownerRef'] !== 'string' || typeof v['capturedAt'] !== 'number' || !Number.isFinite(v['capturedAt']) || typeof v['dirty'] !== 'boolean') return false;
+  if (v['version'] !== 1 || typeof v['id'] !== 'string' || (!/^[0-9a-f-]{36}$/.test(v['id']) && !/^[a-fk-t]{8}-[a-fk-t]{4}-[a-fk-t]{4}-[a-fk-t]{4}-[a-fk-t]{12}$/.test(v['id'])) || typeof v['sourceRoot'] !== 'string' || !isAbsolute(v['sourceRoot']) || typeof v['sourceIdentity'] !== 'string' || typeof v['gitIdentity'] !== 'string' || typeof v['ownerRef'] !== 'string' || typeof v['capturedAt'] !== 'number' || !Number.isFinite(v['capturedAt']) || typeof v['dirty'] !== 'boolean') return false;
   if (!['ownerHead', 'inputTree', 'inputCommit'].every((key) => typeof v[key] === 'string' && HASH.test(v[key] as string)) || typeof v['indexFingerprint'] !== 'string' || !SHA256.test(v['indexFingerprint'])) return false;
   if (!Array.isArray(v['exclusions']) || JSON.stringify(v['exclusions']) !== JSON.stringify(CONTRACT_INPUT_EXCLUSIONS) || !Array.isArray(v['files']) || v['files'].length > MAX_FILES) return false;
   const pathsSeen = new Set<string>();
