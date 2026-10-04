@@ -5,7 +5,7 @@
 |                                                                                                                        |
 |            ✦ Help                                                                                     esc              |
 |                                                                                                                        |
-|            ▏Filter commands and shortcuts                                                       56 entries             |
+|            ▏Filter commands and shortcuts                                                       57 entries             |
 |                                                                                                                        |
 |          ✦ core navigation                                                                                             |
 |            Scroll / history recall                                                               Up / Down             |
@@ -34,7 +34,7 @@
 |            Select the active model route                                                            /model             |
 |                                                                                                                        |
 |                                                                                                                        |
-|             ↑↓  scroll    ?  close                                                               39 more ↓             |
+|             ↑↓  scroll    ?  close                                                               40 more ↓             |
 |                                                                                                                        |
 |        ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀         |
 |                                                                                                                        |

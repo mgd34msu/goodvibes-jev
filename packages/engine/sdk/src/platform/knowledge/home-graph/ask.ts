@@ -1,3 +1,4 @@
+import { withKnowledgeSourceAnswerAliases } from '../source-structural-references.js';
 import type { KnowledgeSemanticService } from '../semantic/index.js';
 import { logger } from '../../utils/logger.js';
 import { scheduleBackground } from '../cooperative.js';
@@ -133,11 +134,7 @@ function uniqueSources(sources: readonly KnowledgeSourceRecord[]): KnowledgeSour
 }
 
 function withAnswerSourceAliases(source: KnowledgeSourceRecord): KnowledgeSourceRecord {
-  return {
-    ...source,
-    sourceId: source.id,
-    url: source.sourceUri ?? source.canonicalUri,
-  };
+  return withKnowledgeSourceAnswerAliases(source);
 }
 
 function filterHomeGraphAnswerLinkedObjects(

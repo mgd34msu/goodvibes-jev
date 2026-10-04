@@ -58,6 +58,29 @@ regenerated with identical content, the SDK keeps the existing `generatedAt`
 and artifact instead of stamping a new one, so an unchanged page does not look
 freshly written every time reindex or sync runs over it.
 
+### Local structural references
+
+Home Graph artifact ingestion and snapshot sync register the exact source IDs
+and canonical URIs they mint. These local bookkeeping references are omitted
+from judgment input only while their opaque, in-memory producer proof still
+matches the current stored record. Ordinary source content and externally
+supplied URIs continue through the full privacy preflight.
+
+Answer responses retain their `sourceId` and `url` aliases. Page refresh can
+recover the original source only from an unchanged alias projection made by
+the owning answer pipeline in the same store. It does not rewrite that exact
+stored source just to add display aliases. JSON copies, caller-built aliases,
+reopened stores, and changed records do not inherit structural authority;
+source or link writes also remain fenced against changes during quality reads.
+Every restored alias is revalidated together after quality evaluation and before
+the first write. A ledger commit that rebuilds byte-identical cached records
+still invalidates their former object-bound authority and holds the whole pass.
+After admission, an originally owned source that changes identity is held rather
+than passed to ordinary upsert. Ownership is rechecked at the guarded node/edge commit points, after awaited
+write operations, and before returning success. A batch is not an atomic rollback:
+earlier valid writes may remain when a later concurrent correction is detected,
+but that correction must not be overwritten or authorize further stale work.
+
 ## Quality
 
 Page generation deduplicates facts that restate the same canonical value under

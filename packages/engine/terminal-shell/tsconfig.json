@@ -21,6 +21,9 @@
     },
     {
       "path": "../sdk"
+    },
+    {
+      "path": "../operator-sdk"
     }
   ]
 }

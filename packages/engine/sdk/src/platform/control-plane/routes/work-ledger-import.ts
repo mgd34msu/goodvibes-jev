@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod/v4';
 import type { GatewayMethodCatalog } from '../method-catalog.js';
 import type { GatewayMethodInvocation } from '../method-catalog-shared.js';
-import { WORK_LEDGER_IMPORT_SCOPE } from '../method-catalog-work-ledger.js';
+import { WORK_LEDGER_IMPORT_SCOPE, WORK_LEDGER_READ_SCOPE } from '../method-catalog-work-ledger.js';
 import { GatewayVerbError } from './gateway-verb-error.js';
 import { readInvocationParams } from './invocation-params.js';
 import { LEGACY_IMPORT_MAX_BYTES, prepareLegacyWorkLedgerMigration, workLedgerCommandSchema,
@@ -23,9 +23,10 @@ export function registerWorkLedgerImportGatewayMethods(catalog: GatewayMethodCat
   };
   const run = async (invocation: GatewayMethodInvocation, prepare: boolean): Promise<unknown> => {
     const context = invocation.context;
-    if (!context.admin || !context.principalId || !context.scopes?.some(scope => scope === '*' || scope === WORK_LEDGER_IMPORT_SCOPE)
+    const operationScope = prepare ? WORK_LEDGER_READ_SCOPE : WORK_LEDGER_IMPORT_SCOPE;
+    if (!context.admin || !context.principalId || !context.scopes?.some(scope => scope === '*' || scope === operationScope)
       || !context.scopes?.some(scope => scope === '*' || scope === 'read:knowledge')
-      || typeof invocation.isAuthorized !== 'function' || invocation.isAuthorized() !== true) throw new GatewayVerbError('Legacy import requires current owner authorization and the dedicated import scope', 'FORBIDDEN', 403);
+      || typeof invocation.isAuthorized !== 'function' || invocation.isAuthorized() !== true) throw new GatewayVerbError(`Legacy import requires current admin authorization, ${operationScope} and read:knowledge`, 'FORBIDDEN', 403);
     const input = readInvocationParams(invocation);
     if (new TextEncoder().encode(JSON.stringify(input)).byteLength > LEGACY_IMPORT_MAX_BYTES) throw new GatewayVerbError('Legacy import exceeds request limit', 'WORK_LEDGER_IMPORT_LIMIT', 413);
     const actor = host.authority.issueActor({ projectId: host.projectId, role: 'coordinator',

@@ -19194,6 +19194,36 @@ export interface OperatorMethodOutputMap {
         } & {
             readonly [key: string]: unknown;
         }))[];
+    } | {
+        items: readonly (({
+            id: string;
+            connectorId: string;
+            sourceType: "bookmark" | "bookmark-list" | "dataset" | "document" | "history" | "image" | "manual" | "other" | "repo" | "url";
+            title?: string;
+            sourceUri?: string;
+            canonicalUri?: string;
+            summary?: string;
+            description?: string;
+            tags: readonly string[];
+            folderPath?: string;
+            status: string;
+            artifactId?: string;
+            contentHash?: string;
+            lastCrawledAt?: number;
+            crawlError?: string;
+            sessionId?: string;
+            metadata: ({} & {
+                readonly [key: string]: ({} & {
+                    readonly [key: string]: JsonValue;
+                }) | boolean | null | number | readonly JsonValue[] | string;
+            });
+            createdAt: number;
+            updatedAt: number;
+        } & {
+            readonly [key: string]: unknown;
+        }))[];
+        hasMore: boolean;
+        nextCursor?: string;
     };
     // (undocumented)
     "knowledge.status": ({

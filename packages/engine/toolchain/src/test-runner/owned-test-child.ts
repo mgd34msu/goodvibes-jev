@@ -165,10 +165,18 @@ function perCallMs(name: string, value: number | undefined, fallback: number): n
 /** `{ at, started }` from the child's heartbeat, or null before the first one. */
 function readHeartbeat(path: string): { at: number; started: number } | null {
   try {
-    const [at, started] = readFileSync(path, 'utf8').trim().split(/\s+/);
-    const atMs = Number(at);
-    if (!Number.isFinite(atMs)) return null;
-    return { at: atMs, started: Number(started) || 0 };
+    // Accept only complete records even if publication is interrupted or a
+    // different writer truncates the file: Number('') is zero, which made an
+    // empty write window look epoch-old and killed healthy suites immediately.
+    const record = /^([1-9]\d*) ([1-9]\d*)\n$/.exec(readFileSync(path, 'utf8'));
+    if (record === null) return null;
+    const at = Number(record[1]);
+    const started = Number(record[2]);
+    if (!Number.isSafeInteger(at) || !Number.isSafeInteger(started)) return null;
+    // Read the clock after the record, so a concurrently published valid beat
+    // cannot appear future-dated just because it followed the poll's clock read.
+    if (at > Date.now()) return null;
+    return { at, started };
   } catch {
     return null;
   }
@@ -427,10 +435,13 @@ export async function runOwnedTestChild(options: {
     escalation.unref?.();
   };
 
+  let lastHeartbeat: { at: number; started: number } | null = null;
   const watchdog = setInterval(() => {
     if (childHasExited) return;
     const now = Date.now();
-    const beat = readHeartbeat(heartbeatPath);
+    // A torn read must neither forget prior progress nor renew its deadline.
+    const beat = readHeartbeat(heartbeatPath) ?? lastHeartbeat;
+    lastHeartbeat = beat;
     const progress = beat === null
       ? 'no test has started yet'
       : `${beat.started} tests started, the last of them ${describeSeconds(now - beat.at)} ago`;

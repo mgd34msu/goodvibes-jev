@@ -2,7 +2,7 @@ import { registerAnswerExcerptSelection } from './answer-excerpts/provenance.js'
 export { answerExcerptProvenance } from './answer-excerpts/provenance.js';
 import { prepareAnswerSourceExcerpts, type LocalAnswerExcerptSpan } from './answer-excerpts/prepare.js';
 import { snapshotNodeInput } from '../activation/projection.js';
-import { knowledgeSourceJudgmentUris } from '../source-structural-references.js';
+import { knowledgeSourceJudgmentUris, withKnowledgeSourceAnswerAliases } from '../source-structural-references.js';
 import { projectAnswerFactClaim } from './answer-claim-projection.js';
 import { assertJudgmentInput } from '../../gate/judgment-input.js';
 import { createSemanticWriteGuard, type SemanticWriteGuard } from './primary-source-plan.js';
@@ -348,11 +348,7 @@ export function uniqueNodes(nodes: readonly KnowledgeNodeRecord[]): KnowledgeNod
 }
 
 export function withAnswerSourceAliases(source: KnowledgeSourceRecord): KnowledgeSourceRecord {
-  return {
-    ...source,
-    sourceId: source.id,
-    url: source.sourceUri ?? source.canonicalUri,
-  };
+  return withKnowledgeSourceAnswerAliases(source);
 }
 
 function buildSourceFactIndex(

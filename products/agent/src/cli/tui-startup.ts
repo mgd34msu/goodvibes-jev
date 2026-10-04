@@ -1,9 +1,10 @@
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
 import type { InputHandler } from '../input/handler.ts';
-import { readOnboardingCompletionMarker } from '../runtime/onboarding/index.ts';
+// Startup diagnostics must not initialize the Agent runtime/onboarding barrels:
+// they pull in feature-enablement's eager metadata lookups before boot begins.
+import { readOnboardingCompletionMarker } from '../runtime/onboarding/markers.ts';
 import type { GoodVibesCliParseResult } from './types.ts';
-import { checkRecoveryFile, readLastSessionPointer } from '@/runtime/index.ts';
-import type { SessionSurface } from '@/runtime/index.ts';
+import { checkRecoveryFile, readLastSessionPointer, type SessionSurface } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { resolveResumableSession, surfaceResumeRelaunchNotice } from './resume-relaunch-notice.ts';
 import { writeFatalLine } from '../utils/fatal-boot-write.ts';
 

@@ -36,7 +36,7 @@
  * writes to answer the only question being asked of them.
  */
 import { beforeEach } from 'bun:test';
-import { writeFileSync } from 'node:fs';
+import { renameSync, writeFileSync } from 'node:fs';
 
 import { HEARTBEAT_PATH_ENV, PARENT_GONE_EXIT_CODE, PARENT_PID_ENV } from './test-child-watchdog-env.js';
 
@@ -65,6 +65,9 @@ function installParentDeathWatchdog(): void {
 function installProgressHeartbeat(): void {
   const path = process.env[HEARTBEAT_PATH_ENV];
   if (!path) return;
+  // This child's runner owns the directory. Publish complete records by a
+  // same-directory rename, so readers never see an in-place truncation window.
+  const pendingPath = `${path}.next`;
   let started = 0;
   let lastWrite = 0;
   beforeEach(() => {
@@ -73,10 +76,12 @@ function installProgressHeartbeat(): void {
     if (now - lastWrite < HEARTBEAT_THROTTLE_MS) return;
     lastWrite = now;
     try {
-      writeFileSync(path, `${now} ${started}\n`, 'utf8');
+      writeFileSync(pendingPath, `${now} ${started}\n`, 'utf8');
+      renameSync(pendingPath, path);
     } catch {
       // A heartbeat that cannot be written must never fail a test. The parent
       // reports the silence instead, which is the same outcome one step later.
+      // Any unfinished staging file stays inside the runner-owned cleanup tree.
     }
   });
 }

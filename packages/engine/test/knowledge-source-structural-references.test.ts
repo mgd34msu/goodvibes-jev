@@ -13,11 +13,12 @@ import { homeGraphSourceId, namespacedCanonicalUri } from '../sdk/src/platform/k
 import { prepareSourceLinkedRepairProfileFacts } from '../sdk/src/platform/knowledge/semantic/self-improvement-promotion.js';
 import { prepareGeneratedFactSupport, type GeneratedFactSupportInput } from '../sdk/src/platform/knowledge/semantic/verification/generated-fact-support.js';
 import { withStoredKnowledgeSourceReferences } from '../sdk/src/platform/knowledge/semantic/verification/structural-references.js';
-import { captureKnowledgeSourceReferences, knowledgeSourceJudgmentUris, projectKnowledgeSourceReferences } from '../sdk/src/platform/knowledge/source-structural-references.js';
+import { captureKnowledgeSourceReferences, knowledgeSourceJudgmentUris, projectKnowledgeSourceReferences, restoreKnowledgeSourceAnswerAliases, withKnowledgeSourceAnswerAliases } from '../sdk/src/platform/knowledge/source-structural-references.js';
 import { judgmentInputProblem, JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
 import { KnowledgeGeneratedFactSupportHeldError } from '../sdk/src/platform/knowledge/semantic/verification/types.js';
 import { supportHash } from '../sdk/src/platform/knowledge/semantic/verification/projection.js';
 
+import { createKnowledgePageSourceReader } from '../sdk/src/platform/knowledge/source-quality.js';
 import { sourceRankingContent } from '../sdk/src/platform/knowledge/semantic/answer-source-ranking.js';
 import { enrichKnowledgeSource } from '../sdk/src/platform/knowledge/semantic/enrichment.js';
 import { sourceSemanticHash } from '../sdk/src/platform/knowledge/semantic/utils.js';
@@ -45,6 +46,23 @@ function candidate(source: GeneratedFactSupportInput['source'], extraction: Gene
 }
 
 describe('fresh generated source and extraction references (THE36)', () => {
+  test('snapshot sync registers only its freshly minted structural URI and preserves ordinary content preflight', async () => {
+    const fake = readings(); const { store, service, dbPath } = await fixture();
+    const result = await service.syncSnapshot({ installationId: 'house', capturedAt: 1791110401109,
+      pageAutomation: { enabled: false }, title: 'Synthetic card material 4111111111111111' });
+    const source = store.getSource(result.source.id)!;
+    expect(source.canonicalUri).toBe('homegraph://homeassistant%3Ahouse/snapshot/63c1920295667438');
+    expect(judgmentInputProblem(source.canonicalUri)).toBe('card-material');
+    expect(knowledgeSourceJudgmentUris(source).canonicalUri).toBeUndefined();
+    const before = fake.requests.length;
+    await expect(createKnowledgePageSourceReader().read(source))
+      .rejects.toMatchObject({ name: 'JudgmentInputError', problem: 'card-material' });
+    expect(fake.requests).toHaveLength(before);
+    const copy = { ...source, title: 'Ordinary snapshot title' };
+    expect(knowledgeSourceJudgmentUris(copy).canonicalUri).toBe(source.canonicalUri);
+    const reopened = new KnowledgeStore({ dbPath }); await reopened.init();
+    expect(knowledgeSourceJudgmentUris(reopened.getSource(source.id)!).canonicalUri).toBe(source.canonicalUri);
+  });
   test('answer-gap equivalence retains the actual minted URI proof through structural snapshots', async () => {
     const fake = readings(); const { store, source, dbPath } = await fixture('00001af0');
     expect(judgmentInputProblem(source.canonicalUri)).toBe('card-material');
@@ -103,6 +121,55 @@ describe('fresh generated source and extraction references (THE36)', () => {
     expect(sourceRankingContent(source).uri).toBe('');
     expect(sourceRankingContent(structuredClone(source)).uri).toBe(source.canonicalUri!);
     expect(plan!.sourceHash).toBe(supportHash(source)); expect(store.getSource(source.id)!.canonicalUri).toBe(source.canonicalUri);
+  });
+  test('owned answer aliases recover only the unchanged current generated source', async () => {
+    readings(); const { store, source, dbPath } = await fixture('00001af0');
+    const alias = withKnowledgeSourceAnswerAliases(source);
+    expect(alias).not.toBe(source);
+    expect(alias.sourceId).toBe(source.id); expect(alias.url).toBe(source.sourceUri ?? source.canonicalUri);
+    expect(judgmentInputProblem(alias.url)).toBe('card-material');
+    expect(restoreKnowledgeSourceAnswerAliases(store, alias)).toBe(source);
+    expect(sourceRankingContent(restoreKnowledgeSourceAnswerAliases(store, alias)).uri).toBe('');
+    expect(Object.getOwnPropertySymbols(alias)).toHaveLength(0);
+    const reopened = new KnowledgeStore({ dbPath }); await reopened.init();
+    expect(() => restoreKnowledgeSourceAnswerAliases(reopened, alias)).toThrow(KnowledgeGeneratedFactSupportHeldError);
+  });
+  test('copied, forged and reopened answer aliases keep full URI preflight', async () => {
+    const fake = readings(); const { store, source, dbPath } = await fixture('00001af0');
+    const alias = withKnowledgeSourceAnswerAliases(source);
+    const reopened = new KnowledgeStore({ dbPath }); await reopened.init();
+    const unknowns = [structuredClone(alias), { ...source, sourceId: source.id, url: source.canonicalUri },
+      withKnowledgeSourceAnswerAliases(structuredClone(source)), withKnowledgeSourceAnswerAliases(reopened.getSource(source.id)!)];
+    const before = fake.requests.length;
+    for (const unknown of unknowns) {
+      expect(restoreKnowledgeSourceAnswerAliases(store, unknown)).toBe(unknown);
+      await expect(createKnowledgePageSourceReader().read(restoreKnowledgeSourceAnswerAliases(store, unknown)))
+        .rejects.toMatchObject({ name: 'JudgmentInputError', problem: 'card-material' });
+    }
+    expect(fake.requests).toHaveLength(before);
+  });
+  test('changed answer alias content or origin cannot inherit the generated URI proof', async () => {
+    const fake = readings(); const { store, source } = await fixture('00001af0');
+    const alias = withKnowledgeSourceAnswerAliases(source);
+    const before = fake.requests.length;
+    Object.assign(alias, { title: 'Synthetic card material 4111111111111111' });
+    expect(() => restoreKnowledgeSourceAnswerAliases(store, alias)).toThrow(KnowledgeGeneratedFactSupportHeldError);
+    const second = withKnowledgeSourceAnswerAliases(source);
+    await store.upsertSource({ ...source, summary: 'Changed origin' });
+    expect(() => restoreKnowledgeSourceAnswerAliases(store, second)).toThrow(KnowledgeGeneratedFactSupportHeldError);
+    expect(fake.requests).toHaveLength(before);
+  });
+  test('owned answer aliases preserve preflight of external numerical URI content', async () => {
+    const fake = readings(); const { store, service, artifactId } = await fixture();
+    const result = await service.ingestArtifact({ installationId: 'house', artifactId,
+      uri: 'https://manuals.example.test/4111111111111111', title: 'AC-7 external manual' });
+    const source = store.getSource(result.source.id)!;
+    const restored = restoreKnowledgeSourceAnswerAliases(store, withKnowledgeSourceAnswerAliases(source));
+    expect(restored).toBe(source);
+    const before = fake.requests.length;
+    await expect(createKnowledgePageSourceReader().read(restored))
+      .rejects.toMatchObject({ name: 'JudgmentInputError', problem: 'card-material' });
+    expect(fake.requests).toHaveLength(before);
   });
   test('copied inputs, unknown persisted records and wrong stores never inherit the capsule', async () => {
     const fake = readings(); const { store, source, extraction, dbPath } = await fixture();
