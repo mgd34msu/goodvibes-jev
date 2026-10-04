@@ -615,8 +615,8 @@ test('per-call cancellation during final delivery reauthorization withholds actu
     const read = new ReadTool(index, undefined, undefined, access);
     const observed: import('../sdk/src/platform/types/tools.js').Tool = {
       definition: read.definition,
-      execute: async (args, options) => {
-        const result = await read.execute(args, options);
+      execute: async (args) => {
+        const result = await read.execute(args);
         expect(result.success).toBe(true);
         expect(result.output).toContain('synthetic-owned');
         backendDone = true;
