@@ -144,6 +144,34 @@ test('live-auth revocation from the final signal accessor prevents commit', asyn
   expect(fs.readFileSync(host.file)).toEqual(bytes);
 });
 
+for (const shadowAbortAccessor of [false, true]) {
+  test(`final live-auth callback cancellation prevents import publication (shadow accessor: ${shadowAbortAccessor})`, async () => {
+    const host = await fixture(); const request = await seed(host); const bytes = fs.readFileSync(host.file);
+    const controller = new AbortController();
+    let signalReads = 0;
+    if (shadowAbortAccessor) Object.defineProperty(controller.signal, 'aborted', {
+      get() { signalReads += 1; return false; },
+    });
+    // An event-listener latch alone is insufficient: an earlier host listener
+    // can stop delivery without undoing the native cancellation state.
+    controller.signal.addEventListener('abort', event => event.stopImmediatePropagation());
+    let authorizationCalls = 0;
+    const result = await host.service.execute(request, host.actor, {
+      signal: controller.signal,
+      isAuthorized: () => {
+        if (++authorizationCalls === 2) controller.abort();
+        return true;
+      },
+    });
+    expect(result).toMatchObject({ kind: 'rejected', code: 'cancelled', revision: 0 });
+    expect(authorizationCalls).toBe(2);
+    if (shadowAbortAccessor) expect(signalReads).toBe(2);
+    expect(fs.readFileSync(host.file)).toEqual(bytes);
+    expect(await host.service.readSnapshot(host.actor)).toMatchObject({ revision: 0, works: [] });
+    expect(await host.service.history(0, host.actor)).toEqual([]);
+  });
+}
+
 test('local read capability preserves import cursor but protects provenance unless host explicitly grants knowledge access', async () => {
   const host = await fixture(); const request = await seed(host); await host.service.execute(request, host.actor);
   const { createLocalWorkLedgerReadBinding } = await import('../sdk/src/platform/workflow/work-ledger/read-client.js');
