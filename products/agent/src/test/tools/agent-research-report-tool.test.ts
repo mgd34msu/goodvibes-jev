@@ -1,3 +1,4 @@
+import { prepareAgentResearchReportInput } from '../../agent/research-report-input.ts';
 import { describe, expect, test } from 'bun:test';
 import type { ArtifactCreateInput, ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -322,6 +323,51 @@ describe('research report source containment', () => {
         expect(store.contents.get('artifact-1')).not.toContain('https://example.test/document');
       }
     }
+  });
+
+  test('contains complete declared malformed URL echoes before prose tokenization', async () => {
+    for (const control of ['\t', '\n', '\r']) {
+      const url = `https://example.test/doc${control}ument?token=sentinel`;
+      const store = new ResearchReportArtifactStore();
+      const result = await createAgentResearchReportTool(store).execute({ ...base, sources: [
+        { url, title: `Read ${url} carefully`, note: `Before ${url} after`, publisher: `Publisher ${url}` },
+        { title: 'Other source', url: 'https://example.test/article?id=123#section-2', note: `Compare ${url} with this source.` },
+      ] });
+      expect(result.success).toBe(true);
+      expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
+      expect(store.records[0]?.metadata.sources).toMatchObject([
+        { title: 'Read [source URL withheld] carefully', note: 'Before [source URL withheld] after', publisher: 'Publisher [source URL withheld]', urlOmitted: true },
+        { title: 'Other source', url: 'https://example.test/article?id=123#section-2', note: 'Compare [source URL withheld] with this source.', urlOmitted: true },
+      ]);
+    }
+  });
+
+  test('repeated preparation retains URL omission provenance and ordinary prose', async () => {
+    for (const control of ['\t', '\n', '\r']) {
+      const url = `https://example.test/doc${control}ument?token=sentinel`;
+      const once = prepareAgentResearchReportInput({ ...base, sources: [
+        { url, title: `See ${url}`, note: `See ${url}` },
+        { title: 'Other source', url: 'https://example.test/article?id=123#section-2' },
+      ] });
+      const twice = prepareAgentResearchReportInput(once);
+      expect(twice).toEqual(once);
+      expect(JSON.stringify(twice)).not.toContain('sentinel');
+      const store = new ResearchReportArtifactStore();
+      const result = await createAgentResearchReportTool(store).execute(twice);
+      expect(result.success).toBe(true);
+      expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
+      expect(store.records[0]?.metadata.sources).toMatchObject([{ title: 'See [source URL withheld]', note: 'See [source URL withheld]', urlOmitted: true }, { url: 'https://example.test/article?id=123#section-2' }]);
+    }
+  });
+
+  test('preserves ordinary multiline source prose and benign references', async () => {
+    const store = new ResearchReportArtifactStore();
+    const note = 'Read https://example.test/article?id=123#section-2\nThen compare the ordinary findings.';
+    const result = await createAgentResearchReportTool(store).execute({ ...base, sources: [
+      { title: 'Ordinary documentation', url: 'https://example.test/article?id=123#section-2', note },
+    ] });
+    expect(result.success).toBe(true);
+    expect(store.records[0]?.metadata.sources).toMatchObject([{ title: 'Ordinary documentation', url: 'https://example.test/article?id=123#section-2', note }]);
   });
 
   test('retains safe sources, query-dependent citations and section anchors', async () => {

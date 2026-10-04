@@ -41,22 +41,52 @@ function citationUrl(value: string): string {
   } catch { return WITHHELD_URL; }
 }
 
-/** Also contain URL aliases in names, notes and URL-derived fallback titles. */
-function sourceText(value: unknown): string {
-  if (typeof value !== 'string') return '';
-  const text = value.trim();
-  if (/^https?:/i.test(text)) return citationUrl(text);
-  const projected = text.replace(/https?:[^\s<>|]*/gi, citationUrl);
-  // A malformed candidate can contain whitespace or quoting. Never retain an
-  // unparsed tail in an alias after withholding just the recognized prefix.
-  return projected.includes(WITHHELD_URL) ? WITHHELD_URL : projected;
+/** Keep complete omitted references before a prose tokenizer can split their controls. */
+function omittedSourceReferences(values: readonly unknown[]): RegExp | undefined {
+  const urls = new Set<string>();
+  for (const value of values) {
+    const candidates = typeof value === 'string'
+      ? value.trim().replace(/^[-*]\s+/, '').split('|').map((part) => part.trim()).filter((part) => /^https?:/i.test(part))
+      : value && typeof value === 'object' && !Array.isArray(value)
+        ? [(value as Record<string, unknown>).url]
+        : [];
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string') continue;
+      const url = candidate.trim();
+      // Contiguous candidates already reach citationUrl intact. These are the
+      // declared references whose exact identity a prose delimiter would lose.
+      if (/[\s<>|]/.test(url) && citationUrl(url) === WITHHELD_URL) urls.add(url);
+    }
+  }
+  if (urls.size === 0) return undefined;
+  const literals = [...urls].sort((left, right) => right.length - left.length)
+    .map((url) => url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  try { return new RegExp(literals.join('|'), 'g'); }
+  catch { throw new Error('Research source aliases could not be prepared before transmission.'); }
 }
 
-function source(value: unknown): AgentResearchReportSource | null {
+/** Also contain URL aliases in names, notes and URL-derived fallback titles. */
+function sourceText(value: unknown, omittedReferences?: RegExp): string {
+  if (typeof value !== 'string') return '';
+  const text = omittedReferences ? value.trim().replace(omittedReferences, WITHHELD_URL) : value.trim();
+  if (/^https?:/i.test(text)) return citationUrl(text);
+  let unboundOmission = false;
+  const projected = text.replace(/https?:[^\s<>|]*/gi, (candidate) => {
+    const url = citationUrl(candidate);
+    if (url === WITHHELD_URL) unboundOmission = true;
+    return url;
+  });
+  // Known reference spans have already been removed completely, so retain their
+  // surrounding prose. An unbound malformed candidate still withholds the field
+  // rather than retaining an unparsed tail that may contain protected material.
+  return unboundOmission ? WITHHELD_URL : projected;
+}
+
+function source(value: unknown, omittedReferences?: RegExp): AgentResearchReportSource | null {
   if (typeof value === 'string') {
     // Parse the declared pipe-delimited syntax, then contain every field before
     // choosing a fallback. No fallback ever reads the original source string.
-    const parts = value.trim().replace(/^[-*]\s+/, '').split('|').map(sourceText).filter(Boolean);
+    const parts = value.trim().replace(/^[-*]\s+/, '').split('|').map((part) => sourceText(part, omittedReferences)).filter(Boolean);
     if (!parts.length) return null;
     const urlIndex = parts.findIndex((part) => /^https?:\/\//i.test(part) || part === WITHHELD_URL);
     const url = urlIndex < 0 ? '' : parts[urlIndex]!;
@@ -73,12 +103,12 @@ function source(value: unknown): AgentResearchReportSource | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   const url = typeof record.url === 'string' && record.url.trim() ? citationUrl(record.url.trim()) : '';
-  const title = sourceText(record.title) || sourceText(record.name) || url;
+  const title = sourceText(record.title, omittedReferences) || sourceText(record.name, omittedReferences) || url;
   if (!title) return null;
-  const credibility = sourceText(record.credibility) || 'unreviewed';
+  const credibility = sourceText(record.credibility, omittedReferences) || 'unreviewed';
   const metadata: Record<string, string> = {};
   for (const key of ['publisher', 'publishedAt', 'accessedAt', 'note']) {
-    const text = sourceText(record[key]);
+    const text = sourceText(record[key], omittedReferences);
     if (text) metadata[key] = text;
   }
   return Object.freeze({
@@ -97,7 +127,8 @@ export function prepareAgentResearchReportInput<T extends { readonly sources?: u
   const captured = snapshotJudgmentInput(input, 'agent_research_report') as T;
   const raw = Array.isArray(captured.sources) ? captured.sources
     : typeof captured.sources === 'string' ? captured.sources.split(/\n/) : [];
-  const sources = Object.freeze(raw.map(source).filter((entry): entry is AgentResearchReportSource => entry !== null).slice(0, 50));
+  const omittedReferences = omittedSourceReferences(raw);
+  const sources = Object.freeze(raw.map((entry) => source(entry, omittedReferences)).filter((entry): entry is AgentResearchReportSource => entry !== null).slice(0, 50));
   const prepared = Object.freeze({ ...captured, sources });
   // Revalidate projection without presentation caps; no semantic approval is
   // invented here, and no raw credential is sent for a judgment.

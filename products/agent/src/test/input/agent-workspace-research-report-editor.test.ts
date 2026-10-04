@@ -58,6 +58,37 @@ describe('research report editor source containment', () => {
     }
   });
 
+  test('contains complete malformed source aliases in actual tool args and model prompts', () => {
+    for (const control of ['\t', '\r']) {
+      const url = `https://example.test/doc${control}ument?token=sentinel`;
+      const read = reader(`Read ${url} carefully | ${url} | high | Before ${url} after`);
+      const args = buildAgentResearchReportToolArgs(read, 'Save the report.');
+      expect(JSON.stringify(args)).not.toContain('sentinel');
+      expect(args.sources[0]).toMatchObject({ title: 'Read [source URL withheld] carefully', note: 'Before [source URL withheld] after', urlOmitted: true });
+      const result = buildAgentResearchReportPromptSubmission(createAgentResearchReportEditor(), read, true);
+      expect(result.kind).toBe('prompt');
+      expect(JSON.stringify(result)).not.toContain('sentinel');
+    }
+  });
+
+  test('keeps LF record framing and contains omitted URL aliases across records', () => {
+    const omitted = 'https://example.test/doc\tument?token=sentinel';
+    const safe = 'https://example.test/article?id=123#section-2';
+    const read = reader(`First source | ${omitted} | high | See ${omitted}\nSecond source | ${safe} | medium | Compare ${omitted} with this source.`);
+    const args = buildAgentResearchReportToolArgs(read, 'Save the report.');
+    expect(args.sources).toHaveLength(2);
+    expect(args.sources[0]).toMatchObject({ title: 'First source', urlOmitted: true, note: 'See [source URL withheld]' });
+    expect(args.sources[1]).toMatchObject({ title: 'Second source', url: safe, note: 'Compare [source URL withheld] with this source.' });
+    const result = buildAgentResearchReportPromptSubmission(createAgentResearchReportEditor(), read, true);
+    expect(result.kind).toBe('prompt');
+    expect(JSON.stringify(result)).not.toContain('sentinel');
+    expect(JSON.stringify(result)).toContain(safe);
+    const safeList = buildAgentResearchReportToolArgs(reader(`First | ${safe}\nSecond | https://example.test/other#anchor`), 'Save the report.');
+    expect(safeList.sources).toHaveLength(2);
+    expect(safeList.sources[0]?.url).toBe(safe);
+    expect(safeList.sources[1]?.url).toBe('https://example.test/other#anchor');
+  });
+
   test('retains ordinary URL canonical equivalence and explicitly encoded path characters', () => {
     const args = buildAgentResearchReportToolArgs(reader('HTTPS://EXAMPLE.TEST:443/document?id=123#section-2\nhttps://example.test/doc%5Cument'), 'Save the report.');
     expect(args.sources[0]?.url).toBe('https://example.test/document?id=123#section-2');
