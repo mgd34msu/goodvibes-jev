@@ -148,6 +148,8 @@ export function prepareLegacyWorkLedgerMigration(input: LegacyMigrationInput, si
       sources.set(sourceId, { source, generation: entry.generation, digest });
     }
     const entities = new Map<string, LegacyMigrationEntity>(); const links: LegacyMigrationLink[] = [];
+    const isPlanningSource = (sourceId: string): boolean =>
+      object(sources.get(sourceId)?.source.metadata, 'source.metadata').planningArtifactKind === 'state';
     function add(kind: LegacyMigrationEntity['kind'], entityId: string, original: RecordValue, sourceId: string, pointer: string, state?: WorkReportedState): void {
       const key = JSON.stringify([kind, entityId]); const previous = entities.get(key);
       if (kind === 'work' && occupied.has(entityId)) fail('target-conflict', `Native work ID ${entityId} already exists; an authenticated import receipt is required to reconcile it.`);
@@ -158,7 +160,7 @@ export function prepareLegacyWorkLedgerMigration(input: LegacyMigrationInput, si
             // shared title/status claims conflict; absent fields do not choose a winner.
             if (String(fragment.original.title).trim() !== String(original.title).trim()) fail('identity-conflict', `Conflicting legacy work title for ${entityId}.`);
             if (fragment.original.status !== undefined && original.status !== undefined
-              && reported(fragment.original.status, fragment.original.taskId === undefined) !== state) fail('identity-conflict', `Conflicting legacy work status for ${entityId}.`);
+              && reported(fragment.original.status, isPlanningSource(fragment.sourceId)) !== state) fail('identity-conflict', `Conflicting legacy work status for ${entityId}.`);
           } else {
             const fields = kind === 'decision' ? ['title', 'decision', 'text', 'status'] : kind === 'question' ? ['prompt', 'answer', 'status'] : [];
             if (kind === 'artifact' && hash(fragment.original) !== hash(original)) fail('identity-conflict', `Conflicting legacy artifact ${entityId}.`);
@@ -174,7 +176,7 @@ export function prepareLegacyWorkLedgerMigration(input: LegacyMigrationInput, si
       // An omitted planning status makes no claim against an explicit work-plan status.
       const explicit = fragments.find(fragment => fragment.original.status !== undefined);
       const workState = kind === 'work' && explicit
-        ? reported(explicit.original.status, explicit.original.taskId === undefined) : state;
+        ? reported(explicit.original.status, isPlanningSource(explicit.sourceId)) : state;
       entities.set(key, { kind, id: entityId, fragments, ...(workState ? { reportedState: workState } : {}), verification: 'unverified' });
       if (entities.size > MAX_ENTITIES) fail('limit', 'Too many legacy entities.');
     }

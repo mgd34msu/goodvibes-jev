@@ -35,7 +35,13 @@ actor capability. A missing acceptance criterion requires review explicitly.
 Preparation is deterministic across source object-key/source-list ordering.
 Fresh replay must agree on the selected host binding, project, ledger revision,
 complete source images and generations. Source changes, missing sources, target
-ID collisions, cancellation and unsaved host-side source edits block preparation.
+ID collisions and cancellation block preparation. The pure preparation helper
+also refuses caller-reported pending local edits. The authenticated gateway
+captures persisted images and can preview an earlier version while a host batch
+has unsaved edits; it does not currently expose that pending-edit state. Import
+admission refuses active batches or dirty local state and revalidates the source
+images and generations before publication. Remote pending-edit disclosure remains
+follow-on integration work.
 Ordinary pending/in-progress work is valid data and is not mistaken for dirty
 source state. Preparation owns no write operation, so cancellation never implies
 rollback of a command that might already have committed.

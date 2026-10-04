@@ -209,6 +209,12 @@ and both `write:work-ledger-import` and `read:knowledge`; the ledger read scope 
 Preparation accepts `{projectId, sourceIds}` and captures complete persisted
 KnowledgeSourceRecords and their host-generated generation fingerprints. It
 returns the version-1 canonical preparation manifest. Preparation is read-only.
+The gateway captures persisted source images, not uncommitted in-memory edits.
+During an active KnowledgeStore batch it can therefore prepare the earlier
+persisted version. Import admission still refuses active batches or dirty local
+state, then revalidates every source image and generation under the transaction.
+Surfacing the host's pending-edit state during remote preparation remains
+follow-on integration work; this endpoint does not currently expose that state.
 The manifest contains source-qualified fragments, original IDs, links and full
 source records; the engine and products share one preparation implementation.
 

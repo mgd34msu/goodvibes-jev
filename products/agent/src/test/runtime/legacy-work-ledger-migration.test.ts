@@ -119,6 +119,21 @@ test('unknown fields, __proto__ data and external references survive losslessly'
   expect(manifest.sources.find(entry => entry.source.id === source.id)?.source.future).toEqual(JSON.parse('{"__proto__":{"value":"literal"}}'));
 });
 
+test('source artifact kind owns task status semantics even when a task retains an unknown taskId', () => {
+  const fresh = mutable();
+  const task = state(fresh).tasks[0];
+  if (!task) throw new Error('Planning task fixture missing');
+  Object.assign(task, { id: 'task-1', title: 'Legacy done item', taskId: 'future-source-qualified-alias' });
+  for (const sources of [fresh.sources, [...fresh.sources].reverse()]) {
+    const manifest = prepared({ ...fresh, sources });
+    const entity = manifest.entities.find(item => item.kind === 'work' && item.id === 'task-1');
+    expect(entity?.reportedState).toBe('complete');
+    expect(entity?.fragments).toHaveLength(2);
+    expect(entity?.fragments.some(fragment => fragment.original.taskId === 'future-source-qualified-alias')).toBe(true);
+    expect(manifest.executionAuthority).toBe('none');
+  }
+});
+
 for (const value of [undefined, NaN, Infinity, -0, 1n, new Date(0), () => 'drop']) {
   test(`rejects unsupported non-JSON data ${String(value)}`, () => {
     const fresh = mutable(); Object.assign(fresh.sources[0]!.source, { unsupported: value });
