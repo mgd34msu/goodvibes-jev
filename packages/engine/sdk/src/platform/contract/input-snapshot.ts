@@ -264,7 +264,9 @@ async function capture(root: string, options: CaptureContractInputOptions): Prom
     const dirty = inputTree !== headTree || git(root, ['diff-index', '--cached', '--raw', '-z', ownerHead, '--']).length > 0;
     // A clean generation uses the real owner commit; synthetic input never enters clean owner history.
     const inputCommit = inputTree === headTree ? ownerHead : gitText(root, ['commit-tree', inputTree, '-p', ownerHead, '-m', 'Local contract input; not a deliverable']);
-    const receipt: ContractInputSnapshot = { version: 1, id: randomUUID(), sourceRoot: root, sourceIdentity, gitIdentity, ownerHead, ownerRef, indexFingerprint: index, inputTree, inputCommit, capturedAt: Date.now(), dirty, exclusions: [...CONTRACT_INPUT_EXCLUSIONS], files };
+    // Encode generated opaque IDs without numeric runs; the privacy floor still
+    // evaluates every original/captured path and must not be relaxed for UUIDs.
+    const receipt: ContractInputSnapshot = { version: 1, id: randomUUID().replace(/[0-9]/g, (digit) => String.fromCharCode(107 + Number(digit))), sourceRoot: root, sourceIdentity, gitIdentity, ownerHead, ownerRef, indexFingerprint: index, inputTree, inputCommit, capturedAt: Date.now(), dirty, exclusions: [...CONTRACT_INPUT_EXCLUSIONS], files };
     check();
     await assertContractInputOwner(receipt, signal);
     if (await indexIdentity(root) !== originalIndex) throw new Error('contract input index replaced during capture');

@@ -1,10 +1,19 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import * as crypto from 'node:crypto';
+import { PermissionManager, type PermissionConfigReader } from '../sdk/src/platform/permissions/manager.js';
+import { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.js';
+import { judgmentInputBoundary } from '../sdk/src/platform/gate/boundary.js';
+import { createContractInputAuthority, authorizeContractInputPath, withContractInputAuthority } from '../sdk/src/platform/contract/input-authority.js';
+import { defaultRepositoryMap } from '../sdk/src/platform/contract/planner.js';
+import type { Contract } from '../sdk/src/platform/contract/types.js';
+import { useGateReadings } from './_helpers/gate-readings.js';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assertContractInputObjects, assertContractInputOwner, assertContractInputView, captureContractInput, contractInputPath, isContractInputSnapshot, materializeContractInput, initializeContractMemberWorktree } from '../sdk/src/platform/contract/input-snapshot.js';
 
+useGateReadings();
 const roots: string[] = [];
 function git(root: string, ...args: string[]): Buffer {
   const r = spawnSync('git', ['-C', root, ...args]);
@@ -178,4 +187,31 @@ test('redirected runtime storage is held before materialization', async () => {
   const snapshot = await captureContractInput(root);
   await expect(prepareContractInputParent(snapshot, contractInputPath(snapshot))).rejects.toThrow('redirected');
   expect(existsSync(join(outside, '.worktrees'))).toBe(false);
+});
+
+
+test('generated snapshot paths preserve allowed repository maps through the unchanged privacy boundary', async () => {
+  const root = repo();
+  // Synthetic UUID with a numeric span matching the existing deterministic floor.
+  const rawId = 'ca698156-0902-4913-8e36-1da052d45109' as ReturnType<typeof crypto.randomUUID>;
+  expect(judgmentInputBoundary('read', { path: join(root, rawId, 'tracked.ts') }, root).passed).toBe(false);
+  const id = spyOn(crypto, 'randomUUID').mockReturnValue(rawId);
+  let snapshot: Awaited<ReturnType<typeof captureContractInput>>;
+  try { snapshot = await captureContractInput(root); } finally { id.mockRestore(); }
+  const frozen = await view(root, snapshot);
+  const manager = new PermissionManager(async () => ({ approved: true }), {
+    isAutoApproveEnabled: () => false,
+    getWorkingDirectory: () => root,
+    getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }),
+  } as PermissionConfigReader, new PolicyRuntimeState());
+  const authority = await createContractInputAuthority({ projectRoot: root, inputSnapshot: snapshot } as Contract, frozen);
+  const ownerRead = async (path: string) => (await manager.readAccess(path)) === 'allow';
+  const filter = async (path: string) => {
+    try { await authorizeContractInputPath(authority, path, ownerRead); return true; } catch { return false; }
+  };
+  const map = await withContractInputAuthority(authority, () => defaultRepositoryMap(frozen, filter, filter));
+  expect(map).toContain('value');
+  expect(map).not.toContain('[access-restricted]');
+  expect(snapshot.id).toMatch(/^[a-z-]+$/);
+  expect(await manager.readAccess(join(root, rawId, 'tracked.ts'))).toBe('restricted');
 });
