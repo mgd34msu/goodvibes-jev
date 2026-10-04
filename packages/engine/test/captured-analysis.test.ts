@@ -240,7 +240,9 @@ for (const files of [['.git/config'], ['../api.ts'], [':(attr:secret)*']] as con
     const f = await fixture();
     const result = await f.tool.execute({ mode: 'breaking', files: [...files] });
     expect(JSON.stringify(result)).not.toContain('HISTORY_ONLY_MARKER'); expect(f.prompts).toHaveLength(0);
-    expect(result.output ?? result.error).toContain('unsupported captured comparison path');
+    expect(result.success).toBe(false);
+    expect(result.output).toBeUndefined();
+    expect(result.error).toContain('unsupported captured comparison');
   });
 }
 
@@ -250,3 +252,36 @@ test('captured Git preserves directory file selections, HEAD alias and output pr
   expect(result.success).toBe(true);
   expect(JSON.parse(result.output!).comparison_inputs.after).toEqual({ ref: '@', commit: f.after });
 });
+
+for (const files of [
+  [':(literal)api.ts'],
+  [':(glob)*.ts'],
+  [':(icase)API.TS'],
+  [':(top,literal)api.ts'],
+  [':/api.ts'],
+  ['.', ':(exclude)package.json'],
+  ['.', ':!api.ts'],
+  ['.', ':^api.ts'],
+  ['.'],
+] as const) {
+  test(`captured Git preserves ordinary metadata selector ${files.join(', ')}`, async () => {
+    const f = await fixture();
+    const args = { mode: 'diff', files: [...files] };
+    const ordinary = await createAnalyzeTool({ chat: f.chat }, undefined, f.root).execute(args);
+    const captured = await f.tool.execute(args);
+    expect(ordinary.success).toBe(true); expect(captured.success).toBe(true);
+    const expected = JSON.parse(ordinary.output!); const actual = JSON.parse(captured.output!);
+    delete actual.comparison_inputs;
+    expect(actual).toEqual(expected);
+    if (files.length === 1) expect(captured.output).toContain('HISTORY_ONLY_MARKER');
+  });
+}
+for (const mode of ['diff', 'breaking', 'semantic_diff'] as const) {
+  test(`captured ${mode} reports an unsupported attribute predicate as a failure`, async () => {
+    const f = await fixture();
+    const result = await f.tool.execute({ mode, files: [':(attr:secret)*'] });
+    expect(result.success).toBe(false); expect(result.output).toBeUndefined();
+    expect(result.error).toContain('live attribute predicates are unavailable');
+    expect(f.prompts).toHaveLength(0);
+  });
+}

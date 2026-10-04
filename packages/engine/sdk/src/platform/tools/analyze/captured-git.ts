@@ -84,6 +84,38 @@ function safeRelativePath(path: string): boolean {
       !CONTRACT_INPUT_EXCLUSIONS.includes(part as (typeof CONTRACT_INPUT_EXCLUSIONS)[number]));
 }
 
+/** Preserve Git's metadata-only selectors while refusing predicates that consult live attributes. */
+function capturedSelector(file: string, projectRoot: string, root: string): string {
+  if (file.length > 4096 || file.includes('\0') || file.includes('\\'))
+    throw new Error('unsupported captured comparison path');
+  if (file === ':') return file; // Git's existing "no pathspec" form; Git rejects mixing it with other selectors.
+  let pattern = file;
+  let magic: string[] = [];
+  if (file.startsWith(':(')) {
+    const closing = file.indexOf(')');
+    if (closing === -1) throw new Error('unsupported captured comparison selector');
+    magic = file.slice(2, closing).split(',').filter(Boolean);
+    pattern = file.slice(closing + 1);
+  } else if (file.startsWith(':')) {
+    let index = 1;
+    while (index < file.length && '/!^'.includes(file[index]!)) {
+      magic.push(file[index] === '/' ? 'top' : 'exclude');
+      index++;
+    }
+    if (file[index] === ':') index++;
+    pattern = file.slice(index);
+  }
+  if (magic.some((name) => !['top', 'literal', 'glob', 'icase', 'exclude'].includes(name)))
+    throw new Error('unsupported captured comparison selector: live attribute predicates are unavailable');
+  const path = relative(root, resolve(magic.includes('top') ? root : projectRoot, pattern)).split(sep).join('/');
+  // Exclusions can remove runtime paths from a comparison; only the resulting changed names grant candidates.
+  const permitted = path === '' || (magic.includes('exclude')
+    ? path.length > 0 && !isAbsolute(path) && path.split('/').every((part) => part !== '' && part !== '.' && part !== '..')
+    : safeRelativePath(path));
+  if (!permitted) throw new Error('unsupported captured comparison path');
+  return `${magic.length > 0 ? `:(${magic.join(',')})` : ''}${path || '.'}`;
+}
+
 /** HEAD belongs to this authorized view; explicit refs become separately identified immutable inputs. */
 export async function createAnalyzeGitReader(projectRoot: string, before: string, after: string): Promise<AnalyzeGitReader> {
   assertCapturedInputPathContext(projectRoot);
@@ -133,12 +165,7 @@ export async function createAnalyzeGitReader(projectRoot: string, before: string
   };
   const diff = async (stat: boolean, files?: string[]): Promise<string> => {
     await assertCurrent();
-    const selection = files?.map((file) => {
-      // The public parameter names files/directories, not Git attribute predicates or option syntax.
-      const path = relative(context.root, resolve(projectRoot, file)).split(sep).join('/');
-      if ((path !== '' && !safeRelativePath(path)) || file.startsWith(':')) throw new Error('unsupported captured comparison path');
-      return path || '.';
-    });
+    const selection = files?.map((file) => capturedSelector(file, projectRoot, context.root));
     const base = ['diff-tree', '--no-commit-id', '-r', '--no-ext-diff', '--no-textconv', '--no-renames'];
     // --name-only does not open blobs. Authorize both sides of every selected change before diff/stat reads them.
     const names = git(source, [...base, '--name-only', '-z', beforeCommit, afterCommit,

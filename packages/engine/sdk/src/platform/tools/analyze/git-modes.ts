@@ -125,13 +125,15 @@ export async function runDiff(
   try {
     statOutput = await git.diffStat(before, after);
   } catch (err) {
+    if (git.comparisonInputs) throw err;
     return { error: `git diff failed: ${summarizeError(err)}`, before, after };
   }
 
   let fullDiff: string;
   try {
     fullDiff = await git.diffBetween(before, after, input.files);
-  } catch {
+  } catch (err) {
+    if (git.comparisonInputs) throw err;
     fullDiff = '';
   }
 
@@ -205,6 +207,7 @@ export async function runBreaking(
   try {
     fullDiff = await git.diffBetween(before, after, input.files);
   } catch (err) {
+    if (git.comparisonInputs) throw err;
     return { error: `git diff failed: ${summarizeError(err)}`, before, after };
   }
 
@@ -278,6 +281,7 @@ export async function runSemanticDiff(
     fullDiff = await git.diffBetween(before, after, input.files);
     statOutput = await git.diffStat(before, after);
   } catch (err) {
+    if (git.comparisonInputs) throw err;
     return { error: `git diff failed: ${summarizeError(err)}`, before, after };
   }
 
