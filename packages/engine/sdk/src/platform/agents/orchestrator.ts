@@ -1,6 +1,10 @@
 import { admitCapturedRegistryContext, type CapturedRegistryContext } from '../tools/registry-tool/captured-source.js';
 import { join } from 'node:path';
 import {
+  admitCapturedExecNodeRuntime,
+  type CapturedExecNodeRuntimeInput,
+} from '../tools/exec/captured-exec-runtime-input.js';
+import {
   admitCapturedExecDependency,
   type CapturedExecDependencyInput,
 } from '../tools/exec/captured-exec-dependencies.js';
@@ -423,6 +427,8 @@ export class AgentOrchestrator {
     dependencyInputs: readonly CapturedExecDependencyInput[] = [],
     capturedRegistry?: CapturedRegistryContext,
     capturedProcessManager?: import('../tools/shared/process-manager.js').ProcessManager,
+    nodeRuntimeInput?: CapturedExecNodeRuntimeInput,
+    nodeRuntimeUnavailable?: string,
   ): ToolRegistry {
     const channelVersion = this.channelRegistry?.getVersion() ?? -1;
     if (this.fullRegistryChannelVersion !== channelVersion) {
@@ -474,7 +480,15 @@ export class AgentOrchestrator {
         ...(authority
           ? {
               capturedReadAccess: readAccessFilter,
-              capturedExec: { authority, root: cwd, readAccessFilter: ownerReadAccess, signal, dependencyInputs },
+              capturedExec: {
+                authority,
+                root: cwd,
+                readAccessFilter: ownerReadAccess,
+                signal,
+                dependencyInputs,
+                nodeRuntimeInput,
+                nodeRuntimeUnavailable,
+              },
               capturedRegistry,
               diagnosticsProvider: null,
             }
@@ -730,6 +744,24 @@ export class AgentOrchestrator {
           )
         : undefined;
     const dependencyInputs = Object.freeze(dependency ? [dependency] : []);
+    let nodeRuntimeInput: CapturedExecNodeRuntimeInput | undefined;
+    let nodeRuntimeUnavailable: string | undefined;
+    if (authority && needsCapturedExec) {
+      try {
+        nodeRuntimeInput = await admitCapturedExecNodeRuntime({
+          authority,
+          root: cwd,
+          readAccessFilter: ownerReadAccess,
+          signal,
+        });
+      } catch {
+        // Optional runtime admission must not hide cancellation or revoked ownership.
+        await assertContractInputAuthority(authority, cwd, signal);
+        signal?.throwIfAborted();
+        nodeRuntimeUnavailable =
+          'Captured Node/npm runtime is unavailable or access-restricted. Install Node with npm/npx on the trusted runtime PATH and permit its declared runtime files, then start a new run.';
+      }
+    }
     if (authority) await assertContractInputAuthority(authority, cwd, signal);
     const capturedRegistry =
       authority && needsCapturedRegistry
@@ -829,6 +861,8 @@ export class AgentOrchestrator {
           dependencyInputs,
           capturedRegistry,
           processManager,
+          nodeRuntimeInput,
+          nodeRuntimeUnavailable,
         ),
       buildScopedRegistry: (allowedNames, fullRegistry, captureAuthority) =>
         this.buildScopedRegistry(allowedNames, fullRegistry, captureAuthority),
@@ -855,7 +889,14 @@ export class AgentOrchestrator {
     if (authority) await assertContractInputAuthority(authority, cwd, signal);
     let context: AgentOrchestratorRunContext | undefined;
     try {
-      context = await this.createRunContext(cwd, authority, signal, runKey, record.tools.includes('exec'), record.tools.includes('registry'));
+      context = await this.createRunContext(
+        cwd,
+        authority,
+        signal,
+        runKey,
+        record.tools.some((name) => ['exec', 'write', 'edit'].includes(name)),
+        record.tools.includes('registry'),
+      );
       await runAgentTask(context, record);
     } finally {
       await context?.beforeRunSettlement?.();
