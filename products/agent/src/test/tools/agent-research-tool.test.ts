@@ -57,6 +57,72 @@ function makeTool(calls: Record<string, unknown>[] = [], commandContext: Command
 }
 
 describe('research adapter', () => {
+  test('refuses report argument getters before routing or projection invokes them', async () => {
+    for (const key of ['action', 'mode', 'sources', 'title', 'summary']) {
+      const calls: Record<string, unknown>[] = [];
+      let reads = 0;
+      const input: Record<string, unknown> = { action: 'report', title: 'Report', sources: [{ title: 'Source' }] };
+      Object.defineProperty(input, key, { enumerable: true, get() { reads++; return key === 'action' || key === 'mode' ? 'report' : 'sentinel'; } });
+      const result = await makeTool(calls).execute(input);
+      expect(result.success).toBe(false);
+      expect(reads).toBe(0);
+      expect(calls).toEqual([]);
+      expect(JSON.stringify(result)).not.toContain('sentinel');
+    }
+  });
+
+  test('prepares report aliases before handing off to the report implementation', async () => {
+    for (const routing of [{ action: 'report' }, { action: 'save-report' }, { mode: 'visual_report' }]) {
+      const calls: Record<string, unknown>[] = [];
+      const unsafe = 'https://example.test/doc\tument?token=sentinel';
+      const safe = 'https://example.test/article?id=123#section-2';
+      const result = await makeTool(calls).execute({ ...routing, title: 'Report', question: 'What is supported?', sources: [
+        { title: `See ${unsafe}`, url: unsafe, note: `Before ${unsafe} after.` },
+        { title: 'Safe source', url: safe, note: 'Ordinary prose.' },
+      ] });
+      expect(result.success).toBe(true);
+      expect(JSON.stringify(calls)).not.toContain('sentinel');
+      expect(calls[0]?.sources).toMatchObject([
+        { title: 'See [source URL withheld]', urlOmitted: true, note: 'Before [source URL withheld] after.' },
+        { title: 'Safe source', url: safe, note: 'Ordinary prose.' },
+      ]);
+    }
+  });
+
+  test('keeps report routing bound to the captured declaration', async () => {
+    const calls: Record<string, unknown>[] = [];
+    let reads = 0;
+    const input = new Proxy({ action: 'report', sources: [{ title: 'Source' }] }, {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === 'action' && ++reads > 1) return { value: 'search', enumerable: true, configurable: true };
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    const result = await makeTool(calls).execute(input);
+    expect(result.success).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
+  test('owns report arguments before implementation callbacks can mutate the originals', async () => {
+    const source = { title: 'Original source', url: 'https://example.test/article?id=123#section-2' };
+    let captured: Record<string, unknown> | undefined;
+    const reportTool = fakeTool('agent_research_report', []);
+    reportTool.execute = async (args: Record<string, unknown>) => {
+      source.title = 'Changed source';
+      source.url = 'https://example.test/?token=sentinel';
+      captured = args;
+      return { success: true, output: 'Saved report.' };
+    };
+    const tool = createAgentResearchTool({ commandRegistry: {} as CommandRegistry,
+      commandContext: { workspace: {}, platform: {} } as CommandContext,
+      toolRegistry: new ToolRegistry(), reportTool });
+    const result = await tool.execute({ action: 'report', title: 'Report', sources: [source] });
+    expect(result.success).toBe(true);
+    expect(captured?.sources).toEqual([{ title: 'Original source', url: 'https://example.test/article?id=123#section-2', credibility: 'unreviewed' }]);
+    expect(JSON.stringify(captured)).not.toContain('sentinel');
+    expect(Object.isFrozen(captured?.sources)).toBe(true);
+  });
+
   test('routes plan, run, and source reads to research harness modes', async () => {
     const calls: Record<string, unknown>[] = [];
     const tool = makeTool(calls);

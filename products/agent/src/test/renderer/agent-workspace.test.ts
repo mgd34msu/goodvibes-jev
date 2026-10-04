@@ -1009,7 +1009,17 @@ describe('renderAgentWorkspace', () => {
     expect(output).toContain('Save Research Report');
     expect(output).toContain('Title *');
     expect(output).toContain('Question *');
+    // The full source privacy hint can put this field below the initial viewport.
+    // Verify the real navigation keeps both the required field and its warning visible.
+    workspace.moveEditorField(4);
+    output = text(renderAgentWorkspace(workspace, 132, 64));
+    expect(output).toContain('Editing: Sources (required)');
     expect(output).toContain('Sources *');
+    expect(output).toContain('Credential-redacted');
+    workspace.moveEditorField(-4);
+    output = text(renderAgentWorkspace(workspace, 132, 64));
+    expect(output).toContain('Editing: Title (required)');
+    expect(output).toContain('Title *');
     expect(workspace.localEditor?.fields.some((field) => field.id === 'confidence')).toBe(true);
     expect(workspace.localEditor?.fields.some((field) => field.id === 'visualReport' && field.value === 'yes')).toBe(true);
     expect(workspace.localEditor?.fields.some((field) => field.id === 'confirm' && field.required)).toBe(true);
