@@ -1,3 +1,5 @@
+import { checkCapturedInputsInBatches } from '../sdk/src/platform/tools/exec/captured-exec-validation.js';
+import { executePolicyCheck } from '../sdk/src/platform/gate/execute-policy-check.js';
 import { afterEach, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -252,3 +254,25 @@ test.skipIf(!supported)('call-only cancellation cannot recreate a cleaned depend
     expect(existsSync(directory)).toBe(false);
   } finally { cancel.abort(); release(); await pending; }
 });
+test('a failed validation batch cancels peers and drains every started check', async () => {
+  let active = 0; let maximum = 0; let started = 0;
+  await expect(checkCapturedInputsInBatches(Array.from({ length: 24 }, (_, i) => i), async (value, signal) => {
+    started++; active++; maximum = Math.max(maximum, active);
+    try {
+      if (value === 0) { await Promise.resolve(); throw new Error('denied fixture input'); }
+      await executePolicyCheck(() => new Promise<void>(() => {}), signal);
+    } finally { await new Promise((resolve) => setTimeout(resolve, 5)); active--; }
+  })).rejects.toThrow('denied fixture input');
+  expect(active).toBe(0); expect(maximum).toBeLessThanOrEqual(8); expect(started).toBeLessThanOrEqual(8);
+});
+for (const mutation of ['branch', 'revoke'] as const)
+  test(`private dependency admission never releases a token after ${mutation} changes during collection`, async () => {
+    let act: (() => void) | undefined;
+    const binding = await fixture(() => { const current = act; act = undefined; current?.(); return true; });
+    const modules = join(binding.owner, 'node_modules'); mkdirSync(modules);
+    writeFileSync(join(modules, 'dependency.js'), 'export const answer = 42;');
+    act = mutation === 'branch'
+      ? () => git(binding.root, 'switch', '-c', 'changed-during-private-admission')
+      : () => revokeContractInputAuthority(binding.authority);
+    await expect(admitCapturedExecDependency(binding, { sourceRoot: modules, targetRelativePath: 'node_modules' })).rejects.toThrow();
+  });
