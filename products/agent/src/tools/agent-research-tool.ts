@@ -1,3 +1,5 @@
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { prepareAgentResearchReportInput } from '../agent/research-report-input.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
@@ -144,7 +146,16 @@ function normalizeResearchAction(value: unknown): AgentResearchAction | null {
 }
 
 function readAction(args: AgentResearchToolArgs): AgentResearchAction {
-  const explicit = normalizeResearchAction(args.action) ?? normalizeResearchAction(args.mode);
+  // Inspect dispatch fields without invoking caller accessors. The complete
+  // report snapshot below must precede every report argument projection.
+  const routing: Record<string, unknown> = {};
+  for (const key of ['action', 'mode']) {
+    const descriptor = Object.getOwnPropertyDescriptor(args, key);
+    if (descriptor && !('value' in descriptor)) throw new Error('Unsupported research input.');
+    routing[key] = descriptor?.value;
+  }
+  const captured = snapshotJudgmentInput(routing, 'research') as AgentResearchToolArgs;
+  const explicit = normalizeResearchAction(captured.action) ?? normalizeResearchAction(captured.mode);
   if (explicit) return explicit;
   if (readString(args.sourceId)) return 'source';
   if (readString(args.runId)) return 'run';
@@ -467,8 +478,18 @@ export function createAgentResearchTool(deps: AgentResearchToolDeps): Tool {
       concurrency: 'serial',
     },
     execute: async (rawArgs: unknown) => {
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentResearchToolArgs;
-      const action = readAction(args);
+      let args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentResearchToolArgs;
+      let action: AgentResearchAction;
+      try {
+        action = readAction(args);
+        if (action === 'report') {
+          args = prepareAgentResearchReportInput(args);
+          // A caller Proxy cannot switch its declared route during capture.
+          if (readAction(args) !== 'report') throw new Error('Unsupported research input.');
+        }
+      } catch {
+        return error('Research input was refused by the protected-input boundary before dispatch.');
+      }
 
       if (action === 'briefing') return harnessTool.execute(briefingArgs(args));
       if (action === 'plan') return harnessTool.execute(planArgs(args));

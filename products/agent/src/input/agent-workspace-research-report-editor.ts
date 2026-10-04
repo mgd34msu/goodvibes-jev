@@ -1,8 +1,7 @@
+import { prepareAgentResearchReportInput } from '../agent/research-report-input.ts';
 import type { AgentWorkspaceActionResult, AgentWorkspaceLocalEditor } from './agent-workspace-types.ts';
 
 type AgentWorkspaceFieldReader = (fieldId: string) => string;
-
-const SECRETISH = /token|secret|password|authorization|credential|api[-_]?key/i;
 
 export interface AgentResearchReportWorkspaceToolArgs {
   readonly title: string;
@@ -12,6 +11,7 @@ export interface AgentResearchReportWorkspaceToolArgs {
   readonly sources: readonly {
     readonly title: string;
     readonly url?: string;
+    readonly urlOmitted?: true;
     readonly credibility?: string;
     readonly note?: string;
   }[];
@@ -43,36 +43,6 @@ function isAffirmative(value: string): boolean {
   return normalized === 'yes' || normalized === 'true';
 }
 
-function sanitizeSourceUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    for (const key of [...url.searchParams.keys()]) {
-      if (SECRETISH.test(key)) url.searchParams.set(key, '<redacted>');
-    }
-    return url.toString();
-  } catch {
-    return value.replace(/([?&\s](?:token|secret|password|authorization|credential|api[-_]?key)=)[^\s&]+/gi, '$1<redacted>');
-  }
-}
-
-function parseSources(value: string): AgentResearchReportWorkspaceToolArgs['sources'] {
-  return splitList(value).map((line) => {
-    const parts = line.split('|').map((part) => part.trim()).filter(Boolean);
-    const urlIndex = parts.findIndex((part) => /^https?:\/\//i.test(part));
-    const url = urlIndex >= 0 ? parts[urlIndex] : '';
-    const detailStart = urlIndex >= 0 ? urlIndex + 1 : 1;
-    const nonUrlParts = parts.filter((_, index) => index !== urlIndex);
-    const title = urlIndex === 0 ? (nonUrlParts.length > 1 ? nonUrlParts[0] : url) : (parts[0] ?? url ?? line);
-    const noteParts = parts.slice(detailStart + 1);
-    return {
-      title: title || line,
-      ...(url ? { url: sanitizeSourceUrl(url) } : {}),
-      ...(parts[detailStart] ? { credibility: parts[detailStart] } : {}),
-      ...(noteParts.length > 0 ? { note: noteParts.join(' | ') } : {}),
-    };
-  });
-}
-
 export function createAgentResearchReportEditor(): AgentWorkspaceLocalEditor {
   return {
     kind: 'research-report',
@@ -85,7 +55,7 @@ export function createAgentResearchReportEditor(): AgentWorkspaceLocalEditor {
       { id: 'question', label: 'Question', value: '', required: true, multiline: true, hint: 'The research question this report answers.' },
       { id: 'summary', label: 'Summary', value: '', required: false, multiline: true, hint: 'Optional executive summary.' },
       { id: 'reportMarkdown', label: 'Report markdown', value: '', required: false, multiline: true, hint: 'Full reviewed report body. Use [S1], [S2], etc. for citations when possible.' },
-      { id: 'sources', label: 'Sources', value: '', required: true, multiline: true, hint: 'One per line: title | https://source | high/medium/low | note.' },
+      { id: 'sources', label: 'Sources', value: '', required: true, multiline: true, hint: 'One per line: title | https://source | high/medium/low | note. Credential-redacted, userinfo-bearing or invalid URLs are withheld, not replaced with a different link.' },
       { id: 'findings', label: 'Findings', value: '', required: false, multiline: true, hint: 'Optional one finding per line.' },
       { id: 'gaps', label: 'Gaps', value: '', required: false, multiline: true, hint: 'Optional caveats or unresolved questions, one per line.' },
       { id: 'recommendations', label: 'Recommendations', value: '', required: false, multiline: true, hint: 'Optional next actions, one per line.' },
@@ -113,12 +83,12 @@ export function buildAgentResearchReportToolArgs(
   const visualReport = isAffirmative(readField('visualReport'));
   const requireCitationCoverage = isAffirmative(readField('requireCitationCoverage'));
   const tags = splitTags(readField('tags'));
-  return {
+  return prepareAgentResearchReportInput({
     title: readField('title').trim(),
     question: readField('question').trim(),
     ...(summary ? { summary } : {}),
     ...(reportMarkdown ? { reportMarkdown } : {}),
-    sources: parseSources(readField('sources')),
+    sources: readField('sources'),
     ...(findings.length > 0 ? { findings } : {}),
     ...(gaps.length > 0 ? { gaps } : {}),
     ...(recommendations.length > 0 ? { recommendations } : {}),
@@ -127,9 +97,9 @@ export function buildAgentResearchReportToolArgs(
     ...(visualReport ? { visualReport } : {}),
     ...(requireCitationCoverage ? { requireCitationCoverage } : {}),
     ...(tags.length > 0 ? { tags } : {}),
-    confirm: true,
+    confirm: true as const,
     explicitUserRequest,
-  };
+  });
 }
 
 export function buildAgentResearchReportPromptSubmission(
@@ -172,10 +142,21 @@ export function buildAgentResearchReportPromptSubmission(
     };
   }
 
-  const args = buildAgentResearchReportToolArgs(
-    readField,
-    'Save a reviewed source-grounded research report as an Agent artifact.',
-  );
+  let args: AgentResearchReportWorkspaceToolArgs;
+  try {
+    args = buildAgentResearchReportToolArgs(
+      readField,
+      'Save a reviewed source-grounded research report as an Agent artifact.',
+    );
+  } catch {
+    const detail = 'Research report input was refused by the protected-input boundary before transmission.';
+    return {
+      kind: 'editor',
+      editor: { ...editor, message: detail },
+      status: detail,
+      actionResult: { kind: 'error', title: 'Research report input refused', detail, safety: 'safe' },
+    };
+  }
   const prompt = [
     'Save this reviewed source-grounded research report as an Agent artifact.',
     'Use the `research` tool with these arguments:',
@@ -185,6 +166,7 @@ export function buildAgentResearchReportPromptSubmission(
     args.summary ? `summary: ${JSON.stringify(args.summary)}` : 'summary: none',
     args.reportMarkdown ? `reportMarkdown: ${JSON.stringify(args.reportMarkdown)}` : 'reportMarkdown: none',
     `sources: ${JSON.stringify(args.sources)}`,
+    ...(args.sources.some((source) => source.urlOmitted) ? ['Source URL status: some original references were withheld before transmission. Do not infer their original URL or treat another URL as equivalent.'] : []),
     args.findings ? `findings: ${JSON.stringify(args.findings)}` : 'findings: none',
     args.gaps ? `gaps: ${JSON.stringify(args.gaps)}` : 'gaps: none',
     args.recommendations ? `recommendations: ${JSON.stringify(args.recommendations)}` : 'recommendations: none',
