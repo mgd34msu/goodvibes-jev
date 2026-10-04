@@ -27152,7 +27152,23 @@ export interface OperatorMethodOutputMap {
         projectId: string;
         revision: number;
         cursor: number;
+        executionRevision?: number;
         works: readonly ({
+            execution?: {
+                id: string;
+                contractId: null | string;
+                target: {
+                    workId: string;
+                    workRevision: number;
+                    criteriaRevision: number;
+                    attemptId: string;
+                    attemptRevision: number;
+                };
+                status: "cancelled" | "deferred" | "dispatching" | "invalidated" | "pending" | "rejected" | "revising" | "running" | "settled";
+                reason: string;
+                decisionIds: readonly string[];
+                evidenceId: null | string;
+            };
             work: {
                 id: string;
                 title: string;
