@@ -50,6 +50,7 @@ async function applyDelta(
     const raw = git(root, [
       'diff',
       '--raw',
+      '--no-color',
       '--no-ext-diff',
       '--no-textconv',
       '--no-renames',
@@ -67,6 +68,7 @@ async function applyDelta(
     const names = git(root, [
       'diff',
       '--name-only',
+      '--no-color',
       '--no-ext-diff',
       '--no-textconv',
       '--no-renames',
@@ -88,6 +90,9 @@ async function applyDelta(
     const patch = git(root, [
       'diff',
       '--binary',
+      '--no-color',
+      '--src-prefix=a/',
+      '--dst-prefix=b/',
       '--full-index',
       '--no-ext-diff',
       '--no-textconv',

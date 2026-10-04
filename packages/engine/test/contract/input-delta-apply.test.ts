@@ -19,6 +19,8 @@ for (const autoCommit of [false, true]) {
       contract: { isolation: 'worktree', autoCommit },
       scripts: { u1: finishes('export const parse = 42;') },
     }));
+    git(h.root, 'config', 'diff.noprefix', 'true');
+    git(h.root, 'config', 'color.diff', 'always');
     writeFileSync(join(h.root, 'README.md'), 'owner staged text\n');
     git(h.root, 'add', 'README.md');
     writeFileSync(join(h.root, 'README.md'), 'owner unstaged text\n');
