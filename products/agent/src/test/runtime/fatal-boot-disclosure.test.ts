@@ -33,7 +33,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeLongLivedProjectTempDir, makeProjectTempDir } from '../helpers/project-temp.ts';
 
@@ -190,6 +190,12 @@ describe('the shape that shipped writes NOTHING once the output guard is on', ()
     // failure, rather than only its length (which hid the CI failure's cause).
     expect(run.stdout).toBe('');
     expect(run.stderr).toBe('');
+    // Prove this is the swallowed fatal report, not an unrelated early exit.
+    const activity = readFileSync(join(home, 'work', '.goodvibes', 'logs', 'activity.md'), 'utf-8');
+    expect(activity).toContain('Intercepted terminal output while TUI renderer was active');
+    expect(activity).toContain('goodvibes-agent failed to launch');
+    expect(activity).toContain('[ERROR] Fatal error');
+    expect(activity).toContain(join(home, 'work', 'settings.json'));
   });
 });
 
@@ -206,5 +212,8 @@ describe('the descriptor sink survives the output guard', () => {
     expect(run.stderr).toContain('goodvibes-agent failed to launch');
     expect(run.stderr).toContain('JSON Parse error');
     expect(run.stderr).toContain(join(home, 'work', 'settings.json'));
+    const activity = readFileSync(join(home, 'work', '.goodvibes', 'logs', 'activity.md'), 'utf-8');
+    expect(activity).toContain('[ERROR] Fatal error');
+    expect(activity).not.toContain('Intercepted terminal output while TUI renderer was active');
   });
 });
