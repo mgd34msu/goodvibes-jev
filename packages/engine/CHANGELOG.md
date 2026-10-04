@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Remembered permission rules become live only after persistence succeeds.
+  Failed writes leave the last committed rules unchanged, reject the calling
+  operation, and cannot leak a grant into a later successful write. Concurrent
+  additions and revocations retain call order; failed revocations remain
+  visible and retryable rather than being reported as deleted.
+
 - Home Graph answer-page refresh preserves owned generated-source provenance
   through response aliases without rewriting the original source. Snapshot
   sync also registers its freshly minted references, so card-shaped local

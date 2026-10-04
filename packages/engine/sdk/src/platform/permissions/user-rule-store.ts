@@ -55,7 +55,7 @@ export class UserPermissionRuleStore {
   private readonly store: PersistentStore<UserRuleFile>;
   private records: StoredUserPermissionRule[] = [];
   private loaded = false;
-  /** Whole-store writes run one at a time, in call order. See StoreWriteQueue. */
+  /** Whole mutations run one at a time, in call order. See StoreWriteQueue. */
   private readonly writes = new StoreWriteQueue();
 
   constructor(filePath: string) {
@@ -94,40 +94,44 @@ export class UserPermissionRuleStore {
     return this.records.map(ruleForEvaluation);
   }
 
+  /** Publish a rule only after persistence succeeds; reject without changing state on failure. */
   async add(record: StoredUserPermissionRule): Promise<void> {
-    this.records = [...this.records, record];
-    await this.persist();
+    await this.writes.run(async () => {
+      const next = [...this.records, record];
+      await this.persist(next);
+      this.records = next;
+    });
   }
 
-  /** Delete by rule id. Returns whether a rule was removed. */
+  /**
+   * Delete by rule id. Returns whether a committed rule was removed.
+   * A failed write rejects and leaves the rule present, so revocation can be retried.
+   */
   async delete(ruleId: string): Promise<boolean> {
-    const next = this.records.filter((record) => record.rule.id !== ruleId);
-    const removed = next.length !== this.records.length;
-    if (removed) {
+    let removed = false;
+    await this.writes.run(async () => {
+      const next = this.records.filter((record) => record.rule.id !== ruleId);
+      if (next.length === this.records.length) return;
+      await this.persist(next);
       this.records = next;
-      await this.persist();
-    }
+      removed = true;
+    });
     return removed;
   }
 
   /**
-   * Replace the store file with the rules as they stand at THIS call, after
-   * every write already queued has finished.
+   * Persist a candidate snapshot inside the mutation queue, before publishing
+   * it to live readers. A failed write must never install an uncommitted grant
+   * or remove a denial, and the manager must not call either change persisted.
    *
-   * `PersistentStore.persist` is atomic but says nothing about ORDER, and these
-   * rules are written by two paths that overlap in practice: `add`, from a
-   * "remember this decision" answer, and `delete`, from a revocation. With the
-   * writes unordered the add's rename could land AFTER the delete's, putting
-   * the revoked rule back on disk, and a durable user rule is consulted before
-   * anything prompts, so the next matching ask was auto-approved by a rule its
-   * owner had already taken away.
-   *
-   * The snapshot is still taken here, synchronously, exactly as it always was.
-   * Ordering is sufficient because both callers replace `records` and then
-   * persist, so each snapshot is at least as new as the one queued before it.
+   * Queue the whole read-modify-persist-publish transaction, not just the file
+   * write. Each successor then starts from the last successful commit, even
+   * after a failure. Capturing before the queue would lose overlapping adds or
+   * carry a failed grant into a later successful write; rollback after a failed
+   * write could instead erase a concurrent change. Ordered transactions also
+   * ensure an add's rename cannot overtake the revocation queued after it.
    */
-  private async persist(): Promise<void> {
-    const snapshot: UserRuleFile = { version: 1, rules: this.records };
-    await this.writes.run(() => this.store.persist(snapshot));
+  private async persist(records: StoredUserPermissionRule[]): Promise<void> {
+    await this.store.persist({ version: 1, rules: records });
   }
 }
