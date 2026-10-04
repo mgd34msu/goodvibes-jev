@@ -1,3 +1,5 @@
+import type { JevDecision } from '@goodvibes-jev/judgment/decisions';
+
 /**
  * Tool emitters, typed emission wrappers for ToolEvent domain.
  */
@@ -36,7 +38,7 @@ export function emitToolPrehooked(
 export function emitToolPermissioned(
   bus: RuntimeEventBus,
   ctx: EmitterContext,
-  data: { callId: string; turnId: string; tool: string; approved: boolean }
+  data: { callId: string; turnId: string; tool: string; approved: boolean; readonly autonomousDecision?: JevDecision | undefined }
 ): void {
   bus.emit('tools', createEventEnvelope('TOOL_PERMISSIONED', { type: 'TOOL_PERMISSIONED', ...data }, ctx));
 }
@@ -73,11 +75,12 @@ export function emitToolPosthooked(
  * for safe emission in the event stream. Never leaks raw output; provides kind, byteSize, preview.
  */
 export function toToolResultSummary(
-  result: { success?: boolean | undefined; output?: string | undefined; error?: string | undefined }
+  result: { success?: boolean | undefined; output?: string | undefined; error?: string | undefined; readonly autonomousDecision?: JevDecision | undefined }
 ): import('../../../events/tools.js').ToolResultSummary {
   if (!result.success) {
     const errStr = result.error ?? 'unknown error';
     return {
+      ...(result.autonomousDecision ? { autonomousDecision: structuredClone(result.autonomousDecision) } : {}),
       kind: 'error',
       byteSize: errStr.length,
       preview: errStr.slice(0, 100),
@@ -94,7 +97,7 @@ export function toToolResultSummary(
     kind = 'text';
     preview = output.slice(0, 100);
   }
-  return { kind, byteSize: output.length, preview };
+  return { kind, byteSize: output.length, preview, ...(result.autonomousDecision ? { autonomousDecision: structuredClone(result.autonomousDecision) } : {}) };
 }
 
 /** Emit TOOL_SUCCEEDED when a tool call completes successfully. */

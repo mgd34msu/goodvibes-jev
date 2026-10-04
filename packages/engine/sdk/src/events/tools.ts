@@ -1,3 +1,5 @@
+import type { JevDecision } from '@goodvibes-jev/judgment/decisions';
+
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 /**
@@ -11,6 +13,8 @@
  * into the event stream while still providing enough context for observability.
  */
 export interface ToolResultSummary {
+  /** Decision provenance only; never permission to execute. */
+  readonly autonomousDecision?: JevDecision | undefined;
   /** Discriminant for the result shape (e.g. 'text', 'json', 'error', 'binary'). */
   kind: string;
   /** Approximate byte size of the raw result. */
@@ -27,7 +31,7 @@ export type ToolEvent =
   /** Pre-execution hooks have run for this tool call. */
   | { type: 'TOOL_PREHOOKED'; callId: string; turnId: string; tool: string }
   /** Permission check completed; call may proceed. */
-  | { type: 'TOOL_PERMISSIONED'; callId: string; turnId: string; tool: string; approved: boolean }
+  | { type: 'TOOL_PERMISSIONED'; callId: string; turnId: string; tool: string; approved: boolean; readonly autonomousDecision?: JevDecision | undefined }
   /** Tool is actively executing. */
   | { type: 'TOOL_EXECUTING'; callId: string; turnId: string; tool: string; startedAt: number }
   /** Tool result has been mapped/transformed for the provider. */
