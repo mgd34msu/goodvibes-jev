@@ -5,6 +5,7 @@ import {
   assertContractInputAuthority,
   authorizeContractInputPath,
   contractInputAuthoritySourceRoot,
+  contractInputAuthorityRoot,
   registerContractInputReadAssertion,
 } from '../../contract/input-authority.js';
 import { CONTRACT_INPUT_EXCLUSIONS } from '../../contract/input-snapshot.js';
@@ -75,8 +76,10 @@ export async function admitCapturedExecDependency(
   try { await lstat(target); return undefined; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   const rootIdentity = `${rootStat.dev}:${rootStat.ino}`;
-  const checkRoot = async (): Promise<void> => {
-    await assertContractInputAuthority(binding.authority, binding.root, binding.signal);
+  const checkRoot = async (full = true): Promise<void> => {
+    binding.signal?.throwIfAborted();
+    if (contractInputAuthorityRoot(binding.authority) !== resolve(binding.root)) throw new Error('dependency authority root changed');
+    if (full) await assertContractInputAuthority(binding.authority, binding.root, binding.signal);
     const stat = await lstat(sourceRoot, { bigint: true });
     if (!stat.isDirectory() || stat.isSymbolicLink() || await realpath(sourceRoot) !== sourceRoot || `${stat.dev}:${stat.ino}` !== rootIdentity)
       throw new Error('dependency source root changed');
@@ -92,22 +95,28 @@ export async function admitCapturedExecDependency(
   };
   const reads: DependencyRead[] = [];
   const files: { path: string; data: Buffer; mode: number }[] = [];
-  const checkRead = async (read: DependencyRead): Promise<void> => {
+  const checkRead = async (read: DependencyRead, full = true): Promise<void> => {
     binding.signal?.throwIfAborted();
     if (!await filter(read.source) || !await filter(read.canonical) || !await filter(read.alias)) throw new Error('dependency input is access-restricted');
-    await checkRoot();
+    await checkRoot(full);
     if (await realpath(read.source) !== read.canonical || fingerprint(await lstat(read.canonical, { bigint: true })) !== read.identity)
       throw new Error('dependency source changed after admission');
   };
   const check = async (): Promise<void> => {
     await checkRoot();
-    for (const read of reads) await checkRead(read);
+    // This metadata-only sweep never releases bytes or grants another operation.
+    // Full recorded-view/Git validation brackets it; each entry still checks
+    // the live opaque token, source-root identity, current original/alias
+    // permissions and immutable file identity. Admission byte reads use the
+    // full checkRead default before their bytes can enter the admitted input.
+    for (const read of reads) await checkRead(read, false);
     for (const link of workspaceLinks) {
       if (fingerprint(await lstat(link.source, { bigint: true })) !== link.identity || await realpath(link.source) !== link.canonical)
         throw new Error('workspace dependency link changed after admission');
       await checkWorkspaceRead(link.captured, link.source, link.alias);
     }
     for (const read of workspaceReads.values()) await checkWorkspaceRead(...read);
+    await checkRoot();
   };
   let bytes = 0;
   const visit = async (source: string, alias: string, path: string, ancestors: ReadonlySet<string>): Promise<void> => {
