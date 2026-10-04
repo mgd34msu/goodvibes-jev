@@ -60,6 +60,7 @@ export interface ContractRunnerCompositionOptions {
   /** Live provider health, so the route planner skips providers that are down. */
   readonly runtimeStore?: Pick<RuntimeStore, 'getState'> | undefined;
   readonly workPlanService?: WorkPlanService | undefined;
+  readonly readAccessFilter?: import('../tools/shared/read-access.js').ReadAccessFilter | undefined;
   readonly planManager?: ExecutionPlans | undefined;
 }
 
@@ -206,6 +207,7 @@ export function composeContractRunner(options: ContractRunnerCompositionOptions)
     runtimeBus: options.runtimeBus,
     configManager: options.configManager,
     projectRoot: options.projectRoot,
+    readAccessFilter: options.readAccessFilter,
     routeSelector: createRoutePlannerContractSelector(planner, {
       catalogSettled: async () => {
         await Promise.all([options.providerRegistry.modelDiscoverySettled(), options.providerRegistry.benchmarks.benchmarksSettled()]);
@@ -217,6 +219,8 @@ export function composeContractRunner(options: ContractRunnerCompositionOptions)
       configManager: options.configManager,
       runtimeBus: options.runtimeBus,
       projectRoot: input.projectRoot,
+      initializeWorktree: input.initializeWorktree,
+      prepareInputAuthority: input.prepareInputAuthority,
       stateRoot: input.stateRoot,
       stateNamespace: input.stateNamespace,
       contractUnitSettlement: input.contractUnitSettlement,

@@ -376,3 +376,5 @@ export {
 export type { ContractCliDeps, ContractCliIo, ContractCliRunner, ContractSessionDriver, OpenedContractRunner } from './cli.js';
 export { contractRow, formatContractEvent, renderContractTable, renderContractTree } from './cli-render.js';
 export type { ContractRow } from './cli-render.js';
+
+export type { ContractInputSnapshot, ContractInputFile, CaptureContractInputOptions } from './input-snapshot.js';

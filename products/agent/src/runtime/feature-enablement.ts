@@ -26,8 +26,8 @@ import {
   FEATURE_SETTINGS,
   deriveFeatureState,
   getFeatureSettingsBinding,
-} from '@/runtime/index.ts';
-import type { FeatureSetting } from '@/runtime/index.ts';
+} from '@goodvibes-jev/engine/sdk/platform/runtime/state';
+import type { FeatureSetting } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
 import { CONFIG_SCHEMA } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ConfigKey, ConfigManager, ConfigSetting } from '../config/index.ts';
 
@@ -41,6 +41,9 @@ export interface FeatureEnablementWrite {
   readonly value: unknown;
 }
 
+// This module is loaded by onboarding during the Agent runtime barrel
+// initialization. Import feature metadata from the public engine state surface
+// directly so compiled startup cannot observe an uninitialized barrel export.
 const FEATURE_SETTINGS_BY_ID: ReadonlyMap<string, FeatureSetting> = new Map(
   FEATURE_SETTINGS.map((feature) => [feature.id, feature]),
 );
