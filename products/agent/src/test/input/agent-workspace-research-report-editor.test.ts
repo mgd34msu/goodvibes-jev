@@ -71,6 +71,18 @@ describe('research report editor source containment', () => {
     }
   });
 
+  test('contains unbound string references and scheme-case aliases before prompt dispatch', () => {
+    const url = 'https://example.test/doc\tument?token=sentinel';
+    for (const sources of [`See ${url}`, `Source | ${url} | high | See ${url.replace('https:', 'HTTPS:')}`]) {
+      const read = reader(sources);
+      const args = buildAgentResearchReportToolArgs(read, 'Save the report.');
+      expect(JSON.stringify(args)).not.toContain('sentinel');
+      const result = buildAgentResearchReportPromptSubmission(createAgentResearchReportEditor(), read, true);
+      expect(result.kind).toBe('prompt');
+      expect(JSON.stringify(result)).not.toContain('sentinel');
+    }
+  });
+
   test('keeps LF record framing and contains omitted URL aliases across records', () => {
     const omitted = 'https://example.test/doc\tument?token=sentinel';
     const safe = 'https://example.test/article?id=123#section-2';
@@ -107,6 +119,12 @@ describe('research report editor source containment', () => {
       expect(result.kind).toBe('prompt');
       if (result.kind === 'prompt') expect(result.prompt).toContain(url);
     }
+  });
+
+  test('validates complete declared URL cells independently of prose matching', () => {
+    const args = buildAgentResearchReportToolArgs(reader('Source | https://example.test/article?q=ordinary words#section | high'), 'Save the report.');
+    expect(args.sources[0]?.url).toBe('https://example.test/article?q=ordinary%20words#section');
+    expect(args.sources[0]?.urlOmitted).toBeUndefined();
   });
 
   test('reads each source field once even when subsequent reads change', () => {

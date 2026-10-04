@@ -65,11 +65,50 @@ function omittedSourceReferences(values: readonly unknown[]): RegExp | undefined
   catch { throw new Error('Research source aliases could not be prepared before transmission.'); }
 }
 
+/**
+ * A control-separated query/fragment continuation is malformed URI syntax,
+ * regardless of parameter names. A URL followed by normal line-delimited prose
+ * or a separate URL is not such a continuation. Never emit a repaired prefix.
+ */
+function hasControlSplitReference(text: string): boolean {
+  const urls = /https?:[^\s<>|]*/gi;
+  const controls = /[\t\r\n\f\v]+/y;
+  const token = /[^\s<>|]+/y;
+  for (let match = urls.exec(text); match; match = urls.exec(text)) {
+    let cursor = urls.lastIndex;
+    const chunks: string[] = [];
+    while (cursor < text.length) {
+      controls.lastIndex = cursor;
+      if (!controls.exec(text)) break;
+      const start = controls.lastIndex;
+      token.lastIndex = start;
+      const next = token.exec(text);
+      if (!next) break;
+      const separateUrl = next[0].search(/https?:/i);
+      if (separateUrl >= 0) {
+        chunks.push(next[0].slice(0, separateUrl));
+        cursor = start + separateUrl;
+        break;
+      }
+      if (/^[a-z][a-z0-9+.-]*:/i.test(next[0])) break;
+      chunks.push(next[0]);
+      cursor = token.lastIndex;
+    }
+    const continuation = chunks.join('');
+    if (/[?&#][^?&#]/.test(continuation)
+      || (/[?&#]$/.test(match[0]) && continuation.length > 0)
+      || (/[?#]/.test(match[0]) && /[=&]/.test(continuation))) return true;
+    // All inspected chunks are URL-free; avoid repeatedly scanning long prose.
+    urls.lastIndex = Math.max(urls.lastIndex, cursor);
+  }
+  return false;
+}
+
 /** Also contain URL aliases in names, notes and URL-derived fallback titles. */
 function sourceText(value: unknown, omittedReferences?: RegExp): string {
   if (typeof value !== 'string') return '';
   const text = omittedReferences ? value.trim().replace(omittedReferences, WITHHELD_URL) : value.trim();
-  if (/^https?:/i.test(text)) return citationUrl(text);
+  if (hasControlSplitReference(text)) return WITHHELD_URL;
   let unboundOmission = false;
   const projected = text.replace(/https?:[^\s<>|]*/gi, (candidate) => {
     const url = citationUrl(candidate);
@@ -86,9 +125,11 @@ function source(value: unknown, omittedReferences?: RegExp): AgentResearchReport
   if (typeof value === 'string') {
     // Parse the declared pipe-delimited syntax, then contain every field before
     // choosing a fallback. No fallback ever reads the original source string.
-    const parts = value.trim().replace(/^[-*]\s+/, '').split('|').map((part) => sourceText(part, omittedReferences)).filter(Boolean);
-    if (!parts.length) return null;
-    const urlIndex = parts.findIndex((part) => /^https?:\/\//i.test(part) || part === WITHHELD_URL);
+    const rawParts = value.trim().replace(/^[-*]\s+/, '').split('|').map((part) => part.trim()).filter(Boolean);
+    if (!rawParts.length) return null;
+    const rawUrlIndex = rawParts.findIndex((part) => /^https?:/i.test(part));
+    const parts = rawParts.map((part, index) => index === rawUrlIndex ? citationUrl(part) : sourceText(part, omittedReferences));
+    const urlIndex = rawUrlIndex >= 0 ? rawUrlIndex : parts.findIndex((part) => part === WITHHELD_URL);
     const url = urlIndex < 0 ? '' : parts[urlIndex]!;
     const detailStart = urlIndex < 0 ? 1 : urlIndex + 1;
     const title = urlIndex === 0 ? url : parts[0]!;

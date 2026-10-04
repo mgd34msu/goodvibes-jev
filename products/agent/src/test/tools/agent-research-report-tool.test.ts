@@ -342,6 +342,34 @@ describe('research report source containment', () => {
     }
   });
 
+  test('contains malformed embedded references without a declared URL and with scheme-case aliases', async () => {
+    for (const control of ['\t', '\n', '\r']) {
+      for (const key of ['token', 'opaque']) {
+        const url = `https://example.test/doc${control}ument?${key}=sentinel`;
+        for (const entry of [{ title: `See ${url}` }, `See ${url}`, { url, title: 'Source', note: `See ${url.replace('https:', 'HTTPS:')}` }]) {
+          const store = new ResearchReportArtifactStore();
+          const result = await createAgentResearchReportTool(store).execute({ ...base, sources: [entry] });
+          expect(result.success).toBe(true);
+          expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
+          expect(store.records[0]?.metadata.sources).toMatchObject([{ urlOmitted: true }]);
+        }
+      }
+    }
+  });
+
+  test('preserves a safe URL at line end followed by ordinary prose or another URL', async () => {
+    const safe = 'https://example.test/article?id=123#section-2';
+    for (const prefix of ['', 'See ']) {
+      for (const suffix of ['Ordinary prose follows on this line.', 'Why? This is ordinary prose.', '## Heading', 'Ordinary\nprose', 'https://example.test/other?q=ordinary#anchor']) {
+        const note = `${prefix}${safe}\n${suffix}`;
+        const store = new ResearchReportArtifactStore();
+        const result = await createAgentResearchReportTool(store).execute({ ...base, sources: [{ title: 'Source', url: safe, note }] });
+        expect(result.success).toBe(true);
+        expect(store.records[0]?.metadata.sources).toMatchObject([{ url: safe, note }]);
+      }
+    }
+  });
+
   test('repeated preparation retains URL omission provenance and ordinary prose', async () => {
     for (const control of ['\t', '\n', '\r']) {
       const url = `https://example.test/doc${control}ument?token=sentinel`;
