@@ -1,5 +1,5 @@
 /** Construction-admitted immutable dependency inputs. No prefix is a read grant. */
-import { lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, symlink, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   assertContractInputAuthority,
@@ -36,6 +36,7 @@ interface Admission {
   readonly target: string;
   readonly files: readonly { path: string; data: Buffer; mode: number }[];
   readonly workspaceLinks: readonly WorkspaceLink[];
+  readonly fileLinks: readonly { path: string; target: string }[];
   readonly checkWorkspaceRead: (captured: string, originalAlias: string, projectedAlias: string) => Promise<void>;
   readonly check: () => Promise<void>;
 }
@@ -81,6 +82,7 @@ export async function admitCapturedExecDependency(
       throw new Error('dependency source root changed');
   };
   const workspaceLinks: WorkspaceLink[] = [];
+  const fileLinks: { path: string; target: string }[] = [];
   const workspaceReads = new Map<string, readonly [string, string, string]>();
   const checkWorkspaceRead = async (captured: string, originalAlias: string, projectedAlias: string): Promise<void> => {
     await authorizeContractInputPath(binding.authority, captured, filter, binding.signal);
@@ -137,6 +139,7 @@ export async function admitCapturedExecDependency(
         await visit(join(source, entry), join(alias, entry), join(path, entry), next);
       }
     } else if (stat.isFile()) {
+      if ((await lstat(source)).isSymbolicLink()) fileLinks.push({ path, target: relative(sourceRoot, canonical) });
       if (files.length >= 20_000 || stat.size > 32n * 1024n * 1024n || bytes + Number(stat.size) > 256 * 1024 * 1024)
         throw new Error('dependency input exceeds resource limit');
       const read = { source, canonical, alias, identity: fingerprint(stat) };
@@ -151,7 +154,7 @@ export async function admitCapturedExecDependency(
   await visit(sourceRoot, target, '', new Set());
   await check();
   const token = Object.freeze({ kind: 'captured-exec-dependency-input' as const });
-  admissions.set(token, { binding, target, files, workspaceLinks, checkWorkspaceRead, check });
+  admissions.set(token, { binding, target, files, workspaceLinks, fileLinks, checkWorkspaceRead, check });
   // Future provider delivery rechecks cached dependency-derived output too.
   registerContractInputReadAssertion(binding.authority, check);
   return token;
@@ -213,6 +216,14 @@ export async function projectCapturedExecDependencies(
       } else throw new Error('workspace dependency projection contains an unsupported alias');
     };
     for (const link of state.workspaceLinks) await copyWorkspace(link, '');
+    // Preserve executable file aliases so Node resolves relative imports from
+    // the admitted canonical package. Directory aliases remain filtered copies:
+    // linking them could expose a child denied under the alias path.
+    for (const link of state.fileLinks) {
+      if (!state.files.some((file) => file.path === link.target)) throw new Error('dependency executable alias target is not admitted');
+      await unlink(join(staged, link.path));
+      await symlink(relative(dirname(link.path), link.target), join(staged, link.path));
+    }
     mounts.push({ source: staged, target: state.target });
   }
   await check();

@@ -1,3 +1,4 @@
+import { projectCapturedExecNodeRuntime, type CapturedExecNodeRuntimeInput } from './captured-exec-runtime-input.js';
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 import { publishCapturedProjection } from './captured-exec-publication.js';
 import { executeCapturedFileOperations } from './captured-exec-file-ops.js';
@@ -23,6 +24,8 @@ import type { ReadAccessFilter } from '../shared/read-access.js';
 import type { ExecCommandInput, ExecCommandResult, ExecFileOp } from './schema.js';
 
 export interface CapturedExecAuthority {
+  readonly nodeRuntimeInput?: CapturedExecNodeRuntimeInput | undefined;
+  readonly nodeRuntimeUnavailable?: string | undefined;
   readonly dependencyInputs?: readonly CapturedExecDependencyInput[] | undefined;
   readonly authority: ContractInputAuthority;
   readonly root: string;
@@ -64,13 +67,13 @@ function socketFilter(network: 'enabled' | 'disabled' = 'disabled'): Buffer {
   });
   return bytes;
 }
-function runtimeArgv(): string[] {
+function runtimeArgv(nodeRuntime = false): string[] {
   const argv = ['--die-with-parent', '--new-session', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--cap-drop', 'ALL',
     '--ro-bind', '/usr/bin', '/usr/bin', '--ro-bind', '/usr/lib', '/usr/lib',
     '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib'];
   if (existsSync('/usr/lib64')) argv.push('--ro-bind', '/usr/lib64', '/usr/lib64', '--symlink', 'usr/lib64', '/lib64');
-  argv.push('--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--dir', '/home/captured',
-    '--ro-bind', process.execPath, `/captured-runtime/bin/${process.versions.bun ? 'bun' : 'node'}`);
+  argv.push('--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--dir', '/home/captured');
+  if (process.versions.bun || !nodeRuntime) argv.push('--ro-bind', process.execPath, `/captured-runtime/bin/${process.versions.bun ? 'bun' : 'node'}`);
   return argv;
 }
 
@@ -206,12 +209,14 @@ export async function runCapturedCommand(
       authorize);
     observer.onFileOperations?.(fileOperations);
     const dependencies = await executePolicyCheck(() => projectCapturedExecDependencies(binding, temporary!, operationSignal, projection), operationSignal);
-    checkDependencies = dependencies.check;
+    const nodeRuntime = await executePolicyCheck(() => projectCapturedExecNodeRuntime(binding, temporary!), operationSignal);
+    checkDependencies = async () => { await dependencies.check(); await nodeRuntime.check(); };
     await check();
     const filterPath = join(temporary, 'sockets.bpf');
     await writeFile(filterPath, socketFilter(network));
     const fd = openSync(filterPath, 'r');
-    const argv = runtimeArgv();
+    const argv = runtimeArgv(Boolean(binding.nodeRuntimeInput));
+    argv.push(...nodeRuntime.argv);
     argv.push(contractInputAuthorityMutable(binding.authority) ? '--bind' : '--ro-bind', projection, root,
       '--chdir', cwd, '--seccomp', '3');
     for (const mount of dependencies.mounts) argv.push('--ro-bind', mount.source, mount.target);
