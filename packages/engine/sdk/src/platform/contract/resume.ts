@@ -29,6 +29,7 @@ import { assertContractInputObjects, assertContractInputView, assertContractExec
 
 import { existsSync } from 'node:fs';
 import { loadWorkstreamSnapshot } from '../orchestration/persistence.js';
+import { awaitNativeResumeConditions, nativeDecisionState } from './native-decisions.js';
 import { logger } from '../utils/logger.js';
 import { queueSessionNudge, type UnitCheckLoop } from './agent-hooks.js';
 import { engineItem, type GroupRunner } from './group-runner.js';
@@ -117,6 +118,8 @@ export function findZombieCause(contract: Contract): string | null {
 }
 
 export interface ContractResumeDeps {
+  /** Native owners retain source-less legacy records for inspection only. */
+  readonly nativeOnly?: boolean | undefined;
   readonly store: ContractStore;
   /** Whether this runner already runs the contract. */
   readonly isLive: (contractId: string) => boolean;
@@ -142,6 +145,8 @@ export interface ContractResumeDeps {
 }
 
 export interface ContractResume {
+  /** Applies native historical-wait migration before explicit durable resume chooses its step. */
+  prepareNative(run: ContractRun): void;
   resumeAll(): Promise<ResumeReport>;
   /** Takes a resumed contract up at its step; for one that waited in the queue, when its slot opened. */
   continueResumed(run: ContractRun): Promise<void>;
@@ -161,11 +166,15 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
       }
       const contract = deps.store.load(contractId);
       if (contract === null) continue;
+      if ((deps.nativeOnly === true) !== (contract.nativeSource !== undefined)) { deps.store.hold(contract); skipped.push(contractId); continue; }
+      // Native authority is never reconstructed from disk. Only resumeDurable may adopt this binding.
+      if (contract.durableAdmission !== undefined) { deps.store.hold(contract); skipped.push(contractId); continue; }
       if (isTerminalContractStatus(contract.status)) {
         deps.store.hold(contract);
         continue;
       }
       const run = deps.adopt(contract);
+      prepareNativeResume(run);
       const zombie = findZombieCause(contract);
       if (zombie !== null) {
         const reason = `contract ${contract.id} could not resume: ${zombie}`;
@@ -195,10 +204,31 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
       }
       deps.takeSlot(run);
       resumed.push({ contractId: run.id, step });
-      await continueResumed(run);
+      if (run.contract.nativeSource === undefined) await continueResumed(run);
+      else void run.work.run(() => continueResumed(run));
     }
     logger.info('contract runner: resumed contracts from disk', { resumed: resumed.length, queued: queued.length, reaped: reaped.length, skipped: skipped.length });
     return { resumed, queued, reaped, skipped };
+  }
+
+  function prepareNativeResume(run: ContractRun): void {
+    const contract = run.contract;
+    if (contract.nativeSource === undefined) return;
+    contract.nativeWaiting = undefined;
+    const state = nativeDecisionState(contract);
+    if (contract.status !== 'awaiting-owner') return;
+    const old = contract.escalations.filter(item => item.resolvedAt === undefined);
+    const plan = old.find(item => item.scope === 'plan');
+    if (plan !== undefined) {
+      state.plannerOutputs.plan ??= plan.question;
+      state.spent.plan = Math.max(state.spent.plan ?? 0, contract.decisions.filter(item => item.action === 'planned').length);
+    }
+    const next = old.some(item => item.scope === 'shape') ? 'shaping' : old.some(item => item.scope === 'plan') ? 'planning' : contract.statusBeforeOwner ?? 'running';
+    run.moveContract(next); contract.statusBeforeOwner = undefined;
+    for (const unit of contract.units) if (unit.status === 'awaiting-owner') run.moveUnit(unit, 'checking');
+    for (const group of contract.groups) if (group.status === 'awaiting-owner') run.moveGroup(group, 'judging');
+    run.decide('resumed', contract.id, 'Historical owner wait retained for inspection; native continuation requires fresh evidence and a fresh Jev decision');
+    deps.store.put(contract);
   }
 
   async function continueResumed(run: ContractRun): Promise<void> {
@@ -208,6 +238,7 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
     contract.resumeFrom = undefined;
     try {
       if (contract.inputSnapshot !== undefined) await assertContractInputView(contract.inputSnapshot, run.abort.signal);
+      await awaitNativeResumeConditions(contract, run.env.native, run.abort.signal);
       switch (step) {
         case 'start':
           await deps.activate(run);
@@ -247,6 +278,8 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
     }
     if (contract.sessionMode === true) resumeSession(run);
     else await resumeEngine(run);
+    if (run.terminal) return;
+    await deps.steps.resumeNative(run);
     if (run.terminal) return;
     if (contract.status === 'queued') run.moveContract(from);
     for (const group of contract.groups) {
@@ -329,5 +362,5 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
     }
   }
 
-  return { resumeAll, continueResumed };
+  return { resumeAll, continueResumed, prepareNative: prepareNativeResume };
 }

@@ -62,6 +62,7 @@ export type {
   GroupKind,
   GroupStatus,
   JudgmentUsage,
+  NativeContractSource,
   Nudge,
   NudgeDelivery,
   NudgeKind,
@@ -378,3 +379,8 @@ export { contractRow, formatContractEvent, renderContractTable, renderContractTr
 export type { ContractRow } from './cli-render.js';
 
 export type { ContractInputSnapshot, ContractInputFile, CaptureContractInputOptions } from './input-snapshot.js';
+export { captureNativeContractSource, nativeContractSourceForAdmission } from './native-source.js';
+
+export type { NativeContractDecisionHost, NativeContractAuthority, NativeContractCondition, NativeContractDecisionRecord, NativeContractDecisionState, NativeContractProgress, NativeContractTransportProgress, NativeContractStage } from './native-decisions.js';
+export { criteriaSetIdForWork, DurableContractAdmissionError } from './durable-admission.js';
+export type { DurableContractAdmission, DurableContractExecution, DurableContractBoundary, DurableContractKey, DurableContractReceipt, DurableContractRequest, DurableStartedContract } from './durable-admission.js';

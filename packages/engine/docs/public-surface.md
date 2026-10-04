@@ -272,6 +272,7 @@ Importing any path not in this table will produce an `ERR_PACKAGE_PATH_NOT_EXPOR
 | `platform/payments/browser` | Browser-safe card-entry surface policy and CVV prompt trade-off warning; no stores, card scanning, judgment runtime or checkout execution | beta |
 | `platform/judgment-browser/catalogs` | Browser-safe fixed WebUI command descriptors and exhaustive producer status-tone catalogs; no provider, private source resolver or decision log | beta |
 | `platform/contract` | The contract runner: `createContractRunner`, the contract data model, turn intake (`createContractIntake`), the fleet controls, the operator service behind `contracts.*` (`createContractOperatorService`), the command line (`runContractCli`), the external work seam, and the Jev batteries and registry for contract decisions | beta |
+| `platform/workflow/work-ledger/native-execution` | Explicit paired-authority native work-attempt host, durable runner association and recovery refusal; does not switch product entrypoints | beta |
 | `platform/control-plane` | Control-plane gateway, method catalog, contracts, and session broker | beta |
 | `platform/core` | Orchestrator, transcript events, execution plan | beta |
 | `platform/daemon` | HTTP server, routes, port-in-use checks | beta |

@@ -201,28 +201,32 @@ function createScopedOperatorClient<TMethodId extends OperatorTypedMethodId>(
   });
 
   const operator: ScopedOperatorClient<TMethodId> = {
-    async invoke<TSelectedMethodId extends TMethodId>(
+    invoke<TSelectedMethodId extends TMethodId>(
       methodId: TSelectedMethodId,
       input?: ScopedInput<TSelectedMethodId>,
       invokeOptions: ScopedInvokeOptions = {},
     ): Promise<ScopedOutput<TSelectedMethodId>> {
-      const route = routes[methodId];
-      if (!route) throw buildRouteError(methodId);
-      const resolved = transport.resolveContractRequest(
-        route.method,
-        route.path,
-        input && typeof input === 'object' && !Array.isArray(input)
-          ? input as JsonRecord
-          : {},
-      );
-      return await transport.requestJson<ScopedOutput<TSelectedMethodId>>(resolved.url, {
-        method: resolved.method,
-        body: resolved.body,
-        headers: invokeOptions.headers,
-        signal: invokeOptions.signal,
-        methodId,
-        idempotent: false,
-      });
+      // Returning the typed transport promise avoids expanding Awaited over the
+      // full operator method map. Keep the former async rejection semantics.
+      try {
+        const route = routes[methodId];
+        if (!route) throw buildRouteError(methodId);
+        const resolved = transport.resolveContractRequest(
+          route.method,
+          route.path,
+          input && typeof input === 'object' && !Array.isArray(input)
+            ? input as JsonRecord
+            : {},
+        );
+        return transport.requestJson<ScopedOutput<TSelectedMethodId>>(resolved.url, {
+          method: resolved.method,
+          body: resolved.body,
+          headers: invokeOptions.headers,
+          signal: invokeOptions.signal,
+          methodId,
+          idempotent: false,
+        });
+      } catch (error) { return Promise.reject(error); }
     },
   };
 

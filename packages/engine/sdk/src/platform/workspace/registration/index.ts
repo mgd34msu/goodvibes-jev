@@ -8,6 +8,7 @@
 
 export {
   WorkspaceRegistrationStore,
+  withWorkspaceRegistrationWriteLockSync,
   type WorkspaceRegistrationStoreOptions,
   type RegisterWorkspaceResult,
 } from './store.js';
@@ -19,6 +20,8 @@ export {
 export { probeWorktreeLink, type GitRunner } from './worktree-link.js';
 export {
   WorkspaceRegistrationError,
+  NativeWorkspaceScopeError,
+  type NativeWorkspaceScope,
   type RegisteredWorkspaceRecord,
   type DeclinedWorkspaceRecord,
   type WorkspaceRegistrySnapshot,

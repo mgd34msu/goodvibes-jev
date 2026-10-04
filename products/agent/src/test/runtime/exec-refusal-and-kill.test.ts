@@ -29,6 +29,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { executeToolCalls, type ToolExecutionDeps } from '@goodvibes-jev/engine/sdk/platform/core';
@@ -51,6 +52,7 @@ const LAST_USER_MESSAGE = 'run the maintenance commands in the scratch folder';
 // Agent background refusal and the owner-terminal rule still decide normally.
 function execReadings() {
   return fakePort((name, question, state) => {
+    if (name === 'disposition' && question.type === 'choice') return choiceAnswer(question, Object.hasOwn(question.criteria, 'act') ? 'act' : 'reject', 0.99);
     const foreignTerminal = JSON.stringify(state).includes('tmux -L gv-exec-refusal-');
     if (name === 'family' || name === 'capability') return choiceAnswer(question, 'generic', 0.99);
     if (name === 'kind') return choiceAnswer(question, 'other', 0.99);
@@ -64,11 +66,13 @@ function execReadings() {
 }
 
 let answers = execReadings();
+let judgmentLog: SqliteDecisionLog;
 let previousPort: ReturnType<typeof installJudgmentPort>;
 const runtimes: RuntimeServices[] = [];
 beforeEach(() => {
   answers = execReadings();
-  previousPort = installJudgmentPort(answers.port);
+  judgmentLog = new SqliteDecisionLog(':memory:');
+  previousPort = installJudgmentPort(withDecisionLog(answers.port, judgmentLog));
 });
 afterEach(async () => {
   try {
@@ -78,6 +82,7 @@ afterEach(async () => {
     }
   } finally {
     installJudgmentPort(previousPort);
+    judgmentLog[Symbol.dispose]();
   }
 });
 
@@ -109,7 +114,7 @@ function agentRuntime(prefix: string): { services: RuntimeServices; workspace: s
   runtimes.push(services);
   // Composition installs its production judgment port; replace only that I/O
   // boundary after construction so this regression stays offline.
-  installJudgmentPort(answers.port);
+  installJudgmentPort(withDecisionLog(answers.port, judgmentLog));
   return { services, workspace };
 }
 
@@ -162,6 +167,7 @@ function agentPipeline(prefix: string, permissionMode: 'allow-all' | 'plan'): Pi
   const toolRegistry = composeAgentExecPipeline(services);
   const signals = new CallSignals();
   const deps: ToolExecutionDeps = {
+    autonomousSource: () => ({ goal: LAST_USER_MESSAGE, criteria: [] }),
     toolRegistry,
     permissionManager: services.permissionManager,
     hookDispatcher: null,
@@ -239,8 +245,8 @@ async function expectPipelineCanWrite(pipeline: Pipeline): Promise<void> {
 
 describe('a command refused through the agent exec pipeline', () => {
   test('a background rm -rf is refused by the agent exec policy even though permission approved it, and never runs', async () => {
-    // allow-all: the permission layer says yes, so the only thing between the
-    // call and the shell is what the agent itself wraps around exec.
+    // The recorded fixture admits the action under allow-all. The Agent's
+    // own exec wrapper must still refuse the forbidden background command.
     const pipeline = agentPipeline('exec-refusal-policy', 'allow-all');
     await expectPipelineCanWrite(pipeline);
     const { victimFile, victim, marker } = scratch(pipeline.workspace);
@@ -290,7 +296,15 @@ describe('a command refused through the agent exec pipeline', () => {
     expect(existsSync(victimFile)).toBe(true);
     expect(readFileSync(victimFile, 'utf8')).toBe('still here\n');
     expect(result.success).toBe(false);
-    expect(result.denial?.reason).toBe('plan-mode');
+    const admission = answers.requests.find(request => request.context?.site === 'engine.gate.autonomous-tool');
+    expect(admission?.state).toMatchObject({ input: { source: { goal: LAST_USER_MESSAGE, criteria: [] }, evidence: { constraints: { mode: 'plan', allowAct: false } } } });
+    const disposition = admission?.questions.disposition;
+    expect(disposition?.type).toBe('choice');
+    if (disposition?.type !== 'choice') throw new Error('Missing recorded plan-mode disposition');
+    expect(disposition.criteria).not.toHaveProperty('act');
+    expect(result.denial).toMatchObject({ reason: 'jev_reject', scope: 'jev_decision' });
+    expect(result.autonomousDecision?.outcome).toBe('reject');
+    for (const id of result.autonomousDecision!.judgmentDecisionIds) expect(judgmentLog.get(id)?.status).toBe('answered');
     expect(modelVisibleText(result).trim().length).toBeGreaterThan(0);
   }, 20_000);
 });

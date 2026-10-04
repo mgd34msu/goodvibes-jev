@@ -1,4 +1,7 @@
+import { builtinGatewayNativeConversationIntakeMethodDescriptors } from './method-catalog-native-intake.js';
+import { builtinGatewayNativeWorkSubmissionMethodDescriptors } from './method-catalog-native-work-submission.js';
 import { builtinGatewayWorkLedgerMethodDescriptors } from './method-catalog-work-ledger.js';
+import { builtinGatewayNativeWorkExecutionMethodDescriptors } from './method-catalog-native-work-execution.js';
 import { builtinBrowserJudgmentMethodDescriptors } from './method-catalog-browser-judgment.js';
 import {
   builtinGatewayAdminMethodDescriptors,
@@ -133,6 +136,9 @@ const BUILTIN_GATEWAY_EVENTS: readonly GatewayEventDescriptor[] = builtinGateway
 
 const BUILTIN_GATEWAY_METHODS: readonly GatewayMethodDescriptor[] = [
   ...builtinGatewayWorkLedgerMethodDescriptors,
+  ...builtinGatewayNativeWorkExecutionMethodDescriptors,
+  ...builtinGatewayNativeWorkSubmissionMethodDescriptors,
+  ...builtinGatewayNativeConversationIntakeMethodDescriptors,
   ...builtinGatewayControlMethodDescriptors,
   ...builtinBrowserJudgmentMethodDescriptors,
   ...builtinGatewayChannelMethodDescriptors,

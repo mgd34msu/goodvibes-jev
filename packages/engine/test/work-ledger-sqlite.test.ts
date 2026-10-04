@@ -110,11 +110,11 @@ test('cross-owner polling catches up and subscription cleanup stops callbacks', 
   await new Promise(resolve => setTimeout(resolve, 160)); expect(seen).toHaveLength(count);
 });
 
-test('v1 migration adds ledger table only; legacy metadata is preserved and older open refuses v2', async () => {
+test('v1 migration adds ledger and native execution tables; legacy metadata is preserved and older open refuses v5', async () => {
   const file = path(); const seed = await open(file);
   await seed.store.upsertSource({ id: 'legacy', connectorId: 'fixture', sourceType: 'manual', status: 'indexed', metadata: { executionApproved: true, verifier: 'legacy-text', answers: ['yes'] } });
   await seed.store.close();
-  const legacy = new SQLiteStore(file); await legacy.init(() => {}, { schemaVersion: 2 });
+  const legacy = new SQLiteStore(file); await legacy.init(() => {}, { schemaVersion: 7 });
   legacy.run('DROP TABLE work_ledgers'); legacy.run('PRAGMA user_version = 1'); await legacy.save(); legacy.close();
   const migrated = await open(file);
   expect(migrated.store.getSource('legacy')?.metadata).toMatchObject({ executionApproved: true, verifier: 'legacy-text', answers: ['yes'] });
@@ -125,7 +125,7 @@ test('v1 migration adds ledger table only; legacy metadata is preserved and olde
 
 test('malformed ledger receipt/history is rejected without reset or publication', async () => {
   const file = path(); const first = await open(file); await first.service.execute(command, first.actor);
-  const raw = new SQLiteStore(file, { coordinated: true }); await raw.init(() => {}, { schemaVersion: 2 });
+  const raw = new SQLiteStore(file, { coordinated: true }); await raw.init(() => {}, { schemaVersion: 7 });
   const state = await first.storage.read() as { receipts: unknown[] };
   state.receipts = [];
   raw.run('UPDATE work_ledgers SET state_json = ?', [JSON.stringify(state)]); await raw.save(); raw.close();
@@ -159,9 +159,9 @@ test('reentrant local writes during a decision are retained and prevent publicat
   await sqlite.save(); sqlite.close();
 });
 
-test('missing ledger table in an established v2 database cannot be repaired by ordinary writes', async () => {
+test('missing ledger table in an established v5 database cannot be repaired by ordinary writes', async () => {
   const file = path(); const first = await open(file); await first.service.execute(command, first.actor); await first.store.close();
-  const raw = new SQLiteStore(file); await raw.init(() => {}, { schemaVersion: 2 }); raw.run('DROP TABLE work_ledgers'); await raw.save(); raw.close();
+  const raw = new SQLiteStore(file); await raw.init(() => {}, { schemaVersion: 7 }); raw.run('DROP TABLE work_ledgers'); await raw.save(); raw.close();
   const bytes = readFileSync(file);
   const owner = new KnowledgeStore({ dbPath: file }); stores.push(owner);
   await expect(owner.init()).rejects.toThrow('schema is missing or corrupt');
@@ -172,7 +172,7 @@ test('missing ledger table in an established v2 database cannot be repaired by o
 
 test('schema deletion after open fences an ordinary save without replacing the newer disk image', async () => {
   const file = path(); const first = await open(file); await first.service.execute(command, first.actor);
-  const raw = new SQLiteStore(file); await raw.init(() => {}, { schemaVersion: 2 }); raw.run('DROP TABLE work_ledgers'); await raw.save(); raw.close();
+  const raw = new SQLiteStore(file); await raw.init(() => {}, { schemaVersion: 7 }); raw.run('DROP TABLE work_ledgers'); await raw.save(); raw.close();
   const bytes = readFileSync(file);
   await expect(first.store.upsertSource({ id: 'must-not-repair', connectorId: 'fixture', sourceType: 'manual', status: 'indexed' })).rejects.toThrow('persisted state changed');
   expect(await first.service.execute(command, first.actor)).toMatchObject({ kind: 'indeterminate' });

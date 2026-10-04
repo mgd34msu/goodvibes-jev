@@ -1,5 +1,8 @@
+import { createNativeWorkSubmissionHost } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-submission';
+import { createNativeConversationIntakeHost, createNativeRequirementProposer } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake';
 import { createLocalWorkLedgerReadBinding } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
-import { registerWorkLedgerGatewayMethods, registerWorkLedgerImportGatewayMethods } from '@goodvibes-jev/engine/sdk/platform/control-plane';
+import { registerWorkLedgerGatewayMethods, registerWorkLedgerImportGatewayMethods, registerNativeWorkExecutionGatewayMethods, registerNativeWorkSubmissionGatewayMethods, registerNativeConversationIntakeGatewayMethods } from '@goodvibes-jev/engine/sdk/platform/control-plane';
+import { WorkspaceRegistrationStore, sharedWorkspaceRegisterPath, legacyWorkspaceRegisterPath } from '@goodvibes-jev/engine/sdk/platform/workspace';
 import { join } from 'node:path';
 import { ServiceRegistry, SubscriptionManager, ToolLLM, sharedSubscriptionsPath } from '@goodvibes-jev/engine/sdk/platform/config';
 import { AutomationDeliveryManager, AutomationManager } from '@goodvibes-jev/engine/sdk/platform/automation';
@@ -60,6 +63,7 @@ import { createTriggerServices } from './trigger-services.js';
 import { wireFleetNeedsInputPush } from './fleet-needs-input-push.js';
 import type { DaemonHandlerCompositionOptions } from './daemon-handler-composition.js';
 import { createDaemonContractServices } from './contract-composition.js';
+import { createDaemonNativeWorkExecutionActivation } from './native-work-execution-activation.js';
 import { createBrowserCheckoutSeamHolder } from './browser-checkout-seam-holder.js';
 import { createDevicePostureServices } from './device-posture-composition.js';
 // Re-exported so the daemon entrypoint reaches the housekeeping sweep through
@@ -81,6 +85,9 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
   // pollers only the daemon has, see disposal-wiring.ts.
   const disposalScope = createRuntimeAcquisitionScope('RuntimeServices');
   let fenceWorkLedger: (() => Promise<void>) | undefined;
+  let fenceNativeWork: (() => Promise<void>) | undefined;
+  let nativeFleetOwnership: ReturnType<typeof createDaemonNativeWorkExecutionActivation>['fleetOwnership'] = () => [];
+  let acpFleetOwnership: typeof nativeFleetOwnership = () => [];
   const close = (): Promise<void> => {
     // Fence immediately, before reverse-order drains can await other owners.
     // The registered ledger owner reports any cleanup failure through the scope.
@@ -208,6 +215,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       agentManager, contextAccountingHolder,
     } = createAgentExecutionGraph({
       runtimeBus: options.runtimeBus, workingDirectory, configManager, providerRegistry,
+      additionalFleetOwnership: () => [...nativeFleetOwnership(), ...acpFleetOwnership()],
     });
     disposalScope.ownUntilRegistered('agent orchestrator tool registries', () => agentOrchestrator.dispose());
     disposalScope.ownUntilRegistered('hosted agent runs', () => { cancelAllAgentRuns(agentManager); });
@@ -345,7 +353,8 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     const workLedgerReader = workLedgerReadBinding.client;
     disposalScope.registry.add('native work ledger reader', () => workLedgerReader.dispose());
     fenceWorkLedger = async () => {
-      try { workLedgerReader.dispose(); } finally { await workLedgerOwner.close(); }
+      const nativeClosing = fenceNativeWork?.();
+      try { workLedgerReader.dispose(); } finally { await Promise.all([nativeClosing, workLedgerOwner.close()]); }
     };
     registerWorkLedgerGatewayMethods(gatewayMethods, workLedgerReader);
     registerWorkLedgerImportGatewayMethods(gatewayMethods, {
@@ -485,7 +494,9 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
         .register({ sessionId: id, kind: 'acp', title, project: cwd, participant: { surfaceKind: 'service', surfaceId: `acp-host:${agentTitle}`, lastSeenAt: Date.now() } })
         .catch(() => { /* best-effort; the fleet row is authoritative */ }),
     });
-    const contracts = createDaemonContractServices({ runtimeBus: options.runtimeBus, agentManager, agentMessageBus, configManager, providerRegistry, projectRoot: workingDirectory, acpHost, runtimeStore: options.runtimeStore, workPlanService: projectPlanningService, planManager });
+    acpFleetOwnership = () => acpHost.list().map(session => ({ id: `acp:${session.id}`, active: true }));
+    const contracts = createDaemonContractServices({ runtimeBus: options.runtimeBus, agentManager, agentMessageBus, configManager, providerRegistry, projectRoot: workingDirectory, acpHost, runtimeStore: options.runtimeStore, workPlanService: projectPlanningService, planManager,
+      additionalFleetOwnership: () => nativeFleetOwnership() });
     disposalScope.ownUntilRegistered('contract runner', () => contracts.dispose());
     const { runner: contractRunner, operator: contractOperator } = contracts;
     const { processRegistry } = createFleetServices({ // Shared archive-aware fleet registry (+ daemon observed rows). See fleet-services.ts.
@@ -628,7 +639,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       featureFlags,
       userRuleStore: userPermissionRuleStore,
     });
-    agentOrchestrator.setDependencies({
+    const agentToolDependencies = {
       contractRunner, contractHooks: contractRunner.hooks(),
       agentManager,
       surfaceRoot: surface.surfaceRoot,
@@ -663,7 +674,33 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       // Without this the `profile` tool is never registered, and a conversational
       // turn that was told to record what the owner said has nothing to call.
       personalCapture,
+    };
+    agentOrchestrator.setDependencies(agentToolDependencies);
+    const nativeScopes = new WorkspaceRegistrationStore({ path: sharedWorkspaceRegisterPath(shellPaths),
+      fallbackReadPath: legacyWorkspaceRegisterPath(shellPaths), homeDir: homeDirectory,
+      daemonStateDir: shellPaths.resolveUserPath() });
+    const nativeSubmission = createNativeWorkSubmissionHost({ projectRoot: workingDirectory, projectId: projectPlanningProjectId,
+      sessionId: `native-work:${projectPlanningProjectId}`, service: workLedgerOwner.service, authority: workLedgerOwner.authority, scopes: nativeScopes });
+    disposalScope.ownUntilRegistered('native work submission', nativeSubmission.close);
+    registerNativeWorkSubmissionGatewayMethods(gatewayMethods, nativeSubmission);
+    const nativeIntake = createNativeConversationIntakeHost({ projectRoot: workingDirectory, projectId: projectPlanningProjectId,
+      sessionId: `native-work:${projectPlanningProjectId}`, storage: await knowledgeStore.openNativeConversationStorage(projectPlanningProjectId),
+      scopes: nativeScopes, port: judgment.port, decisionLog: judgment.decisionLog, proposer: createNativeRequirementProposer(providerRegistry) });
+    disposalScope.ownUntilRegistered('native conversation intake', nativeIntake.close);
+    registerNativeConversationIntakeGatewayMethods(gatewayMethods, nativeIntake);
+    const nativeWork = createDaemonNativeWorkExecutionActivation({
+      runtimeBus: options.runtimeBus, configManager, providerRegistry, runtimeStore: options.runtimeStore,
+      projectRoot: workingDirectory, projectId: projectPlanningProjectId,
+      sessionId: `native-work:${projectPlanningProjectId}`, acpHost, knowledgeStore,
+      nativeScopes,
+      judgmentPort: judgment.port, decisionLog: judgment.decisionLog,
+      permissionManager, hookDispatcher, featureFlags, toolDependencies: agentToolDependencies,
+      additionalFleetOwnership: () => agentManager.fleetOwnership(),
     });
+    nativeFleetOwnership = nativeWork.fleetOwnership;
+    fenceNativeWork = async () => { await Promise.all([nativeSubmission.close(), nativeIntake.close(), nativeWork.close()]); };
+    disposalScope.ownUntilRegistered('native work execution', nativeWork.close);
+    registerNativeWorkExecutionGatewayMethods(gatewayMethods, { projectId: projectPlanningProjectId, acquire: nativeWork.acquire });
 
     // Continuity reads (recovery-file presence, last-session pointer) scoped to
     // the same surface the daemon writes with, so a reader never checks the
@@ -816,6 +853,10 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       dispose: (): void => { void close().catch(() => {}); },
     };
     registerDaemonRuntimeBasePollers(disposalScope.registry, { ...services, contractRunner: contracts }, { stopConfigWatch });
+    // Native turns borrow these owners, so they drain before shared pollers.
+    disposalScope.registry.add('native work submission', nativeSubmission.close);
+    disposalScope.registry.add('native conversation intake', nativeIntake.close);
+    disposalScope.registry.add('native work execution', nativeWork.close);
     // Drain plugin work before releasing the graph it can call into.
     disposalScope.registry.add('plugins', () => pluginManager.close());
     const handlerOptions = {

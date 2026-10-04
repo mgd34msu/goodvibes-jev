@@ -1,3 +1,4 @@
+import type { JevDecision } from '@goodvibes-jev/judgment/decisions';
 /**
  * Types of the gate's per-call decision (the gate replaces the old permission
  * layer; the type names keep their permission prefix so every surface that
@@ -24,7 +25,8 @@ export type PermissionDecisionSource =
   | 'session_override'
   // A durable user-origin rule written by a remembered approval decision
   | 'user_rule'
-  | 'user_prompt';
+  | 'user_prompt'
+  | 'jev_decision';
 
 export type PermissionDecisionReasonCode =
   // Boundary refusals, one per check
@@ -55,7 +57,8 @@ export type PermissionDecisionReasonCode =
   | 'user_rule_allow'
   | 'user_rule_deny'
   | 'user_approved'
-  | 'user_denied';
+  | 'user_denied'
+  | 'jev_act' | 'jev_revise' | 'jev_defer' | 'jev_reject';
 
 export type PermissionAnalysisTargetKind = 'command' | 'path' | 'url' | 'task' | 'generic';
 export type PermissionAnalysisSurface = 'filesystem' | 'shell' | 'network' | 'orchestration' | 'platform' | 'generic';
@@ -98,6 +101,7 @@ export interface GatePresetRecord {
 }
 
 export interface PermissionCheckResult {
+  readonly autonomousDecision?: JevDecision | undefined;
   readonly approved: boolean;
   readonly persisted: boolean;
   readonly sourceLayer: PermissionDecisionSource;

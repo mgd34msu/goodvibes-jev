@@ -63,7 +63,7 @@ test('actual TUI import history preserves source details without masquerading as
 
 
 test('limited TUI reader preserves native history while naming protected legacy provenance', async () => {
-  const work = { id: 'limited-work', title: 'Native imported work', goal: 'Read native facts', criteria: ['Review'], revision: 1, criteriaRevision: 1, reportedState: 'complete' as const, currentAttemptId: null, createdAt: 1, updatedAt: 1 };
+  const work = { source: null, id: 'limited-work', title: 'Native imported work', goal: 'Read native facts', criteria: ['Review'], revision: 1, criteriaRevision: 1, reportedState: 'complete' as const, currentAttemptId: null, createdAt: 1, updatedAt: 1 };
   const event: WorkLedgerReadEvent = { type: 'import_legacy', sequence: 1, actorId: 'host-owner', requestId: 'limited-import', at: 1, works: [work], manifest: null, provenance: 'requires_read_knowledge' };
   const snapshot: WorkLedgerReadSnapshot = { projectId: 'limited-project', revision: 1, cursor: 1, works: [{ work, attempt: null, verification: { state: 'unverified', reason: 'Historical claim', evidence: null }, attention: [] }] };
   const surface = createNativeWorkLedgerModalSurface(() => ({ available: true, identity: 'limited-host', projectId: snapshot.projectId, bind: () => ({ available: true, client: {

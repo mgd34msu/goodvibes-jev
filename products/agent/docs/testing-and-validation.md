@@ -9,6 +9,14 @@ commit, SHA-256 and file-mode provenance. The Bun lane restores and verifies tho
 exact files, installs tmux, then runs the unchanged canonical terminal E2Es as part
 of `products:test`. Missing binaries, tmux or failed product behavior fail the lane.
 
+The first-turn success fixtures explicitly provision an owned real daemon and
+paired operator through the existing authenticated migration method, register
+its separate synthetic workspace, and replay only exact captured Jev readings.
+They exercise actual capture, admission, durable dispatch and local-model reply;
+they do not prove fresh onboarding. A separate disconnected E2E keeps the original
+no-daemon home and asserts a visible setup diagnostic with no model call or
+source publication. No test skips or extended reply timeouts are used.
+
 Build-local compatibility transforms resolve jsdom and css-tree from their actual
 dependency owners and leave installed files untouched. The compiled HTML regression
 runs the real lazy loader and extractor from an isolated directory, asserting the

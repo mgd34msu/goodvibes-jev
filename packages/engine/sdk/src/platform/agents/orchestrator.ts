@@ -1,5 +1,6 @@
 import { admitCapturedRegistryContext, type CapturedRegistryContext } from '../tools/registry-tool/captured-source.js';
 import { join } from 'node:path';
+import { getContractActionSource, getContractActionPort, type ContractActionPort } from '../tools/agent/contract-binding.js';
 import { createCapturedExecNodeRuntimeAdmission } from '../tools/exec/captured-exec-runtime-input.js';
 import {
   admitCapturedExecDependency,
@@ -155,7 +156,7 @@ type AgentOrchestratorToolDeps = {
     | Pick<
         import('../permissions/manager.js').PermissionManager,
         'checkDetailed' | 'check' | 'getBackgroundAgentsMode' | 'readAccess' | 'passesBoundary'
-      >
+      > & Partial<Pick<import('../permissions/manager.js').PermissionManager, 'admitAutonomous' | 'autonomousPreparation'>>
     | undefined;
   /**
    * Settable holder for the context_accounting tool's session source. Threaded
@@ -715,10 +716,14 @@ export class AgentOrchestrator {
     runKey?: string,
     needsCapturedExec = false,
     needsCapturedRegistry = false,
+    autonomousSource?: () => import('../permissions/autonomous.js').AutonomousToolSource,
+    autonomousPort?: ContractActionPort,
   ): Promise<AgentOrchestratorRunContext> {
     const cwd = workingDirectory ?? this.toolDeps?.workingDirectory ?? '';
     const delivered = new Set<string>();
     const originalPermissionManager = this.toolDeps?.permissionManager;
+    if (autonomousSource && (!originalPermissionManager?.admitAutonomous || !originalPermissionManager.autonomousPreparation))
+      throw new Error('Native contract member requires the shared autonomous permission owner');
     const processManager = this.toolDeps?.processManager;
     const contractHooks = this.toolDeps?.contractHooks;
     if (authority && !originalPermissionManager)
@@ -766,12 +771,18 @@ export class AgentOrchestrator {
       : undefined;
     return {
       workingDirectory: cwd,
-      ...(authority
+      ...(autonomousSource ? { autonomousSource } : {}),
+      ...(autonomousPort ? { autonomousPort } : {}),
+      ...(authority || autonomousSource
         ? {
             beforeProviderRequest: async () => {
-              await assertContractInputAuthority(authority, cwd, signal);
-              await assertContractInputReadAccess(authority, ownerReadAccess, signal);
-              for (const path of delivered) await authorizeContractInputPath(authority, path, ownerReadAccess, signal);
+              autonomousSource?.();
+              if (authority) {
+                await assertContractInputAuthority(authority, cwd, signal);
+                await assertContractInputReadAccess(authority, ownerReadAccess, signal);
+                for (const path of delivered) await authorizeContractInputPath(authority, path, ownerReadAccess, signal);
+              }
+              autonomousSource?.();
             },
           }
         : {}),
@@ -862,6 +873,9 @@ export class AgentOrchestrator {
    */
   async runAgent(record: AgentRecord): Promise<void> {
     const authority = getContractInputAuthority(record);
+    const autonomousSource = getContractActionSource(record);
+    if (record.contractId && this.toolDeps?.contractRunner.get(record.contractId)?.nativeSource !== undefined && !autonomousSource)
+      throw new Error('Native member has no construction-owned action source');
     const cwd = record.workingDirectory ?? this.toolDeps?.workingDirectory ?? '';
     if (!authority && isCapturedInputPath(cwd))
       throw new Error('captured view has no construction-owned input authority');
@@ -877,6 +891,8 @@ export class AgentOrchestrator {
         runKey,
         record.tools.some((name) => ['exec', 'write', 'edit'].includes(name)),
         record.tools.includes('registry'),
+        autonomousSource,
+        getContractActionPort(record),
       );
       await runAgentTask(context, record);
     } finally {

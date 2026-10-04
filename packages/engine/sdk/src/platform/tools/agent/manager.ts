@@ -1,4 +1,5 @@
 import { bindContractInputAuthority } from '../../contract/input-authority.js';
+import { bindContractActionSource } from './contract-binding.js';
 import type { AgentConstructionBinding } from './contract-binding.js';
 import { ArchetypeLoader } from '../../agents/archetypes.js';
 import { AgentOrchestrator } from '../../agents/orchestrator.js';
@@ -30,6 +31,22 @@ export type AgentExecutor = {
   runAgent(record: AgentRecord): Promise<void>;
 };
 
+/** Execution ownership for one real agent, including terminal cleanup. */
+export interface AgentFleetOwnership {
+  readonly id: string;
+  readonly active: boolean;
+}
+
+// Only the synchronous live-read/reservation boundary is guarded. The guard
+// ends before publishing events or entering an executor, so ordinary reentrant
+// spawning still sees the newly reserved record and the real remaining cap.
+let readingSharedFleetAdmission = false;
+function reserveSharedFleet<T>(reserve: () => T): T {
+  if (readingSharedFleetAdmission) throw new Error('Shared fleet admission is already reading live ownership');
+  readingSharedFleetAdmission = true;
+  try { return reserve(); } finally { readingSharedFleetAdmission = false; }
+}
+
 export interface AgentManagerDependencies {
   readonly archetypeLoader?: Pick<ArchetypeLoader, 'loadArchetype'> | undefined;
   readonly messageBus?: Pick<AgentMessageBus, 'registerAgent'> | undefined;
@@ -45,6 +62,8 @@ export interface AgentManagerDependencies {
   readonly conversationSnapshotRetention?: number | undefined;
   /** The live provider registry, when wired up, enables bare model id resolution for spawn() overrides. */
   readonly providerRegistry?: Pick<ProviderRegistry, 'listModels'> | undefined;
+  /** Trusted sibling graphs sharing this runtime's existing fleet.maxSize. */
+  readonly additionalFleetOwnership?: (() => readonly AgentFleetOwnership[]) | undefined;
 }
 
 export type { ContractOwnerBinding, ContractUnitBinding } from './contract-binding.js';
@@ -133,6 +152,8 @@ interface AgentExecutionState {
 
 export class AgentManager {
   private agents = new Map<string, AgentRecord>();
+  private readonly restoredContractUnits = new Set<string>();
+  private readonly executionBoundaries = new Map<string, NonNullable<ContractUnitBinding['withCurrentExecution']>>();
   /** Actual per-agent invocations; terminal records alone do not prove cleanup. */
   private readonly executions = new Map<string, AgentExecutionState>();
   private runtimeBus: RuntimeEventBus | null = null;
@@ -141,6 +162,7 @@ export class AgentManager {
   private contractRunner: AgentContractRunner | null;
   private executor: AgentExecutor | null;
   private readonly configManager: Pick<ConfigManager, 'get'> | null;
+  private readonly additionalFleetOwnership: (() => readonly AgentFleetOwnership[]) | undefined;
   /**
    * Live snapshot accessors for RUNNING agents (conversation-snapshot bridge, Part C6).
    * Registered by the executor (orchestrator-runner.ts) right after it
@@ -187,11 +209,29 @@ export class AgentManager {
     this.contractRunner = deps.contractRunner ?? null;
     this.executor = deps.executor ?? null;
     this.configManager = deps.configManager ?? null;
+    this.additionalFleetOwnership = deps.additionalFleetOwnership;
     this.conversationSnapshotRetention = deps.conversationSnapshotRetention ?? DEFAULT_CONVERSATION_SNAPSHOT_RETENTION;
   }
 
   setRuntimeBus(runtimeBus: RuntimeEventBus | null): void {
     this.runtimeBus = runtimeBus;
+  }
+
+  /** Local read-only occupancy; never recursively consults sibling views. */
+  fleetOwnership(): readonly AgentFleetOwnership[] {
+    const ids = new Set([...this.agents.keys(), ...this.executions.keys()]);
+    return Object.freeze([...ids].map(id => {
+      const status = this.agents.get(id)?.status;
+      const active = status === 'pending' || status === 'running'
+        || [...(this.executions.get(id)?.slots ?? [])].some(slot => slot.active);
+      return Object.freeze({ id, active });
+    }));
+  }
+
+  private activeFleetCount(): number {
+    // Preserve historical callers when no shared owner was composed.
+    if (!this.additionalFleetOwnership) return this.list().filter(agent => agent.status === 'pending' || agent.status === 'running').length;
+    return new Set([...this.fleetOwnership(), ...this.additionalFleetOwnership()].filter(agent => agent.active).map(agent => agent.id)).size;
   }
 
   private deriveEffectiveTools(
@@ -376,7 +416,7 @@ export class AgentManager {
       throw new Error(`Unknown parent agent: '${input.parentAgentId}'`);
     }
     const orchestrationDepth = parentRecord ? parentRecord.orchestrationDepth + 1 : 0;
-    const activeAgents = this.list().filter((agent) => agent.status === 'pending' || agent.status === 'running').length;
+    const activeAgents = this.activeFleetCount();
     const isContractOwnerChild = Boolean(parentRecord?.contractRole === 'owner' && input.outsideContract);
     const spawnDecision = evaluateOrchestrationSpawn({
       configManager: this.configManager,
@@ -499,10 +539,24 @@ export class AgentManager {
     };
 
     if (spawnBinding && 'inputReadAuthority' in spawnBinding) bindContractInputAuthority(record, spawnBinding.inputReadAuthority);
-    this.agents.set(id, record);
+    bindContractActionSource(record, spawnBinding && 'autonomousSource' in spawnBinding ? spawnBinding.autonomousSource : undefined,
+      spawnBinding && 'autonomousPort' in spawnBinding ? spawnBinding.autonomousPort : undefined);
+    const reserve = () => {
+      if (this.additionalFleetOwnership) {
+        // Routing and supplied registry readers above can re-enter a sibling
+        // manager. Recheck at the synchronous reservation boundary, with no
+        // await or published callback between this check and pending insertion.
+        const admission = evaluateOrchestrationSpawn({ configManager: this.configManager!, mode: 'manual-batch',
+          activeAgents: this.activeFleetCount(), requestedDepth: orchestrationDepth });
+        if (!admission.allowed) throw new Error(admission.reason ?? 'Shared fleet capacity reached');
+      }
+      this.agents.set(id, record);
+      return this.reserveExecution(id);
+    };
     // Reserve before publishing the record or invoking any re-entrant callback.
-    const { begin, controller, slot } = this.reserveExecution(id);
+    const { begin, controller, slot } = this.additionalFleetOwnership ? reserveSharedFleet(reserve) : reserve();
     this.cancellationControllers.set(id, controller);
+    if (binding?.withCurrentExecution !== undefined) this.executionBoundaries.set(id, binding.withCurrentExecution);
     owned?.reserved(record, slot);
     try {
       this.messageBus.registerAgent({
@@ -557,7 +611,10 @@ export class AgentManager {
       }
 
       if (this.executor && record.status !== 'cancelled') {
-        begin(this.executor.runAgent(record).catch((error) => {
+        const executor = this.executor;
+        const execute = () => controller.signal.aborted || record.status === 'cancelled' ? Promise.resolve() : executor.runAgent(record);
+        const boundary = this.executionBoundaries.get(id);
+        begin((boundary === undefined ? execute() : Promise.resolve().then(() => boundary(execute))).catch((error) => {
           record.status = 'failed';
           record.error = summarizeError(error, {
             ...(record.provider ? { provider: record.provider } : {}),
@@ -639,6 +696,7 @@ export class AgentManager {
   wakeWithSteer(agentId: string, steer: string, options: { readonly allowCompleted?: boolean } = {}): { woke: boolean; reason: string } {
     const record = this.agents.get(agentId);
     if (!record) return { woke: false, reason: 'unknown-agent' };
+    if (this.restoredContractUnits.has(agentId)) return { woke: false, reason: 'contract-unit-requires-resume' };
     const wakeCompleted = record.status === 'completed' && options.allowCompleted === true && Boolean(record.contractUnitId);
     if (record.status !== 'failed' && !wakeCompleted) {
       return { woke: false, reason: `agent status is '${record.status}', not a wedged/failed loop` };
@@ -648,7 +706,21 @@ export class AgentManager {
       return { woke: false, reason: 'empty steer message' };
     }
     const executor = this.executor;
-    const { begin, controller, previous } = this.reserveExecution(agentId);
+    let reservation: ReturnType<AgentManager['reserveExecution']>;
+    if (this.additionalFleetOwnership) {
+      try {
+        reservation = reserveSharedFleet(() => {
+          const alreadyOwned = this.fleetOwnership().some(agent => agent.id === agentId && agent.active);
+          const admission = evaluateOrchestrationSpawn({ configManager: this.configManager!, mode: 'manual-batch',
+            activeAgents: this.activeFleetCount() - (alreadyOwned ? 1 : 0), requestedDepth: record.orchestrationDepth });
+          if (!admission.allowed) throw new Error(admission.reason ?? 'Shared fleet capacity reached');
+          // A queued replacement occupies the same id until both invocations drain.
+          record.status = 'pending';
+          return this.reserveExecution(agentId);
+        });
+      } catch (error) { return { woke: false, reason: error instanceof Error ? error.message : String(error) }; }
+    } else reservation = this.reserveExecution(agentId);
+    const { begin, controller, previous } = reservation;
     const start = (): Promise<void> | void => {
       // Cancellation covers the queued admission too, without aborting an
       // unrelated future wake admitted after this one actually settles.
@@ -664,7 +736,9 @@ export class AgentManager {
       record.failureReason = undefined;
       record.turnBudget = undefined;
       record.completedAt = undefined;
-      return executor.runAgent(record);
+      const execute = () => controller.signal.aborted || record.status === 'cancelled' ? Promise.resolve() : executor.runAgent(record);
+      const boundary = this.executionBoundaries.get(agentId);
+      return boundary === undefined ? execute() : boundary(execute);
     };
     let running: Promise<void>;
     try {
@@ -896,6 +970,8 @@ export class AgentManager {
 
   clear(): void {
     this.agents.clear();
+    this.executionBoundaries.clear();
+    this.restoredContractUnits.clear();
     this.conversationSources.clear();
     this.frozenConversationSnapshots.clear();
   }
@@ -912,7 +988,10 @@ export class AgentManager {
 
   importState(records: AgentRecord[]): void {
     for (const record of records) {
-      if (record.status === 'running' || record.status === 'pending') continue;
+      if (record.status === 'running' || record.status === 'pending' || this.executionBoundaries.has(record.id)) continue;
+      // A serialized record cannot carry the live native execution fence. The contract runner
+      // must recover its checkpoint and obtain current authority before creating a fresh unit.
+      if (record.contractUnitId !== undefined) this.restoredContractUnits.add(record.id);
       this.agents.set(record.id, record);
     }
   }

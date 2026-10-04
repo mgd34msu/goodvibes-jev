@@ -175,7 +175,10 @@ jobs:
   platform-matrix:
     name: Platform matrix (${{ matrix.platform }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The full Bun suite now includes the native-admission contracts. Its
+    # 15-minute runner ceiling below leaves five minutes for setup, judgment,
+    # the wake-race sweep and cleanup; other platform lanes keep their budgets.
+    timeout-minutes: ${{ matrix.platform == 'bun' && 20 || 15 }}
     needs: [build]
     strategy:
       fail-fast: false
@@ -195,7 +198,12 @@ jobs:
           # `pretest` tsc build does not re-emit over the restored artifact.
           - platform: bun
             node-version: "22"
-            test-cmd: bun packages/engine/scripts/test.ts
+            # Main's 18,937 tests took 653-678s; native-admission coverage adds
+            # ~115s of progressing tests. CI run 37241755354 reached the old
+            # 720s ceiling with its last test starting just 151ms earlier.
+            # Raise only this complete-suite invocation, keeping the 180s
+            # stall watchdog and every per-test deadline unchanged.
+            test-cmd: GOODVIBES_TEST_CEILING_MS=900000 bun packages/engine/scripts/test.ts
           - platform: rn-bundle
             node-version: "22"
             test-cmd: bun run test:rn

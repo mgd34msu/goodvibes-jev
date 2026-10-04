@@ -6,6 +6,8 @@
  * scope it serves. The readings are folded here, in code, into plan problems
  * and criterion dispositions.
  */
+import { nativeContractPort, type NativeContractServices } from './native-decisions.js';
+import type { Contract } from './types.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { leansYes, type JudgmentPort, type YesNoReading } from '@goodvibes-jev/judgment';
 import type { PlanCheck } from '../../events/contract.js';
@@ -15,7 +17,7 @@ import { planCoverage, type CoveragePart } from './batteries/plan-coverage.js';
 import { delegationForbidden, saysYesAtAct } from './batteries/request-shape.js';
 import { unitShape, unitShapeInput, VERIFICATION_ROLES, type RequirementReading, type UnitShapeInput, type UnitShapeRole } from './batteries/unit-shape.js';
 import { findParallelGroup, planUnits, type ContractPlan, type PlannedStatedCriterion, type PlannedUnit, type PlanProblem } from './plan-schema.js';
-import type { CriterionDisposition, RequestShape } from './types.js';
+import type { CriterionDisposition, NativeContractSource, RequestShape } from './types.js';
 
 /** Decision-log sites, one per check. */
 export const PLAN_CHECK_SITES = {
@@ -61,6 +63,9 @@ export interface PlanVerdict {
 }
 
 export interface PlanCheckOptions {
+  readonly native?: { readonly contract: Contract; readonly services: NativeContractServices | undefined } | undefined;
+  /** Native trace and coverage are exact structural checks, never model-generated requirements. */
+  readonly nativeSource?: NativeContractSource | undefined;
   readonly signal?: AbortSignal | undefined;
 }
 
@@ -194,14 +199,14 @@ async function readCriterionShapes(
   const site = PLAN_CHECK_SITES['criterion-shape'];
   const runs = await Promise.all(plan.criteria.map(async (criterion) => ({
     criterion,
-    run: await criterionShape.run(port, { request: ask, criterion: criterion.text }, callOptions(site, options)),
+    run: await criterionShape.run(port, { request: ask, criterion: criterion.text, ...(options.nativeSource === undefined ? {} : { nativeSource: { ...options.nativeSource, criteria: [...options.nativeSource.criteria] } }) }, callOptions(site, options)),
   })));
   for (const { criterion, run } of runs) {
     record(output, run.result.decisionId, run.result.usage);
     const { checkable, topology_only: topologyOnly, solo } = run.readings;
     // A topology-only criterion is met or missed by the plan's shape, so it is
     // never judged; that it cannot be checked from the work is expected.
-    if (topologyOnly.verdict === 'yes' && topologyOnly.outcome === 'act') {
+    if (options.nativeSource === undefined && topologyOnly.verdict === 'yes' && topologyOnly.outcome === 'act') {
       const ruling = topologyRuling(plan, shape, solo);
       output.dispositions.set(criterion.id, ruling);
       run.recordAction(ruling.disposition);
@@ -252,7 +257,7 @@ async function checkUnits(port: JudgmentPort, plan: ContractPlan, options: PlanC
   const site = PLAN_CHECK_SITES['unit-shape'];
   const runs = await Promise.all(planUnits(plan).map(async (unit) => ({
     unit,
-    run: await unitShape.read(port, unitShapeState(plan, unit), callOptions(site, options)),
+    run: await unitShape.read(port, { ...unitShapeState(plan, unit), ...(options.nativeSource === undefined ? {} : { nativeSource: { ...options.nativeSource, criteria: [...options.nativeSource.criteria] } }) }, callOptions(site, options)),
   })));
   for (const { unit, run } of runs) {
     record(output, run.decisionId, run.usage);
@@ -299,8 +304,9 @@ function totalUsage(outputs: readonly CheckOutput[]): PlanCheckUsage {
 }
 
 /** The port every plan check reads through. */
-function planCheckPort(): JudgmentPort {
-  return judgmentPort('contract.plan-checks');
+function planCheckPort(options: PlanCheckOptions): JudgmentPort {
+  const port = judgmentPort('contract.plan-checks');
+  return options.native === undefined ? port : nativeContractPort(options.native.contract, options.native.services, port, options.signal);
 }
 
 /**
@@ -308,17 +314,16 @@ function planCheckPort(): JudgmentPort {
  * and dispositions. Call it only on a plan whose code checks passed.
  */
 export async function runPlanChecks(plan: ContractPlan, ask: string, shape: RequestShape, options: PlanCheckOptions = {}): Promise<PlanVerdict> {
-  const port = planCheckPort();
+  const port = planCheckPort(options);
   const [trace, coverage, shapes, units] = await Promise.all([
-    checkTrace(port, plan, ask, options),
-    checkCoverage(port, plan, ask, options),
+    options.nativeSource === undefined ? checkTrace(port, plan, ask, options) : emptyOutput(),
+    options.nativeSource === undefined ? checkCoverage(port, plan, ask, options) : emptyOutput(),
     readCriterionShapes(port, plan, ask, shape, options),
     checkUnits(port, plan, options),
   ]);
   const outputs = [trace, coverage, shapes, units];
   const reports = [
-    report('criterion-trace', trace),
-    report('plan-coverage', coverage),
+    ...(options.nativeSource === undefined ? [report('criterion-trace', trace), report('plan-coverage', coverage)] : []),
     report('criterion-shape', shapes),
     report('unit-shape', units),
   ];
@@ -340,7 +345,7 @@ export async function runUnitShapeChecks(
   plan: ContractPlan,
   options: PlanCheckOptions = {},
 ): Promise<{ readonly problems: readonly PlanProblem[]; readonly decisionIds: readonly string[]; readonly usage: PlanCheckUsage }> {
-  const units = await checkUnits(planCheckPort(), plan, options);
+  const units = await checkUnits(planCheckPort(options), plan, options);
   return { problems: units.problems, decisionIds: units.decisionIds, usage: totalUsage([units]) };
 }
 
@@ -355,6 +360,6 @@ export async function readCriterionDispositions(
   shape: RequestShape,
   options: PlanCheckOptions = {},
 ): Promise<{ readonly dispositions: ReadonlyMap<string, CriterionDispositionRuling>; readonly decisionIds: readonly string[]; readonly usage: PlanCheckUsage }> {
-  const shapes = await readCriterionShapes(planCheckPort(), plan, ask, shape, options);
+  const shapes = await readCriterionShapes(planCheckPort(options), plan, ask, shape, options);
   return { dispositions: shapes.dispositions, decisionIds: shapes.decisionIds, usage: totalUsage([shapes]) };
 }

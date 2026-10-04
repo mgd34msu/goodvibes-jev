@@ -9,3 +9,6 @@ export * from './user-rule-store.js';
 export * from './briefs/build.js';
 export * from './briefs/render-hints.js';
 export * from './briefs/types.js';
+
+export { decideAutonomousTool, captureAutonomousSource, captureAutonomousChoices, autonomousRevision, assertAutonomousData } from './autonomous.js';
+export type { AutonomousToolSource, AutonomousToolRevision, AutonomousToolChoices, AutonomousToolDecisionInput, AutonomousToolDecision } from './autonomous.js';

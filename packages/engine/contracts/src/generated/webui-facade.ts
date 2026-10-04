@@ -10,7 +10,7 @@ import type { OperatorMethodId } from './operator-method-ids.js';
  * call sites) hand-written on top of these generated primitives.
  *
  * Contract product version: 2.0.23
- * Methods: 518 total, 446 REST-routed, 72 ws-only invoke.
+ * Methods: 530 total, 458 REST-routed, 72 ws-only invoke.
  */
 
 export type WebuiHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -1784,6 +1784,22 @@ export const WEBUI_METHOD_ROUTES: Readonly<Record<string, WebuiRouteDefinition>>
     "method": "POST",
     "path": "/api/web-search/query"
   },
+  "workLedger.execution.cancel": {
+    "method": "POST",
+    "path": "/api/work-ledger/execution/cancel"
+  },
+  "workLedger.execution.resume": {
+    "method": "POST",
+    "path": "/api/work-ledger/execution/resume"
+  },
+  "workLedger.execution.start": {
+    "method": "POST",
+    "path": "/api/work-ledger/execution/start"
+  },
+  "workLedger.execution.status": {
+    "method": "POST",
+    "path": "/api/work-ledger/execution/status"
+  },
   "workLedger.history": {
     "method": "GET",
     "path": "/api/work-ledger/history"
@@ -1792,13 +1808,45 @@ export const WEBUI_METHOD_ROUTES: Readonly<Record<string, WebuiRouteDefinition>>
     "method": "POST",
     "path": "/api/work-ledger/legacy-import"
   },
+  "workLedger.intake.admit": {
+    "method": "POST",
+    "path": "/api/work-ledger/intake/admit"
+  },
+  "workLedger.intake.cancel": {
+    "method": "POST",
+    "path": "/api/work-ledger/intake/cancel"
+  },
+  "workLedger.intake.capture": {
+    "method": "POST",
+    "path": "/api/work-ledger/intake/capture"
+  },
+  "workLedger.intake.get": {
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get"
+  },
+  "workLedger.intake.resume": {
+    "method": "POST",
+    "path": "/api/work-ledger/intake/resume"
+  },
   "workLedger.prepareLegacyImport": {
     "method": "POST",
     "path": "/api/work-ledger/legacy-import/prepare"
   },
+  "workLedger.project": {
+    "method": "GET",
+    "path": "/api/work-ledger/project"
+  },
   "workLedger.snapshot": {
     "method": "GET",
     "path": "/api/work-ledger/snapshot"
+  },
+  "workLedger.submission.get": {
+    "method": "POST",
+    "path": "/api/work-ledger/submissions/get"
+  },
+  "workLedger.submit": {
+    "method": "POST",
+    "path": "/api/work-ledger/submissions"
   },
   "workspaces.registrations.add": {
     "method": "POST",
@@ -2411,10 +2459,22 @@ export const WEBUI_METHOD_DISPOSITION: Readonly<Record<string, WebuiMethodDispos
   "watchers.update": "rest",
   "web_search.providers.list": "rest",
   "web_search.query": "rest",
+  "workLedger.execution.cancel": "rest",
+  "workLedger.execution.resume": "rest",
+  "workLedger.execution.start": "rest",
+  "workLedger.execution.status": "rest",
   "workLedger.history": "rest",
   "workLedger.importLegacy": "rest",
+  "workLedger.intake.admit": "rest",
+  "workLedger.intake.cancel": "rest",
+  "workLedger.intake.capture": "rest",
+  "workLedger.intake.get": "rest",
+  "workLedger.intake.resume": "rest",
   "workLedger.prepareLegacyImport": "rest",
+  "workLedger.project": "rest",
   "workLedger.snapshot": "rest",
+  "workLedger.submission.get": "rest",
+  "workLedger.submit": "rest",
   "workspaces.registrations.add": "rest",
   "workspaces.registrations.list": "rest",
   "workspaces.registrations.remove": "rest",
@@ -24690,6 +24750,246 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "metadata": {}
     }
   },
+  "workLedger.execution.cancel": {
+    "input": {
+      "projectId": "sample",
+      "workId": "sample",
+      "attemptId": "sample",
+      "expectedRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      }
+    },
+    "output": {
+      "kind": "execution",
+      "projectId": "sample",
+      "workId": "sample",
+      "attemptId": "sample",
+      "expectedRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentAttempt": false,
+      "stale": false,
+      "state": "prepared",
+      "recovery": "available",
+      "receipt": {
+        "contractId": "sample",
+        "ownerAgentId": "sample"
+      },
+      "settlement": {
+        "state": "pending",
+        "evidenceId": "sample",
+        "reportSequence": 0,
+        "evidenceSequence": 0
+      },
+      "progress": {
+        "status": "queued",
+        "sessionMode": false,
+        "semanticState": "deciding",
+        "stage": "sample",
+        "retrying": false,
+        "units": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0
+        },
+        "criteria": {
+          "total": 0,
+          "met": 0,
+          "unmet": 0,
+          "unshown": 0
+        }
+      }
+    }
+  },
+  "workLedger.execution.resume": {
+    "input": {
+      "projectId": "sample",
+      "workId": "sample",
+      "attemptId": "sample",
+      "expectedRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      }
+    },
+    "output": {
+      "kind": "execution",
+      "projectId": "sample",
+      "workId": "sample",
+      "attemptId": "sample",
+      "expectedRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentAttempt": false,
+      "stale": false,
+      "state": "prepared",
+      "recovery": "available",
+      "receipt": {
+        "contractId": "sample",
+        "ownerAgentId": "sample"
+      },
+      "settlement": {
+        "state": "pending",
+        "evidenceId": "sample",
+        "reportSequence": 0,
+        "evidenceSequence": 0
+      },
+      "progress": {
+        "status": "queued",
+        "sessionMode": false,
+        "semanticState": "deciding",
+        "stage": "sample",
+        "retrying": false,
+        "units": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0
+        },
+        "criteria": {
+          "total": 0,
+          "met": 0,
+          "unmet": 0,
+          "unshown": 0
+        }
+      }
+    }
+  },
+  "workLedger.execution.start": {
+    "input": {
+      "projectId": "sample",
+      "workId": "sample",
+      "attemptId": "sample",
+      "expectedRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      }
+    },
+    "output": {
+      "kind": "execution",
+      "projectId": "sample",
+      "workId": "sample",
+      "attemptId": "sample",
+      "expectedRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentAttempt": false,
+      "stale": false,
+      "state": "prepared",
+      "recovery": "available",
+      "receipt": {
+        "contractId": "sample",
+        "ownerAgentId": "sample"
+      },
+      "settlement": {
+        "state": "pending",
+        "evidenceId": "sample",
+        "reportSequence": 0,
+        "evidenceSequence": 0
+      },
+      "progress": {
+        "status": "queued",
+        "sessionMode": false,
+        "semanticState": "deciding",
+        "stage": "sample",
+        "retrying": false,
+        "units": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0
+        },
+        "criteria": {
+          "total": 0,
+          "met": 0,
+          "unmet": 0,
+          "unshown": 0
+        }
+      }
+    }
+  },
+  "workLedger.execution.status": {
+    "input": {
+      "projectId": "sample",
+      "workId": "sample",
+      "attemptId": "sample",
+      "expectedRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      }
+    },
+    "output": {
+      "kind": "execution",
+      "projectId": "sample",
+      "workId": "sample",
+      "attemptId": "sample",
+      "expectedRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentAttempt": false,
+      "stale": false,
+      "state": "prepared",
+      "recovery": "available",
+      "receipt": {
+        "contractId": "sample",
+        "ownerAgentId": "sample"
+      },
+      "settlement": {
+        "state": "pending",
+        "evidenceId": "sample",
+        "reportSequence": 0,
+        "evidenceSequence": 0
+      },
+      "progress": {
+        "status": "queued",
+        "sessionMode": false,
+        "semanticState": "deciding",
+        "stage": "sample",
+        "retrying": false,
+        "units": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0
+        },
+        "criteria": {
+          "total": 0,
+          "met": 0,
+          "unmet": 0,
+          "unshown": 0
+        }
+      }
+    }
+  },
   "workLedger.history": {
     "input": {
       "projectId": "sample",
@@ -24719,6 +25019,13 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
             "criteria": [
               "sample"
             ],
+            "source": {
+              "version": 1,
+              "sourceId": "sample",
+              "sourceRevision": "sample",
+              "inputId": "sample",
+              "sessionId": "sample"
+            },
             "revision": 0,
             "criteriaRevision": 0,
             "reportedState": "pending",
@@ -24801,6 +25108,13 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "criteria": [
             "sample"
           ],
+          "source": {
+            "version": 1,
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "inputId": "sample",
+            "sessionId": "sample"
+          },
           "revision": 0,
           "criteriaRevision": 0,
           "reportedState": "pending",
@@ -24857,6 +25171,102 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       }
     }
   },
+  "workLedger.intake.admit": {
+    "input": {
+      "inputId": "sample",
+      "sourceRevision": "sample"
+    },
+    "output": {
+      "kind": "captured",
+      "projectId": "sample",
+      "requestId": "sample",
+      "sourceRef": {
+        "version": 1,
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "sessionId": "sample"
+      }
+    }
+  },
+  "workLedger.intake.cancel": {
+    "input": {
+      "inputId": "sample",
+      "sourceRevision": "sample"
+    },
+    "output": {
+      "kind": "captured",
+      "projectId": "sample",
+      "requestId": "sample",
+      "sourceRef": {
+        "version": 1,
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "sessionId": "sample"
+      }
+    }
+  },
+  "workLedger.intake.capture": {
+    "input": {
+      "requestId": "sample",
+      "inputId": "sample",
+      "text": "sample",
+      "unsupportedSources": [
+        {
+          "kind": "image",
+          "label": "sample"
+        }
+      ]
+    },
+    "output": {
+      "kind": "captured",
+      "projectId": "sample",
+      "requestId": "sample",
+      "sourceRef": {
+        "version": 1,
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "sessionId": "sample"
+      }
+    }
+  },
+  "workLedger.intake.get": {
+    "input": {
+      "inputId": "sample"
+    },
+    "output": {
+      "kind": "captured",
+      "projectId": "sample",
+      "requestId": "sample",
+      "sourceRef": {
+        "version": 1,
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "sessionId": "sample"
+      }
+    }
+  },
+  "workLedger.intake.resume": {
+    "input": {
+      "inputId": "sample",
+      "sourceRevision": "sample"
+    },
+    "output": {
+      "kind": "captured",
+      "projectId": "sample",
+      "requestId": "sample",
+      "sourceRef": {
+        "version": 1,
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "sessionId": "sample"
+      }
+    }
+  },
   "workLedger.prepareLegacyImport": {
     "input": {
       "projectId": "sample",
@@ -24867,6 +25277,12 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
     "output": {
       "kind": "prepared",
       "manifest": {}
+    }
+  },
+  "workLedger.project": {
+    "input": {},
+    "output": {
+      "projectId": "sample"
     }
   },
   "workLedger.snapshot": {
@@ -24887,6 +25303,13 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
             "criteria": [
               "sample"
             ],
+            "source": {
+              "version": 1,
+              "sourceId": "sample",
+              "sourceRevision": "sample",
+              "inputId": "sample",
+              "sessionId": "sample"
+            },
             "revision": 0,
             "criteriaRevision": 0,
             "reportedState": "pending",
@@ -24949,6 +25372,75 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           ]
         }
       ]
+    }
+  },
+  "workLedger.submission.get": {
+    "input": {
+      "requestId": "sample"
+    },
+    "output": {
+      "kind": "found",
+      "receipt": {
+        "projectId": "sample",
+        "requestId": "sample",
+        "inputId": "sample",
+        "ledgerRevision": 0,
+        "workId": "sample",
+        "attemptId": "sample",
+        "expectedRevision": {
+          "work": 0,
+          "criteria": 0,
+          "attempt": 0
+        },
+        "source": {
+          "version": 1,
+          "sourceId": "sample",
+          "sourceRevision": "sample",
+          "sessionId": "sample"
+        },
+        "goal": "sample",
+        "criteria": [
+          "sample"
+        ]
+      }
+    }
+  },
+  "workLedger.submit": {
+    "input": {
+      "requestId": "sample",
+      "inputId": "sample",
+      "expectedRevision": 0,
+      "goal": "sample",
+      "criteria": [
+        "sample"
+      ]
+    },
+    "output": {
+      "kind": "submitted",
+      "replayed": false,
+      "receipt": {
+        "projectId": "sample",
+        "requestId": "sample",
+        "inputId": "sample",
+        "ledgerRevision": 0,
+        "workId": "sample",
+        "attemptId": "sample",
+        "expectedRevision": {
+          "work": 0,
+          "criteria": 0,
+          "attempt": 0
+        },
+        "source": {
+          "version": 1,
+          "sourceId": "sample",
+          "sourceRevision": "sample",
+          "sessionId": "sample"
+        },
+        "goal": "sample",
+        "criteria": [
+          "sample"
+        ]
+      }
     }
   },
   "workspaces.registrations.add": {

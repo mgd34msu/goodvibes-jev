@@ -377,3 +377,15 @@ describe('getFeed', () => {
     expect(router.getFeed()).toBeNull();
   });
 });
+
+describe('direct user-action results', () => {
+  test.each(['panel', 'conversation', 'both'] as const)('remains visible exactly once with %s ambient routing', target => {
+    const conv = makeConversation(); const feed = makePanel();
+    const router = createSystemMessageRouter(conv as unknown as ConversationManager, feed as unknown as ActivityFeed,
+      makeTargetResolver({ system: target }));
+    const message = 'Connected-host operator token is required. No ordinary turn was started.';
+    router.userAction(message);
+    expect(conv._messages).toEqual([message]);
+    expect(feed._pushed).toEqual([{ text: message, priority: 'high' }]);
+  });
+});

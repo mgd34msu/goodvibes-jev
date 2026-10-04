@@ -187,6 +187,11 @@ const ROUTE_REGISTRARS: ReadonlyArray<readonly [string, (catalog: GatewayMethodC
  * generic stubs would stop at FORBIDDEN before validating any input. Its
  * required-field conformance is exercised through authenticated real-host
  * prepare/import requests in work-ledger-import-transport.test.ts instead.
+ * The three native registrars similarly require live paired-token authority
+ * before inspecting input. gateway-native-required-conformance.test.ts probes
+ * every one of their handlers with authenticated descriptor-required-only
+ * input and verifies host entry, plus per-field omission and auth refusals;
+ * putting them in this user-principal probe would only exercise FORBIDDEN.
  */
 export const EXPECTED_ROUTE_REGISTRARS: readonly string[] = [
   'registerAcpGatewayMethods',
@@ -216,6 +221,9 @@ export const EXPECTED_ROUTE_REGISTRARS: readonly string[] = [
   'registerHostedSessionGatewayMethods',
   'registerMemoryGatewayMethods',
   'registerMemoryProjectionsGatewayMethods',
+  'registerNativeConversationIntakeGatewayMethods',
+  'registerNativeWorkExecutionGatewayMethods',
+  'registerNativeWorkSubmissionGatewayMethods',
   'registerPairingGatewayMethods',
   'registerPairingHandoffGatewayMethods',
   'registerPermissionRulesGatewayMethods',

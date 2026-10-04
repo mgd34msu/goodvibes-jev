@@ -7,6 +7,7 @@ import {
   type YesNoReading,
 } from '@goodvibes-jev/judgment/decisions';
 import type { DaemonErrorCategory } from './daemon-error-contract.js';
+import type { CallOptions, JudgmentPort } from '@goodvibes-jev/judgment';
 import { judgmentPort } from './judgment-port.js';
 
 /**
@@ -213,6 +214,11 @@ export interface FailureEvidence {
   readonly errorName?: string | undefined;
 }
 
+/** An owned reading never borrows another caller's in-flight or memoized decision. */
+export interface FailureReadOptions extends Pick<CallOptions, 'signal' | 'beforeAttempt' | 'onRetry'> {
+  readonly port: JudgmentPort;
+}
+
 export interface FailureConclusions {
   /** The category the wording supports; 'unknown' unless the reading is strong enough to act on. */
   readonly category: FailureCategory;
@@ -228,7 +234,7 @@ export interface FailureConclusions {
     readonly category: ChoiceReading<FailureCategory>;
     readonly connection_failure: ChoiceReading<ConnectionFailure>;
   } & { readonly [K in Exclude<FailureQuestion, 'category' | 'connection_failure'>]: YesNoReading };
-  /** The decision-log entry of the reading (a repeated wording shares the first reading's), so a caller's decision can name it. */
+  /** The decision-log entry of the reading (unscoped repeated wording shares the first reading's), so a caller's decision can name it. */
   readonly decisionId?: string | undefined;
 }
 
@@ -261,14 +267,19 @@ function remember(state: string, reading: Promise<FailureConclusions>): Promise<
 
 /**
  * Reads what an error's wording says, asking every failure question in one
- * request. `site` names the decision site for the decision log.
+ * request. `site` names the decision site for the decision log. Explicit owned
+ * options keep their port/lifetime and bypass the cross-caller wording memo.
  */
-export function readFailure(evidence: FailureEvidence, site: string): Promise<FailureConclusions> {
+export function readFailure(evidence: FailureEvidence, site: string, options?: FailureReadOptions): Promise<FailureConclusions> {
   const state = failureState(evidence);
-  const known = memo.get(state);
+  const known = options === undefined ? memo.get(state) : undefined;
   if (known !== undefined) return known;
-  return remember(state, (async () => {
-    const run = await failureReading.run(judgmentPort(site), state, { site });
+  const reading = (async () => {
+    const run = await failureReading.run(options?.port ?? judgmentPort(site), state, { site,
+      ...(options?.signal === undefined ? {} : { signal: options.signal }),
+      ...(options?.beforeAttempt === undefined ? {} : { beforeAttempt: options.beforeAttempt }),
+      ...(options?.onRetry === undefined ? {} : { onRetry: options.onRetry }),
+    });
     const r = run.readings;
     const category = r.category.outcome === 'act' ? r.category.choice : 'unknown';
     return {
@@ -283,7 +294,8 @@ export function readFailure(evidence: FailureEvidence, site: string): Promise<Fa
       readings: r,
       ...(run.result.decisionId === undefined ? {} : { decisionId: run.result.decisionId }),
     };
-  })());
+  })();
+  return options === undefined ? remember(state, reading) : reading;
 }
 
 /**

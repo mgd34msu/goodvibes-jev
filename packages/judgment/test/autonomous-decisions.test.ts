@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  JEV_DECISION_BINDING_KEYS, JEV_DECISION_SCHEMA, JevDecisionError, parseJevDecision, validateJevDecision,
+  captureJevDecisionContext, JEV_DECISION_BINDING_KEYS, JEV_DECISION_SCHEMA, JevDecisionError, parseJevDecision, validateJevDecision,
   type JevDecision, type JevDecisionBinding, type JevDecisionContext,
 } from '../src/decisions.ts';
 
@@ -196,5 +196,30 @@ describe('autonomous semantic decision contract', () => {
     // @ts-expect-error An operational wait is not a semantic decision.
     const waiting: JevDecision['outcome'] = 'waiting';
     expect(String(waiting)).toBe('waiting');
+  });
+});
+
+
+describe('owned pre-reading decision context', () => {
+  test('captures frozen protocol references with an empty pre-reading lineage', () => {
+    const borrowed = { ...context, binding: { ...binding }, judgmentDecisionIds: [] as string[], evidence: [{ id: 'e1', revision: 'r1' }] };
+    const captured = captureJevDecisionContext(borrowed);
+    borrowed.binding.actionRevision = 'changed'; borrowed.evidence[0]!.revision = 'changed'; borrowed.judgmentDecisionIds.push('late');
+    expect(captured.binding.actionRevision).toBe(binding.actionRevision);
+    expect(captured.evidence).toEqual([{ id: 'e1', revision: 'r1' }]);
+    expect(captured.judgmentDecisionIds).toEqual([]);
+    for (const value of [captured, captured.binding, captured.evidence, captured.evidence[0], captured.continuations, captured.resumeConditions]) expect(Object.isFrozen(value)).toBe(true);
+  });
+  test('rejects malformed, duplicate and executable metadata without invoking accessors', () => {
+    let reads = 0;
+    const unsafe = { ...binding }; Object.defineProperty(unsafe, 'sourceId', { get() { reads++; return 'source'; } });
+    for (const value of [
+      { ...context, binding: unsafe }, { ...context, binding: { ...binding, extra: 'bad' } },
+      { ...context, evidence: [{ id: 'x', revision: '1' }, { id: 'x', revision: '1' }] },
+      { ...context, judgmentDecisionIds: ['same', 'same'] },
+      { ...context, continuations: [{ id: 'x', revision: '1', kind: 'allow-all' }] },
+      { ...context, resumeConditions: [{ id: '', revision: '1' }] },
+    ]) expectKind(() => captureJevDecisionContext(value), 'invalid-contract');
+    expect(reads).toBe(0);
   });
 });

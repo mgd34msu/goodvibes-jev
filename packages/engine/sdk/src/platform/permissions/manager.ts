@@ -1,3 +1,10 @@
+import { readSettingsWriteEvidence } from '../gate/policy/settings-write-evidence.js';
+import { hashState, JudgmentError, type EntryType, type JudgmentPort } from '@goodvibes-jev/judgment';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { getProcessUntrustedContentLedger } from '../security/untrusted-content.js';
+import { autonomousRevision, assertAutonomousData, captureAutonomousChoices, captureAutonomousSource, decideAutonomousTool, type AutonomousToolChoices, type AutonomousToolRevision, type AutonomousToolSource } from './autonomous.js';
+import type { JevDecisionBinding, JevVersionRef } from '@goodvibes-jev/judgment/decisions';
 import { bindTurnHookDispatcher, type TurnHookOwner } from '../hooks/turn-ownership.js';
 import { getConfigSnapshot, isAutoApproveEnabled } from '../config/index.js';
 import type { PermissionAction, PermissionsToolConfig, PermissionMode, BackgroundAgentsMode } from '../config/schema.js';
@@ -6,7 +13,7 @@ import { assertPermissionActive, awaitPermission } from './cancellation.js';
 import { analyzePermissionRequest, withReading } from './analysis.js';
 import { judgmentInputBoundary, runBoundary, type BoundaryCheckName, type BoundaryVerdict } from '../gate/boundary.js';
 import { decideByPreset, presetForMode, type GatePreset } from '../gate/presets.js';
-import { categoryForSideEffectKind, classificationFromReading, readTouchesSecrets, readToolCall, shellCommandsIn, type GateReading } from '../gate/reading.js';
+import { categoryForSideEffectKind, classificationFromReading, readingArguments, readTouchesSecrets, readToolCall, shellCommandsIn, type GateReading } from '../gate/reading.js';
 import { grantOwnerApproval, type OwnerApproval } from '../security/owner-approval.js';
 import type { UntrustedContentLedger } from '../security/untrusted-content.js';
 import { currentTurnSurfaceId } from '../security/turn-boundary.js';
@@ -60,6 +67,8 @@ export type {
 type PermissionConfigSnapshot = Readonly<Pick<ReturnType<typeof getConfigSnapshot>, 'permissions'>>;
 
 export interface PermissionConfigReader {
+  /** Coherent owner-held frame. Must read owned state without invoking observers or host callbacks. */
+  getAutonomousSnapshot?(): Readonly<{ permissions: PermissionConfigSnapshot['permissions']; autoApprove: boolean; directory: string | null }>;
   isAutoApproveEnabled(): boolean;
   getSnapshot(): PermissionConfigSnapshot;
   getWorkingDirectory(): string | null;
@@ -87,9 +96,10 @@ function readDecisionOtlpConfig(configManager: Pick<ConfigManager, 'get'>): Deci
 }
 
 export function createPermissionConfigReader(
-  configManager: Pick<ConfigManager, 'get' | 'getRaw' | 'getWorkingDirectory'>,
+  configManager: Pick<ConfigManager, 'get' | 'getRaw' | 'getWorkingDirectory'> & Partial<Pick<ConfigManager, 'getAutonomousPermissionSnapshot'>>,
 ): PermissionConfigReader {
   return {
+    ...(configManager.getAutonomousPermissionSnapshot ? { getAutonomousSnapshot: () => configManager.getAutonomousPermissionSnapshot!() } : {}),
     isAutoApproveEnabled: () => isAutoApproveEnabled(configManager),
     getSnapshot: () => getConfigSnapshot(configManager),
     getWorkingDirectory: () => configManager.getWorkingDirectory(),
@@ -145,6 +155,8 @@ const TOOL_CONFIG_KEYS: Record<string, keyof PermissionsToolConfig> = {
 
 /** How the gate learns who is asking and what the turn has read. */
 export interface GateOptions {
+  /** Trusted host alternatives; never populated from model-authored executable prose. */
+  readonly autonomousChoices?: ((sourceId: string) => AutonomousToolChoices) | undefined;
   /**
    * The surface the current turn's instruction came from (gate/surface-authority.ts);
    * defaults to the turn boundary's record (security/turn-boundary.ts).
@@ -211,7 +223,29 @@ const readingRecord = (reading: GateReading): GateReadingRecord => ({
  *      allows, asks or denies on the reading's stakes.
  *   6. An ask goes to the owner through the surface's approval prompt.
  */
+export interface AutonomousPermissionAdmission {
+  readonly result: PermissionCheckResult;
+  readonly revision?: AutonomousToolRevision | undefined;
+  readonly revisionIds: readonly string[];
+  /** Call once, synchronously after the final reentrant hook and before the body. */
+  claim(): void;
+}
+
+export interface AutonomousPermissionOptions extends PermissionExecutionOptions {
+  readonly decoratePort?: ((port: JudgmentPort) => JudgmentPort) | undefined;
+  readonly sourceOf: () => AutonomousToolSource;
+  readonly consumedRevisions?: readonly string[];
+  readonly permittedRevisionIds?: readonly string[];
+  readonly schemaRevision?: string;
+  readonly preparationDecisionIds?: readonly string[];
+  readonly assertPrepared?: () => void;
+}
+
 export class PermissionManager {
+  private readonly autonomousPending = new Set<string>();
+  private readonly autonomousEpochs = new Map<string, number>();
+  private readonly autonomousClaims = new Set<string>();
+  private readonly autonomousDeferred = new Map<string, { readonly inputRevision: string; readonly until: JevVersionRef }>();
   /** Explicit session-tier decisions only; durable rules are always matched live. */
   private sessionApprovals = new Map<string, boolean>();
   private readonly requestPermission: PermissionRequestHandler;
@@ -238,6 +272,213 @@ export class PermissionManager {
     this.featureFlags = featureFlags;
     this.userRuleStore = userRuleStore;
     this.gate = { surfaceOf: currentTurnSurfaceId, ...gate };
+  }
+
+  private autonomousAuthority(sourceId: string, sourceOf: () => AutonomousToolSource): unknown {
+    // Stage host callbacks first. The subsequent source/config/store copies are
+    // owned data reads, not a sequence interleaving observers with sampled fields.
+    const choices = this.gate.autonomousChoices?.(sourceId) ?? {};
+    const surface = this.gate.surfaceOf?.();
+    const source = sourceOf();
+    const rules = this.userRuleStore?.rules() ?? [];
+    const policyRules = this.policyRuntimeState.getRegistry().getCurrent()?.rules ?? [];
+    const policyEnabled = this.featureFlags?.isEnabled('permissions-policy-engine') === true;
+    const exposure = (this.gate.ledger ?? getProcessUntrustedContentLedger()).ingestedThisTurn();
+    const scope = this.configReader.getAutonomousSnapshot?.();
+    if (!scope) throw new Error('Autonomous execution requires a coherent permission owner snapshot');
+    assertAutonomousData(scope);
+    const frame = { ...scope, source, surface, rules, policyRules, policyEnabled,
+      sessionGrants: [...this.sessionApprovals], exposure };
+    assertAutonomousData(choices);
+    assertAutonomousData(frame);
+    const ownedFrame = snapshotJudgmentInput({ ...frame, source: captureAutonomousSource(source) }) as Record<string, unknown>;
+    return Object.freeze({ ...ownedFrame, autonomousChoices: captureAutonomousChoices(choices) });
+  }
+
+  /** The same live authority owns pre-admission argument-repair judgment. */
+  autonomousPreparation(sourceId: string, sourceOf: () => AutonomousToolSource, signal?: AbortSignal, decoratePort?: (port: JudgmentPort) => JudgmentPort): { readonly port: JudgmentPort; assertCurrent(): void } {
+    assertPermissionActive(signal);
+    const revision = hashState(this.autonomousAuthority(sourceId, sourceOf) as EntryType);
+    const assertCurrent = () => {
+      assertPermissionActive(signal);
+      if (this.autonomousClaims.has(sourceId) || hashState(this.autonomousAuthority(sourceId, sourceOf) as EntryType) !== revision)
+        throw new Error('Autonomous preparation authority changed or source was claimed');
+    };
+    const base = judgmentPort('engine.gate.autonomous-preparation');
+    const installed = decoratePort?.(base) ?? base;
+    if (!installed.recorder) throw new JudgmentError('unrecorded', 'autonomous admission requires the recorded judgment port');
+    const port: JudgmentPort = {
+      get model() { return installed.model; },
+      ...(installed.recorder ? { recorder: installed.recorder } : {}),
+      ask(request) {
+        assertCurrent();
+        const prior = request.beforeAttempt;
+        // A transport may ignore abort. Release the permission caller while
+        // draining its late recorded answer; aborted authority cannot claim it.
+        return awaitPermission(() => installed.ask({ ...request, beforeAttempt() { assertCurrent(); prior?.(); } }), signal);
+      },
+    };
+    return { port, assertCurrent };
+  }
+
+  /**
+   * The migrated orchestrator's admission path. A preset or stored grant is
+   * context/authority, never a semantic substitute for the recorded Jev choice.
+   * Legacy checkDetailed callers remain separately tracked for migration.
+   */
+  async admitAutonomous(
+    sourceId: string,
+    toolName: string,
+    preparedArgs: Record<string, unknown>,
+    options: AutonomousPermissionOptions,
+  ): Promise<AutonomousPermissionAdmission> {
+    assertPermissionActive(options.signal);
+    if (this.autonomousClaims.has(sourceId)) throw new Error('Autonomous tool source was already claimed');
+    if (this.autonomousPending.has(sourceId)) throw new Error('Autonomous admission is already pending for this source');
+    if (!this.autonomousEpochs.has(sourceId) && this.autonomousEpochs.size >= 10_000) throw new Error('Autonomous source capacity reached');
+    const epoch = (this.autonomousEpochs.get(sourceId) ?? 0) + 1;
+    this.autonomousEpochs.set(sourceId, epoch);
+    this.autonomousPending.add(sourceId);
+    try { return await this.decideAutonomous(sourceId, toolName, preparedArgs, options, epoch); }
+    finally { this.autonomousPending.delete(sourceId); }
+  }
+
+  private async decideAutonomous(sourceId: string, toolName: string, preparedArgs: Record<string, unknown>, options: AutonomousPermissionOptions, epoch: number): Promise<AutonomousPermissionAdmission> {
+    const signal = options.signal;
+    assertPermissionActive(signal);
+    const args = snapshotJudgmentInput(preparedArgs, toolName) as Record<string, unknown>;
+    const sourceOf = options.sourceOf;
+    const ledger = this.gate.ledger ?? getProcessUntrustedContentLedger();
+    const authority = () => this.autonomousAuthority(sourceId, sourceOf);
+    const capturedAuthority = authority() as { source: AutonomousToolSource; autonomousChoices: AutonomousToolChoices; directory: string | null; permissions: PermissionConfigSnapshot['permissions'] };
+    const source = capturedAuthority.source;
+    const sourceRevision = autonomousRevision(source);
+    const authorityRevision = hashState(capturedAuthority as unknown as EntryType);
+    const offered = (capturedAuthority as { autonomousChoices: AutonomousToolChoices }).autonomousChoices;
+    const directory = capturedAuthority.directory ?? undefined;
+    // Raw action/source/scope data was inspected above. Schema revisions and
+    // source handles are typed protocol identities and retain that validation.
+    const schemaRevision = options.schemaRevision;
+    captureAutonomousChoices({ resumeConditions: [{ id: sourceId, revision: schemaRevision ?? 'unversioned-schema' }] });
+    const inputRevision = hashState({ toolName, args, directory, schemaRevision, source } as unknown as EntryType);
+    // A source condition is a typed protocol reference, not raw action text.
+    // Keep its canonical identity intact: prefixing a generated SHA can make
+    // an incidental digit run look like card material to the raw-input guard.
+    const sourceCondition = captureAutonomousChoices({ resumeConditions: [{ id: sourceId, revision: inputRevision }] }).resumeConditions![0]!;
+    const legacySourceConditionId = `source-${sourceId}`;
+    let deferred = this.autonomousDeferred.get(sourceId);
+    if (deferred?.inputRevision === inputRevision) {
+      if (deferred.until.id === sourceCondition.id || deferred.until.id === legacySourceConditionId) throw new Error('Autonomous source is waiting for a new input revision');
+      const waitingFor = deferred.until;
+      const condition = offered.resumeConditions?.find(item => item.id === waitingFor.id);
+      if (!condition || condition.revision === deferred.until.revision) throw new Error('Autonomous source is waiting for its registered condition');
+    }
+    // sourceId was inspected as protocol metadata above; toolName and args
+    // passed raw-input inspection. Do not rescan the generated hash as text.
+    const actionId = hashState({ sourceId, toolName });
+    const binding: JevDecisionBinding = Object.freeze({
+      sourceId, inputRevision, actionId, actionRevision: inputRevision,
+      authorityId: 'engine.permission-runtime', authorityRevision,
+      scopeId: autonomousRevision({ directory }), scopeRevision: authorityRevision,
+    });
+    const assertPrepared = options.assertPrepared;
+    const assertCurrent = () => {
+      assertPermissionActive(signal);
+      if (this.autonomousEpochs.get(sourceId) !== epoch) throw new Error('Autonomous admission was superseded');
+      const current = authority();
+      assertPermissionActive(signal);
+      if (hashState(current as EntryType) !== authorityRevision) throw new Error('Autonomous admission authority, source or scope changed');
+      assertPrepared?.();
+      if (this.autonomousClaims.has(sourceId)) throw new Error('Autonomous tool source was already claimed');
+      const latestDeferral = this.autonomousDeferred.get(sourceId);
+      if (latestDeferral && latestDeferral !== deferred) throw new Error('A concurrent admission deferred this source');
+    };
+    assertCurrent();
+    const category = this.getCategory(toolName, args);
+    let analysis = analyzePermissionRequest(toolName, args, category);
+    this.policyRuntimeState.recordPermissionRequest({ callId: sourceId, tool: toolName, category, analysis });
+    assertCurrent();
+    const base = judgmentPort('engine.gate.autonomous-tool');
+    const installed = options.decoratePort?.(base) ?? base;
+    const supportingIds = [...(options.preparationDecisionIds ?? [])];
+    const scopedPort: JudgmentPort = {
+      get model() { return installed.model; },
+      ...(installed.recorder ? { recorder: installed.recorder } : {}),
+      async ask(request) {
+        const prior = request.beforeAttempt;
+        const result = await awaitPermission(() => installed.ask({ ...request, beforeAttempt() { prior?.(); assertCurrent(); } }), signal);
+        assertCurrent();
+        if (!result.decisionId) throw new JudgmentError('unrecorded', 'autonomous supporting read has no recorded provenance');
+        supportingIds.push(result.decisionId);
+        return result;
+      },
+    };
+    const reading = await readToolCall({ toolName, args, workingDirectory: directory,
+      askKind: TOOL_CATEGORIES[toolName] === undefined, askObfuscated: shellCommandsIn(args).length > 0,
+      signal, port: scopedPort });
+    assertCurrent();
+    if (reading) analysis = withReading(analysis, reading, category);
+    const boundary = await runBoundary({ toolName, args, reading, surfaceId: this.gate.surfaceOf?.(), ledger, signal, port: scopedPort });
+    assertCurrent();
+    const settings = toolName === 'goodvibes_settings' ? await readSettingsWriteEvidence(args, scopedPort, signal) : null;
+    assertCurrent();
+    if (settings && !settings.judgmentDecisionId) throw new Error('Settings evidence has no recorded judgment provenance');
+    const permissions = capturedAuthority.permissions;
+    const mode = permissions?.mode ?? 'prompt';
+    const preset = presetForMode(mode);
+    const explicitToolDeny = preset.perTool && TOOL_CONFIG_KEYS[toolName] !== undefined
+      && permissions?.tools?.[TOOL_CONFIG_KEYS[toolName]!] === 'deny';
+    const durable = this.rememberedDecision(this.getApprovalKey(toolName, args), toolName, args);
+    const policy = this.featureFlags?.isEnabled('permissions-policy-engine') === true
+      ? this.mapEvaluatorDecision(this.evaluateRuntimePolicy(toolName, args, mode, reading ? classificationFromReading(reading) : 'read'), analysis)
+      : null;
+    const allowAct = boundary.passed && !explicitToolDeny && durable?.approved !== false && policy?.approved !== false
+      && !(preset.readOnly && reading !== null && (reading.mutates || reading.outward));
+    if (offered.resumeConditions?.some(condition => condition.id === sourceCondition.id || condition.id === legacySourceConditionId)) throw new Error('Host condition conflicts with the source condition');
+    const choices = {
+      revisions: (offered.revisions ?? []).filter(item => !options.consumedRevisions?.includes(item.ref.id) && (!options.permittedRevisionIds || options.permittedRevisionIds.includes(item.ref.id))),
+      // The manager owns this source revision condition. A changed source must
+      // enter through fresh admission; this receipt never becomes a later grant.
+      resumeConditions: [sourceCondition, ...(offered.resumeConditions ?? [])],
+    };
+    const decision = await decideAutonomousTool({
+      port: scopedPort, binding,
+      state: readingArguments({ tool: toolName, arguments: args, source, ...(directory ? { workingDirectory: directory } : {}),
+        evidence: { boundary: boundaryRecord(boundary), ...(reading ? { reading: readingRecord(reading) } : {}),
+          ...(settings ? { settings: { key: settings.key, hazard: settings.hazard.choice, hazardOutcome: settings.hazard.outcome,
+            requested: settings.requested?.verdict ?? null, requestedOutcome: settings.requested?.outcome ?? null } } : {}),
+          constraints: { allowAct, mode, explicitToolDeny: explicitToolDeny === true, durableEffect: durable?.approved ?? null } } }) as import('@goodvibes-jev/judgment').EntryType,
+      evidence: [{ id: 'prepared-tool-input', revision: inputRevision }, { id: 'source-goal-and-criteria', revision: sourceRevision }, { id: 'live-authority', revision: authorityRevision }],
+      supportingDecisionIds: [...supportingIds],
+      choices, allowAct, assertCurrent, signal,
+    });
+    assertCurrent();
+    const receipt = decision.decision;
+    if (receipt.outcome === 'defer') {
+      if (this.autonomousDeferred.size >= 10_000 && !this.autonomousDeferred.has(sourceId)) throw new Error('Autonomous deferral capacity reached');
+      deferred = Object.freeze({ inputRevision, until: receipt.until });
+      this.autonomousDeferred.set(sourceId, deferred);
+    }
+    const result = this.result(receipt.outcome === 'act', false, 'jev_decision', `jev_${receipt.outcome}`, analysis, {
+      autonomousDecision: receipt, boundary: boundaryRecord(boundary),
+      ...(reading ? { reading: readingRecord(reading) } : {}),
+      detail: receipt.summary,
+    });
+    this.policyRuntimeState.recordPermissionDecision({ callId: sourceId, tool: toolName, category, result });
+    assertCurrent();
+    return {
+      result, revisionIds: Object.freeze(decision.context.continuations.map(item => item.id)), ...(decision.revision ? { revision: decision.revision } : {}),
+      claim: () => {
+        decision.assertCurrent();
+        if (receipt.outcome !== 'act') throw new Error('Only a current Jev act decision can be claimed');
+        if (this.autonomousClaims.size >= 10_000) throw new Error('Autonomous admission claim capacity reached');
+        decision.recordClaim();
+        assertCurrent();
+        // No await or callback between the final check and the single-use claim.
+        this.autonomousClaims.add(sourceId);
+        this.autonomousDeferred.delete(sourceId);
+      },
+    };
   }
 
   /** Resolves to true when the gate approves the call. */

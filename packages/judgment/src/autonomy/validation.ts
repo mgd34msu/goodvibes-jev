@@ -99,6 +99,23 @@ function matches(ref: JevVersionRef, known: readonly JevVersionRef[]): boolean {
 }
 
 /**
+ * Detached, frozen host protocol metadata, including a pre-reading context
+ * with no call IDs yet. This establishes shape/ownership, never authority.
+ * Opaque registry IDs are not raw semantic content or credential containers.
+ */
+export function captureJevDecisionContext(value: unknown): JevDecisionContext {
+  try {
+    const record = object(value, ['decisionId', 'binding', 'judgmentDecisionIds', 'evidence', 'continuations', 'resumeConditions']);
+    return Object.freeze({
+      decisionId: refString(record.decisionId), binding: binding(record.binding),
+      judgmentDecisionIds: list(record.judgmentDecisionIds, refString),
+      evidence: list(record.evidence, versionRef), continuations: list(record.continuations, continuation),
+      resumeConditions: list(record.resumeConditions, versionRef),
+    });
+  } catch { return fail(); }
+}
+
+/**
  * Check a record against host-owned, current context. This is binding validation,
  * not an authorization service. Deterministic execution boundaries still run.
  */

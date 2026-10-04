@@ -152,7 +152,7 @@ describe('workspace-registration: legacy registry migration', () => {
     expect(resolution.status).toBe('unknown');
   });
 
-  test('records already present in the shared store are counted, not duplicated', async () => {
+  test('legacy migration refuses an already-native shared store without duplicating records', async () => {
     const { shellPaths, work, home } = makeShellPaths();
     const store = createWorkspaceRegistrationStore(shellPaths);
     await store.add(work);
@@ -165,8 +165,7 @@ describe('workspace-registration: legacy registry migration', () => {
     }));
 
     const result = migrateLegacyWorkspaceRegistryIfNeeded(shellPaths);
-    expect(result?.recordsMigrated).toBe(0);
-    expect(result?.recordsAlreadyPresent).toBe(1);
+    expect(result).toBeNull();
     const snapshot = await store.snapshot();
     expect(snapshot.workspaces).toHaveLength(1);
   });
@@ -290,7 +289,7 @@ describe('workspace-registration: checkpoint-eligibility boundary', () => {
     }));
 
     const result = backfillCheckpointEligibilityIfNeeded(shellPaths);
-    expect(result?.recordsStamped).toBe(0);
+    expect(result).toBeNull();
     expect(resolveCheckpointEligibilitySync(shellPaths, work, {}).status).toBe('unknown');
   });
 });
@@ -346,3 +345,24 @@ async function pollUntilResolved(
   }
   return false;
 }
+
+describe('workspace-registration: native v2 preservation', () => {
+  test('legacy migration and backfill cannot erase native metadata or resurrect a removed scope', async () => {
+    const { shellPaths, work, home } = makeShellPaths();
+    const store = createWorkspaceRegistrationStore(shellPaths);
+    await store.add(work);
+    const scope = store.currentScope(work);
+    const legacyPath = legacyRegistryPath(home);
+    mkdirSync(join(home, '.goodvibes', 'agent', 'checkpoints'), { recursive: true });
+    writeFileSync(legacyPath, JSON.stringify({ version: 1, workspaces: [{ root: work, registeredAt: '2099-01-01T00:00:00.000Z' }] }));
+    expect(backfillCheckpointEligibilityIfNeeded(shellPaths)).toBeNull();
+    expect(migrateLegacyWorkspaceRegistryIfNeeded(shellPaths)).toBeNull();
+    expect(store.currentScope(work)).toEqual(scope);
+    await store.remove(work);
+    expect(migrateLegacyWorkspaceRegistryIfNeeded(shellPaths)).toBeNull();
+    expect(backfillCheckpointEligibilityIfNeeded(shellPaths)).toBeNull();
+    expect((await store.snapshot()).workspaces).toHaveLength(0);
+    await store.add(work);
+    expect(store.currentScope(work).scopeId).not.toBe(scope.scopeId);
+  });
+});

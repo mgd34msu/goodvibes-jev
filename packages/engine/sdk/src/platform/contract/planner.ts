@@ -1,4 +1,6 @@
-import { createContractInputAuthority, bindContractInputAuthority, assertContractInputAdmission, pinContractInputAdmission, authorizeContractInputPath, assertContractInputReadAccess, withContractInputAuthority } from './input-authority.js';
+import { createContractInputAuthority, bindContractInputAuthority, assertContractInputAdmission, pinContractInputAdmission, authorizeContractInputPath, assertContractInputReadAccess, withContractInputAuthority, type ContractInputAuthority } from './input-authority.js';
+import { bindContractActionSource } from '../tools/agent/contract-binding.js';
+import { nativeContractActionSource } from './native-decisions.js';
 /**
  * Planning (docs/design/contract-runner.md section 3): read the request's
  * shape, run the planning model as a read-only sub-agent, check its plan in
@@ -23,6 +25,8 @@ import { createRepoMapTool } from '../tools/repo-map/index.js';
 import { summarizeError } from '../utils/error-display.js';
 import { delegationForbidden, readRequestShape, REQUEST_SHAPE_SITE, saysYesAtAct, writingUnclear } from './batteries/request-shape.js';
 import { readContractConfig, type ContractConfig, type ContractConfigReader } from './config.js';
+import { nativeContractRoute, decideNativeContract, nativeContractPort, nativeDecisionState, nativeSpent, spendNative, type NativeContractServices } from './native-decisions.js';
+import { assertNativeContractSource, nativeSourcePlan } from './native-source.js';
 import { checkDraftFidelity, draftSection } from './draft-plan.js';
 import { readCriterionDispositions, runPlanChecks, type CriterionDispositionRuling, type PlanCheckUsage, type PlanVerdict } from './plan-checks.js';
 import {
@@ -58,6 +62,7 @@ import {
 // ── Dependencies and outcomes ─────────────────────────────────────────────────
 
 export interface ContractPlannerDeps {
+  readonly native?: NativeContractServices | undefined;
   /** Runs the read-only planner sub-agent (agents/planner-decomposition-runner.ts in production). */
   readonly decompositionRunner: DecompositionRunner;
   /** Picks the planner's model; required, there is no default model. */
@@ -131,6 +136,7 @@ export function buildContractPlannerPrompt(): string {
     '```',
     '',
     'Rules:',
+    '- If an immutable native source is supplied, copy its complete goal and ordered root criteria exactly from the required projection, including ids, text and quote. Do not infer replacements from the display request or correction instructions. All rules about generating contract roots below apply only when there is no native source.',
     '- Contract criteria ("c1", "c2"...) are what the user requires: every requirement, limit and preference their request states, each as its own criterion, and nothing they did not ask for. Each has a "quote": the user\'s exact words it comes from, copied character for character from the request.',
     '- Every criterion must be checkable from the finished work: its files, its output, or a command run against it.',
     '- Groups are "g1", "g2"...; units are "u1", "u2"... and unique across the plan. A group criterion is "<groupId>.c<n>" and a unit criterion "<unitId>.c<n>". Every group and unit criterion lists in "serves" the contract criteria it serves.',
@@ -146,6 +152,7 @@ export function buildContractPlannerPrompt(): string {
 
 export interface PlannerRequestInput {
   readonly ask: string;
+  readonly nativeSource?: StartContractInput['nativeSource'];
   readonly shape: RequestShape;
   readonly config: Pick<ContractConfig, 'defaultAttempts' | 'maxUnits'>;
   readonly proposedUnits?: StartContractInput['proposedUnits'];
@@ -187,9 +194,15 @@ function problemLine(problem: PlanProblem): string {
 /** The planner's user prompt: the ask verbatim, the shape, proposed units, the repository, and on a repair every problem with the previous plan. */
 export function buildContractPlannerRequest(input: PlannerRequestInput): string {
   const sections: string[] = [
-    "## The user's request\nEvery contract criterion quotes these words exactly.\n\n<request>\n" + input.ask + '\n</request>',
+    (input.nativeSource === undefined
+      ? "## The user's request\nEvery contract criterion quotes these words exactly.\n\n<request>\n"
+      : '## Display request\nThe separate immutable native source is authoritative for the full goal and ordered criteria.\n\n<request>\n') + input.ask + '\n</request>',
     '## How the user wants the work done\n' + shapeLines(input.shape, input.config).join('\n'),
   ];
+  if (input.nativeSource !== undefined) {
+    sections.push('## Immutable native source\nThis is the complete original goal and ordered criteria, with host revisions. Do not summarize, rewrite, drop, add or reorder these roots. Only derive groups and units. The root goal and criteria in every response must exactly equal the following projection.\n'
+      + JSON.stringify(input.nativeSource) + '\nRequired plan roots:\n' + JSON.stringify(nativeSourcePlan(input.nativeSource)));
+  }
   if (input.draftPlan !== undefined) sections.push(draftSection(input.draftPlan));
   const proposed = input.proposedUnits ?? [];
   if (proposed.length > 0) {
@@ -198,7 +211,9 @@ export function buildContractPlannerRequest(input: PlannerRequestInput): string 
       .join('\n'));
   }
   if (input.ownerInstruction !== undefined) {
-    sections.push("## The owner's instruction\nThe owner has authority over the requirements: follow this instruction, rewording or dropping criteria as it says.\n\n" + input.ownerInstruction);
+    sections.push((input.nativeSource === undefined
+      ? "## The owner's instruction\nThe owner has authority over the requirements: follow this instruction, rewording or dropping criteria as it says.\n\n"
+      : "## Correction instruction\nApply only to derived work. The immutable native goal and ordered criteria cannot change.\n\n") + input.ownerInstruction);
     if (input.previousPlan !== undefined) sections.push('## The plan the instruction changes\n```json\n' + input.previousPlan + '\n```');
   }
   sections.push('## Repository\n' + input.repositoryMap);
@@ -357,8 +372,11 @@ export async function shapeContract(contract: Contract, deps: ContractPlannerDep
   const context = new PlanningContext(contract, deps);
   context.move('shaping');
   let read: Awaited<ReturnType<typeof readRequestShape>>;
+  const reusedShape = contract.nativeSource !== undefined && contract.shape !== undefined;
   try {
-    read = await readRequestShape(judgmentPort(REQUEST_SHAPE_SITE), contract.ask, options);
+    read = contract.nativeSource !== undefined && contract.shape !== undefined
+      ? { shape: contract.shape, usage: { inputTokens: 0, outputTokens: 0 } }
+      : await readRequestShape(nativeContractPort(contract, deps.native, judgmentPort(REQUEST_SHAPE_SITE), options.signal), contract.ask, { ...options, nativeSource: contract.nativeSource });
   } catch (error) {
     if (isAbort(error, options.signal)) return { kind: 'cancelled' };
     const reason = judgmentFailureReason(error);
@@ -367,7 +385,7 @@ export async function shapeContract(contract: Contract, deps: ContractPlannerDep
   }
   const { shape, usage } = read;
   contract.shape = shape;
-  context.addJudgmentUsage({ calls: 1, ...usage });
+  context.addJudgmentUsage({ calls: reusedShape ? 0 : 1, ...usage });
   context.decide('shaped', describeShape(shape), shape.decisionIds);
   deps.emit({
     type: 'CONTRACT_SHAPED',
@@ -378,6 +396,15 @@ export async function shapeContract(contract: Contract, deps: ContractPlannerDep
     asksForAttempts: shape.asks_for_attempts,
     decisionIds: shape.decisionIds,
   });
+  if (writingUnclear(shape) && contract.nativeSource !== undefined) {
+    const decision = await decideNativeContract(contract, deps.native, { stage: 'shape', targetId: contract.id,
+      action: 'Proceed to planning with the observed request shape. Any writing must satisfy the complete original requirements and live capability boundaries. No reading is changed by this decision.',
+      allowAct: true, state: () => ({ forbidsWriting: { ...shape.forbids_writing }, forbidsDelegation: { ...shape.forbids_delegation } }),
+      continuations: [], decisionIds: shape.decisionIds, signal: options.signal ?? new AbortController().signal });
+    if (decision.decision.outcome !== 'act') return context.fail('planning', 'Jev refused proceeding from the unresolved request shape');
+    decision.recordClaim();
+    return { kind: 'shaped', shape };
+  }
   if (writingUnclear(shape)) {
     const escalation = context.escalate('shape', 'writing-unclear', buildWritingEscalationQuestion(contract.id, contract.ask), shape.decisionIds);
     return { kind: 'awaiting-owner', shape, escalation };
@@ -443,12 +470,12 @@ async function checkPlanText(context: PlanningContext, output: string, repair: n
   context.move('checking-plan');
   context.decide('planned', repair === 0 ? 'the planner wrote a plan' : `the planner wrote repair ${repair}`);
   const codeProblems = [
-    ...validateContractPlan(plan, contract.ask, shape, config),
+    ...validateContractPlan(plan, contract.ask, shape, config, contract.nativeSource),
     ...(contract.draftPlan === undefined ? [] : checkDraftFidelity(plan, contract.draftPlan)),
   ];
   deps.emit({ type: 'CONTRACT_PLAN_CHECKED', contractId: contract.id, check: 'structure', passed: codeProblems.length === 0, problems: codeProblems, decisionIds: [] });
   if (codeProblems.length > 0) return { plan, text, problems: codeProblems, verdict: undefined };
-  const verdict = await runPlanChecks(plan, contract.ask, shape, { signal });
+  const verdict = await runPlanChecks(plan, contract.ask, shape, { signal, nativeSource: contract.nativeSource, native: { contract, services: deps.native } });
   context.addJudgmentUsage(verdict.usage);
   for (const entry of verdict.reports) {
     deps.emit({ type: 'CONTRACT_PLAN_CHECKED', contractId: contract.id, check: entry.check, passed: entry.passed, problems: entry.problems, decisionIds: entry.decisionIds });
@@ -465,6 +492,7 @@ async function checkPlanText(context: PlanningContext, output: string, repair: n
  * cannot produce a readable plan.
  */
 export async function planContract(contract: Contract, deps: ContractPlannerDeps, input: PlanContractInput = {}): Promise<PlanningOutcome> {
+  assertNativeContractSource(contract);
   if (contract.shape === undefined) throw new Error(`contract ${contract.id} has no request shape; shape it before planning`);
   const context = new PlanningContext(contract, deps);
   const { signal } = input;
@@ -491,7 +519,7 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
 
   let route: UnitRoute;
   try {
-    route = await deps.routeSelector({ purpose: 'planner', contract });
+    route = await nativeContractRoute(deps.routeSelector, contract, deps.native, { purpose: 'planner', contract }, signal);
   } catch (error) {
     if (isAbort(error, signal)) return { kind: 'cancelled' };
     // The route planner reads the work through Jev: an outage is the judgment's, not the planning's.
@@ -513,6 +541,7 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
   if (authority) await assertContractInputReadAccess(authority, filter, signal);
   const bounds = readPlannerBounds(deps.configManager);
   const systemPrompt = buildContractPlannerPrompt();
+  if (contract.nativeSource !== undefined) return planNativeContract(context, input, route, repositoryMap, bounds, systemPrompt, { workingDirectory, authority, assertCurrent });
 
   let repair = 0;
   let previous: { readonly problems: readonly PlanProblem[]; readonly previousPlan: string } | undefined;
@@ -522,6 +551,7 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
       await assertCurrent();
       const userPrompt = buildContractPlannerRequest({
         ask: contract.ask,
+        nativeSource: contract.nativeSource,
         shape: contract.shape,
         config: context.config,
         proposedUnits: input.proposedUnits,
@@ -578,6 +608,69 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
   }
 }
 
+/** Native planning consumes durable attempt counters and semantic receipts, never an owner approval. */
+async function planNativeContract(context: PlanningContext, input: PlanContractInput, route: UnitRoute, repositoryMap: string, bounds: DecompositionBounds, systemPrompt: string,
+  admitted: { readonly workingDirectory: string; readonly authority: ContractInputAuthority | undefined; assertCurrent(): Promise<void> }): Promise<PlanningOutcome> {
+  const { contract, deps } = context;
+  const signal = input.signal ?? new AbortController().signal;
+  const sourceOf = nativeContractActionSource(contract, deps.native, signal);
+  const state = nativeDecisionState(contract);
+  const budgetKey = 'plan';
+  let output = state.plannerOutputs[budgetKey];
+  let needsPlan = output === undefined;
+  let previous: { readonly problems: readonly PlanProblem[]; readonly previousPlan: string } | undefined;
+  try {
+    for (;;) {
+      signal.throwIfAborted();
+      await admitted.assertCurrent();
+      if (needsPlan) {
+        if (nativeSpent(contract, budgetKey) >= context.config.planRepairLimit + 1) {
+          await decideNativeContract(contract, deps.native, { stage: 'plan', targetId: contract.id, action: 'Start another planning attempt', allowAct: false,
+            state: () => ({ attempts: nativeSpent(contract, budgetKey), limit: context.config.planRepairLimit + 1, reason: 'Planning budget exhausted' }), continuations: [], signal });
+          return context.fail('planning', 'Native planning budget exhausted; no eligible planning continuation');
+        }
+        const attempt = spendNative(contract, deps.native, budgetKey);
+        const request = buildContractPlannerRequest({ ask: contract.ask, nativeSource: contract.nativeSource, shape: contract.shape!, config: context.config,
+          proposedUnits: input.proposedUnits, draftPlan: contract.draftPlan, repositoryMap, repair: previous });
+        const run = await deps.decompositionRunner.run(bindContractActionSource(bindContractInputAuthority({ goal: contract.nativeSource!.goal, workingDir: admitted.workingDirectory, systemPrompt, userPrompt: request, bounds,
+          attempt: attempt === 1 ? 'initial' : 'repair', route, signal }, admitted.authority), sourceOf, port => nativeContractPort(contract, deps.native, port, signal)));
+        if (run.agentId !== undefined) contract.plannerAgentIds.push(run.agentId);
+        signal.throwIfAborted();
+        await admitted.assertCurrent();
+        if (run.status !== 'completed') return context.fail('planning', runFailureReason(run));
+        output = run.output; state.plannerOutputs[budgetKey] = output; deps.native?.changed(contract);
+      }
+      const checked = await checkPlanText(context, output!, nativeSpent(contract, budgetKey) - 1, signal);
+      await admitted.assertCurrent();
+      const valid = checked.problems.length === 0 && checked.plan !== undefined;
+      const canRepair = nativeSpent(contract, budgetKey) < context.config.planRepairLimit + 1;
+      const decisionIds = [...contract.shape!.decisionIds, ...(checked.verdict?.decisionIds ?? [])];
+      const decision = await decideNativeContract(contract, deps.native, { stage: 'plan', targetId: contract.id,
+        action: 'Accept this exact checked plan and schedule its derived units against the immutable original roots', allowAct: valid,
+        state: () => ({ plan: checked.plan ?? null, problems: checked.problems, attempts: nativeSpent(contract, budgetKey), limit: context.config.planRepairLimit + 1 }) as unknown as import('@goodvibes-jev/judgment').EntryType,
+        continuations: canRepair ? [{ id: 'repair-plan', kind: 'revise-action', description: 'Use one remaining planner attempt to revise the derived plan while preserving all original roots.' }] : [], decisionIds, signal });
+      await admitted.assertCurrent();
+      decision.assertCurrent();
+      if (decision.decision.outcome === 'act' && checked.plan !== undefined) {
+        decision.recordClaim();
+        acceptPlan(contract, checked.plan, checked.verdict?.dispositions ?? new Map(), context, decision.decision.judgmentDecisionIds, 'native Jev act on the exact checked plan');
+        return { kind: 'accepted', plan: checked.plan, decisionIds: decision.decision.judgmentDecisionIds };
+      }
+      if (decision.decision.outcome === 'reject') return context.fail('planning', 'Jev refused the native plan');
+      if (decision.continuationId !== 'repair-plan' || !canRepair) throw new Error('Native planner continuation is no longer eligible');
+      decision.assertCurrent();
+      previous = { problems: checked.problems, previousPlan: checked.text }; needsPlan = true;
+      context.decide('plan-repaired', 'Jev selected registered native plan repair', decision.decision.judgmentDecisionIds);
+      context.move('planning');
+    }
+  } catch (error) {
+    if (isAbort(error, signal)) return { kind: 'cancelled' };
+    const reason = judgmentFailureReason(error);
+    if (reason === undefined) throw error;
+    return context.fail('judgment-unavailable', reason);
+  }
+}
+
 /**
  * The owner approved an unresolved plan (section 3.5): accept exactly the plan
  * the escalation showed. The owner settles its problems, but a plan the engine
@@ -590,15 +683,16 @@ export async function acceptEscalatedPlan(
   deps: ContractPlannerDeps,
   options: { readonly signal?: AbortSignal | undefined } = {},
 ): Promise<EscalatedPlanOutcome> {
+  if (contract.nativeSource !== undefined) return { kind: 'unrunnable', problems: [{ code: 'native-source-changed', message: 'Native plans require a fresh semantic decision; owner approval is unavailable.' }] };
   if (escalation.reason !== 'plan-unresolved') throw new Error(`escalation ${escalation.id} is not about the plan`);
   if (contract.shape === undefined) throw new Error(`contract ${contract.id} has no request shape`);
   const context = new PlanningContext(contract, deps);
   const parsed = parseContractPlan(escalation.question);
   if (!parsed.ok) return { kind: 'unrunnable', problems: parsed.problems };
-  const blocking = validateContractPlan(parsed.plan, contract.ask, contract.shape, context.config).filter((entry) => UNRUNNABLE_PLAN_PROBLEMS.has(entry.code));
+  const blocking = validateContractPlan(parsed.plan, contract.ask, contract.shape, context.config, contract.nativeSource).filter((entry) => UNRUNNABLE_PLAN_PROBLEMS.has(entry.code));
   if (blocking.length > 0) return { kind: 'unrunnable', problems: blocking };
   try {
-    const read = await readCriterionDispositions(parsed.plan, contract.ask, contract.shape, options);
+    const read = await readCriterionDispositions(parsed.plan, contract.ask, contract.shape, { ...options, nativeSource: contract.nativeSource });
     context.addJudgmentUsage(read.usage);
     // The plan checks the owner settled, the owner's reply, and the dispositions read now.
     const decisionIds = [
@@ -729,8 +823,12 @@ function acceptPlan(
   how = 'every plan check passed',
 ): void {
   const tree = buildPlanTree(plan, dispositions, context.config.defaultAttempts);
-  contract.goal = tree.goal;
-  contract.criteria = tree.criteria;
+  if (contract.nativeSource === undefined) {
+    contract.goal = tree.goal;
+    contract.criteria = tree.criteria;
+  } else {
+    assertNativeContractSource(contract);
+  }
   contract.groups = tree.groups;
   contract.units = tree.units;
   const excluded = tree.criteria.filter((criterion) => criterion.disposition === 'excluded').length;

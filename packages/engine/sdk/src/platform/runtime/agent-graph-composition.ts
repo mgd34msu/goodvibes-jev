@@ -37,6 +37,7 @@ export interface AgentExecutionGraphOptions {
   readonly workingDirectory: string;
   readonly configManager: ConfigManager;
   readonly providerRegistry: ProviderRegistry;
+  readonly additionalFleetOwnership?: (() => ReturnType<AgentManager['fleetOwnership']>) | undefined;
 }
 
 export interface AgentGraph extends AgentExecutionGraph {
@@ -73,6 +74,7 @@ export function createAgentExecutionGraph(options: AgentExecutionGraphOptions): 
     // The live registry lets a bare model id in a spawn() override resolve
     // through the shared resolver instead of being rejected as unqualified.
     providerRegistry: options.providerRegistry,
+    additionalFleetOwnership: options.additionalFleetOwnership,
   });
   const contextAccountingHolder = new ContextAccountingHolder();
   // Conversation-snapshot bridge (mirrors the SDK's own createRuntimeServices).

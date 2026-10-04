@@ -14,6 +14,7 @@ import { PolicyRuntimeState } from '@/runtime/index.ts';
 import { ProviderError } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { HookResult } from '@goodvibes-jev/engine/sdk/platform/hooks';
 import { createTestManagers } from '../helpers/test-managers.ts';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
 import { forgetFailureReadings, installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 
@@ -120,6 +121,7 @@ describe('runtime substrate gate', () => {
   const savedStream = configManager.get('display.stream') as boolean;
   const realDateNow = Date.now;
   let fakeNow = 1_800_000_000_000;
+  let judgmentLog: SqliteDecisionLog;
   let previousJudgmentPort: ReturnType<typeof installJudgmentPort>;
   let rateLimited = false;
 
@@ -127,7 +129,9 @@ describe('runtime substrate gate', () => {
     Date.now = () => ++fakeNow;
     forgetFailureReadings();
     rateLimited = false;
-    previousJudgmentPort = installJudgmentPort(fakePort((name, question) => {
+    judgmentLog = new SqliteDecisionLog(':memory:');
+    previousJudgmentPort = installJudgmentPort(withDecisionLog(fakePort((name, question) => {
+      if (name === 'disposition') return choiceAnswer(question, 'act', 0.97);
       if (name === 'intent') return choiceAnswer(question, 'chat', 0.97);
       if (name === 'risk') return scoreAnswer(question, 0, 0.97);
       if (name === 'family') return choiceAnswer(question, 'generic', 0.97);
@@ -138,11 +142,12 @@ describe('runtime substrate gate', () => {
       if (name === 'unit') return choiceAnswer(question, 's', 0.97);
       if (question.type === 'noul') return noulAnswer(name === 'rate_limited' && rateLimited ? 0.97 : 0.03);
       throw new Error(`Unexpected substrate reading: ${name}`);
-    }).port);
+    }).port, judgmentLog));
   });
 
   afterEach(() => {
     installJudgmentPort(previousJudgmentPort);
+    judgmentLog[Symbol.dispose]();
     forgetFailureReadings();
     configManager.set('display.stream', savedStream);
     Date.now = realDateNow;
@@ -256,7 +261,7 @@ describe('runtime substrate gate', () => {
       models: ['mock-model'],
       chat: mock(async (): Promise<ChatResponse> => ({
         content: '',
-        toolCalls: [{ id: `call-${Date.now()}-${Math.random()}`, name: 'missing_tool', arguments: {} }],
+        toolCalls: [{ id: `call-${crypto.randomUUID()}`, name: 'missing_tool', arguments: {} }],
         usage: { inputTokens: 5, outputTokens: 1 },
         stopReason: 'tool_call',
       })),

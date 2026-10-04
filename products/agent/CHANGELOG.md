@@ -2,6 +2,15 @@
 
 Product-facing release notes for GoodVibes Agent.
 
+## Unreleased
+
+- Added explicit complete-source JSON-file submission with durable principal-bound request identity, crash-safe original-ID lookup/replay, and separate execution controls.
+
+- Distinguish pending/refused admission and cancellation before admission from actual native execution receipts. Preserve explicit recovery and original requested revisions.
+
+- Added explicit native work start, status, cancellation and recovery controls through the authenticated daemon client. Native project discovery no longer depends on legacy planning.
+- Kept original criteria and verification separate from execution progress, and fenced pending requests on host, token, workspace and view replacement. Closing the view does not cancel server execution.
+
 ## 2.1.0 - 2026-09-30
 
 - **Added: themes.** display.theme picks goodvibes (the default), goodvibes-neon, catppuccin, tokyonight, dracula, nord, gruvbox, one-dark, rosepine, solarized, github, or system, which follows the terminal's own palette, under tmux too. A theme you already chose is kept.

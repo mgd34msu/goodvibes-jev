@@ -18,7 +18,9 @@
  *      on the process umask), then `renameSync` it over the target.
  *      `rename(2)` is atomic on POSIX: a concurrent reader, and a process
  *      that dies mid-write, can only ever observe the previous complete file
- *      or the new complete one, never a torn write.
+ *      or the new complete one, never a torn write. `durable: true` additionally
+ *      confirms the published file and complete canonical/alias ancestry before
+ *      returning success; the historical default retains rename-only behavior.
  *
  *      The temp name is unique per WRITE, not per process
  *      ({@link createAtomicTempPath}: `<name>.tmp-<pid>-<seq>-<random>`), and
@@ -65,11 +67,15 @@ import {
   chmodSync,
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
+  realpathSync,
   renameSync,
   statSync,
   unlinkSync,
@@ -77,7 +83,8 @@ import {
   writeSync,
 } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, parse, sep } from 'node:path';
+import type { Stats } from 'node:fs';
 import { logger } from './logger.js';
 
 /**
@@ -135,6 +142,8 @@ export interface AtomicWriteOptions {
    * Defaults to `0o600`.
    */
   readonly mode?: number;
+  /** Opt in to file + complete pathname-ancestry durability before success. */
+  readonly durable?: boolean;
 }
 
 export interface AtomicJsonWriteOptions extends AtomicWriteOptions {
@@ -144,6 +153,107 @@ export interface AtomicJsonWriteOptions extends AtomicWriteOptions {
   readonly trailingNewline?: boolean;
 }
 
+export type AtomicWriteDurabilityPhase = 'before-publication' | 'published-indeterminate';
+
+/** A failed post-rename confirmation is uncertainty, never proof of rollback. */
+export class AtomicWriteDurabilityError extends Error {
+  readonly code = 'ATOMIC_WRITE_DURABILITY_FAILED';
+  constructor(readonly filePath: string, readonly phase: AtomicWriteDurabilityPhase, cause: unknown) {
+    super(`Atomic file durability failed (${phase}): ${filePath}`, { cause });
+    this.name = 'AtomicWriteDurabilityError';
+  }
+}
+
+interface DurablePathEntry { readonly path: string; readonly identity: Stats; }
+interface DurablePathLink extends DurablePathEntry { readonly target: string; }
+function sameInode(a: Stats, b: Stats): boolean { return a.dev === b.dev && a.ino === b.ino; }
+function sameFile(a: Stats, b: Stats): boolean {
+  return sameInode(a, b) && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
+}
+
+/**
+ * Trace actual lookup, including symlink chains and their parent directories.
+ * realpath + lexical ancestors alone misses an intermediate symlink's parent.
+ * Keep `..` until after symlinks resolve, exactly as filesystem lookup does.
+ */
+function traceDurablePath(filePath: string): {
+  readonly canonical: string; readonly file: Stats;
+  readonly directories: readonly DurablePathEntry[]; readonly links: readonly DurablePathLink[];
+} {
+  const canonical = realpathSync(filePath);
+  const absolute = isAbsolute(filePath) ? filePath : `${process.cwd()}${sep}${filePath}`;
+  let cursor = parse(absolute).root;
+  let pending = absolute.slice(cursor.length).split(sep);
+  const directories = new Map<string, DurablePathEntry>();
+  const links: DurablePathLink[] = [];
+  const rememberDirectory = (path: string) => {
+    const identity = lstatSync(path);
+    if (!identity.isDirectory()) throw new Error('Durable path ancestor is not a directory');
+    directories.set(path, { path, identity });
+  };
+  rememberDirectory(cursor);
+  while (pending.length > 0) {
+    const component = pending.shift()!;
+    if (!component || component === '.') continue;
+    if (component === '..') { cursor = dirname(cursor); rememberDirectory(cursor); continue; }
+    const path = join(cursor, component);
+    const identity = lstatSync(path);
+    if (identity.isSymbolicLink()) {
+      if (links.length >= 40) throw new Error('Durable path has too many symbolic links');
+      const target = readlinkSync(path);
+      links.push({ path, identity, target });
+      if (isAbsolute(target)) { cursor = parse(target).root; rememberDirectory(cursor); }
+      pending = [...target.slice(isAbsolute(target) ? parse(target).root.length : 0).split(sep), ...pending];
+      continue;
+    }
+    cursor = path;
+    if (identity.isDirectory()) rememberDirectory(cursor);
+  }
+  if (cursor !== canonical) throw new Error('Durable path changed during resolution');
+  const file = lstatSync(canonical);
+  if (!file.isFile()) throw new Error('Durable publication is not a regular file');
+  return { canonical, file, directories: [...directories.values()], links };
+}
+
+/**
+ * Establish durability of already-visible bytes, including newly created
+ * ancestors and every symlink/alias ancestry. Call under the store's owner
+ * lock; this helper supplies durability, not cross-writer serialization.
+ * A read/restart can use this to recover an indeterminate publication. Failures
+ * never remove, restore, quarantine or rewrite the published file.
+ */
+export function confirmFileDurable(filePath: string): void {
+  try {
+    const path = traceDurablePath(filePath);
+    const fd = openSync(path.canonical, 'r');
+    try {
+      if (!sameFile(fstatSync(fd), path.file)) throw new Error('Durable file changed before confirmation');
+      fsyncSync(fd);
+      // Reverse lookup order preserves descendant-before-ancestor ordering,
+      // including branches traversed by a chain of symlinks.
+      for (const directory of [...path.directories].reverse()) {
+        const dirFd = openSync(directory.path, 'r');
+        try {
+          if (!sameInode(fstatSync(dirFd), directory.identity)) throw new Error('Durable ancestor changed');
+          fsyncSync(dirFd);
+        } finally { closeSync(dirFd); }
+      }
+      if (realpathSync(filePath) !== path.canonical || !sameFile(fstatSync(fd), path.file)
+        || !sameFile(statSync(filePath), path.file)) throw new Error('Durable file changed during confirmation');
+      for (const directory of path.directories) {
+        if (!sameInode(lstatSync(directory.path), directory.identity)) throw new Error('Durable ancestor changed');
+      }
+      for (const link of path.links) {
+        if (!sameInode(lstatSync(link.path), link.identity) || readlinkSync(link.path) !== link.target) {
+          throw new Error('Durable alias changed during confirmation');
+        }
+      }
+    } finally { closeSync(fd); }
+  } catch (error) {
+    throw new AtomicWriteDurabilityError(filePath, 'published-indeterminate', error);
+  }
+}
+
 /**
  * Write `contents` to `filePath` atomically, creating parent directories as
  * needed. See the module docstring for the mechanics and why they matter.
@@ -151,33 +261,32 @@ export interface AtomicJsonWriteOptions extends AtomicWriteOptions {
 export function writeFileAtomic(filePath: string, contents: string, options: AtomicWriteOptions = {}): void {
   const mode = options.mode ?? DEFAULT_STORE_FILE_MODE;
   const dir = dirname(filePath);
-  mkdirSync(dir, { recursive: true });
-
-  cleanupStaleTempFiles(dir, filePath);
-
-  const tmpPath = createAtomicTempPath(filePath);
-
+  let tmpPath: string | undefined;
+  let published = false;
   try {
+    mkdirSync(dir, { recursive: true });
+    cleanupStaleTempFiles(dir, filePath);
+    tmpPath = createAtomicTempPath(filePath);
     const fd = openSync(tmpPath, 'w', mode);
     try {
-      writeSync(fd, contents, null, 'utf-8');
+      const written = writeSync(fd, contents, null, 'utf-8');
+      if (options.durable === true && written !== Buffer.byteLength(contents, 'utf-8')) {
+        throw new Error('Incomplete strict atomic file write');
+      }
       fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-
-    // `open(2)` masks the requested mode with the process umask; an explicit
-    // chmod makes the resulting mode exact, which is what a 0600 store file
-    // needs to actually mean 0600 under any umask.
+    } finally { closeSync(fd); }
     chmodSync(tmpPath, mode);
-
     renameSync(tmpPath, filePath);
+    published = true;
+    if (options.durable === true) confirmFileDurable(filePath);
   } catch (error) {
-    try {
-      unlinkSync(tmpPath);
-    } catch {
-      // Best-effort cleanup, the original error takes priority, and the
-      // stale-temp sweep above will catch this next time regardless.
+    if (tmpPath !== undefined && !published) {
+      try { unlinkSync(tmpPath); }
+      catch { /* Best-effort temp cleanup; never restore the previous image. */ }
+    }
+    if (options.durable === true) {
+      if (error instanceof AtomicWriteDurabilityError) throw error;
+      throw new AtomicWriteDurabilityError(filePath, published ? 'published-indeterminate' : 'before-publication', error);
     }
     throw error;
   }
@@ -185,10 +294,17 @@ export function writeFileAtomic(filePath: string, contents: string, options: Ato
 
 /** Serialize `value` as JSON and write it atomically via {@link writeFileAtomic}. */
 export function writeJsonFileAtomic(filePath: string, value: unknown, options: AtomicJsonWriteOptions = {}): void {
-  const indent = options.indent === undefined ? 2 : options.indent;
-  const trailingNewline = options.trailingNewline ?? true;
-  const serialized = indent === null ? JSON.stringify(value) : JSON.stringify(value, null, indent);
-  writeFileAtomic(filePath, trailingNewline ? `${serialized}\n` : serialized, options);
+  try {
+    const indent = options.indent === undefined ? 2 : options.indent;
+    const trailingNewline = options.trailingNewline ?? true;
+    const serialized = indent === null ? JSON.stringify(value) : JSON.stringify(value, null, indent);
+    writeFileAtomic(filePath, trailingNewline ? `${serialized}\n` : serialized, options);
+  } catch (error) {
+    if (options.durable === true && !(error instanceof AtomicWriteDurabilityError)) {
+      throw new AtomicWriteDurabilityError(filePath, 'before-publication', error);
+    }
+    throw error;
+  }
 }
 
 export interface AtomicJsonSafeWriteOptions extends AtomicJsonWriteOptions {

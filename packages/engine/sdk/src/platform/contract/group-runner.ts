@@ -1,4 +1,5 @@
 import { createContractInputAuthority, type ContractInputAuthority } from './input-authority.js';
+import { nativeContractRoute } from './native-decisions.js';
 /**
  * Groups on the orchestration engine (docs/design/contract-runner.md sections
  * 6.1, 7.3 and 7.4): one engine per contract, a workstream per group started
@@ -204,7 +205,7 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
       const runsAgent = units.flatMap((unit) => unit.attemptUnits ?? [unit]);
       for (const unit of runsAgent) {
         if (unit.route !== undefined) continue;
-        unit.route = await deps.routeSelector({ purpose: unit.role === 'integration' ? 'integration' : 'unit', contract: run.view(), unit: structuredClone(unit) });
+        unit.route = await nativeContractRoute(deps.routeSelector, run.contract, run.env.native, { purpose: unit.role === 'integration' ? 'integration' : 'unit', contract: run.view(), unit: structuredClone(unit) }, run.abort.signal);
         if (run.terminal) return;
       }
       rollUpContractUsage(contract, deps.getStatus, deps.pricing);

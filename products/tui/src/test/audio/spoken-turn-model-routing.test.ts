@@ -128,4 +128,38 @@ describe('spoken turn model routing', () => {
     expect(observedModels).toEqual(['openai:chat-model']);
     expect(messages.join('\n')).toContain("Configured TTS LLM 'missing-model' was not found");
   });
+  for (const scenario of [
+    { name: 'ordinary input', spoken: false, model: '' },
+    { name: 'spoken input without an override', spoken: true, model: '' },
+    { name: 'spoken input with an override', spoken: true, model: 'anthropic:spoken-model' },
+  ]) {
+    test(`preserves opaque execution context for ${scenario.name}`, async () => {
+      const registry = makeRegistry();
+      const admission = Object.freeze({ identity: Symbol('native-admission') });
+      const laterContext = Object.freeze({ identity: Symbol('future-context') });
+      const inputOptions = scenario.spoken ? createSpokenTurnInputOptions() : undefined;
+      const content = [{ type: 'text' as const, text: 'original source' }];
+      let observed: readonly unknown[] = [];
+      const target = {
+        setCoreServices(_services: { providerRegistry?: ProviderRegistry }) {},
+        async runTurn(...args: readonly unknown[]) { observed = args; },
+      };
+      const detach = attachSpokenTurnModelRouting({
+        orchestrator: target as never, providerRegistry: registry,
+        configManager: makeConfig({ 'tts.llmModel': scenario.model }),
+      });
+      await target.runTurn('original source', content, inputOptions, admission, laterContext);
+      expect(observed).toHaveLength(5);
+      expect(observed[0]).toBe('original source');
+      expect(observed[1]).toBe(content);
+      expect(observed[2]).toBe(inputOptions);
+      expect(observed[3]).toBe(admission);
+      expect(observed[4]).toBe(laterContext);
+      detach();
+      await target.runTurn('after detach', content, inputOptions, admission, laterContext);
+      expect(observed[3]).toBe(admission);
+      expect(observed[4]).toBe(laterContext);
+    });
+  }
+
 });

@@ -1,3 +1,5 @@
+import { createNativeConversationCaptureTable } from './store-native-intake.js';
+import { createNativeWorkSettlementTable, createNativeWorkExecutionTable, createNativeWorkExecutionIntentTable } from './store-native-work-execution.js';
 import { createWorkLedgerTable } from './store-work-ledger.js';
 import { join } from 'node:path';
 import type { AutomationScheduleDefinition } from '../automation/schedules.js';
@@ -73,7 +75,11 @@ export function parseJsonValue<T>(value: unknown, fallback: T): T {
 }
 
 export function createSchema(db: { run(sql: string): void }): void {
+  createNativeConversationCaptureTable(db);
   createWorkLedgerTable(db);
+  createNativeWorkExecutionTable(db);
+  createNativeWorkExecutionIntentTable(db);
+  createNativeWorkSettlementTable(db);
   db.run(`
     CREATE TABLE IF NOT EXISTS knowledge_sources (
       id TEXT PRIMARY KEY,

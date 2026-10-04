@@ -1,6 +1,6 @@
 import { readKnowledgeSourceSnapshot } from './store-source-generation.js';
 import type { SQLiteStore, SqlDatabase } from '../state/sqlite-store.js';
-import { createEmptyWorkLedgerState } from '../workflow/work-ledger/service.js';
+import { createEmptyWorkLedgerState, readWorkLedgerState, migrateLegacyWorkLedgerState } from '../workflow/work-ledger/service.js';
 import { workLedgerStateSchema, type WorkLedgerDecision, type WorkLedgerState, type WorkLedgerStorage, type WorkLedgerTransactionContext } from '../workflow/work-ledger/types.js';
 
 export interface KnowledgeWorkLedgerStorage extends WorkLedgerStorage {
@@ -22,17 +22,33 @@ export function validateWorkLedgerTable(db: Pick<SqlDatabase, 'exec'>): void {
   })) throw new Error('KnowledgeStore: current work ledger schema is missing or corrupt; refusing repair');
 }
 
-function readLedger(db: Pick<SqlDatabase, 'exec'>, projectId: string): WorkLedgerState {
+/** Runs inside the existing schema transaction; no legacy authority is invented. */
+export function migrateWorkLedgerTableToVersion2(db: Pick<SqlDatabase, 'exec' | 'run'>): void {
+  validateWorkLedgerTable(db);
+  const upgrades = (db.exec('SELECT project_id, format_version, revision, state_json FROM work_ledgers')[0]?.values ?? []).map(row => {
+    if (typeof row[0] !== 'string' || row[1] !== 1 || typeof row[3] !== 'string') throw new Error('Work ledger legacy persisted format is invalid');
+    const state = migrateLegacyWorkLedgerState(JSON.parse(row[3]), row[0]);
+    if (state.revision !== row[2]) throw new Error('Work ledger legacy persisted revision is invalid');
+    return state;
+  });
+  // Validate every row before changing any row, even in the private migration image.
+  for (const state of upgrades) db.run('UPDATE work_ledgers SET format_version = ?, state_json = ? WHERE project_id = ?', [2, JSON.stringify(state), state.projectId]);
+}
+
+export function readKnowledgeWorkLedger(db: Pick<SqlDatabase, 'exec'>, projectId: string): WorkLedgerState {
   const row = db.exec('SELECT format_version, revision, state_json FROM work_ledgers WHERE project_id = ?', [projectId])[0]?.values[0];
   if (!row) return createEmptyWorkLedgerState(projectId);
-  if (row[0] !== 1 || typeof row[2] !== 'string') throw new Error('Work ledger persisted format is invalid');
+  if (row[0] !== 2 || typeof row[2] !== 'string') throw new Error('Work ledger persisted format is invalid');
   const state = workLedgerStateSchema.parse(JSON.parse(row[2]));
   if (state.projectId !== projectId || state.revision !== row[1]) throw new Error('Work ledger persisted identity is invalid');
   return state;
 }
 
 /** Internal adapter composed exclusively by the existing KnowledgeStore owner. */
-export function createKnowledgeWorkLedgerStorage(sqlite: SQLiteStore, projectId: string, refresh: () => void): KnowledgeWorkLedgerStorage {
+export function createKnowledgeWorkLedgerStorage(sqlite: SQLiteStore, projectId: string, refresh: () => void, hooks?: {
+  beforeDecision(db: SqlDatabase): void;
+  beforeCommit(db: SqlDatabase, current: WorkLedgerState, next: WorkLedgerState): void;
+}): KnowledgeWorkLedgerStorage {
   createEmptyWorkLedgerState(projectId); // Validate even before the first row exists.
   let closed = false;
   let closePromise: Promise<void> | undefined;
@@ -42,7 +58,7 @@ export function createKnowledgeWorkLedgerStorage(sqlite: SQLiteStore, projectId:
   function observe(): void {
     if (closed || listeners.size === 0) return;
     let state: WorkLedgerState;
-    try { state = sqlite.readPersisted(db => readLedger(db, projectId)); } catch { return; }
+    try { state = sqlite.readPersisted(db => readKnowledgeWorkLedger(db, projectId)); } catch { return; }
     for (const [listener, revision] of listeners) {
       if (state.revision <= revision) continue;
       listeners.set(listener, state.revision);
@@ -57,20 +73,26 @@ export function createKnowledgeWorkLedgerStorage(sqlite: SQLiteStore, projectId:
   return {
     read() {
       if (closed) return Promise.reject(new Error('Work ledger storage is closed'));
-      return track(Promise.resolve().then(() => sqlite.readPersisted(db => readLedger(db, projectId))));
+      return track(Promise.resolve().then(() => sqlite.readPersisted(db => readKnowledgeWorkLedger(db, projectId))));
     },
     transaction<T>(decide: (current: unknown, context?: WorkLedgerTransactionContext) => WorkLedgerDecision<T>): Promise<T> {
       if (closed) return Promise.reject(new Error('Work ledger storage is closed'));
       return track(sqlite.transactPersisted(db => {
-        const decision = decide(readLedger(db, projectId), { readSource: id => readKnowledgeSourceSnapshot(db, { id }) });
+        hooks?.beforeDecision(db);
+        const current = readKnowledgeWorkLedger(db, projectId);
+        const decision = decide(structuredClone(current), { readSource: id => readKnowledgeSourceSnapshot(db, { id }) });
         if (decision && typeof (decision as unknown as { then?: unknown }).then === 'function') {
           if (decision instanceof Promise) void decision.catch(() => {});
           throw new TypeError('Work ledger decision must be synchronous');
         }
         if (!decision || !('next' in decision)) throw new TypeError('Invalid work ledger decision');
         if (decision.next !== null) {
-          const next = workLedgerStateSchema.parse(decision.next);
+          const next = readWorkLedgerState(decision.next, projectId);
           if (next.projectId !== projectId) throw new Error('Work ledger project mismatch');
+          if (next.history.slice(current.history.length).some(event => event.type === 'submit_native' && event.work.source?.version === 2) && !hooks) {
+            throw new Error('Extracted conversation sources require atomic capture publication');
+          }
+          hooks?.beforeCommit(db, current, next);
           db.run('INSERT INTO work_ledgers(project_id, format_version, revision, state_json) VALUES (?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET format_version=excluded.format_version, revision=excluded.revision, state_json=excluded.state_json', [projectId, next.version, next.revision, JSON.stringify(next)]);
         }
         return { changed: decision.next !== null, value: decision.value };

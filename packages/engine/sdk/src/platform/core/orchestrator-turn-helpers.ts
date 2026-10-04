@@ -1,4 +1,5 @@
 import { publishTurnTerminal } from './turn-cancellation.js';
+import { isNativeConversationTurn } from './native-turn-scope.js';
 import type { ConversationManager } from './conversation.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { ContentPart, LLMProvider } from '../providers/interface.js';
@@ -79,7 +80,8 @@ export async function prepareConversationForTurn(
   planManager: Pick<ExecutionPlanManager, 'getActive' | 'toMarkdown'> | null = null,
   options: TurnPreparationOptions = {},
 ): Promise<ExecutionPlan | null> {
-  const preTurnPlan = planManager?.getActive(sessionId) ?? null;
+  const nativeTurn = isNativeConversationTurn();
+  const preTurnPlan = nativeTurn ? null : planManager?.getActive(sessionId) ?? null;
   if (preTurnPlan && planManager) {
     const planMd = planManager.toMarkdown(preTurnPlan);
     conversation.addSystemMessage(
@@ -106,6 +108,9 @@ export async function prepareConversationForTurn(
   }
 
   options.onMessageAdded?.();
+  // Native admission has already read this exact source. It owns routing and
+  // planning; the legacy classifier must not reinterpret or prime it again.
+  if (nativeTurn) return null;
   // The submitted message is retained even if judgment fails or is cancelled.
   const classification = await classifyIntent(text, options.signal ? { signal: options.signal } : {});
   options.signal?.throwIfAborted();
@@ -119,6 +124,7 @@ export async function prepareConversationForTurn(
 
 /** Apply only after contract intake leaves this as an ordinary conversational turn. */
 export function primeConversationForTurn(conversation: ConversationManager, classification: ClassificationResult, activePlan: ExecutionPlan | null): void {
+  if (isNativeConversationTurn()) return;
   if (!activePlan && classification.needsPlan.verdict === 'yes' && classification.needsPlan.outcome === 'act') {
     classification.recordAction('inject specification and execution-plan instruction');
     conversation.addSystemMessage(
@@ -292,7 +298,7 @@ export async function handleToolResponseOutcome(args: {
     args.conversation.addUserMessage(imageParts);
   }
 
-  const spawnedAgents = toolCalls.some((tc: ToolCall) => {
+  const spawnedAgents = !isNativeConversationTurn() && toolCalls.some((tc: ToolCall) => {
     const mode = (tc.arguments as Record<string, unknown>).mode;
     return tc.name === 'agent' && (mode === 'spawn' || mode === 'batch-spawn');
   });
@@ -359,7 +365,7 @@ export async function handleToolResponseOutcome(args: {
     return { continueLoop: false, results };
   }
 
-  if (args.planManager?.getActive(args.sessionId)) {
+  if (!isNativeConversationTurn() && args.planManager?.getActive(args.sessionId)) {
     args.conversation.addSystemMessage(
       'Update the execution plan to reflect completed work. Mark items as COMPLETE or IN_PROGRESS with the agent ID.'
     );
@@ -404,6 +410,7 @@ export function handleFinalResponseOutcome(args: {
     }), args.onTurnTerminal);
   }
 
+  if (isNativeConversationTurn()) return false;
   const planManager = args.planManager;
   if (args.preTurnPlan && args.preTurnPlan.awaitingPlan === true && args.response.content.includes('## Phase') && planManager) {
     const parsed = planManager.parseFromMarkdown(args.response.content);

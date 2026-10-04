@@ -1,4 +1,7 @@
 #!/usr/bin/env bun
+import type { NativeConversationIntakeState } from './runtime/native-conversation-intake.ts';
+import { captureNativeConversationInput, type ProductInputContext } from './runtime/native-conversation-input.ts';
+import { routeNativeConversationInput, dispatchNativeConversationTurn } from './runtime/native-conversation-ingress.ts';
 import { readTuiConfigValue, subscribeTuiConfigValue } from './config/host-settings.ts';
 import { resolveGoodVibesDaemonHome, resolveGoodVibesHome } from '@goodvibes-jev/engine/sdk/platform/config';
 import { Compositor } from './renderer/compositor.ts';
@@ -281,7 +284,24 @@ async function main() {
   stopSpokenOutputForExit = ambience.stopSpokenOutputForExit;
   const { spokenTurns, scriptableStatusline } = ambience;
   unsubs.push(...ambience.unsubs);
-  const submitInput = (text: string, content?: ContentPart[], options: { readonly spokenOutput?: boolean } = {}) => {
+  const dispatchNativeTurn = async (state: NativeConversationIntakeState, spokenOutput = false): Promise<void> => {
+    if (!state.turnReady || !state.turnPermit || state.result?.kind !== 'turn') return;
+    const inputOptions = { ...(spokenOutput ? createSpokenTurnInputOptions() : {}), nativeConversationTurnPermit: state.turnPermit };
+    if (spokenOutput) spokenTurns.submitNextTurn(state.result.text);
+    // Provider failover retains the exact same source identity and opaque permit.
+    retryCtx = { count: conversation.getMessageCount(), text: state.result.text, opts: inputOptions };
+    streamResult.clearFailoverVisited();
+    await refreshMemoryRecallSnapshot(ctx.services);
+    try { await dispatchNativeConversationTurn(state, orchestrator, inputOptions); }
+    catch {
+      systemMessageRouter.high('Native turn dispatch requires recovery. Its durable claim was preserved; no legacy fallback was started.');
+      render();
+    }
+  };
+  commandContext.dispatchNativeIntakeTurn = state => dispatchNativeTurn(state);
+
+  const submitInput = (text: string, content?: ContentPart[], options: ProductInputContext = {}) => {
+    const original = options.source ?? { text, unsupportedSources: [{ kind: 'context' as const, label: 'derived-input' }] };
     input.clearModalStack();
     transcript.toBottom(); // Re-lock on any user input
     conversation.dismissSplash(); // owner rule: any submission retires the splash for the run
@@ -295,14 +315,13 @@ async function main() {
     }).text;
     if (processedText || content) {
       void (async () => {
-        const inputOptions = options.spokenOutput ? createSpokenTurnInputOptions() : undefined;
-        if (options.spokenOutput && processedText) { spokenTurns.submitNextTurn(processedText); }
-        // Snapshot pre-submission state for failover retryTurn; also clears visited set.
-        retryCtx = { count: conversation.getMessageCount(), text: processedText, content, opts: inputOptions };
-        streamResult.clearFailoverVisited();
-        await refreshMemoryRecallSnapshot(ctx.services); // pre-turn recall-snapshot refresh (SDK 1.2.0 full detach)
-        orchestrator.handleUserInput(processedText, content, inputOptions).catch((err: unknown) => {
-          logger.debug('handleUserInput safety catch (already handled by runTurn)', { error: summarizeError(err) });
+        const unsupportedSources = [...original.unsupportedSources];
+        if (processedText !== text) unsupportedSources.push({ kind: 'context', label: 'composer-derived-text' });
+        if (content?.some(part => part.type !== 'text')) unsupportedSources.push({ kind: 'image', label: 'attached-content' });
+        await routeNativeConversationInput({ intake: commandContext.nativeConversationIntake,
+          source: { text: original.text, unsupportedSources },
+          notify: message => { systemMessageRouter.high(message); render(); },
+          dispatch: state => dispatchNativeTurn(state, options.spokenOutput),
         });
       })();
     } else {
@@ -332,7 +351,7 @@ async function main() {
     render();
   };
 
-  commandContext.submitInput = submitInput; commandContext.submitSpokenInput = (text, content) => submitInput(text, content, { spokenOutput: true });
+  commandContext.submitInput = submitInput; commandContext.submitSpokenInput = (text, content) => submitInput(text, content, { spokenOutput: true, source: captureNativeConversationInput(text, content) });
   commandContext.stopSpokenOutput = () => spokenTurns.stop(); commandContext.pasteFromClipboard = () => input.handlePaste();
   // Read-only view of pending [TEXT: pN, M lines] fold markers, so /pastes
   // can preview a folded paste's actual content before the user submits it.
@@ -438,7 +457,7 @@ async function main() {
   // Model picker callback is handled in bootstrap.ts, do not duplicate here.
   input.setHistory(inputHistory);
   // ONE microphone path, shared by push-to-talk voice input (Alt+V) and wake-word detection; opens no device by itself (shell/voice-capture-shell.ts).
-  voiceCaptureStatus = installVoiceCapture({ configManager, shellPaths: ctx.services.shellPaths, homeDirectory, sessionId: ctx.runtime.sessionId, commandContext, unsubs, buffer: input, submitInput, notify: (m) => { systemMessageRouter.high(m); render(); }, render: () => render() });
+  voiceCaptureStatus = installVoiceCapture({ configManager, shellPaths: ctx.services.shellPaths, homeDirectory, sessionId: ctx.runtime.sessionId, commandContext, unsubs, buffer: input, submitInput: text => submitInput(text, undefined, { source: captureNativeConversationInput(text) }), notify: (m) => { systemMessageRouter.high(m); render(); }, render: () => render() });
 
   const toolCount = toolRegistry.list().length;
   conversation.splashOptions = {
@@ -712,6 +731,10 @@ async function main() {
   const retryTurn = (notice?: string): boolean => {
     if (!retryCtx) return false; // nothing to roll back to; the caller narrates instead
     const { count, text, content: rContent, opts: rOpts } = retryCtx;
+    if (rOpts?.nativeConversationTurnPermit && !orchestrator.canRetryNativeConversationTurn(rOpts.nativeConversationTurnPermit)) {
+      systemMessageRouter.high('Native turn recovery is required before another model attempt. Its transcript and original source were retained.');
+      render(); return false;
+    }
     // Roll back to pre-submission count, then re-submit. SDK gap, no retry-in-place (see handoff).
     // The rollback erases the failed turn's transcript, the failover notice included, which is how
     // that notice used to vanish before anyone could read it. The caller hands it over instead, and

@@ -10,8 +10,8 @@
  * must read through the store (the write-reap tally has no on-disk form) it
  * says so.
  */
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { promises as fs, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -502,42 +502,57 @@ describe('PersistentStore writes owner-only, durably, and leaves no litter', () 
       .toBe(`${join(dir, 'x.json')}.lock`);
   });
 
-  /**
-   * STRUCTURAL, AND SAID SO.
-   *
-   * The fsync ordering, write, sync the file, rename, sync the directory,
-   * has no observable behavioural consequence that a test on a working machine
-   * can distinguish from its absence: what it buys is what survives a power
-   * cut, and a power cut is not something this suite can stage. Simulating one
-   * would only test the simulation.
-   *
-   * So this asserts the defining lines are present, in order, in the source.
-   * That is a weaker claim than the others in this file and is labelled as
-   * such: it catches a removal or a reordering of the durability calls, which
-   * is the realistic regression, and it does not and cannot prove durability.
-   */
-  test('the persist path syncs the file before the rename and the directory after it', async () => {
-    const source = readFileSync(
-      join(import.meta.dir, '..', 'sdk/src/platform/state/persistent-store.ts'),
-      'utf-8',
-    );
-    // SCOPED TO THE persist BODY, and that scoping is not cosmetic: this test
-    // was first written with a bare `source.indexOf('await handle.sync();')`,
-    // which matched the sync inside the `syncDirectory` helper defined ABOVE
-    // the class. Every ordering assertion then passed for a reason that had
-    // nothing to do with persist, and a mutation moving persist's own sync
-    // could not have been detected. Anchored on the write that precedes it.
-    const body = source.slice(source.indexOf('  async persist(data: T): Promise<void> {'));
-    expect(body.length).toBeGreaterThan(0);
-    const write = body.indexOf("await handle.writeFile(content, 'utf-8');");
-    const syncFile = body.indexOf('await handle.sync();');
-    const rename = body.indexOf('await fs.rename(tmpPath, this.filePath);');
-    const syncDir = body.indexOf('await syncDirectory(this.dir);');
-    expect(write).toBeGreaterThan(-1);
-    expect(syncFile).toBeGreaterThan(write);
-    expect(rename).toBeGreaterThan(syncFile);
-    expect(syncDir).toBeGreaterThan(rename);
-  });
+  // Observe the real file operations instead of matching a method signature
+  // in source. This proves the write path awaits the durability operations in
+  // order; like the old structural check, it does not simulate a power cut.
+  for (const durable of [false, true]) {
+    test(`persist awaits file sync before rename and directory sync after it (durable=${durable})`, async () => {
+      const path = join(dir, 'ordered.json');
+      const calls: string[] = [];
+      const open = fs.open.bind(fs);
+      const rename = fs.rename.bind(fs);
+      const observedOpen = spyOn(fs, 'open').mockImplementation(async (file, flags, mode) => {
+        const handle = await open(file, flags, mode);
+        const kind = String(file).startsWith(`${path}.tmp.`) ? 'file'
+          : String(file) === dir && flags === 'r' ? 'directory' : null;
+        if (!kind) return handle;
+        return new Proxy(handle, {
+          get(target, property) {
+            if (property === 'writeFile') {
+              const write = target.writeFile.bind(target);
+              return async (...args: Parameters<typeof write>) => {
+                await write(...args);
+                calls.push('write');
+              };
+            }
+            if (property === 'sync' || property === 'close') return async () => {
+              // Snapshot at entry, not after the OS operation: close() can
+              // itself drain a pending sync and conceal a removed await.
+              const before = [...calls];
+              await target[property]();
+              calls.push(`${property}-${kind}`);
+              if (kind === 'file') expect(before).toEqual(property === 'sync'
+                ? ['write'] : ['write', 'sync-file']);
+            };
+            const value: unknown = Reflect.get(target, property, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+      });
+      const observedRename = spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+        await rename(from, to);
+        if (String(to) === path) calls.push('rename');
+      });
+      try {
+        await new PersistentStore<{ value: string }>(path).persist({ value: 'durable bytes' }, { durable });
+        expect(calls).toEqual(['write', 'sync-file', 'close-file', 'rename', 'sync-directory', 'close-directory']);
+        expect(JSON.parse(readFileSync(path, 'utf-8'))).toEqual({ value: 'durable bytes' });
+      } finally {
+        observedRename.mockRestore();
+        observedOpen.mockRestore();
+      }
+    });
+  }
 });
 
 describe('two independent writers over one record file lose nothing', () => {

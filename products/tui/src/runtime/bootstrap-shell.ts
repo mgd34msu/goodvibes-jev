@@ -41,6 +41,7 @@ import type { SessionSpineClient } from '@goodvibes-jev/engine/sdk/platform/runt
 export interface BootstrapShellState {
   readonly commandRegistry: CommandRegistry;
   readonly commandContext: CommandContext;
+  readonly closeNativeWorkSubmission?: () => void;
   readonly gitStatusProvider: GitStatusProvider;
   readonly lastGitInfoRef: { value: GitHeaderInfo | undefined };
   readonly inputHistory: InputHistory;
@@ -174,7 +175,7 @@ export function createBootstrapShell(options: BootstrapShellOptions): BootstrapS
   }
 
   let commandContextRef: CommandContext | null = null;
-  const nativeWorkLedgerHost = createNativeWorkLedgerHost({ configManager, ...(options.daemonHomeDirectory ? { daemonHomeDirectory: options.daemonHomeDirectory } : {}), homeDirectory: uiServices.environment.shellPaths.homeDirectory, workspace: () => services.workingDirectory });
+  const nativeWorkLedgerHost = createNativeWorkLedgerHost({ configManager, journalPath: services.shellPaths.resolveUserPath('tui', 'native-work-submission.json'), ...(options.daemonHomeDirectory ? { daemonHomeDirectory: options.daemonHomeDirectory } : {}), homeDirectory: uiServices.environment.shellPaths.homeDirectory, workspace: () => services.workingDirectory });
   const views = createShellViews({
     nativeWorkLedgerSelection: nativeWorkLedgerHost.readSelection,
     providerRegistry: services.providerRegistry,
@@ -214,7 +215,7 @@ export function createBootstrapShell(options: BootstrapShellOptions): BootstrapS
 
   const commandRegistry = new CommandRegistry();
   registerBuiltinCommands(commandRegistry);
-  registerNativeWorkLedgerCommand(commandRegistry, nativeWorkLedgerHost.selectProject, nativeWorkLedgerHost.discoverProject);
+  registerNativeWorkLedgerCommand(commandRegistry, nativeWorkLedgerHost.selectProject, nativeWorkLedgerHost.discoverProject, nativeWorkLedgerHost.submission);
   registerTuiLegacyImportCommands(commandRegistry, options.daemonHomeDirectory);
   const remoteRuntime = createShellRemoteCommandService({
     readModels: uiServices.readModels,
@@ -349,9 +350,11 @@ export function createBootstrapShell(options: BootstrapShellOptions): BootstrapS
     persist: saveHistory,
   });
 
+  commandContext.nativeConversationIntake = nativeWorkLedgerHost.intake;
   return {
     commandRegistry,
     commandContext,
+    closeNativeWorkSubmission: () => { nativeWorkLedgerHost.submission.close(); nativeWorkLedgerHost.intake.close(); },
     gitStatusProvider,
     lastGitInfoRef,
     inputHistory,

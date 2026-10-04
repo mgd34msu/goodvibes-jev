@@ -1,8 +1,12 @@
 import { array, discriminatedUnion, enum as enumSchema, literal, number, strictObject, string, union, unknown as unknownSchema, type z } from 'zod/v4';
+import { nativeConversationSpanSchema, nativeConversationProposalRevision, validateNativeConversationProposal } from './native-intake-types.js';
+import { NATIVE_WORK_SUBMISSION_MAX_REQUEST_BYTES } from './native-submission-wire.js';
 import { LEGACY_IMPORT_MAX_BYTES, validateLegacyWorkLedgerManifest, type LegacyMigrationManifest } from './legacy-import.js';
 
 const id = string().min(1).max(200);
 const text = string().trim().min(1).max(20_000);
+/** Requirements are immutable source text; validate without normalization. */
+export const workLedgerSemanticTextSchema = string().min(1).max(20_000).refine(value => value.trim().length > 0, 'Text must contain non-whitespace characters');
 const revision = number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const stamp = number().int().nonnegative();
 
@@ -34,11 +38,31 @@ const reportedState = enumSchema(['pending', 'in_progress', 'blocked', 'complete
 export type WorkReportedState = z.infer<typeof reportedState>;
 export type WorkVerificationState = 'unverified' | 'verified' | 'failed' | 'unavailable' | 'stale';
 
+export const workLedgerExplicitSourceSchema = strictObject({
+  version: literal(1),
+  sourceId: id,
+  sourceRevision: id,
+  inputId: id,
+  sessionId: id,
+});
+export const workLedgerExtractedSourceSchema = strictObject({
+  version: literal(2), sourceId: id, sourceRevision: id, inputId: id, sessionId: id,
+  extraction: strictObject({
+    version: literal(1), offsetEncoding: literal('utf16'),
+    spans: array(nativeConversationSpanSchema).min(1).max(100),
+    proposalRevision: id, admissionDecisionId: id, judgmentDecisionIds: array(id).min(1).max(128),
+  }),
+});
+export const workLedgerSourceSchema = union([workLedgerExplicitSourceSchema, workLedgerExtractedSourceSchema]);
+export type WorkLedgerSource = z.infer<typeof workLedgerSourceSchema>;
+
 export const ledgerWorkSchema = strictObject({
   id,
   title: text,
-  goal: text,
-  criteria: array(text).min(1).max(100),
+  goal: workLedgerSemanticTextSchema,
+  criteria: array(workLedgerSemanticTextSchema).min(1).max(100),
+  /** No explicit-submission provenance; migration creates no authority. */
+  source: workLedgerSourceSchema.nullable(),
   revision,
   criteriaRevision: revision,
   reportedState,
@@ -90,10 +114,10 @@ export const legacyWorkLedgerManifestSchema = unknownSchema().superRefine((input
 
 const envelope = { requestId: id, expectedRevision: revision };
 const workEnvelope = { ...envelope, workId: id };
-export const workLedgerCommandSchema = discriminatedUnion('type', [
+const commandSchemas = [
   strictObject({ type: literal('import_legacy'), ...envelope, manifest: legacyWorkLedgerManifestSchema }),
-  strictObject({ type: literal('create'), ...envelope, title: text, goal: text, criteria: array(text).min(1).max(100) }),
-  strictObject({ type: literal('revise'), ...workEnvelope, title: text, goal: text, criteria: array(text).min(1).max(100) }),
+  strictObject({ type: literal('create'), ...envelope, title: text, goal: workLedgerSemanticTextSchema, criteria: array(workLedgerSemanticTextSchema).min(1).max(100) }),
+  strictObject({ type: literal('revise'), ...workEnvelope, title: text, goal: workLedgerSemanticTextSchema, criteria: array(workLedgerSemanticTextSchema).min(1).max(100) }),
   strictObject({ type: literal('claim'), ...workEnvelope }),
   strictObject({ type: literal('report'), ...workEnvelope, attemptId: id, state: enumSchema(['in_progress', 'blocked', 'complete']), report: text, blocker: text.optional() }),
   strictObject({ type: literal('release'), ...workEnvelope, attemptId: id, reason: text }),
@@ -101,9 +125,30 @@ export const workLedgerCommandSchema = discriminatedUnion('type', [
   strictObject({ type: literal('cancel'), ...workEnvelope, reason: text }),
   strictObject({ type: literal('reopen'), ...workEnvelope, reason: text }),
   strictObject({ type: literal('record_evidence'), ...envelope, target: evidenceTargetSchema, outcome: enumSchema(['verified', 'failed', 'unavailable']), reason: text, references: array(evidenceReferenceSchema).max(100), source: ledgerEvidenceSchema.shape.source, criteriaResults: ledgerEvidenceSchema.shape.criteriaResults }),
+] as const;
+export const workLedgerCommandSchema = discriminatedUnion('type', [
+  ...commandSchemas,
+  strictObject({ type: literal('submit_native'), ...envelope, title: text, goal: workLedgerSemanticTextSchema, criteria: array(workLedgerSemanticTextSchema).min(1).max(100), source: workLedgerSourceSchema }),
 ]).superRefine((command, context) => {
   if (command.type === 'import_legacy' && new TextEncoder().encode(JSON.stringify(command)).byteLength > LEGACY_IMPORT_MAX_BYTES) {
     context.addIssue({ code: 'custom', message: 'Complete import command exceeds 256 KiB' });
+  }
+  if (command.type === 'submit_native') {
+    if (command.source.version === 2) {
+      try {
+        const proposal = validateNativeConversationProposal({ sourceRevision: command.source.sourceRevision, spans: command.source.extraction.spans }, command.goal, command.source.sourceRevision);
+        const extraction = command.source.extraction;
+        if (nativeConversationProposalRevision(proposal) !== extraction.proposalRevision
+          || new Set(extraction.judgmentDecisionIds).size !== extraction.judgmentDecisionIds.length
+          || JSON.stringify(proposal.spans.map(span => command.goal.slice(span.start, span.end))) !== JSON.stringify(command.criteria)) throw new Error();
+      } catch { context.addIssue({ code: 'custom', message: 'Extracted native source does not match its exact input ranges' }); }
+    }
+    // Match the explicit input boundary; individually bounded host metadata and
+    // display text must not consume the caller's accepted source-text budget.
+    const input = { requestId: command.requestId, inputId: command.source.inputId, expectedRevision: command.expectedRevision, goal: command.goal, criteria: command.criteria };
+    if (new TextEncoder().encode(JSON.stringify(input)).byteLength > NATIVE_WORK_SUBMISSION_MAX_REQUEST_BYTES) {
+      context.addIssue({ code: 'custom', message: 'Native submission input exceeds 256 KiB' });
+    }
   }
 });
 export type WorkLedgerCommand = z.infer<typeof workLedgerCommandSchema>;
@@ -111,7 +156,7 @@ export type WorkLedgerAction = WorkLedgerCommand['type'];
 
 const ordinaryLedgerEventSchema = strictObject({
   sequence: revision,
-  type: enumSchema(['create', 'revise', 'claim', 'report', 'release', 'handoff', 'cancel', 'reopen', 'record_evidence']),
+  type: enumSchema(['create', 'submit_native', 'revise', 'claim', 'report', 'release', 'handoff', 'cancel', 'reopen', 'record_evidence']),
   actorId: id,
   requestId: id,
   workId: id,
@@ -129,6 +174,13 @@ export const ledgerImportEventSchema = strictObject({
 });
 export const ledgerEventSchema = union([ordinaryLedgerEventSchema, ledgerImportEventSchema]);
 export type WorkLedgerEvent = z.infer<typeof ledgerEventSchema>;
+/** Immutable original submission image for trusted host reconciliation. */
+export type WorkLedgerSubmission = Exclude<WorkLedgerEvent, { type: 'import_legacy' }> & {
+  readonly type: 'submit_native';
+  readonly work: LedgerWork & { readonly source: WorkLedgerSource };
+  readonly attemptId: string;
+  readonly attempts: [LedgerAttempt];
+};
 /** Permission-aware public history, preserving cursor continuity without disclosing raw sources. */
 export const workLedgerReadEventSchema = union([ordinaryLedgerEventSchema,
   ledgerImportEventSchema.extend({ manifest: legacyWorkLedgerManifestSchema.nullable(), provenance: literal('requires_read_knowledge').optional() }),
@@ -149,7 +201,7 @@ const receiptSchema = strictObject({
 
 /** Serializable host-owned state. This core creates no database or file. */
 export const workLedgerStateSchema = strictObject({
-  version: literal(1),
+  version: literal(2),
   projectId: id,
   revision,
   works: array(ledgerWorkSchema),
@@ -259,6 +311,8 @@ export class WorkLedgerAccessError extends Error {
 export interface WorkLedgerService {
   readSnapshot(actor: WorkLedgerActor): Promise<WorkLedgerSnapshot>;
   history(afterSequence: number, actor: WorkLedgerActor): Promise<readonly WorkLedgerEvent[]>;
+  /** Actor-scoped persisted submission receipt; no execution or capability is returned. */
+  lookupSubmission(requestId: string, actor: WorkLedgerActor): Promise<WorkLedgerSubmission | null>;
   /** Delta notification; readSnapshot is the authoritative initial view. */
   subscribe(actor: WorkLedgerActor, listener: (snapshot: WorkLedgerSnapshot) => void): () => void;
   execute(command: unknown, trustedHostActor: WorkLedgerActor, options?: { readonly signal?: AbortSignal | undefined; readonly isAuthorized?: (() => boolean) | undefined }): Promise<WorkLedgerResult>;

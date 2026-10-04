@@ -160,6 +160,18 @@ describe('route planner', () => {
     expect(requests.length - before).toBe(2);
   });
 
+  test('request and model-choice readings preserve complete ordered native source separately from bounded briefs', async () => {
+    const { port, requests } = routingPort({ tier: 'premium', frontier: isFlagship, pick: 'alpha:flagship-1' });
+    installJudgmentPort(port);
+    const planner = createRoutePlanner({ catalog: catalogOf(models, ['alpha', 'beta']), tiers: new ModelTierStore() });
+    const originalSource = { goal: 'Original goal '.repeat(700), criteria: ['  First requirement\n', 'Second requirement '.repeat(700), '  First requirement\n'] };
+    await planner.planRoute({ purpose: 'unit', brief: 'Derived summary '.repeat(800), originalSource });
+    const input = requests[0]!.state as { work: string; originalSource: typeof originalSource };
+    expect(input.work).toHaveLength(6000); expect(input.originalSource).toEqual(originalSource);
+    const choiceState = requests.at(-1)!.state as { context: { originalSource: typeof originalSource } };
+    expect(choiceState.context.originalSource).toEqual(originalSource);
+  });
+
   test('when no model of the wanted tier is configured the next tier is used and the reason says so', async () => {
     const { port } = routingPort({ tier: 'economy', frontier: isFlagship, pick: 'alpha:flagship-1' });
     installJudgmentPort(port);

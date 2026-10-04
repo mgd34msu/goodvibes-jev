@@ -45,7 +45,7 @@ export interface ContractIntake {
 }
 
 export interface ContractIntakeDeps {
-  readonly runner: Pick<ContractRunner, 'start' | 'list' | 'reply'>;
+  readonly runner: Pick<ContractRunner, 'start' | 'list' | 'reply' | 'nativeMode'>;
   /** The project a turn's contract works in. */
   readonly projectRoot: string;
 }
@@ -54,6 +54,7 @@ export interface ContractIntakeDeps {
 export function openEscalation(contracts: readonly ContractView[]): { readonly contract: ContractView; readonly escalation: Escalation } | null {
   let newest: { readonly contract: ContractView; readonly escalation: Escalation } | null = null;
   for (const contract of contracts) {
+    if (contract.nativeSource !== undefined) continue;
     for (const escalation of contract.escalations) {
       if (escalation.resolvedAt !== undefined) continue;
       if (newest === null || escalation.at > newest.escalation.at) newest = { contract, escalation: escalation as Escalation };
@@ -65,6 +66,7 @@ export function openEscalation(contracts: readonly ContractView[]): { readonly c
 export function createContractIntake(deps: ContractIntakeDeps): ContractIntake {
   return {
     async intake(turn) {
+      if (deps.runner.nativeMode === true) throw new Error('Native intake requires source-bearing host admission; legacy owner replies are unavailable');
       const signal = turn.signal === undefined ? {} : { signal: turn.signal };
       const waiting = openEscalation(deps.runner.list({ sessionId: turn.sessionId }));
       if (waiting !== null) {

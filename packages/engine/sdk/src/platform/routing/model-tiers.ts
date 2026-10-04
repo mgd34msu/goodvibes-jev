@@ -115,17 +115,19 @@ export class ModelTierStore {
   }
 
   /** Reads one model's tier (once per set of facts). */
-  read(facts: ModelFacts, options: { readonly site?: string; readonly signal?: AbortSignal } = {}): Promise<TierRecord> {
+  read(facts: ModelFacts, options: import('@goodvibes-jev/judgment').CallOptions = {}): Promise<TierRecord> {
     const known = this.known(facts);
     if (known) return Promise.resolve(known);
     const key = `${facts.registryKey}\u0000${fingerprint(facts)}`;
-    const pending = this.#inFlight.get(key);
+    const pending = options.beforeAttempt === undefined ? this.#inFlight.get(key) : undefined;
     if (pending) return pending;
     const site = options.site ?? 'routing.model-tier';
     const reading = (async (): Promise<TierRecord> => {
       const run = await modelTier.run(judgmentPort(site), modelFactsState(facts), {
         site,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(options.beforeAttempt === undefined ? {} : { beforeAttempt: options.beforeAttempt }),
+    ...(options.onRetry === undefined ? {} : { onRetry: options.onRetry }),
       });
       const record: TierRecord = {
         tier: modelTierFrom(run.readings),
@@ -137,15 +139,17 @@ export class ModelTierStore {
       this.#save();
       return record;
     })();
-    this.#inFlight.set(key, reading);
-    void reading.finally(() => this.#inFlight.delete(key)).catch(() => undefined);
+    if (options.beforeAttempt === undefined) {
+      this.#inFlight.set(key, reading);
+      void reading.finally(() => this.#inFlight.delete(key)).catch(() => undefined);
+    }
     return reading;
   }
 
   /** Reads every model not yet read, a bounded number at a time. */
   async readMany(
     models: readonly ModelFacts[],
-    options: { readonly site?: string; readonly signal?: AbortSignal } = {},
+    options: import('@goodvibes-jev/judgment').CallOptions = {},
   ): Promise<ReadonlyMap<string, TierRecord>> {
     const records = await mapLimit(models, TIER_READ_CONCURRENCY, (facts) => this.read(facts, options));
     return new Map(models.map((facts, index) => [facts.registryKey, records[index]!]));

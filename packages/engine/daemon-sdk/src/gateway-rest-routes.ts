@@ -55,6 +55,18 @@ function route(method: string, template: string, methodId: string): GatewayRestR
  * bindings (the reconcile gate enforces it).
  */
 export const GATEWAY_REST_ROUTES: readonly GatewayRestRoute[] = [
+  route('GET', '/api/work-ledger/project', 'workLedger.project'),
+  route('POST', '/api/work-ledger/submissions', 'workLedger.submit'),
+  route('POST', '/api/work-ledger/submissions/get', 'workLedger.submission.get'),
+  route('POST', '/api/work-ledger/intake/capture', 'workLedger.intake.capture'),
+  route('POST', '/api/work-ledger/intake/get', 'workLedger.intake.get'),
+  route('POST', '/api/work-ledger/intake/admit', 'workLedger.intake.admit'),
+  route('POST', '/api/work-ledger/intake/resume', 'workLedger.intake.resume'),
+  route('POST', '/api/work-ledger/intake/cancel', 'workLedger.intake.cancel'),
+  route('POST', '/api/work-ledger/execution/start', 'workLedger.execution.start'),
+  route('POST', '/api/work-ledger/execution/status', 'workLedger.execution.status'),
+  route('POST', '/api/work-ledger/execution/cancel', 'workLedger.execution.cancel'),
+  route('POST', '/api/work-ledger/execution/resume', 'workLedger.execution.resume'),
   route('POST', '/api/work-ledger/legacy-import/prepare', 'workLedger.prepareLegacyImport'),
   route('POST', '/api/work-ledger/legacy-import', 'workLedger.importLegacy'),
   route('GET', '/api/work-ledger/snapshot', 'workLedger.snapshot'),

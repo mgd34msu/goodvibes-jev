@@ -23,8 +23,7 @@ import { extractKnowledgeArtifact } from '../sdk/src/platform/knowledge/extracto
 import { refreshDevicePagesForHomeGraphAsk } from '../sdk/src/platform/knowledge/home-graph/ask-page-refresh.js';
 import { HOME_GRAPH_PAGE_POLICY_VERSION } from '../sdk/src/platform/knowledge/home-graph/generated-pages.js';
 import type { HomeGraphAskResult } from '../sdk/src/platform/knowledge/home-graph/types.js';
-import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
-import { createSchema } from '../sdk/src/platform/knowledge/store-schema.js';
+import type { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
 import { writeKnowledgeNodeRow } from '../sdk/src/platform/knowledge/store-node-history.js';
 import type { KnowledgeNodeRecord } from '../sdk/src/platform/knowledge/types.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
@@ -406,10 +405,20 @@ describe('Home Graph repair and generated pages', () => {
     }
 
     service.dispose();
-    const sqlite = new SQLiteStore(store.storagePath); await sqlite.init(createSchema, { schemaVersion: 2 });
+    // Seed pre-gate rows through the owning connection after its real schema
+    // migrations. Opening this current image as an old generic SQLite store
+    // correctly refuses a downgrade, and pinning a new version would drift
+    // again. This test-only seam bypasses node activation, never versioning.
+    const sqlite = (store as unknown as { readonly sqlite: SQLiteStore }).sqlite;
+    const schemaVersion = sqlite.exec('PRAGMA user_version');
     for (const record of legacyFacts) writeKnowledgeNodeRow(sqlite, record);
     await sqlite.save();
-    store = new KnowledgeStore({ dbPath: store.storagePath }); await store.init();
+    expect(sqlite.exec('PRAGMA user_version')).toEqual(schemaVersion);
+    await store.close();
+    store = disposables.add(new KnowledgeStore({ dbPath: store.storagePath })); await store.init();
+    // The renderer must reject junk that is actually persisted and reloaded,
+    // rather than accidentally passing because the fixture dropped the rows.
+    for (const record of legacyFacts) expect(store.getNode(record.id)?.summary).toBe(record.summary);
     service = disposables.add(new HomeGraphService(store, artifactStore));
     const page = await service.refreshDevicePassport({ installationId: 'house-1', deviceId: 'lg-tv' });
 

@@ -681,6 +681,7 @@ export {
   type FailureCategory,
   type FailureConclusions,
   type FailureEvidence,
+  type FailureReadOptions,
   type FailureQuestion,
 } from './failure-reading.js';
 export {

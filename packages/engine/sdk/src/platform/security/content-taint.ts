@@ -64,6 +64,8 @@ export interface TaintSource {
 }
 
 export interface TaintOptions {
+  /** Optional host-scoped port; transport retry remains owned by that port. */
+  readonly port?: JudgmentPort | undefined;
   /** Cancels pending derivation and prevents queued readings or late action records. */
   readonly signal?: AbortSignal | undefined;
   /**
@@ -160,10 +162,10 @@ export function findExactContainment(
  * confident no to the derivation question or a confident yes to the
  * boilerplate question; the reading's outcome is recorded with what was done.
  */
-async function readsAsDerived(field: string, text: string, source: TaintSource, reply: boolean, signal?: AbortSignal): Promise<boolean> {
+async function readsAsDerived(field: string, text: string, source: TaintSource, reply: boolean, signal?: AbortSignal, port?: JudgmentPort): Promise<boolean> {
   assertTaintActive(signal);
   const derivationItem = reply ? 'reply_derives' : 'derives';
-  const run = await contentDerivation.run(taintPort(signal), derivationView(field, text, source), {
+  const run = await contentDerivation.run(taintPort(signal, port), derivationView(field, text, source), {
     site: CONTENT_DERIVATION_SITE,
     only: [derivationItem, 'boilerplate_only'],
     ...(signal === undefined ? {} : { signal }),
@@ -212,7 +214,7 @@ export async function findContentTaint(
   }
 
   const derived = await mapLimit(pairs, DERIVATION_CONCURRENCY, (pair) =>
-    readsAsDerived(pair.field, pair.text, pair.source, replyFields.has(pair.field), options.signal));
+    readsAsDerived(pair.field, pair.text, pair.source, replyFields.has(pair.field), options.signal, options.port));
   assertTaintActive(options.signal);
 
   const findings: TaintFinding[] = [...exact];
@@ -260,9 +262,9 @@ function assertTaintActive(signal?: AbortSignal): void {
   if (signal?.aborted) throw new JudgmentError('aborted', 'the judgment call was cancelled');
 }
 
-function taintPort(signal?: AbortSignal): JudgmentPort {
+function taintPort(signal?: AbortSignal, scopedPort?: JudgmentPort): JudgmentPort {
   assertTaintActive(signal);
-  const port = judgmentPort(CONTENT_DERIVATION_SITE);
+  const port = scopedPort ?? judgmentPort(CONTENT_DERIVATION_SITE);
   if (!signal) return port;
   const recorder = port.recorder;
   return {

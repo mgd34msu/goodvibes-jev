@@ -32,6 +32,8 @@ export type PatternName =
   | 'compound-split';
 
 export interface CallOptions {
+  readonly beforeAttempt?: () => void;
+  readonly onRetry?: (progress: import('../port/types.ts').JudgmentRetryProgress) => void;
   readonly signal?: AbortSignal;
   /** The decision site, recorded in the decision log. */
   readonly site?: string;
@@ -69,6 +71,8 @@ export function askAs<const Q extends Questions>(
     questions,
     ...(header.model === undefined ? {} : { model: header.model }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(options.beforeAttempt === undefined ? {} : { beforeAttempt: options.beforeAttempt }),
+    ...(options.onRetry === undefined ? {} : { onRetry: options.onRetry }),
     context: contextFor(header, pattern, options),
   });
 }

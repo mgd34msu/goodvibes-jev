@@ -218,6 +218,11 @@ export class ConfigManager {
     return this.configDir;
   }
 
+  /** One owned, synchronous permission frame; no listeners/hooks run while it is copied. */
+  getAutonomousPermissionSnapshot(): Readonly<{ permissions: GoodVibesConfig['permissions']; autoApprove: boolean; directory: string | null }> {
+    return structuredClone({ permissions: this.config.permissions, autoApprove: this.config.behavior.autoApprove, directory: this.workingDirectory });
+  }
+
   getWorkingDirectory(): string | null {
     return this.workingDirectory;
   }

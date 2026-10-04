@@ -75,6 +75,14 @@ export async function invokeOperatorGatewayMethod<TMethodId extends OperatorMeth
       baseUrl: connection.baseUrl,
     };
   }
+  const failed = async (error: unknown): Promise<OperatorGatewayCallFailure> => {
+    const failure = await classifyConnectedHostError(error, connection, {
+      route,
+      incompatibleMessage: `Connected GoodVibes host compatibility does not satisfy Agent requirements; ${methodId} is unavailable.`,
+      site: 'agent.operator-gateway.failure',
+    });
+    return { ...failure, methodId };
+  };
   try {
     const sdk = createBrowserGoodVibesSdk({ baseUrl: connection.baseUrl, authToken: connection.token });
     // The SDK's typed overload takes a CONDITIONAL argument tuple
@@ -89,15 +97,15 @@ export async function invokeOperatorGatewayMethod<TMethodId extends OperatorMeth
       methodId: TMethodId,
       input: OperatorMethodInput<TMethodId>,
     ) => Promise<OperatorMethodOutput<TMethodId>>;
-    const data = await invokeTyped(methodId, payload);
-    return { ok: true, data, methodId, route };
+    // Awaiting a still-generic operator output makes TypeScript expand every
+    // method's output through Awaited. Wrap the fully typed result first;
+    // preserve the same classification for both rejection and setup throws.
+    return invokeTyped(methodId, payload).then(
+      (data): OperatorGatewayCallSuccess<OperatorMethodOutput<TMethodId>> => ({ ok: true, data, methodId, route }),
+      failed,
+    );
   } catch (error) {
-    const failure = await classifyConnectedHostError(error, connection, {
-      route,
-      incompatibleMessage: `Connected GoodVibes host compatibility does not satisfy Agent requirements; ${methodId} is unavailable.`,
-      site: 'agent.operator-gateway.failure',
-    });
-    return { ...failure, methodId };
+    return failed(error);
   }
 }
 

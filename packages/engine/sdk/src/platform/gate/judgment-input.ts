@@ -41,6 +41,7 @@ const CREDENTIAL_FIELDS = new Set([
   'accessToken', 'access_token', 'refreshToken', 'refresh_token', 'id_token',
   'privateKey', 'private_key', 'api-key', 'access-token', 'client-secret', 'private-key',
 ]);
+const CREDENTIAL_FIELDS_CASE_FOLDED = new Set([...CREDENTIAL_FIELDS].map(field => field.toLowerCase()));
 const AUTH_HEADERS = new Set(['authorization', 'proxy-authorization', 'cookie', 'set-cookie']);
 // CardMaterial/CardFieldName and the HTML payment autofill field names.
 const CARD_FIELDS = new Set([
@@ -129,7 +130,7 @@ function fieldDeclaration(value: unknown): boolean {
 
 function protectedKey(key: string): JudgmentInputProblem | undefined {
   if (CARD_FIELDS.has(key)) return 'card-material';
-  if (CREDENTIAL_FIELDS.has(key) || AUTH_HEADERS.has(key.toLowerCase()) || credentialKey(key)) return 'credential-material';
+  if (CREDENTIAL_FIELDS_CASE_FOLDED.has(key.toLowerCase()) || AUTH_HEADERS.has(key.toLowerCase()) || credentialKey(key)) return 'credential-material';
   return undefined;
 }
 

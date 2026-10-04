@@ -75,6 +75,11 @@ function paths(root: string, exclusions: readonly string[]): string[] {
   const text = bytes.toString('utf8');
   if (!Buffer.from(text).equals(bytes)) throw new Error('contract input contains a non-UTF-8 path');
   return [...new Set(text.split('\0').filter(Boolean))].filter((path) => {
+    // Git reports an unignored nested runtime worktree as a directory ending
+    // in '/'. Exclude only the canonical owned root before the stricter file
+    // path check; do not normalize traversal, repeated separators or lookalikes.
+    const generated = path.endsWith('/') ? path.slice(0, -1) : path;
+    if (exclusions.includes('.goodvibes') && (generated === '.goodvibes' || generated.startsWith('.goodvibes/')) && safePath(generated)) return false;
     if (!safePath(path)) throw new Error('contract input contains an ambiguous path');
     return !excluded(path, exclusions);
   }).sort();
