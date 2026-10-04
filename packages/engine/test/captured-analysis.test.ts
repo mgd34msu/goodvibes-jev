@@ -204,3 +204,49 @@ for (const captured of [false, true]) {
     }
   }, 20_000);
 }
+
+test('retained captured paths and a copied scope cannot create historical read authority', async () => {
+  const f = await fixture();
+  const { withCapturedAnalyzeInput } = await import('../sdk/src/platform/tools/analyze/captured-git.js');
+  const result = await createAnalyzeTool({ chat: f.chat }, undefined, f.view).execute({ mode: 'diff' });
+  expect(result.success).toBe(false); expect(result.output).toBeUndefined();
+  const scope = await withCapturedAnalyzeInput(f.authority, f.root, undefined,
+    () => createAnalyzeTool({ chat: f.chat }, undefined, f.root).execute({ mode: 'diff' }));
+  expect(scope.success).toBe(false); expect(scope.output).toBeUndefined();
+});
+
+test('Git attributes, external diff configuration and caller Git routing cannot run a driver or read live owner bytes', async () => {
+  const f = await fixture();
+  const { existsSync } = await import('node:fs');
+  const marker = join(f.root, 'unexpected-driver-marker');
+  const driver = join(f.root, 'driver.sh');
+  writeFileSync(driver, `#!/bin/sh\necho ran > '${marker}'\necho PRIVATE_DRIVER_OUTPUT\n`, { mode: 0o755 });
+  git(f.root, 'config', 'diff.external', driver);
+  git(f.root, 'config', 'diff.secret.textconv', driver);
+  writeFileSync(join(f.root, '.gitattributes'), '*.ts diff=secret\n');
+  writeFileSync(join(f.root, 'api.ts'), 'LIVE_OWNER_BYTES_NEVER_COMPARED');
+  const before = process.env.GIT_EXTERNAL_DIFF;
+  process.env.GIT_EXTERNAL_DIFF = driver;
+  try {
+    const result = await f.tool.execute({ mode: 'diff' });
+    expect(result.success).toBe(true); expect(result.output).toContain('HISTORY_ONLY_MARKER');
+    expect(result.output).not.toContain('LIVE_OWNER_BYTES_NEVER_COMPARED');
+    expect(result.output).not.toContain('PRIVATE_DRIVER_OUTPUT'); expect(existsSync(marker)).toBe(false);
+  } finally { if (before === undefined) delete process.env.GIT_EXTERNAL_DIFF; else process.env.GIT_EXTERNAL_DIFF = before; }
+});
+
+for (const files of [['.git/config'], ['../api.ts'], [':(attr:secret)*']] as const) {
+  test(`captured historical file selector remains bounded: ${files[0]}`, async () => {
+    const f = await fixture();
+    const result = await f.tool.execute({ mode: 'breaking', files: [...files] });
+    expect(JSON.stringify(result)).not.toContain('HISTORY_ONLY_MARKER'); expect(f.prompts).toHaveLength(0);
+    expect(result.output ?? result.error).toContain('unsupported captured comparison path');
+  });
+}
+
+test('captured Git preserves directory file selections, HEAD alias and output provenance in summary mode', async () => {
+  const f = await fixture();
+  const result = await f.tool.execute({ mode: 'diff', files: ['.'], after: '@', output: { format: 'summary' } });
+  expect(result.success).toBe(true);
+  expect(JSON.parse(result.output!).comparison_inputs.after).toEqual({ ref: '@', commit: f.after });
+});

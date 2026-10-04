@@ -7,13 +7,14 @@ import {
   assertCapturedInputPathContext,
   assertContractInputGitAuthority,
   contractInputAuthoritySourceRoot,
+  contractInputAuthorityRoot,
   isCapturedInputPath,
   registerContractInputReadAssertion,
   type ContractInputAuthority,
 } from '../../contract/input-authority.js';
 import { CONTRACT_INPUT_EXCLUSIONS } from '../../contract/input-snapshot.js';
 import { GitService } from '../../git/service.js';
-import { assertCapturedToolAccessCurrent, assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
+import { assertCapturedToolAccessCurrent, assertCapturedToolReadAccess, hasCapturedToolInvocation } from '../shared/captured-input-tools.js';
 
 interface CapturedAnalysis {
   readonly authority: ContractInputAuthority;
@@ -91,6 +92,8 @@ export async function createAnalyzeGitReader(projectRoot: string, before: string
     if (isCapturedInputPath(projectRoot)) throw new Error('captured Git analysis requires its owned invocation');
     return new GitService(projectRoot);
   }
+  if (!hasCapturedToolInvocation() || contractInputAuthorityRoot(context.authority) !== resolve(context.root))
+    throw new Error('captured Git analysis requires the matching owned tool invocation');
   await assertContractInputGitAuthority(context.authority, context.signal);
   const prefix = relative(context.root, resolve(projectRoot));
   if (isAbsolute(prefix) || prefix === '..' || prefix.startsWith(`..${sep}`))
