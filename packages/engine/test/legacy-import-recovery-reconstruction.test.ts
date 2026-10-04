@@ -8,7 +8,7 @@ import { resolveLegacyImportJournalLocation } from '../terminal-shell/src/legacy
 import { captureLegacyImportAction } from '../sdk/src/platform/workflow/work-ledger/import-action-binding.js';
 import { prepareLegacyWorkLedgerMigration, projectLegacyImportWorks } from '../sdk/src/platform/workflow/work-ledger/legacy-import.js';
 import type { JevDecision } from '@goodvibes-jev/judgment/decisions';
-import fixture from '../../../products/agent/src/test/fixtures/legacy-ledger/preparation.json';
+import fixture from '../../../products/agent/src/test/fixtures/legacy-ledger/preparation.json' with { type: 'json' };
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function setup() {

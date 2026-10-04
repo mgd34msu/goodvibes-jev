@@ -23,6 +23,7 @@
     { "path": "./transport-realtime" },
     { "path": "./operator-sdk" },
     { "path": "./peer-sdk" },
-    { "path": "./sdk" }
+    { "path": "./sdk" },
+    { "path": "./terminal-shell" }
   ]
 }
