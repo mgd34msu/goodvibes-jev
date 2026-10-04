@@ -13281,7 +13281,13 @@ describe('agent_harness tool', () => {
           recommendationCount: 1,
         },
       });
-      expect(JSON.stringify(artifact?.metadata)).toContain('token=%3Credacted%3E');
+      expect(artifact?.metadata.sources).toEqual([{
+        id: 'S1',
+        title: 'Ollama docs',
+        urlOmitted: true,
+        credibility: 'high',
+        note: 'Official docs.',
+      }]);
       expect(JSON.stringify(artifact?.metadata)).not.toContain('token=secret');
     } finally {
       fixture.cleanup();
