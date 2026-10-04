@@ -222,21 +222,15 @@ for (const interruption of ['abort', 'revoke', 'permission'] as const)
     expect(existsSync(join(f.root, 'late.txt'))).toBe(false); expect(existsSync(join(f.owner, 'late.txt'))).toBe(false);
   });
 
-test.skipIf(!supported)('npx-backed validators report the actual contained runtime result without host fallback', async () => {
+test.skipIf(!supported)('npx-backed validators report missing declared runtime without host fallback', async () => {
   const f = await fixture();
   const result = await f.tools().write.execute({ files: [{ path: 'source.txt', content: 'changed', mode: 'overwrite' }], validate: { after: ['typecheck', 'lint'] } });
   const output = JSON.parse(result.output!);
-  // This host has npx only in its private runtime directory, outside the
-  // executor's admitted system/Bun mounts. A real process must report that
-  // dependency absence, never run the host package manager or claim success.
-  if (!existsSync('/usr/bin/npx') && !existsSync('/bin/npx')) {
-    expect(output.validation_failures).toHaveLength(2);
-    expect(output.validation_failures.every((failure: { exit_code: number; stderr: string }) => failure.exit_code === 127 && failure.stderr.includes('npx'))).toBe(true);
-    expect(output.validation_passed).toBeUndefined();
-  } else {
-    expect(output.validation_passed === true || Array.isArray(output.validation_failures)).toBe(true);
-  }
+  expect(output.validation_failures).toHaveLength(2);
+  expect(output.validation_failures.every((failure: { exit_code: number; stderr: string }) => failure.exit_code === -1 && failure.stderr.includes('Install Node with npm/npx'))).toBe(true);
+  expect(output.validation_passed).toBeUndefined();
 });
+
 
 import { publishWithinCapturedLease, withCapturedPublication, type CapturedPublicationLease } from '../sdk/src/platform/tools/shared/captured-publication.js';
 test('validator publication lease rejects copied, wrong-owner, concurrent and expired callbacks', async () => {

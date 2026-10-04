@@ -1,5 +1,6 @@
 /** Reuse the existing validator commands inside the captured executor. Neither
  * model arguments nor an ordinary validator runner can choose host execution. */
+import { assertContractInputAuthority } from '../../contract/input-authority.js';
 import { runCapturedCommand, type CapturedExecAuthority } from '../exec/captured-exec.js';
 import { capturedToolPublicationContext } from './captured-input-tools.js';
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
@@ -17,6 +18,22 @@ export function createCapturedValidatorRunner(binding: CapturedExecAuthority, op
   return async (name, cwd) => {
     const context = capturedToolPublicationContext();
     const command = validatorCommand(name).map((part) => `'${part.replace(/'/g, `'\\''`)}'`).join(' ');
+    let executionBinding = binding;
+    if (name === 'typecheck' || name === 'lint') {
+      let nodeRuntimeInput = binding.nodeRuntimeInput;
+      if (!nodeRuntimeInput && binding.nodeRuntimeAdmission) {
+        try { nodeRuntimeInput = await binding.nodeRuntimeAdmission(context.signal); }
+        catch {
+          context.signal?.throwIfAborted();
+          await assertContractInputAuthority(binding.authority, binding.root, binding.signal);
+        }
+      }
+      if (!nodeRuntimeInput) return {
+        validator: name, passed: false, stdout: '', exitCode: -1,
+        stderr: binding.nodeRuntimeUnavailable ?? 'Captured Node/npm runtime is unavailable or access-restricted. Install Node with npm/npx on the trusted runtime PATH and permit its declared runtime files, then start a new run.',
+      };
+      executionBinding = { ...binding, nodeRuntimeInput };
+    }
     // The ordinary shared validator has a fixed command table, not exec's
     // model-command admission path. Preserve that table while honoring this
     // member's existing exec network policy and credential environment hygiene.
@@ -26,7 +43,7 @@ export function createCapturedValidatorRunner(binding: CapturedExecAuthority, op
     const ambient = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
     const environment = await executePolicyCheck(() => scrubCredentialEnv(ambient, scrub), context.signal);
     const network = !plan || plan.network === 'enabled' ? 'enabled' : 'disabled';
-    const result = await runCapturedCommand(binding, command, {}, cwd, 30_000, context.signal, network, environment.env, { publicationLease: context.lease });
+    const result = await runCapturedCommand(executionBinding, command, {}, cwd, 30_000, context.signal, network, environment.env, { publicationLease: context.lease });
     return {
       validator: name,
       passed: result.success,
