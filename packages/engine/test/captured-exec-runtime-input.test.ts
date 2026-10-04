@@ -4,7 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { captureContractInput, materializeContractInput, contractInputPath } from '../sdk/src/platform/contract/input-snapshot.js';
-import { createContractInputAuthority } from '../sdk/src/platform/contract/input-authority.js';
+import { assertContractInputReadAccess, createContractInputAuthority, revokeContractInputAuthority } from '../sdk/src/platform/contract/input-authority.js';
 import type { Contract } from '../sdk/src/platform/contract/types.js';
 import { runCapturedCommand, probeCapturedExecAvailability, type CapturedExecAuthority } from '../sdk/src/platform/tools/exec/captured-exec.js';
 import { admitCapturedExecNodeRuntime, createCapturedExecNodeRuntimeAdmission } from '../sdk/src/platform/tools/exec/captured-exec-runtime-input.js';
@@ -206,4 +206,49 @@ test.skipIf(!supported)('unused unavailable Node runtime preserves an ordinary B
   const result = await run({ ...binding, nodeRuntimeAdmission }, 'bun -e "console.log(42)"');
   expect(result.success).toBe(true); expect(result.stdout).toBe('42\n');
   await expect(nodeRuntimeAdmission()).rejects.toThrow();
+});
+for (const mutation of ['branch', 'revoke'] as const)
+  test(`metadata sweep rechecks ${mutation} changes before provider delivery`, async () => {
+    let act: (() => void) | undefined;
+    const binding = await fixture(() => { const current = act; act = undefined; current?.(); return true; });
+    const modules = join(binding.owner, 'node_modules');
+    mkdirSync(modules);
+    writeFileSync(join(modules, 'dependency.js'), 'export const answer = 42;');
+    await admitCapturedExecDependency(binding, { sourceRoot: modules, targetRelativePath: 'node_modules' });
+    act = mutation === 'branch'
+      ? () => git(binding.root, 'switch', '-c', 'changed-during-sweep')
+      : () => revokeContractInputAuthority(binding.authority);
+    await expect(assertContractInputReadAccess(binding.authority, binding.readAccessFilter)).rejects.toThrow();
+  });
+
+test.skipIf(!supported)('call-only cancellation cannot recreate a cleaned dependency projection after a late permission answer', async () => {
+  let armed = false; let dependencyPath = '';
+  let release!: () => void; let reached!: () => void;
+  const waiting = new Promise<void>((resolve) => { reached = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const binding = await fixture(async (path) => {
+    if (armed && path === dependencyPath) { armed = false; reached(); await gate; }
+    return true;
+  });
+  const modules = join(binding.owner, 'node_modules');
+  mkdirSync(modules); dependencyPath = join(modules, 'dependency.js');
+  writeFileSync(dependencyPath, 'export const answer = 42;');
+  const dependency = await admitCapturedExecDependency(binding, { sourceRoot: modules, targetRelativePath: 'node_modules' });
+  const before = new Set(readdirSync(tmpdir()));
+  const cancel = new AbortController();
+  armed = true;
+  const pending = run({ ...binding, dependencyInputs: [dependency!] }, 'echo should-not-start', cancel.signal);
+  try {
+    await waiting;
+    const created = readdirSync(tmpdir()).filter((name) => name.startsWith('goodvibes-captured-exec-') && !before.has(name));
+    expect(created).toHaveLength(1);
+    const directory = join(tmpdir(), created[0]!);
+    cancel.abort();
+    const result = await pending;
+    expect(result.success).toBe(false); expect(result.stdout).toBe('');
+    expect(existsSync(directory)).toBe(false);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(existsSync(directory)).toBe(false);
+  } finally { cancel.abort(); release(); await pending; }
 });

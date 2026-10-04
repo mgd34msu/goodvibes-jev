@@ -212,7 +212,7 @@ export async function runCapturedCommand(
     const fileOperations = await executeCapturedFileOperations(root, projection, observer.fileOps,
       authorize);
     observer.onFileOperations?.(fileOperations);
-    const dependencies = await executePolicyCheck(() => projectCapturedExecDependencies(binding, temporary!, operationSignal, projection), operationSignal);
+    const dependencies = await projectCapturedExecDependencies(binding, temporary, operationSignal, projection);
     const nodeRuntime = await projectCapturedExecNodeRuntime(binding, temporary, operationSignal);
     checkDependencies = async () => { await dependencies.check(); await nodeRuntime.check(); };
     await check();
