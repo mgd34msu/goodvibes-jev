@@ -113,6 +113,27 @@ describe('security adapter', () => {
       expect(fixture.requests[0]!.state).toMatchObject({ tool: 'settings', arguments: body.toolArgs });
     });
 
+    for (const routingKey of ['action', 'mode'] as const) test(`${caller} refuses outer routing ${routingKey} accessors before dispatch`, async () => {
+      let reads = 0;
+      const fixture = fakePort((_name, question) => choiceAnswer(question, 'read', 0.99));
+      installJudgmentPort(fixture.port);
+      const registry = new ToolRegistry(); registerSettingsTool(registry);
+      const calls: Record<string, unknown>[] = [];
+      const tool = caller === 'security' ? makeTool(calls, registry) : createAgentHarnessTool({
+        commandRegistry: {} as CommandRegistry, commandContext: fakeContext(), toolRegistry: registry,
+      });
+      const input = { action: 'explain', mode: 'policy_explain', toolName: 'settings', toolArgs: { action: 'get' } };
+      // Exercise the security mode alias as well as its primary action route.
+      if (caller === 'security' && routingKey === 'mode') input.action = '';
+      Object.defineProperty(input, routingKey, {
+        enumerable: true, get() { reads++; return routingKey === 'action' ? 'explain' : 'policy_explain'; },
+      });
+      await expect(tool.execute(input)).rejects.toMatchObject({ name: 'JudgmentInputError', problem: 'unsupported-input' });
+      expect(reads).toBe(0);
+      expect(fixture.requests).toHaveLength(0);
+      expect(calls).toHaveLength(0);
+    });
+
     for (const location of ['input', 'toolArgs'] as const) test(`${caller} explanation refuses a ${location} getter without invoking it or Jev`, async () => {
       let reads = 0;
       const fixture = fakePort((_name, question) => choiceAnswer(question, 'read', 0.99));

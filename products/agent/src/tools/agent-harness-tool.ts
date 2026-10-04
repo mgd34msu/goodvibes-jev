@@ -1,3 +1,4 @@
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
@@ -148,7 +149,13 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
     },
     execute: async (rawArgs, options) => {
       const signal = options?.signal;
-      const args = rawArgs as AgentHarnessToolArgs;
+      // Inspect the routing descriptor without invoking a caller accessor. Full
+      // judgment validation belongs to explanation input, not unrelated local
+      // harness routes (which retain their own credential/redaction handling).
+      const modeDescriptor = Object.getOwnPropertyDescriptor(rawArgs, 'mode');
+      const args = (!modeDescriptor || !('value' in modeDescriptor) || modeDescriptor.value === 'policy_explain'
+        ? snapshotJudgmentInput(rawArgs)
+        : rawArgs) as AgentHarnessToolArgs;
       if (!isMode(args.mode)) {
         const requested = String(args.mode).toLowerCase();
         const suggestions = AGENT_HARNESS_MODES
