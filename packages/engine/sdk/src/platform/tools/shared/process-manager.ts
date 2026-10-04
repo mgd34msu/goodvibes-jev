@@ -465,7 +465,10 @@ export class ProcessManager {
   /** Adopt an already-contained owned execution without spawning a host process. */
   async trackOwnedBoundary(execution: OwnedBoundaryExecution): Promise<BgCommandResult> {
     if (this._closed) { await execution.stop(); throw new Error('ProcessManager is closed'); }
-    const id = this.newId();
+    // These opaque generated handles are not payment data. Avoid producing a
+    // long decimal timestamp that the unchanged card-material floor can mistake
+    // for a PAN when the model later uses bg_output/bg_status.
+    const id = `bg_owned_${this.newId().slice(3).replace(/\d/g, (digit) => String.fromCharCode(97 + Number(digit)))}`;
     const entry: BackgroundProcess = {
       id, pid: 0, cmd: execution.cmd, startTime: Date.now(), stdout: [], stderr: [],
       exitCode: null, done: false, killDeadline: null,

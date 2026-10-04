@@ -45,7 +45,7 @@ async function waitUntil(predicate: () => boolean | Promise<boolean>) { const de
 test.skipIf(!supported)('captured background job has live scoped output, commits on completion, and never uses host spawn', async () => {
   const f = await fixture();
   const started = await f.tool.execute({ commands: [{ cmd: 'echo READY; sleep 0.3; echo built > built.txt; echo DONE', background: true }] });
-  expect(started.success).toBe(true); const id = output(started).process_id!; expect(id).toBeString();
+  expect(started.success).toBe(true); const id = output(started).process_id!; expect(id).toBeString(); expect(id).toMatch(/^bg_owned_[a-j_]+$/);
   await waitUntil(async () => output(await f.tool.execute({ commands: [{ cmd: `bg_output ${id}` }] })).stdout?.includes('READY') === true);
   expect(f.manager.getOutput(id)).toEqual({ stdout: '', stderr: '' });
   const other = await fixture();
