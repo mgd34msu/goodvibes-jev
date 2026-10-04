@@ -176,9 +176,8 @@ describe('preferred route and alternatives', () => {
     });
     expect(body.alternatives.map((route) => [route.id, route.confidence])).toEqual([
       ['personal-ops-daily-briefing', 'high'],
-      ['personal-ops-review-queue', 'medium'],
     ]);
-    expect(body.routesConsidered).toBe(3);
+    expect(body.routesConsidered).toBe(2);
     expect(body.note).toBeUndefined();
     expect(body.preferred.score).toBeUndefined();
   });
@@ -218,15 +217,14 @@ describe('preferred route and alternatives', () => {
     expect(body.routesConsidered).toBe(2);
   });
 
-  test('a picked route that does not read as fitting is not preferred', async () => {
-    const body = await plan('check daemon health', { pick: 'host-runtime-diagnostics', fits: { 'host-runtime-diagnostics': 0.2 } });
-    expect(body.preferred.id).toBe('main-conversation-first');
-    expect(body.preferred.confidence).toBe('low');
-  });
-
-  test('a weak pick is preferred with low confidence', async () => {
-    const body = await plan('check daemon health', { pick: 'host-runtime-diagnostics', pickConfidence: 0.5 });
-    expect(body.preferred).toMatchObject({ id: 'host-runtime-diagnostics', confidence: 'low' });
+  test.each([
+    { pick: 'host-runtime-diagnostics', fits: { 'host-runtime-diagnostics': 0.2 } },
+    { pick: 'host-runtime-diagnostics', pickConfidence: 0.5 },
+  ])('unresolved selection does not publish a ready fallback or chosen route', async script => {
+    installJudgmentPort(scriptedPort(script).port);
+    const result = await planTaskRoute({ query: 'check daemon health' });
+    expect(result.status).toBe('uncertain');
+    expect('preferred' in result).toBe(false);
   });
 
   test('the request preview is cut to 120 characters, 220 with parameters', async () => {
@@ -258,12 +256,14 @@ describe('slot readings shape the route', () => {
     });
   });
 
-  test('a clear no leaves the route read-only; an unsure reading keeps the boundary', async () => {
+  test('a clear no leaves the route read-only; an unsure reading keeps the plan unresolved', async () => {
     const readOnly = await settings(0.1);
     expect(readOnly.preferred.requiresConfirmation).toBe(false);
     expect(readOnly.preferred.missingFields).toBeUndefined();
-    const unsure = await settings(0.5);
-    expect(unsure.preferred.requiresConfirmation).toBe(true);
+    installJudgmentPort(scriptedPort({ pick: 'agent-settings-configuration', slots: { changes: 0.5 } }).port);
+    const unsure = await planTaskRoute({ query: 'change the theme setting' });
+    expect(unsure.status).toBe('uncertain');
+    expect('preferred' in unsure).toBe(false);
   });
 
   test('channel task and target pick the channel variant and its route strings', async () => {
@@ -302,18 +302,25 @@ describe('slot readings shape the route', () => {
     expect(status.preferred.supportingRoutes?.[0]).toBe('channels action:"setup" includeParameters:true');
   });
 
-  test('a named model provider fills the provider route; a weak reading keeps the generic one', async () => {
+  test('a named model provider fills the provider route; a weak reading keeps the plan unresolved', async () => {
     const named = await plan('connect OpenRouter subscription', { pick: 'model-provider-account-posture', slots: { changes: 0.9 }, named: { modelProvider: 'openrouter' } });
     expect(named.preferred).toMatchObject({
       modelRoute: 'models action:"provider" providerId:"openrouter" includeParameters:true',
       requiresConfirmation: true,
     });
-    const weak = await plan('connect OpenRouter subscription', {
-      pick: 'model-provider-account-posture',
-      named: { modelProvider: 'openrouter' },
-      namedConfidence: 0.5,
-    });
-    expect(weak.preferred.modelRoute).toBe('models action:"providers" query:"connect OpenRouter subscription" includeParameters:true');
+    installJudgmentPort(scriptedPort({
+      pick: 'model-provider-account-posture', named: { modelProvider: 'openrouter' }, namedConfidence: 0.5,
+    }).port);
+    const weak = await planTaskRoute({ query: 'connect OpenRouter subscription' }, { namedIds: LISTINGS });
+    expect(weak.status).toBe('uncertain');
+    expect('preferred' in weak).toBe(false);
+  });
+
+  test('listing field insertion order does not falsely invalidate an unchanged source', async () => {
+    const result = await plan('connect OpenRouter subscription', {
+      pick: 'model-provider-account-posture', named: { modelProvider: 'openrouter' },
+    }, {}, { namedIds: { modelProvider: () => [{ names: ['OpenRouter'], id: 'openrouter' }] } });
+    expect(result.preferred.modelRoute).toContain('providerId:"openrouter"');
   });
 
   test('external memory provider routes carry the named provider or ask for one', async () => {
@@ -453,16 +460,15 @@ describe('product catalogs', () => {
     expect(limits).toEqual([3, 3, 6, 6]);
   });
 
-  test('absent or failing catalogs give empty lists', async () => {
+  test('absent catalogs give empty lists; failed catalogs remain unavailable', async () => {
     const absent = await plan('check daemon health', { pick: 'host-runtime-diagnostics' });
     expect(absent.workspaceMatches).toEqual([]);
     expect(absent.harnessModeMatches).toEqual([]);
-    const failing = await plan('check daemon health', { pick: 'host-runtime-diagnostics' }, {}, {
+    await expect(plan('check daemon health', { pick: 'host-runtime-diagnostics' }, {}, {
       workspaceMatches: () => {
         throw new Error('catalog unavailable');
       },
-    });
-    expect(failing.workspaceMatches).toEqual([]);
+    })).rejects.toThrow('catalog unavailable');
   });
 });
 

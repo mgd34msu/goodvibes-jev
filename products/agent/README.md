@@ -1,5 +1,19 @@
 # GoodVibes Agent
 
+## Jev migration status
+
+This workspace is an unfinished port; the upstream package/release instructions
+and product tour below are retained as reference, not a claim that this Jev
+workspace is published or fully autonomous. The [current decision contract](../../docs/design/autonomous-jev-decisions.md)
+supersedes their confirmation-gated runtime behavior: Jev makes semantic
+decisions with no human approval or escalation loop, and products consume the
+one shared port's retry/waiting lifecycle with cancellation. Admission,
+grant/revocation and legacy caller migration remain [release gates](../../README.md#status).
+Setup, login, workspace provisioning and deterministic authority checks remain
+distinct from runtime semantic decisions.
+
+## Upstream product reference
+
 [![CI](https://github.com/mgd34msu/goodvibes-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/mgd34msu/goodvibes-agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/mgd34msu/goodvibes-agent)
@@ -168,7 +182,7 @@ The Agent consumes the bundled GoodVibes platform runtime, pinned in `package.js
 
 ## Stability
 
-Documentation always describes the **current** behavior, not historical behavior. Notable changes are recorded in [CHANGELOG.md](CHANGELOG.md).
+The product reference above describes inherited upstream behavior. The Jev migration status and current decision contract take precedence for this workspace; upstream changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

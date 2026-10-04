@@ -6,6 +6,14 @@ upstream hold. The existing Jev behavior, privacy boundaries, operator authority
 and contract runner remain the destination architecture. Upstream UI changes are
 the new product-parity target; we are not designing another interface.
 
+The October 3 [autonomous Jev decision contract](autonomous-jev-decisions.md)
+supersedes older runtime approval/escalation semantics, including those in
+upstream UI descriptions. Preserve provisioning/login and deterministic
+authority boundaries while migrating runtime decisions to Jev and outage
+waiting to the one shared retry implementation. The [root status](../../README.md#status)
+records unfinished admission, grant/revocation and consumer migration; source
+parity alone does not prove autonomous execution.
+
 ## Exact sources
 
 These are current source commits, not merely release tags. The SDK, daemon, TUI
@@ -74,7 +82,8 @@ the independent terminal-oriented SDK work completes.
 Retarget imports, build and package tooling to the monorepo. Preserve navigation,
 assets, themes, PWA and auth/connection behavior. Reconcile new and removed
 inventory paths, including semantic status-tone decisions that moved to shared
-helpers. Work and approval views must render the Jev contract/gate state.
+helpers. Work and former approval views must render the shared autonomous
+contract/gate states and waiting progress, without human semantic approval.
 
 The real workspace, browser-safe theme/payment imports, nullable-context
 rendering and pairing-lifetime repair have landed. Synthetic browser and LAN
