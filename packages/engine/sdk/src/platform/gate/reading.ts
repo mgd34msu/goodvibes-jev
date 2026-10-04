@@ -229,9 +229,9 @@ export function categoryForSideEffectKind(kind: SideEffectKind): PermissionCateg
 }
 
 /** Reads only the side-effect kind of a call (the execution ledger's route kind). */
-export async function readSideEffectKind(toolName: string, args: Record<string, unknown>, site: string): Promise<{ readonly kind: SideEffectKind; readonly confident: boolean }> {
+export async function readSideEffectKind(toolName: string, args: Record<string, unknown>, site: string, signal?: AbortSignal): Promise<{ readonly kind: SideEffectKind; readonly confident: boolean }> {
   const state = readingState(toolName, args);
-  const run = await sideEffect.run(judgmentPort(site), state, { site, only: ['kind'] });
+  const run = await sideEffect.run(judgmentPort(site), state, { site, only: ['kind'], ...(signal === undefined ? {} : { signal }) });
   return { kind: run.readings.kind.choice, confident: run.readings.kind.outcome === 'act' };
 }
 
