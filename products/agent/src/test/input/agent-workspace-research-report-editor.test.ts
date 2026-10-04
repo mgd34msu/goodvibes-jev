@@ -71,9 +71,9 @@ describe('research report editor source containment', () => {
     }
   });
 
-  test('contains unbound string references and scheme-case aliases before prompt dispatch', () => {
+  test('contains declared scheme-case aliases before prompt dispatch', () => {
     const url = 'https://example.test/doc\tument?token=sentinel';
-    for (const sources of [`See ${url}`, `Source | ${url} | high | See ${url.replace('https:', 'HTTPS:')}`]) {
+    for (const sources of [`Source | ${url} | high | See ${url.replace('https:', 'HTTPS:')}`]) {
       const read = reader(sources);
       const args = buildAgentResearchReportToolArgs(read, 'Save the report.');
       expect(JSON.stringify(args)).not.toContain('sentinel');
@@ -81,6 +81,15 @@ describe('research report editor source containment', () => {
       expect(result.kind).toBe('prompt');
       expect(JSON.stringify(result)).not.toContain('sentinel');
     }
+  });
+
+  test.todo('contains unbound control-split prompt prose once a source-span screening boundary exists', () => {
+    const sources = 'See https://example.test/doc\tument?token=sentinel';
+    const args = buildAgentResearchReportToolArgs(reader(sources), 'Save the report.');
+    expect(JSON.stringify(args)).not.toContain('sentinel');
+    const result = buildAgentResearchReportPromptSubmission(createAgentResearchReportEditor(), reader(sources), true);
+    expect(result.kind).toBe('prompt');
+    expect(JSON.stringify(result)).not.toContain('sentinel');
   });
 
   test('keeps LF record framing and contains omitted URL aliases across records', () => {

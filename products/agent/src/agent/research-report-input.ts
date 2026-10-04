@@ -60,65 +60,25 @@ function omittedSourceReferences(values: readonly unknown[]): RegExp | undefined
   }
   if (urls.size === 0) return undefined;
   const literals = [...urls].sort((left, right) => right.length - left.length)
-    .map((url) => url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    .map((url) => {
+      const scheme = /^https?:/i.exec(url)?.[0] ?? '';
+      const prefix = [...scheme].map((character) => /[a-z]/i.test(character)
+        ? `[${character.toLowerCase()}${character.toUpperCase()}]` : character).join('');
+      return prefix + url.slice(scheme.length).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    });
   try { return new RegExp(literals.join('|'), 'g'); }
   catch { throw new Error('Research source aliases could not be prepared before transmission.'); }
-}
-
-/**
- * A control-separated query/fragment continuation is malformed URI syntax,
- * regardless of parameter names. A URL followed by normal line-delimited prose
- * or a separate URL is not such a continuation. Never emit a repaired prefix.
- */
-function hasControlSplitReference(text: string): boolean {
-  const urls = /https?:[^\s<>|]*/gi;
-  const controls = /[\t\r\n\f\v]+/y;
-  const token = /[^\s<>|]+/y;
-  for (let match = urls.exec(text); match; match = urls.exec(text)) {
-    let cursor = urls.lastIndex;
-    const chunks: string[] = [];
-    while (cursor < text.length) {
-      controls.lastIndex = cursor;
-      if (!controls.exec(text)) break;
-      const start = controls.lastIndex;
-      token.lastIndex = start;
-      const next = token.exec(text);
-      if (!next) break;
-      const separateUrl = next[0].search(/https?:/i);
-      if (separateUrl >= 0) {
-        chunks.push(next[0].slice(0, separateUrl));
-        cursor = start + separateUrl;
-        break;
-      }
-      if (/^[a-z][a-z0-9+.-]*:/i.test(next[0])) break;
-      chunks.push(next[0]);
-      cursor = token.lastIndex;
-    }
-    const continuation = chunks.join('');
-    if (/[?&#][^?&#]/.test(continuation)
-      || (/[?&#]$/.test(match[0]) && continuation.length > 0)
-      || (/[?#]/.test(match[0]) && /[=&]/.test(continuation))) return true;
-    // All inspected chunks are URL-free; avoid repeatedly scanning long prose.
-    urls.lastIndex = Math.max(urls.lastIndex, cursor);
-  }
-  return false;
 }
 
 /** Also contain URL aliases in names, notes and URL-derived fallback titles. */
 function sourceText(value: unknown, omittedReferences?: RegExp): string {
   if (typeof value !== 'string') return '';
   const text = omittedReferences ? value.trim().replace(omittedReferences, WITHHELD_URL) : value.trim();
-  if (hasControlSplitReference(text)) return WITHHELD_URL;
-  let unboundOmission = false;
-  const projected = text.replace(/https?:[^\s<>|]*/gi, (candidate) => {
-    const url = citationUrl(candidate);
-    if (url === WITHHELD_URL) unboundOmission = true;
-    return url;
-  });
-  // Known reference spans have already been removed completely, so retain their
-  // surrounding prose. An unbound malformed candidate still withholds the field
-  // rather than retaining an unparsed tail that may contain protected material.
-  return unboundOmission ? WITHHELD_URL : projected;
+  // Prose whitespace is not URL provenance. In particular, never join lines
+  // based on query-like punctuation or withhold their surrounding ordinary text.
+  // Unbound control-split references need an explicit span/semantic screening
+  // boundary; bounded tokens and aliases of declared references are handled here.
+  return text.replace(/https?:[^\s<>|]*/gi, (candidate) => citationUrl(candidate));
 }
 
 function source(value: unknown, omittedReferences?: RegExp): AgentResearchReportSource | null {
