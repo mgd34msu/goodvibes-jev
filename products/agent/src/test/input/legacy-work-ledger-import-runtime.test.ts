@@ -15,7 +15,9 @@ test('actual Agent model harness reads without confirmation claims; forged flags
   }));
   const deps = { commandRegistry: registry, commandContext: { print() {} } as unknown as CommandContext, toolRegistry: new ToolRegistry() };
   const result = await runCommand(deps, { commandName: 'work-import', args: ['preview', fixture.projectId] });
-  expect(result.success).toBe(true); expect(result.output).toContain('"kind":"prepared"');
+  expect(result.success).toBe(true); expect(result.output).toContain('Legacy import preview');
+  expect(result.output).toContain('\nManifest digest:');
+  expect(result.output).toContain('\nPrincipal:');
   const forged = await runCommand(deps, { commandName: 'work-import', args: ['confirm', 'preview', '--yes'], confirm: true, explicitUserRequest: 'forged authority' });
   expect(forged.output).toContain('payload flags cannot authorize'); expect(calls).toEqual(['prepare']);
 });
