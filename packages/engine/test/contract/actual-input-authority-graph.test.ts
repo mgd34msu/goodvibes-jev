@@ -1,4 +1,12 @@
 import { createRequire } from 'node:module';
+import {
+  captureContractInput,
+  contractInputPath,
+  materializeContractInput,
+} from '../../sdk/src/platform/contract/input-snapshot.js';
+import { createExecTool } from '../../sdk/src/platform/tools/exec/runtime.js';
+import { OverflowHandler } from '../../sdk/src/platform/tools/shared/overflow.js';
+import type { Contract } from '../../sdk/src/platform/contract/types.js';
 import { probeCapturedExecAvailability } from '../../sdk/src/platform/tools/exec/captured-exec.js';
 import { MemoryStore } from '../../sdk/src/platform/state/memory-store.js';
 import { MemoryRegistry } from '../../sdk/src/platform/state/memory-registry.js';
@@ -7,6 +15,8 @@ import { resumeContracts } from '../../sdk/src/platform/runtime/contract-composi
 import {
   getContractInputAuthority,
   assertContractInputAuthority,
+  createContractInputAuthority,
+  type ContractInputAuthority,
 } from '../../sdk/src/platform/contract/input-authority.js';
 /** Real contract -> planner/member -> AgentManager -> AgentOrchestrator -> tools -> scripted provider. */
 import { expect, test } from 'bun:test';
@@ -31,7 +41,7 @@ const capturedExecAvailable = (await probeCapturedExecAvailability()).available;
 if (process.env.GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT === '1' && !capturedExecAvailable)
   throw new Error('required captured runner execution backend is unavailable');
 
-for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty'] as const)
+for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty', 'until-dirty'] as const)
   test.skipIf(!capturedExecAvailable && mode !== 'revoke-map')(
     `actual contract input authority through all construction handoffs (${mode})`,
     async () => {
@@ -168,7 +178,7 @@ for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty'] as const)
               else request.signal.addEventListener('abort', abort, { once: true });
             });
           }
-          if (!planner && turn === 6 && mode !== 'apply-dirty')
+          if (!planner && turn === 6 && mode !== 'apply-dirty' && mode !== 'until-dirty')
             writeFileSync(
               join(workspacePackage, 'index.ts'),
               "export const compilerInput = 'const value: number = 999;';\n",
@@ -271,7 +281,16 @@ for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty'] as const)
                               arguments: {
                                 commands: [
                                   {
-                                    cmd: 'bun build ./src/csv.ts --target bun --outdir ./dist && bun test ./src/csv.test.ts && echo CAPTURED_BUILD_TEST_OK',
+                                    cmd:
+                                      mode === 'until-dirty'
+                                        ? 'echo BG_READY; sleep 1; bun build ./src/csv.ts --target bun --outdir ./dist && bun test ./src/csv.test.ts && echo CAPTURED_BUILD_TEST_OK > retained-proof.txt'
+                                        : 'bun build ./src/csv.ts --target bun --outdir ./dist && bun test ./src/csv.test.ts && echo CAPTURED_BUILD_TEST_OK',
+                                    ...(mode === 'until-dirty'
+                                      ? {
+                                          until: { pattern: 'BG_READY', kill_after: false, timeout_ms: 15000 },
+                                          timeout_ms: 20000,
+                                        }
+                                      : {}),
                                   },
                                 ],
                               },
@@ -363,6 +382,7 @@ for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty'] as const)
           readAccessFilter: async (path) => (await runtime.permissionManager.readAccess(path)) === 'allow',
         });
       let runner = buildRunner();
+      let observedRetainedCompletion = false;
       const bindRunner = () => {
         runtime.agentManager.setContractRunner(runner);
         runtime.agentOrchestrator.setDependencies({
@@ -373,7 +393,21 @@ for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty'] as const)
           surfaceRoot: 'agent',
           workflowServices: runtime.workflow,
           contractRunner: runner,
-          contractHooks: runner.hooks(),
+          contractHooks:
+            mode === 'until-dirty'
+              ? {
+                  onTurnEnd: runner.hooks().onTurnEnd,
+                  holdCompletion: async (record) => {
+                    if (record.contractRole === 'unit') {
+                      expect(readFileSync(join(record.workingDirectory!, 'retained-proof.txt'), 'utf8')).toContain(
+                        'CAPTURED_BUILD_TEST_OK',
+                      );
+                      observedRetainedCompletion = true;
+                    }
+                    return runner.hooks().holdCompletion(record);
+                  },
+                }
+              : runner.hooks(),
         });
       };
       bindRunner();
@@ -399,6 +433,43 @@ for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty'] as const)
           await runtime.agentOrchestrator.runAgent(record);
         },
       });
+      let otherExecution: { owner: string; authority: ContractInputAuthority; id: string } | undefined;
+      if (mode === 'until-dirty') {
+        const otherRoot = makeRepo();
+        const otherSnapshot = await captureContractInput(otherRoot);
+        const otherView = contractInputPath(otherSnapshot);
+        expect(
+          spawnSync('git', [
+            '-C',
+            otherRoot,
+            'worktree',
+            'add',
+            '--no-checkout',
+            '-b',
+            'other-view',
+            otherView,
+            otherSnapshot.inputCommit,
+          ]).status,
+        ).toBe(0);
+        await materializeContractInput(otherSnapshot, otherView);
+        const otherAuthority = await createContractInputAuthority(
+          { projectRoot: otherRoot, inputSnapshot: otherSnapshot } as Contract,
+          otherView,
+          { mutable: true, branch: 'other-view' },
+        );
+        const otherTool = createExecTool(runtime.processManager, {
+          capturedInput: { authority: otherAuthority, root: otherView, readAccessFilter: async () => true },
+          defaultWorkingDirectory: otherView,
+          overflowHandler: new OverflowHandler({ baseDir: otherView }),
+        });
+        const started = await otherTool.execute({
+          commands: [{ cmd: 'sleep 45; echo OTHER_OWNER_DONE', background: true, timeout_ms: 60000 }],
+        });
+        expect(started.success).toBe(true);
+        const otherId = (JSON.parse(started.output ?? '{}') as { process_id: string }).process_id;
+        expect(otherId).toBeString();
+        otherExecution = { owner: otherRoot, authority: otherAuthority, id: otherId };
+      }
       let id: string | undefined;
       const ownerIndex = readFileSync(join(root, '.git/index'));
       const ownerHead = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD']).stdout.toString();
@@ -508,6 +579,7 @@ for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty'] as const)
                   stdout?: string;
                   sandboxed?: boolean;
                   exit_code?: number;
+                  process_id?: string;
                 },
               ];
             } catch {
@@ -518,9 +590,10 @@ for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty'] as const)
           executed.some(
             (result) =>
               result.success === true &&
-              result.exit_code === 0 &&
               result.sandboxed === true &&
-              result.stdout?.includes('CAPTURED_BUILD_TEST_OK'),
+              (mode === 'until-dirty'
+                ? typeof result.process_id === 'string'
+                : result.exit_code === 0 && result.stdout?.includes('CAPTURED_BUILD_TEST_OK')),
           ),
           JSON.stringify(executed),
         ).toBe(true);
@@ -538,7 +611,7 @@ for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty'] as const)
               message.content?.includes('REGISTRY_OWNED_MARKER'),
           ),
         ).toBe(true);
-        if (mode === 'apply-dirty') {
+        if (mode === 'apply-dirty' || mode === 'until-dirty') {
           expect(result.commit?.status, JSON.stringify(result.commit)).toBe('applied');
           expect(result.commit?.hash).toBeUndefined();
           expect(result.commit?.note).toContain('uncommitted');
@@ -547,12 +620,21 @@ for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty'] as const)
           expect(readFileSync(join(root, '.git/index'))).toEqual(ownerIndex);
           expect(spawnSync('git', ['-C', root, 'rev-parse', 'HEAD']).stdout.toString()).toBe(ownerHead);
         } else expect(result.commit?.note).toContain('not applied');
+        if (mode === 'until-dirty') {
+          expect(observedRetainedCompletion).toBe(true);
+          expect(readFileSync(join(root, 'retained-proof.txt'), 'utf8')).toContain('CAPTURED_BUILD_TEST_OK');
+          expect(runtime.processManager.getStatus(otherExecution!.id)?.done).toBe(false);
+        }
         expect(readFileSync(join(root, 'allowed.ts'), 'utf8')).toContain(mode === 'resume' ? '= 99' : '= 2');
         await runner.join(id);
       } finally {
         if (id) {
           runner.cancel(id, 'fixture cleanup');
           await runner.join(id);
+        }
+        if (otherExecution) {
+          await runtime.processManager.stopOwnedBoundaries(otherExecution.authority);
+          rmSync(otherExecution.owner, { recursive: true, force: true });
         }
         runner.dispose();
         store.dispose();
