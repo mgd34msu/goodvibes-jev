@@ -82,6 +82,8 @@ export type ContractUnitOutcome = 'completed' | 'failed' | 'cancelled';
  * kills or requeues the item, and the settlement then resolves `cancelled`.
  */
 export interface ContractUnitSettlement {
+  /** Wrap the actual executor invocation after all AgentManager spawning hooks. */
+  withCurrentExecution?(item: WorkItem, execute: () => Promise<void>): Promise<void>;
   settle(item: WorkItem, agentId: string, signal: AbortSignal): Promise<ContractUnitOutcome>;
   /**
    * Asked before a contract unit's phase spawns an agent. After a restart, a
@@ -518,7 +520,12 @@ async function runPhaseWithSignal(
       ...unitSpawn?.input,
       // An isolated item's tools run inside its own worktree.
       ...(deps.itemWorktree ? { workingDirectory: deps.itemWorktree.path } : {}),
-    } as Parameters<PhaseRunnerAgentManagerLike['spawn']>[0], unitSpawn?.binding);
+    } as Parameters<PhaseRunnerAgentManagerLike['spawn']>[0], unitSpawn === null ? undefined : {
+      ...unitSpawn.binding,
+      ...(deps.contractUnitSettlement?.withCurrentExecution === undefined ? {} : {
+        withCurrentExecution: (execute: () => Promise<void>) => deps.contractUnitSettlement!.withCurrentExecution!(item, execute),
+      }),
+    });
 
     record.workItemId = item.id;
     if (!signal.aborted) item.agentId = record.id;

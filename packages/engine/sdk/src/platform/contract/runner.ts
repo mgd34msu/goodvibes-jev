@@ -23,6 +23,7 @@
  * turn to the unit and is held and nudged exactly as a sub-agent is); no
  * engine runs and no sub-agent is spawned.
  */
+import { assertDurableCheckpoint, DurableContractAdmissions, DurableContractAdmissionError, durableKeyHash, durablePayloadRevision, freezeDurableRequest, parseDurableAdmission, type DurableContractAdmission, type DurableContractBoundary, type DurableContractKey, type DurableContractRequest, type DurableStartedContract } from './durable-admission.js';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -48,12 +49,12 @@ import { createGroupRunner, takeBaseline, type ContractEngineInput } from './gro
 import { CONTRACT_RUNNER_AGENT_ID } from './nudge.js';
 import { planContract, shapeContract, type ContractPlannerDeps, type PlanningOutcome, type ShapeOutcome } from './planner.js';
 import { createContractPlanSync, type ExecutionPlans, type WorkPlanService } from './plan-sync.js';
-import { createContractResume, type ResumeReport } from './resume.js';
+import { createContractResume, findZombieCause, type ResumeReport } from './resume.js';
 import { numberDraft } from './draft-plan.js';
 import { createContractFleetControls, type ContractFleetControls } from './fleet-controls.js';
 import { ContractRun, failureFromError, type RunEnv } from './run-context.js';
 import { createContractSteps, type ContractSteps, type ContractStepsWithReplies } from './steps.js';
-import type { ContractStore } from './store.js';
+import { deserializeContract, serializeContract, type ContractStore } from './store.js';
 import {
   CURRENT_CONTRACT_SCHEMA_VERSION,
   isTerminalContractStatus,
@@ -71,6 +72,8 @@ import { createUnitWatchdog, type WatchedAgent } from './watchdog.js';
 import { logger } from '../utils/logger.js';
 
 export interface ContractRunnerDeps {
+  /** Host ledger synchronization and live deterministic validation for native-bound launches. */
+  readonly durableAdmission?: DurableContractBoundary | undefined;
   readonly agentManager: Pick<AgentManager, 'spawn' | 'getStatus' | 'list' | 'cancel' | 'wakeWithSteer'> & Partial<Pick<AgentManager, 'join'>>;
   readonly messageBus: Pick<AgentMessageBus, 'send' | 'registerAgent'>;
   readonly runtimeBus: RuntimeEventBus;
@@ -120,6 +123,10 @@ export interface OwnedStartedContract extends StartedContract {
 export const AGENT_MANAGER_SESSION_ID = 'agent-manager';
 
 export interface ContractRunner {
+  /** Atomically bind a native attempt to one durable runner record. Exact replay never starts another execution. */
+  startDurable(request: DurableContractRequest): Promise<DurableStartedContract>;
+  /** Explicit restart of the same record, after fresh validation; never mint a second native attempt. */
+  resumeDurable(key: DurableContractKey): Promise<DurableStartedContract>;
   /** Starts a contract from an ask. Returns at once with the contract and its owner agent record. */
   start(input: StartContractInput): StartedContract;
   /**
@@ -192,6 +199,8 @@ export function filesModified(contract: Pick<Contract, 'units'>): number {
 
 export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
   const now = deps.now ?? Date.now;
+  const durableAdmissions = new DurableContractAdmissions(deps.store.projectRoot);
+  const durableLeases = new Map<string, () => void>();
   const listeners = new Set<(event: ContractEvent) => void>();
   const runs = new Map<string, ContractRun>();
   const settlements = new Map<string, { readonly promise: Promise<void>; readonly resolve: () => void }>();
@@ -221,6 +230,8 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       await Promise.all(contractAgentIds(run.contract).map((id) => deps.agentManager.join?.(id)));
       for (const release of run.sharedTreeReleases.values()) release();
       run.sharedTreeReleases.clear();
+      durableLeases.get(run.id)?.();
+      durableLeases.delete(run.id);
       entry.resolve();
       settlements.delete(run.id);
       settling.delete(run.id);
@@ -269,6 +280,15 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
   const detachPlanSync = on(planSync.onEvent);
 
   const settlement: ContractUnitSettlement = {
+    withCurrentExecution(item, execute) {
+      const run = item.contractId === undefined ? undefined : runs.get(item.contractId);
+      if (run === undefined || run.terminal || run.abort.signal.aborted) return Promise.reject(new DurableContractAdmissionError('boundary'));
+      if (run.contract.durableAdmission === undefined) return execute();
+      return withCurrentDurableExecution(run, execute).catch((error: unknown) => {
+        cancelRun(run, 'native execution binding is no longer current');
+        throw error;
+      });
+    },
     settle(item, agentId, signal) {
       const run = item.contractId === undefined ? undefined : runs.get(item.contractId);
       const unit = item.contractUnitId === undefined ? undefined : run?.unit(item.contractUnitId);
@@ -411,7 +431,9 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
   function admit(run: ContractRun): void {
     if (run.terminal || disposed) return;
     admitted.add(run.id);
-    void run.work.run(() => run.contract.resumeFrom === undefined ? activate(run) : resume.continueResumed(run));
+    if (run.contract.durableAdmission !== undefined) {
+      void launchDurable(run).catch(() => cancelRun(run, 'native admission is no longer current'));
+    } else void run.work.run(() => run.contract.resumeFrom === undefined ? activate(run) : resume.continueResumed(run));
   }
 
   function dequeue(): void {
@@ -428,6 +450,167 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
 
   function ownerProgress(contract: Contract): string {
     return `Contract ${contract.id}: ${contract.status}`;
+  }
+
+  function durableResult(admission: DurableContractAdmission): DurableStartedContract {
+    const contract = runs.get(admission.contractId)?.contract ?? deserializeContract(durableAdmissions.checkpoint(admission.key));
+    if (contract === null || contract.durableAdmission?.payloadRevision !== admission.payloadRevision
+      || contract.ownerAgentId !== admission.ownerAgentId) throw new DurableContractAdmissionError('checkpoint');
+    assertDurableCheckpoint(contract, admission);
+    const { input: _input, ...receipt } = admission;
+    return { admission: Object.freeze(receipt), contract: structuredClone(contract), state: isTerminalContractStatus(contract.status)
+      ? 'terminal' : contract.durableLaunchState ?? 'prepared' };
+  }
+
+  async function withCurrentDurableExecution(run: ContractRun, execute: () => Promise<void>, claimLaunch = false): Promise<void> {
+    const admission = run.contract.durableAdmission;
+    const boundary = deps.durableAdmission;
+    if (admission === undefined || boundary === undefined) throw new DurableContractAdmissionError('boundary');
+    let open = true;
+    let invoked = false;
+    let execution: Promise<void> | undefined;
+    let boundaryFailed = false;
+    let boundaryError: unknown;
+    try {
+      const boundaryResult = boundary.withCurrent(admission, (assertCurrent) => {
+        if (!open || invoked || typeof assertCurrent !== 'function') throw new DurableContractAdmissionError('boundary');
+        invoked = true;
+        if (disposed || run.terminal || run.abort.signal.aborted) throw new DurableContractAdmissionError('boundary');
+        if (claimLaunch) {
+          run.contract.durableLaunchState = 'launch-claimed';
+          if (!deps.store.write(run.id)) throw new DurableContractAdmissionError('checkpoint');
+        }
+        // Every borrowed/reentrant hook, including persistence and AgentManager's spawning events,
+        // precedes this synchronous check. The host holds its ledger lock through invocation.
+        assertDurableCheckpoint(run.contract, admission);
+        const validity: unknown = assertCurrent();
+        if (validity !== undefined) {
+          void Promise.resolve(validity).catch(() => undefined);
+          throw new DurableContractAdmissionError('boundary');
+        }
+        assertDurableCheckpoint(run.contract, admission);
+        if (disposed || run.terminal || run.abort.signal.aborted) throw new DurableContractAdmissionError('boundary');
+        execution = execute();
+        // Observe rejection immediately even when the host's lock-release promise is still pending.
+        void execution.catch(() => undefined);
+      });
+      if (boundaryResult === undefined) open = false;
+      await boundaryResult;
+      if (!invoked) throw new DurableContractAdmissionError('boundary');
+    } catch (error) {
+      boundaryFailed = true;
+      boundaryError = error;
+      cancelRun(run, 'native admission boundary failed');
+    } finally { open = false; }
+    if (boundaryFailed) {
+      // Launch may already have entered an executor. Failed lock release/commit is not drainage.
+      try { await execution; } catch { /* Preserve the boundary failure after actual executor cleanup. */ }
+      throw boundaryError;
+    }
+    // Do not hold the ledger lock for an executor's entire lifetime.
+    await execution;
+  }
+
+  function launchDurable(run: ContractRun): Promise<void> {
+    return withCurrentDurableExecution(run, () => {
+      void run.work.run(() => run.contract.resumeFrom === undefined ? activate(run) : resume.continueResumed(run));
+      return Promise.resolve();
+    }, true);
+  }
+
+  async function startDurable(request: DurableContractRequest): Promise<DurableStartedContract> {
+    const frozen = freezeDurableRequest(request);
+    assertOwnedExecution();
+    if (disposed) throw new Error('Contract runner is disposed');
+    if (deps.durableAdmission === undefined) throw new DurableContractAdmissionError('boundary');
+    // An immutable binding is already committed before the host boundary runs. Exact delivery
+    // replay must remain readable even while that boundary waits for its ledger transaction.
+    const committed = durableAdmissions.read(frozen.key);
+    if (committed !== null) {
+      if (committed.payloadRevision !== durablePayloadRevision(frozen)) throw new DurableContractAdmissionError('conflict');
+      return durableResult(committed);
+    }
+    const release = await durableAdmissions.lock(frozen.key);
+    try {
+      if (disposed) throw new Error('Contract runner is disposed');
+      const existing = durableAdmissions.read(frozen.key);
+      if (existing !== null) {
+        if (existing.payloadRevision !== durablePayloadRevision(frozen)) throw new DurableContractAdmissionError('conflict');
+        return durableResult(existing);
+      }
+      // Never mint another binding if a compatibility checkpoint proves the receipt went missing.
+      for (const storedId of deps.store.listStoredIds()) {
+        const stored = deps.store.load(storedId);
+        if (stored?.durableAdmission !== undefined && durableKeyHash(stored.durableAdmission.key) === durableKeyHash(frozen.key)) {
+          throw new DurableContractAdmissionError('checkpoint');
+        }
+      }
+      const lease = await durableAdmissions.lease(frozen.key);
+      const id = newContractId();
+      durableLeases.set(id, lease);
+      try {
+        const owner = spawnOwner(frozen.input, id);
+        const admission = parseDurableAdmission({ ...frozen, schemaVersion: 1, contractId: id,
+          ownerAgentId: owner.id, payloadRevision: durablePayloadRevision(frozen) });
+        create(frozen.input, id, owner, { durableAdmission: admission }, true, true);
+        const run = runs.get(id);
+        if (run !== undefined && !run.terminal && !disposed) {
+          if (admitted.size < env.config().maxActiveContracts) {
+            admitted.add(id);
+            try { await launchDurable(run); }
+            catch (error) { cancelRun(run, 'native admission launch was not validated'); throw error; }
+          } else {
+            queue.push(run);
+            run.decide('queued', id, 'waiting for an active-contract slot');
+          }
+        }
+        return durableResult(admission);
+      } catch (error) {
+        const run = runs.get(id);
+        if (run !== undefined) cancelRun(run, 'native admission could not start');
+        else if (!settling.has(id)) { durableLeases.delete(id); lease(); }
+        throw error;
+      }
+    } finally { release(); }
+  }
+
+  async function resumeDurable(key: DurableContractKey): Promise<DurableStartedContract> {
+    assertOwnedExecution();
+    if (disposed) throw new Error('Contract runner is disposed');
+    if (deps.durableAdmission === undefined) throw new DurableContractAdmissionError('boundary');
+    // Detach the key before lock acquisition can yield to caller code.
+    const frozenKey = Object.freeze({ ...key });
+    const release = await durableAdmissions.lock(frozenKey);
+    try {
+      if (disposed) throw new Error('Contract runner is disposed');
+      const admission = durableAdmissions.read(frozenKey);
+      if (admission === null) throw new DurableContractAdmissionError('missing');
+      const result = durableResult(admission);
+      if (runs.has(admission.contractId) || result.state === 'terminal') return result;
+      const lease = await durableAdmissions.lease(frozenKey);
+      durableLeases.set(admission.contractId, lease);
+      const contract = deserializeContract(durableAdmissions.checkpoint(admission.key));
+      if (contract === null) { durableLeases.delete(admission.contractId); lease(); throw new DurableContractAdmissionError('checkpoint'); }
+      try { assertDurableCheckpoint(contract, admission); }
+      catch (error) { durableLeases.delete(admission.contractId); lease(); throw error; }
+      deps.store.hold(contract);
+      const run = newRun(contract);
+      run.requireSettlement = true;
+      const zombie = findZombieCause(contract);
+      if (zombie !== null) { fail(run, 'zombie', 'native contract checkpoint cannot resume', true); return durableResult(admission); }
+      // Preserve the restart step even while queued. The persisted native binding never grants launch.
+      contract.resumeFrom = contract.resumeFrom ?? contract.status;
+      if (admitted.size < env.config().maxActiveContracts) {
+        admitted.add(run.id);
+        try { await launchDurable(run); }
+        catch (error) { cancelRun(run, 'native admission resume was not validated'); throw error; }
+      } else {
+        if (contract.status !== 'queued') run.moveContract('queued');
+        queue.push(run);
+        run.decide('queued', run.id, 'waiting to resume a native contract');
+      }
+      return durableResult(admission);
+    } finally { release(); }
   }
 
   function start(input: StartContractInput): StartedContract {
@@ -499,14 +682,16 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     input: Omit<StartContractInput, 'proposedUnits'> & Pick<StartContractInput, 'proposedUnits'>,
     id: string,
     owner: AgentRecord,
-    extra: Pick<Contract, 'draftPlan'>,
+    extra: Pick<Contract, 'draftPlan' | 'durableAdmission'>,
     requireSettlement = false,
+    deferAdmission = false,
   ): StartedContract {
     const config = env.config();
     const short = id.slice('ctr-'.length);
     const isolation = resolveIsolation(input.isolation ?? config.isolation, input.projectRoot);
     const contract: Contract = {
       id,
+      ...(extra.durableAdmission === undefined ? {} : { durableAdmission: extra.durableAdmission, durableLaunchState: 'prepared' as const }),
       schemaVersion: CURRENT_CONTRACT_SCHEMA_VERSION,
       sessionId: input.sessionId,
       origin: input.origin,
@@ -538,10 +723,16 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     const run = newRun(contract);
     run.requireSettlement = requireSettlement;
     deps.store.put(contract);
+    if (contract.durableAdmission !== undefined) {
+      const checkpoint = serializeContract(contract, now());
+      if (checkpoint === null) throw new DurableContractAdmissionError('checkpoint');
+      durableAdmissions.write(contract.durableAdmission, checkpoint);
+      if (!deps.store.write(id)) throw new DurableContractAdmissionError('checkpoint');
+    }
     run.decide('created', id, `origin ${input.origin}; ${isolation} isolation${extra.draftPlan === undefined ? '' : `; ${extra.draftPlan.units.length} drafted units`}`);
     run.emit({ type: 'CONTRACT_CREATED', contractId: id, sessionId: input.sessionId, origin: input.origin, ask: input.ask, ownerAgentId: owner.id });
     if (owner.status === 'cancelled') cancelRun(run, 'the owner was cancelled during spawn');
-    if (run.terminal) {
+    if (run.terminal || deferAdmission) {
       // Re-entrant creation/spawn listeners can stop the owner before admission.
     } else if (admitted.size < config.maxActiveContracts) {
       admit(run);
@@ -695,6 +886,12 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     const { contract } = run;
     if (!isTerminalContractStatus(contract.status) || run.ownerSettled) return;
     run.ownerSettled = true;
+    // A terminal native checkpoint must be durable before its execution lease can be released.
+    if (!disposed && contract.durableAdmission !== undefined && !deps.store.write(run.id)) {
+      logger.error('native contract terminal checkpoint failed; retaining execution lease', { contractId: run.id });
+      // Do not make another runner eligible to resume an unpersisted cancellation.
+      durableLeases.delete(run.id);
+    }
     settleWork(run);
     run.abort.abort();
     groups.stopRun(run);
@@ -824,6 +1021,8 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
   // ── The API ─────────────────────────────────────────────────────────────────
 
   return {
+    startDurable,
+    resumeDurable,
     start,
     startFromPlan,
     startForOwner,

@@ -131,6 +131,8 @@ interface AgentExecutionState {
 
 export class AgentManager {
   private agents = new Map<string, AgentRecord>();
+  private readonly restoredContractUnits = new Set<string>();
+  private readonly executionBoundaries = new Map<string, NonNullable<ContractUnitBinding['withCurrentExecution']>>();
   /** Actual per-agent invocations; terminal records alone do not prove cleanup. */
   private readonly executions = new Map<string, AgentExecutionState>();
   private runtimeBus: RuntimeEventBus | null = null;
@@ -500,6 +502,7 @@ export class AgentManager {
     // Reserve before publishing the record or invoking any re-entrant callback.
     const { begin, controller, slot } = this.reserveExecution(id);
     this.cancellationControllers.set(id, controller);
+    if (binding?.withCurrentExecution !== undefined) this.executionBoundaries.set(id, binding.withCurrentExecution);
     owned?.reserved(record, slot);
     try {
       this.messageBus.registerAgent({
@@ -554,7 +557,10 @@ export class AgentManager {
       }
 
       if (this.executor && record.status !== 'cancelled') {
-        begin(this.executor.runAgent(record).catch((error) => {
+        const executor = this.executor;
+        const execute = () => controller.signal.aborted || record.status === 'cancelled' ? Promise.resolve() : executor.runAgent(record);
+        const boundary = this.executionBoundaries.get(id);
+        begin((boundary === undefined ? execute() : Promise.resolve().then(() => boundary(execute))).catch((error) => {
           record.status = 'failed';
           record.error = summarizeError(error, {
             ...(record.provider ? { provider: record.provider } : {}),
@@ -636,6 +642,7 @@ export class AgentManager {
   wakeWithSteer(agentId: string, steer: string, options: { readonly allowCompleted?: boolean } = {}): { woke: boolean; reason: string } {
     const record = this.agents.get(agentId);
     if (!record) return { woke: false, reason: 'unknown-agent' };
+    if (this.restoredContractUnits.has(agentId)) return { woke: false, reason: 'contract-unit-requires-resume' };
     const wakeCompleted = record.status === 'completed' && options.allowCompleted === true && Boolean(record.contractUnitId);
     if (record.status !== 'failed' && !wakeCompleted) {
       return { woke: false, reason: `agent status is '${record.status}', not a wedged/failed loop` };
@@ -661,7 +668,9 @@ export class AgentManager {
       record.failureReason = undefined;
       record.turnBudget = undefined;
       record.completedAt = undefined;
-      return executor.runAgent(record);
+      const execute = () => controller.signal.aborted || record.status === 'cancelled' ? Promise.resolve() : executor.runAgent(record);
+      const boundary = this.executionBoundaries.get(agentId);
+      return boundary === undefined ? execute() : boundary(execute);
     };
     let running: Promise<void>;
     try {
@@ -893,6 +902,8 @@ export class AgentManager {
 
   clear(): void {
     this.agents.clear();
+    this.executionBoundaries.clear();
+    this.restoredContractUnits.clear();
     this.conversationSources.clear();
     this.frozenConversationSnapshots.clear();
   }
@@ -909,7 +920,10 @@ export class AgentManager {
 
   importState(records: AgentRecord[]): void {
     for (const record of records) {
-      if (record.status === 'running' || record.status === 'pending') continue;
+      if (record.status === 'running' || record.status === 'pending' || this.executionBoundaries.has(record.id)) continue;
+      // A serialized record cannot carry the live native execution fence. The contract runner
+      // must recover its checkpoint and obtain current authority before creating a fresh unit.
+      if (record.contractUnitId !== undefined) this.restoredContractUnits.add(record.id);
       this.agents.set(record.id, record);
     }
   }

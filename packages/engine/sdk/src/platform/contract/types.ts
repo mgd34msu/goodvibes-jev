@@ -1,3 +1,4 @@
+import type { DurableContractAdmission } from './durable-admission.js';
 /**
  * The contract runner's data model (docs/design/contract-runner.md section 2.3):
  * a contract, its groups and units, their criteria with every reading, checks,
@@ -88,7 +89,8 @@ export type AgentManagerLike = Pick<AgentManager, 'spawn' | 'getStatus' | 'list'
 // ── Ids ────────────────────────────────────────────────────────────────────────
 
 /** Schema version of a persisted contract; `deserializeContract` refuses a newer one. */
-export const CURRENT_CONTRACT_SCHEMA_VERSION = 1;
+// Version 2 fences native-bound checkpoints from older runners that would otherwise resume them unvalidated.
+export const CURRENT_CONTRACT_SCHEMA_VERSION = 2;
 
 /** `ctr-<8 hex>`. Also the store's file name, so it is checked before any path is built from it. */
 export const CONTRACT_ID_PATTERN = /^ctr-[0-9a-f]{8}$/;
@@ -391,6 +393,9 @@ export interface JudgmentUsage {
 }
 
 export interface Contract {
+  /** Native-bound contracts are resumed only through resumeDurable with fresh host validation. */
+  readonly durableAdmission?: DurableContractAdmission | undefined;
+  durableLaunchState?: 'prepared' | 'launch-claimed' | undefined;
   readonly id: string;
   /** CURRENT_CONTRACT_SCHEMA_VERSION when written. */
   readonly schemaVersion: number;

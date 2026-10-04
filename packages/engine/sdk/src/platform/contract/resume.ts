@@ -147,6 +147,8 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
       }
       const contract = deps.store.load(contractId);
       if (contract === null) continue;
+      // Native authority is never reconstructed from disk. Only resumeDurable may adopt this binding.
+      if (contract.durableAdmission !== undefined) { skipped.push(contractId); continue; }
       if (isTerminalContractStatus(contract.status)) {
         deps.store.hold(contract);
         continue;

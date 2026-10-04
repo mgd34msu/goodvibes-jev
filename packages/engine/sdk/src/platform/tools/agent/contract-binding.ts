@@ -9,6 +9,8 @@ import type { AgentRecord } from './record.js';
 
 /** Binds a spawn to a contract unit: the turn loop calls the contract hooks for it. */
 export interface ContractUnitBinding {
+  /** Trusted, nonserialized native execution fence, invoked after spawning hooks and on every wake. */
+  readonly withCurrentExecution?: ((execute: () => Promise<void>) => Promise<void>) | undefined;
   readonly contractId: string;
   readonly contractUnitId: string;
   /** The route selector's reason for the unit's model, copied to AgentRecord.routeReason. */

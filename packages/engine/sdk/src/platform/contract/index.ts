@@ -376,3 +376,6 @@ export {
 export type { ContractCliDeps, ContractCliIo, ContractCliRunner, ContractSessionDriver, OpenedContractRunner } from './cli.js';
 export { contractRow, formatContractEvent, renderContractTable, renderContractTree } from './cli-render.js';
 export type { ContractRow } from './cli-render.js';
+
+export { criteriaSetIdForWork, DurableContractAdmissionError } from './durable-admission.js';
+export type { DurableContractAdmission, DurableContractBoundary, DurableContractKey, DurableContractReceipt, DurableContractRequest, DurableStartedContract } from './durable-admission.js';

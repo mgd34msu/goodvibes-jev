@@ -177,6 +177,7 @@ export interface Harness {
 }
 
 export interface HarnessOptions {
+  readonly durableAdmission?: ContractRunnerDeps['durableAdmission'];
   readonly createEngine?: ContractRunnerDeps['createEngine'];
   readonly plan?: DraftPlan;
   readonly contract?: Record<string, unknown>;
@@ -296,6 +297,7 @@ export function makeHarness(options: HarnessOptions): Harness {
     run: async () => ({ status: 'completed', output: plannerOutput(plan), elapsedMs: 1, agentId: 'planner-1' }),
   };
   runner = createContractRunner({
+    ...(options.durableAdmission === undefined ? {} : { durableAdmission: options.durableAdmission }),
     agentManager: manager,
     messageBus,
     runtimeBus: bus,

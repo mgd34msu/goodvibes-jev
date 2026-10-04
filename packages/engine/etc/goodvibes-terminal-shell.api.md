@@ -5,6 +5,7 @@
 ```ts
 
 import type { JevDecision } from '@goodvibes-jev/judgment/decisions';
+import type { JevDecisionBinding } from '@goodvibes-jev/judgment/decisions';
 import type { Outcome } from '@goodvibes-jev/judgment';
 import type { ReplyReadingName } from '@goodvibes-jev/judgment';
 import type { Socket } from 'node:net';
