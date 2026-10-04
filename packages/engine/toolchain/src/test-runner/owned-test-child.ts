@@ -165,14 +165,17 @@ function perCallMs(name: string, value: number | undefined, fallback: number): n
 /** `{ at, started }` from the child's heartbeat, or null before the first one. */
 function readHeartbeat(path: string): { at: number; started: number } | null {
   try {
-    // The child truncates then rewrites this file. Only a complete record is
-    // progress: Number('') is zero, which made an empty write window look like
-    // a heartbeat from the Unix epoch and killed a healthy suite immediately.
+    // Accept only complete records even if publication is interrupted or a
+    // different writer truncates the file: Number('') is zero, which made an
+    // empty write window look epoch-old and killed healthy suites immediately.
     const record = /^([1-9]\d*) ([1-9]\d*)\n$/.exec(readFileSync(path, 'utf8'));
     if (record === null) return null;
     const at = Number(record[1]);
     const started = Number(record[2]);
     if (!Number.isSafeInteger(at) || !Number.isSafeInteger(started)) return null;
+    // Read the clock after the record, so a concurrently published valid beat
+    // cannot appear future-dated just because it followed the poll's clock read.
+    if (at > Date.now()) return null;
     return { at, started };
   } catch {
     return null;
