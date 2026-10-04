@@ -87,7 +87,7 @@ test.skipIf(!supported)('admitted real Node/npm runs unchanged local typecheck a
   expect(result.stderr).not.toContain('Captured exec held');
   expect(result.success, JSON.stringify(result)).toBe(true);
   expect(result.sandboxed).toBe(true);
-  const escaped = await run(admitted, 'test ! -e /opt/codex; test ! -e /home/captured/.npmrc; node -e "console.log(process.version)"');
+  const escaped = await run(admitted, 'test ! -e /opt/codex && test ! -e /home/captured/.npmrc && node -e "console.log(process.version)"');
   expect(escaped.success).toBe(true);
   expect(escaped.stdout).toMatch(/^v/);
 }, 180000);
@@ -143,4 +143,17 @@ test('cancellation settles a pending runtime permission callback', async () => {
   const pending = admitCapturedExecNodeRuntime({ ...binding, signal: controller.signal }, declaration);
   setTimeout(() => controller.abort(), 50);
   await expect(pending).rejects.toThrow();
+});
+test.skipIf(!supported)('an executable alias cannot materialize an unadmitted canonical target', async () => {
+  let denied = '';
+  const binding = await fixture((path) => path !== denied);
+  const modules = join(binding.owner, 'node_modules');
+  mkdirSync(join(modules, '.bin'), { recursive: true });
+  mkdirSync(join(modules, 'package'));
+  writeFileSync(join(modules, 'package/tool.js'), 'console.log("UNADMITTED_TARGET");');
+  symlinkSync('../package/tool.js', join(modules, '.bin/tool'));
+  denied = join(binding.root, 'node_modules/package/tool.js');
+  const dependency = await admitCapturedExecDependency(binding, { sourceRoot: modules, targetRelativePath: 'node_modules' });
+  const result = await run({ ...binding, dependencyInputs: [dependency!] }, 'cat node_modules/.bin/tool');
+  expect(result.denied).toBe(true); expect(result.stdout).toBe('');
 });
