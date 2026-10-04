@@ -212,7 +212,7 @@ export async function runCapturedCommand(
       authorize);
     observer.onFileOperations?.(fileOperations);
     const dependencies = await executePolicyCheck(() => projectCapturedExecDependencies(binding, temporary!, operationSignal, projection), operationSignal);
-    const nodeRuntime = await executePolicyCheck(() => projectCapturedExecNodeRuntime(binding, temporary!), operationSignal);
+    const nodeRuntime = await projectCapturedExecNodeRuntime(binding, temporary, operationSignal);
     checkDependencies = async () => { await dependencies.check(); await nodeRuntime.check(); };
     await check();
     const filterPath = join(temporary, 'sockets.bpf');

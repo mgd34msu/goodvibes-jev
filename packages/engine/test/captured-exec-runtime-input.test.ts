@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { captureContractInput, materializeContractInput, contractInputPath } from '../sdk/src/platform/contract/input-snapshot.js';
@@ -156,4 +156,33 @@ test.skipIf(!supported)('an executable alias cannot materialize an unadmitted ca
   const dependency = await admitCapturedExecDependency(binding, { sourceRoot: modules, targetRelativePath: 'node_modules' });
   const result = await run({ ...binding, dependencyInputs: [dependency!] }, 'cat node_modules/.bin/tool');
   expect(result.denied).toBe(true); expect(result.stdout).toBe('');
+});
+test.skipIf(!supported)('call-only cancellation cannot recreate a cleaned runtime projection after a late permission answer', async () => {
+  let armed = false; let nodePath = '';
+  let release!: () => void; let reached!: () => void;
+  const waiting = new Promise<void>((resolve) => { reached = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const binding = await fixture(async (path) => {
+    if (armed && path === nodePath) { armed = false; reached(); await gate; }
+    return true;
+  });
+  const declaration = syntheticRuntime(binding); nodePath = declaration.nodeExecutable;
+  const nodeRuntimeInput = await admitCapturedExecNodeRuntime(binding, declaration);
+  const before = new Set(readdirSync(tmpdir()));
+  const cancel = new AbortController();
+  armed = true;
+  const pending = run({ ...binding, nodeRuntimeInput }, 'echo should-not-start', cancel.signal);
+  try {
+    await waiting;
+    const created = readdirSync(tmpdir()).filter((name) => name.startsWith('goodvibes-captured-exec-') && !before.has(name));
+    expect(created).toHaveLength(1);
+    const directory = join(tmpdir(), created[0]!);
+    cancel.abort();
+    const result = await pending;
+    expect(result.success).toBe(false); expect(result.stdout).toBe('');
+    expect(existsSync(directory)).toBe(false);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(existsSync(directory)).toBe(false);
+  } finally { cancel.abort(); release(); await pending; }
 });

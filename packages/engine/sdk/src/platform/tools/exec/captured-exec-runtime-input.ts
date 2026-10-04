@@ -15,7 +15,7 @@ export interface CapturedExecNodeRuntimeDeclaration {
 export interface CapturedExecNodeRuntimeInput { readonly kind: 'captured-exec-node-runtime' }
 const TARGET = '/captured-runtime/node';
 const states = new WeakMap<CapturedExecNodeRuntimeInput, {
-  binding: Binding; files: readonly { path: string; data: Buffer; mode: number }[]; check: () => Promise<void>;
+  binding: Binding; files: readonly { path: string; data: Buffer; mode: number }[]; check: (signal?: AbortSignal) => Promise<void>;
 }>();
 const identity = (s: { dev: bigint; ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint; mode: bigint }): string =>
   `${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}:${s.mode}`;
@@ -57,18 +57,19 @@ export async function admitCapturedExecNodeRuntime(
     throw new Error('Node runtime npm/npx must belong to the same declared npm package');
   const reads: { source: string; canonical: string; alias: string; identity: string }[] = [];
   const files: { path: string; data: Buffer; mode: number }[] = [];
-  const checkRead = async (read: typeof reads[number]): Promise<void> => {
-    binding.signal?.throwIfAborted();
-    if (!await executePolicyCheck(() => filter(read.source), binding.signal) || !await executePolicyCheck(() => filter(read.canonical), binding.signal) || !await executePolicyCheck(() => filter(read.alias), binding.signal))
+  const checkRead = async (read: typeof reads[number], signal: AbortSignal | undefined = binding.signal): Promise<void> => {
+    signal?.throwIfAborted();
+    if (!await executePolicyCheck(() => filter(read.source), signal) || !await executePolicyCheck(() => filter(read.canonical), signal) || !await executePolicyCheck(() => filter(read.alias), signal))
       throw new Error('Node runtime input is access-restricted');
     if (await realpath(read.source) !== read.canonical || identity(await lstat(read.canonical, { bigint: true })) !== read.identity)
       throw new Error('Node runtime input changed after admission');
-    binding.signal?.throwIfAborted();
+    signal?.throwIfAborted();
   };
-  const check = async (): Promise<void> => {
-    await assertContractInputAuthority(binding.authority, binding.root, binding.signal);
-    for (const read of reads) await checkRead(read);
-    await assertContractInputAuthority(binding.authority, binding.root, binding.signal);
+  const check = async (signal: AbortSignal | undefined = binding.signal): Promise<void> => {
+    signal = binding.signal && signal ? AbortSignal.any([binding.signal, signal]) : binding.signal ?? signal;
+    await assertContractInputAuthority(binding.authority, binding.root, signal);
+    for (const read of reads) await checkRead(read, signal);
+    await assertContractInputAuthority(binding.authority, binding.root, signal);
   };
   let bytes = 0;
   const visit = async (source: string, path: string, root: string): Promise<void> => {
@@ -112,24 +113,27 @@ export async function admitCapturedExecNodeRuntime(
   return token;
 }
 
-export async function projectCapturedExecNodeRuntime(binding: CapturedExecAuthority, temporary: string): Promise<{
-  argv: string[]; check: () => Promise<void>;
+export async function projectCapturedExecNodeRuntime(binding: CapturedExecAuthority, temporary: string, signal?: AbortSignal): Promise<{
+  argv: string[]; check: (signal?: AbortSignal) => Promise<void>;
 }> {
   if (!binding.nodeRuntimeInput) return { argv: [], check: async () => {} };
   const state = states.get(binding.nodeRuntimeInput);
   if (!state || state.binding.authority !== binding.authority || state.binding.root !== binding.root || state.binding.readAccessFilter !== binding.readAccessFilter)
     throw new Error('Node runtime has no matching construction-owned admission');
-  await state.check();
+  signal = binding.signal && signal ? AbortSignal.any([binding.signal, signal]) : binding.signal ?? signal;
+  await state.check(signal);
   const staged = join(temporary, 'node-runtime');
   for (const file of state.files) {
-    binding.signal?.throwIfAborted();
+    signal?.throwIfAborted();
     const path = join(staged, file.path);
     await mkdir(dirname(path), { recursive: true });
+    signal?.throwIfAborted();
     await writeFile(path, file.data, { mode: file.mode });
+    signal?.throwIfAborted();
     await chmod(path, file.mode);
   }
-  await state.check();
-  return { check: state.check, argv: ['--ro-bind', staged, TARGET,
+  await state.check(signal);
+  return { check: () => state.check(signal), argv: ['--ro-bind', staged, TARGET,
     '--symlink', `${TARGET}/bin/node`, '/captured-runtime/bin/node',
     '--symlink', `${TARGET}/lib/node_modules/npm/bin/npm-cli.js`, '/captured-runtime/bin/npm',
     '--symlink', `${TARGET}/lib/node_modules/npm/bin/npx-cli.js`, '/captured-runtime/bin/npx'] };
