@@ -835,6 +835,7 @@ describe('reusable workflows: workflow_call contracts', () => {
     const wf = load('reusable-release-verify.yml');
     const verify = wf.jobs!['verify']!;
     const capMinutes = verify['timeout-minutes']!;
+    if (typeof capMinutes !== 'number') throw new Error('The verify job must have a numeric timeout-minutes cap');
     expect(capMinutes).toBeGreaterThan(0);
     for (const id of ['pjg-workspace', 'pjg-registry']) {
       const step = steps(verify).find((s) => s.id === id);
