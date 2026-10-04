@@ -34,6 +34,27 @@ class ResearchReportArtifactStore implements Pick<ArtifactStore, 'create'> {
 }
 
 describe('agent_research_report tool', () => {
+  test('contains embedded non-HTTP URI userinfo in public report artifact metadata and content', async () => {
+    const store = new ResearchReportArtifactStore();
+    const tool = createAgentResearchTool({ commandRegistry: {} as CommandRegistry,
+      commandContext: { workspace: {}, platform: { artifactStore: store } } as unknown as CommandContext,
+      toolRegistry: new ToolRegistry() });
+    const uri = 'ftp://sentinel@archive.example.test/paper?edition=2#part';
+    const result = await tool.execute({ action: 'report', title: 'Report', question: 'What is supported?',
+      summary: 'Evidence [S1].', confirm: true, explicitUserRequest: 'Save the report.', sources: [
+        { title: `Read ${uri} carefully`, url: 'https://example.test/article?id=123#section-2',
+          note: `Before ${uri} after.`, publisher: `Archive ${uri}`, credibility: `Reviewed ${uri}` },
+      ] });
+    expect(result.success).toBe(true);
+    expect(store.records).toHaveLength(1);
+    expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
+    expect(store.records[0]?.metadata.sources).toMatchObject([{
+      title: 'Read [source URL withheld] carefully', url: 'https://example.test/article?id=123#section-2',
+      note: 'Before [source URL withheld] after.', publisher: 'Archive [source URL withheld]',
+      credibility: 'Reviewed [source URL withheld]', urlOmitted: true,
+    }]);
+  });
+
   test('the public research adapter protects the actual report artifact path', async () => {
     const store = new ResearchReportArtifactStore();
     const tool = createAgentResearchTool({ commandRegistry: {} as CommandRegistry,
@@ -306,6 +327,85 @@ describe('research report source containment', () => {
     confirm: true, explicitUserRequest: 'Save this research report.',
   };
 
+  test('contains userinfo across URI schemes and source fields without changing safe references', async () => {
+    const safe = 'https://example.test/article?id=123#section-2';
+    for (const uri of [
+      'ftp://sentinel@archive.example.test/paper?edition=2#part',
+      'FTP://sentinel@ARCHIVE.EXAMPLE.TEST/paper',
+      'git+ssh://sentinel@[2001:db8::1]:22/repo',
+      'x.demo-1://sentinel@example.test/resource',
+      'wss://sentinel@example.test/socket',
+      'file://sentinel@example.test/document',
+      'sftp://%73entinel%3Aencoded@example.test/document',
+    ]) {
+      for (const entry of [
+        uri, `${uri} | high | Ordinary notes.`,
+        `Named source | ${uri} | high | Ordinary notes.`,
+        { url: uri }, { name: `Read ${uri} carefully` },
+        { title: `Read ${uri} carefully`, url: safe, credibility: `Reviewed ${uri}`,
+          note: `Before <${uri}> after.`, publisher: `Archive "${uri}"`,
+          publishedAt: `Published ${uri}`, accessedAt: `Accessed ${uri}` },
+      ]) {
+        const prepared = prepareAgentResearchReportInput({ ...base, sources: [entry] });
+        const repeated = prepareAgentResearchReportInput(prepared);
+        expect(repeated).toEqual(prepared);
+        expect(Object.isFrozen(prepared.sources[0])).toBe(true);
+        const store = new ResearchReportArtifactStore();
+        const result = await createAgentResearchReportTool(store).execute(repeated);
+        expect(result.success).toBe(true);
+        expect(JSON.stringify([prepared, result, store.records, [...store.contents.values()]])).not.toContain(uri);
+        expect(store.records[0]?.metadata.sources).toMatchObject([{ urlOmitted: true }]);
+      }
+    }
+    const prepared = prepareAgentResearchReportInput({ sources: [{ title: 'Source', url: safe,
+      note: 'Before <ftp://sentinel@example.test/document> after.', publisher: 'Archive "ftp://sentinel@example.test/document"' }] });
+    expect(prepared.sources[0]).toMatchObject({ url: safe, note: 'Before <[source URL withheld]> after.', publisher: 'Archive "[source URL withheld]"' });
+  });
+
+  test('preserves non-userinfo references and ordinary multiline prose exactly', async () => {
+    for (const uri of [
+      'ftp://archive.example.test/paper?edition=2#part',
+      'ftp://@archive.example.test/paper?edition=2#part',
+      'git+ssh://example.test/repo',
+      'custom://example.test/path/@author?q=name@example.test#anchor',
+      'custom://example.test?lookup=name@example.test',
+      'custom://example.test#name@example.test',
+      'custom://encoded%40name.example.test/resource',
+      'file:///docs/paper?edition=2#part',
+      'mailto:author@example.test',
+      'urn:example:author@example.test',
+      'author@example.test',
+    ]) {
+      const note = `Read <${uri}> carefully.\nWhat?! R&D and C#11 findings follow.\nhttps://example.test/guide?q=ordinary#anchor`;
+      const store = new ResearchReportArtifactStore();
+      const result = await createAgentResearchReportTool(store).execute({ ...base,
+        sources: [{ title: `Reference ${uri}`, note }] });
+      expect(result.success).toBe(true);
+      expect(store.records[0]?.metadata.sources).toMatchObject([{ title: `Reference ${uri}`, note }]);
+      expect((store.records[0]?.metadata.sources as Array<{ urlOmitted?: boolean }>)[0]?.urlOmitted).toBeUndefined();
+      expect(store.contents.get('artifact-1')).toContain(note);
+    }
+  });
+
+  test('contains declared control-split non-HTTP userinfo aliases without joining prose', async () => {
+    for (const control of ['\t', '\n', '\r', '"']) {
+      const uri = `ftp://sentinel@archive.example.test/doc${control}ument`;
+      const alias = uri.replace('ftp://sentinel@archive.example.test', 'FTP://sentinel@ARCHIVE.EXAMPLE.TEST');
+      const prepared = prepareAgentResearchReportInput({ ...base, sources: [
+        { title: `Read ${alias} carefully`, url: uri, note: `Before ${alias} after.` },
+        { title: 'Other source', note: `Compare ${alias}\nOrdinary prose follows.` },
+      ] });
+      const store = new ResearchReportArtifactStore();
+      const result = await createAgentResearchReportTool(store).execute(prepared);
+      expect(result.success).toBe(true);
+      expect(JSON.stringify([prepared, result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
+      expect(prepared.sources).toMatchObject([
+        { title: 'Read [source URL withheld] carefully', note: 'Before [source URL withheld] after.', urlOmitted: true },
+        { title: 'Other source', note: 'Compare [source URL withheld]\nOrdinary prose follows.', urlOmitted: true },
+      ]);
+    }
+  });
+
   for (const url of [
     'https://example.test/doc?token=sentinel',
     'https://example.test/doc?auth_token=sentinel',
@@ -327,7 +427,7 @@ describe('research report source containment', () => {
     });
   }
 
-  for (const url of ['https://example.test/doc?access_token=sentinel', 'https://example.test/doc?api_key=sentinel', 'https://sentinel:password@example.test/doc']) {
+  for (const url of ['https://example.test/doc?access_token=sentinel', 'https://example.test/doc?api_key=sentinel', 'https://sentinel:password@example.test/doc', 'ftp://user:sentinel@example.test/doc']) {
     test(`refuses declared credential syntax before storing a report: ${url}`, async () => {
       for (const entry of [url, { url }, { name: url, url }, { title: url, url, note: url }]) {
         const store = new ResearchReportArtifactStore();

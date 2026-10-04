@@ -14,6 +14,11 @@ export interface AgentResearchReportSource {
 
 const WITHHELD_URL = '[source URL withheld]';
 
+/** RFC 3986 sections 3.1/3.2: userinfo is delimited by @ inside //authority. */
+function hasUriUserinfo(value: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\/[^/?#]+@/i.test(value);
+}
+
 function literalReferencePattern(value: string, foldCase = false): string {
   return [...value].map((character) => foldCase && /[a-z]/i.test(character)
     ? `[${character.toLowerCase()}${character.toUpperCase()}]`
@@ -22,8 +27,8 @@ function literalReferencePattern(value: string, foldCase = false): string {
 
 /** Fold ASCII case only in scheme and hostname, never userinfo, path or query text. */
 function omittedReferencePattern(value: string): string {
-  const scheme = /^https?:/i.exec(value)?.[0] ?? '';
-  const authority = /^https?:\/\/([^/?#\\]*)/i.exec(value);
+  const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(value)?.[0] ?? '';
+  const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/?#\\]*)/i.exec(value);
   if (!authority) return literalReferencePattern(scheme, true) + literalReferencePattern(value.slice(scheme.length));
   const authorityText = authority[1]!;
   const hostStart = authority[0].length - authorityText.length + authorityText.lastIndexOf('@') + 1;
@@ -69,7 +74,7 @@ function omittedSourceReferences(values: readonly unknown[]): RegExp | undefined
   const urls = new Set<string>();
   for (const value of values) {
     const candidates = typeof value === 'string'
-      ? value.trim().replace(/^[-*]\s+/, '').split('|').map((part) => part.trim()).filter((part) => /^https?:/i.test(part))
+      ? value.trim().replace(/^[-*]\s+/, '').split('|').map((part) => part.trim()).filter((part) => /^https?:/i.test(part) || hasUriUserinfo(part))
       : value && typeof value === 'object' && !Array.isArray(value)
         ? [(value as Record<string, unknown>).url]
         : [];
@@ -78,7 +83,7 @@ function omittedSourceReferences(values: readonly unknown[]): RegExp | undefined
       const url = candidate.trim();
       // Contiguous candidates already reach citationUrl intact. These are the
       // declared references whose exact identity a prose delimiter would lose.
-      if (/[\s<>|]/.test(url) && citationUrl(url) === WITHHELD_URL) urls.add(url);
+      if (/[\s<>"|]/.test(url) && citationUrl(url) === WITHHELD_URL) urls.add(url);
     }
   }
   if (urls.size === 0) return undefined;
@@ -96,7 +101,13 @@ function sourceText(value: unknown, omittedReferences?: RegExp): string {
   // based on query-like punctuation or withhold their surrounding ordinary text.
   // Unbound control-split references need an explicit span/semantic screening
   // boundary; bounded tokens and aliases of declared references are handled here.
-  return text.replace(/https?:[^\s<>|]*/gi, (candidate) => citationUrl(candidate));
+  // A literal scheme://authority gives userinfo a structural meaning without
+  // guessing query-parameter roles. Keep benign non-HTTP references byte-for-byte;
+  // no parser repair or whole-field omission is needed. Start once per scheme
+  // run so a long ordinary word cannot cause quadratic candidate scanning.
+  const projected = text.replace(/(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^\s<>"|]*/gi,
+    (candidate) => !/^https?:/i.test(candidate) && hasUriUserinfo(candidate) ? WITHHELD_URL : candidate);
+  return projected.replace(/https?:[^\s<>|]*/gi, (candidate) => citationUrl(candidate));
 }
 
 function source(value: unknown, omittedReferences?: RegExp): AgentResearchReportSource | null {
