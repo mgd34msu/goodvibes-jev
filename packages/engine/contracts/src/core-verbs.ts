@@ -430,6 +430,13 @@ export interface ScopedVerbExemption {
 }
 
 export const SCOPED_EXEMPT_VERB_CATEGORIES: Readonly<Record<string, ScopedVerbExemption>> = {
+  'work-ledger-legacy-import': {
+    namespaces: ['workLedger'],
+    verbs: ['prepareLegacyImport', 'importLegacy'],
+    // The read-only source capture and atomic, exact-request-replay import
+    // form one bounded migration protocol. Neither verb is generic CRUD or
+    // execution authority; keep this vocabulary confined to the work ledger.
+  },
   'work-ledger-event-history': {
     namespaces: ['workLedger'],
     verbs: ['history'],

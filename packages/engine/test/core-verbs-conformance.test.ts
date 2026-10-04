@@ -122,6 +122,20 @@ describe('core-verbs conformance', () => {
     expect(classifyVerb('sessions.history').kind).toBe('unclassified');
   });
 
+  test('legacy import vocabulary is scoped to the work ledger', () => {
+    for (const verb of ['prepareLegacyImport', 'importLegacy']) {
+      expect(classifyVerb(`workLedger.${verb}`)).toEqual({
+        kind: 'exempt', verb, category: 'work-ledger-legacy-import',
+      });
+      expect(classifyVerb(`workLedgerExtra.${verb}`).kind).toBe('unclassified');
+      expect(classifyVerb(`sessions.${verb}`).kind).toBe('unclassified');
+    }
+    expect(OPERATOR_METHOD_IDS.filter((id) => {
+      const classification = classifyVerb(id);
+      return classification.kind === 'exempt' && classification.category === 'work-ledger-legacy-import';
+    })).toEqual(['workLedger.importLegacy', 'workLedger.prepareLegacyImport']);
+  });
+
   test('every scoped exemption names at least one live method id', () => {
     const stale: string[] = [];
     for (const [category, exemption] of Object.entries(SCOPED_EXEMPT_VERB_CATEGORIES)) {

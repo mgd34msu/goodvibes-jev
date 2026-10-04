@@ -1,3 +1,4 @@
+import { projectLegacyImportWorks, validateLegacyWorkLedgerManifest } from './legacy-import.js';
 import { enum as enumSchema, strictObject, string } from 'zod/v4';
 import {
   workLedgerCommandSchema, workLedgerStateSchema, WorkLedgerAccessError,
@@ -6,7 +7,7 @@ import {
   type WorkLedgerClock, type WorkLedgerCommand, type WorkLedgerEvent,
   type WorkLedgerHostIdentity, type WorkLedgerRejection, type WorkLedgerResult,
   type WorkLedgerService, type WorkLedgerSnapshot, type WorkLedgerState,
-  type WorkLedgerStorage, type WorkLedgerView,
+  type WorkLedgerStorage, type WorkLedgerView, type WorkLedgerTransactionContext, type LedgerEvidence,
 } from './types.js';
 
 const identitySchema = strictObject({
@@ -14,6 +15,18 @@ const identitySchema = strictObject({
   projectId: string().min(1).max(200),
   role: enumSchema(['coordinator', 'worker', 'verifier']),
 });
+
+const nativeAbortState = Object.getOwnPropertyDescriptor(AbortSignal.prototype, 'aborted')?.get;
+
+/** Observe a standard host signal without invoking its shadowed public getter. */
+function readNativeAbortState(signal: AbortSignal | undefined): boolean {
+  if (!signal || !nativeAbortState) return false;
+  try { return nativeAbortState.call(signal) === true; } catch {
+    // Structural host/test signals have no native slot. Their ordinary
+    // accessor is still observed before the final authorization callback.
+    return false;
+  }
+}
 
 export function createEmptyWorkLedgerState(projectId: string): WorkLedgerState {
   return workLedgerStateSchema.parse({
@@ -53,11 +66,30 @@ function readState(input: unknown, projectId: string): WorkLedgerState {
   // receipts detached from the history they claim to acknowledge.
   const works = new Map<string, LedgerWork>();
   const attempts = new Map<string, LedgerAttempt>();
-  const evidence = new Map<string, WorkLedgerEvent['evidence']>();
+  const evidence = new Map<string, LedgerEvidence>();
   const equal = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
+  const importedEntities = new Set<string>();
   for (const [index, event] of state.history.entries()) {
-    const prior = works.get(event.workId);
+    if (event.at < (state.history[index - 1]?.at ?? 0)) throw new Error('Invalid history clock');
     const receipt = state.receipts[index];
+    if (event.type === 'import_legacy') {
+      if (!receipt || receipt.actorId !== event.actorId || receipt.requestId !== event.requestId || !equal(receipt.event, event)) throw new Error('Invalid import receipt');
+      const signature = strictObject({ role: identitySchema.shape.role, command: workLedgerCommandSchema }).parse(JSON.parse(receipt.signature));
+      const command = signature.command;
+      if (signature.role !== 'coordinator' || command.type !== 'import_legacy' || JSON.stringify(signature) !== receipt.signature
+        || command.requestId !== event.requestId || command.expectedRevision !== index
+        || command.manifest.expectedLedgerRevision !== index || command.manifest.projectId !== projectId
+        || !equal(command.manifest, event.manifest) || !equal(projectLegacyImportWorks(event.manifest, event.at), event.works)
+        || event.works.some(work => works.has(work.id) || attempts.has(work.id) || evidence.has(work.id))) throw new Error('Invalid import history');
+      for (const entity of event.manifest.entities) {
+        const key = JSON.stringify([entity.kind, entity.id]);
+        if (importedEntities.has(key)) throw new Error('Duplicate imported identity');
+        importedEntities.add(key);
+      }
+      for (const work of event.works) works.set(work.id, work);
+      continue;
+    }
+    const prior = works.get(event.workId);
     if (!receipt || receipt.actorId !== event.actorId || receipt.requestId !== event.requestId
       || !equal(receipt.event, event) || event.work.id !== event.workId
       || event.attemptId !== event.work.currentAttemptId
@@ -71,7 +103,7 @@ function readState(input: unknown, projectId: string): WorkLedgerState {
     const signature = strictObject({ role: identitySchema.shape.role, command: workLedgerCommandSchema }).parse(JSON.parse(receipt.signature));
     const command = signature.command;
     if (JSON.stringify(signature) !== receipt.signature || command.requestId !== event.requestId
-      || command.type !== event.type || command.expectedRevision !== index
+      || command.type === 'import_legacy' || command.type !== event.type || command.expectedRevision !== index
       || (command.type !== 'create' && (command.type === 'record_evidence' ? command.target.workId : command.workId) !== event.workId)) {
       throw new Error('Inconsistent work ledger receipt command');
     }
@@ -157,6 +189,8 @@ function rejected(code: WorkLedgerRejection, reason: string, revision: number | 
  */
 export function createWorkLedger(options: {
   readonly projectId: string;
+  /** Host-issued binding for new imports. Exact durable retries survive host restarts. */
+  readonly importHostId?: string;
   readonly storage: WorkLedgerStorage;
   readonly clock: WorkLedgerClock;
 }): { readonly service: WorkLedgerService; readonly authority: WorkLedgerAuthority } {
@@ -209,7 +243,7 @@ export function createWorkLedger(options: {
     },
   };
 
-  function reduce(state: WorkLedgerState, command: WorkLedgerCommand, actor: WorkLedgerHostIdentity): WorkLedgerResult {
+  function reduce(state: WorkLedgerState, command: WorkLedgerCommand, actor: WorkLedgerHostIdentity, context?: WorkLedgerTransactionContext): WorkLedgerResult {
     const signature = JSON.stringify({ role: actor.role, command });
     const receipt = state.receipts.find(r => r.actorId === actor.actorId && r.requestId === command.requestId);
     if (receipt) return receipt.signature === signature
@@ -219,9 +253,40 @@ export function createWorkLedger(options: {
     if (state.revision === Number.MAX_SAFE_INTEGER) throw new Error('Work ledger revision exhausted');
     const at = clock.now();
     if (!Number.isSafeInteger(at) || at < 0 || at < (state.history.at(-1)?.at ?? 0)) throw new Error('Invalid host ledger clock');
+    if (command.type === 'import_legacy') {
+      if (actor.role !== 'coordinator') return rejected('forbidden', 'Only the coordinator can import historical work.', state.revision);
+      const manifest = command.manifest;
+      if (!options.importHostId || manifest.hostId !== options.importHostId || manifest.projectId !== projectId
+        || manifest.expectedLedgerRevision !== command.expectedRevision) return rejected('conflict', 'Selected host, project or reviewed ledger revision changed.', state.revision);
+      if (!context) return rejected('host_error', 'Authoritative transactional source snapshots are unavailable.', state.revision);
+      const captures = manifest.sources.map(entry => {
+        const current = context.readSource(String(entry.source.id));
+        return { source: current.source, generation: current.generation };
+      });
+      try {
+        validateLegacyWorkLedgerManifest({ ...manifest, sources: captures.map((entry, index) => ({ ...entry, digest: manifest.sources[index]!.digest })) });
+      } catch { return rejected('stale_source', 'Complete persisted source images changed since preparation.', state.revision); }
+      const imported = projectLegacyImportWorks(manifest, at);
+      const oldEntities = new Set(state.history.flatMap(event => event.type === 'import_legacy'
+        ? event.manifest.entities.map(entity => JSON.stringify([entity.kind, entity.id])) : []));
+      if (manifest.entities.some(entity => oldEntities.has(JSON.stringify([entity.kind, entity.id])))
+        || imported.some(work => state.works.some(value => value.id === work.id) || state.attempts.some(value => value.id === work.id) || state.evidence.some(value => value.id === work.id))) {
+        return rejected('conflict', 'An imported identity already exists; reconcile the original request receipt.', state.revision);
+      }
+      const event: WorkLedgerEvent = { type: 'import_legacy', sequence: state.revision + 1, actorId: actor.actorId,
+        requestId: command.requestId, at, manifest, works: imported };
+      // One full event must always fit the existing history transport without truncation.
+      if (new TextEncoder().encode(JSON.stringify(event)).byteLength > 524_288) return rejected('invalid_command', 'Import history event exceeds the bounded transport limit.', state.revision);
+      state.works.push(...imported);
+      if (new TextEncoder().encode(JSON.stringify(snapshot(state, actor))).byteLength > 1_000_000) return rejected('invalid_command', 'Imported snapshot exceeds the bounded read transport limit.', state.revision);
+      state.revision += 1;
+      state.history.push(event);
+      state.receipts.push({ actorId: actor.actorId, requestId: command.requestId, signature, event });
+      return { kind: 'accepted', replayed: false, event };
+    }
     const changed: LedgerAttempt[] = [];
     const createdAttempts = new Set<string>();
-    let evidence: WorkLedgerEvent['evidence'] = null;
+    let evidence: LedgerEvidence | null = null;
     const reason: string | null = 'reason' in command ? command.reason : null;
     let work: LedgerWork;
     const nextId = (kind: 'work' | 'attempt' | 'evidence') => {
@@ -429,25 +494,26 @@ export function createWorkLedger(options: {
       const parsed = workLedgerCommandSchema.safeParse(input);
       if (!parsed.success) return Promise.resolve(rejected('invalid_command', parsed.error.message, null));
       const command = parsed.data;
+      if (command.type === 'import_legacy') command.manifest = validateLegacyWorkLedgerManifest(command.manifest);
       const signal = executeOptions?.signal;
       const actorId = requireIdentity(actor).actorId;
-      const operation = Promise.resolve().then(() => storage.transaction(current => {
+      const operation = Promise.resolve().then(() => storage.transaction((current, context) => {
         let state: WorkLedgerState;
         try { state = readState(current, projectId); } catch {
           return { next: null, value: rejected('invalid_state', 'Authoritative ledger state is invalid; it was not reset.', null) };
         }
-        if (!identity(actor)) return { next: null, value: rejected('forbidden', 'Host actor was revoked before commit.', state.revision) };
+        if ((executeOptions?.isAuthorized && executeOptions.isAuthorized() !== true) || !identity(actor)) return { next: null, value: rejected('forbidden', 'Host actor was revoked before commit.', state.revision) };
         // A known durable receipt wins over a later abort: never describe an
         // already committed command as cancelled when reconciling its outcome.
         if (state.receipts.some(receipt => receipt.actorId === requireIdentity(actor).actorId && receipt.requestId === command.requestId)) {
-          return { next: null, value: reduce(state, command, requireIdentity(actor)) };
+          return { next: null, value: reduce(state, command, requireIdentity(actor), context) };
         }
         if (signal?.aborted) return { next: null, value: rejected('cancelled', 'Command was cancelled before commit.', state.revision) };
         const initialRevision = state.revision;
         let result: WorkLedgerResult;
         let next: WorkLedgerState | null;
         try {
-          result = reduce(state, command, requireIdentity(actor));
+          result = reduce(state, command, requireIdentity(actor), context);
           next = result.kind === 'accepted' && !result.replayed ? readState(state, projectId) : null;
         } catch {
           return { next: null, value: rejected('host_error', 'Host clock, identity generation or transition validation failed before commit.', initialRevision) };
@@ -457,8 +523,13 @@ export function createWorkLedger(options: {
         // Read the extensible signal accessor before the final identity check:
         // a host-provided getter can itself synchronously revoke the actor.
         const aborted = signal?.aborted;
-        if (!identity(actor)) return { next: null, value: rejected('forbidden', 'Host actor was revoked before commit.', initialRevision) };
-        if (aborted) return { next: null, value: rejected('cancelled', 'Command was cancelled before commit.', initialRevision) };
+        const authorized = !executeOptions?.isAuthorized || executeOptions.isAuthorized() === true;
+        // Authorization itself may synchronously cancel a genuine host signal.
+        // Do not call its extensible getter again after sampling authorization:
+        // that would reopen the inverse getter-to-revocation race above.
+        const nativelyAborted = readNativeAbortState(signal);
+        if (!authorized || !identity(actor)) return { next: null, value: rejected('forbidden', 'Host actor was revoked before commit.', initialRevision) };
+        if (aborted || nativelyAborted) return { next: null, value: rejected('cancelled', 'Command was cancelled before commit.', initialRevision) };
         return { next, value: result };
       })).catch((): WorkLedgerResult => ({ kind: 'indeterminate', requestId: command.requestId, actorId,
         reason: 'Storage outcome is unknown. Reconcile by exact retry against the authoritative store.' }));

@@ -157,7 +157,7 @@ for (const phase of ['before-rename', 'after-rename', 'after-directory-sync'] as
     } else {
       expect(readFileSync(dbPath)).not.toEqual(originalBytes);
       expect(recovered.state.revision).toBe(2);
-      expect(recovered.state.history[1]?.workId).toBe('interrupted-owner-work-1');
+      expect(recovered.state.history[1]).toMatchObject({ workId: 'interrupted-owner-work-1' });
       expect(recovered.state.receipts[1]?.event).toEqual(recovered.state.history[1]);
     }
     const retry = await completed(start(root, { dbPath, projectId, command, label: 'retry-owner', now: 300 }));

@@ -1,5 +1,5 @@
 import { createLocalWorkLedgerReadBinding } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
-import { registerWorkLedgerGatewayMethods } from '@goodvibes-jev/engine/sdk/platform/control-plane';
+import { registerWorkLedgerGatewayMethods, registerWorkLedgerImportGatewayMethods } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import { join } from 'node:path';
 import { ServiceRegistry, SubscriptionManager, ToolLLM, sharedSubscriptionsPath } from '@goodvibes-jev/engine/sdk/platform/config';
 import { AutomationDeliveryManager, AutomationManager } from '@goodvibes-jev/engine/sdk/platform/automation';
@@ -337,6 +337,8 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     // Request payloads can only verify this binding, never select a store or actor.
     const workLedgerReadBinding = createLocalWorkLedgerReadBinding({
       available: true, projectId: projectPlanningProjectId, actorId: 'host:operator-ledger-read',
+      // Gateway checks each request's read:knowledge scope before source provenance leaves the host.
+      allowLegacyProvenance: true,
       service: workLedgerOwner.service, authority: workLedgerOwner.authority,
     });
     if (!workLedgerReadBinding.available) throw new Error(workLedgerReadBinding.reason);
@@ -346,6 +348,11 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       try { workLedgerReader.dispose(); } finally { await workLedgerOwner.close(); }
     };
     registerWorkLedgerGatewayMethods(gatewayMethods, workLedgerReader);
+    registerWorkLedgerImportGatewayMethods(gatewayMethods, {
+      hostId: workLedgerOwner.importHostId, projectId: projectPlanningProjectId,
+      service: workLedgerOwner.service, authority: workLedgerOwner.authority,
+      readSource: id => knowledgeStore.getSourceSnapshot({ id }),
+    });
     const voiceProviders = new VoiceProviderRegistry();
     ensureBuiltinVoiceProviders(voiceProviders, { readConfig: (key) => configManager.get(key as Parameters<typeof configManager.get>[0]) });
     const voiceService = new VoiceService(voiceProviders);

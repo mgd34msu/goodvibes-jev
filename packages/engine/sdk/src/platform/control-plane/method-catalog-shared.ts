@@ -84,6 +84,9 @@ export interface GatewayMethodInvocationContext {
 }
 
 export interface GatewayMethodInvocation {
+  /** Trusted transport lifecycle and live authorization; never parsed from payloads. */
+  readonly signal?: AbortSignal | undefined;
+  readonly isAuthorized?: ((requiredScopes?: readonly string[]) => boolean) | undefined;
   readonly body?: unknown | undefined;
   readonly query?: Record<string, unknown> | undefined;
   readonly context: GatewayMethodInvocationContext;

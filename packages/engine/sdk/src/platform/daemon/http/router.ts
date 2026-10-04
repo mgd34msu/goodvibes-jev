@@ -163,6 +163,7 @@ interface DaemonHttpRouterContext {
   readonly invokeGatewayMethodCall: (input: {
     readonly authToken: string;
     readonly methodId: string;
+    readonly signal?: AbortSignal | undefined;
     readonly query?: Record<string, unknown> | undefined;
     readonly body?: unknown | undefined;
     readonly context?: {

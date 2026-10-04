@@ -55,6 +55,8 @@ function route(method: string, template: string, methodId: string): GatewayRestR
  * bindings (the reconcile gate enforces it).
  */
 export const GATEWAY_REST_ROUTES: readonly GatewayRestRoute[] = [
+  route('POST', '/api/work-ledger/legacy-import/prepare', 'workLedger.prepareLegacyImport'),
+  route('POST', '/api/work-ledger/legacy-import', 'workLedger.importLegacy'),
   route('GET', '/api/work-ledger/snapshot', 'workLedger.snapshot'),
   route('GET', '/api/work-ledger/history', 'workLedger.history'),
   // skills.*

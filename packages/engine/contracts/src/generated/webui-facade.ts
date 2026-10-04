@@ -10,7 +10,7 @@ import type { OperatorMethodId } from './operator-method-ids.js';
  * call sites) hand-written on top of these generated primitives.
  *
  * Contract product version: 2.0.23
- * Methods: 516 total, 444 REST-routed, 72 ws-only invoke.
+ * Methods: 518 total, 446 REST-routed, 72 ws-only invoke.
  */
 
 export type WebuiHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -1788,6 +1788,14 @@ export const WEBUI_METHOD_ROUTES: Readonly<Record<string, WebuiRouteDefinition>>
     "method": "GET",
     "path": "/api/work-ledger/history"
   },
+  "workLedger.importLegacy": {
+    "method": "POST",
+    "path": "/api/work-ledger/legacy-import"
+  },
+  "workLedger.prepareLegacyImport": {
+    "method": "POST",
+    "path": "/api/work-ledger/legacy-import/prepare"
+  },
   "workLedger.snapshot": {
     "method": "GET",
     "path": "/api/work-ledger/snapshot"
@@ -2404,6 +2412,8 @@ export const WEBUI_METHOD_DISPOSITION: Readonly<Record<string, WebuiMethodDispos
   "web_search.providers.list": "rest",
   "web_search.query": "rest",
   "workLedger.history": "rest",
+  "workLedger.importLegacy": "rest",
+  "workLedger.prepareLegacyImport": "rest",
   "workLedger.snapshot": "rest",
   "workspaces.registrations.add": "rest",
   "workspaces.registrations.list": "rest",
@@ -24691,6 +24701,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "afterSequence": 0,
       "cursor": 0,
       "throughSequence": 0,
+      "provenance": "available",
       "hasMore": false,
       "events": [
         {
@@ -24765,6 +24776,99 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       ]
     }
   },
+  "workLedger.importLegacy": {
+    "input": {
+      "type": "import_legacy",
+      "requestId": "sample",
+      "expectedRevision": 0,
+      "manifest": {}
+    },
+    "output": {
+      "kind": "accepted",
+      "replayed": false,
+      "event": {
+        "sequence": 0,
+        "type": "create",
+        "actorId": "sample",
+        "requestId": "sample",
+        "workId": "sample",
+        "attemptId": "sample",
+        "at": 0,
+        "work": {
+          "id": "sample",
+          "title": "sample",
+          "goal": "sample",
+          "criteria": [
+            "sample"
+          ],
+          "revision": 0,
+          "criteriaRevision": 0,
+          "reportedState": "pending",
+          "currentAttemptId": "sample",
+          "createdAt": 0,
+          "updatedAt": 0
+        },
+        "attempts": [
+          {
+            "id": "sample",
+            "workId": "sample",
+            "predecessorId": "sample",
+            "ownerId": "sample",
+            "revision": 0,
+            "state": "active",
+            "report": "sample",
+            "blocker": "sample",
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        ],
+        "evidence": {
+          "id": "sample",
+          "target": {
+            "workId": "sample",
+            "workRevision": 0,
+            "criteriaRevision": 0,
+            "attemptId": "sample",
+            "attemptRevision": 0
+          },
+          "outcome": "verified",
+          "reason": "sample",
+          "references": [
+            {
+              "kind": "decision",
+              "ref": "sample",
+              "digest": "sample"
+            }
+          ],
+          "source": "host_check",
+          "criteriaResults": [
+            {
+              "criterionIndex": 0,
+              "status": "satisfied",
+              "references": [
+                "sample"
+              ]
+            }
+          ],
+          "actorId": "sample",
+          "at": 0
+        },
+        "reason": "sample"
+      }
+    }
+  },
+  "workLedger.prepareLegacyImport": {
+    "input": {
+      "projectId": "sample",
+      "sourceIds": [
+        "sample"
+      ]
+    },
+    "output": {
+      "kind": "prepared",
+      "manifest": {}
+    }
+  },
   "workLedger.snapshot": {
     "input": {
       "projectId": "sample"
@@ -24773,6 +24877,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "projectId": "sample",
       "revision": 0,
       "cursor": 0,
+      "provenance": "available",
       "works": [
         {
           "work": {
