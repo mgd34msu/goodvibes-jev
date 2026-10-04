@@ -1,3 +1,4 @@
+import { withCapturedPublication } from './captured-publication.js';
 import { isCapturedRegistryTool } from '../registry-tool/index.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 /** Defense-in-depth around the actual captured-view tool implementations. */
@@ -168,7 +169,10 @@ export function capturedInputTool(
                   `captured ${name} requires an original-owner-authorized backend; this workflow is not yet available`,
                 );
               }
-              const result = await tool.execute(args, options);
+              const publicationSignal = signal && options?.signal ? AbortSignal.any([signal, options.signal]) : signal ?? options?.signal;
+              const result = name === 'write' || name === 'edit' || (name === 'inspect' && args.mode === 'scaffold' && args.dryRun === false)
+                ? await withCapturedPublication(authority, () => tool.execute(args, options), publicationSignal)
+                : await tool.execute(args, options);
               await assertContractInputAuthority(authority, root, signal);
               options?.signal?.throwIfAborted();
               // No content, cached output, diagnostics or errors leave after revocation.

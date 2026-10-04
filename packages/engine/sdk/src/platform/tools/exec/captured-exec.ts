@@ -1,3 +1,8 @@
+import { executePolicyCheck } from '../../gate/execute-policy-check.js';
+import { publishCapturedProjection } from './captured-exec-publication.js';
+import { executeCapturedFileOperations } from './captured-exec-file-ops.js';
+import { compileSafeRegExp, safeRegExpTest } from '../../utils/safe-regex.js';
+import { runInteractiveCommand, type ExecInteractionRuntime } from './interactive.js';
 import { projectCapturedExecDependencies, type CapturedExecDependencyInput } from './captured-exec-dependencies.js';
 /** Commands see a permission-filtered disposable copy, never the host workspace.
  * This is a filesystem boundary, not another command/risk/retry evaluator.
@@ -6,7 +11,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, existsSync, openSync } from 'node:fs';
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   assertContractInputAuthority,
   authorizeContractInputPath,
@@ -15,7 +20,7 @@ import {
 } from '../../contract/input-authority.js';
 import { CONTRACT_INPUT_EXCLUSIONS } from '../../contract/input-snapshot.js';
 import type { ReadAccessFilter } from '../shared/read-access.js';
-import type { ExecCommandInput, ExecCommandResult } from './schema.js';
+import type { ExecCommandInput, ExecCommandResult, ExecFileOp } from './schema.js';
 
 export interface CapturedExecAuthority {
   readonly dependencyInputs?: readonly CapturedExecDependencyInput[] | undefined;
@@ -95,6 +100,18 @@ function within(root: string, path: string): boolean {
   return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`);
 }
 
+export interface CapturedExecutionLease {
+  readonly pid: number;
+  readonly readOutput: () => Promise<ExecCommandResult>;
+}
+export interface CapturedExecutionObserver {
+  readonly fileOps?: ExecFileOp[] | undefined;
+  readonly onFileOperations?: ((result: Awaited<ReturnType<typeof executeCapturedFileOperations>>) => void) | undefined;
+  readonly interaction?: ExecInteractionRuntime | undefined;
+  readonly onUntilMatched?: (() => void) | undefined;
+  readonly onStarted?: ((lease: CapturedExecutionLease) => void) | undefined;
+}
+
 export async function runCapturedCommand(
   binding: CapturedExecAuthority,
   command: string,
@@ -104,30 +121,38 @@ export async function runCapturedCommand(
   signal?: AbortSignal,
   network: 'enabled' | 'disabled' = 'disabled',
   ambientEnvironment: Readonly<Record<string, string>> = {},
+  observer: CapturedExecutionObserver = {},
 ): Promise<ExecCommandResult> {
   binding = Object.freeze({ ...binding, dependencyInputs: binding.dependencyInputs ? Object.freeze([...binding.dependencyInputs]) : undefined });
   input = structuredClone(input);
+  observer = { ...observer, fileOps: observer.fileOps ? structuredClone(observer.fileOps) : undefined };
   const start = Date.now();
   const root = resolve(binding.root);
   const cwd = resolve(workingDirectory, input.cwd ?? '.');
   const combined = binding.signal && signal ? AbortSignal.any([binding.signal, signal]) : binding.signal ?? signal;
+  const operations = new AbortController();
+  const operationSignal = combined ? AbortSignal.any([combined, operations.signal]) : operations.signal;
   let temporary: string | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let monitor: ReturnType<typeof setInterval> | undefined;
   let killed = false;
   let timedOut = false;
   let invalid = false;
+  let untilMatched = false;
   let validation: Promise<void> = Promise.resolve();
   let validating = false;
   let stop = (): void => {};
+  let childCompletion: Promise<number | null> | undefined;
   const paths = new Set<string>();
   let checkDependencies = async (): Promise<void> => {};
-  const check = async (): Promise<void> => {
+  const authorize = (path: string): Promise<string> => executePolicyCheck(
+    () => authorizeContractInputPath(binding.authority, path, binding.readAccessFilter, operationSignal), operationSignal);
+  const check = async (): Promise<void> => executePolicyCheck(async () => {
     if (!binding.readAccessFilter) throw new Error('captured exec requires original-owner read authorization');
     await assertContractInputAuthority(binding.authority, root, combined);
-    for (const path of paths) await authorizeContractInputPath(binding.authority, path, binding.readAccessFilter, combined);
+    for (const path of paths) await authorize(path);
     await checkDependencies();
-  };
+  }, operationSignal);
   try {
     if (!within(root, resolve(workingDirectory)) || !within(root, cwd)) throw new Error('outside captured working directory');
     if (['/usr', '/bin', '/lib', '/lib64', '/proc', '/dev'].some((path) => within(path, root) || within(root, path)))
@@ -138,41 +163,49 @@ export async function runCapturedCommand(
       stderr: 'Captured exec does not support stdin/input options; use a shell pipe or an authorized input file.',
       captured_exec_unsupported_options: unsupported,
     };
-    if (input.background || input.until || input.interactive) throw new Error('captured exec requires a bounded foreground command');
+    if (input.background) throw new Error('captured background must be retained by its ProcessManager owner');
+    const untilPattern = input.until ? compileSafeRegExp(input.until.pattern, '', { operation: 'exec until pattern' }) : undefined;
     await check();
     const availability = await probeCapturedExecAvailability();
     await check();
     if (!availability.available) return { cmd: command, cwd, exit_code: null, stdout: '', stderr: availability.message, success: false, denied: true,
       sandboxed: false, sandbox_boundary: 'captured boundary unavailable', captured_exec_availability: availability, duration_ms: Date.now() - start };
-    if (cwd !== root) await authorizeContractInputPath(binding.authority, cwd, binding.readAccessFilter, combined);
+    if (cwd !== root) await authorize(cwd);
     temporary = await mkdtemp(join(tmpdir(), 'goodvibes-captured-exec-'));
     const projection = join(temporary, 'view');
     await mkdir(projection);
     const originals = new Map<string, { data: Buffer; mode: number }>();
+    const originalDirectories = new Map<string, number>();
     let bytes = 0;
     const populate = async (dir: string): Promise<void> => {
       for (const entry of await readdir(join(root, dir), { withFileTypes: true })) {
         if (CONTRACT_INPUT_EXCLUSIONS.includes(entry.name as typeof CONTRACT_INPUT_EXCLUSIONS[number])) continue;
         const rel = join(dir, entry.name);
         const source = join(root, rel);
-        try { await authorizeContractInputPath(binding.authority, source, binding.readAccessFilter, combined); }
+        try { await authorize(source); }
         catch { await assertContractInputAuthority(binding.authority, root, combined); continue; }
         const stat = await lstat(source);
-        if (stat.isDirectory()) { await mkdir(join(projection, rel), { recursive: true }); await populate(rel); }
+        if (stat.isDirectory()) { originalDirectories.set(rel, stat.mode & 0o777); await mkdir(join(projection, rel), { recursive: true, mode: stat.mode & 0o777 }); await chmod(join(projection, rel), stat.mode & 0o777); await populate(rel); }
         else if (stat.isFile() && !stat.isSymbolicLink()) {
           if (stat.size > 32 * 1024 * 1024 || bytes + stat.size > MAX_BYTES) throw new Error('captured input exceeds byte limit');
           const data = await readFile(source);
-          await authorizeContractInputPath(binding.authority, source, binding.readAccessFilter, combined);
+          await authorize(source);
           paths.add(source);
           bytes += data.length;
           if (originals.size >= MAX_FILES || bytes > MAX_BYTES) throw new Error('captured projection exceeds resource limit');
           originals.set(rel, { data, mode: stat.mode & 0o777 });
           await writeFile(join(projection, rel), data, { mode: stat.mode & 0o777 });
+          await chmod(join(projection, rel), stat.mode & 0o777);
         }
       }
     };
     await populate('');
-    const dependencies = await projectCapturedExecDependencies(binding, temporary, combined, projection);
+    if (observer.fileOps?.some((operation) => operation.op !== 'delete' || !operation.dry_run) && !contractInputAuthorityMutable(binding.authority))
+      throw new Error('immutable captured input cannot apply file operations');
+    const fileOperations = await executeCapturedFileOperations(root, projection, observer.fileOps,
+      authorize);
+    observer.onFileOperations?.(fileOperations);
+    const dependencies = await executePolicyCheck(() => projectCapturedExecDependencies(binding, temporary!, operationSignal, projection), operationSignal);
     checkDependencies = dependencies.check;
     await check();
     const filterPath = join(temporary, 'sockets.bpf');
@@ -182,90 +215,136 @@ export async function runCapturedCommand(
     argv.push(contractInputAuthorityMutable(binding.authority) ? '--bind' : '--ro-bind', projection, root,
       '--chdir', cwd, '--seccomp', '3');
     for (const mount of dependencies.mounts) argv.push('--ro-bind', mount.source, mount.target);
-    argv.push('--', '/bin/sh', '-c', command);
-    let child: ReturnType<typeof spawn>;
-    try {
-      combined?.throwIfAborted();
-      child = spawn('/usr/bin/bwrap', argv, {
-        // Preserve the existing scrubbed ambient + explicit override contract.
-        // Only ambient path defaults are rebased into the captured filesystem;
-        // an explicit per-command override remains the caller's opt-in.
-        env: { ...ambientEnvironment, PATH: '/captured-runtime/bin:/usr/bin:/bin', HOME: '/home/captured', TMPDIR: '/tmp', LANG: ambientEnvironment.LANG ?? 'C.UTF-8', ...input.env },
-        stdio: ['ignore', 'pipe', 'pipe', fd],
-      });
-    } finally { closeSync(fd); }
-    stop = () => { killed = true; child.kill('SIGKILL'); };
-    const onAbort = (): void => { invalid = true; stop(); };
-    combined?.addEventListener('abort', onAbort, { once: true });
-    if (combined?.aborted) onAbort();
-    timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
+    const environment = { ...ambientEnvironment, PATH: '/captured-runtime/bin:/usr/bin:/bin', HOME: '/home/captured', TMPDIR: '/tmp', LANG: ambientEnvironment.LANG ?? 'C.UTF-8', ...input.env };
+    const boundaryStop = new AbortController();
+    const executionSignal = combined ? AbortSignal.any([combined, boundaryStop.signal]) : boundaryStop.signal;
+    stop = () => { killed = true; operations.abort(); boundaryStop.abort(); };
     monitor = setInterval(() => {
       if (validating) return;
       validating = true;
       validation = check().catch(() => { invalid = true; stop(); }).finally(() => { validating = false; });
     }, 50);
     let stdout = ''; let stderr = '';
-    const capture = (data: Buffer, output: 'stdout' | 'stderr'): void => {
-      if (output === 'stdout') stdout += data.toString(); else stderr += data.toString();
-      if (stdout.length + stderr.length > MAX_OUTPUT) { invalid = true; stop(); }
-    };
-    child.stdout!.on('data', (data: Buffer) => capture(data, 'stdout'));
-    child.stderr!.on('data', (data: Buffer) => capture(data, 'stderr'));
-    const exitCode = await new Promise<number | null>((resolveExit, reject) => {
-      child.once('error', reject); child.once('close', resolveExit);
-    }).finally(() => { clearInterval(monitor); clearTimeout(timer); combined?.removeEventListener('abort', onAbort); });
+    let exitCode: number | null;
+    let modeResult: ExecCommandResult | undefined;
+    if (observer.interaction) {
+      try {
+        modeResult = await runInteractiveCommand({
+          cmdStr: command, cwd: undefined, env: environment, timeoutMs, startTime: start,
+          sandboxArgv: ['/usr/bin/bwrap', ...argv, '--'], interaction: observer.interaction,
+          signal: executionSignal, extraStdio: [fd], beforeOutput: check, maxOutputChars: MAX_OUTPUT,
+        });
+        stdout = modeResult.stdout; stderr = modeResult.stderr; exitCode = modeResult.exit_code;
+        timedOut = modeResult.timed_out === true;
+        killed = killed || timedOut || modeResult.cancelled === true;
+        if (killed) operations.abort();
+      } finally { closeSync(fd); clearInterval(monitor); }
+    } else {
+      argv.push('--', '/bin/sh', '-c', command);
+      let child: ReturnType<typeof spawn>;
+      try {
+        executionSignal.throwIfAborted();
+        child = spawn('/usr/bin/bwrap', argv, { env: environment, stdio: ['ignore', 'pipe', 'pipe', fd] });
+      } finally { closeSync(fd); }
+      childCompletion = new Promise<number | null>((resolveExit, reject) => {
+        child.once('error', reject); child.once('close', resolveExit);
+      });
+      void childCompletion.catch(() => {});
+      stop = () => { killed = true; operations.abort(); child.kill('SIGKILL'); };
+      const onAbort = (): void => { invalid = true; stop(); };
+      executionSignal.addEventListener('abort', onAbort, { once: true });
+      if (executionSignal.aborted) onAbort();
+      const timeout = (): void => { timedOut = true; stop(); };
+      timer = setTimeout(timeout, input.until?.timeout_ms ?? timeoutMs);
+      const capture = (data: Buffer, output: 'stdout' | 'stderr'): void => {
+        if (output === 'stdout') stdout += data.toString(); else stderr += data.toString();
+        if (stdout.length + stderr.length > MAX_OUTPUT) { invalid = true; stop(); }
+        try {
+          if (untilPattern && !untilMatched && safeRegExpTest(untilPattern, stdout + stderr, { operation: 'exec until pattern', maxInputChars: 500_000 })) {
+            untilMatched = true;
+            clearTimeout(timer);
+            if (input.until?.kill_after) child.kill('SIGKILL');
+            else timer = setTimeout(timeout, timeoutMs);
+            observer.onUntilMatched?.();
+          }
+        } catch { invalid = true; stop(); }
+      };
+      child.stdout!.on('data', (data: Buffer) => capture(data, 'stdout'));
+      child.stderr!.on('data', (data: Buffer) => capture(data, 'stderr'));
+      observer.onStarted?.({ pid: child.pid!, readOutput: async () => {
+        await check();
+        const snapshot = { cmd: command, cwd, exit_code: child.exitCode, stdout, stderr, success: true, sandboxed: true };
+        await check();
+        return snapshot;
+      } });
+      exitCode = await childCompletion.finally(() => { clearInterval(monitor); clearTimeout(timer); executionSignal.removeEventListener('abort', onAbort); });
+    }
     await validation;
     await check();
     if (invalid) throw new Error('authority changed');
     if (killed) return { cmd: command, cwd, exit_code: null, stdout: '', stderr: '', success: false, timed_out: timedOut, duration_ms: Date.now() - start };
     const changes = new Map<string, { data: Buffer; mode: number }>();
     const present = new Set<string>();
+    const directories = new Map<string, number>();
     let resultBytes = 0;
-    const inspect = async (dir: string): Promise<void> => {
+    const inspect = async (dir: string): Promise<boolean> => {
+      let retained = false;
       for (const entry of await readdir(join(projection, dir), { withFileTypes: true })) {
         const rel = join(dir, entry.name);
         const target = join(root, rel);
-        await authorizeContractInputPath(binding.authority, target, binding.readAccessFilter, combined);
+        if (dependencies.mounts.some((mount) => mount.target === target)) continue;
+        await authorize(target);
         paths.add(target);
         const stat = await lstat(join(projection, rel));
-        if (stat.isDirectory()) await inspect(rel);
+        if (stat.isDirectory()) {
+          const children = await inspect(rel);
+          if (!originalDirectories.has(rel) && !children && dependencies.mounts.some((mount) => within(target, mount.target))) continue;
+          directories.set(rel, stat.mode & 0o777);
+          retained = true;
+        }
         else if (stat.isFile() && !stat.isSymbolicLink()) {
           if (stat.size > 32 * 1024 * 1024 || resultBytes + stat.size > MAX_BYTES) throw new Error('captured output exceeds byte limit');
           const data = await readFile(join(projection, rel));
           resultBytes += data.length;
           if (present.size >= MAX_FILES || resultBytes > MAX_BYTES) throw new Error('captured output exceeds resource limit');
           present.add(rel);
+          retained = true;
           const previous = originals.get(rel);
           if (!previous?.data.equals(data) || previous.mode !== (stat.mode & 0o777)) changes.set(rel, { data, mode: stat.mode & 0o777 });
         } else throw new Error('captured output contains an alias or special file');
       }
+      return retained;
     };
     await inspect('');
     await check();
-    if (contractInputAuthorityMutable(binding.authority)) {
-      for (const [rel, { data, mode }] of changes) {
-        const target = await authorizeContractInputPath(binding.authority, join(root, rel), binding.readAccessFilter, combined);
-        await mkdir(dirname(target), { recursive: true }); await writeFile(target, data, { mode }); await chmod(target, mode);
-      }
-      for (const rel of originals.keys()) if (!present.has(rel)) {
-        const target = await authorizeContractInputPath(binding.authority, join(root, rel), binding.readAccessFilter, combined);
-        await rm(target);
-      }
-    }
+    if (contractInputAuthorityMutable(binding.authority))
+      await publishCapturedProjection(binding, originals, originalDirectories, present, directories, changes, combined);
     await check();
     const failures: string[] = [];
+    if (fileOperations.fileOpError) failures.push(fileOperations.fileOpError);
     if (input.expect?.exit_code !== undefined && exitCode !== input.expect.exit_code) failures.push('exit_code expectation failed');
     if (input.expect?.stdout_contains !== undefined && !stdout.includes(input.expect.stdout_contains)) failures.push('stdout expectation failed');
     if (input.expect?.stderr_contains !== undefined && !stderr.includes(input.expect.stderr_contains)) failures.push('stderr expectation failed');
-    return { cmd: command, cwd, exit_code: exitCode, stdout, stderr, success: exitCode === 0 && failures.length === 0,
+    return { ...modeResult, cmd: command, cwd, exit_code: exitCode, stdout, stderr, success: (input.until ? untilMatched : (modeResult?.success ?? exitCode === 0)) && failures.length === 0,
       duration_ms: Date.now() - start, sandboxed: true, sandbox_boundary: `captured authorized projection; isolated PID/mounts; network ${network}`, sandbox_network: network,
       captured_exec_availability: availability, ...(failures.length ? { expectation_error: failures.join('; ') } : {}) };
   } catch {
     stop();
+    await childCompletion?.catch(() => {});
+    if (timedOut) return { cmd: command, cwd, exit_code: null, stdout: '', stderr: '', success: false, timed_out: true, duration_ms: Date.now() - start };
     return { cmd: command, cwd, exit_code: null, stdout: '', stderr: HELD, success: false, denied: true,
       ...(combined?.aborted ? { cancelled: true } : {}), duration_ms: Date.now() - start };
   } finally {
     clearTimeout(timer); clearInterval(monitor);
-    if (temporary) await rm(temporary, { recursive: true, force: true });
+    if (temporary) {
+      const restoreDirectoryAccess = async (path: string): Promise<void> => {
+        const stat = await lstat(path);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+        await chmod(path, (stat.mode & 0o777) | 0o700);
+        for (const name of await readdir(path)) await restoreDirectoryAccess(join(path, name));
+      };
+      await restoreDirectoryAccess(temporary);
+      await rm(temporary, { recursive: true, force: true });
+    }
   }
 }

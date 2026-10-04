@@ -90,6 +90,8 @@ export interface AgentOrchestratorRunContext {
    * the nudge as the next user turn). Undefined leaves every agent unheld.
    */
   readonly contractHooks?: ContractAgentHooks | undefined;
+  /** Construction-owned drain before a captured run emits terminal state. */
+  readonly beforeRunSettlement?: (() => Promise<void>) | undefined;
   /**
    * Per-turn passive-injection knobs (see CHANGELOG 0.38.0). Both optional,
    * undefined means "use the derived default" (see turn-knowledge-injection.ts:

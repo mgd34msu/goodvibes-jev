@@ -1,3 +1,4 @@
+import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 import { summarizeError } from '../../utils/error-display.js';
@@ -117,6 +118,19 @@ export interface BgCommandResult {
   pid?: number | undefined;
 }
 
+/** Trusted adapter for an execution boundary which owns its own child/IO.
+ * Raw output stays behind its asynchronous authority check, never in sync reads.
+ */
+export interface OwnedBoundaryExecution {
+  readonly owner: object;
+  readonly cmd: string;
+  readonly includeReadyOutput?: boolean | undefined;
+  readonly started: Promise<{ readonly pid: number }>;
+  readonly completion: Promise<BgCommandResult & { readonly timed_out?: boolean | undefined; readonly cancelled?: boolean | undefined }>;
+  readonly readOutput: () => Promise<BgCommandResult & { readonly denied?: boolean | undefined; readonly cancelled?: boolean | undefined; readonly timed_out?: boolean | undefined }>;
+  readonly stop: () => Promise<void>;
+}
+
 interface ManagedProcessShutdown {
   readonly killOnClose: boolean;
   stopRequested: boolean;
@@ -128,6 +142,7 @@ interface ManagedProcessShutdown {
 
 export class ProcessManager {
   private _counter = 0;
+  private readonly _boundaryExecutions = new Map<string, OwnedBoundaryExecution>();
   private _processes = new Map<string, BackgroundProcess>();
   private readonly _shutdowns = new Map<string, ManagedProcessShutdown>();
   private readonly _launches = new Set<Promise<BgCommandResult>>();
@@ -447,6 +462,116 @@ export class ProcessManager {
     };
   }
 
+  /** Adopt an already-contained owned execution without spawning a host process. */
+  async trackOwnedBoundary(execution: OwnedBoundaryExecution): Promise<BgCommandResult> {
+    if (this._closed) { await execution.stop(); throw new Error('ProcessManager is closed'); }
+    const id = this.newId();
+    const entry: BackgroundProcess = {
+      id, pid: 0, cmd: execution.cmd, startTime: Date.now(), stdout: [], stderr: [],
+      exitCode: null, done: false, killDeadline: null,
+    };
+    this._processes.set(id, entry);
+    this._boundaryExecutions.set(id, execution);
+    const shutdown: ManagedProcessShutdown = {
+      killOnClose: true, stopRequested: false,
+      stop: async () => {
+        shutdown.stopRequested = true;
+        try { await execution.stop(); await execution.completion; }
+        finally { this._shutdowns.delete(id); }
+      },
+      detach: () => {}, // Boundary lifetimes are never detached from this runtime.
+    };
+    this._shutdowns.set(id, shutdown);
+    void execution.completion.then((result) => {
+      entry.exitCode = result.exit_code;
+      entry.timedOut = result.timed_out;
+      entry.signal = result.cancelled || result.timed_out || (result.exit_code === null && !result.success) ? 'SIGKILL' : null;
+      entry.done = true;
+      entry.completedAt = Date.now();
+      this._shutdowns.delete(id);
+      if (!this._processes.has(id)) this._boundaryExecutions.delete(id);
+      this.pruneCompletedProcesses();
+    }, () => {
+      entry.exitCode = null; entry.signal = 'SIGKILL'; entry.done = true; entry.completedAt = Date.now();
+      this._shutdowns.delete(id);
+      if (!this._processes.has(id)) this._boundaryExecutions.delete(id);
+      this.pruneCompletedProcesses();
+    });
+    const admission = (async (): Promise<BgCommandResult> => {
+      try {
+        const readiness = await Promise.race([
+          execution.started.then((started) => ({ kind: 'started' as const, started })),
+          execution.completion.then((completed) => ({ kind: 'completed' as const, completed })),
+        ]);
+        if (readiness.kind === 'started') entry.pid = readiness.started.pid;
+        if (this._closed) throw new Error('ProcessManager is closed');
+        const observed = await execution.readOutput();
+        if (readiness.kind === 'completed') {
+          this._processes.delete(id); this._boundaryExecutions.delete(id);
+          return observed;
+        }
+        const started = readiness.started;
+        if (observed.denied || observed.cancelled || observed.timed_out) {
+          await shutdown.stop();
+          this._processes.delete(id); this._boundaryExecutions.delete(id);
+          return observed;
+        }
+        return { cmd: execution.cmd, exit_code: null, stdout: execution.includeReadyOutput ? observed.stdout : '', stderr: execution.includeReadyOutput ? observed.stderr : '', success: true, process_id: id, pid: started.pid };
+      } catch (error) {
+        try { await shutdown.stop(); }
+        finally { this._processes.delete(id); this._boundaryExecutions.delete(id); }
+        throw error;
+      }
+    })();
+    this._launches.add(admission);
+    try { return await admission; } finally { this._launches.delete(admission); }
+  }
+
+  /** Await only this authority's active executions before its result is judged. */
+  async waitOwnedBoundaries(owner: object, signal?: AbortSignal): Promise<void> {
+    while (true) {
+      const active = [...this._boundaryExecutions].filter(([id, item]) => item.owner === owner && this._shutdowns.has(id));
+      if (active.length === 0) return;
+      await executePolicyCheck(() => Promise.all(active.map(([, item]) => item.completion)), signal);
+    }
+  }
+
+  /** Cancel and reap only this authority before terminal events/view disposal. */
+  async stopOwnedBoundaries(owner: object): Promise<void> {
+    const active = [...this._boundaryExecutions].filter(([id, item]) => item.owner === owner && this._shutdowns.has(id));
+    const results = await Promise.allSettled(active.map(([, item]) => item.stop()));
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failures.length) throw new AggregateError(failures.map((result) => result.reason), 'Captured execution shutdown failed');
+  }
+
+  /** Authority-scoped bg_* access. Another captured caller cannot inspect/stop it. */
+  async handleOwnedBoundaryCommand(cmd: string, owner: object): Promise<BgCommandResult | null> {
+    this.pruneCompletedProcesses();
+    const match = cmd.match(/^bg_(status|output|stop)\s+(\S+)$/);
+    if (cmd.trim() === 'bg_list') {
+      const ids = new Set([...this._boundaryExecutions].filter(([, item]) => item.owner === owner).map(([id]) => id));
+      for (const id of ids) await this._boundaryExecutions.get(id)?.readOutput();
+      return { cmd, exit_code: 0, stdout: JSON.stringify([...this._processes.values()].filter((entry) => ids.has(entry.id)).map((entry) => ({ id: entry.id, pid: entry.pid, cmd: entry.cmd, status: describeProcessStatus(entry), done: entry.done }))), stderr: '', success: true };
+    }
+    if (!match) return null;
+    const id = match[2]!;
+    const execution = this._boundaryExecutions.get(id);
+    if (!execution || execution.owner !== owner || !this._processes.has(id))
+      return { cmd, exit_code: 1, stdout: '', stderr: 'Unknown process in this execution authority', success: false };
+    if (match[1] === 'stop') {
+      await execution.stop();
+      this._processes.delete(id); this._boundaryExecutions.delete(id);
+      return { cmd, exit_code: 0, stdout: `Stopped ${id}`, stderr: '', success: true };
+    }
+    const output = await execution.readOutput();
+    if (match[1] === 'output') return { ...output, cmd };
+    const entry = this._processes.get(id);
+    if (!entry) return { cmd, exit_code: 1, stdout: '', stderr: 'Unknown process in this execution authority', success: false };
+    return { cmd, exit_code: 0, stdout: JSON.stringify({ id, pid: entry.pid, cmd: entry.cmd,
+      status: describeProcessStatus(entry), exit_code: entry.exitCode, signal: entry.signal ?? null,
+      timed_out: entry.timedOut === true, duration_ms: (entry.completedAt ?? Date.now()) - entry.startTime }), stderr: '', success: true };
+  }
+
   /** Get the status record for a background process, or undefined if not found. */
   getStatus(id: string): BackgroundProcess | undefined {
     this.pruneCompletedProcesses();
@@ -480,8 +605,13 @@ export class ProcessManager {
     // Preserve bg_stop's immediate record removal, but retain the owned handle
     // until exit/output collection completes so close() can still drain it.
     this._processes.delete(id);
+    // A pending boundary remains discoverable to its owner's settlement drain.
+    if (!this._shutdowns.has(id)) this._boundaryExecutions.delete(id);
     return true;
   }
+
+  /** Runtime cleanup can distinguish retained boundaries without exposing their owner token. */
+  hasBoundaryOwner(id: string): boolean { return this._boundaryExecutions.has(id); }
 
   /** List tracked processes with authoritative completion and display status. */
   list(): Array<{ id: string; pid: number; cmd: string; status: string; done: boolean }> {
@@ -501,6 +631,9 @@ export class ProcessManager {
    */
   handleCommand(cmd: string): BgCommandResult | null {
     this.pruneCompletedProcesses();
+    const boundaryMatch = cmd.match(/^bg_(?:status|output|stop)\s+(\S+)$/);
+    if (boundaryMatch && this._boundaryExecutions.has(boundaryMatch[1]!))
+      return { cmd, exit_code: 1, stdout: '', stderr: 'This process requires its captured execution authority', success: false };
     // bg_status <id>
     const statusMatch = cmd.match(/^bg_status\s+(\S+)$/);
     if (statusMatch) {
@@ -555,7 +688,7 @@ export class ProcessManager {
 
     // bg_list
     if (cmd.trim() === 'bg_list') {
-      return { cmd, exit_code: 0, stdout: JSON.stringify(this.list()), stderr: '', success: true };
+      return { cmd, exit_code: 0, stdout: JSON.stringify(this.list().filter((entry) => !this._boundaryExecutions.has(entry.id))), stderr: '', success: true };
     }
 
     return null;
@@ -570,6 +703,7 @@ export class ProcessManager {
       const completedAt = entry.completedAt ?? entry.startTime;
       if (now - completedAt <= COMPLETED_PROCESS_TTL_MS && i < MAX_COMPLETED_PROCESSES) continue;
       this._processes.delete(entry.id);
+      this._boundaryExecutions.delete(entry.id);
     }
   }
 }

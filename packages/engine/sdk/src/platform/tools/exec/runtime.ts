@@ -1,3 +1,4 @@
+import { startCapturedBackground } from './captured-exec-background.js';
 import { capturedExecUnsupportedOptions, runCapturedCommand, type CapturedExecAuthority } from './captured-exec.js';
 import { join, resolve, isAbsolute } from 'node:path';
 import { randomInt, randomUUID } from 'node:crypto';
@@ -269,8 +270,11 @@ async function runCommand(
     const scrubbed = await scrubCredentialEnv(buildCleanEnv(), scrub);
     signal?.throwIfAborted();
     const withheld = scrubbed.withheld.filter((name) => !(cmdInput.env && name in cmdInput.env));
-    const result = await runCapturedCommand(policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal,
-      !plan || plan.network === 'enabled' ? 'enabled' : 'disabled', scrubbed.env);
+    const network = !plan || plan.network === 'enabled' ? 'enabled' : 'disabled';
+    const interactive = await shouldRunInteractive(policy.interaction, cmdInput, cmdStr, signal);
+    const result = cmdInput.background || (cmdInput.until && !cmdInput.until.kill_after)
+      ? await startCapturedBackground(processManager, policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal, network, scrubbed.env)
+      : await runCapturedCommand(policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal, network, scrubbed.env, interactive && policy.interaction ? { interaction: policy.interaction } : {});
     return withheld.length > 0 ? { ...result, withheld_env: withheld } : result;
   }
   const sandbox = policy.sandbox;
@@ -319,7 +323,7 @@ async function runCommand(
   // run under a PTY nested INSIDE the sandbox argv (the boundary, when active,
   // wraps the PTY allocation). Detected prompts ride the approval machinery
   // via the interaction seam; the runner + detection live in interactive.ts.
-  if (await shouldRunInteractive(interaction, cmdInput, cmdStr)) {
+  if (await shouldRunInteractive(interaction, cmdInput, cmdStr, signal)) {
     return attachWithheld(await runInteractiveCommand({
       cmdStr, cwd, env: mergedEnv, timeoutMs, startTime, sandboxArgv,
       interaction: interaction!, signal,
@@ -797,7 +801,13 @@ async function executeResolvedCommand(
   signal?.throwIfAborted();
   if (terminalRefusal) return terminalRefusal;
   // A captured command never reaches the host ProcessManager's special commands.
-  if (policy.capturedInput) return runWithRetry(processManager, overflowHandler, featureFlags, cmdStr, cmdInput, workingDirectory, globalTimeout, scrub, policy, signal);
+  if (policy.capturedInput) {
+    const backgroundResult = await processManager.handleOwnedBoundaryCommand(cmdStr, policy.capturedInput.authority);
+    if (backgroundResult) return backgroundResult;
+    return cmdInput.background
+      ? runCommand(processManager, overflowHandler, featureFlags, cmdStr, cmdInput, workingDirectory, globalTimeout, scrub, policy, signal)
+      : runWithRetry(processManager, overflowHandler, featureFlags, cmdStr, cmdInput, workingDirectory, globalTimeout, scrub, policy, signal);
+  }
   const bgSpecial = handleBgSpecialCommand(processManager, cmdStr);
   if (bgSpecial) return bgSpecial;
   if (cmdInput.background) {
@@ -972,10 +982,19 @@ export function createExecTool(
         const failFast = input.fail_fast === true || input.stop_on_error === true;
         const projectRoot = resolve(workingDirectory);
 
+        let fileOperations: Awaited<ReturnType<typeof executeFileOperations>>;
         if (policy.capturedInput && input.file_ops?.length) {
-          return { success: false, error: 'Captured exec file_ops require the guarded edit/write tools.' };
-        }
-        const { fileOpResults, fileOpError, fileOpWarnings } = await executeFileOperations(input.file_ops, projectRoot);
+          let capturedOperations: Awaited<ReturnType<typeof executeFileOperations>> | undefined;
+          const applied = await runCapturedCommand(policy.capturedInput, ':', {}, workingDirectory, globalTimeout, signal,
+            'disabled', {}, { fileOps: input.file_ops.map((operation) => ({ ...operation,
+              source: resolve(projectRoot, operation.source),
+              ...(operation.destination ? { destination: resolve(projectRoot, operation.destination) } : {}),
+            })), onFileOperations: (result) => { capturedOperations = result; } });
+          if (applied.denied || applied.cancelled || applied.timed_out || !capturedOperations)
+            return { success: false, error: applied.stderr || 'Captured file operations did not complete.' };
+          fileOperations = capturedOperations;
+        } else fileOperations = await executeFileOperations(input.file_ops, projectRoot);
+        const { fileOpResults, fileOpError, fileOpWarnings } = fileOperations;
         signal?.throwIfAborted();
         if (fileOpError) {
           return {

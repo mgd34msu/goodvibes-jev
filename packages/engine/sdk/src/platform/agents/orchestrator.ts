@@ -422,6 +422,7 @@ export class AgentOrchestrator {
     capturedOwnerRead?: import('../tools/shared/read-access.js').ReadAccessFilter,
     dependencyInputs: readonly CapturedExecDependencyInput[] = [],
     capturedRegistry?: CapturedRegistryContext,
+    capturedProcessManager?: import('../tools/shared/process-manager.js').ProcessManager,
   ): ToolRegistry {
     const channelVersion = this.channelRegistry?.getVersion() ?? -1;
     if (this.fullRegistryChannelVersion !== channelVersion) {
@@ -463,6 +464,7 @@ export class AgentOrchestrator {
         : ownerReadAccess;
       const registered = registerAllTools(registry, {
         ...this.toolDeps,
+        ...(authority && capturedProcessManager ? { processManager: capturedProcessManager } : {}),
         contractRunner: this.toolDeps.contractRunner,
         projectRoot: defaultCwd,
         workingDirectory: cwd,
@@ -708,6 +710,8 @@ export class AgentOrchestrator {
     const cwd = workingDirectory ?? this.toolDeps?.workingDirectory ?? '';
     const delivered = new Set<string>();
     const originalPermissionManager = this.toolDeps?.permissionManager;
+    const processManager = this.toolDeps?.processManager;
+    const contractHooks = this.toolDeps?.contractHooks;
     if (authority && !originalPermissionManager)
       throw new Error('captured agent requires original-owner read authorization');
     const ownerReadAccess = originalPermissionManager
@@ -777,7 +781,7 @@ export class AgentOrchestrator {
         ? (agentId) => this.conversationSink!.release(agentId)
         : undefined,
       getCancellationSignal: this.cancellationSource ? (agentId) => this.cancellationSource!.get(agentId) : undefined,
-      processManager: this.toolDeps?.processManager,
+      processManager,
       messageBus: this.messageBus,
       knowledgeService: this.toolDeps?.knowledgeService,
       memoryRegistry: this.toolDeps?.memoryRegistry,
@@ -790,7 +794,26 @@ export class AgentOrchestrator {
               this.toolDeps?.toolExecutionObserver?.(toolName, args, success);
             }
           : undefined,
-      contractHooks: this.toolDeps?.contractHooks,
+      contractHooks: authority && contractHooks && processManager
+        ? {
+            onTurnEnd: (record, turn) => {
+              void processManager.waitOwnedBoundaries(authority, signal).then(() => {
+                signal?.throwIfAborted();
+                contractHooks.onTurnEnd(record, turn);
+              }).catch((error: unknown) => {
+                logger.debug('Captured turn check stopped before execution settlement', { error: String(error) });
+              });
+            },
+            holdCompletion: async (record) => {
+              await processManager.waitOwnedBoundaries(authority, signal);
+              signal?.throwIfAborted();
+              return contractHooks.holdCompletion(record);
+            },
+          }
+        : contractHooks,
+      ...(authority && processManager
+        ? { beforeRunSettlement: () => processManager.stopOwnedBoundaries(authority) }
+        : {}),
       archetypeLoader: this.toolDeps?.archetypeLoader,
       providerOptimizer: this.toolDeps?.providerOptimizer,
       providerRegistry: this.toolDeps!.providerRegistry!,
@@ -805,6 +828,7 @@ export class AgentOrchestrator {
           ownerReadAccess,
           dependencyInputs,
           capturedRegistry,
+          processManager,
         ),
       buildScopedRegistry: (allowedNames, fullRegistry, captureAuthority) =>
         this.buildScopedRegistry(allowedNames, fullRegistry, captureAuthority),
@@ -829,19 +853,12 @@ export class AgentOrchestrator {
     const signal = this.cancellationSource?.get(record.id);
     const runKey = authority ? `${cwd}:captured-run:${randomUUID()}` : undefined;
     if (authority) await assertContractInputAuthority(authority, cwd, signal);
+    let context: AgentOrchestratorRunContext | undefined;
     try {
-      await runAgentTask(
-        await this.createRunContext(
-          cwd,
-          authority,
-          signal,
-          runKey,
-          record.tools.includes('exec'),
-          record.tools.includes('registry'),
-        ),
-        record,
-      );
+      context = await this.createRunContext(cwd, authority, signal, runKey, record.tools.includes('exec'), record.tools.includes('registry'));
+      await runAgentTask(context, record);
     } finally {
+      await context?.beforeRunSettlement?.();
       if (runKey) {
         this.fullRegistries.delete(runKey);
         await this.ownedProjectIndexes.get(runKey)?.dispose();
