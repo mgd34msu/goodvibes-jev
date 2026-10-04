@@ -26,6 +26,7 @@ import type { ExecCommandInput, ExecCommandResult, ExecFileOp } from './schema.j
 
 export interface CapturedExecAuthority {
   readonly nodeRuntimeInput?: CapturedExecNodeRuntimeInput | undefined;
+  readonly nodeRuntimeAdmission?: ((signal?: AbortSignal) => Promise<CapturedExecNodeRuntimeInput>) | undefined;
   readonly nodeRuntimeUnavailable?: string | undefined;
   readonly dependencyInputs?: readonly CapturedExecDependencyInput[] | undefined;
   readonly authority: ContractInputAuthority;

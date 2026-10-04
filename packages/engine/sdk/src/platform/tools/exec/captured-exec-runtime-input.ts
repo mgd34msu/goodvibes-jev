@@ -1,6 +1,6 @@
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 /** Trusted runtime declarations are separate from model arguments and project dependencies. */
-import { constants } from 'node:fs';
+import { accessSync, constants, lstatSync, realpathSync } from 'node:fs';
 import { access, chmod, lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { assertContractInputAuthority, registerContractInputReadAssertion } from '../../contract/input-authority.js';
@@ -30,6 +30,60 @@ async function executable(name: string, path: string): Promise<string> {
     try { await access(candidate, constants.X_OK); return candidate; } catch { /* Next trusted PATH entry. */ }
   }
   throw new Error(`Captured validators require an installed ${name} executable on the trusted runtime PATH.`);
+}
+
+/** Fixed validators can defer unused runtime bytes without selecting commands by text.
+ * PATH resolution and executable identities are pinned synchronously at construction.
+ * A failed/cancelled first admission is terminal; this is not another retry loop.
+ */
+export function createCapturedExecNodeRuntimeAdmission(
+  binding: Binding,
+  declaration?: CapturedExecNodeRuntimeDeclaration,
+): (signal?: AbortSignal) => Promise<CapturedExecNodeRuntimeInput> {
+  binding = Object.freeze({ ...binding });
+  const trustedPath = process.env.PATH ?? '';
+  let pinned: CapturedExecNodeRuntimeDeclaration | undefined;
+  let initialError: unknown;
+  let identities: readonly { source: string; canonical: string; identity: string }[] = [];
+  try {
+    const find = (name: string): string => {
+      for (const directory of trustedPath.split(sep === '/' ? ':' : ';')) {
+        if (!isAbsolute(directory)) continue;
+        const candidate = join(directory, name);
+        try { accessSync(candidate, constants.X_OK); return candidate; } catch { /* Next trusted entry. */ }
+      }
+      throw new Error(`Captured validators require an installed ${name} executable on the trusted runtime PATH.`);
+    };
+    pinned = Object.freeze(declaration ? { ...declaration } : {
+      nodeExecutable: find('node'), npmExecutable: find('npm'), npxExecutable: find('npx'),
+    });
+    identities = Object.values(pinned).map((source) => {
+      if (!isAbsolute(source)) throw new Error('Node runtime declarations must be absolute');
+      const canonical = realpathSync(source);
+      return { source, canonical, identity: identity(lstatSync(canonical, { bigint: true })) };
+    });
+  } catch (error) { initialError = error; }
+  const checkPinned = (): void => {
+    for (const read of identities) {
+      if (realpathSync(read.source) !== read.canonical || identity(lstatSync(read.canonical, { bigint: true })) !== read.identity)
+        throw new Error('Node runtime executable changed since trusted construction');
+    }
+  };
+  let admission: Promise<CapturedExecNodeRuntimeInput> | undefined;
+  return (signal?: AbortSignal) => {
+    admission ??= (async () => {
+      if (initialError) throw initialError;
+      if (!pinned) throw new Error('Node runtime declaration is unavailable');
+      const combined = binding.signal && signal ? AbortSignal.any([binding.signal, signal]) : binding.signal ?? signal;
+      combined?.throwIfAborted();
+      checkPinned();
+      const token = await admitCapturedExecNodeRuntime({ ...binding, signal: combined }, pinned);
+      checkPinned();
+      combined?.throwIfAborted();
+      return token;
+    })();
+    return executePolicyCheck(() => admission!, signal);
+  };
 }
 
 /** Call only during trusted construction. Never accept this declaration from tool JSON. */

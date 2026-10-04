@@ -7,7 +7,7 @@ import { captureContractInput, materializeContractInput, contractInputPath } fro
 import { createContractInputAuthority } from '../sdk/src/platform/contract/input-authority.js';
 import type { Contract } from '../sdk/src/platform/contract/types.js';
 import { runCapturedCommand, probeCapturedExecAvailability, type CapturedExecAuthority } from '../sdk/src/platform/tools/exec/captured-exec.js';
-import { admitCapturedExecNodeRuntime } from '../sdk/src/platform/tools/exec/captured-exec-runtime-input.js';
+import { admitCapturedExecNodeRuntime, createCapturedExecNodeRuntimeAdmission } from '../sdk/src/platform/tools/exec/captured-exec-runtime-input.js';
 import { admitCapturedExecDependency } from '../sdk/src/platform/tools/exec/captured-exec-dependencies.js';
 import { useToolReadings } from './_helpers/tool-readings.js';
 useToolReadings();
@@ -185,4 +185,25 @@ test.skipIf(!supported)('call-only cancellation cannot recreate a cleaned runtim
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(existsSync(directory)).toBe(false);
   } finally { cancel.abort(); release(); await pending; }
+});
+test('fixed-validator runtime admission is lazy, pinned and memoized', async () => {
+  let reads = 0;
+  const binding = await fixture(() => { reads++; return true; });
+  const declaration = syntheticRuntime(binding);
+  const admit = createCapturedExecNodeRuntimeAdmission(binding, declaration);
+  expect(reads).toBe(0);
+  const first = await admit(); const after = reads;
+  expect(await admit()).toBe(first); expect(reads).toBe(after);
+  const changed = createCapturedExecNodeRuntimeAdmission(binding, declaration);
+  writeFileSync(declaration.nodeExecutable, '#!/bin/sh\nexit 1\n');
+  await expect(changed()).rejects.toThrow('changed since trusted construction');
+});
+test.skipIf(!supported)('unused unavailable Node runtime preserves an ordinary Bun command', async () => {
+  const binding = await fixture();
+  const nodeRuntimeAdmission = createCapturedExecNodeRuntimeAdmission(binding, {
+    nodeExecutable: '/synthetic-missing/node', npmExecutable: '/synthetic-missing/npm', npxExecutable: '/synthetic-missing/npx',
+  });
+  const result = await run({ ...binding, nodeRuntimeAdmission }, 'bun -e "console.log(42)"');
+  expect(result.success).toBe(true); expect(result.stdout).toBe('42\n');
+  await expect(nodeRuntimeAdmission()).rejects.toThrow();
 });
