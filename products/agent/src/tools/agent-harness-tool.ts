@@ -156,23 +156,26 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
       const args = (!modeDescriptor || !('value' in modeDescriptor) || modeDescriptor.value === 'policy_explain'
         ? snapshotJudgmentInput(rawArgs)
         : rawArgs) as AgentHarnessToolArgs;
-      if (!isMode(args.mode)) {
-        const requested = String(args.mode).toLowerCase();
+      // Dispatch only on the inspected value. A Proxy must not switch routes
+      // by returning a different mode from a subsequent property read.
+      const dispatchMode = snapshotJudgmentInput(modeDescriptor && 'value' in modeDescriptor ? modeDescriptor.value : undefined);
+      if (!isMode(dispatchMode)) {
+        const requested = String(dispatchMode).toLowerCase();
         const suggestions = AGENT_HARNESS_MODES
           .filter((mode) => mode.includes(requested) || requested.includes(mode))
           .slice(0, 5);
-        return error(`Unknown agent_harness mode: ${String(args.mode)}. ${suggestions.length > 0 ? `Closest modes: ${suggestions.join(', ')}. ` : ''}Use mode:"modes" to list the full catalog.`);
+        return error(`Unknown agent_harness mode: ${String(dispatchMode)}. ${suggestions.length > 0 ? `Closest modes: ${suggestions.join(', ')}. ` : ''}Use mode:"modes" to list the full catalog.`);
       }
       // Judgment stays pending or rejects with its typed outcome; the generic
       // harness display catch must not turn unavailable judgment into tool text.
-      if (args.mode === 'policy_explain') {
+      if (dispatchMode === 'policy_explain') {
         const resolved = await explainAgentPolicyDecision(deps.commandContext, deps.toolRegistry, args, signal);
         if (resolved.status === 'found') return output(resolved.explanation);
         if (resolved.status === 'ambiguous') return error(`Ambiguous policy explanation target ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
         return error(resolved.usage);
       }
       try {
-        if (args.mode === 'summary') {
+        if (dispatchMode === 'summary') {
           const channelReadiness = channelReadinessCatalogStatus(deps.commandContext);
           const notificationTargets = notificationTargetCatalogStatus(deps.commandContext);
           const providerAccounts = await providerAccountCatalogStatus(deps.commandContext).catch((err) => ({
@@ -289,15 +292,15 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
             connectedHost,
           });
         }
-        if (args.mode === 'modes') return output(listHarnessModes(args));
-        if (args.mode === 'mode') {
+        if (dispatchMode === 'modes') return output(listHarnessModes(args));
+        if (dispatchMode === 'mode') {
           const mode = describeHarnessMode(args);
           if (mode.status === 'ambiguous') return error(`Ambiguous harness mode ${String(mode.input)}. Candidates: ${JSON.stringify(mode.candidates)}`);
           if (mode.status === 'missing_lookup') return error(String(mode.usage));
           return output(mode.mode);
         }
-        if (args.mode === 'route_decision') return output(await planAgentTaskRoute(deps.commandContext, args, deps.taskRouteSources, { ...(signal ? { signal } : {}) }));
-        if (args.mode === 'cli_commands') {
+        if (dispatchMode === 'route_decision') return output(await planAgentTaskRoute(deps.commandContext, args, deps.taskRouteSources, { ...(signal ? { signal } : {}) }));
+        if (dispatchMode === 'cli_commands') {
           const commands = listHarnessCliCommands(args);
           return output({
             ...catalogEnvelope('commands', commands, totalHarnessCliCommands(), catalogFilters(args, CQ.cli_commands.filters), CQ.cli_commands.discovery),
@@ -305,123 +308,123 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
             policy: 'CLI modes are read-only discovery. Use first-class model tools, workspace actions, settings modes, or confirmed slash-command mirrors for in-process operation.',
           });
         }
-        if (args.mode === 'cli_command') {
+        if (dispatchMode === 'cli_command') {
           return output(describeHarnessCliCommand(args));
         }
-        if (args.mode === 'ui_surfaces') {
+        if (dispatchMode === 'ui_surfaces') {
           const surfaces = listHarnessUiSurfaces(deps.commandContext, args);
           return output(catalogEnvelope('surfaces', surfaces, totalHarnessUiSurfaces(), catalogFilters(args, CQ.ui_surfaces.filters), CQ.ui_surfaces.discovery));
         }
-        if (args.mode === 'ui_surface') {
+        if (dispatchMode === 'ui_surface') {
           const surface = describeHarnessUiSurface(deps.commandContext, args);
           return surface ? output(surface) : error(`Unknown UI surface ${readString(args.surfaceId || args.query || args.target) || '<missing>'}.`);
         }
-        if (args.mode === 'open_ui_surface') {
+        if (dispatchMode === 'open_ui_surface') {
           const confirmationError = requireConfirmedAction(args, 'UI surface routing');
           if (confirmationError) return error(confirmationError);
           return output(await openHarnessUiSurface(deps.commandContext, args));
         }
-        if (args.mode === 'shortcuts') return output(listHarnessShortcuts(deps.commandContext, args));
-        if (args.mode === 'keybindings') return output(listHarnessKeybindings(deps.commandContext, args));
-        if (args.mode === 'keybinding') {
+        if (dispatchMode === 'shortcuts') return output(listHarnessShortcuts(deps.commandContext, args));
+        if (dispatchMode === 'keybindings') return output(listHarnessKeybindings(deps.commandContext, args));
+        if (dispatchMode === 'keybinding') {
           const binding = describeHarnessKeybinding(deps.commandContext, args);
           return binding ? output(binding) : error(`Unknown keybinding action ${readString(args.actionId || args.target || args.key || args.query) || '<missing>'}.`);
         }
-        if (args.mode === 'set_keybinding') {
+        if (dispatchMode === 'set_keybinding') {
           const confirmationError = requireConfirmedAction(args, 'Keybinding mutation');
           return confirmationError ? error(confirmationError) : output(setHarnessKeybinding(deps.commandContext, args));
         }
-        if (args.mode === 'reset_keybinding') {
+        if (dispatchMode === 'reset_keybinding') {
           const confirmationError = requireConfirmedAction(args, 'Keybinding reset');
           return confirmationError ? error(confirmationError) : output(resetHarnessKeybinding(deps.commandContext, args));
         }
-        if (args.mode === 'run_keybinding') {
+        if (dispatchMode === 'run_keybinding') {
           const confirmationError = requireConfirmedAction(args, 'Keybinding action');
           return confirmationError ? error(confirmationError) : output(runHarnessKeybinding(deps.commandContext, args));
         }
-        if (args.mode === 'commands') {
+        if (dispatchMode === 'commands') {
           const commands = searchHarnessCommands(deps.commandRegistry, args);
           return output(catalogEnvelope('commands', commands.matches, deps.commandRegistry.list().length, catalogFilters(args, CQ.commands.filters), CQ.commands.discovery, { relaxedQuery: commands.relaxed }));
         }
-        if (args.mode === 'command') {
+        if (dispatchMode === 'command') {
           const detail = describeHarnessCommand(deps.commandRegistry, args);
           const query = readString(args.command || args.commandName || args.target || args.query);
           return detail
             ? output(detail)
             : error(`Unknown slash command ${query || '<missing>'}. Use mode:"commands" to inspect available commands.`);
         }
-        if (args.mode === 'run_command') return runCommand(deps, args);
-        if (args.mode === 'channels') return output(listHarnessChannels(deps.commandContext, args));
-        if (args.mode === 'channel') {
+        if (dispatchMode === 'run_command') return runCommand(deps, args);
+        if (dispatchMode === 'channels') return output(listHarnessChannels(deps.commandContext, args));
+        if (dispatchMode === 'channel') {
           const resolved = describeHarnessChannel(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.channel);
           if (resolved.status === 'ambiguous') return error(`Ambiguous channel ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'channel_setup_guide') {
+        if (dispatchMode === 'channel_setup_guide') {
           const resolved = describeHarnessChannelSetupGuide(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.guide);
           if (resolved.status === 'ambiguous') return error(`Ambiguous channel setup guide target ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'channel_triage') return output(await describeHarnessChannelTriage(deps.commandContext, args));
-        if (args.mode === 'channel_deliveries') return output(describeHarnessChannelDeliveries(deps.commandContext, args));
-        if (args.mode === 'notifications') return output(listHarnessNotificationTargets(deps.commandContext, args));
-        if (args.mode === 'notification_target') {
+        if (dispatchMode === 'channel_triage') return output(await describeHarnessChannelTriage(deps.commandContext, args));
+        if (dispatchMode === 'channel_deliveries') return output(describeHarnessChannelDeliveries(deps.commandContext, args));
+        if (dispatchMode === 'notifications') return output(listHarnessNotificationTargets(deps.commandContext, args));
+        if (dispatchMode === 'notification_target') {
           const resolved = describeHarnessNotificationTarget(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.target);
           if (resolved.status === 'ambiguous') return error(`Ambiguous notification target ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'provider_accounts') return output(await providerAccountSummary(deps.commandContext, args));
-        if (args.mode === 'provider_account') {
+        if (dispatchMode === 'provider_accounts') return output(await providerAccountSummary(deps.commandContext, args));
+        if (dispatchMode === 'provider_account') {
           const resolved = await describeHarnessProviderAccount(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.account);
           if (resolved.status === 'ambiguous') return error(`Ambiguous provider account ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'mcp_servers') return output(await mcpServerSummary(deps.commandContext, args));
-        if (args.mode === 'mcp_server') {
+        if (dispatchMode === 'mcp_servers') return output(await mcpServerSummary(deps.commandContext, args));
+        if (dispatchMode === 'mcp_server') {
           const resolved = await describeHarnessMcpServer(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.server);
           if (resolved.status === 'ambiguous') return error(`Ambiguous MCP server ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'setup_posture') return output(await setupPostureSummary(deps.commandContext, args));
-        if (args.mode === 'setup_item') {
+        if (dispatchMode === 'setup_posture') return output(await setupPostureSummary(deps.commandContext, args));
+        if (dispatchMode === 'setup_item') {
           const resolved = await describeHarnessSetupItem(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.item);
           if (resolved.status === 'ambiguous') return error(`Ambiguous setup item ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'setup_repair') return output(await setupRepairSummary(deps.commandContext, args));
-        if (args.mode === 'setup_checkpoint') return output(await setupCheckpointSummary(deps.commandContext));
-        if (args.mode === 'mark_setup_checkpoint') {
+        if (dispatchMode === 'setup_repair') return output(await setupRepairSummary(deps.commandContext, args));
+        if (dispatchMode === 'setup_checkpoint') return output(await setupCheckpointSummary(deps.commandContext));
+        if (dispatchMode === 'mark_setup_checkpoint') {
           const confirmationError = requireConfirmedAction(args, 'Setup wizard checkpoint save');
           if (confirmationError) return error(confirmationError);
           return output(await markSetupCheckpoint(deps.commandContext, args));
         }
-        if (args.mode === 'clear_setup_checkpoint') {
+        if (dispatchMode === 'clear_setup_checkpoint') {
           const confirmationError = requireConfirmedAction(args, 'Setup wizard checkpoint clear');
           if (confirmationError) return error(confirmationError);
           return output(clearSetupCheckpoint(deps.commandContext, args));
         }
-        if (args.mode === 'project_context') return output(projectContextSummary(deps.commandContext, args));
-        if (args.mode === 'project_context_file') {
+        if (dispatchMode === 'project_context') return output(projectContextSummary(deps.commandContext, args));
+        if (dispatchMode === 'project_context_file') {
           const resolved = describeProjectContextFile(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.file);
           if (resolved.status === 'ambiguous') return error(`Ambiguous project context file ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'prompt_context') return output(await promptContextSummary(deps.commandContext, args, signal));
-        if (args.mode === 'agent_orchestration') return output(agentOrchestrationSummary(deps.commandContext, deps.toolRegistry, args));
-        if (args.mode === 'agent_orchestration_agent') {
+        if (dispatchMode === 'prompt_context') return output(await promptContextSummary(deps.commandContext, args, signal));
+        if (dispatchMode === 'agent_orchestration') return output(agentOrchestrationSummary(deps.commandContext, deps.toolRegistry, args));
+        if (dispatchMode === 'agent_orchestration_agent') {
           const resolved = describeAgentOrchestrationAgent(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.agent);
           if (resolved.status === 'ambiguous') return error(`Ambiguous visible Agent ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'provision_connected_host_token') {
+        if (dispatchMode === 'provision_connected_host_token') {
           const confirmationError = requireConfirmedAction(args, 'Connected-host token provisioning');
           if (confirmationError) return error(confirmationError);
           const setupItemId = readString(args.setupItemId);
@@ -430,85 +433,85 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           }
           return output(provisionConnectedHostOperatorToken(deps.commandContext, args));
         }
-        if (args.mode === 'run_setup_smoke') {
+        if (dispatchMode === 'run_setup_smoke') {
           const confirmationError = requireConfirmedAction(args, 'Setup smoke');
           if (confirmationError) return error(confirmationError);
           const setupItemId = readString(args.setupItemId);
           if (setupItemId && setupItemId !== 'install-smoke') return error('run_setup_smoke currently supports setupItemId:"install-smoke" only.');
           return output(await runSetupInstallSmoke(deps.commandContext, args));
         }
-        if (args.mode === 'model_routing') return output(await modelRoutingSummary(deps.commandContext, args));
-        if (args.mode === 'model_route') {
+        if (dispatchMode === 'model_routing') return output(await modelRoutingSummary(deps.commandContext, args));
+        if (dispatchMode === 'model_route') {
           const resolved = await describeHarnessModelRoute(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.route);
           if (resolved.status === 'ambiguous') return error(`Ambiguous model route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'run_local_model_smoke') {
+        if (dispatchMode === 'run_local_model_smoke') {
           const confirmationError = requireConfirmedAction(args, 'Local model smoke');
           return confirmationError ? error(confirmationError) : output(await runLocalModelServerSmoke(deps.commandContext, args));
         }
-        if (args.mode === 'execution_posture') return output(executionPostureSummary(deps.commandContext, deps.toolRegistry, args));
-        if (args.mode === 'browser_control_route') return output(browserControlRouteSummary(deps.commandContext, deps.toolRegistry, args));
-        if (args.mode === 'execution_route') {
+        if (dispatchMode === 'execution_posture') return output(executionPostureSummary(deps.commandContext, deps.toolRegistry, args));
+        if (dispatchMode === 'browser_control_route') return output(browserControlRouteSummary(deps.commandContext, deps.toolRegistry, args));
+        if (dispatchMode === 'execution_route') {
           const resolved = describeHarnessExecutionRoute(deps.commandContext, deps.toolRegistry, args);
           if (resolved.status === 'found') return output(resolved.route);
           if (resolved.status === 'ambiguous') return error(`Ambiguous execution route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'background_processes') return output(backgroundProcessSummary(deps.commandContext, args));
-        if (args.mode === 'background_process') {
+        if (dispatchMode === 'background_processes') return output(backgroundProcessSummary(deps.commandContext, args));
+        if (dispatchMode === 'background_process') {
           const resolved = describeBackgroundProcess(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.process);
           if (resolved.status === 'ambiguous') return error(`Ambiguous background process ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'run_background_process') return output(await runBackgroundProcessAction(deps.commandContext, args));
-        if (args.mode === 'execution_history') return output(executionHistorySummary(deps.commandContext, args));
-        if (args.mode === 'execution_history_item') {
+        if (dispatchMode === 'run_background_process') return output(await runBackgroundProcessAction(deps.commandContext, args));
+        if (dispatchMode === 'execution_history') return output(executionHistorySummary(deps.commandContext, args));
+        if (dispatchMode === 'execution_history_item') {
           const resolved = describeExecutionHistoryItem(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.record);
           if (resolved.status === 'ambiguous') return error(`Ambiguous execution history record ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'file_recovery') return output(fileRecoverySummary(deps.commandContext, args));
-        if (args.mode === 'run_file_recovery') {
+        if (dispatchMode === 'file_recovery') return output(fileRecoverySummary(deps.commandContext, args));
+        if (dispatchMode === 'run_file_recovery') {
           const confirmationError = requireConfirmedAction(args, 'File recovery');
           return confirmationError ? error(confirmationError) : output(runFileRecovery(deps.commandContext, args));
         }
-        if (args.mode === 'personal_ops_briefing') return output(await personalOpsBriefingSummary(deps.commandContext, args));
-        if (args.mode === 'personal_ops') return output(await personalOpsSummary(deps.commandContext, args));
-        if (args.mode === 'personal_ops_queue') return output(await personalOpsQueueSummary(deps.commandContext, args));
-        if (args.mode === 'personal_ops_intake') return output(await personalOpsIntakeSummary(deps.commandContext, args));
-        if (args.mode === 'personal_ops_lane') {
+        if (dispatchMode === 'personal_ops_briefing') return output(await personalOpsBriefingSummary(deps.commandContext, args));
+        if (dispatchMode === 'personal_ops') return output(await personalOpsSummary(deps.commandContext, args));
+        if (dispatchMode === 'personal_ops_queue') return output(await personalOpsQueueSummary(deps.commandContext, args));
+        if (dispatchMode === 'personal_ops_intake') return output(await personalOpsIntakeSummary(deps.commandContext, args));
+        if (dispatchMode === 'personal_ops_lane') {
           const resolved = await describePersonalOpsLane(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.lane);
           if (resolved.status === 'ambiguous') return error(`Ambiguous Personal Ops lane ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'run_personal_ops_read') return output(await runPersonalOpsRead(deps.commandContext, args));
-        if (args.mode === 'memory_posture') return output(await memoryPostureSummary(deps.commandContext, args));
-        if (args.mode === 'memory_provider') {
+        if (dispatchMode === 'run_personal_ops_read') return output(await runPersonalOpsRead(deps.commandContext, args));
+        if (dispatchMode === 'memory_posture') return output(await memoryPostureSummary(deps.commandContext, args));
+        if (dispatchMode === 'memory_provider') {
           const resolved = await describeMemoryProvider(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.provider);
           if (resolved.status === 'ambiguous') return error(`Ambiguous memory provider ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'memory_refinement') return output(memoryRefinementSummary(deps.commandContext, args));
-        if (args.mode === 'run_memory_refinement') {
+        if (dispatchMode === 'memory_refinement') return output(memoryRefinementSummary(deps.commandContext, args));
+        if (dispatchMode === 'run_memory_refinement') {
           const confirmationError = requireConfirmedAction(args, 'Agent Knowledge semantic refinement');
           return confirmationError ? error(confirmationError) : output(await runMemoryRefinement(deps.commandContext, args));
         }
-        if (args.mode === 'autonomy_intake') return output(autonomyIntakeSummary(deps.commandContext, args));
-        if (args.mode === 'autonomy_queue') return output(autonomyQueueSummary(deps.commandContext, args));
-        if (args.mode === 'autonomy_queue_item') {
+        if (dispatchMode === 'autonomy_intake') return output(autonomyIntakeSummary(deps.commandContext, args));
+        if (dispatchMode === 'autonomy_queue') return output(autonomyQueueSummary(deps.commandContext, args));
+        if (dispatchMode === 'autonomy_queue_item') {
           const resolved = describeAutonomyQueueItem(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.item);
           if (resolved.status === 'ambiguous') return error(`Ambiguous autonomy queue item ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'learning_curator') return output(learningCuratorSummary(deps.commandContext, args));
-        if (args.mode === 'learning_auto_promote') {
+        if (dispatchMode === 'learning_curator') return output(learningCuratorSummary(deps.commandContext, args));
+        if (dispatchMode === 'learning_auto_promote') {
           const confirmationError = requireConfirmedAction(args, 'Learning promotion'); if (confirmationError) return error(confirmationError);
           const shellPaths = deps.commandContext.workspace?.shellPaths;
           if (!shellPaths) return error('learning_auto_promote requires an active workspace.');
@@ -524,83 +527,83 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
             policy: 'Confirmed promotion. Skills are created via the skill-draft runner. Memory, persona, routine creates call registry directly. Consolidation runs the full merge-stale-delete pipeline. Secret scanning enforced by each registry create().',
           });
         }
-        if (args.mode === 'learning_candidate') {
+        if (dispatchMode === 'learning_candidate') {
           const resolved = describeLearningCandidate(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.candidate);
           if (resolved.status === 'ambiguous') return error(`Ambiguous learning candidate ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'research_briefing') return output(researchBriefingSummary(deps.commandContext, args));
-        if (args.mode === 'research_workflow') return output(researchWorkflowSummary(deps.commandContext, args));
-        if (args.mode === 'research_runs') return output(researchRunsSummary(deps.commandContext, args));
-        if (args.mode === 'research_run') {
+        if (dispatchMode === 'research_briefing') return output(researchBriefingSummary(deps.commandContext, args));
+        if (dispatchMode === 'research_workflow') return output(researchWorkflowSummary(deps.commandContext, args));
+        if (dispatchMode === 'research_runs') return output(researchRunsSummary(deps.commandContext, args));
+        if (dispatchMode === 'research_run') {
           const resolved = describeResearchRun(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.run);
           if (resolved.status === 'ambiguous') return error(`Ambiguous research run ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'research_queue') return output(researchQueueSummary(deps.commandContext, args));
-        if (args.mode === 'research_source') {
+        if (dispatchMode === 'research_queue') return output(researchQueueSummary(deps.commandContext, args));
+        if (dispatchMode === 'research_source') {
           const resolved = describeResearchSource(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.source);
           if (resolved.status === 'ambiguous') return error(`Ambiguous research source ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'document_ops') return output(documentOpsSummary(deps.commandContext, args));
-        if (args.mode === 'document_ops_lane') {
+        if (dispatchMode === 'document_ops') return output(documentOpsSummary(deps.commandContext, args));
+        if (dispatchMode === 'document_ops_lane') {
           const resolved = describeDocumentOpsLane(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.lane);
           if (resolved.status === 'ambiguous') return error(`Ambiguous Document Ops lane ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'pairing_posture') return output(pairingPostureSummary(deps.commandContext, args));
-        if (args.mode === 'pairing_route') {
+        if (dispatchMode === 'pairing_posture') return output(pairingPostureSummary(deps.commandContext, args));
+        if (dispatchMode === 'pairing_route') {
           const resolved = describeHarnessPairingRoute(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.route);
           if (resolved.status === 'ambiguous') return error(`Ambiguous pairing route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'delegation_posture') return output(delegationPostureSummary(deps.commandContext, args));
-        if (args.mode === 'delegation_route') {
+        if (dispatchMode === 'delegation_posture') return output(delegationPostureSummary(deps.commandContext, args));
+        if (dispatchMode === 'delegation_route') {
           const resolved = describeHarnessDelegationRoute(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.route);
           if (resolved.status === 'ambiguous') return error(`Ambiguous delegation route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'security_posture') return output(await securityPostureSummary(deps.commandContext, args));
-        if (args.mode === 'security_finding') {
+        if (dispatchMode === 'security_posture') return output(await securityPostureSummary(deps.commandContext, args));
+        if (dispatchMode === 'security_finding') {
           const resolved = describeHarnessSecurityFinding(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.finding);
           if (resolved.status === 'ambiguous') return error(`Ambiguous security finding ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'support_bundles') return output(supportBundleSummary(args));
-        if (args.mode === 'support_bundle') {
+        if (dispatchMode === 'support_bundles') return output(supportBundleSummary(args));
+        if (dispatchMode === 'support_bundle') {
           const resolved = describeHarnessSupportBundle(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.bundle);
           return error(resolved.usage);
         }
-        if (args.mode === 'media_posture') return output(await mediaPostureSummary(deps.commandContext, args));
-        if (args.mode === 'media_provider') {
+        if (dispatchMode === 'media_posture') return output(await mediaPostureSummary(deps.commandContext, args));
+        if (dispatchMode === 'media_provider') {
           const resolved = await describeHarnessMediaProvider(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.provider);
           if (resolved.status === 'ambiguous') return error(`Ambiguous media provider ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'sessions') return output(sessionSummary(deps.commandContext, args));
-        if (args.mode === 'session') {
+        if (dispatchMode === 'sessions') return output(sessionSummary(deps.commandContext, args));
+        if (dispatchMode === 'session') {
           const resolved = describeHarnessSession(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.session);
           if (resolved.status === 'ambiguous') return error(`Ambiguous session ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'settings') {
+        if (dispatchMode === 'settings') {
           // Ownership-aware (daemon-owned keys carry the DAEMON's live value)
           // and short-page-aware: harnessSettingsCatalog states in words when
           // the page it returns is short of what matched.
           return output(await harnessSettingsCatalog(deps.commandContext.platform.configManager, args));
         }
-        if (args.mode === 'get_setting') {
+        if (dispatchMode === 'get_setting') {
           const setting = await resolveEffectiveHarnessSetting(deps.commandContext.platform.configManager, settingLookupArgs(args));
           if (setting?.status === 'found') return output(setting.setting);
           if (setting?.status === 'ambiguous') {
@@ -608,7 +611,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           }
           return error(`Unknown setting ${readString(args.key || args.target || args.query) || '<missing>'}. Use mode:"settings" to inspect available settings.`);
         }
-        if (args.mode === 'set_setting') {
+        if (dispatchMode === 'set_setting') {
           const confirmationError = requireConfirmedAction(args, 'Setting mutation');
           if (confirmationError) return error(confirmationError);
           if (args.value === undefined) return error('set_setting requires value.');
@@ -627,7 +630,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           );
           return output({ ...result, lookup: setting.lookup });
         }
-        if (args.mode === 'reset_setting') {
+        if (dispatchMode === 'reset_setting') {
           const confirmationError = requireConfirmedAction(args, 'Setting reset');
           if (confirmationError) return error(confirmationError);
           const setting = await resolveEffectiveHarnessSetting(deps.commandContext.platform.configManager, settingLookupArgs(args));
@@ -644,17 +647,17 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           );
           return output({ ...result, lookup: setting.lookup });
         }
-        if (args.mode === 'workspace' || args.mode === 'workspace_categories') {
+        if (dispatchMode === 'workspace' || dispatchMode === 'workspace_categories') {
           return output({
             categories: AGENT_WORKSPACE_CATEGORIES.map(describeWorkspaceCategory),
             actions: allWorkspaceActions().length,
           });
         }
-        if (args.mode === 'workspace_actions') {
+        if (dispatchMode === 'workspace_actions') {
           const actions = listWorkspaceActions(deps.commandContext, args);
           return output(catalogEnvelope('actions', actions, allWorkspaceActions().length, catalogFilters(args, CQ.workspace_actions.filters), CQ.workspace_actions.discovery));
         }
-        if (args.mode === 'workspace_action') {
+        if (dispatchMode === 'workspace_action') {
           const resolved = resolveWorkspaceActionDetail(args);
           const editorContext = buildWorkspaceEditorContext(deps.commandContext, args);
           if (resolved?.status === 'found') {
@@ -665,28 +668,28 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           }
           return error(`Unknown Agent workspace action ${readString(args.actionId || args.command || args.target || args.query) || '<missing>'}. Use mode:"workspace_actions" to inspect available actions.`);
         }
-        if (args.mode === 'run_workspace_action') return runWorkspaceAction(deps, args);
-        if (args.mode === 'tools') {
+        if (dispatchMode === 'run_workspace_action') return runWorkspaceAction(deps, args);
+        if (dispatchMode === 'tools') {
           const tools = searchHarnessModelTools(deps.toolRegistry, args);
           return output(catalogEnvelope('tools', tools.matches, deps.toolRegistry.getToolDefinitions().length, catalogFilters(args, CQ.tools.filters), CQ.tools.discovery, { relaxedQuery: tools.relaxed }));
         }
-        if (args.mode === 'tool') {
+        if (dispatchMode === 'tool') {
           const query = readString(args.toolName || args.target || args.query);
           const resolved = describeHarnessModelTool(deps.toolRegistry, args);
           if (resolved?.status === 'found') return output(resolved.tool);
           if (resolved?.status === 'ambiguous') return error(`Ambiguous model tool ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(describeUnknownModelTool(deps.toolRegistry, query));
         }
-        if (args.mode === 'release_evidence') return output(releaseEvidenceSummary(args));
-        if (args.mode === 'release_evidence_artifact') {
+        if (dispatchMode === 'release_evidence') return output(releaseEvidenceSummary(args));
+        if (dispatchMode === 'release_evidence_artifact') {
           const resolved = describeHarnessReleaseEvidenceArtifact(args);
           if (resolved.status === 'found') return output(resolved);
           if (resolved.status === 'ambiguous') return error(`Ambiguous release evidence artifact ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           if (resolved.status === 'missing_lookup') return error(resolved.usage ?? 'release_evidence_artifact requires artifactId, target, or query.');
           return error(`Unknown release evidence artifact ${readString(args.artifactId || args.target || args.query) || '<missing>'}. Use mode:"release_evidence" to inspect available artifacts.`);
         }
-        if (args.mode === 'release_readiness') return output(releaseReadinessSummary(args));
-        if (args.mode === 'release_readiness_item') {
+        if (dispatchMode === 'release_readiness') return output(releaseReadinessSummary(args));
+        if (dispatchMode === 'release_readiness_item') {
           const resolved = describeHarnessReleaseReadinessItem(args);
           if (resolved.status === 'found') return output(resolved);
           if (resolved.status === 'ambiguous') return error(`Ambiguous release readiness item ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
@@ -694,38 +697,38 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'missing_lookup') return error(resolved.usage ?? 'release_readiness_item requires itemId, target, or query.');
           return error(`Unknown release readiness item ${readString(args.itemId || args.target || args.query) || '<missing>'}. Use mode:"release_readiness" to inspect available items.`);
         }
-        if (args.mode === 'operator_methods') return output(operatorMethodSummary(args));
-        if (args.mode === 'operator_method') {
+        if (dispatchMode === 'operator_methods') return output(operatorMethodSummary(args));
+        if (dispatchMode === 'operator_method') {
           const resolved = describeHarnessOperatorMethod(args);
           if (resolved.status === 'found') return output(resolved.method);
           if (resolved.status === 'ambiguous') return error(`Ambiguous operator method ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'service_posture') return output(await servicePostureSummary(deps.commandContext, args));
-        if (args.mode === 'service_endpoint') {
+        if (dispatchMode === 'service_posture') return output(await servicePostureSummary(deps.commandContext, args));
+        if (dispatchMode === 'service_endpoint') {
           const resolved = await describeHarnessServiceEndpoint(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.endpoint);
           if (resolved.status === 'ambiguous') return error(`Ambiguous service endpoint ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'connected_host' || args.mode === 'daemon') {
+        if (dispatchMode === 'connected_host' || dispatchMode === 'daemon') {
           return output(connectedHostSummary(deps.commandContext, deps.toolRegistry, {
             includeParameters: args.includeParameters === true,
           }));
         }
-        if (args.mode === 'connected_host_capability') {
+        if (dispatchMode === 'connected_host_capability') {
           const query = readString(args.capabilityId || args.target || args.query);
           const resolved = describeConnectedHostCapability(deps.toolRegistry, query);
           if (resolved?.status === 'found') return output(resolved.detail);
           if (resolved?.status === 'ambiguous') return error(`Ambiguous connected-host capability ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(`Unknown connected-host capability ${query || '<missing>'}. Use mode:"connected_host" to inspect allowed and blocked capability ids.`);
         }
-        if (args.mode === 'connected_host_status' || args.mode === 'daemon_status') {
+        if (dispatchMode === 'connected_host_status' || dispatchMode === 'daemon_status') {
           return output(await connectedHostStatusSummary(deps.commandContext, deps.toolRegistry, {
             includeParameters: args.includeParameters === true,
           }));
         }
-        if (args.mode === 'propose_skill_drafts') {
+        if (dispatchMode === 'propose_skill_drafts') {
           const confirmationError = requireConfirmedAction(args, 'Skill draft proposal');
           if (confirmationError) return error(confirmationError);
           const shellPaths = deps.commandContext.workspace?.shellPaths;
@@ -742,48 +745,48 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
             policy: 'Drafted skills are disabled and require review before use. Enable them under Memory > Skills.',
           });
         }
-        if (args.mode === 'remote_snapshot') return output(remoteSnapshotSummary(args));
-        if (args.mode === 'remote_peers') return output(remotePeersSummary(args));
-        if (args.mode === 'remote_work') return output(remoteWorkSummary(args));
-        if (args.mode === 'remote_pair_requests') return output(remotePairRequestsSummary(args));
-        if (args.mode === 'remote_pair_approve') {
+        if (dispatchMode === 'remote_snapshot') return output(remoteSnapshotSummary(args));
+        if (dispatchMode === 'remote_peers') return output(remotePeersSummary(args));
+        if (dispatchMode === 'remote_work') return output(remoteWorkSummary(args));
+        if (dispatchMode === 'remote_pair_requests') return output(remotePairRequestsSummary(args));
+        if (dispatchMode === 'remote_pair_approve') {
           const confirmationError = requireConfirmedAction(args, 'Remote pair request approval');
           if (confirmationError) return error(confirmationError);
           return output(remotePairApproveHandoff(args));
         }
-        if (args.mode === 'remote_pair_reject') {
+        if (dispatchMode === 'remote_pair_reject') {
           const confirmationError = requireConfirmedAction(args, 'Remote pair request rejection');
           if (confirmationError) return error(confirmationError);
           return output(remotePairRejectHandoff(args));
         }
-        if (args.mode === 'remote_peers_invoke') {
+        if (dispatchMode === 'remote_peers_invoke') {
           const confirmationError = requireConfirmedAction(args, 'Remote peer command invocation');
           if (confirmationError) return error(confirmationError);
           return output(remotePeersInvokeHandoff(args));
         }
-        if (args.mode === 'remote_work_cancel') {
+        if (dispatchMode === 'remote_work_cancel') {
           const confirmationError = requireConfirmedAction(args, 'Remote work cancellation');
           if (confirmationError) return error(confirmationError);
           return output(remoteWorkCancelHandoff(args));
         }
-        if (args.mode === 'unified_inbox') return output(await unifiedInboxSummary(deps.commandContext, args));
-        if (args.mode === 'channel_drafts') return output(await channelDraftsSummary(deps.commandContext, args));
-        if (args.mode === 'channel_draft_save') {
+        if (dispatchMode === 'unified_inbox') return output(await unifiedInboxSummary(deps.commandContext, args));
+        if (dispatchMode === 'channel_drafts') return output(await channelDraftsSummary(deps.commandContext, args));
+        if (dispatchMode === 'channel_draft_save') {
           const result = await channelDraftSaveHandoff(deps.commandContext, args); return typeof result === 'string' ? error(result) : output(result);
         }
-        if (args.mode === 'channel_draft_send') {
+        if (dispatchMode === 'channel_draft_send') {
           const result = await channelDraftSendHandoff(deps.commandContext, args); return typeof result === 'string' ? error(result) : output(result);
         }
-        if (args.mode === 'channel_routing') return output(channelRoutingSummary(deps.commandContext, args));
-        if (args.mode === 'channel_routing_assign') {
+        if (dispatchMode === 'channel_routing') return output(channelRoutingSummary(deps.commandContext, args));
+        if (dispatchMode === 'channel_routing_assign') {
           const result = await channelRoutingAssignHandoff(deps.commandContext, args);
           return typeof result === 'string' ? error(result) : output(result);
         }
-        if (args.mode === 'channel_routing_remove') {
+        if (dispatchMode === 'channel_routing_remove') {
           const result = channelRoutingRemoveHandoff(deps.commandContext, args);
           return typeof result === 'string' ? error(result) : output(result);
         }
-        return error(`Unhandled agent_harness mode: ${args.mode}`);
+        return error(`Unhandled agent_harness mode: ${dispatchMode}`);
       } catch (err) {
         return error(formatHarnessError(err));
       }
