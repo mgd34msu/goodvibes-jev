@@ -1,3 +1,4 @@
+import { registerGeneratedKnowledgeSourceReferences } from '../source-structural-references.js';
 import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
 import { snapshotNodeInput } from '../activation/projection.js';
 import type { ArtifactStore } from '../../artifacts/index.js';
@@ -49,12 +50,14 @@ export async function runHomeGraphSnapshotSync(input: {
   return await store.batch(async () => {
     const { spaceId, installationId } = resolveHomeGraphSpace(snapshot);
     const capturedAt = snapshot.capturedAt ?? Date.now();
+    const sourceId = homeGraphSourceId(spaceId, 'snapshot', String(capturedAt));
+    const canonicalUri = namespacedCanonicalUri(spaceId, 'snapshot', String(capturedAt));
     const source = await store.upsertSource({
-      id: homeGraphSourceId(spaceId, 'snapshot', String(capturedAt)),
+      id: sourceId,
       connectorId: HOME_GRAPH_CONNECTOR_ID,
       sourceType: 'dataset',
       title: snapshot.title ?? 'Home Assistant snapshot',
-      canonicalUri: namespacedCanonicalUri(spaceId, 'snapshot', String(capturedAt)),
+      canonicalUri,
       summary: 'Home Assistant entity, device, area, automation, script, scene, label, and integration snapshot.',
       tags: ['homeassistant', 'home-graph', 'snapshot'],
       status: 'indexed',
@@ -65,6 +68,7 @@ export async function runHomeGraphSnapshotSync(input: {
         capturedAt,
       }),
     });
+    registerGeneratedKnowledgeSourceReferences(store, source, { id: sourceId, canonicalUri });
     const home = await upsertHomeNode(store, spaceId, installationId, snapshot);
     const beforeState = readHomeGraphState(store, spaceId);
     const beforeNodeIds = new Set(beforeState.nodes.map((node) => node.id));

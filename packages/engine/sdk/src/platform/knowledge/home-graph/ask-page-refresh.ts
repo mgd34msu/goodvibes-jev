@@ -1,3 +1,4 @@
+import { restoreKnowledgeSourceAnswerAliases } from '../source-structural-references.js';
 import type { ArtifactStore } from '../../artifacts/index.js';
 import { logger } from '../../utils/logger.js';
 import type { KnowledgeStore } from '../store.js';
@@ -96,11 +97,14 @@ async function persistAnswerFactSubjectLinks(input: {
   for (const device of input.devices) guard.node(device.id);
   const facts = input.facts.filter((fact) => getKnowledgeSpaceId(fact) === input.spaceId);
   for (const fact of facts) guard.node(fact.id);
+  const restoredSources = new Set<KnowledgeSourceRecord>();
   const candidates = input.sources.filter((source) => getKnowledgeSpaceId(source) === input.spaceId)
     .filter((source) => {
       const existing = guard.source(source.id);
       return !existing || getKnowledgeSpaceId(existing) === input.spaceId;
-    }).slice(0, MAX_ASK_PAGE_SOURCES_TO_CONSIDER).map((source) => {
+    }).slice(0, MAX_ASK_PAGE_SOURCES_TO_CONSIDER).map((responseSource) => {
+    const source = restoreKnowledgeSourceAnswerAliases(input.store, responseSource);
+    if (source !== responseSource) restoredSources.add(source);
     const existing = input.store.getSource(source.id) ?? undefined;
     return { source, existing, status: mergeSourceStatus(source.status, existing?.status) };
   });
@@ -114,7 +118,7 @@ async function persistAnswerFactSubjectLinks(input: {
     guard.assertCurrent();
     const devicesById = new Map(input.devices.map((device) => [device.id, device]));
     for (const reading of pageSources) {
-      const storedSource = await upsertAnswerPageSource(input, reading.source);
+      const storedSource = await upsertAnswerPageSource(input, reading.source, restoredSources.has(reading.source));
       for (const device of input.devices) {
         await input.store.upsertEdge({
           fromKind: 'source',
@@ -205,8 +209,11 @@ async function upsertAnswerPageSource(input: {
   readonly store: KnowledgeStore;
   readonly spaceId: string;
   readonly installationId: string;
-}, source: KnowledgeSourceRecord): Promise<KnowledgeSourceRecord> {
+}, source: KnowledgeSourceRecord, preserveOwnedSource = false): Promise<KnowledgeSourceRecord> {
   const existing = input.store.getSource(source.id);
+  // A restored answer projection already names this exact current record. Do not
+  // rewrite its minted URI as an external sourceUri or invalidate its provenance.
+  if (preserveOwnedSource && source === existing) return source;
   return input.store.upsertSource({
     id: source.id,
     connectorId: source.connectorId,

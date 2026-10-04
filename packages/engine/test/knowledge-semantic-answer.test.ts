@@ -11,7 +11,8 @@ const answerReadings = useKnowledgeAnswerReadings({ repairProfile: semanticRepai
 ] });
 useSemanticActivationFixtures(answerReadings);
 
-import { describe, expect, test } from 'bun:test';
+import * as crypto from 'node:crypto';
+import { describe, expect, spyOn, test } from 'bun:test';
 import {
   createProviderBackedKnowledgeSemanticLlm,
   createWebKnowledgeGapRepairer,
@@ -399,13 +400,20 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
       areas: [{ id: 'living-room', name: 'Living Room' }],
       devices: [{ id: 'tv', name: 'Living Room TV', areaId: 'living-room', model: 'MODEL-1' }],
     });
-    await service.ingestNote({
-      installationId: 'house',
-      title: 'Living Room TV manual',
-      body: 'The Living Room TV supports Dolby Vision and includes four HDMI ports.',
-      tags: ['manual', 'tv'],
-      target: { kind: 'device', id: 'tv', relation: 'has_manual' },
-    });
+    const random = spyOn(crypto, 'randomUUID').mockReturnValue('00001af0-0000-4000-8000-000000000000');
+    // The generated local URI for this UUID has a protected-looking digit run.
+    // Keep the ordinary TV content, and exercise the owned answer-alias path.
+    try {
+      await service.ingestNote({
+        installationId: 'house',
+        title: 'Living Room TV manual',
+        body: 'The Living Room TV supports Dolby Vision and includes four HDMI ports.',
+        tags: ['manual', 'tv'],
+        target: { kind: 'device', id: 'tv', relation: 'has_manual' },
+      });
+    } finally { random.mockRestore(); }
+    const originalSource = store.listSources().find((source) => source.title === 'Living Room TV manual')!;
+    const sourceSnapshot = structuredClone(originalSource);
 
     const answer = await service.ask({
       installationId: 'house',
@@ -415,6 +423,10 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     });
     const page = await service.refreshDevicePassport({ installationId: 'house', deviceId: 'tv' });
 
+    expect(store.getSource(originalSource.id)).toBe(originalSource);
+    expect(store.getSource(originalSource.id)).toEqual(sourceSnapshot);
+    expect(answer.answer.sources.find((source) => source.id === originalSource.id)?.url)
+      .toBe(originalSource.sourceUri ?? originalSource.canonicalUri);
     expect(answer.spaceId).toBe(homeAssistantKnowledgeSpaceId('house'));
     expect(answer.answer.synthesized).toBe(true);
     expect(answer.answer.text).toContain('Dolby Vision');
@@ -515,6 +527,8 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));
     await service.syncSnapshot({
       installationId: 'house',
+      // This real generated snapshot URI contains a protected-looking digit run.
+      capturedAt: 1791110401109,
       devices: [
         { id: 'tv', name: 'LG webOS Smart TV', manufacturer: 'LG', model: '86NANO90UNA' },
         { id: 'router', name: 'Storage Router', manufacturer: 'GL.iNet', model: 'MT6000' },

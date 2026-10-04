@@ -6,6 +6,7 @@ import { KnowledgeGeneratedFactSupportHeldError } from './semantic/verification/
 interface SourceIdentity { readonly id: string; readonly canonicalUri: string; readonly sourceUri?: string | undefined; }
 interface ExtractionIdentity { readonly id: string; readonly sourceId: string; }
 const sourceIdentities = new WeakMap<KnowledgeSourceRecord, SourceIdentity & { readonly store: KnowledgeStore; readonly hash: string }>();
+const answerAliases = new WeakMap<KnowledgeSourceRecord, { readonly original: KnowledgeSourceRecord; readonly hash: string }>();
 const extractionIdentities = new WeakMap<KnowledgeExtractionRecord, ExtractionIdentity & { readonly store: KnowledgeStore; readonly hash: string }>();
 const projections = new WeakMap<object, { readonly store: KnowledgeStore; readonly source: SourceIdentity;
   readonly sourceRecord: KnowledgeSourceRecord; readonly sourceHash: string; readonly extractionRecord: KnowledgeExtractionRecord | null;
@@ -50,6 +51,25 @@ export function knowledgeSourceJudgmentUris(source: KnowledgeSourceRecord) {
   const identity = currentSourceIdentity(source);
   return { url: source.url, sourceUri: identity?.sourceUri === undefined ? source.sourceUri : undefined,
     canonicalUri: identity ? undefined : source.canonicalUri };
+}
+/** Only this owned projection may recover a producer-minted source for local bookkeeping.
+ * A JSON copy, caller-created alias, changed projection, or reopened store cannot inherit it.
+ * The consumer still reads the full original content through ordinary judgment preflight.
+ */
+export function withKnowledgeSourceAnswerAliases(source: KnowledgeSourceRecord): KnowledgeSourceRecord {
+  const identity = currentSourceIdentity(source);
+  const result = { ...source, sourceId: source.id, url: source.sourceUri ?? source.canonicalUri };
+  if (identity) answerAliases.set(result, { original: source, hash: fingerprint(result) });
+  return result;
+}
+export function restoreKnowledgeSourceAnswerAliases(store: KnowledgeStore, source: KnowledgeSourceRecord): KnowledgeSourceRecord {
+  const known = answerAliases.get(source);
+  if (!known) return source;
+  const identity = currentSourceIdentity(known.original);
+  if (!identity || identity.store !== store || fingerprint(source) !== known.hash) {
+    throw new KnowledgeGeneratedFactSupportHeldError('stale');
+  }
+  return known.original;
 }
 /** Capture from actual current store records. The opaque proof is never serialized or recovered from JSON. */
 export function captureKnowledgeSourceReferences(store: KnowledgeStore, source: KnowledgeSourceRecord | null, extraction: KnowledgeExtractionRecord | null): object | undefined {

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- Home Graph answer-page refresh preserves owned generated-source provenance
+  through response aliases without rewriting the original source. Snapshot
+  sync also registers its freshly minted references, so card-shaped local
+  hashes do not randomly block ordinary answers; untrusted URI and content
+  privacy checks remain unchanged.
+
 ### Added
 
 - Session-preserving `sessions.turns.cancel` with required expected execution identity, synchronous currentness fencing, idempotent request acceptance, honest stale/ended outcomes, typed public client contracts, and the existing operator write policy. Terminal events remain settlement authority.

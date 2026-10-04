@@ -58,6 +58,21 @@ regenerated with identical content, the SDK keeps the existing `generatedAt`
 and artifact instead of stamping a new one, so an unchanged page does not look
 freshly written every time reindex or sync runs over it.
 
+### Local structural references
+
+Home Graph artifact ingestion and snapshot sync register the exact source IDs
+and canonical URIs they mint. These local bookkeeping references are omitted
+from judgment input only while their opaque, in-memory producer proof still
+matches the current stored record. Ordinary source content and externally
+supplied URIs continue through the full privacy preflight.
+
+Answer responses retain their `sourceId` and `url` aliases. Page refresh can
+recover the original source only from an unchanged alias projection made by
+the owning answer pipeline in the same store. It does not rewrite that exact
+stored source just to add display aliases. JSON copies, caller-built aliases,
+reopened stores, and changed records do not inherit structural authority;
+source or link writes also remain fenced against changes during quality reads.
+
 ## Quality
 
 Page generation deduplicates facts that restate the same canonical value under

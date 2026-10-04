@@ -1,3 +1,5 @@
+import { HomeGraphService } from '../sdk/src/platform/knowledge/home-graph/service.js';
+import { withKnowledgeSourceAnswerAliases } from '../sdk/src/platform/knowledge/source-structural-references.js';
 import { createKnowledgeNodeOperatorMutation } from '../sdk/src/platform/knowledge/store-node-authority.js';
 import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -395,6 +397,46 @@ describe('Home Graph page quality persistence boundaries', () => {
       }
     });
   }
+
+  test('a plain current source still receives Home Graph metadata during ask refresh', async () => {
+    const context = await fixture();
+    const source = await context.store.upsertSource({ id: 'plain-current-reference', connectorId: 'manual',
+      sourceType: 'manual', title: 'Plain reference manual', status: 'indexed',
+      canonicalUri: 'https://reference.example.test/plain-current', metadata: { knowledgeSpaceId: spaceId } });
+    readings();
+    await refreshAsk(context, [source]);
+    const stored = context.store.getSource(source.id)!;
+    expect(stored).not.toBe(source);
+    expect(stored.metadata.homeGraph).toBe(true);
+    expect(stored.metadata.homeAssistant).toMatchObject({ installationId });
+  });
+
+  test('owned answer alias source changes during quality leave no source or link writes', async () => {
+    const context = await fixture();
+    const service = new HomeGraphService(context.store, context.artifactStore);
+    const ingested = await service.ingestNote({ installationId, title: 'Reference device manual',
+      body: 'The reference device supports 4K UHD resolution.', category: 'manual' });
+    const source = context.store.getSource(ingested.source.id)!;
+    const alias = withKnowledgeSourceAnswerAliases(source);
+    const pause = pauseReading();
+    const before = persisted(context);
+    const result = refreshAsk(context, [alias]).then(() => undefined, (error: unknown) => error);
+    try {
+      await withTestTimeout(pause.entered);
+      expect(persisted(context)).toBe(before);
+      await context.store.replaceSourceRecord({ ...source, summary: 'Concurrent source correction.' });
+      const afterConcurrentEdit = persisted(context);
+      pause.release();
+      const error = await result;
+      expect(error).toBeInstanceOf(KnowledgeSourceQualityHeldError);
+      expect((error as KnowledgeSourceQualityHeldError).reason).toBe('stale');
+      expect(persisted(context)).toBe(afterConcurrentEdit);
+    } finally {
+      pause.release();
+      await result;
+      service.dispose();
+    }
+  });
 
   test('ask refresh links accepted-source facts only and leaves rejected and foreign facts unchanged', async () => {
     const context = await fixture();
