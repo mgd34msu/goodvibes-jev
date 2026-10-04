@@ -9,9 +9,9 @@
  * the `engine.gate.execution-ledger` site); it replaces the tool-name keyword
  * ladder the agent used. The kind vocabulary is the ledger's own.
  *
- * The reading is asynchronous, so a call's record is added once its kind is
- * read, and the call's later lifecycle events are applied after that, in the
- * order they arrived. When the reading itself fails, the record is still
+ * Readings asynchronously enrich an immediately visible, value-free record.
+ * Lifecycle events apply in delivery order without waiting for judgment.
+ * When the reading itself fails, the record is still
  * added so the call is never lost, with the kind `other` and the failure
  * stated in `routeKindError`.
  *
@@ -22,9 +22,9 @@
  * redacted, and when the reading fails every value is redacted and the
  * failure is stated in `argsReadingError`.
  */
+import type { JevDecision } from '@goodvibes-jev/judgment/decisions';
 import type { ToolEvent } from '../../../events/tools.js';
 import type { RuntimeEventBus } from '../../runtime/events/index.js';
-import { summarizeError } from '../../utils/error-display.js';
 import { logger } from '../../utils/logger.js';
 import type { SideEffectKind } from '../batteries/side-effect.js';
 import { snapshotJudgmentInput, JudgmentInputError } from '../judgment-input.js';
@@ -40,6 +40,8 @@ export type AgentExecutionStatus = 'running' | 'succeeded' | 'failed' | 'cancell
 export type AgentExecutionRouteKind = SideEffectKind;
 
 export interface AgentExecutionResultSummary {
+  /** Passive provenance from execution, never authority. */
+  readonly autonomousDecision?: JevDecision | undefined;
   readonly kind: string;
   readonly byteSize: number;
   readonly preview?: string | undefined;
@@ -62,6 +64,8 @@ export interface AgentExecutionRecord {
   readonly completedAt?: number | undefined;
   readonly durationMs?: number | undefined;
   readonly permissionApproved?: boolean | undefined;
+  /** Passive provenance from permission/execution, never authority. */
+  readonly autonomousDecision?: JevDecision | undefined;
   readonly argsPreview: string;
   readonly argsKeys: readonly string[];
   readonly commandPreview?: string | undefined;
@@ -86,6 +90,7 @@ interface MutableAgentExecutionRecord {
   completedAt?: number | undefined;
   durationMs?: number | undefined;
   permissionApproved?: boolean | undefined;
+  autonomousDecision?: JevDecision | undefined;
   argsPreview: string;
   argsKeys: readonly string[];
   commandPreview?: string | undefined;
@@ -116,16 +121,16 @@ interface ArgRole {
 const ARG_ROLES = new Map<string, ArgRole>();
 const ARG_ROLES_LIMIT = 1024;
 const ARG_READ_CONCURRENCY = 8;
-const roleKey = (tool: string, argument: string): string => `${tool}\u0000${argument}`;
+const roleKey = (tool: string, argument: string): string => JSON.stringify([tool, argument]);
 
-/** Every object key in the arguments, as deep as the preview shows them. */
+/** Every captured object key, including beyond the visible preview limits. */
 function argumentNames(value: unknown, depth = 0, names = new Set<string>()): Set<string> {
-  if (depth > 3 || !value || typeof value !== 'object') return names;
+  if (!value || typeof value !== 'object') return names;
   if (Array.isArray(value)) {
-    for (const entry of value.slice(0, 8)) argumentNames(entry, depth + 1, names);
+    for (const entry of value) argumentNames(entry, depth + 1, names);
     return names;
   }
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>).slice(0, 16)) {
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
     names.add(key);
     argumentNames(entry, depth + 1, names);
   }
@@ -133,17 +138,33 @@ function argumentNames(value: unknown, depth = 0, names = new Set<string>()): Se
 }
 
 /** Reads the roles of the argument names not read yet for this tool. A JudgmentError propagates. */
-async function readArgRoles(tool: string, args: Record<string, unknown>): Promise<ReadonlyMap<string, ArgRole>> {
+async function readArgRoles(tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<ReadonlyMap<string, ArgRole>> {
   const names = [...argumentNames(args)];
   const unread = names.filter((name) => !ARG_ROLES.has(roleKey(tool, name)));
   const port = unread.length > 0 ? judgmentPort(EXECUTION_LEDGER_SITE) : undefined;
+  // mapLimit is fail-fast: its rejected promise does not wait for sibling
+  // workers. Keep their lifetime owned after the caller has observed failure.
+  const batch = new AbortController();
+  const batchSignal = AbortSignal.any([signal, batch.signal]);
   await mapLimit(unread, ARG_READ_CONCURRENCY, async (argument) => {
-    const run = await ledgerArg.run(port!, { tool, argument }, { site: EXECUTION_LEDGER_SITE });
-    const credential = !(run.readings.holds_credential.verdict === 'no' && run.readings.holds_credential.outcome === 'act');
-    const target = run.readings.is_target.verdict === 'yes' && run.readings.is_target.outcome === 'act';
-    run.recordAction(credential ? 'redact' : target ? 'target' : 'show');
-    ARG_ROLES.set(roleKey(tool, argument), { credential, target });
-    if (ARG_ROLES.size > ARG_ROLES_LIMIT) ARG_ROLES.delete(ARG_ROLES.keys().next().value!);
+    try {
+      batchSignal.throwIfAborted();
+      const run = await ledgerArg.run(port!, { tool, argument }, { site: EXECUTION_LEDGER_SITE, signal: batchSignal });
+      batchSignal.throwIfAborted();
+      const credential = !(run.readings.holds_credential.verdict === 'no' && run.readings.holds_credential.outcome === 'act');
+      const target = run.readings.is_target.verdict === 'yes' && run.readings.is_target.outcome === 'act';
+      run.recordAction(credential ? 'redact' : target ? 'target' : 'show');
+      // Recording can synchronously dispose the owning ledger.
+      batchSignal.throwIfAborted();
+      ARG_ROLES.set(roleKey(tool, argument), { credential, target });
+      if (ARG_ROLES.size > ARG_ROLES_LIMIT) ARG_ROLES.delete(ARG_ROLES.keys().next().value!);
+    } catch (error) {
+      // Abort immediately at the failing worker, before aggregate rejection
+      // retires the ledger's pending entry. Non-cooperative late readers hit
+      // the post-await guard; queued workers hit the pre-ask guard.
+      batch.abort();
+      throw error;
+    }
   });
   return new Map(names.map((name) => [name, ARG_ROLES.get(roleKey(tool, name))!]));
 }
@@ -188,25 +209,41 @@ function targetPreview(args: Record<string, unknown>, roles: ReadonlyMap<string,
   return undefined;
 }
 
-/** Reads the call's route kind; a failed reading is reported with the record, never guessed. */
-async function readRouteKind(tool: string, args: Record<string, unknown>): Promise<{ routeKind: AgentExecutionRouteKind; routeKindError?: string }> {
+/** Redact the complete captured tree before any value-bearing reading. */
+function readingArgs(value: unknown, roles: ReadonlyMap<string, ArgRole> | null): unknown {
+  if (Array.isArray(value)) return value.map((entry) => readingArgs(entry, roles));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
+    key, roles?.get(key)?.credential === false ? readingArgs(entry, roles) : '[redacted]',
+  ]));
+}
+
+/** Provider errors can echo inputs; diagnostics here must never contain them. */
+const ROUTE_READING_FAILED = 'Execution route judgment unavailable.';
+const ARG_READING_FAILED = 'Execution argument judgment unavailable; values withheld.';
+const READING_CANCELLED = 'Execution judgment cancelled; values withheld.';
+
+/** Reads the call's route kind; uncertainty never becomes a guessed kind. */
+async function readRouteKind(tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<{ routeKind: AgentExecutionRouteKind; routeKindError?: string }> {
   try {
-    return { routeKind: (await readSideEffectKind(tool, args, EXECUTION_LEDGER_SITE)).kind };
-  } catch (error) {
-    const routeKindError = summarizeError(error);
-    logger.warn('AgentExecutionLedger: route kind reading failed', { tool, error: routeKindError });
-    return { routeKind: 'other', routeKindError };
+    signal.throwIfAborted();
+    const reading = await readSideEffectKind(tool, args, EXECUTION_LEDGER_SITE, signal);
+    signal.throwIfAborted();
+    if (!reading.confident) return { routeKind: 'other', routeKindError: 'Execution route judgment uncertain.' };
+    return { routeKind: reading.kind };
+  } catch {
+    if (!signal.aborted) logger.warn('AgentExecutionLedger: route kind reading failed');
+    return { routeKind: 'other', routeKindError: ROUTE_READING_FAILED };
   }
 }
 
-/** The argument roles, or the failure stated when the reading fails (every value is then redacted). */
-async function readArgRolesReported(tool: string, args: Record<string, unknown>): Promise<{ roles: ReadonlyMap<string, ArgRole> | null; error?: string }> {
+/** Argument values stay withheld on any failed reading. */
+async function readArgRolesReported(tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<{ roles: ReadonlyMap<string, ArgRole> | null; error?: string }> {
   try {
-    return { roles: await readArgRoles(tool, args) };
-  } catch (error) {
-    const message = summarizeError(error);
-    logger.warn('AgentExecutionLedger: argument reading failed', { tool, error: message });
-    return { roles: null, error: message };
+    return { roles: await readArgRoles(tool, args, signal) };
+  } catch {
+    if (!signal.aborted) logger.warn('AgentExecutionLedger: argument reading failed');
+    return { roles: null, error: ARG_READING_FAILED };
   }
 }
 
@@ -220,6 +257,7 @@ function statusForPhase(phase: ToolEvent['type']): AgentExecutionStatus {
 function resultSummaryFrom(value: Extract<ToolEvent, { type: 'TOOL_SUCCEEDED' | 'TOOL_FAILED' }>['result']): AgentExecutionResultSummary | undefined {
   if (!value) return undefined;
   return {
+    ...(value.autonomousDecision ? { autonomousDecision: structuredClone(value.autonomousDecision) } : {}),
     kind: value.kind,
     byteSize: value.byteSize,
     ...(typeof value.preview === 'string' && value.preview.trim() ? { preview: truncateText(value.preview, 220) } : {}),
@@ -227,7 +265,10 @@ function resultSummaryFrom(value: Extract<ToolEvent, { type: 'TOOL_SUCCEEDED' | 
 }
 
 function immutable(record: MutableAgentExecutionRecord): AgentExecutionRecord {
-  return { ...record };
+  return { ...record, argsKeys: [...record.argsKeys],
+    ...(record.autonomousDecision ? { autonomousDecision: structuredClone(record.autonomousDecision) } : {}),
+    ...(record.resultSummary ? { resultSummary: structuredClone(record.resultSummary) } : {}),
+  };
 }
 
 export class AgentExecutionLedger {
@@ -235,8 +276,8 @@ export class AgentExecutionLedger {
   private readonly order: string[] = [];
   private readonly subscribers = new Set<() => void>();
   private readonly unsubscribe: () => void;
-  /** Per call: the work still to finish before the call's next event applies. */
-  private readonly pending = new Map<string, Promise<void>>();
+  /** Enrichment never blocks lifecycle events, cancellation, or disposal. */
+  private readonly pending = new Map<string, { done: Promise<void>; cancel: () => void }>();
   private disposed = false;
 
   public constructor(
@@ -271,101 +312,131 @@ export class AgentExecutionLedger {
 
   /** Resolves once every route-kind reading started so far has been applied. */
   public async settled(): Promise<void> {
-    while (this.pending.size > 0) await Promise.all([...this.pending.values()]);
+    // Domain delivery itself is deferred by RuntimeEventBus.
+    await Promise.resolve();
+    while (this.pending.size > 0) await Promise.all([...this.pending.values()].map((entry) => entry.done));
   }
 
   public dispose(): void {
     this.disposed = true;
     this.unsubscribe();
+    for (const entry of this.pending.values()) entry.cancel();
+    this.pending.clear();
     this.subscribers.clear();
   }
 
   private handleToolEvent(event: ToolEvent, timestamp: number): void {
-    if (!('callId' in event)) return;
-    const callId = event.callId;
-    const before = this.pending.get(callId);
-    const step = event.type === 'TOOL_RECEIVED'
-      ? (before ?? Promise.resolve()).then(() => this.recordReceived(event, timestamp))
-      : before?.then(() => this.applyLifecycleEvent(event, timestamp));
-    if (!step) {
-      this.applyLifecycleEvent(event, timestamp);
-      return;
-    }
-    this.pending.set(callId, step);
-    void step.then(() => {
-      if (this.pending.get(callId) === step) this.pending.delete(callId);
-    });
+    if (this.disposed || !('callId' in event)) return;
+    if (event.type === 'TOOL_RECEIVED') this.recordReceived(event, timestamp);
+    else this.applyLifecycleEvent(event, timestamp);
   }
 
   private applyLifecycleEvent(event: Extract<ToolEvent, { callId: string }>, timestamp: number): void {
     if (this.disposed) return;
     const existing = this.records.get(event.callId);
-    if (!existing) return;
+    if (!existing || existing.status !== 'running') return;
     existing.phase = event.type;
     existing.status = statusForPhase(event.type);
     existing.updatedAt = timestamp;
-    if (event.type === 'TOOL_PERMISSIONED') existing.permissionApproved = event.approved;
+    if (event.type === 'TOOL_PERMISSIONED') {
+      existing.permissionApproved = event.approved;
+      if (event.autonomousDecision) existing.autonomousDecision = structuredClone(event.autonomousDecision);
+    }
     if (event.type === 'TOOL_SUCCEEDED') {
       existing.completedAt = timestamp;
       existing.durationMs = event.durationMs;
       existing.resultSummary = resultSummaryFrom(event.result);
+      if (event.result?.autonomousDecision) existing.autonomousDecision = structuredClone(event.result.autonomousDecision);
     }
     if (event.type === 'TOOL_FAILED') {
       existing.completedAt = timestamp;
       existing.durationMs = event.durationMs;
       existing.error = truncateText(event.error, 220);
       existing.resultSummary = resultSummaryFrom(event.result);
+      if (event.result?.autonomousDecision) existing.autonomousDecision = structuredClone(event.result.autonomousDecision);
     }
     if (event.type === 'TOOL_CANCELLED') {
+      const pending = this.pending.get(event.callId);
+      if (pending) {
+        pending.cancel();
+        this.pending.delete(event.callId);
+        existing.argsReadingError ??= READING_CANCELLED;
+        existing.routeKindError ??= READING_CANCELLED;
+      }
       existing.completedAt = timestamp;
       existing.cancelReason = event.reason ? truncateText(event.reason, 220) : undefined;
     }
     this.notify();
   }
 
-  private async recordReceived(event: Extract<ToolEvent, { type: 'TOOL_RECEIVED' }>, timestamp: number): Promise<void> {
-    // TOOL_RECEIVED precedes the permission result. Refused material must not
-    // reach the independent route/argument readers or their persisted previews.
+  private recordReceived(event: Extract<ToolEvent, { type: 'TOOL_RECEIVED' }>, timestamp: number): void {
+    // Capture at delivery, before our first await. The event bus owns the
+    // earlier asynchronous dispatch boundary; this is not an emitter snapshot.
+    if (this.records.has(event.callId)) return;
     let args: Record<string, unknown> = {};
     let refusal: string | undefined;
     try { args = snapshotJudgmentInput(event.args, event.tool) as Record<string, unknown>; }
     catch (error) {
-      if (!(error instanceof JudgmentInputError)) throw error;
-      refusal = error.message;
+      refusal = error instanceof JudgmentInputError ? error.message : ARG_READING_FAILED;
     }
-    const problem = refusal !== undefined;
-    const [route, roles] = refusal
-      ? [{ routeKind: 'other' as const, routeKindError: refusal }, { roles: null, error: refusal }]
-      : await Promise.all([readRouteKind(event.tool, args), readArgRolesReported(event.tool, args)]);
-    const command = shellCommandsIn(args)[0];
-    if (this.disposed) return;
     const record: MutableAgentExecutionRecord = {
-      id: event.callId,
-      callId: event.callId,
-      turnId: event.turnId,
-      tool: problem ? '[protected tool call]' : event.tool,
-      routeKind: route.routeKind,
-      ...(route.routeKindError !== undefined ? { routeKindError: route.routeKindError } : {}),
-      status: 'running',
-      phase: event.type,
-      receivedAt: timestamp,
-      updatedAt: timestamp,
-      ...(roles.error !== undefined ? { argsReadingError: roles.error } : {}),
-      argsPreview: problem ? '[redacted: protected input]' : argsPreview(args, roles.roles),
-      argsKeys: Object.keys(args).filter((key) => roles.roles?.get(key)?.credential === false).sort(),
-      commandPreview: command !== undefined && command.trim() ? truncateText(command, 180) : undefined,
-      targetPreview: targetPreview(args, roles.roles),
+      id: event.callId, callId: event.callId, turnId: event.turnId,
+      tool: refusal ? '[protected tool call]' : event.tool,
+      routeKind: 'other', status: 'running', phase: event.type,
+      receivedAt: timestamp, updatedAt: timestamp,
+      argsPreview: refusal ? '[redacted: protected input]' : '[judgment pending: values withheld]',
+      argsKeys: [],
+      ...(refusal ? { routeKindError: refusal, argsReadingError: refusal } : {}),
     };
+    // Receipt order, retention, and lifecycle visibility do not depend on the
+    // speed (or eventual availability) of a hosted judgment.
     this.records.set(record.id, record);
     this.order.push(record.id);
     while (this.order.length > this.limit) {
       const dropped = this.order.shift();
-      if (dropped) this.records.delete(dropped);
+      if (dropped) {
+        this.pending.get(dropped)?.cancel();
+        this.pending.delete(dropped);
+        this.records.delete(dropped);
+      }
     }
     this.notify();
+    if (this.disposed || refusal || this.records.get(record.id) !== record) return;
+
+    const controller = new AbortController();
+    let release: () => void = () => {};
+    const cancelled = new Promise<void>((resolve) => { release = resolve; });
+    const active = () => !this.disposed && !controller.signal.aborted && this.records.get(record.id) === record;
+    const enrich = async (): Promise<void> => {
+      // The argument reader sees names only. Credential/uncertain values
+      // cannot reach the independent, value-bearing route reader.
+      const roles = await readArgRolesReported(record.tool, args, controller.signal);
+      if (!active()) return;
+      const safeArgs = readingArgs(args, roles.roles) as Record<string, unknown>;
+      const route = roles.error
+        ? { routeKind: 'other' as const, routeKindError: ARG_READING_FAILED }
+        : await readRouteKind(record.tool, safeArgs, controller.signal);
+      if (!active()) return;
+      record.routeKind = route.routeKind;
+      record.routeKindError = route.routeKindError;
+      record.argsReadingError = roles.error;
+      record.argsPreview = argsPreview(args, roles.roles);
+      record.argsKeys = Object.keys(args).filter((key) => roles.roles?.get(key)?.credential === false).sort();
+      const command = shellCommandsIn(safeArgs)[0];
+      record.commandPreview = command && command !== '[redacted]' && command.trim() ? truncateText(command, 180) : undefined;
+      record.targetPreview = targetPreview(args, roles.roles);
+      this.notify();
+    };
+    const done = Promise.race([enrich(), cancelled]).then(() => {
+      if (this.pending.get(record.id)?.done === done) this.pending.delete(record.id);
+    });
+    this.pending.set(record.id, { done, cancel: () => { controller.abort(); release(); } });
   }
 
   private notify(): void {
-    for (const callback of this.subscribers) callback();
+    for (const callback of this.subscribers) {
+      try { callback(); }
+      catch { logger.warn('AgentExecutionLedger: subscriber failed'); }
+    }
   }
 }

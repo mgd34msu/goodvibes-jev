@@ -7,6 +7,7 @@
 import { Battery } from '@goodvibes-jev/judgment/decisions';
 import { ChoiceItem } from '@goodvibes-jev/judgment/decisions';
 import { ChoiceReading } from '@goodvibes-jev/judgment/decisions';
+import type { JevDecision } from '@goodvibes-jev/judgment/decisions';
 import type { JudgmentPort } from '@goodvibes-jev/judgment/decisions';
 import { YesNoItem } from '@goodvibes-jev/judgment/decisions';
 import { YesNoReading } from '@goodvibes-jev/judgment/decisions';
@@ -29724,6 +29725,7 @@ export type ToolEvent =
     turnId: string;
     tool: string;
     approved: boolean;
+    readonly autonomousDecision?: JevDecision | undefined;
 }
 /** Tool is actively executing. */
 | {
@@ -29823,6 +29825,7 @@ export type ToolEventType = ToolEvent['type'];
 
 // @public
 export interface ToolResultSummary {
+    readonly autonomousDecision?: JevDecision | undefined;
     byteSize: number;
     kind: string;
     preview?: string | undefined;
