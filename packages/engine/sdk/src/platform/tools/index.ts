@@ -1,3 +1,4 @@
+import { createCapturedValidatorRunner } from './shared/captured-validators.js';
 import { join } from 'node:path';
 import { resolveScopedDirectory } from '../runtime/surface-root.js';
 import { ToolRegistry } from './registry.js';
@@ -488,39 +489,6 @@ export function registerAllTools(
     deps.diagnosticsProvider === null
       ? undefined
       : (deps.diagnosticsProvider ?? new TypeScriptSyntaxDiagnosticsProvider());
-  registerTool(
-    createWriteTool({
-      projectRoot: workingDirectory,
-      fileCache,
-      projectIndex,
-      capturedReadAccess: deps.capturedReadAccess,
-      fileUndoManager,
-      configManager: deps.configManager,
-      toolLLM: deps.toolLLM,
-      changeTracker: deps?.changeTracker,
-      diagnosticsProvider,
-    }),
-  );
-  registerTool(
-    createEditTool(fileCache, {
-      cwd: workingDirectory,
-      fileUndoManager,
-      configManager: deps.configManager,
-      toolLLM: deps.toolLLM,
-      changeTracker: deps?.changeTracker,
-      diagnosticsProvider,
-    }),
-  );
-  registerTool(
-    createFindTool(workingDirectory, deps.featureFlags, undefined, deps.readAccessFilter, deps.capturedReadAccess),
-  );
-  registerTool(
-    createRepoMapTool({
-      projectRoot: workingDirectory,
-      ...(deps.readAccessFilter ? { readAccessFilter: deps.readAccessFilter } : {}),
-    }),
-  );
-  registerTool(createContextAccountingTool(deps.contextAccountingHolder ?? new ContextAccountingHolder()));
   // Per-command exec sandbox: only probe the host (a bwrap spawn) when the
   // graduation-gated flag AND the sandbox.enabled config switch are both on, so
   // the default path stays zero-cost and byte-for-byte unchanged.
@@ -540,6 +508,42 @@ export function registerAllTools(
           ...(deps.onSandboxedRun ? { onSandboxedRun: deps.onSandboxedRun } : {}),
         }
       : null;
+  const validatorRunner = deps.capturedExec ? createCapturedValidatorRunner(deps.capturedExec, { sandbox: execSandbox, credentialEnvScrub: deps.credentialEnvScrub }) : undefined;
+  registerTool(
+    createWriteTool({
+      projectRoot: workingDirectory,
+      fileCache,
+      projectIndex,
+      capturedReadAccess: deps.capturedReadAccess,
+      validatorRunner,
+      fileUndoManager,
+      configManager: deps.configManager,
+      toolLLM: deps.toolLLM,
+      changeTracker: deps?.changeTracker,
+      diagnosticsProvider,
+    }),
+  );
+  registerTool(
+    createEditTool(fileCache, {
+      cwd: workingDirectory,
+      validatorRunner,
+      fileUndoManager,
+      configManager: deps.configManager,
+      toolLLM: deps.toolLLM,
+      changeTracker: deps?.changeTracker,
+      diagnosticsProvider,
+    }),
+  );
+  registerTool(
+    createFindTool(workingDirectory, deps.featureFlags, undefined, deps.readAccessFilter, deps.capturedReadAccess),
+  );
+  registerTool(
+    createRepoMapTool({
+      projectRoot: workingDirectory,
+      ...(deps.readAccessFilter ? { readAccessFilter: deps.readAccessFilter } : {}),
+    }),
+  );
+  registerTool(createContextAccountingTool(deps.contextAccountingHolder ?? new ContextAccountingHolder()));
   // PTY prompt-answer path: only probe the host (a `command -v script` spawn)
   // when the composition root wired a prompt-answer handler, so the default
   // path stays zero-cost and byte-for-byte unchanged.

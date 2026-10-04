@@ -9,7 +9,7 @@ import { FileStateCache, unifiedDiff } from '../../state/file-cache.js';
 import type { ConfigManager } from '../../config/manager.js';
 import type { ToolLLM } from '../../config/tool-llm.js';
 import { resolveAndValidatePath } from '../../utils/path-safety.js';
-import { assertCapturedToolReadAccess, hasCapturedToolInvocation } from '../shared/captured-input-tools.js';
+import { assertCapturedToolMutationCurrent, assertCapturedToolReadAccess, hasCapturedToolInvocation } from '../shared/captured-input-tools.js';
 import { editSchema } from './schema.js';
 import { AutoHealer } from '../shared/auto-heal.js';
 import {
@@ -33,13 +33,14 @@ import {
   runValidators as runSharedValidators,
   formatValidatorFailure,
   type ValidatorResult,
+  type ValidatorRunner,
 } from '../shared/validators.js';
 
 const DIFF_TRUNCATE_THRESHOLD = 5000;
 const DIFF_PREVIEW_LENGTH = 500;
 
-async function runValidators(validators: ValidatorName[], cwd: string): Promise<ValidatorResult | null> {
-  const failures = await runSharedValidators(validators, cwd);
+async function runValidators(validators: ValidatorName[], cwd: string, runner?: ValidatorRunner): Promise<ValidatorResult | null> {
+  const failures = await runSharedValidators(validators, cwd, runner);
   return failures[0] ?? null;
 }
 
@@ -51,6 +52,7 @@ interface EditExecutionContext {
   toolLLM?: Pick<ToolLLM, 'chat'> | undefined;
   changeTracker?: Pick<SessionChangeTracker, 'recordChange'> | undefined;
   diagnosticsProvider?: DiagnosticsProvider | undefined;
+  validatorRunner?: ValidatorRunner | undefined;
 }
 
 interface ResolvedTextEditInput {
@@ -137,7 +139,9 @@ async function writeSuccessfulTextEdits(
 
     try {
       await assertCapturedToolReadAccess(resolvedPath);
-      await writeFile(resolvedPath, newContent, 'utf-8');
+      assertCapturedToolMutationCurrent(resolvedPath);
+      if (hasCapturedToolInvocation()) writeFileSync(resolvedPath, newContent, 'utf-8');
+      else await writeFile(resolvedPath, newContent, 'utf-8');
       env.fileCache.update(resolvedPath, newContent);
       writtenPaths.add(resolvedPath);
       if (env.fileUndoManager) {
@@ -224,7 +228,10 @@ async function buildImportGraphWarning(cwd: string, writtenPaths: Set<string>): 
 async function restoreOriginalContents(fileContents: Map<string, string>, env: EditExecutionContext): Promise<void> {
   for (const [resolvedPath, originalContent] of fileContents) {
     try {
-      await writeFile(resolvedPath, originalContent, 'utf-8');
+      await assertCapturedToolReadAccess(resolvedPath);
+      assertCapturedToolMutationCurrent(resolvedPath);
+      if (hasCapturedToolInvocation()) writeFileSync(resolvedPath, originalContent, 'utf-8');
+      else await writeFile(resolvedPath, originalContent, 'utf-8');
       env.fileCache.update(resolvedPath, originalContent);
     } catch {
       // Continue restoring the remaining files.
@@ -239,6 +246,7 @@ async function repairAfterValidationFailure(
   env: EditExecutionContext,
 ): Promise<PostValidationRepairResult> {
   let healed = false;
+  if (hasCapturedToolInvocation()) return { healed };
   for (const [resolvedPath, originalContent] of fileContents) {
     const newContent = workingContents.get(resolvedPath);
     if (newContent === undefined || newContent === originalContent) continue;
@@ -267,13 +275,13 @@ async function validateAfterTextEdits(
   workingContents: Map<string, string>,
   env: EditExecutionContext,
 ): Promise<{ error?: string }> {
-  const failure = await runValidators(validators, cwd);
+  const failure = await runValidators(validators, cwd, env.validatorRunner);
   if (!failure) return {};
 
   const failureMessages = [formatValidatorFailure(failure)];
   const repair = await repairAfterValidationFailure(fileContents, workingContents, failureMessages, env);
   if (repair.healed) {
-    const healFailure = await runValidators(validators, cwd);
+    const healFailure = await runValidators(validators, cwd, env.validatorRunner);
     if (!healFailure) {
       return {};
     }
@@ -369,7 +377,7 @@ async function executeTextEdits(
   const cwd = env.cwd;
 
   if (!dryRun && validateBefore.length > 0) {
-    const failure = await runValidators(validateBefore, cwd);
+    const failure = await runValidators(validateBefore, cwd, env.validatorRunner);
     if (failure) {
       return { success: false, error: `Pre-edit validation failed. ${formatValidatorFailure(failure)}` };
     }
@@ -556,6 +564,7 @@ export interface EditToolOptions {
   toolLLM?: Pick<ToolLLM, 'chat'> | undefined;
   changeTracker?: Pick<SessionChangeTracker, 'recordChange'> | undefined;
   diagnosticsProvider?: DiagnosticsProvider | undefined;
+  validatorRunner?: ValidatorRunner | undefined;
 }
 
 function resolveEditCwd(options?: EditToolOptions): string {
@@ -604,6 +613,7 @@ export function createEditTool(fileCache: FileStateCache, options?: EditToolOpti
         toolLLM: options?.toolLLM,
         changeTracker: options?.changeTracker,
         diagnosticsProvider: options?.diagnosticsProvider,
+        validatorRunner: options?.validatorRunner,
       };
 
       if (input.notebook_operations) {

@@ -1,4 +1,5 @@
 import { projectCapturedExecNodeRuntime, type CapturedExecNodeRuntimeInput } from './captured-exec-runtime-input.js';
+import type { CapturedPublicationLease } from '../shared/captured-publication.js';
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 import { publishCapturedProjection } from './captured-exec-publication.js';
 import { executeCapturedFileOperations } from './captured-exec-file-ops.js';
@@ -108,6 +109,8 @@ export interface CapturedExecutionLease {
   readonly readOutput: () => Promise<ExecCommandResult>;
 }
 export interface CapturedExecutionObserver {
+  /** Construction-only owner for nested write/edit validators, never model input. */
+  readonly publicationLease?: CapturedPublicationLease | undefined;
   readonly fileOps?: ExecFileOp[] | undefined;
   readonly onFileOperations?: ((result: Awaited<ReturnType<typeof executeCapturedFileOperations>>) => void) | undefined;
   readonly interaction?: ExecInteractionRuntime | undefined;
@@ -323,7 +326,7 @@ export async function runCapturedCommand(
     await inspect('');
     await check();
     if (contractInputAuthorityMutable(binding.authority))
-      await publishCapturedProjection(binding, originals, originalDirectories, present, directories, changes, combined);
+      await publishCapturedProjection(binding, originals, originalDirectories, present, directories, changes, combined, observer.publicationLease);
     await check();
     const failures: string[] = [];
     if (fileOperations.fileOpError) failures.push(fileOperations.fileOpError);

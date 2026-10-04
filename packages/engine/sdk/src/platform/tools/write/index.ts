@@ -1,10 +1,11 @@
+import { assertCapturedToolMutationCurrent, assertCapturedToolReadAccess, hasCapturedToolInvocation, prepareCapturedToolBackup } from '../shared/captured-input-tools.js';
 import type { ReadAccessFilter } from '../shared/read-access.js';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, unlinkSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Tool, ToolDefinition } from '../../types/tools.js';
 import { WRITE_SCHEMA, type WriteInput, type WriteFileInput, type WriteMode } from './schema.js';
-import { runValidators, formatValidatorFailure, type ValidatorName } from '../shared/validators.js';
+import { runValidators, formatValidatorFailure, type ValidatorName, type ValidatorRunner } from '../shared/validators.js';
 import { FileStateCache } from '../../state/file-cache.js';
 import { ProjectIndex } from '../../state/project-index.js';
 import { FileUndoManager } from '../../state/file-undo.js';
@@ -147,7 +148,7 @@ function validateNotebookContent(
  * Atomically write content to a file.
  * Writes to a temp file first, then renames to the target path.
  */
-function atomicWrite(targetPath: string, content: string, encoding: BufferEncoding = 'utf-8'): void {
+function atomicWrite(targetPath: string, content: string | Buffer, encoding: BufferEncoding = 'utf-8'): void {
   const rand = randomBytes(4).toString('hex');
   const tmpPath = `${targetPath}.tmp.${rand}`;
   try {
@@ -179,6 +180,7 @@ function processSingleWrite(
   fileInput: WriteFileInput,
   projectRoot: string,
   dryRun: boolean,
+  capturedBackup?: Awaited<ReturnType<typeof prepareCapturedToolBackup>>,
 ): { ok: true; result: FileWriteResult } | { ok: false; error: string } {
   // Resolve and validate path
   let resolvedPath: string;
@@ -249,17 +251,20 @@ function processSingleWrite(
   if (dryRun) {
     result.would_write = true;
     if (alreadyExists && mode === 'backup') {
-      result.backup_path = buildBackupPath(resolvedPath, projectRoot);
+      result.backup_path = capturedBackup?.path ?? buildBackupPath(resolvedPath, projectRoot);
     }
     return { ok: true, result };
   }
 
   // Backup if needed
   if (alreadyExists && mode === 'backup') {
-    const backupPath = buildBackupPath(resolvedPath, projectRoot);
+    const backupPath = capturedBackup?.path ?? buildBackupPath(resolvedPath, projectRoot);
     try {
-      mkdirSync(dirname(backupPath), { recursive: true });
-      copyFileSync(resolvedPath, backupPath);
+      if (capturedBackup) capturedBackup.create();
+      else {
+        mkdirSync(dirname(backupPath), { recursive: true });
+        copyFileSync(resolvedPath, backupPath);
+      }
       result.backup_path = backupPath;
     } catch (err) {
       return {
@@ -349,6 +354,7 @@ export function createWriteTool(options?: {
   changeTracker?: Pick<SessionChangeTracker, 'recordChange'> | undefined;
   diagnosticsProvider?: DiagnosticsProvider | undefined;
   capturedReadAccess?: ReadAccessFilter | undefined;
+  validatorRunner?: ValidatorRunner | undefined;
 }): Tool {
   if (typeof options?.projectRoot !== 'string' || options.projectRoot.trim().length === 0) {
     throw new Error('createWriteTool requires projectRoot');
@@ -385,7 +391,40 @@ export function createWriteTool(options?: {
       const warnings: string[] = [];
       const transactionMode = input.transaction?.mode ?? 'none';
       // Snapshots for atomic rollback: map from resolvedPath -> original content (null = new file)
-      const snapshots = new Map<string, string | null>();
+      const snapshots = new Map<string, string | Buffer | null>();
+      const captured = hasCapturedToolInvocation();
+      const capturedAtomic = captured && transactionMode === 'atomic';
+      const backups = new Map<WriteFileInput, Awaited<ReturnType<typeof prepareCapturedToolBackup>>>();
+
+      // Atomic captured batches admit and validate every path before effects.
+      // Once publication starts there are no awaited callbacks until every write
+      // (or its synchronous rollback) has finished under the shared view lock.
+      if (capturedAtomic) {
+        const willExist = new Set<string>();
+        for (const fileInput of input.files) {
+          if (!fileInput.path || typeof fileInput.path !== 'string')
+            return { success: false, error: "Atomic transaction has an invalid file path" };
+          const path = resolveAndValidatePath(fileInput.path, projectRoot);
+          await assertCapturedToolReadAccess(path);
+          if (options.capturedReadAccess && !await options.capturedReadAccess(path))
+            throw new Error('Captured write path is access-restricted');
+          const checked = processSingleWrite(fileInput, projectRoot, true);
+          if (!checked.ok) return { success: false, error: `Atomic transaction failed on '${fileInput.path}': ${checked.error}` };
+          if (willExist.has(path) && (fileInput.mode ?? 'fail_if_exists') === 'fail_if_exists')
+            return { success: false, error: `Atomic transaction would create '${fileInput.path}' more than once` };
+          willExist.add(path);
+          if (!snapshots.has(path)) snapshots.set(path, existsSync(path) ? readFileSync(path) : null);
+          if (fileInput.mode === 'backup' && existsSync(path)) backups.set(fileInput, await prepareCapturedToolBackup(path));
+        }
+        for (const path of snapshots.keys()) await assertCapturedToolReadAccess(path);
+        for (const backup of backups.values()) await backup.assertCurrent();
+        assertCapturedToolMutationCurrent();
+        for (const [path, before] of snapshots) {
+          assertCapturedToolMutationCurrent(path);
+          if (before === null ? existsSync(path) : !existsSync(path) || !Buffer.from(before).equals(readFileSync(path)))
+            throw new Error('Captured atomic write conflicts with changed input');
+        }
+      }
 
       for (const fileInput of input.files) {
         if (!fileInput.path || typeof fileInput.path !== 'string') {
@@ -393,15 +432,24 @@ export function createWriteTool(options?: {
           continue;
         }
 
-        if (options.capturedReadAccess && !await options.capturedReadAccess(resolveAndValidatePath(fileInput.path, projectRoot))) {
-          errors.push('Captured write path is access-restricted');
-          continue;
+        if (!capturedAtomic && (captured || options.capturedReadAccess)) {
+          const path = resolveAndValidatePath(fileInput.path, projectRoot);
+          await assertCapturedToolReadAccess(path);
+          if (options.capturedReadAccess && !await options.capturedReadAccess(path)) {
+            errors.push('Captured write path is access-restricted');
+            continue;
+          }
+          if (captured && fileInput.mode === 'backup' && existsSync(path)) backups.set(fileInput, await prepareCapturedToolBackup(path));
         }
+        let preparationError: string | undefined;
+        try {
+          if (captured) assertCapturedToolMutationCurrent(resolveAndValidatePath(fileInput.path, projectRoot));
+        } catch (error) { preparationError = summarizeError(error); }
 
         // Capture before-content for undo and atomic transaction snapshots BEFORE the write happens
         let beforeContent: string | null = null;
         let existedBeforeWrite = false;
-        if (!dryRun && fileInput.path) {
+        if (!preparationError && !dryRun && fileInput.path) {
           let resolvedForUndo: string | undefined;
           try {
             resolvedForUndo = resolveAndValidatePath(fileInput.path, projectRoot);
@@ -435,7 +483,9 @@ export function createWriteTool(options?: {
           }
         }
 
-        const outcome = processSingleWrite(fileInput, projectRoot, dryRun);
+        const outcome = preparationError
+          ? { ok: false as const, error: preparationError }
+          : processSingleWrite(fileInput, projectRoot, dryRun, backups.get(fileInput));
 
         if (!outcome.ok) {
           errors.push(outcome.error);
@@ -445,8 +495,9 @@ export function createWriteTool(options?: {
           if (transactionMode === 'atomic' && results.length > 0) {
             const rolledBack: string[] = [];
             const rollbackFailures: string[] = [];
-            for (const written of results) {
+            for (const written of [...new Map(results.map((result) => [result.resolved_path, result])).values()]) {
               try {
+                assertCapturedToolMutationCurrent(written.resolved_path);
                 const snapshot = snapshots.get(written.resolved_path);
                 if (snapshot === null || snapshot === undefined) {
                   // File was new - delete it
@@ -454,6 +505,7 @@ export function createWriteTool(options?: {
                 } else {
                   // File existed before - restore original
                   atomicWrite(written.resolved_path, snapshot);
+                  options.fileCache?.update(written.resolved_path, snapshot.toString());
                 }
                 rolledBack.push(written.path);
               } catch (rollbackErr) {
@@ -498,8 +550,8 @@ export function createWriteTool(options?: {
               );
             }
           }
-          if (autoHealEnabled && options.capturedReadAccess) appendWarning(warnings, 'Captured input auto-heal is unavailable until its backend enforces original-owner authority.');
-          if (autoHealEnabled && !options.capturedReadAccess) {
+          if (autoHealEnabled && captured) appendWarning(warnings, 'Captured input auto-heal is unavailable until its backend enforces original-owner authority.');
+          if (autoHealEnabled && !captured) {
             const ext = extname(outcome.result.resolved_path).toLowerCase();
             const isJsTs = ['.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs'].includes(ext);
             if (isJsTs) {
@@ -660,7 +712,7 @@ export function createWriteTool(options?: {
         const validatorNames = input.validate.after as ValidatorName[];
         logger.debug('write tool: running post-write validators', { validators: validatorNames });
         try {
-          const failures = await runValidators(validatorNames, projectRoot);
+          const failures = await runValidators(validatorNames, projectRoot, options.validatorRunner);
           if (failures.length > 0) {
             finalOutput.validation_failures = failures.map((f) => ({
               validator: f.validator,

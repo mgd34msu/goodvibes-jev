@@ -1,9 +1,11 @@
 import { withCapturedAnalyzeInput } from '../analyze/captured-git.js';
-import { withCapturedPublication } from './captured-publication.js';
+import { prepareCapturedWriteBackup } from './captured-write-backup.js';
+import { withCapturedPublication, type CapturedPublicationLease } from './captured-publication.js';
 import { isCapturedRegistryTool } from '../registry-tool/index.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 /** Defense-in-depth around the actual captured-view tool implementations. */
-import { resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { lstatSync, realpathSync } from 'node:fs';
 import { isCapturedExecTool } from '../exec/runtime.js';
 import type { Tool } from '../../types/tools.js';
 import type { ReadAccessFilter } from './read-access.js';
@@ -14,11 +16,16 @@ import {
   withContractInputAuthority,
   authorizeContractInputPath,
   contractInputAuthorityMutable,
+  contractInputAuthoritySourceRoot,
   type ContractInputAuthority,
 } from '../../contract/input-authority.js';
 
 const deliveryReads = new AsyncLocalStorage<{
   readonly paths: Set<string>;
+  readonly checks: Set<() => Promise<void>>;
+  readonly assertMutable: (path?: string) => void;
+  readonly prepareBackup: (path: string) => ReturnType<typeof prepareCapturedWriteBackup>;
+  readonly publicationLease?: CapturedPublicationLease | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly authorize: (path: string) => Promise<void>;
   readonly assertCurrent: () => Promise<void>;
@@ -33,6 +40,23 @@ export async function assertCapturedToolAccessCurrent(): Promise<void> {
 }
 export function hasCapturedToolInvocation(): boolean {
   return deliveryReads.getStore() !== undefined;
+}
+
+export function assertCapturedToolMutationCurrent(path?: string): void {
+  deliveryReads.getStore()?.assertMutable(path);
+}
+export async function prepareCapturedToolBackup(path: string): ReturnType<typeof prepareCapturedWriteBackup> {
+  const context = deliveryReads.getStore();
+  if (!context) throw new Error('captured backup requires an owned invocation');
+  const backup = await context.prepareBackup(path);
+  context.checks.add(backup.assertCurrent);
+  return backup;
+}
+
+export function capturedToolPublicationContext(): { readonly lease: CapturedPublicationLease; readonly signal?: AbortSignal | undefined } {
+  const context = deliveryReads.getStore();
+  if (!context?.publicationLease) throw new Error('captured validator requires its active write/edit publication owner');
+  return { lease: context.publicationLease, signal: context.signal };
 }
 
 class UnsupportedCapturedWorkflow extends Error {}
@@ -65,6 +89,39 @@ export function capturedInputTool(
         deliveryReads.run(
           {
             paths: new Set<string>(),
+            checks: new Set<() => Promise<void>>(),
+            assertMutable: (path) => {
+              signal?.throwIfAborted(); options?.signal?.throwIfAborted();
+              if (!contractInputAuthorityMutable(authority)) throw new Error('immutable captured input cannot be changed');
+              if (path !== undefined) {
+                const target = resolve(root, path);
+                if (!deliveryReads.getStore()!.paths.has(target)) throw new Error('captured mutation path has not been admitted');
+                const rel = relative(root, target);
+                if (!rel || isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) throw new Error('captured mutation path is outside the view');
+                for (const base of [root, contractInputAuthoritySourceRoot(authority)]) {
+                  if (realpathSync(base) !== base) throw new Error('captured mutation root redirected');
+                  let current = base;
+                  const parts = rel.split(sep);
+                  for (let index = 0; index < parts.length; index++) {
+                    current = join(current, parts[index]!);
+                    try {
+                      const stat = lstatSync(current);
+                      if (stat.isSymbolicLink() || (!stat.isDirectory() && (!stat.isFile() || stat.nlink !== 1)))
+                        throw new Error('captured mutation path is an alias or special file');
+                      if (index < parts.length - 1 && !stat.isDirectory()) throw new Error('captured mutation parent changed');
+                    } catch (error) {
+                      if ((error as NodeJS.ErrnoException).code === 'ENOENT') break;
+                      throw error;
+                    }
+                  }
+                }
+              }
+            },
+            prepareBackup: (path) => {
+              const callSignal = options?.signal;
+              const combined = signal && callSignal ? AbortSignal.any([signal, callSignal]) : (signal ?? callSignal);
+              return prepareCapturedWriteBackup({ authority, root, readAccessFilter: filter, signal: combined }, path, combined);
+            },
             signal: options?.signal,
             authorize: async (path) => {
               const callSignal = options?.signal;
@@ -103,14 +160,6 @@ export function capturedInputTool(
               } else if (name === 'edit') {
                 if (!contractInputAuthorityMutable(authority))
                   throw new UnsupportedCapturedWorkflow('immutable captured planner input cannot be edited');
-                if (
-                  (Array.isArray(object(args.validate).before) &&
-                    (object(args.validate).before as unknown[]).length > 0) ||
-                  (Array.isArray(object(args.validate).after) && (object(args.validate).after as unknown[]).length > 0)
-                )
-                  throw new UnsupportedCapturedWorkflow(
-                    'captured edit validators need an authorized backend',
-                  );
               } else if (name === 'registry') {
                 if (!isCapturedRegistryTool(tool, authority))
                   throw new UnsupportedCapturedWorkflow(
@@ -137,15 +186,6 @@ export function capturedInputTool(
               } else if (name === 'write') {
                 if (!contractInputAuthorityMutable(authority))
                   throw new UnsupportedCapturedWorkflow('immutable captured planner input cannot be written');
-                if (
-                  object(args.transaction).mode === 'atomic' ||
-                  (Array.isArray(object(args.validate).after) &&
-                    (object(args.validate).after as unknown[]).length > 0) ||
-                  (Array.isArray(args.files) && args.files.some((file) => object(file).mode === 'backup'))
-                )
-                  throw new UnsupportedCapturedWorkflow(
-                    'captured write validators, backup and rollback need an authorized backend',
-                  );
               } else {
                 throw new UnsupportedCapturedWorkflow(
                   `captured ${name} requires an original-owner-authorized backend; this workflow is not yet available`,
@@ -153,7 +193,10 @@ export function capturedInputTool(
               }
               const publicationSignal = signal && options?.signal ? AbortSignal.any([signal, options.signal]) : signal ?? options?.signal;
               const result = name === 'write' || name === 'edit' || (name === 'inspect' && args.mode === 'scaffold' && args.dryRun === false)
-                ? await withCapturedPublication(authority, () => tool.execute(args, options), publicationSignal)
+                ? await withCapturedPublication(authority, (publicationLease) => deliveryReads.run(
+                  { ...deliveryReads.getStore()!, publicationLease, signal: publicationSignal },
+                  () => tool.execute(args, options),
+                ), publicationSignal)
                 : name === 'analyze'
                   ? await withCapturedAnalyzeInput(authority, root, publicationSignal, () => tool.execute(args, options))
                   : await tool.execute(args, options);
@@ -164,6 +207,7 @@ export function capturedInputTool(
               const combined = signal && callSignal ? AbortSignal.any([signal, callSignal]) : (signal ?? callSignal);
               for (const path of deliveryReads.getStore()!.paths)
                 await authorizeContractInputPath(authority, path, filter, combined);
+              for (const check of deliveryReads.getStore()!.checks) await check();
               await assertCapturedToolAccessCurrent();
               combined?.throwIfAborted();
               return result;

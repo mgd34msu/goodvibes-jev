@@ -4,7 +4,7 @@ import type { Stats } from 'node:fs';
 import { chmodSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { assertContractInputAuthority, authorizeContractInputPath, contractInputAuthorityMutable } from '../../contract/input-authority.js';
-import { withCapturedPublication } from '../shared/captured-publication.js';
+import { withCapturedPublication, publishWithinCapturedLease, type CapturedPublicationLease } from '../shared/captured-publication.js';
 import type { CapturedExecAuthority } from './captured-exec.js';
 export interface CapturedFileBytes { readonly data: Buffer; readonly mode: number }
 
@@ -16,8 +16,9 @@ export async function publishCapturedProjection(
   directories: ReadonlyMap<string, number>,
   changes: ReadonlyMap<string, CapturedFileBytes>,
   signal?: AbortSignal,
+  lease?: CapturedPublicationLease,
 ): Promise<void> {
-  await withCapturedPublication(binding.authority, async () => {
+  const publish = async (assertLeaseCurrent?: () => void): Promise<void> => {
     if (!contractInputAuthorityMutable(binding.authority)) throw new Error('immutable captured input cannot be published');
     const removedFiles = [...originals.keys()].filter((path) => !present.has(path));
     const removedDirectories = [...originalDirectories.keys()].filter((path) => !directories.has(path)).sort((a, b) => b.length - a.length);
@@ -27,6 +28,8 @@ export async function publishCapturedProjection(
       await executePolicyCheck(() => authorizeContractInputPath(binding.authority, join(binding.root, path), binding.readAccessFilter, signal), signal);
     await executePolicyCheck(() => assertContractInputAuthority(binding.authority, binding.root, signal), signal);
 
+    assertLeaseCurrent?.();
+    signal?.throwIfAborted();
     // No awaited callbacks between final comparison and publication. The shared
     // lock covers write/edit tools and other completed retained projections.
     if (realpathSync(binding.root) !== binding.root) throw new Error('captured publication root redirected');
@@ -82,5 +85,7 @@ export async function publishCapturedProjection(
     for (const path of removedFiles) unlinkSync(join(binding.root, path));
     // Never recursively remove a host tree: only now-empty admitted directories.
     for (const path of removedDirectories) rmdirSync(join(binding.root, path));
-  }, signal);
+  };
+  if (lease) await publishWithinCapturedLease(lease, binding.authority, publish, signal);
+  else await withCapturedPublication(binding.authority, () => publish(), signal);
 }

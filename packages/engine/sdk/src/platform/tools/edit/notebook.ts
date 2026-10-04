@@ -6,7 +6,7 @@ import { FileUndoManager } from '../../state/file-undo.js';
 import { logger } from '../../utils/logger.js';
 import { resolveAndValidatePath } from '../../utils/path-safety.js';
 import type { EditInput, JupyterNotebook, NotebookCell, NotebookOperation, NotebookOperationsInput, EditResult } from './types.js';
-import { assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
+import { assertCapturedToolMutationCurrent, assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
 import { summarizeError } from '../../utils/error-display.js';
 
 export function normalizeSource(source: string | string[]): string[] {
@@ -263,6 +263,7 @@ export async function executeNotebookEdit(
   }
 
   await assertCapturedToolReadAccess(resolvedPath);
+  assertCapturedToolMutationCurrent(resolvedPath);
   try {
     writeFileSync(resolvedPath, newContent, 'utf-8');
   } catch (err) {
