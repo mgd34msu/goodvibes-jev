@@ -158,13 +158,14 @@ async function finalizeAgentRun(
   session: AgentSession | null,
   preAgentProcessIds: Set<string>,
 ): Promise<void> {
+  if (context.beforeRunSettlement) await context.beforeRunSettlement();
   const statusAfterLoop = (record as { status: string }).status;
   if (statusAfterLoop !== 'failed' && statusAfterLoop !== 'cancelled') {
     record.status = 'completed';
   }
   record.completedAt = Date.now();
   recoverEmptyConversationalReply(record);
-  cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
+  if (!context.beforeRunSettlement) cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
 
   if (context.runtimeBus && record.status !== 'failed' && statusAfterLoop !== 'cancelled') {
     context.emitAgentCompletedEvent(record.id, (record.completedAt ?? Date.now()) - record.startedAt, record.fullOutput ?? '', record.toolCallCount, record.usage);
@@ -214,10 +215,11 @@ async function handleAgentRunFailure(
       record.fullOutput = typeof lastAssistant.content === 'string' ? lastAssistant.content : '';
     }
   }
+  if (context.beforeRunSettlement) await context.beforeRunSettlement();
   record.status = 'failed';
   record.error = message;
   record.completedAt = Date.now();
-  cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
+  if (!context.beforeRunSettlement) cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
   context.emitAgentFailedEvent(record.id, message, Date.now() - record.startedAt);
   logger.error(`Agent ${record.id} failed`, { error: message });
   if (session) {
@@ -553,6 +555,7 @@ export async function runAgentTask(
             context.emitStreamDelta(record.id, delta.content ?? '', streamAccumulated);
           };
 
+          await context.beforeProviderRequest?.();
           try {
             // Thread the agent's cancellation signal into the in-flight LLM
             // request so a cancel/kill aborts the provider call mid-stream, not

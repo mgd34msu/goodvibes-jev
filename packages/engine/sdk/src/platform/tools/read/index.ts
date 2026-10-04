@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+import type { ReadAccessFilter } from '../shared/read-access.js';
 import type { Tool, ToolDefinition } from '../../types/tools.js';
 import { READ_TOOL_SCHEMA } from './schema.js';
 import { toRecord } from '../../utils/record-coerce.js';
@@ -40,6 +42,7 @@ export class ReadTool implements Tool {
     projectIndex: ProjectIndex,
     fileCache?: FileStateCache,
     codeIntelligence?: Pick<CodeIntelligence, 'getOutline' | 'getSymbols'>,
+    private readonly capturedReadAccess?: ReadAccessFilter | undefined,
   ) {
     this.fileCache = fileCache ?? new FileStateCache();
     this.projectIndex = projectIndex;
@@ -97,8 +100,9 @@ export class ReadTool implements Tool {
     const results: FileReadResult[] = await mapWithConcurrency(
       filesToProcess,
       MAX_PARALLEL_READ_FILES,
-      (f) =>
-        readOneFile(
+      async (f) => {
+        if (this.capturedReadAccess && !await this.capturedReadAccess(resolve(this.projectIndex.baseDir, f.path))) throw new Error('captured input read is access-restricted');
+        return readOneFile(
           f,
           globalExtract,
           format,
@@ -109,7 +113,8 @@ export class ReadTool implements Tool {
           globalImageMode,
           globalMaxImageSize,
           this.codeIntelligence,
-        ),
+        );
+      },
     );
 
     if (maxTokens !== undefined) {

@@ -15,6 +15,7 @@
  * carrying three refusal texts inline.
  */
 
+import type { CapturedExecAuthority } from './captured-exec.js';
 import type { ExecCommandResult } from './schema.js';
 import { decideExecContainment, type ExecContainmentRequirement } from './containment.js';
 import { decideOwnerTerminalAccess, type OwnerTerminalGuard } from './owner-terminal-guard.js';
@@ -23,6 +24,7 @@ import type { ExecInteractionRuntime } from './interactive.js';
 
 /** What a composition stated about its exec tool. */
 export interface ExecRunPolicy {
+  readonly capturedInput?: CapturedExecAuthority | undefined;
   readonly sandbox: ExecSandboxRuntime | null;
   readonly interaction: ExecInteractionRuntime | null;
   readonly containment: ExecContainmentRequirement | null;

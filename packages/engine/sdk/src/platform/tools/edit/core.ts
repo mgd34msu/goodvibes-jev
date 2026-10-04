@@ -9,9 +9,14 @@ import { FileStateCache, unifiedDiff } from '../../state/file-cache.js';
 import type { ConfigManager } from '../../config/manager.js';
 import type { ToolLLM } from '../../config/tool-llm.js';
 import { resolveAndValidatePath } from '../../utils/path-safety.js';
+import { assertCapturedToolReadAccess, hasCapturedToolInvocation } from '../shared/captured-input-tools.js';
 import { editSchema } from './schema.js';
 import { AutoHealer } from '../shared/auto-heal.js';
-import { collectPostEditDiagnostics, formatDiagnosticsBlock, type DiagnosticsProvider } from '../shared/post-edit-diagnostics.js';
+import {
+  collectPostEditDiagnostics,
+  formatDiagnosticsBlock,
+  type DiagnosticsProvider,
+} from '../shared/post-edit-diagnostics.js';
 import { ImportGraph } from '../../intelligence/index.js';
 import {
   buildFailedEditResult,
@@ -20,13 +25,7 @@ import {
   computeAstPatternEdit,
   computeSingleEdit,
 } from './match.js';
-import type {
-  EditInput,
-  EditItem,
-  EditResult,
-  EditResultStatus,
-  ValidatorName,
-} from './types.js';
+import type { EditInput, EditItem, EditResult, EditResultStatus, ValidatorName } from './types.js';
 import { executeNotebookEdit } from './notebook.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { toRecord } from '../../utils/record-coerce.js';
@@ -65,11 +64,11 @@ interface PostValidationRepairResult {
   healed: boolean;
 }
 
-function prepareTextEditInput(
+async function prepareTextEditInput(
   input: EditInput,
   env: EditExecutionContext,
   transactionMode: 'atomic' | 'partial' | 'none',
-): ResolvedTextEditInput | { error: string } {
+): Promise<ResolvedTextEditInput | { error: string }> {
   const resolvedPaths: Map<string, string> = new Map();
   for (const item of input.edits!) {
     if (resolvedPaths.has(item.path)) continue;
@@ -88,6 +87,7 @@ function prepareTextEditInput(
   const fileReadErrors: Map<string, string> = new Map();
 
   for (const resolvedPath of uniquePaths) {
+    await assertCapturedToolReadAccess(resolvedPath);
     const cacheResult = env.fileCache.lookup(resolvedPath);
     if (cacheResult.status === 'modified') {
       const msg = `OCC conflict: '${resolvedPath}' was modified externally since last read`;
@@ -99,6 +99,7 @@ function prepareTextEditInput(
     }
 
     try {
+      await assertCapturedToolReadAccess(resolvedPath);
       const content = readFileSync(resolvedPath, 'utf-8');
       fileContents.set(resolvedPath, content);
     } catch {
@@ -135,6 +136,7 @@ async function writeSuccessfulTextEdits(
     if (newContent === undefined) continue;
 
     try {
+      await assertCapturedToolReadAccess(resolvedPath);
       await writeFile(resolvedPath, newContent, 'utf-8');
       env.fileCache.update(resolvedPath, newContent);
       writtenPaths.add(resolvedPath);
@@ -168,7 +170,14 @@ async function buildImportGraphWarning(cwd: string, writtenPaths: Set<string>): 
   try {
     const graph = new ImportGraph();
     graph.markDirty();
-    await graph.build(cwd);
+    await graph.build(cwd, async (path) => {
+      try {
+        await assertCapturedToolReadAccess(path);
+        return true;
+      } catch {
+        return false;
+      }
+    });
 
     const editedAbsPaths = [...writtenPaths];
     const affectedSet = new Set<string>();
@@ -182,6 +191,8 @@ async function buildImportGraphWarning(cwd: string, writtenPaths: Set<string>): 
     }
 
     if (affectedSet.size === 0) return undefined;
+    if (hasCapturedToolInvocation())
+      return `\nImport graph: ${affectedSet.size} transitive dependent(s) affected. Automatic dependency diagnostics are unavailable for captured edits; use the contained exec build/test workflow to verify the change.`;
 
     const affectedList = Array.from(affectedSet);
     const proc = Bun.spawn(['npx', 'tsc', '--noEmit', ...affectedList], {
@@ -231,9 +242,10 @@ async function repairAfterValidationFailure(
   for (const [resolvedPath, originalContent] of fileContents) {
     const newContent = workingContents.get(resolvedPath);
     if (newContent === undefined || newContent === originalContent) continue;
-    const healResult = env.configManager && env.toolLLM
-      ? await new AutoHealer(env.configManager, env.toolLLM).heal(resolvedPath, newContent, failureMessages)
-      : { healed: false, content: newContent };
+    const healResult =
+      env.configManager && env.toolLLM
+        ? await new AutoHealer(env.configManager, env.toolLLM).heal(resolvedPath, newContent, failureMessages)
+        : { healed: false, content: newContent };
     if (healResult.healed) {
       try {
         writeFileSync(resolvedPath, healResult.content, 'utf-8');
@@ -275,7 +287,11 @@ async function validateAfterTextEdits(
   };
 }
 
-function formatOutput(results: EditResult[], format: 'count_only' | 'minimal' | 'with_diff' | 'verbose', dryRun: boolean): string {
+function formatOutput(
+  results: EditResult[],
+  format: 'count_only' | 'minimal' | 'with_diff' | 'verbose',
+  dryRun: boolean,
+): string {
   const totalApplied = results.filter((r) => r.success).length;
   const totalFailed = results.filter((r) => !r.success).length;
   const dryTag = dryRun ? ' (dry run)' : '';
@@ -359,7 +375,7 @@ async function executeTextEdits(
     }
   }
 
-  const prepResult = prepareTextEditInput(input, env, transactionMode);
+  const prepResult = await prepareTextEditInput(input, env, transactionMode);
   if ('error' in prepResult) {
     return { success: false, error: prepResult.error };
   }
@@ -404,13 +420,22 @@ async function executeTextEdits(
       continue;
     }
 
-    let editResult: { newContent: string; occurrencesReplaced: number; warning?: string | undefined } | { error: string; hint?: string | undefined };
+    let editResult:
+      | { newContent: string; occurrencesReplaced: number; warning?: string | undefined }
+      | { error: string; hint?: string | undefined };
     if (matchMode === 'ast_pattern') {
       editResult = await computeAstPatternEdit(currentContent, item, resolvedPath);
     } else if (matchMode === 'ast') {
       editResult = await computeAstEdit(currentContent, item, resolvedPath);
     } else {
-      editResult = await computeSingleEdit(currentContent, item, matchMode, caseSensitive, whitespaceSensitive, multiline);
+      editResult = await computeSingleEdit(
+        currentContent,
+        item,
+        matchMode,
+        caseSensitive,
+        whitespaceSensitive,
+        multiline,
+      );
     }
 
     if ('error' in editResult) {
@@ -506,8 +531,12 @@ async function executeTextEdits(
   // like the import-graph warning). Off when configured off; empty block when
   // the provider finds nothing (honest absence).
   let diagnosticsBlock = '';
-  if (!dryRun && writtenPaths.size > 0 && env.diagnosticsProvider
-    && (env.configManager?.get('diagnostics.postEdit') ?? 'on') === 'on') {
+  if (
+    !dryRun &&
+    writtenPaths.size > 0 &&
+    env.diagnosticsProvider &&
+    (env.configManager?.get('diagnostics.postEdit') ?? 'on') === 'on'
+  ) {
     const touched = [...writtenPaths]
       .map((path) => ({ path, content: workingContents.get(path) }))
       .filter((f): f is { path: string; content: string } => typeof f.content === 'string');
@@ -555,7 +584,9 @@ export function createEditTool(fileCache: FileStateCache, options?: EditToolOpti
     supportsProgress: true,
   };
 
-  async function execute(args: Record<string, unknown>): Promise<{ success: boolean; output?: string; error?: string }> {
+  async function execute(
+    args: Record<string, unknown>,
+  ): Promise<{ success: boolean; output?: string; error?: string }> {
     try {
       const input = args as EditInput;
       if (!input.edits && !input.notebook_operations) {

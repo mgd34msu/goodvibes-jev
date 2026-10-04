@@ -408,7 +408,7 @@ jobs:
       - name: Require actual sandbox fixture execution
         env:
           GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT: "1"
-        run: bun packages/engine/scripts/test.ts test/exec-interactive.test.ts test/exec-sandbox.test.ts test/exec-containment-proof.test.ts
+        run: bun packages/engine/scripts/test.ts test/exec-interactive.test.ts test/exec-sandbox.test.ts test/exec-containment-proof.test.ts test/captured-exec.test.ts test/captured-exec-modes.test.ts test/captured-exec-file-ops.test.ts test/contract/actual-input-authority-graph.test.ts
 
   # ---------------------------------------------------------------------------
   # Consumer jobs that share the build artifact. Each tests the exact same

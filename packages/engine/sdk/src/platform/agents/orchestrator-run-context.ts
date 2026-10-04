@@ -19,6 +19,8 @@ import type { ContractAgentHooks } from '../contract/agent-hooks.js';
 type EmitterContext = import('../runtime/emitters/index.js').EmitterContext;
 
 export interface AgentOrchestratorRunContext {
+  /** Revalidate captured byte authority immediately before each initial/retried provider admission. */
+  readonly beforeProviderRequest?: (() => Promise<void>) | undefined;
   readonly workingDirectory: string;
   readonly surfaceRoot?: string | undefined;
   /** At-rest journal redaction + retention policy; undefined -> honest default (redaction on). */
@@ -88,6 +90,8 @@ export interface AgentOrchestratorRunContext {
    * the nudge as the next user turn). Undefined leaves every agent unheld.
    */
   readonly contractHooks?: ContractAgentHooks | undefined;
+  /** Construction-owned drain before a captured run emits terminal state. */
+  readonly beforeRunSettlement?: (() => Promise<void>) | undefined;
   /**
    * Per-turn passive-injection knobs (see CHANGELOG 0.38.0). Both optional,
    * undefined means "use the derived default" (see turn-knowledge-injection.ts:

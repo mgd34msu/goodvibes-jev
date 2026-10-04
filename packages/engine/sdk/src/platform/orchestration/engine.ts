@@ -62,6 +62,7 @@ import { summarizeError } from '../utils/error-display.js';
 import { OwnedWork } from '../utils/owned-work.js';
 
 export interface OrchestrationEngineDeps {
+  readonly prepareInputAuthority?: import('../contract/group-runner.js').ContractEngineInput['prepareInputAuthority'];
   readonly agentManager: PhaseRunnerAgentManagerLike;
   readonly configManager: Pick<ConfigManager, 'get' | 'getCategory'>;
   readonly runtimeBus: RuntimeEventBus;
@@ -94,6 +95,7 @@ export interface OrchestrationEngineDeps {
   /** Kept-worktree retention bound before oldest-first eviction (worktree mode). Default 20. */
   readonly keptWorktreeCap?: number | undefined;
   /** Cold-start worktree setup hook (deps install, .env carry-over); wired by the composition root; a failing setup never fails creation. */
+  readonly initializeWorktree?: import('./worktree-isolation.js').WorktreeIsolationManagerDeps['initializeWorktree'];
   readonly runWorktreeSetup?: ((worktreePath: string) => Promise<void> | void) | undefined;
   /** Optional best-of-N judge (PROPOSES a winner; never auto-picks unless the item opted in). Injectable, provider-agnostic. */
   readonly judgeAttempts?: AttemptJudge | undefined;
@@ -250,6 +252,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     now,
     keptWorktreeCap: deps.keptWorktreeCap,
     runSetup: runWorktreeSetupHook,
+    initializeWorktree: deps.initializeWorktree,
   });
 
   function getWorkstream(id: string): Workstream | null {
@@ -448,6 +451,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     const priorReports = getPhaseResults(workstream.id).filter((r) => r.itemId === item.id);
     const outcome = await runPhase(workstream, item, phase, priorReports, {
       agentManager: deps.agentManager,
+      prepareInputAuthority: deps.prepareInputAuthority,
       configManager: deps.configManager,
       runtimeBus: deps.runtimeBus,
       projectRoot: deps.projectRoot,
