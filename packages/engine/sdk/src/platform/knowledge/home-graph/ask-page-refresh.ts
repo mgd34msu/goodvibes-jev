@@ -1,7 +1,9 @@
+import { KnowledgeGeneratedFactSupportHeldError } from '../semantic/verification/types.js';
+import { restoreKnowledgeSourceAnswerAliases } from '../source-structural-references.js';
 import type { ArtifactStore } from '../../artifacts/index.js';
 import { logger } from '../../utils/logger.js';
 import type { KnowledgeStore } from '../store.js';
-import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../types.js';
+import type { KnowledgeEdgeUpsertInput, KnowledgeNodeRecord, KnowledgeNodeUpsertInput, KnowledgeSourceRecord } from '../types.js';
 import {
   buildHomeGraphMetadata,
   isGeneratedPageSource,
@@ -96,11 +98,18 @@ async function persistAnswerFactSubjectLinks(input: {
   for (const device of input.devices) guard.node(device.id);
   const facts = input.facts.filter((fact) => getKnowledgeSpaceId(fact) === input.spaceId);
   for (const fact of facts) guard.node(fact.id);
+  const restoredSources = new Set<KnowledgeSourceRecord>();
+  const restoredAliases = new Set<KnowledgeSourceRecord>();
   const candidates = input.sources.filter((source) => getKnowledgeSpaceId(source) === input.spaceId)
     .filter((source) => {
       const existing = guard.source(source.id);
       return !existing || getKnowledgeSpaceId(existing) === input.spaceId;
-    }).slice(0, MAX_ASK_PAGE_SOURCES_TO_CONSIDER).map((source) => {
+    }).slice(0, MAX_ASK_PAGE_SOURCES_TO_CONSIDER).map((responseSource) => {
+    const source = restoreKnowledgeSourceAnswerAliases(input.store, responseSource);
+    if (source !== responseSource) {
+      restoredSources.add(source);
+      restoredAliases.add(responseSource);
+    }
     const existing = input.store.getSource(source.id) ?? undefined;
     return { source, existing, status: mergeSourceStatus(source.status, existing?.status) };
   });
@@ -109,14 +118,34 @@ async function persistAnswerFactSubjectLinks(input: {
     .sort((a, b) => b.probability! - a.probability! || a.source.id.localeCompare(b.source.id))
     .slice(0, MAX_ASK_PAGE_SOURCES_TO_LINK);
   const acceptedSourceIds = new Set(pageSources.map((reading) => reading.source.id));
+  const assertRestoredAliasesCurrent = () => {
+    for (const alias of restoredAliases) restoreKnowledgeSourceAnswerAliases(input.store, alias);
+  };
+  // The store methods await initialization/activation before committing. Keep
+  // ownership in the prepared graph's final synchronous write guard as well.
+  const writeGraph = (nodes: readonly KnowledgeNodeUpsertInput[], edges: readonly KnowledgeEdgeUpsertInput[]) =>
+    input.store.applyPreparedIngest({ sources: [], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({
+      nodes, edges, issues: [], assertCurrent: assertRestoredAliasesCurrent,
+    }));
+  const writeEdge = (edge: KnowledgeEdgeUpsertInput) => writeGraph([], [edge]);
+  const writeNode = async (node: KnowledgeNodeUpsertInput & { readonly id: string }) => {
+    await writeGraph([node], []);
+    const stored = input.store.getNode(node.id);
+    if (!stored) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+    return stored;
+  };
   await input.store.batch(async () => {
     // No source/link mutation follows a stale model await.
     guard.assertCurrent();
+    // A ledger commit can rebuild byte-identical records during quality reads.
+    // Recheck every object-bound alias before any write; batch flushes even on a hold.
+    assertRestoredAliasesCurrent();
     const devicesById = new Map(input.devices.map((device) => [device.id, device]));
     for (const reading of pageSources) {
-      const storedSource = await upsertAnswerPageSource(input, reading.source);
+      const storedSource = await upsertAnswerPageSource(input, reading.source, restoredSources.has(reading.source));
+      assertRestoredAliasesCurrent();
       for (const device of input.devices) {
-        await input.store.upsertEdge({
+        await writeEdge({
           fromKind: 'source',
           fromId: storedSource.id,
           toKind: 'node',
@@ -127,6 +156,7 @@ async function persistAnswerFactSubjectLinks(input: {
             linkedBy: 'homegraph-ask-page-refresh',
           }),
         });
+        assertRestoredAliasesCurrent();
       }
     }
     for (const fact of facts) {
@@ -151,7 +181,7 @@ async function persistAnswerFactSubjectLinks(input: {
         })),
         ...readTargetHints(existing.metadata.targetHints),
       ]).filter((hint) => devicesById.has(readString(hint.id) ?? ''));
-      const updatedFact = await input.store.upsertNode({
+      const updatedFact = await writeNode({
         id: existing.id,
         kind: existing.kind,
         slug: existing.slug,
@@ -172,7 +202,8 @@ async function persistAnswerFactSubjectLinks(input: {
           linkedBy: 'homegraph-ask-page-refresh',
         }),
       });
-      await input.store.upsertEdge({
+      assertRestoredAliasesCurrent();
+      await writeEdge({
         fromKind: 'source',
         fromId: source.id,
         toKind: 'node',
@@ -183,8 +214,9 @@ async function persistAnswerFactSubjectLinks(input: {
           linkedBy: 'homegraph-ask-page-refresh',
         }),
       });
+      assertRestoredAliasesCurrent();
       for (const device of targets) {
-        await input.store.upsertEdge({
+        await writeEdge({
           fromKind: 'node',
           fromId: updatedFact.id,
           toKind: 'node',
@@ -196,17 +228,27 @@ async function persistAnswerFactSubjectLinks(input: {
             sourceId: source.id,
           }),
         });
+        assertRestoredAliasesCurrent();
       }
     }
   });
+  // Batch may publish earlier valid writes; a late loss of ownership still
+  // cannot return a successful stale result or authorize passport refresh.
+  assertRestoredAliasesCurrent();
 }
 
 async function upsertAnswerPageSource(input: {
   readonly store: KnowledgeStore;
   readonly spaceId: string;
   readonly installationId: string;
-}, source: KnowledgeSourceRecord): Promise<KnowledgeSourceRecord> {
+}, source: KnowledgeSourceRecord, preserveOwnedSource = false): Promise<KnowledgeSourceRecord> {
   const existing = input.store.getSource(source.id);
+  // A restored answer projection already names this exact current record. Do not
+  // rewrite its minted URI as an external sourceUri or invalidate its provenance.
+  if (preserveOwnedSource) {
+    if (source !== existing) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+    return source;
+  }
   return input.store.upsertSource({
     id: source.id,
     connectorId: source.connectorId,

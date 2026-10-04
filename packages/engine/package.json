@@ -1363,7 +1363,12 @@
       "types": "./transport-realtime/dist/relay-transport.d.ts",
       "import": "./transport-realtime/dist/relay-transport.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./terminal-shell/legacy-work-ledger-import": {
+      "bun": "./terminal-shell/src/legacy-work-ledger-import.ts",
+      "types": "./terminal-shell/dist/legacy-work-ledger-import.d.ts",
+      "import": "./terminal-shell/dist/legacy-work-ledger-import.js"
+    }
   },
   "publishConfig": {
     "access": "public"

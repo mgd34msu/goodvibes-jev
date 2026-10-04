@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed
+
+- Home Graph answer-page refresh preserves owned generated-source provenance
+  through response aliases without rewriting the original source. Snapshot
+  sync also registers its freshly minted references, so card-shaped local
+  hashes do not randomly block ordinary answers; untrusted URI and content
+  privacy checks remain unchanged. Revalidate the entire restored-alias batch
+  after quality evaluation so byte-identical ledger cache rebuilds cannot leave
+  partial source or link writes. If an owned source changes after writing has
+  begun, hold instead of falling back to upsert, preserve the newer correction,
+  and stop subsequent stale steps without claiming earlier writes rolled back.
+
 ### Added
 
 - Session-preserving `sessions.turns.cancel` with required expected execution identity, synchronous currentness fencing, idempotent request acceptance, honest stale/ended outcomes, typed public client contracts, and the existing operator write policy. Terminal events remain settlement authority.

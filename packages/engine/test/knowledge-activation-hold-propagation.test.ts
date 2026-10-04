@@ -117,12 +117,18 @@ describe('required activation holds across knowledge refresh catches', () => {
 
   test('Ask retains its ordinary bookkeeping failure fallback and honestly counts the generated passport', async () => {
     const item = await fixture('AC-7 supports 4K UHD resolution.'); askReadings(0.99);
-    const upsertNode = item.store.upsertNode.bind(item.store);
-    item.store.upsertNode = async (input, mutation) => {
-      if (input.id === item.fact.id) throw new Error('Synthetic bookkeeping write unavailable');
-      return upsertNode(input, mutation);
-    };
+    const applyPreparedIngest = item.store.applyPreparedIngest.bind(item.store);
+    let injected = false;
+    item.store.applyPreparedIngest = async (input, prepareGraph, options) => applyPreparedIngest(input, async (stage) => {
+      const graph = await prepareGraph(stage);
+      if (graph.nodes.some((node) => node.id === item.fact.id)) {
+        injected = true;
+        throw new Error('Synthetic bookkeeping write unavailable');
+      }
+      return graph;
+    }, options);
     expect(await ask(item)).toEqual({ requested: true, refreshed: 1 });
+    expect(injected).toBe(true);
     const reopened = await item.reload();
     expect(reopened.getNode(item.fact.id)).toEqual(item.fact);
     expectProtected(reopened, item);

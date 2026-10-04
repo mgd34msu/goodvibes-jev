@@ -14,6 +14,7 @@ export type { ConnectedHostCapabilityResolution } from './agent-harness-connecte
 export interface CommandExecutionPolicy {
   readonly effect: 'read-only' | 'local-state' | 'connected-host-state' | 'external-network' | 'ui-navigation' | 'session-lifecycle' | 'delegated-work' | 'mixed' | 'unknown';
   readonly confirmation: string;
+  readonly requiresConfirmation?: boolean;
   readonly preferredModelTool?: string;
   readonly boundary: string;
 }
@@ -21,6 +22,15 @@ export interface CommandExecutionPolicy {
 export function describeCommandPolicy(commandName: string): CommandExecutionPolicy {
   const root = commandName.replace(/^\//, '').trim().toLowerCase();
   const confirmation = 'agent_harness mode:"run_command" requires confirm:true and explicitUserRequest for every slash command invocation.';
+  if (root === 'work-import') {
+    return {
+      effect: 'read-only',
+      requiresConfirmation: false,
+      confirmation: 'Preview and status use existing authenticated host read permissions without extra confirmation flags.',
+      preferredModelTool: `${agentHarnessModes('run_command')} commandName:"work-import"`,
+      boundary: '/work-import preview|status <project-id> reads complete legacy preparation and durable recovery state using the selected authenticated host, admin, read:work-ledger and read:knowledge. It does not submit an import, dispatch native work or grant authority from historical claims. Autonomous mutation remains unavailable until the shared host gate is composed.',
+    };
+  }
   if (root === 'work') {
     return {
       effect: 'ui-navigation',

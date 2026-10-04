@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOwnedTestChild } from '../scripts/owned-test-child.ts';
+import { HEARTBEAT_PATH_ENV } from '../toolchain/src/test-runner/test-child-watchdog-env.ts';
 
 const SDK_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -151,6 +152,94 @@ async function waitForExit(pid: number, withinMs: number): Promise<boolean> {
 }
 
 describe('the stall ceiling ends a run that has stopped starting tests', () => {
+  test.each(['', '179'])('an incomplete initial heartbeat (%j) cannot make startup look epoch-old', async (partial) => {
+    const dir = mkTemp();
+    const path = join(dir, 'initial-heartbeat.test.ts');
+    writeFileSync(path, [
+      "import { test, expect } from 'bun:test';",
+      "import { writeFileSync } from 'node:fs';",
+      `writeFileSync(process.env[${JSON.stringify(HEARTBEAT_PATH_ENV)}]!, ${JSON.stringify(partial)});`,
+      // Hold the intermediate write open across a real watchdog poll.
+      'await Bun.sleep(1500);',
+      "test('finishes loading', () => expect(true).toBe(true));",
+    ].join('\n'));
+    setRunnerEnv('GOODVIBES_TEST_STALL_MS', '30000');
+    const result = await runOwnedTestChild({ argv: [path], cwd: dir, env: { ...process.env } });
+    expect(result.stopped).toBeNull();
+    expect(result.exitCode).toBe(0);
+  }, 60_000);
+
+  test.each([
+    ['blank', "''", false],
+    ['blank', "''", true],
+    ['malformed', "'not a heartbeat\\n'", false],
+    ['malformed', "'not a heartbeat\\n'", true],
+    ['future', '`${Date.now() + 60_000} 3\\n`', true],
+  ] as const)('an invalid replacement retains progress and its deadline (%s, %s, wedged: %s)', async (_kind, replacement, wedged) => {
+    const dir = mkTemp();
+    const path = join(dir, 'replacement-heartbeat.test.ts');
+    const pidPath = join(dir, 'child.pid');
+    const terminatedPath = join(dir, 'terminated');
+    writeFileSync(path, [
+      "import { test, expect } from 'bun:test';",
+      "import { writeFileSync } from 'node:fs';",
+      `writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
+      // A real stall must still be reaped when its test refuses SIGTERM.
+      `process.on('SIGTERM', () => writeFileSync(${JSON.stringify(terminatedPath)}, 'received'));`,
+      "test('establishes progress', async () => { await Bun.sleep(1800); });",
+      "test('replaces the heartbeat', async () => {",
+      // Give the parent a full poll interval to observe this test's heartbeat,
+      // then leave the truncation window open past the startup stall deadline.
+      '  await Bun.sleep(1500);',
+      `  writeFileSync(process.env[${JSON.stringify(HEARTBEAT_PATH_ENV)}]!, ${replacement});`,
+      wedged ? '  await new Promise(() => {});' : '  await Bun.sleep(1500);',
+      '  expect(true).toBe(true);',
+      '}, 30000);',
+    ].join('\n'));
+    setRunnerEnv('GOODVIBES_TEST_STALL_MS', '4000');
+    setRunnerEnv('GOODVIBES_TEST_CEILING_MS', '8000');
+    const began = Date.now();
+    const result = await runOwnedTestChild({ argv: [path], cwd: dir, env: { ...process.env }, ownProcessGroup: true, killGraceMs: 100 });
+    expect(result.stopped).toBe(wedged ? 'stalled' : null);
+    if (wedged) {
+      expect(Date.now() - began).toBeGreaterThanOrEqual(5800);
+      expect(result.stopReason).toContain('2 tests started');
+      expect(result.signalCode).toBe('SIGKILL');
+      expect(readFileSync(terminatedPath, 'utf8')).toBe('received');
+      expect(await waitForExit(Number(readFileSync(pidPath, 'utf8')), 1000)).toBe(true);
+    } else expect(result.exitCode).toBe(0);
+  }, 60_000);
+
+  test('heartbeat publication replaces the complete record without truncating the previous inode', async () => {
+    const dir = mkTemp();
+    const path = join(dir, 'atomic-heartbeat.test.ts');
+    writeFileSync(path, [
+      "import { afterAll, test, expect } from 'bun:test';",
+      "import { closeSync, openSync, readFileSync } from 'node:fs';",
+      `const heartbeat = process.env[${JSON.stringify(HEARTBEAT_PATH_ENV)}]!;`,
+      'let descriptor: number | undefined;',
+      "let previous = '';",
+      'afterAll(() => { if (descriptor !== undefined) closeSync(descriptor); });',
+      "test('holds the published first record open', async () => {",
+      "  previous = readFileSync(heartbeat, 'utf8');",
+      "  expect(previous).toMatch(/^[1-9]\\d* 1\\n$/);",
+      "  descriptor = openSync(heartbeat, 'r');",
+      '  await Bun.sleep(1100);',
+      '});',
+      "test('publishes the next record atomically', () => {",
+      "  const current = readFileSync(heartbeat, 'utf8');",
+      "  expect(current).toMatch(/^[1-9]\\d* 2\\n$/);",
+      '  expect(current).not.toBe(previous);',
+      // An open reader must retain the intact previous record while fresh
+      // readers see the replacement, rather than either seeing truncation.
+      "  expect(readFileSync(descriptor!, 'utf8')).toBe(previous);",
+      '});',
+    ].join('\n'));
+    const result = await runOwnedTestChild({ argv: [path], cwd: dir, env: { ...process.env } });
+    expect(result.stopped).toBeNull();
+    expect(result.exitCode).toBe(0);
+  }, 60_000);
+
   test('a file that never finishes loading is ended, by the runner, with a reason', async () => {
     const dir = mkTemp();
     const wedged = writeWedgedFile(dir);

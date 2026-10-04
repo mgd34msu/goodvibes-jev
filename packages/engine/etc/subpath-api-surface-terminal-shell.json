@@ -1265,6 +1265,120 @@
       "text": "export declare function findMethodsMissingHandlers(catalog: GatewayCatalogConformanceView, options?: ConformanceOptions): string[];"
     }
   ],
+  "./legacy-work-ledger-import": [
+    {
+      "name": "LegacyImportBinding",
+      "kind": "interface",
+      "required": [
+        "endpoint",
+        "principalId",
+        "principalKind",
+        "projectId",
+        "workspaceId"
+      ],
+      "text": "export interface LegacyImportBinding { readonly endpoint: string; readonly projectId: string; readonly workspaceId: string; readonly principalId: string; readonly principalKind: string; }"
+    },
+    {
+      "name": "LegacyImportCommand",
+      "kind": "type",
+      "text": "export type LegacyImportCommand = Extract<WorkLedgerCommand, { type: 'import_legacy'; }>; ;; via Extract = type Extract<T, U> = T extends U ? T : never; ;; WorkLedgerCommand = export type WorkLedgerCommand = z.infer<typeof workLedgerCommandSchema>;"
+    },
+    {
+      "name": "LegacyImportEntry",
+      "kind": "interface",
+      "required": [
+        "attempts",
+        "binding",
+        "command",
+        "decisions",
+        "receiptActorId",
+        "result",
+        "state"
+      ],
+      "text": "export interface LegacyImportEntry { readonly binding: LegacyImportBinding; readonly command: LegacyImportCommand; readonly state: 'pending' | 'unknown' | 'accepted' | 'rejected' | 'cancelled'; readonly attempts: number; readonly receiptActorId: string | null; readonly result: WorkLedgerResult | null; readonly decisions: readonly JevDecision[]; } ;; via JevDecision = export type JevDecision = JevDecisionRecord & ({ readonly outcome: 'act'; } | { readonly outcome: 'revise'; readonly next: JevContinuation; } | { readonly outcome: 'defer'; readonly until: JevVersionRef; } | { readonly outcome: 'reject'; }); ;; WorkLedgerResult = export type WorkLedgerResult = { readonly kind: 'accepted'; readonly replayed: boolean; readonly event: WorkLedgerEvent; } | { readonly kind: 'rejected'; readonly code: WorkLedgerRejection; readonly reason: string; readonly revision: number | null; } | { readonly kind: 'indeterminate'; readonly requestId: string; readonly actorId: string; readonly reason: string; };"
+    },
+    {
+      "name": "LegacyImportHost",
+      "kind": "interface",
+      "required": [
+        "baseUrl",
+        "token",
+        "workspace"
+      ],
+      "text": "export interface LegacyImportHost { readonly baseUrl: string; readonly token: string; readonly workspace: string; }"
+    },
+    {
+      "name": "LegacyImportJournal",
+      "kind": "class",
+      "publicMembers": [
+        "cancel",
+        "close",
+        "constructor",
+        "dispatch",
+        "read",
+        "record",
+        "recordDecision",
+        "reserve"
+      ],
+      "text": "export declare class LegacyImportJournal { private readonly db; constructor(path: string, directorySync?: (path: string) => void); close(): void; read(binding: LegacyImportBinding): LegacyImportEntry | null; reserve(binding: LegacyImportBinding, makeCommand: () => LegacyImportCommand, replaceRequestId?: string): LegacyImportEntry; private readExpected; cancel(binding: LegacyImportBinding, command: LegacyImportCommand): LegacyImportEntry | null; dispatch(binding: LegacyImportBinding, command: LegacyImportCommand): LegacyImportEntry; recordDecision(binding: LegacyImportBinding, command: LegacyImportCommand, raw: unknown): LegacyImportEntry; record(binding: LegacyImportBinding, command: LegacyImportCommand, raw: WorkLedgerResult): LegacyImportEntry; } ;; via WorkLedgerResult = export type WorkLedgerResult = { readonly kind: 'accepted'; readonly replayed: boolean; readonly event: WorkLedgerEvent; } | { readonly kind: 'rejected'; readonly code: WorkLedgerRejection; readonly reason: string; readonly revision: number | null; } | { readonly kind: 'indeterminate'; readonly requestId: string; readonly actorId: string; readonly reason: string; };"
+    },
+    {
+      "name": "LegacyImportOperatorClient",
+      "kind": "interface",
+      "required": [
+        "currentAuth",
+        "dispose",
+        "invoke"
+      ],
+      "text": "export interface LegacyImportOperatorClient { currentAuth(): Promise<unknown>; invoke(method: string, input: Record<string, unknown>): Promise<unknown>; dispose(): void; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "LegacyImportOperatorOptions",
+      "kind": "interface",
+      "required": [
+        "journalPath",
+        "projectId",
+        "resolve"
+      ],
+      "text": "export interface LegacyImportOperatorOptions { readonly resolve: () => LegacyImportHost | { readonly reason: string; }; readonly projectId: string; readonly journalPath: string; readonly createClient?: (host: LegacyImportHost) => LegacyImportOperatorClient; }"
+    },
+    {
+      "name": "LegacyImportOperatorSession",
+      "kind": "interface",
+      "required": [
+        "binding",
+        "dispose",
+        "prepare",
+        "status"
+      ],
+      "text": "export interface LegacyImportOperatorSession { readonly binding: LegacyImportBinding; prepare(): Promise<LegacyMigrationPreparation>; status(): Promise<LegacyImportEntry | null>; dispose(): void; } ;; via LegacyMigrationPreparation = export type LegacyMigrationPreparation = { readonly kind: 'prepared'; readonly manifest: LegacyMigrationManifest; } | { readonly kind: 'blocked'; readonly code: 'cancelled' | 'pending-local-changes' | 'invalid-source' | 'limit' | 'identity-conflict' | 'target-conflict' | 'stale-preparation'; readonly reason: string; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "bindingKey",
+      "kind": "function",
+      "text": "export declare function bindingKey(binding: LegacyImportBinding): string;"
+    },
+    {
+      "name": "legacyImportResultSchema",
+      "kind": "const",
+      "text": "legacyImportResultSchema: import(\"zod/v4\").ZodUnion<readonly [import(\"zod/v4\").ZodObject<{ kind: import(\"zod/v4\").ZodLiteral<\"accepted\">; replayed: import(\"zod/v4\").ZodBoolean; event: import(\"zod/v4\").ZodUnion<readonly [import(\"zod/v4\").ZodObject<{ sequence: import(\"zod/v4\").ZodNumber; type: import(\"zod/v4\").ZodEnum<{ handoff: \"handoff\"; report: \"report\"; release: \"release\"; create: \"create\"; cancel: \"cancel\"; revise: \"revise\"; claim: \"claim\"; reopen: \"reopen\"; record_evidence: \"record_evidence\"; }>; actorId: import(\"zod/v4\").ZodString; requestId: import(\"zod/v4\").ZodString; workId: import(\"zod/v4\").ZodString; attemptId: import(\"zod/v4\").ZodNullable<import(\"zod/v4\").ZodString>; at: import(\"zod/v4\").ZodNumber; work: import(\"zod/v4\").ZodObject<{ id: import(\"zod/v4\").ZodString; title: import(\"zod/v4\").ZodString; goal: import(\"zod/v4\").ZodString; criteria: import(\"zod/v4\").ZodArray<import(\"zod/v4\").ZodString>; revision: import(\"zod/v4\").ZodNumber; criteriaRevision: import(\"zod/v4\").ZodNumber; reportedState: import(\"zod/v4\").ZodEnum<{ cancelled: \"cancelled\"; pending: \"pending\"; blocked: \"blocked\"; in_progress: \"in_progress\"; complete: \"complete\"; }>; currentAttemptId: import(\"zod/v4\").ZodNullable<import(\"zod/v4\").ZodString>; createdAt: import(\"zod/v4\").ZodNumber; updatedAt: import(\"zod/v4\").ZodNumber; }, import(\"zod/v4/core\").$strict>; attempts: import(\"zod/v4\").ZodArray<import(\"zod/v4\").ZodObject<{ id: import(\"zod/v4\").ZodString; workId: import(\"zod/v4\").ZodString; predecessorId: import(\"zod/v4\").ZodNullable<import(\"zod/v4\").ZodString>; ownerId: import(\"zod/v4\").ZodString; revision: import(\"zod/v4\").ZodNumber; state: import(\"zod/v4\").ZodEnum<{ cancelled: \"cancelled\"; active: \"active\"; complete: \"complete\"; released: \"released\"; }>; report: import(\"zod/v4\").ZodNullable<import(\"zod/v4\").ZodString>; blocker: import(\"zod/v4\").ZodNullable<import(\"zod/v4\").ZodString>; createdAt: import(\"zod/v4\").ZodNumber; updatedAt: import(\"zod/v4\").ZodNumber; }, import(\"zod/v4/core\").$strict>>; evidence: import(\"zod/v4\").ZodNullable<import(\"zod/v4\").ZodObject<{ id: import(\"zod/v4\").ZodString; target: import(\"zod/v4\").ZodObject<{ workId: import(\"zod/v4\").ZodString; workRevision: import(\"zod/v4\").ZodNumber; criteriaRevision: import(\"zod/v4\").ZodNumber; attemptId: import(\"zod/v4\").ZodString; attemptRevision: import(\"zod/v4\").ZodNumber; }, import(\"zod/v4/core\").$strict>; outcome: import(\"zod/v4\").ZodEnum<{ failed: \"failed\"; unavailable: \"unavailable\"; verified: \"verified\"; }>; reason: import(\"zod/v4\").ZodString; references: import(\"zod/v4\").ZodArray<import(\"zod/v4\").ZodObject<{ kind: import(\"zod/v4\").ZodEnum<{ decision: \"decision\"; artifact: \"artifact\"; test: \"test\"; commit: \"commit\"; }>; ref: import(\"zod/v4\").ZodString; digest: import(\"zod/v4\").ZodOptional<import(\"zod/v4\").ZodString>; }, import(\"zod/v4/core\").$strict>>; source: import(\"zod/v4\").ZodEnum<{ judgment: \"judgment\"; host_check: \"host_check\"; }>; criteriaResults: import(\"zod/v4\").ZodArray<import(\"zod/v4\").ZodObject<{ criterionIndex: import(\"zod/v4\").ZodNumber; status: import(\"zod/v4\").ZodEnum<{ unknown: \"unknown\"; satisfied: \"satisfied\"; unsatisfied: \"unsatisfied\"; }>; references: import(\"zod/v4\").ZodArray<import(\"zod/v4\").ZodString>; }, import(\"zod/v4/core\").$strict>>; actorId: import(\"zod/v4\").ZodString; at: import(\"zod/v4\").ZodNumber; }, import(\"zod/v4/core\").$strict>>; reason: import(\"zod/v4\").ZodNullable<import(\"zod/v4\").ZodString>; }, import(\"zod/v4/core\").$strict>, import(\"zod/v4\").ZodObject<{ sequence: import(\"zod/v4\").ZodNumber; type: import(\"zod/v4\").ZodLiteral<\"import_legacy\">; actorId: import(\"zod/v4\").ZodString; requestId: import(\"zod/v4\").ZodString; at: import(\"zod/v4\").ZodNumber; manifest: import(\"zod/v4\").ZodType<import(\"@goodvibes-jev/engine/sdk/platform/workflow/work-ledger\").LegacyMigrationManifest, unknown, import(\"zod/v4/core\").$ZodTypeInternals<import(\"@goodvibes-jev/engine/sdk/platform/workflow/work-ledger\").LegacyMigrationManifest, unknown>>; works: import(\"zod/v4\").ZodArray<import(\"zod/v4\").ZodObject<{ id: import(\"zod/v4\").ZodString; title: import(\"zod/v4\").ZodString; goal: import(\"zod/v4\").ZodString; criteria: import(\"zod/v4\").ZodArray<import(\"zod/v4\").ZodString>; revision: import(\"zod/v4\").ZodNumber; criteriaRevision: import(\"zod/v4\").ZodNumber; reportedState: import(\"zod/v4\").ZodEnum<{ cancelled: \"cancelled\"; pending: \"pending\"; blocked: \"blocked\"; in_progress: \"in_progress\"; complete: \"complete\"; }>; currentAttemptId: import(\"zod/v4\").ZodNullable<import(\"zod/v4\").ZodString>; createdAt: import(\"zod/v4\").ZodNumber; updatedAt: import(\"zod/v4\").ZodNumber; }, import(\"zod/v4/core\").$strict>>; }, import(\"zod/v4/core\").$strict>]>; }, import(\"zod/v4/core\").$strict>, import(\"zod/v4\").ZodObject<{ kind: import(\"zod/v4\").ZodLiteral<\"rejected\">; code: import(\"zod/v4\").ZodEnum<{ cancelled: \"cancelled\"; closed: \"closed\"; invalid_command: \"invalid_command\"; forbidden: \"forbidden\"; conflict: \"conflict\"; stale_evidence: \"stale_evidence\"; stale_source: \"stale_source\"; not_found: \"not_found\"; invalid_transition: \"invalid_transition\"; request_conflict: \"request_conflict\"; invalid_state: \"invalid_state\"; host_error: \"host_error\"; }>; reason: import(\"zod/v4\").ZodString; revision: import(\"zod/v4\").ZodNullable<import(\"zod/v4\").ZodNumber>; }, import(\"zod/v4/core\").$strict>, import(\"zod/v4\").ZodObject<{ kind: import(\"zod/v4\").ZodLiteral<\"indeterminate\">; requestId: import(\"zod/v4\").ZodString; actorId: import(\"zod/v4\").ZodString; reason: import(\"zod/v4\").ZodString; }, import(\"zod/v4/core\").$strict>]>"
+    },
+    {
+      "name": "openLegacyImportOperator",
+      "kind": "function",
+      "text": "export declare function openLegacyImportOperator(options: LegacyImportOperatorOptions): Promise<LegacyImportOperatorSession>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "registerLegacyImportCommands",
+      "kind": "function",
+      "text": "export declare function registerLegacyImportCommands<T extends Context>(registry: Registry<T>, open: (context: T, projectId: string) => Promise<LegacyImportOperatorSession>): void; ;; via Context = interface Context { print(text: string): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Registry = interface Registry<T extends Context> { register(command: { name: string; description: string; usage: string; argsHint: string; handler(args: string[], context: T): Promise<void>; }): void; }"
+    },
+    {
+      "name": "resolveLegacyImportJournalLocation",
+      "kind": "function",
+      "text": "export declare function resolveLegacyImportJournalLocation(input: { workspace: string; projectId: string; stateDirectory: string; }): { workspace: string; journalPath: string; };"
+    }
+  ],
   "./terminal-output-guard": [
     {
       "name": "FullScreenTerminalOutputGuardOptions",

@@ -1,9 +1,14 @@
+import * as crypto from 'node:crypto';
+import { createWorkLedger } from '../sdk/src/platform/workflow/work-ledger/service.js';
+import { KnowledgeGeneratedFactSupportHeldError } from '../sdk/src/platform/knowledge/semantic/verification/types.js';
+import { HomeGraphService } from '../sdk/src/platform/knowledge/home-graph/service.js';
+import { withKnowledgeSourceAnswerAliases } from '../sdk/src/platform/knowledge/source-structural-references.js';
 import { createKnowledgeNodeOperatorMutation } from '../sdk/src/platform/knowledge/store-node-authority.js';
 import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -392,6 +397,150 @@ describe('Home Graph page quality persistence boundaries', () => {
       } finally {
         pause.release();
         await result;
+      }
+    });
+  }
+
+  test('a plain current source still receives Home Graph metadata during ask refresh', async () => {
+    const context = await fixture();
+    const source = await context.store.upsertSource({ id: 'plain-current-reference', connectorId: 'manual',
+      sourceType: 'manual', title: 'Plain reference manual', status: 'indexed',
+      canonicalUri: 'https://reference.example.test/plain-current', metadata: { knowledgeSpaceId: spaceId } });
+    readings();
+    await refreshAsk(context, [source]);
+    const stored = context.store.getSource(source.id)!;
+    expect(stored).not.toBe(source);
+    expect(stored.metadata.homeGraph).toBe(true);
+    expect(stored.metadata.homeAssistant).toMatchObject({ installationId });
+  });
+
+  test('owned answer alias source changes during quality leave no source or link writes', async () => {
+    const context = await fixture();
+    const service = new HomeGraphService(context.store, context.artifactStore);
+    const ingested = await service.ingestNote({ installationId, title: 'Reference device manual',
+      body: 'The reference device supports 4K UHD resolution.', category: 'manual' });
+    const source = context.store.getSource(ingested.source.id)!;
+    const alias = withKnowledgeSourceAnswerAliases(source);
+    const pause = pauseReading();
+    const before = persisted(context);
+    const result = refreshAsk(context, [alias]).then(() => undefined, (error: unknown) => error);
+    try {
+      await withTestTimeout(pause.entered);
+      expect(persisted(context)).toBe(before);
+      await context.store.replaceSourceRecord({ ...source, summary: 'Concurrent source correction.' });
+      const afterConcurrentEdit = persisted(context);
+      pause.release();
+      const error = await result;
+      expect(error).toBeInstanceOf(KnowledgeSourceQualityHeldError);
+      expect((error as KnowledgeSourceQualityHeldError).reason).toBe('stale');
+      expect(persisted(context)).toBe(afterConcurrentEdit);
+    } finally {
+      pause.release();
+      await result;
+      service.dispose();
+    }
+  });
+
+  test('a ledger cache rebuild during quality rejects all owned aliases before the first write', async () => {
+    const context = await fixture();
+    const service = new HomeGraphService(context.store, context.artifactStore);
+    const random = spyOn(crypto, 'randomUUID').mockReturnValue('00001af0-0000-4000-8000-000000000000');
+    let ingested: Awaited<ReturnType<HomeGraphService['ingestNote']>>;
+    try {
+      ingested = await service.ingestNote({ installationId, title: 'Reference device manual',
+        body: 'The reference device supports 4K UHD resolution.', category: 'manual' });
+    } finally { random.mockRestore(); }
+    const source = context.store.getSource(ingested.source.id)!;
+    const alias = withKnowledgeSourceAnswerAliases(source);
+    // This valid new source sorts before the stale owned alias. A per-source
+    // check would admit a partial write: SQLiteStore.batch flushes in finally.
+    const responseOnly = { ...source, id: 'a-response-first',
+      canonicalUri: 'https://reference.example.test/response-first', sourceUri: undefined };
+    const projectId = 'alias-cache-rebuild';
+    const storage = await context.store.openWorkLedgerStorage(projectId);
+    const ledger = createWorkLedger({ projectId, storage, clock: { now: () => 100, newId: kind => `${kind}-fixture` } });
+    const actor = ledger.authority.issueActor({ projectId, actorId: 'fixture-owner', role: 'coordinator' });
+    const pause = pauseReading();
+    const result = refreshAsk(context, [responseOnly, alias]).then(() => undefined, (error: unknown) => error);
+    try {
+      await withTestTimeout(pause.entered);
+      expect(await ledger.service.execute({ type: 'create', requestId: 'create-ledger-work', expectedRevision: 0,
+        title: 'Independent ledger work', goal: 'Commit a normal ledger transaction', criteria: ['Durable revision'] }, actor))
+        .toMatchObject({ kind: 'accepted' });
+      const current = context.store.getSource(source.id)!;
+      expect(current).not.toBe(source);
+      expect(current).toEqual(source);
+      const afterLedger = persisted(context);
+      const bytesAfterLedger = readFileSync(context.store.storagePath);
+      pause.release();
+      const error = await result;
+      expect(context.store.getSource(responseOnly.id)).toBeNull();
+      expect(persisted(context)).toBe(afterLedger);
+      expect(readFileSync(context.store.storagePath)).toEqual(bytesAfterLedger);
+      expect(error).toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
+      expect((error as KnowledgeGeneratedFactSupportHeldError).reason).toBe('stale');
+    } finally {
+      pause.release();
+      await result;
+      await ledger.service.close();
+      service.dispose();
+    }
+  });
+
+  for (const [changedSource, extraMicrotasks] of [['later', 0], ['current', 0], ['current', 1]] as const) {
+    test(`a public correction to the ${changedSource} owned source after the first edge and ${extraMicrotasks} extra microtasks is never overwritten`, async () => {
+      const context = await fixture();
+      const service = new HomeGraphService(context.store, context.artifactStore);
+      const otherDevice = await seedHomeAssistantObservation(context.store, {
+        id: 'another-reference-device', kind: 'ha_device', slug: 'another-reference-device',
+        title: 'Another reference device', status: 'active',
+        metadata: metadata({ homeAssistant: { objectId: 'another-reference-device', objectKind: 'device' } }),
+      });
+      const sources: KnowledgeSourceRecord[] = [];
+      for (const title of ['First reference manual', 'Second reference manual']) {
+        const ingested = await service.ingestNote({ installationId, title,
+          body: 'The reference device supports 4K UHD resolution.', category: 'manual' });
+        sources.push(context.store.getSource(ingested.source.id)!);
+      }
+      sources.sort((left, right) => left.id.localeCompare(right.id));
+      const first = sources[0]!, later = sources[1]!;
+      const changed = changedSource === 'later' ? later : first;
+      const aliases = sources.map(withKnowledgeSourceAnswerAliases);
+      const askEdges = () => context.store.listEdges().filter((edge) => edge.relation === 'source_for'
+        && edge.metadata.linkedBy === 'homegraph-ask-page-refresh');
+      readings();
+      let settled = false;
+      const result = refreshAsk(context, aliases, [], [context.device, otherDevice])
+        .then(() => undefined, (error: unknown) => error).finally(() => { settled = true; });
+      try {
+        // Observe public state between real async store operations. No store
+        // method is replaced; a public upsert races the next source/edge step.
+        for (let turn = 0; turn < 1_000 && !settled && !askEdges().some((edge) => edge.fromId === first.id); turn++) {
+          await Promise.resolve();
+        }
+        expect(askEdges().some((edge) => edge.fromId === first.id && edge.toId === context.device.id)).toBe(true);
+        for (let turn = 0; turn < extraMicrotasks; turn++) await Promise.resolve();
+        const correction = await context.store.upsertSource({ ...changed,
+          title: 'Newer corrected manual title', summary: 'Newer operator correction after the first valid edge.' });
+        const error = await result;
+        expect(context.store.getSource(changed.id)).toBe(correction);
+        expect(context.store.getSource(changed.id)).toEqual(correction);
+        expect(error).toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
+        expect((error as KnowledgeGeneratedFactSupportHeldError).reason).toBe('stale');
+        expect(askEdges().filter((edge) => edge.fromId === later.id)).toHaveLength(0);
+        if (changedSource === 'current') {
+          expect(askEdges().filter((edge) => edge.fromId === first.id && edge.toId === otherDevice.id)).toHaveLength(0);
+        }
+        // The earlier valid edge may remain: batch is not an atomic rollback.
+        expect(askEdges().some((edge) => edge.fromId === first.id && edge.toId === context.device.id)).toBe(true);
+        const reopened = new KnowledgeStore({ dbPath: context.store.storagePath });
+        try {
+          await reopened.init();
+          expect(reopened.getSource(changed.id)).toEqual(correction);
+        } finally { await reopened.close(); }
+      } finally {
+        await result;
+        service.dispose();
       }
     });
   }
