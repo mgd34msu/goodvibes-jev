@@ -32,6 +32,11 @@ const MAX_FILES = 20_000;
 const MAX_BYTES = 256 * 1024 * 1024;
 const MAX_OUTPUT = 2 * 1024 * 1024;
 
+/** These are not exec schema inputs; never pretend that supplied stdin ran. */
+export function capturedExecUnsupportedOptions(input: Record<string, unknown>): string[] {
+  return ['stdin', 'input'].filter((name) => Object.prototype.hasOwnProperty.call(input, name));
+}
+
 /** No socket creation (including io_uring), no alternate ABI. Seccomp keeps
  * network isolation enforceable when bwrap's loopback setup is unavailable.
  */
@@ -98,6 +103,7 @@ export async function runCapturedCommand(
   timeoutMs: number,
   signal?: AbortSignal,
   network: 'enabled' | 'disabled' = 'disabled',
+  ambientEnvironment: Readonly<Record<string, string>> = {},
 ): Promise<ExecCommandResult> {
   binding = Object.freeze({ ...binding, dependencyInputs: binding.dependencyInputs ? Object.freeze([...binding.dependencyInputs]) : undefined });
   input = structuredClone(input);
@@ -126,6 +132,12 @@ export async function runCapturedCommand(
     if (!within(root, resolve(workingDirectory)) || !within(root, cwd)) throw new Error('outside captured working directory');
     if (['/usr', '/bin', '/lib', '/lib64', '/proc', '/dev'].some((path) => within(path, root) || within(root, path)))
       throw new Error('captured root overlaps runtime mounts');
+    const unsupported = capturedExecUnsupportedOptions(input as unknown as Record<string, unknown>);
+    if (unsupported.length > 0) return {
+      cmd: command, cwd, exit_code: null, stdout: '', success: false, denied: true,
+      stderr: 'Captured exec does not support stdin/input options; use a shell pipe or an authorized input file.',
+      captured_exec_unsupported_options: unsupported,
+    };
     if (input.background || input.until || input.interactive) throw new Error('captured exec requires a bounded foreground command');
     await check();
     const availability = await probeCapturedExecAvailability();
@@ -175,7 +187,10 @@ export async function runCapturedCommand(
     try {
       combined?.throwIfAborted();
       child = spawn('/usr/bin/bwrap', argv, {
-        env: { PATH: '/captured-runtime/bin:/usr/bin:/bin', HOME: '/home/captured', TMPDIR: '/tmp', LANG: 'C.UTF-8', ...input.env },
+        // Preserve the existing scrubbed ambient + explicit override contract.
+        // Only ambient path defaults are rebased into the captured filesystem;
+        // an explicit per-command override remains the caller's opt-in.
+        env: { ...ambientEnvironment, PATH: '/captured-runtime/bin:/usr/bin:/bin', HOME: '/home/captured', TMPDIR: '/tmp', LANG: ambientEnvironment.LANG ?? 'C.UTF-8', ...input.env },
         stdio: ['ignore', 'pipe', 'pipe', fd],
       });
     } finally { closeSync(fd); }

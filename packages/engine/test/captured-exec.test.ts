@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { admitCapturedExecDependency } from '../sdk/src/platform/tools/exec/captured-exec-dependencies.js';
 import { useToolReadings } from './_helpers/tool-readings.js';
-useToolReadings([], [['CAPTURE_NETWORK_POLICY', { catastrophic: false, needsNetwork: true }]]);
+useToolReadings([['"CAPTURE_SYNTHETIC_TOKEN"', { credential: true }]], [['CAPTURE_NETWORK_POLICY', { catastrophic: false, needsNetwork: true }]]);
 import { captureContractInput, materializeContractInput, contractInputPath } from '../sdk/src/platform/contract/input-snapshot.js';
 import { assertContractInputReadAccess, createContractInputAuthority, revokeContractInputAuthority } from '../sdk/src/platform/contract/input-authority.js';
 import type { Contract } from '../sdk/src/platform/contract/types.js';
@@ -310,3 +310,52 @@ test.skipIf(!supported)('workspace remapping refuses excluded owner targets', as
   symlinkSync('../.aws', join(dependencies, 'excluded-workspace'));
   await expect(admitCapturedExecDependency(binding, { sourceRoot: dependencies, targetRelativePath: 'node_modules' })).rejects.toThrow('escapes');
 });
+
+for (const mode of ['default', 'override', 'allowlist', 'disabled'] as const)
+  test.skipIf(!supported)(`captured ambient environment preserves existing scrub and ${mode} opt-in semantics`, async () => {
+    const { createExecTool } = await import('../sdk/src/platform/tools/exec/runtime.js');
+    const { ProcessManager } = await import('../sdk/src/platform/tools/shared/process-manager.js');
+    const { OverflowHandler } = await import('../sdk/src/platform/tools/shared/overflow.js');
+    const binding = await fixture();
+    const previousOrdinary = process.env.CAPTURE_BUILD_SETTING;
+    const previousToken = process.env.CAPTURE_SYNTHETIC_TOKEN;
+    process.env.CAPTURE_BUILD_SETTING = 'synthetic-build-config';
+    process.env.CAPTURE_SYNTHETIC_TOKEN = 'synthetic-ambient-value';
+    try {
+      const tool = createExecTool(new ProcessManager(), {
+        capturedInput: binding, defaultWorkingDirectory: binding.root, overflowHandler: new OverflowHandler({ baseDir: binding.root }),
+        credentialEnvScrub: mode === 'allowlist' ? { allowlist: ['CAPTURE_SYNTHETIC_TOKEN'] } : { enabled: mode !== 'disabled' },
+      });
+      const result = await tool.execute({ commands: [{
+        cmd: 'printf "%s|%s|%s|%s|%s" "$CAPTURE_BUILD_SETTING" "${CAPTURE_SYNTHETIC_TOKEN-unset}" "$PATH" "$HOME" "$TMPDIR"',
+        ...(mode === 'override' ? { env: { CAPTURE_SYNTHETIC_TOKEN: 'synthetic-explicit-value', CAPTURE_BUILD_SETTING: 'explicit-build-config' } } : {}),
+      }] });
+      expect(result.success).toBe(true);
+      const output = JSON.parse(result.output ?? '{}') as { stdout: string; withheld_env?: string[] };
+      expect(output.stdout).toContain(mode === 'override' ? 'explicit-build-config|synthetic-explicit-value' : `synthetic-build-config|${mode === 'default' ? 'unset' : 'synthetic-ambient-value'}`);
+      expect(output.stdout).toContain('|/captured-runtime/bin:/usr/bin:/bin|/home/captured|/tmp');
+      expect(output.withheld_env?.includes('CAPTURE_SYNTHETIC_TOKEN') ?? false).toBe(mode === 'default');
+    } finally {
+      if (previousOrdinary === undefined) delete process.env.CAPTURE_BUILD_SETTING; else process.env.CAPTURE_BUILD_SETTING = previousOrdinary;
+      if (previousToken === undefined) delete process.env.CAPTURE_SYNTHETIC_TOKEN; else process.env.CAPTURE_SYNTHETIC_TOKEN = previousToken;
+    }
+  });
+
+for (const position of ['top-level', 'command'] as const)
+  for (const option of ['stdin', 'input'] as const)
+  test(`captured unsupported ${position} ${option} is a typed refusal, never false success`, async () => {
+    const { createExecTool } = await import('../sdk/src/platform/tools/exec/runtime.js');
+    const { ProcessManager } = await import('../sdk/src/platform/tools/shared/process-manager.js');
+    const { OverflowHandler } = await import('../sdk/src/platform/tools/shared/overflow.js');
+    const binding = await fixture();
+    const tool = createExecTool(new ProcessManager(), {
+      capturedInput: binding, defaultWorkingDirectory: binding.root, overflowHandler: new OverflowHandler({ baseDir: binding.root }),
+    });
+    const result = await tool.execute(position === 'top-level'
+      ? { commands: [{ cmd: 'cat' }], [option]: 'synthetic input' }
+      : { commands: [{ cmd: 'cat', [option]: 'synthetic input' }] });
+    expect(result.success).toBe(false);
+    const output = JSON.parse(result.output ?? '{}') as { captured_exec_unsupported_options?: string[]; denied?: boolean };
+    expect(output.denied).toBe(true);
+    expect(output.captured_exec_unsupported_options).toEqual([option]);
+  });

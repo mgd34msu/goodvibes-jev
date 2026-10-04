@@ -1,4 +1,4 @@
-import { runCapturedCommand, type CapturedExecAuthority } from './captured-exec.js';
+import { capturedExecUnsupportedOptions, runCapturedCommand, type CapturedExecAuthority } from './captured-exec.js';
 import { join, resolve, isAbsolute } from 'node:path';
 import { randomInt, randomUUID } from 'node:crypto';
 import type { Tool } from '../../types/tools.js';
@@ -266,8 +266,12 @@ async function runCommand(
       cmd: cmdStr, exit_code: null, stdout: '', stderr: `Sandbox escalation denied: ${escalation.deniedEscalations.join('; ')}`,
       success: false, denied: true,
     };
-    return runCapturedCommand(policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal,
-      !plan || plan.network === 'enabled' ? 'enabled' : 'disabled');
+    const scrubbed = await scrubCredentialEnv(buildCleanEnv(), scrub);
+    signal?.throwIfAborted();
+    const withheld = scrubbed.withheld.filter((name) => !(cmdInput.env && name in cmdInput.env));
+    const result = await runCapturedCommand(policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal,
+      !plan || plan.network === 'enabled' ? 'enabled' : 'disabled', scrubbed.env);
+    return withheld.length > 0 ? { ...result, withheld_env: withheld } : result;
   }
   const sandbox = policy.sandbox;
   const interaction = policy.interaction;
@@ -952,6 +956,14 @@ export function createExecTool(
         }
         if ((args['commands'] as unknown[]).length > MAX_EXEC_COMMANDS) {
           return { success: false, error: `Too many commands: maximum ${MAX_EXEC_COMMANDS} per exec call` };
+        }
+        if (policy.capturedInput) {
+          const unsupported = capturedExecUnsupportedOptions(args);
+          if (unsupported.length > 0) return {
+            success: false,
+            error: 'Captured exec does not support stdin/input options; use a shell pipe or an authorized input file.',
+            output: JSON.stringify({ denied: true, captured_exec_unsupported_options: unsupported }),
+          };
         }
         const input = normalizeExecInput(args as unknown as ExecInput);
         const workingDirectory = requireWorkingDirectory(input, options.defaultWorkingDirectory);

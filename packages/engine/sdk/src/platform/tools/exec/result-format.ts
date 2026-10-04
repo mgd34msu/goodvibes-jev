@@ -115,6 +115,7 @@ export function formatResult(result: ExecCommandResult, verbosity: ExecVerbosity
       exit_code: result.exit_code,
       success: false,
       denied: true,
+      ...(result.captured_exec_unsupported_options && { captured_exec_unsupported_options: result.captured_exec_unsupported_options }),
       ...sandboxFields(result),
       // `stderr` stays populated so existing consumers keep reading the reason
       // where they always have; `denial_reason` adds the same text under a name
