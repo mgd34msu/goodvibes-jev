@@ -70972,128 +70972,263 @@ Return ingested structured knowledge sources. Without ?limit/?cursor returns { s
 
 ```json
 {
-  "type": "object",
-  "properties": {
-    "sources": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "connectorId": {
-            "type": "string"
-          },
-          "sourceType": {
-            "type": "string",
-            "enum": [
-              "url",
-              "bookmark",
-              "bookmark-list",
-              "history",
-              "document",
-              "repo",
-              "dataset",
-              "image",
-              "manual",
-              "other"
-            ]
-          },
-          "title": {
-            "type": "string"
-          },
-          "sourceUri": {
-            "type": "string"
-          },
-          "canonicalUri": {
-            "type": "string"
-          },
-          "summary": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "folderPath": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "artifactId": {
-            "type": "string"
-          },
-          "contentHash": {
-            "type": "string"
-          },
-          "lastCrawledAt": {
-            "type": "number"
-          },
-          "crawlError": {
-            "type": "string"
-          },
-          "sessionId": {
-            "type": "string"
-          },
-          "metadata": {
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "sources": {
+          "type": "array",
+          "items": {
             "type": "object",
-            "additionalProperties": {
-              "anyOf": [
-                {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "connectorId": {
+                "type": "string"
+              },
+              "sourceType": {
+                "type": "string",
+                "enum": [
+                  "url",
+                  "bookmark",
+                  "bookmark-list",
+                  "history",
+                  "document",
+                  "repo",
+                  "dataset",
+                  "image",
+                  "manual",
+                  "other"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "sourceUri": {
+                "type": "string"
+              },
+              "canonicalUri": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
                   "type": "string"
-                },
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "boolean"
-                },
-                {
-                  "type": "null"
-                },
-                {
-                  "type": "object",
-                  "additionalProperties": {}
-                },
-                {
-                  "type": "array",
-                  "items": {}
                 }
-              ]
-            }
-          },
-          "createdAt": {
-            "type": "number"
-          },
-          "updatedAt": {
-            "type": "number"
+              },
+              "folderPath": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "artifactId": {
+                "type": "string"
+              },
+              "contentHash": {
+                "type": "string"
+              },
+              "lastCrawledAt": {
+                "type": "number"
+              },
+              "crawlError": {
+                "type": "string"
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    {
+                      "type": "array",
+                      "items": {}
+                    }
+                  ]
+                }
+              },
+              "createdAt": {
+                "type": "number"
+              },
+              "updatedAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "connectorId",
+              "sourceType",
+              "tags",
+              "status",
+              "metadata",
+              "createdAt",
+              "updatedAt"
+            ],
+            "additionalProperties": true
+          }
+        }
+      },
+      "required": [
+        "sources"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "connectorId": {
+                "type": "string"
+              },
+              "sourceType": {
+                "type": "string",
+                "enum": [
+                  "url",
+                  "bookmark",
+                  "bookmark-list",
+                  "history",
+                  "document",
+                  "repo",
+                  "dataset",
+                  "image",
+                  "manual",
+                  "other"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "sourceUri": {
+                "type": "string"
+              },
+              "canonicalUri": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "folderPath": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "artifactId": {
+                "type": "string"
+              },
+              "contentHash": {
+                "type": "string"
+              },
+              "lastCrawledAt": {
+                "type": "number"
+              },
+              "crawlError": {
+                "type": "string"
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    {
+                      "type": "array",
+                      "items": {}
+                    }
+                  ]
+                }
+              },
+              "createdAt": {
+                "type": "number"
+              },
+              "updatedAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "connectorId",
+              "sourceType",
+              "tags",
+              "status",
+              "metadata",
+              "createdAt",
+              "updatedAt"
+            ],
+            "additionalProperties": true
           }
         },
-        "required": [
-          "id",
-          "connectorId",
-          "sourceType",
-          "tags",
-          "status",
-          "metadata",
-          "createdAt",
-          "updatedAt"
-        ],
-        "additionalProperties": true
-      }
+        "hasMore": {
+          "type": "boolean"
+        },
+        "nextCursor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "items",
+        "hasMore"
+      ],
+      "additionalProperties": false
     }
-  },
-  "required": [
-    "sources"
-  ],
-  "additionalProperties": false
+  ]
 }
 ```
 
@@ -119005,7 +119140,7 @@ Capture bounded complete legacy sources on the selected authoritative host. Prep
 - Access: `admin`
 - Transport: `http`, `ws`
 - HTTP: `POST /api/work-ledger/legacy-import/prepare`
-- Scopes: `write:work-ledger-import`, `read:knowledge`
+- Scopes: `read:work-ledger`, `read:knowledge`
 - Emits events: none
 - Dangerous: `no`
 - Invokable: `yes`

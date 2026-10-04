@@ -524,7 +524,18 @@ export const KNOWLEDGE_ASK_OUTPUT_SCHEMA = objectSchema({
   results: arraySchema(KNOWLEDGE_SEARCH_RESULT_SCHEMA),
 }, ['ok', 'spaceId', 'query', 'answer', 'results'], { additionalProperties: true });
 
-export const KNOWLEDGE_SOURCES_OUTPUT_SCHEMA = listOutputSchema('sources', KNOWLEDGE_SOURCE_SCHEMA);
+// The same route retains its legacy response when pagination is omitted.
+// Typed clients must also accept the host's bounded cursor envelope.
+export const KNOWLEDGE_SOURCES_OUTPUT_SCHEMA = {
+  anyOf: [
+    listOutputSchema('sources', KNOWLEDGE_SOURCE_SCHEMA),
+    objectSchema({
+      items: arraySchema(KNOWLEDGE_SOURCE_SCHEMA),
+      hasMore: BOOLEAN_SCHEMA,
+      nextCursor: STRING_SCHEMA,
+    }, ['items', 'hasMore']),
+  ],
+};
 export const KNOWLEDGE_NODES_OUTPUT_SCHEMA = listOutputSchema('nodes', KNOWLEDGE_NODE_SCHEMA);
 export const KNOWLEDGE_ISSUES_OUTPUT_SCHEMA = listOutputSchema('issues', KNOWLEDGE_ISSUE_SCHEMA);
 export const KNOWLEDGE_ISSUE_REVIEW_OUTPUT_SCHEMA = objectSchema({
