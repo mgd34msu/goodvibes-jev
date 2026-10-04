@@ -47,7 +47,13 @@ export class NativeWorkLedgerModel {
       const unsubscribe = client.subscribe(snapshot => this.accept(snapshot, epoch));
       if (epoch !== this.epoch) { try { unsubscribe(); } catch {} return; }
       this.unsubscribe = unsubscribe;
-      void client.readSnapshot().then(snapshot => this.accept(snapshot, epoch), error => this.fail(error, epoch));
+      const projectionEpoch = this.projectionEpoch;
+      void client.readSnapshot().then(snapshot => {
+        // The reader can notify a newer projection before an older snapshot's
+        // promise continuation runs. Keep that notification's provenance while
+        // still accepting durable snapshot contents through the cursor fence.
+        this.accept(projectionEpoch === this.projectionEpoch ? snapshot : { ...snapshot, provenance: this.provenance }, epoch);
+      }, error => this.fail(error, epoch));
     } catch (error) { this.fail(error, epoch); }
   }
   private fail(error: unknown, epoch: number): void {
