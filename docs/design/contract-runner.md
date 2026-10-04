@@ -1,6 +1,10 @@
 # The contract runner: implementation design
 
-This is the build design for ledger task R, the contract runner that replaces WRFC. It is written so that engineers can build it in the parts listed in section 12 without making further design decisions. Every file path and function named here was read in the ported engine on 2026-09-26. Where the design adds something new, it says so and names the file it goes in.
+**Status: earlier design and implementation history, with runtime decision semantics superseded on 2026-10-03.** The [autonomous Jev decision contract](autonomous-jev-decisions.md) controls new work: Jev resolves all semantic decisions through `act`, `revise`, `defer` or `reject`, without a human runtime decision loop. The owner-reply, confirmation, escalation and approval-prompt paths below remain documented migration work, not target behavior. Legacy records must not be relabeled as autonomous authorization.
+
+Transient Jev outages must use the one shared judgment-port retry implementation until recovery, with backoff and lifecycle cancellation. Any older retry limits below do not define the Jev outage contract; non-Jev agent/provider failure handling is a separate concern. See the [current implementation status](../../README.md#status) and [legacy migration map](autonomous-jev-decisions.md#legacy-migration-map). This document does not establish completed migration or live proof.
+
+This is the original build design for ledger task R, the contract runner that replaces WRFC, retained to account for the parts listed in section 12. Every file path and function named here was read in the ported engine on 2026-09-26. Where the design adds something new, it says so and names the file it goes in.
 
 Sources of scope: `goodvibes-jev-intent.md` (the contract runner section, and the engine table rows for core, agents and orchestration, hosted sessions, sessions and embed) and `docs/inventory/wrfc-to-jev.md`, which is the specification. Section 11 places every row of that inventory.
 
