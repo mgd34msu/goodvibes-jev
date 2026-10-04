@@ -44,7 +44,7 @@ function copyPackage(source: string, target: string, seen = new Set<string>()): 
   }
 }
 
-test.skipIf(!supported)('actual default member direct commands and typecheck/lint share admitted Node/npm and real project dependencies', async () => {
+async function assertActualRuntimeFlow(mode: 'direct' | 'validators'): Promise<void> {
   const root = makeRepo();
   writeFileSync(join(root, '.gitignore'), '.goodvibes/\nnode_modules/\n');
   mkdirSync(join(root, 'src'));
@@ -52,36 +52,42 @@ test.skipIf(!supported)('actual default member direct commands and typecheck/lin
   const changed = 'export const answer: number = 42;\n';
   writeFileSync(join(root, 'src/csv.ts'), original);
   writeFileSync(join(root, 'private.txt'), 'SYNTHETIC_DIRECT_RUNTIME_DENIED');
-  writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true, scripts: { proof: 'node direct-proof.cjs' } }));
-  writeFileSync(join(root, 'direct-proof.cjs'), [
-    'const { existsSync, readFileSync, writeFileSync } = require("node:fs");',
-    `if (existsSync(${JSON.stringify(join(root, 'src/csv.ts'))})) throw Error("owner source escaped into direct command");`,
-    'if (existsSync("private.txt") || existsSync(".git") || existsSync("/opt/codex")) throw Error("unadmitted direct inputs visible");',
-    'if (process.env.HOME !== "/home/captured") throw Error("direct runtime is not contained");',
-    'if (!readFileSync("src/csv.ts", "utf8").includes("= 1")) throw Error("wrong captured input");',
-    'writeFileSync("node-proof.txt", "REAL_CONTAINED_DIRECT_NODE\\n");',
-    'console.log("DIRECT_RUNTIME_ALLOWED");',
-  ].join('\n'));
-  writeFileSync(join(root, 'tsconfig.json'), '{"compilerOptions":{"strict":true,"skipLibCheck":true},"files":["src/csv.ts"]}');
-  writeFileSync(join(root, 'lint-target.js'), 'const answer = 42; console.log(answer);');
-  writeFileSync(join(root, 'eslint.config.mjs'), [
-    'import { existsSync, writeFileSync } from "node:fs";',
-    `if (existsSync(${JSON.stringify(join(root, 'src/csv.ts'))})) throw Error("owner source escaped into validator");`,
-    'if (existsSync(".git") || existsSync(".goodvibes") || existsSync("/opt/codex")) throw Error("unadmitted runtime files visible");',
-    'if (process.env.HOME !== "/home/captured") throw Error("validator is not contained");',
-    'writeFileSync("lint-proof.txt", "REAL_CONTAINED_ESLINT\\n");',
-    'export default [{files:["lint-target.js"],rules:{"no-unused-vars":"error"}}];',
-  ].join('\n'));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true, ...(mode === 'direct' ? { scripts: { proof: 'node direct-proof.cjs' } } : {}) }));
+  if (mode === 'direct') {
+    writeFileSync(join(root, 'direct-proof.cjs'), [
+      'const { existsSync, readFileSync, writeFileSync } = require("node:fs");',
+      `if (existsSync(${JSON.stringify(join(root, 'src/csv.ts'))})) throw Error("owner source escaped into direct command");`,
+      'if (existsSync("private.txt") || existsSync(".git") || existsSync("/opt/codex")) throw Error("unadmitted direct inputs visible");',
+      'if (process.env.HOME !== "/home/captured") throw Error("direct runtime is not contained");',
+      'if (!readFileSync("src/csv.ts", "utf8").includes("= 1")) throw Error("wrong captured input");',
+      `writeFileSync("src/csv.ts", ${JSON.stringify(changed)});`,
+      'writeFileSync("node-proof.txt", "REAL_CONTAINED_DIRECT_NODE\\n");',
+      'console.log("DIRECT_RUNTIME_ALLOWED");',
+    ].join('\n'));
+  } else {
+    writeFileSync(join(root, 'tsconfig.json'), '{"compilerOptions":{"strict":true,"skipLibCheck":true},"files":["src/csv.ts"]}');
+    writeFileSync(join(root, 'lint-target.js'), 'const answer = 42; console.log(answer);');
+    writeFileSync(join(root, 'eslint.config.mjs'), [
+      'import { existsSync, writeFileSync } from "node:fs";',
+      `if (existsSync(${JSON.stringify(join(root, 'src/csv.ts'))})) throw Error("owner source escaped into validator");`,
+      'if (existsSync(".git") || existsSync(".goodvibes") || existsSync("/opt/codex")) throw Error("unadmitted runtime files visible");',
+      'if (process.env.HOME !== "/home/captured") throw Error("validator is not contained");',
+      'writeFileSync("lint-proof.txt", "REAL_CONTAINED_ESLINT\\n");',
+      'export default [{files:["lint-target.js"],rules:{"no-unused-vars":"error"}}];',
+    ].join('\n'));
+  }
   writeFileSync(join(root, 'owner.txt'), 'committed\n');
   git(root, 'add', '.'); git(root, 'commit', '-qm', 'validator source');
   writeFileSync(join(root, 'owner.txt'), 'staged\n'); git(root, 'add', 'owner.txt'); writeFileSync(join(root, 'owner.txt'), 'unstaged\n');
   const head = git(root, 'rev-parse', 'HEAD'); const index = readFileSync(join(root, '.git/index'));
-  const modules = join(root, 'node_modules'); mkdirSync(modules);
-  const installed = realpathSync(join(import.meta.dir, '../../../../node_modules'));
-  copyPackage(realpathSync(join(installed, 'typescript')), modules);
-  const store = join(installed, '.bun'); const eslint = readdirSync(store).find((name) => name.startsWith('eslint@'));
-  expect(eslint).toBeDefined(); copyPackage(join(store, eslint!, 'node_modules/eslint'), modules);
-  mkdirSync(join(modules, '.bin')); symlinkSync('../typescript/bin/tsc', join(modules, '.bin/tsc')); symlinkSync('../eslint/bin/eslint.js', join(modules, '.bin/eslint'));
+  if (mode === 'validators') {
+    const modules = join(root, 'node_modules'); mkdirSync(modules);
+    const installed = realpathSync(join(import.meta.dir, '../../../../node_modules'));
+    copyPackage(realpathSync(join(installed, 'typescript')), modules);
+    const store = join(installed, '.bun'); const eslint = readdirSync(store).find((name) => name.startsWith('eslint@'));
+    expect(eslint).toBeDefined(); copyPackage(join(store, eslint!, 'node_modules/eslint'), modules);
+    mkdirSync(join(modules, '.bin')); symlinkSync('../typescript/bin/tsc', join(modules, '.bin/tsc')); symlinkSync('../eslint/bin/eslint.js', join(modules, '.bin/eslint'));
+  }
   const config = new ConfigManager({ surfaceRoot: 'agent', configDir: join(root, '.goodvibes', 'cfg'), workingDir: root, homeDir: root });
   config.set('permissions.engine', 'policy-engine'); config.set('permissions.mode', 'prompt'); config.set('behavior.autoApprove', false);
   config.set('contract.isolation', 'worktree'); config.set('tools.autoHeal', false);
@@ -106,20 +112,23 @@ test.skipIf(!supported)('actual default member direct commands and typecheck/lin
       const turn = ++calls; memberRoot = runtime.agentManager.list().find((record) => record.contractRole === 'unit')!.workingDirectory!;
       expect(memberRoot).not.toBe(root); assertOwner();
       let step: ToolCall | undefined;
-      if (turn === 1) step = { id: 'direct-node-npm', name: 'exec', arguments: { commands: [{ cmd: 'node --version && npm run proof && npx --version' }] } };
-      else if (turn === 2) {
-        const direct = results.get('direct-node-npm');
-        expect(direct?.success, JSON.stringify(direct)).toBe(true);
-        expect(direct?.output).toContain('DIRECT_RUNTIME_ALLOWED');
-        expect(readFileSync(join(memberRoot, 'node-proof.txt'), 'utf8')).toBe('REAL_CONTAINED_DIRECT_NODE\n');
-        expect(existsSync(join(root, 'node-proof.txt'))).toBe(false);
-        step = { id: 'real-npx', name: 'write', arguments: { files: [{ path: 'src/csv.ts', content: changed, mode: 'overwrite' }], validate: { after: ['typecheck', 'lint'] }, verbosity: 'standard' } };
-      } else {
+      if (mode === 'direct') {
+        if (turn === 1) step = { id: 'direct-node-npm', name: 'exec', arguments: { commands: [{ cmd: 'node --version && npm run proof && npx --version' }] } };
+        else {
+          const direct = results.get('direct-node-npm');
+          expect(direct?.success, JSON.stringify(direct)).toBe(true);
+          expect(direct?.output).toContain('DIRECT_RUNTIME_ALLOWED');
+          expect(readFileSync(join(memberRoot, 'node-proof.txt'), 'utf8')).toBe('REAL_CONTAINED_DIRECT_NODE\n');
+          expect(existsSync(join(root, 'node-proof.txt'))).toBe(false);
+          expect(readFileSync(join(memberRoot, 'src/csv.ts'), 'utf8')).toBe(changed);
+        }
+      } else if (turn === 1) step = { id: 'real-npx', name: 'write', arguments: { files: [{ path: 'src/csv.ts', content: changed, mode: 'overwrite' }], validate: { after: ['typecheck', 'lint'] }, verbosity: 'standard' } };
+      else {
         const written = results.get('real-npx'); expect(written?.success, JSON.stringify(written)).toBe(true);
         expect(JSON.parse(written!.output!).validation_passed, written!.output).toBe(true);
         expect(readFileSync(join(memberRoot, 'lint-proof.txt'), 'utf8')).toBe('REAL_CONTAINED_ESLINT\n');
         expect(readFileSync(join(memberRoot, 'src/csv.ts'), 'utf8')).toBe(changed);
-        if (turn === 3) step = { id: 'actual-type-error', name: 'edit', arguments: { edits: [{ path: 'src/csv.ts', find: '= 42', replace: '= "wrong"' }], validate: { after: ['typecheck'] }, transaction: { mode: 'atomic' } } };
+        if (turn === 2) step = { id: 'actual-type-error', name: 'edit', arguments: { edits: [{ path: 'src/csv.ts', find: '= 42', replace: '= "wrong"' }], validate: { after: ['typecheck'] }, transaction: { mode: 'atomic' } } };
         else { expect(results.get('actual-type-error')?.success).toBe(false); expect(results.get('actual-type-error')?.error).toContain('TS2322'); }
       }
       return { content: step ? '' : 'Created src/csv.ts. The parser works.', toolCalls: step ? [step] : [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: step ? 'tool_call' : 'completed' };
@@ -144,15 +153,21 @@ test.skipIf(!supported)('actual default member direct commands and typecheck/lin
   let id: string | undefined;
   try {
     id = runner.start({ ask: 'Add a CSV parser module', sessionId: 'actual-npx-fixture', origin: 'cli', projectRoot: root, isolation: 'worktree' }).contract.id;
-    await waitFor(() => ['passed', 'failed', 'cancelled', 'awaiting-owner'].includes(runner.get(id!)!.status), 'actual Node/npm validator settlement', 180_000);
+    await waitFor(() => ['passed', 'failed', 'cancelled', 'awaiting-owner'].includes(runner.get(id!)!.status), `actual Node/npm ${mode} settlement`, mode === 'direct' ? 120_000 : 180_000);
     await runner.join(id); const result = runner.get(id)!;
-    expect(result.status, JSON.stringify({ error: result.error, results: [...results], calls })).toBe('passed'); expect(calls).toBe(4); expect(checked).toBe(true);
+    expect(result.status, JSON.stringify({ error: result.error, results: [...results], calls })).toBe('passed'); expect(calls).toBe(mode === 'direct' ? 2 : 3); expect(checked).toBe(true);
     expect(result.commit?.status, result.commit?.note).toBe('applied'); expect(readFileSync(join(root, 'src/csv.ts'), 'utf8')).toBe(changed);
-    expect(readFileSync(join(root, 'lint-proof.txt'), 'utf8')).toBe('REAL_CONTAINED_ESLINT\n');
-    expect(readFileSync(join(root, 'node-proof.txt'), 'utf8')).toBe('REAL_CONTAINED_DIRECT_NODE\n');
+    if (mode === 'direct') expect(readFileSync(join(root, 'node-proof.txt'), 'utf8')).toBe('REAL_CONTAINED_DIRECT_NODE\n');
+    else expect(readFileSync(join(root, 'lint-proof.txt'), 'utf8')).toBe('REAL_CONTAINED_ESLINT\n');
     expect(readFileSync(join(root, 'owner.txt'), 'utf8')).toBe('unstaged\n'); expect(readFileSync(join(root, '.git/index'))).toEqual(index); expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
   } finally {
     if (id) { runner.cancel(id, 'fixture cleanup'); await runner.join(id); }
     runner.dispose(); storeObject.dispose(); runtime.dispose(); installJudgmentPort(previous); rmSync(root, { recursive: true, force: true });
   }
-}, 240_000);
+}
+
+for (const mode of ['direct', 'validators'] as const)
+  test.skipIf(!supported)(mode === 'direct'
+    ? 'actual default member direct Node/npm commands admit their runtime without prior validators'
+    : 'actual default member typecheck/lint validators use admitted Node/npm and real project dependencies',
+  () => assertActualRuntimeFlow(mode), mode === 'direct' ? 150_000 : 240_000);

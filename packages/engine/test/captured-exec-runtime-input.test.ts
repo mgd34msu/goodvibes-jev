@@ -14,6 +14,10 @@ import type { Contract } from '../sdk/src/platform/contract/types.js';
 import { runCapturedCommand, probeCapturedExecAvailability, type CapturedExecAuthority } from '../sdk/src/platform/tools/exec/captured-exec.js';
 import { admitCapturedExecNodeRuntime, createCapturedExecNodeRuntimeAdmission } from '../sdk/src/platform/tools/exec/captured-exec-runtime-input.js';
 import { admitCapturedExecDependency } from '../sdk/src/platform/tools/exec/captured-exec-dependencies.js';
+import { createCapturedValidatorRunner } from '../sdk/src/platform/tools/shared/captured-validators.js';
+import { capturedInputTool } from '../sdk/src/platform/tools/shared/captured-input-tools.js';
+import { createWriteTool } from '../sdk/src/platform/tools/write/index.js';
+import { FileStateCache } from '../sdk/src/platform/state/file-cache.js';
 import { useToolReadings } from './_helpers/tool-readings.js';
 useToolReadings();
 const roots: string[] = [];
@@ -415,6 +419,34 @@ test.skipIf(!supported)('call-only cancellation cannot recreate a cleaned runtim
     expect(existsSync(directory)).toBe(false);
   } finally { cancel.abort(); release(); await pending; }
 });
+test.skipIf(!supported)('direct exec and fixed validators reuse one opaque runtime with fresh denial', async () => {
+  let denied = '';
+  const base = await fixture((path) => path !== denied);
+  const declaration = syntheticRuntime(base);
+  writeFileSync(declaration.nodeExecutable, '#!/bin/sh\necho DIRECT_RUNTIME\n', { mode: 0o755 });
+  writeFileSync(declaration.npxExecutable, '#!/bin/sh\ncase "$*" in "tsc --noEmit"|"eslint --no-error-on-unmatched-pattern") printf "%s\\n" "$*" >> validators.txt; echo FIXED_VALIDATOR; exit 0;; *) exit 87;; esac\n', { mode: 0o755 });
+  fs.chmodSync(declaration.npxExecutable, 0o755);
+  const admit = createCapturedExecNodeRuntimeAdmission(base, declaration);
+  const tokens: unknown[] = [];
+  const binding = { ...base, nodeRuntimeAdmission: async (signal?: AbortSignal) => {
+    const token = await admit(signal); tokens.push(token); return token;
+  } };
+  expect((await run(binding, 'node')).stdout).toBe('DIRECT_RUNTIME\n');
+  const validatorRunner = createCapturedValidatorRunner(binding);
+  const write = capturedInputTool(createWriteTool({ projectRoot: base.root, fileCache: new FileStateCache(), validatorRunner }), base.authority, base.root, base.readAccessFilter, undefined);
+  const result = await write.execute({ files: [{ path: 'source.ts', content: 'checked', mode: 'overwrite' }], validate: { after: ['typecheck', 'lint'] }, verbosity: 'standard' });
+  expect(result.success, JSON.stringify(result)).toBe(true);
+  expect(JSON.parse(result.output!).validation_passed, JSON.stringify(result)).toBe(true);
+  expect(readFileSync(join(base.root, 'validators.txt'), 'utf8')).toBe('tsc --noEmit\neslint --no-error-on-unmatched-pattern\n');
+  expect(tokens.length).toBe(3);
+  expect(tokens[1]).toBe(tokens[0]); expect(tokens[2]).toBe(tokens[0]);
+  expect(existsSync(join(base.owner, 'validators.txt'))).toBe(false);
+  denied = '/captured-runtime/bin/node';
+  const refused = await write.execute({ files: [{ path: 'source.ts', content: 'forbidden', mode: 'overwrite' }], validate: { after: ['typecheck'] } });
+  expect(refused.success).toBe(false);
+  expect(readFileSync(join(base.root, 'source.ts'), 'utf8')).toBe('checked');
+});
+
 test('fixed-validator runtime admission is lazy, pinned and memoized', async () => {
   let reads = 0;
   const binding = await fixture(() => { reads++; return true; });
