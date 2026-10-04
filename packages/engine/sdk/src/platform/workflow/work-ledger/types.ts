@@ -1,9 +1,11 @@
-import { z } from 'zod/v4';
+import { array, discriminatedUnion, enum as enumSchema, literal, number, strictObject, string, type z } from 'zod/v4';
+import { workExecutionSchema, type WorkExecutionView } from './execution-types.js';
+import type { NativeExecutionDecisionContext } from './execution-admission.js';
 
-const id = z.string().min(1).max(200);
-const text = z.string().trim().min(1).max(20_000);
-const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const stamp = z.number().int().nonnegative();
+const id = string().min(1).max(200);
+const text = string().trim().min(1).max(20_000);
+const revision = number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const stamp = number().int().nonnegative();
 
 /** Identity is supplied by the authenticated host, never parsed from a command. */
 export interface WorkLedgerHostIdentity {
@@ -12,7 +14,7 @@ export interface WorkLedgerHostIdentity {
   readonly role: 'coordinator' | 'worker' | 'verifier';
 }
 
-export const evidenceTargetSchema = z.strictObject({
+export const evidenceTargetSchema = strictObject({
   workId: id,
   workRevision: revision,
   criteriaRevision: revision,
@@ -21,23 +23,23 @@ export const evidenceTargetSchema = z.strictObject({
 });
 export type WorkEvidenceTarget = z.infer<typeof evidenceTargetSchema>;
 
-export const evidenceReferenceSchema = z.strictObject({
-  kind: z.enum(['decision', 'artifact', 'test', 'commit']),
+export const evidenceReferenceSchema = strictObject({
+  kind: enumSchema(['decision', 'artifact', 'test', 'commit']),
   ref: text,
   /** Content identity, when the host can supply it; a URI alone is not content. */
-  digest: z.string().min(1).max(200).optional(),
+  digest: string().min(1).max(200).optional(),
 });
 export type WorkEvidenceReference = z.infer<typeof evidenceReferenceSchema>;
 
-const reportedState = z.enum(['pending', 'in_progress', 'blocked', 'complete', 'cancelled']);
+const reportedState = enumSchema(['pending', 'in_progress', 'blocked', 'complete', 'cancelled']);
 export type WorkReportedState = z.infer<typeof reportedState>;
 export type WorkVerificationState = 'unverified' | 'verified' | 'failed' | 'unavailable' | 'stale';
 
-export const ledgerWorkSchema = z.strictObject({
+export const ledgerWorkSchema = strictObject({
   id,
   title: text,
   goal: text,
-  criteria: z.array(text).min(1).max(100),
+  criteria: array(text).min(1).max(100),
   revision,
   criteriaRevision: revision,
   reportedState,
@@ -47,13 +49,13 @@ export const ledgerWorkSchema = z.strictObject({
 });
 export type LedgerWork = z.infer<typeof ledgerWorkSchema>;
 
-export const ledgerAttemptSchema = z.strictObject({
+export const ledgerAttemptSchema = strictObject({
   id,
   workId: id,
   predecessorId: id.nullable(),
   ownerId: id,
   revision,
-  state: z.enum(['active', 'complete', 'released', 'cancelled']),
+  state: enumSchema(['active', 'complete', 'released', 'cancelled']),
   report: text.nullable(),
   blocker: text.nullable(),
   createdAt: stamp,
@@ -61,20 +63,20 @@ export const ledgerAttemptSchema = z.strictObject({
 });
 export type LedgerAttempt = z.infer<typeof ledgerAttemptSchema>;
 
-export const criterionResultSchema = z.strictObject({
+export const criterionResultSchema = strictObject({
   criterionIndex: revision,
-  status: z.enum(['satisfied', 'unsatisfied', 'unknown']),
-  references: z.array(text).max(100),
+  status: enumSchema(['satisfied', 'unsatisfied', 'unknown']),
+  references: array(text).max(100),
 });
 
-export const ledgerEvidenceSchema = z.strictObject({
+export const ledgerEvidenceSchema = strictObject({
   id,
   target: evidenceTargetSchema,
-  outcome: z.enum(['verified', 'failed', 'unavailable']),
+  outcome: enumSchema(['verified', 'failed', 'unavailable']),
   reason: text,
-  references: z.array(evidenceReferenceSchema).max(100),
-  source: z.enum(['host_check', 'judgment']),
-  criteriaResults: z.array(criterionResultSchema).max(100),
+  references: array(evidenceReferenceSchema).max(100),
+  source: enumSchema(['host_check', 'judgment']),
+  criteriaResults: array(criterionResultSchema).max(100),
   actorId: id,
   at: stamp,
 });
@@ -82,23 +84,23 @@ export type LedgerEvidence = z.infer<typeof ledgerEvidenceSchema>;
 
 const envelope = { requestId: id, expectedRevision: revision };
 const workEnvelope = { ...envelope, workId: id };
-export const workLedgerCommandSchema = z.discriminatedUnion('type', [
-  z.strictObject({ type: z.literal('create'), ...envelope, title: text, goal: text, criteria: z.array(text).min(1).max(100) }),
-  z.strictObject({ type: z.literal('revise'), ...workEnvelope, title: text, goal: text, criteria: z.array(text).min(1).max(100) }),
-  z.strictObject({ type: z.literal('claim'), ...workEnvelope }),
-  z.strictObject({ type: z.literal('report'), ...workEnvelope, attemptId: id, state: z.enum(['in_progress', 'blocked', 'complete']), report: text, blocker: text.optional() }),
-  z.strictObject({ type: z.literal('release'), ...workEnvelope, attemptId: id, reason: text }),
-  z.strictObject({ type: z.literal('handoff'), ...workEnvelope, attemptId: id, targetActorId: id, reason: text }),
-  z.strictObject({ type: z.literal('cancel'), ...workEnvelope, reason: text }),
-  z.strictObject({ type: z.literal('reopen'), ...workEnvelope, reason: text }),
-  z.strictObject({ type: z.literal('record_evidence'), ...envelope, target: evidenceTargetSchema, outcome: z.enum(['verified', 'failed', 'unavailable']), reason: text, references: z.array(evidenceReferenceSchema).max(100), source: ledgerEvidenceSchema.shape.source, criteriaResults: ledgerEvidenceSchema.shape.criteriaResults }),
+export const workLedgerCommandSchema = discriminatedUnion('type', [
+  strictObject({ type: literal('create'), ...envelope, title: text, goal: text, criteria: array(text).min(1).max(100) }),
+  strictObject({ type: literal('revise'), ...workEnvelope, title: text, goal: text, criteria: array(text).min(1).max(100) }),
+  strictObject({ type: literal('claim'), ...workEnvelope }),
+  strictObject({ type: literal('report'), ...workEnvelope, attemptId: id, state: enumSchema(['in_progress', 'blocked', 'complete']), report: text, blocker: text.optional() }),
+  strictObject({ type: literal('release'), ...workEnvelope, attemptId: id, reason: text }),
+  strictObject({ type: literal('handoff'), ...workEnvelope, attemptId: id, targetActorId: id, reason: text }),
+  strictObject({ type: literal('cancel'), ...workEnvelope, reason: text }),
+  strictObject({ type: literal('reopen'), ...workEnvelope, reason: text }),
+  strictObject({ type: literal('record_evidence'), ...envelope, target: evidenceTargetSchema, outcome: enumSchema(['verified', 'failed', 'unavailable']), reason: text, references: array(evidenceReferenceSchema).max(100), source: ledgerEvidenceSchema.shape.source, criteriaResults: ledgerEvidenceSchema.shape.criteriaResults }),
 ]);
 export type WorkLedgerCommand = z.infer<typeof workLedgerCommandSchema>;
 export type WorkLedgerAction = WorkLedgerCommand['type'];
 
-export const ledgerEventSchema = z.strictObject({
+export const ledgerEventSchema = strictObject({
   sequence: revision,
-  type: z.enum(['create', 'revise', 'claim', 'report', 'release', 'handoff', 'cancel', 'reopen', 'record_evidence']),
+  type: enumSchema(['create', 'revise', 'claim', 'report', 'release', 'handoff', 'cancel', 'reopen', 'record_evidence']),
   actorId: id,
   requestId: id,
   workId: id,
@@ -106,33 +108,36 @@ export const ledgerEventSchema = z.strictObject({
   at: stamp,
   /** Full changed records make old criteria, ownership and reports inspectable. */
   work: ledgerWorkSchema,
-  attempts: z.array(ledgerAttemptSchema),
+  attempts: array(ledgerAttemptSchema),
   evidence: ledgerEvidenceSchema.nullable(),
   reason: text.nullable(),
 });
 export type WorkLedgerEvent = z.infer<typeof ledgerEventSchema>;
 
-const receiptSchema = z.strictObject({
+const receiptSchema = strictObject({
   actorId: id,
   requestId: id,
-  signature: z.string(),
+  signature: string(),
   event: ledgerEventSchema,
 });
 
 /** Serializable host-owned state. This core creates no database or file. */
-export const workLedgerStateSchema = z.strictObject({
-  version: z.literal(1),
+export const workLedgerStateSchema = strictObject({
+  version: literal(1),
   projectId: id,
   revision,
-  works: z.array(ledgerWorkSchema),
-  attempts: z.array(ledgerAttemptSchema),
-  evidence: z.array(ledgerEvidenceSchema),
-  history: z.array(ledgerEventSchema),
-  receipts: z.array(receiptSchema),
+  works: array(ledgerWorkSchema),
+  attempts: array(ledgerAttemptSchema),
+  evidence: array(ledgerEvidenceSchema),
+  history: array(ledgerEventSchema),
+  receipts: array(receiptSchema),
+  executions: array(workExecutionSchema).default([]),
+  executionRevision: revision.default(0),
 });
 export type WorkLedgerState = z.infer<typeof workLedgerStateSchema>;
 
 export interface WorkLedgerView {
+  readonly execution?: WorkExecutionView;
   readonly work: LedgerWork;
   readonly attempt: LedgerAttempt | null;
   readonly verification: {
@@ -146,6 +151,7 @@ export interface WorkLedgerView {
 }
 
 export interface WorkLedgerSnapshot {
+  readonly executionRevision?: number;
   readonly projectId: string;
   readonly revision: number;
   readonly cursor: number;
@@ -236,6 +242,9 @@ export interface WorkLedgerService {
 
 /** Keep in trusted host composition; never expose to editable product data. */
 export interface WorkLedgerAuthority {
+  authenticateActor(actor: WorkLedgerActor): Readonly<WorkLedgerHostIdentity>;
+  onActorRevoked(actor: WorkLedgerActor, listener: () => void): () => void;
+  publishExecution(executionId: string, actor: WorkLedgerActor, options: { readonly current: NativeExecutionDecisionContext; readonly signal?: AbortSignal }): Promise<WorkLedgerResult>;
   issueActor(identity: WorkLedgerHostIdentity): WorkLedgerActor;
   revokeActor(actor: WorkLedgerActor): void;
 }

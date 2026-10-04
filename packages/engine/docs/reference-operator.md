@@ -118178,11 +118178,119 @@ Read the selected host project ledger, without mutation authority or allowedActi
       "minimum": 0,
       "maximum": 9007199254740991
     },
+    "executionRevision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
     "works": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
+          "execution": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "contractId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^ctr-[a-f0-9]{8}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "target": {
+                "type": "object",
+                "properties": {
+                  "workId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "workRevision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "criteriaRevision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "attemptId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "attemptRevision": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "workId",
+                  "workRevision",
+                  "criteriaRevision",
+                  "attemptId",
+                  "attemptRevision"
+                ],
+                "additionalProperties": false
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "dispatching",
+                  "running",
+                  "settled",
+                  "revising",
+                  "deferred",
+                  "rejected",
+                  "cancelled",
+                  "invalidated"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "decisionIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "evidenceId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "contractId",
+              "target",
+              "status",
+              "reason",
+              "decisionIds",
+              "evidenceId"
+            ],
+            "additionalProperties": false
+          },
           "work": {
             "type": "object",
             "properties": {

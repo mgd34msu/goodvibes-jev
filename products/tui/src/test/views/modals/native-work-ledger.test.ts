@@ -227,3 +227,14 @@ test('native row namespaces isolate suffix-like work, criterion, attention and e
   }
   handleConfigModalToken(route, { type: 'key', logicalName: 'escape' } as never); expect(f.disposed()).toBe(1);
 });
+
+test('typed rejected execution remains distinct from verification in native modal', async () => {
+  const f = fixture(); const value = snapshot();
+  const execution = { id: 'execution', contractId: null, target: { workId: 'work-1', workRevision: 3, criteriaRevision: 2, attemptId: 'attempt-1', attemptRevision: 2 }, status: 'rejected' as const, reason: 'Jev rejected the action', decisionIds: ['reading'], evidenceId: null };
+  f.update({ ...value, executionRevision: 1, works: value.works.map(view => ({ ...view, execution })) });
+  const surface = createNativeWorkLedgerModalSurface(() => f.selection);
+  const modal = new ConfigModal(); modal.open(surface); await tick();
+  const text = surface.buildView().tabs.flatMap(tab => tab.rows.map(row => row.label)).join('\n');
+  expect(text).toContain('execution rejected'); expect(text).toContain('verificationState stale'); expect(surface.actions).toEqual([]);
+  modal.close();
+});

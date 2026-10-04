@@ -177,6 +177,7 @@ export interface Harness {
 }
 
 export interface HarnessOptions {
+  readonly executeAgent?: (record: AgentRecord, context: { readonly root: string; readonly runner: ContractRunner; readonly manager: AgentManager; readonly bus: RuntimeEventBus; readonly messageBus: AgentMessageBus }) => Promise<void>;
   readonly createEngine?: ContractRunnerDeps['createEngine'];
   readonly plan?: DraftPlan;
   readonly contract?: Record<string, unknown>;
@@ -283,11 +284,11 @@ export function makeHarness(options: HarnessOptions): Harness {
     emitAgentCompleted(bus, ctx, { agentId: record.id, durationMs: 1, output: record.fullOutput ?? '' });
   }
 
-  const manager = new AgentManager({
+  const manager: AgentManager = new AgentManager({
     configManager: { get: () => null } as unknown as Pick<ConfigManager, 'get'>,
     messageBus,
     archetypeLoader: { loadArchetype: () => null },
-    executor: { runAgent: (record) => execute(record) },
+    executor: { runAgent: (record): Promise<void> => options.executeAgent ? options.executeAgent(record, { root, runner, manager, bus, messageBus }) : execute(record) },
   });
   manager.setRuntimeBus(bus);
   const store = new ContractStore({ projectRoot: root, debounceMs: 5, sweepIntervalMs: 0 });

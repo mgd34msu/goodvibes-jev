@@ -1,5 +1,6 @@
 import { array, boolean, enum as enumSchema, number, strictObject, string, toJSONSchema, type z } from 'zod/v4';
 import { ledgerWorkSchema, ledgerAttemptSchema, ledgerEvidenceSchema, ledgerEventSchema } from '../workflow/work-ledger/types.js';
+import { workExecutionViewSchema } from '../workflow/work-ledger/execution-types.js';
 import { methodDescriptor, type GatewayMethodDescriptor } from './method-catalog-shared.js';
 
 /** Dedicated capability. Never reuse fleet, workspace, or generic event scopes. */
@@ -9,6 +10,7 @@ export const WORK_LEDGER_READ_MAX_BYTES = 1_048_576;
 const sequence = number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const projectId = string().min(1).max(200);
 const readView = strictObject({
+  execution: workExecutionViewSchema.optional(),
   work: ledgerWorkSchema,
   attempt: ledgerAttemptSchema.nullable(),
   verification: strictObject({
@@ -19,7 +21,7 @@ const readView = strictObject({
   attention: array(strictObject({ kind: enumSchema(['blocked', 'verification']), reason: string() })),
 });
 export const workLedgerReadSnapshotSchema = strictObject({
-  projectId, revision: sequence, cursor: sequence, works: array(readView),
+  projectId, revision: sequence, cursor: sequence, executionRevision: sequence.optional(), works: array(readView),
 });
 export const workLedgerHistoryPageSchema = strictObject({
   projectId, afterSequence: sequence, cursor: sequence, throughSequence: sequence,

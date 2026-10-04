@@ -22092,8 +22092,26 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "projectId": "sample",
       "revision": 0,
       "cursor": 0,
+      "executionRevision": 0,
       "works": [
         {
+          "execution": {
+            "id": "sample",
+            "contractId": "sample",
+            "target": {
+              "workId": "sample",
+              "workRevision": 0,
+              "criteriaRevision": 0,
+              "attemptId": "sample",
+              "attemptRevision": 0
+            },
+            "status": "pending",
+            "reason": "sample",
+            "decisionIds": [
+              "sample"
+            ],
+            "evidenceId": "sample"
+          },
           "work": {
             "id": "sample",
             "title": "sample",

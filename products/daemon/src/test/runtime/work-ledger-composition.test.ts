@@ -169,3 +169,20 @@ test('reverse acquisition drain keeps backing store alive through adapter shutdo
   adapterDrain.resolve(); await closing;
   expect(fx.events.slice(-2)).toEqual(['storage.close', 'knowledge.close']);
 });
+
+test('execution journal shares lazy host store and publishes only safe status projection', async () => {
+  const fx = fixture();
+  const created = await fx.owner.service.execute(command, fx.actor);
+  if (created.kind !== 'accepted') throw new Error('create failed');
+  const claimed = await fx.owner.service.execute({ type: 'claim', requestId: 'claim-native', expectedRevision: 1, workId: created.event.workId }, fx.actor);
+  if (claimed.kind !== 'accepted') throw new Error('claim failed');
+  const attempt = claimed.event.attempts[0]!;
+  await fx.owner.executionJournal.prepare({ id: 'native', target: { workId: created.event.workId, workRevision: claimed.event.work.revision, criteriaRevision: 1, attemptId: attempt.id, attemptRevision: attempt.revision }, sessionId: 'session', projectRoot: '/fixture' }, fx.actor);
+  const view = (await fx.owner.service.readSnapshot(fx.actor)).works[0]!;
+  expect(view.execution?.status).toBe('pending');
+  expect('runnerReceipt' in view.execution!).toBe(false);
+  expect('publication' in view.execution!).toBe(false);
+  expect(fx.events.filter(event => event.startsWith('open:'))).toHaveLength(1);
+  await fx.owner.close();
+  await expect(fx.owner.executionJournal.list(fx.actor)).rejects.toThrow('closed');
+});

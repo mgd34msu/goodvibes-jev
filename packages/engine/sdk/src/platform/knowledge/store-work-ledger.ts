@@ -36,15 +36,16 @@ export function createKnowledgeWorkLedgerStorage(sqlite: SQLiteStore, projectId:
   let closed = false;
   let closePromise: Promise<void> | undefined;
   const pending = new Set<Promise<unknown>>();
-  const listeners = new Map<(state: WorkLedgerState) => void, number>();
+  const listeners = new Map<(state: WorkLedgerState) => void, string>();
   let poll: ReturnType<typeof setInterval> | undefined;
   function observe(): void {
     if (closed || listeners.size === 0) return;
     let state: WorkLedgerState;
     try { state = sqlite.readPersisted(db => readLedger(db, projectId)); } catch { return; }
     for (const [listener, revision] of listeners) {
-      if (state.revision <= revision) continue;
-      listeners.set(listener, state.revision);
+      const cursor = `${state.revision}:${state.executionRevision}`;
+      if (cursor === revision) continue;
+      listeners.set(listener, cursor);
       try { void Promise.resolve(listener(structuredClone(state))).catch(() => {}); } catch { /* Observers cannot fail commits. */ }
     }
   }
@@ -82,7 +83,7 @@ export function createKnowledgeWorkLedgerStorage(sqlite: SQLiteStore, projectId:
     },
     subscribe(listener) {
       if (closed) throw new Error('Work ledger storage is closed');
-      listeners.set(listener, -1);
+      listeners.set(listener, '');
       if (!poll) { poll = setInterval(observe, 100); poll.unref?.(); }
       queueMicrotask(observe);
       return () => {
