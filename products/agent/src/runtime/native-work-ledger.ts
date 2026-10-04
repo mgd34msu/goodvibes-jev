@@ -1,9 +1,14 @@
+import type { NativeWorkSubmissionState } from './native-work-submission.ts';
+import { NativeWorkExecutionControls, type NativeWorkExecutionAction, type NativeWorkExecutionState } from './native-work-execution.ts';
+import type { OperatorNativeWorkExecutionClient } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client';
 import type { WorkLedgerReadBinding, WorkLedgerReadClient, WorkLedgerReadSnapshot } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
 import type { WorkLedgerReadEvent } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
 
+export type NativeWorkLedgerBinding = WorkLedgerReadBinding & { readonly execution?: OperatorNativeWorkExecutionClient };
+
 export type NativeWorkLedgerState =
   | { readonly status: 'closed' | 'loading' | 'unavailable'; readonly reason: string }
-  | { readonly status: 'ready'; readonly snapshot: WorkLedgerReadSnapshot; readonly history: readonly WorkLedgerReadEvent[]; readonly cursor: number };
+  | { readonly status: 'ready'; readonly snapshot: WorkLedgerReadSnapshot; readonly history: readonly WorkLedgerReadEvent[]; readonly cursor: number; readonly execution?: NativeWorkExecutionState };
 
 /** One view owns one reader and its durable history cursor. It never owns a store. */
 export class NativeWorkLedgerModel {
@@ -22,25 +27,40 @@ export class NativeWorkLedgerModel {
       ? { type: event.type, sequence: event.sequence, actorId: event.actorId, requestId: event.requestId, at: event.at, works: event.works, manifest: null, provenance: 'requires_read_knowledge' } : event);
   }
   state: NativeWorkLedgerState = { status: 'closed', reason: 'Native work ledger view is closed.' };
-  constructor(private readonly changed: () => void = () => {}) {}
-  private publish(state: NativeWorkLedgerState): void { this.state = state; this.changed(); }
-  private release(): void {
-    ++this.epoch;
+  private readonly execution = new NativeWorkExecutionControls(() => {
+    if (this.state.status === 'ready') this.publish(this.state);
+  });
+  constructor(private readonly changed: () => void = () => {}, private readonly current: () => boolean = () => true) {}
+  private publish(state: NativeWorkLedgerState): void { this.state = state.status === 'ready' ? { ...state, execution: this.execution.state } : state; this.changed(); }
+  execute(action: NativeWorkExecutionAction, workId: string): Promise<NativeWorkExecutionState | undefined> { return this.execution.run(action, workId); }
+  private release(): number {
+    const epoch = ++this.epoch;
     const unsubscribe = this.unsubscribe; const client = this.client;
     this.unsubscribe = undefined; this.client = undefined; this.pending = undefined;
     this.provenance = undefined; this.projectionEpoch += 1;
     this.draining = false; this.cursor = 0; this.highestSnapshotCursor = -1; this.history = [];
+    // Revoke local references before any external cleanup can reenter.
+    this.execution.clear();
     // Independent cleanup: a throwing observer must not retain the reader.
     try { unsubscribe?.(); } catch { /* best effort */ }
     try { client?.dispose(); } catch { /* best effort */ }
+    return epoch;
   }
-  loading(reason: string): void { this.release(); this.publish({ status: 'loading', reason }); }
-  close(): void { this.release(); this.publish({ status: 'closed', reason: 'Native work ledger view is closed.' }); }
-  unavailable(reason: string): void { this.release(); this.publish({ status: 'unavailable', reason }); }
-  open(binding: WorkLedgerReadBinding): void {
-    this.release();
+  loading(reason: string): void { const epoch = this.release(); if (epoch === this.epoch) this.publish({ status: 'loading', reason }); }
+  close(): void { const epoch = this.release(); if (epoch === this.epoch) this.publish({ status: 'closed', reason: 'Native work ledger view is closed.' }); }
+  unavailable(reason: string): void { const epoch = this.release(); if (epoch === this.epoch) this.publish({ status: 'unavailable', reason }); }
+  open(binding: NativeWorkLedgerBinding): void {
+    const released = this.release();
+    if (released !== this.epoch) {
+      if (binding.available && binding.client !== this.client) {
+        try { binding.execution?.dispose(); } catch {}
+        try { binding.client.dispose(); } catch {}
+      }
+      return;
+    }
     if (!binding.available) { this.publish({ status: 'unavailable', reason: binding.reason }); return; }
     const client = binding.client; this.client = client; const epoch = this.epoch;
+    if (binding.execution) this.execution.bind(binding.execution, client, () => this.current() && epoch === this.epoch && this.client === client);
     this.publish({ status: 'loading', reason: 'Reading native work ledger and durable history…' });
     if (epoch !== this.epoch) return;
     try {
@@ -103,6 +123,7 @@ export class NativeWorkLedgerModel {
           if (snapshot.projectId !== this.client.projectId || snapshot.cursor < cursor) throw new Error('Native ledger snapshot is behind durable history. Reopen to reload.');
           if (snapshot.cursor > cursor) { this.enqueue(snapshot); continue; }
         }
+        this.execution.observe(snapshot);
         this.publish({ status: 'ready', snapshot, history: [...this.history], cursor });
       }
     } catch (error) { this.fail(error, epoch); }
@@ -111,9 +132,14 @@ export class NativeWorkLedgerModel {
 }
 
 export interface NativeWorkLedgerView {
+  readonly intake?: import('./native-conversation-intake.ts').NativeConversationIntakeActions;
   readonly state: NativeWorkLedgerState;
+  submitFile?(path: string): Promise<NativeWorkSubmissionState | undefined>;
+  submissionStatus?(): Promise<NativeWorkSubmissionState | undefined>;
+  retrySubmission?(): Promise<NativeWorkSubmissionState | undefined>;
   selectProject(projectId: string): void;
   open(): void;
   sync(): void;
   close(): void;
+  execute?(action: NativeWorkExecutionAction, workId: string): Promise<NativeWorkExecutionState | undefined>;
 }

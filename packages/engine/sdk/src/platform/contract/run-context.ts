@@ -9,6 +9,7 @@ import { pinContractInputAdmission } from './input-authority.js';
  * every runner decision is appended to the contract's decision list. The
  * correction and completion steps (R.6) act on a contract through this class.
  */
+import type { NativeContractServices } from './native-decisions.js';
 import { JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import type { ContractEvent } from '../../events/contract.js';
@@ -116,6 +117,7 @@ export function isAbortError(error: unknown, signal?: AbortSignal): boolean {
 }
 
 export interface RunEnv {
+  readonly native?: NativeContractServices | undefined;
   readonly now: () => number;
   readonly config: () => ContractConfig;
   /** Emits on the runtime bus with the contract's context, and to the runner's listeners. */

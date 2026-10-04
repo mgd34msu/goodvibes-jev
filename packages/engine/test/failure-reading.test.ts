@@ -93,6 +93,24 @@ describe('the reading', () => {
     expect((await readFailure({ message: 'something odd' }, 'test.site')).category).toBe('unknown');
   });
 
+  test('an owned reading preserves its transport lifetime and does not borrow or populate the global memo', async () => {
+    const shared = billingPort(); const owned = billingPort('network');
+    installJudgmentPort(shared.port);
+    const evidence = { message: 'Same failure wording across different owners' };
+    const cached = await readFailure(evidence, 'test.shared');
+    const signal = new AbortController().signal;
+    const beforeAttempt = () => {}; const onRetry = () => {};
+    const options = { port: owned.port, signal, beforeAttempt, onRetry };
+    const first = await readFailure(evidence, 'test.owned', options);
+    const second = await readFailure(evidence, 'test.owned', options);
+    expect(first.category).toBe('network'); expect(second).not.toBe(first);
+    expect(owned.requests).toHaveLength(2);
+    for (const request of owned.requests) {
+      expect(request.signal).toBe(signal); expect(request.beforeAttempt).toBe(beforeAttempt); expect(request.onRetry).toBe(onRetry);
+    }
+    expect(await readFailure(evidence, 'test.shared')).toBe(cached); expect(shared.requests).toHaveLength(1);
+  });
+
   test('no port is an error, not a guess', async () => {
     await expect(readFailure({ message: 'fetch failed' }, 'test.site')).rejects.toBeInstanceOf(JudgmentPortMissingError);
   });

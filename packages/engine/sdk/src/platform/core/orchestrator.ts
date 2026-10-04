@@ -1,3 +1,7 @@
+import type { AutonomousToolSource } from '../permissions/autonomous.js';
+import { revalidateNativeConversationTurnPermit, type NativeConversationTurnPermit } from '../workflow/work-ledger/native-intake-client.js';
+import { admitNativeConversationTurn, failNativeConversationTurn, NativeConversationTurnAdmissionError, readNativeConversationTurnStatus, settleNativeConversationTurn, startNativeConversationTurn, validateNativeConversationTurn, type NativeConversationTurnAdmission } from './native-turn-admission.js';
+import { isNativeConversationTurn, markNativeConversationTurnEffectsPossible, nativeConversationTurnCanRetry, NATIVE_TURN_EXECUTION_REFUSAL, withNativeConversationTurn, withoutNativeConversationTurn } from './native-turn-scope.js';
 import { TurnHookOwner, bindTurnHookDispatcher } from '../hooks/turn-ownership.js';
 import { TurnCancellationFence, type TurnCancellationResult } from './turn-cancellation.js';
 import { resolveSystemPrompt } from './orchestrator-system-prompt.js';
@@ -101,6 +105,7 @@ interface LowPrioritySystemMessageSink {
 
 export interface OrchestratorUserInputOptions {
   readonly origin?: TurnInputOrigin | undefined;
+  readonly nativeConversationTurnPermit?: NativeConversationTurnPermit | undefined;
 }
 
 /**
@@ -176,7 +181,7 @@ export class Orchestrator {
   public streamingInputTokens = 0;
   /** Output tokens received so far in the current streaming turn (one per delta chunk). */
   public streamingOutputTokens = 0;
-  public messageQueue: { id: string; queuedAt: number; text: string; content?: ContentPart[] | undefined; options?: OrchestratorUserInputOptions | undefined }[] = [];
+  public messageQueue: { id: string; queuedAt: number; text: string; content?: ContentPart[] | undefined; options?: OrchestratorUserInputOptions | undefined; nativeTurn?: NativeConversationTurnAdmission | undefined }[] = [];
 
   private animInterval: ReturnType<typeof setInterval> | null = null;
   private abortController: AbortController | null = null;
@@ -186,6 +191,9 @@ export class Orchestrator {
   /** Monotonic id source for queued-message ids. */
   private queuedMessageSeq = 0;
   private autoSpawnTimeout: ReturnType<typeof setTimeout> | null = null;
+  private nativeConversationProjectId: string | undefined;
+  private activeNativeConversationTurn = false;
+  private nativeAdmissionAbort: AbortController | null = null;
   private acpManager: AcpManager | null = null;
   /** Message count at the start of a turn, used to rollback on cancel. */
   private turnStartMessageCount = 0;
@@ -316,7 +324,7 @@ export class Orchestrator {
       scrollToEnd: (height) => this.scrollToEnd(height),
       getSystemPrompt: (signal) => this.getSystemPrompt(signal),
       requestRender: () => this.requestRender(),
-      getThinkingState: () => ({ isThinking: this.isThinking || this.turnInFlight, isCompacting: this.isCompacting }),
+      getThinkingState: () => ({ isThinking: this.isThinking || this.turnInFlight || this.activeNativeConversationTurn, isCompacting: this.isCompacting }),
       getQueuedUserMessageCount: () => this.messageQueue.length,
       getProviderRegistry: () => requireProviderRegistry(this.coreServices),
       getCurrentModel: () => requireProviderRegistry(this.coreServices).getCurrentModel(),
@@ -390,6 +398,7 @@ export class Orchestrator {
         },
       },
       execute: async (args): Promise<{ success: boolean; output: string }> => {
+        if (isNativeConversationTurn()) return { success: false, output: NATIVE_TURN_EXECUTION_REFUSAL };
         if (!this.acpManager) {
           return { success: false, output: 'ACP manager not initialized' };
         }
@@ -462,6 +471,7 @@ export class Orchestrator {
 
   /** Replace a still-queued message's text; false once delivered (immutable). */
   public editQueuedMessage(id: string, text: string): boolean {
+    if (this.messageQueue.some(message => message.id === id && message.nativeTurn)) return false;
     const edited = editQueuedMessage(this.messageQueue, id, text);
     if (edited) {
       this.emitQueueChange('edited', id);
@@ -472,7 +482,9 @@ export class Orchestrator {
 
   /** Remove a still-queued message before delivery; false once delivered. */
   public deleteQueuedMessage(id: string): boolean {
+    const nativeTurn = this.messageQueue.find(message => message.id === id)?.nativeTurn;
     const deleted = deleteQueuedMessage(this.messageQueue, id);
+    if (deleted && nativeTurn) settleNativeConversationTurn(nativeTurn);
     if (deleted) {
       this.emitQueueChange('deleted', id);
       this.requestRender();
@@ -498,6 +510,7 @@ export class Orchestrator {
 
   /** Abort the current in-flight LLM request, if any. */
   public abort(): void {
+    this.nativeAdmissionAbort?.abort();
     this.abortController?.abort();
     this.followUpRuntime?.cancel();
     // A whole-turn abort also cancels every in-flight tool call, so cooperative
@@ -530,6 +543,7 @@ export class Orchestrator {
     this.disposed = true;
     this.coreServices.sessionLiveTurnControls?.unbind(this);
     this.abort();
+    for (const queued of this.messageQueue) if (queued.nativeTurn) failNativeConversationTurn(queued.nativeTurn, false);
     if (this.animInterval) {
       clearInterval(this.animInterval);
       this.animInterval = null;
@@ -558,13 +572,23 @@ export class Orchestrator {
     content?: ContentPart[],
     options?: OrchestratorUserInputOptions | undefined,
   ): Promise<void> {
+    // Authenticate and detach before any queue, transcript, or event mutation.
+    if (options?.nativeConversationTurnPermit) {
+      if (!this.nativeConversationProjectId) throw new NativeConversationTurnAdmissionError('identity_mismatch');
+      validateNativeConversationTurn(options.nativeConversationTurnPermit, text, content, this.nativeConversationProjectId);
+    }
     if (this.disposed) return;
     if (!text.trim() && !content?.length) return;
+    const nativeTurn = options?.nativeConversationTurnPermit
+      ? admitNativeConversationTurn(options.nativeConversationTurnPermit, text, content, this.nativeConversationProjectId) : undefined;
+    if (nativeTurn === null) return;
+    options = options ? Object.freeze({ ...options, ...(options.origin ? { origin: Object.freeze({ ...options.origin }) } : {}) }) : undefined;
+    if (nativeTurn && content) content = [{ type: 'text', text }];
 
-    if (this.turnInFlight || this.isThinking || this.isCompacting) {
+    if (this.turnInFlight || this.activeNativeConversationTurn || this.isThinking || this.isCompacting) {
       this.queuedMessageSeq += 1;
       const id = `qm-${this.queuedMessageSeq}`;
-      this.messageQueue.push({ id, queuedAt: Date.now(), text, content, options });
+      this.messageQueue.push({ id, queuedAt: Date.now(), text, content, options, nativeTurn });
       this.emitQueueChange('enqueued', id);
       this.requestRender();
       return;
@@ -573,14 +597,27 @@ export class Orchestrator {
     // Set the original task on the first user message (idempotent, subsequent calls are no-ops)
     getSessionLineageTracker(this.coreServices, this.ownedSessionLineageTracker).setOriginalTask(text.slice(0, 200));
 
-    await withTurnSurface(options?.origin, () => this.runTurn(text, content, options)); // gate surface scope
-
     // Process any messages queued while the LLM was thinking. Draining is gated on
     // isCompacting so a queued turn cannot start while a background auto-compaction is
     // mid-flight (which would let compact() replace the message array and drop the
     // in-flight turn's freshly appended messages). Messages left queued during
     // compaction are drained by setCompacting() once compaction settles.
-    await this.drainMessageQueue();
+    try { await withTurnSurface(options?.origin, () => this.runTurn(text, content, options, nativeTurn)); }
+    finally { await this.drainMessageQueue(); }
+  }
+
+  /** Provider failover may preserve this exact binding only before effects. */
+  public canRetryNativeConversationTurn(permit: NativeConversationTurnPermit): boolean {
+    return readNativeConversationTurnStatus(permit) === 'retryable';
+  }
+
+  /** Product composition calls this from its authenticated native host selection. */
+  public bindNativeConversationProject(projectId: string): void {
+    if (!projectId.trim() || projectId.length > 200 || (this.nativeConversationProjectId !== projectId
+      && (this.activeNativeConversationTurn || this.messageQueue.some(message => message.nativeTurn)))) {
+      throw new NativeConversationTurnAdmissionError('identity_mismatch');
+    }
+    this.nativeConversationProjectId = projectId;
   }
 
   /**
@@ -590,12 +627,15 @@ export class Orchestrator {
    * message is lost.
    */
   private async drainMessageQueue(): Promise<void> {
-    while (!this.disposed && this.messageQueue.length > 0 && !this.turnInFlight && !this.isThinking && !this.isCompacting) {
+    let failure: unknown;
+    while (!this.disposed && this.messageQueue.length > 0 && !this.turnInFlight && !this.activeNativeConversationTurn && !this.isThinking && !this.isCompacting) {
       const next = this.messageQueue.shift()!;
       this.emitQueueChange('delivered', next.id);
-      await withTurnSurface(next.options?.origin, () => this.runTurn(next.text, next.content, next.options));
+      try { await withTurnSurface(next.options?.origin, () => this.runTurn(next.text, next.content, next.options, next.nativeTurn)); }
+      catch (error) { failure ??= error; }
     }
     this.followUpRuntime.scheduleFlush();
+    if (failure !== undefined) throw failure;
   }
 
   /**
@@ -605,7 +645,7 @@ export class Orchestrator {
   private setCompacting(value: boolean): void {
     const wasCompacting = this.isCompacting;
     this.isCompacting = value;
-    if (wasCompacting && !value && !this.turnInFlight && !this.isThinking && this.messageQueue.length > 0) {
+    if (wasCompacting && !value && !this.turnInFlight && !this.activeNativeConversationTurn && !this.isThinking && this.messageQueue.length > 0) {
       void this.drainMessageQueue().catch((err) => logger.error('Orchestrator: queued message drain after compaction failed', {
         error: err instanceof Error ? err.message : String(err),
       }));
@@ -615,7 +655,7 @@ export class Orchestrator {
   private turnInFlight = false;
 
   /** Actual execution ownership, including cancellation and hook drainage. */
-  public get isTurnInFlight(): boolean { return this.turnInFlight; }
+  public get isTurnInFlight(): boolean { return this.turnInFlight || this.activeNativeConversationTurn; }
 
   private startThinking(estimatedInputTokens?: number): void {
     this.followUpRuntime.cancel(true);
@@ -654,6 +694,34 @@ export class Orchestrator {
     text: string,
     content?: ContentPart[],
     options?: OrchestratorUserInputOptions | undefined,
+    nativeTurn?: NativeConversationTurnAdmission,
+  ): Promise<void> {
+    const execute = async () => {
+      try {
+        if (nativeTurn) {
+          validateNativeConversationTurn(nativeTurn.permit, text, content, this.nativeConversationProjectId);
+          startNativeConversationTurn(nativeTurn);
+          this.activeNativeConversationTurn = true;
+          const admissionAbort = new AbortController();
+          this.nativeAdmissionAbort = admissionAbort;
+          await revalidateNativeConversationTurnPermit(nativeTurn.permit);
+          admissionAbort.signal.throwIfAborted();
+          if (this.disposed) throw new NativeConversationTurnAdmissionError('recovery_required');
+        }
+        await this.runTurnBody(text, content, options, nativeTurn);
+      }
+      catch (error) { if (nativeTurn) failNativeConversationTurn(nativeTurn, false); throw error; }
+      finally { if (nativeTurn) { settleNativeConversationTurn(nativeTurn); this.activeNativeConversationTurn = false; this.nativeAdmissionAbort = null; } }
+    };
+    if (nativeTurn) await withNativeConversationTurn(nativeTurn.permit, execute);
+    else await withoutNativeConversationTurn(execute);
+  }
+
+  private async runTurnBody(
+    text: string,
+    content?: ContentPart[],
+    options?: OrchestratorUserInputOptions,
+    nativeTurn?: NativeConversationTurnAdmission,
   ): Promise<void> {
     // Where "this turn" acquires a beginning: an owner-started turn ends the
     // previous untrusted-content window, a channel- or schedule-started one
@@ -679,6 +747,9 @@ export class Orchestrator {
     // Judgment preflight shares the same cancellation and cleanup as streaming.
     try {
       const signal = this.abortController?.signal;
+      // Hooks may run external commands. A later provider error cannot prove
+      // replay safe once that extensibility boundary has been entered.
+      if (nativeTurn && this.hookDispatcher) markNativeConversationTurnEffectsPossible();
       let turnClassification: ClassificationResult | undefined;
       const preTurnPlan = await prepareConversationForTurn(
         this.conversation, providerRegistry, text, content, this.sessionId, this.coreServices.planManager ?? null,
@@ -696,6 +767,8 @@ export class Orchestrator {
 
       signal?.throwIfAborted();
       // --- Phase 3: Post-turn reconciliation ---
+      if (nativeTurn && this._turnFailed) failNativeConversationTurn(nativeTurn, false);
+      markNativeConversationTurnEffectsPossible();
       await this.runTurnReconcile(turnId, configManager, providerRegistry);
       await hookOwner.closeAndDrain();
       signal?.throwIfAborted();
@@ -704,6 +777,8 @@ export class Orchestrator {
     } catch (err: unknown) {
       this._turnFailed = true;
       await hookOwner.closeAndDrain();
+      // Set before TURN_ERROR: synchronous failover observers read this fence.
+      if (nativeTurn) failNativeConversationTurn(nativeTurn, err instanceof ProviderError && !this.abortController?.signal.aborted && nativeConversationTurnCanRetry());
       await this.handleTurnError(err, turnId, configManager, providerRegistry);
     } finally {
       this.turnHookOwner = null;
@@ -720,7 +795,7 @@ export class Orchestrator {
     providerRegistry: ReturnType<typeof requireProviderRegistry>,
   ): { submissionKey: string; turnId: string } | null {
     // Session, transcript position and prompt prefix identify one in-flight submission.
-    const submissionIdentity = createHash('sha256')
+    const submissionIdentity = options?.nativeConversationTurnPermit ? randomUUID() : createHash('sha256')
       .update(`${this.sessionId}:${this.conversation.getMessageCount()}:${text.slice(0, 512)}`)
       .digest('hex')
       .slice(0, 16); // 16-char prefix is sufficient for in-process dedup
@@ -806,12 +881,12 @@ export class Orchestrator {
       helperModel: new HelperModel({ configManager, providerRegistry, runtimeBus: this.runtimeBus, sessionId: () => this.sessionId }),
       sessionId: this.sessionId,
       preTurnPlan,
-      planManager: this.coreServices.planManager ?? null,
+      planManager: isNativeConversationTurn() ? null : this.coreServices.planManager ?? null,
       text,
       content,
       turnId,
       emitterContext: (id) => createEmitterContext(this.sessionId, id),
-      executeToolCalls: (id, calls) => this.executeToolCalls(id, calls),
+      executeToolCalls: (id, calls, sourceOf) => this.executeToolCalls(id, calls, sourceOf ?? (() => ({ goal: text, criteria: [] }))),
       checkContextWindowPreflight: (id, model) => this.checkContextWindowPreflight(id, model),
       normalizeUsage,
       estimateFreshTurnInputTokens: (currentEstimatedTokens, nextText, nextContent) =>
@@ -868,7 +943,7 @@ export class Orchestrator {
       conversation: this.conversation,
       agentManager: this.agentManager,
       contractRunner: this.contractRunner,
-      planManager: this.coreServices.planManager ?? null,
+      planManager: isNativeConversationTurn() ? null : this.coreServices.planManager ?? null,
       sessionMemoryStore: this.coreServices.sessionMemoryStore ?? null,
       configManager,
       providerRegistry,
@@ -1036,6 +1111,7 @@ export class Orchestrator {
     plan: ExecutionPlan,
     items: PlanItem[],
   ): string[] {
+    if (isNativeConversationTurn()) return [];
     const configManager = requireConfigManager(this.coreServices);
     const providerRegistry = requireProviderRegistry(this.coreServices);
     return autoSpawnPendingItems(
@@ -1110,8 +1186,10 @@ export class Orchestrator {
     }, resolvedResults, reason);
   }
 
-  private async executeToolCalls(turnId: string, calls: ToolCall[]): Promise<ToolResult[]> {
+  private async executeToolCalls(turnId: string, calls: ToolCall[], sourceOf: () => AutonomousToolSource): Promise<ToolResult[]> {
+    if (calls.length > 0) markNativeConversationTurnEffectsPossible();
     const results = await executeToolCalls({
+      autonomousSource: sourceOf,
       turnSignal: this.abortController?.signal,
       hookOwner: this.turnHookOwner ?? undefined,
       toolRegistry: this.toolRegistry,

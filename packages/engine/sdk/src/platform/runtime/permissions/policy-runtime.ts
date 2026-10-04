@@ -11,6 +11,7 @@ import type { PolicyPreflightReview } from './preflight.js';
 const MAX_PERMISSION_AUDIT = 100;
 
 export interface PermissionAuditEntry {
+  readonly autonomousDecision?: PermissionCheckResult['autonomousDecision'];
   readonly callId: string;
   readonly tool: string;
   readonly category: string;
@@ -138,6 +139,7 @@ export class PolicyRuntimeState {
       tool: params.tool,
       category: params.category,
       approved: params.result.approved,
+      autonomousDecision: params.result.autonomousDecision,
       sourceLayer: params.result.sourceLayer,
       reasonCode: params.result.reasonCode,
       riskLevel: params.result.analysis.riskLevel,

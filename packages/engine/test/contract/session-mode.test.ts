@@ -245,3 +245,43 @@ describe('session mode (6.6)', () => {
     expect(conversation.getMessageSnapshot().some((message) => message.role === 'system' && typeof message.content === 'string' && message.content.includes('[Contract] Contract ctr-0000abcd took this request'))).toBe(true);
   });
 });
+
+describe('native action source ownership', () => {
+  test('keeps original ask and ordered source quotes instead of rewritten goals and unit briefs', async () => {
+    const plan = oneUnitPlan(1);
+    plan.goal = 'A rewritten planner goal';
+    plan.criteria = [
+      { id: 'c2', text: 'Planner paraphrase two', quote: 'wire it into the convert command' },
+      { id: 'c1', text: 'Planner paraphrase one', quote: 'Add a CSV parser module' },
+    ];
+    plan.groups[0]!.units[0]!.criteria[0]!.serves = ['c2', 'c1'];
+    const h = makeHarness({ plan, scripts: {}, port: answers(noDelegation) }); harness = h;
+    const id = await sessionReady(h);
+    const hooks = h.runner.hooks();
+    const record = hooks.sessionTurn('session-1', 'source-turn')!;
+    const source = hooks.actionSource?.(record);
+    expect(source).toEqual({
+      goal: 'Add a CSV parser module and wire it into the convert command.',
+      criteria: ['wire it into the convert command', 'Add a CSV parser module'],
+    });
+    expect(Object.isFrozen(source)).toBe(true);
+    expect(Object.isFrozen(source?.criteria)).toBe(true);
+    expect(source?.goal).not.toBe(plan.goal);
+    h.runner.cancel(id, 'synthetic source retirement');
+    expect(hooks.actionSource?.(record)).toBeNull();
+  });
+
+  test('the actual turn loop hands its executor the live contract-owned source getter', async () => {
+    const h = makeHarness({ plan: oneUnitPlan(1), scripts: {}, port: answers(noDelegation) }); harness = h;
+    const id = await sessionReady(h); const seen = { requests: 0 };
+    const model = provider([{ write: 'src/csv.ts' }, { text: 'parser written' }], seen);
+    const captured: unknown[] = [];
+    const write = writer(h.root);
+    const { context } = turnContext(h, { turnId: 'source-round', model, executeToolCalls: async (turnId, calls, sourceOf) => {
+      expect(sourceOf).toBeDefined(); captured.push(sourceOf!()); return write(turnId, calls);
+    } });
+    await executeOrchestratorTurnLoop(context);
+    await waitFor(() => terminal(h, id), 'source-bound contract completion', 15_000);
+    expect(captured).toEqual([{ goal: 'Add a CSV parser module and wire it into the convert command.', criteria: ['Add a CSV parser module'] }]);
+  });
+});

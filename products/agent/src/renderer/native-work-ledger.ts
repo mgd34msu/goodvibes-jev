@@ -1,9 +1,10 @@
+import { nativeWorkExecutionLines } from '../runtime/native-work-execution.ts';
 import type { NativeWorkLedgerState } from '../runtime/native-work-ledger.ts';
 
 /** Plain terminal text only; ledger content never becomes an action or terminal escape. */
 const safe = (text: string): string => text.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, ' ');
 export function nativeWorkLedgerLines(state: NativeWorkLedgerState): string[] {
-  const lines = ['Native work ledger · read only'];
+  const lines = ['Native work ledger · explicit execution controls'];
   if (state.status !== 'ready') return [...lines, `${state.status}: ${safe(state.reason)}`];
   lines.push(`Project ${safe(state.snapshot.projectId)} · snapshot ${state.snapshot.cursor} · history ${state.cursor}`);
   if (!state.snapshot.works.length) lines.push('No native work recorded for this project.');
@@ -29,6 +30,8 @@ export function nativeWorkLedgerLines(state: NativeWorkLedgerState): string[] {
       for (const result of evidence.criteriaResults) lines.push(`  Criterion ${result.criterionIndex + 1}: ${result.status} · ${result.references.map(safe).join(', ')}`);
     }
   }
+  lines.push(...nativeWorkExecutionLines(state.execution).map(safe));
+  lines.push('Controls: /work start|status|cancel|resume <work-id>. Status/cancel retain the observed attempt; resume is explicit. Closing only detaches local requests.');
   lines.push('Durable history (read only; no execution authority)');
   for (const event of state.history) {
     if (event.type === 'import_legacy') {

@@ -87,7 +87,7 @@ export { ToolRegistry } from './registry.js';
 export { ProcessManager } from './shared/process-manager.js';
 export type { BackgroundProcess, BgCommandResult, SpawnOptions } from './shared/process-manager.js';
 export { AGENT_TEMPLATES, AgentManager } from './agent/index.js';
-export type { AgentExecutor, AgentRecord } from './agent/index.js';
+export type { AgentExecutor, AgentRecord, AgentFleetOwnership } from './agent/index.js';
 export { AutoHealer } from './shared/auto-heal.js';
 export {
   appendSchemaFingerprint,

@@ -13,6 +13,8 @@
  * `[unmet]` reads every criterion as failing, `[p=0.1,0.9]` gives each
  * criterion's probability that it fails, anything else reads met.
  */
+import { SqliteDecisionLog } from '@goodvibes-jev/judgment';
+import type { NativeContractDecisionHost } from '../../sdk/src/platform/contract/native-decisions.js';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -177,7 +179,11 @@ export interface Harness {
 }
 
 export interface HarnessOptions {
+  readonly executeAgent?: (record: AgentRecord, context: { readonly root: string; readonly runner: ContractRunner; readonly manager: AgentManager; readonly bus: RuntimeEventBus; readonly messageBus: AgentMessageBus }) => Promise<void>;
   readonly readAccessFilter?: ContractRunnerDeps['readAccessFilter'];
+  readonly recordNative?: boolean;
+  readonly nativeDecisions?: NativeContractDecisionHost;
+  readonly durableAdmission?: ContractRunnerDeps['durableAdmission'];
   readonly createEngine?: ContractRunnerDeps['createEngine'];
   readonly plan?: DraftPlan;
   readonly contract?: Record<string, unknown>;
@@ -285,11 +291,11 @@ export function makeHarness(options: HarnessOptions): Harness {
     emitAgentCompleted(bus, ctx, { agentId: record.id, durationMs: 1, output: record.fullOutput ?? '' });
   }
 
-  const manager = new AgentManager({
+  const manager: AgentManager = new AgentManager({
     configManager: { get: () => null } as unknown as Pick<ConfigManager, 'get'>,
     messageBus,
     archetypeLoader: { loadArchetype: () => null },
-    executor: { runAgent: (record) => execute(record) },
+    executor: { runAgent: (record): Promise<void> => options.executeAgent ? options.executeAgent(record, { root, runner, manager, bus, messageBus }) : execute(record) },
   });
   manager.setRuntimeBus(bus);
   const store = new ContractStore({ projectRoot: root, debounceMs: 5, sweepIntervalMs: 0 });
@@ -298,6 +304,8 @@ export function makeHarness(options: HarnessOptions): Harness {
     run: async () => ({ status: 'completed', output: plannerOutput(plan), elapsedMs: 1, agentId: 'planner-1' }),
   };
   runner = createContractRunner({
+    ...(options.nativeDecisions === undefined && !options.recordNative ? {} : { nativeDecisions: options.nativeDecisions ?? { authorityOf: () => ({ authorityId: 'test-host', authorityRevision: '1', scopeId: 'test-project', scopeRevision: '1' }) } }),
+    ...(options.durableAdmission === undefined ? {} : { durableAdmission: options.durableAdmission }),
     agentManager: manager,
     messageBus,
     runtimeBus: bus,
@@ -331,7 +339,9 @@ export function makeHarness(options: HarnessOptions): Harness {
   });
   runner.on((event) => events.push(event));
   const fake = runnerPort(options.port);
-  const previous = installJudgmentPort(options.decisionLog === undefined ? fake.port : withDecisionLog(fake.port, options.decisionLog));
+  const nativeLog = options.recordNative && options.decisionLog === undefined ? new SqliteDecisionLog(':memory:') : undefined;
+  const log = options.decisionLog ?? nativeLog;
+  const previous = installJudgmentPort(log === undefined ? fake.port : withDecisionLog(fake.port, log));
 
   return {
     root,
@@ -345,6 +355,7 @@ export function makeHarness(options: HarnessOptions): Harness {
     agentsOf: (unitId) => manager.list().filter((record) => record.contractUnitId === unitId).sort((a, b) => a.startedAt - b.startedAt).map((record) => record.id),
     dispose: () => {
       runner.dispose();
+      if (nativeLog !== undefined) void Promise.all(runner.list({ includeTerminal: true }).map(contract => runner.join(contract.id))).finally(() => nativeLog[Symbol.dispose]());
       installJudgmentPort(previous);
       if (options.root === undefined) rmSync(root, { recursive: true, force: true });
     },

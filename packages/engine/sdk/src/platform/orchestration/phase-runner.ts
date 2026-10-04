@@ -82,6 +82,11 @@ export type ContractUnitOutcome = 'completed' | 'failed' | 'cancelled';
  * kills or requeues the item, and the settlement then resolves `cancelled`.
  */
 export interface ContractUnitSettlement {
+  autonomousPort?(item: WorkItem): import('../tools/agent/contract-binding.js').ContractActionPort | undefined;
+  /** Source ownership is borrowed only by this real native member, never reconstructed from its brief. */
+  autonomousSource?(item: WorkItem): (() => import('../permissions/autonomous.js').AutonomousToolSource) | undefined;
+  /** Wrap the actual executor invocation after all AgentManager spawning hooks. */
+  withCurrentExecution?(item: WorkItem, execute: () => Promise<void>): Promise<void>;
   settle(item: WorkItem, agentId: string, signal: AbortSignal): Promise<ContractUnitOutcome>;
   /**
    * Asked before a contract unit's phase spawns an agent. After a restart, a
@@ -506,6 +511,8 @@ async function runPhaseWithSignal(
     if (decided.route !== undefined) Object.assign(item, { route: decided.route });
   }
   const unitSpawn = contractUnitSpawn(item);
+  const autonomousSource = deps.contractUnitSettlement?.autonomousSource?.(item);
+  const autonomousPort = deps.contractUnitSettlement?.autonomousPort?.(item);
   const inputReadAuthority = deps.prepareInputAuthority && deps.itemWorktree
     ? await deps.prepareInputAuthority({ path: deps.itemWorktree.path, branch: item.worktreeBranch ?? '' }, signal)
     : undefined;
@@ -524,7 +531,15 @@ async function runPhaseWithSignal(
       ...unitSpawn?.input,
       // An isolated item's tools run inside its own worktree.
       ...(deps.itemWorktree ? { workingDirectory: deps.itemWorktree.path } : {}),
-    } as Parameters<PhaseRunnerAgentManagerLike['spawn']>[0], unitSpawn ? { ...unitSpawn.binding, ...(inputReadAuthority ? { inputReadAuthority } : {}) } : undefined);
+    } as Parameters<PhaseRunnerAgentManagerLike['spawn']>[0], unitSpawn === null ? undefined : {
+      ...unitSpawn.binding,
+      ...(autonomousSource === undefined ? {} : { autonomousSource }),
+      ...(autonomousPort === undefined ? {} : { autonomousPort }),
+      ...(inputReadAuthority ? { inputReadAuthority } : {}),
+      ...(deps.contractUnitSettlement?.withCurrentExecution === undefined ? {} : {
+        withCurrentExecution: (execute: () => Promise<void>) => deps.contractUnitSettlement!.withCurrentExecution!(item, execute),
+      }),
+    });
 
     record.workItemId = item.id;
     if (!signal.aborted) item.agentId = record.id;

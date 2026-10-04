@@ -21995,6 +21995,230 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "metadata": {}
     }
   },
+  "workLedger.execution.cancel": {
+    "methodId": "workLedger.execution.cancel",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/execution/cancel"
+    },
+    "status": 200,
+    "body": {
+      "kind": "execution",
+      "projectId": "sample",
+      "workId": "sample",
+      "attemptId": "sample",
+      "expectedRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentAttempt": false,
+      "stale": false,
+      "state": "prepared",
+      "recovery": "available",
+      "receipt": {
+        "contractId": "sample",
+        "ownerAgentId": "sample"
+      },
+      "settlement": {
+        "state": "pending",
+        "evidenceId": "sample",
+        "reportSequence": 0,
+        "evidenceSequence": 0
+      },
+      "progress": {
+        "status": "queued",
+        "sessionMode": false,
+        "semanticState": "deciding",
+        "stage": "sample",
+        "retrying": false,
+        "units": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0
+        },
+        "criteria": {
+          "total": 0,
+          "met": 0,
+          "unmet": 0,
+          "unshown": 0
+        }
+      }
+    }
+  },
+  "workLedger.execution.resume": {
+    "methodId": "workLedger.execution.resume",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/execution/resume"
+    },
+    "status": 200,
+    "body": {
+      "kind": "execution",
+      "projectId": "sample",
+      "workId": "sample",
+      "attemptId": "sample",
+      "expectedRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentAttempt": false,
+      "stale": false,
+      "state": "prepared",
+      "recovery": "available",
+      "receipt": {
+        "contractId": "sample",
+        "ownerAgentId": "sample"
+      },
+      "settlement": {
+        "state": "pending",
+        "evidenceId": "sample",
+        "reportSequence": 0,
+        "evidenceSequence": 0
+      },
+      "progress": {
+        "status": "queued",
+        "sessionMode": false,
+        "semanticState": "deciding",
+        "stage": "sample",
+        "retrying": false,
+        "units": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0
+        },
+        "criteria": {
+          "total": 0,
+          "met": 0,
+          "unmet": 0,
+          "unshown": 0
+        }
+      }
+    }
+  },
+  "workLedger.execution.start": {
+    "methodId": "workLedger.execution.start",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start"
+    },
+    "status": 200,
+    "body": {
+      "kind": "execution",
+      "projectId": "sample",
+      "workId": "sample",
+      "attemptId": "sample",
+      "expectedRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentAttempt": false,
+      "stale": false,
+      "state": "prepared",
+      "recovery": "available",
+      "receipt": {
+        "contractId": "sample",
+        "ownerAgentId": "sample"
+      },
+      "settlement": {
+        "state": "pending",
+        "evidenceId": "sample",
+        "reportSequence": 0,
+        "evidenceSequence": 0
+      },
+      "progress": {
+        "status": "queued",
+        "sessionMode": false,
+        "semanticState": "deciding",
+        "stage": "sample",
+        "retrying": false,
+        "units": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0
+        },
+        "criteria": {
+          "total": 0,
+          "met": 0,
+          "unmet": 0,
+          "unshown": 0
+        }
+      }
+    }
+  },
+  "workLedger.execution.status": {
+    "methodId": "workLedger.execution.status",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/execution/status"
+    },
+    "status": 200,
+    "body": {
+      "kind": "execution",
+      "projectId": "sample",
+      "workId": "sample",
+      "attemptId": "sample",
+      "expectedRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentRevision": {
+        "work": 0,
+        "criteria": 0,
+        "attempt": 0
+      },
+      "currentAttempt": false,
+      "stale": false,
+      "state": "prepared",
+      "recovery": "available",
+      "receipt": {
+        "contractId": "sample",
+        "ownerAgentId": "sample"
+      },
+      "settlement": {
+        "state": "pending",
+        "evidenceId": "sample",
+        "reportSequence": 0,
+        "evidenceSequence": 0
+      },
+      "progress": {
+        "status": "queued",
+        "sessionMode": false,
+        "semanticState": "deciding",
+        "stage": "sample",
+        "retrying": false,
+        "units": {
+          "total": 0,
+          "passed": 0,
+          "failed": 0
+        },
+        "criteria": {
+          "total": 0,
+          "met": 0,
+          "unmet": 0,
+          "unshown": 0
+        }
+      }
+    }
+  },
   "workLedger.history": {
     "methodId": "workLedger.history",
     "http": {
@@ -22025,6 +22249,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
             "criteria": [
               "sample"
             ],
+            "source": {
+              "version": 1,
+              "sourceId": "sample",
+              "sourceRevision": "sample",
+              "inputId": "sample",
+              "sessionId": "sample"
+            },
             "revision": 0,
             "criteriaRevision": 0,
             "reportedState": "pending",
@@ -22107,6 +22338,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "criteria": [
             "sample"
           ],
+          "source": {
+            "version": 1,
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "inputId": "sample",
+            "sessionId": "sample"
+          },
           "revision": 0,
           "criteriaRevision": 0,
           "reportedState": "pending",
@@ -22163,6 +22401,106 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       }
     }
   },
+  "workLedger.intake.admit": {
+    "methodId": "workLedger.intake.admit",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/intake/admit"
+    },
+    "status": 200,
+    "body": {
+      "kind": "captured",
+      "projectId": "sample",
+      "requestId": "sample",
+      "sourceRef": {
+        "version": 1,
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "sessionId": "sample"
+      }
+    }
+  },
+  "workLedger.intake.cancel": {
+    "methodId": "workLedger.intake.cancel",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/intake/cancel"
+    },
+    "status": 200,
+    "body": {
+      "kind": "captured",
+      "projectId": "sample",
+      "requestId": "sample",
+      "sourceRef": {
+        "version": 1,
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "sessionId": "sample"
+      }
+    }
+  },
+  "workLedger.intake.capture": {
+    "methodId": "workLedger.intake.capture",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/intake/capture"
+    },
+    "status": 200,
+    "body": {
+      "kind": "captured",
+      "projectId": "sample",
+      "requestId": "sample",
+      "sourceRef": {
+        "version": 1,
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "sessionId": "sample"
+      }
+    }
+  },
+  "workLedger.intake.get": {
+    "methodId": "workLedger.intake.get",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/intake/get"
+    },
+    "status": 200,
+    "body": {
+      "kind": "captured",
+      "projectId": "sample",
+      "requestId": "sample",
+      "sourceRef": {
+        "version": 1,
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "sessionId": "sample"
+      }
+    }
+  },
+  "workLedger.intake.resume": {
+    "methodId": "workLedger.intake.resume",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/intake/resume"
+    },
+    "status": 200,
+    "body": {
+      "kind": "captured",
+      "projectId": "sample",
+      "requestId": "sample",
+      "sourceRef": {
+        "version": 1,
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "sessionId": "sample"
+      }
+    }
+  },
   "workLedger.prepareLegacyImport": {
     "methodId": "workLedger.prepareLegacyImport",
     "http": {
@@ -22173,6 +22511,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     "body": {
       "kind": "prepared",
       "manifest": {}
+    }
+  },
+  "workLedger.project": {
+    "methodId": "workLedger.project",
+    "http": {
+      "method": "GET",
+      "path": "/api/work-ledger/project"
+    },
+    "status": 200,
+    "body": {
+      "projectId": "sample"
     }
   },
   "workLedger.snapshot": {
@@ -22196,6 +22545,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
             "criteria": [
               "sample"
             ],
+            "source": {
+              "version": 1,
+              "sourceId": "sample",
+              "sourceRevision": "sample",
+              "inputId": "sample",
+              "sessionId": "sample"
+            },
             "revision": 0,
             "criteriaRevision": 0,
             "reportedState": "pending",
@@ -22258,6 +22614,75 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           ]
         }
       ]
+    }
+  },
+  "workLedger.submission.get": {
+    "methodId": "workLedger.submission.get",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/submissions/get"
+    },
+    "status": 200,
+    "body": {
+      "kind": "found",
+      "receipt": {
+        "projectId": "sample",
+        "requestId": "sample",
+        "inputId": "sample",
+        "ledgerRevision": 0,
+        "workId": "sample",
+        "attemptId": "sample",
+        "expectedRevision": {
+          "work": 0,
+          "criteria": 0,
+          "attempt": 0
+        },
+        "source": {
+          "version": 1,
+          "sourceId": "sample",
+          "sourceRevision": "sample",
+          "sessionId": "sample"
+        },
+        "goal": "sample",
+        "criteria": [
+          "sample"
+        ]
+      }
+    }
+  },
+  "workLedger.submit": {
+    "methodId": "workLedger.submit",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/submissions"
+    },
+    "status": 200,
+    "body": {
+      "kind": "submitted",
+      "replayed": false,
+      "receipt": {
+        "projectId": "sample",
+        "requestId": "sample",
+        "inputId": "sample",
+        "ledgerRevision": 0,
+        "workId": "sample",
+        "attemptId": "sample",
+        "expectedRevision": {
+          "work": 0,
+          "criteria": 0,
+          "attempt": 0
+        },
+        "source": {
+          "version": 1,
+          "sourceId": "sample",
+          "sourceRevision": "sample",
+          "sessionId": "sample"
+        },
+        "goal": "sample",
+        "criteria": [
+          "sample"
+        ]
+      }
     }
   },
   "workspaces.registrations.add": {

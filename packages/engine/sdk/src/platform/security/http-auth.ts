@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { UserAuthManager } from './user-auth.js';
+import type { AuthenticatedNativePairingToken } from '../pairing/pairing-token-store.js';
 
 export const OPERATOR_SESSION_COOKIE_NAME = 'goodvibes_session';
 
@@ -23,6 +24,17 @@ export type AuthenticatedOperatorRequest =
       readonly roles: readonly string[];
     };
 
+/** Construction-only transport capability, never accepted from a wire payload. */
+export interface NativePairedSnapshot extends AuthenticatedNativePairingToken {
+  readonly scopes: readonly string[];
+}
+
+export interface NativeExecutionAuthority {
+  current(): NativePairedSnapshot | null;
+  withCurrent<T>(expected: NativePairedSnapshot,
+    operation: (assertCurrent: () => NativePairedSnapshot) => T | Promise<T>): Promise<T>;
+}
+
 /**
  * The synchronous per-pairing token authenticator the operator-auth path
  * consults BEFORE the legacy shared token. A revoked token misses here, so
@@ -30,6 +42,10 @@ export type AuthenticatedOperatorRequest =
  * tokens are configured (only the shared token / user sessions authenticate).
  */
 export interface PairingTokenAuthenticator {
+  /** Optional for legacy authenticators; absence explicitly refuses native execution. */
+  authenticateNative?(token: string): AuthenticatedNativePairingToken | null;
+  withNativeAuthority?<T>(token: string, expected: AuthenticatedNativePairingToken,
+    operation: (assertCurrent: () => AuthenticatedNativePairingToken) => T | Promise<T>): Promise<T>;
   authenticate(token: string): { readonly id: string; readonly name: string } | null;
   /** Whether the legacy single shared token has been revoked. */
   isLegacyRevoked(): boolean;

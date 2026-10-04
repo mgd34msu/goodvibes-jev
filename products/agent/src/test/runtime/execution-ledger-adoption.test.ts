@@ -1,3 +1,4 @@
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
 import type { JevDecision } from '@goodvibes-jev/judgment/decisions';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { executeToolCalls } from '@goodvibes-jev/engine/sdk/platform/core';
@@ -20,6 +21,7 @@ const decision: JevDecision = {
   judgmentDecisionIds: ['reading'], evidence: [],
 };
 const call = { callId: 'call', turnId: 'turn', tool: 'read_local' };
+let judgmentLog: SqliteDecisionLog;
 let previous: ReturnType<typeof installJudgmentPort>;
 let services: RuntimeServices | undefined;
 // An imported helper's hooks belong to the first importing test file. Full
@@ -30,6 +32,7 @@ function compose() {
   services = getTestRuntimeServices();
   forgetLedgerArgRoles();
   const fixture = fakePort((name, question, state) => {
+    if (name === 'disposition') return choiceAnswer(question, 'act', 0.99);
     if (name === 'kind') return choiceAnswer(question, 'network', 0.99);
     const key = (state as { argument?: string }).argument;
     if (name === 'holds_credential') return noulAnswer(key === 'pat' ? 0.999 : 0.001);
@@ -38,13 +41,14 @@ function compose() {
     if (question.type === 'noul') return noulAnswer(0.001);
     throw new Error(`Unexpected fixture question: ${name}`);
   });
-  previous = installJudgmentPort(fixture.port);
+  judgmentLog = new SqliteDecisionLog(':memory:');
+  previous = installJudgmentPort(withDecisionLog(fixture.port, judgmentLog));
   return { runtime: services, requests: fixture.requests };
 }
 afterEach(async () => {
   if (services) { await services.processManager.close(); services.dispose(); services = undefined; }
   resetTestRuntimeServices();
-  installJudgmentPort(previous); forgetLedgerArgRoles();
+  installJudgmentPort(previous); judgmentLog[Symbol.dispose](); forgetLedgerArgRoles();
 });
 
 test('real Agent services construct the shared ledger and actual history consumes its Jev kind and target', async () => {
@@ -86,6 +90,7 @@ test('the real tool execution path combines the shared permission guard and ledg
     async execute() { executions++; return { success: true, output: 'synthetic result' }; },
   });
   const results = await executeToolCalls({
+    autonomousSource: () => ({ goal: 'Read the fixture target and record its execution history', criteria: ['Preserve the recorded tool decision'] }),
     toolRegistry: registry, permissionManager: composeAgentPermissionManager(runtime),
     hookDispatcher: null, runtimeBus: runtime.runtimeBus,
     sessionId: ctx.sessionId, emitterContext: () => ctx,

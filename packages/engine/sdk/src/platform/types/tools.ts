@@ -1,3 +1,4 @@
+import type { JevDecision } from '@goodvibes-jev/judgment/decisions';
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 /** Represents a tool the LLM can invoke. Parameters follow JSON Schema. */
@@ -55,6 +56,7 @@ export interface ToolDenial {
 
 /** The outcome of executing a tool. */
 export interface ToolResult {
+  readonly autonomousDecision?: JevDecision | undefined;
   callId: string;
   success: boolean;
   output?: string | undefined;

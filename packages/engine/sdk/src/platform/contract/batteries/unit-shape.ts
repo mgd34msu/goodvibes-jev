@@ -108,6 +108,8 @@ export interface UnitShapeRequirement {
 }
 
 export interface UnitShapeInput {
+  /** Complete native source retained while examining derived work. */
+  readonly nativeSource?: import('../types.js').NativeContractSource | undefined;
   /** The contract goal. */
   readonly goal: string;
   readonly unit: UnitShapeUnit;
@@ -413,6 +415,7 @@ export const unitShape: UnitShape = {
     const { unit } = input;
     const state = {
       goal: input.goal,
+      ...(input.nativeSource === undefined ? {} : { nativeSource: { ...input.nativeSource, criteria: [...input.nativeSource.criteria] } }),
       unit: { title: unit.title, goal: unit.goal, brief: unit.brief, criteria: [...unit.criteria] },
       otherUnits: input.otherUnits.map((other) => ({ title: other.title, goal: other.goal, criteria: [...other.criteria] })),
     };

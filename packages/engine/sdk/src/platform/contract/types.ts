@@ -1,3 +1,4 @@
+import type { DurableContractAdmission } from './durable-admission.js';
 /**
  * The contract runner's data model (docs/design/contract-runner.md section 2.3):
  * a contract, its groups and units, their criteria with every reading, checks,
@@ -13,6 +14,7 @@
  */
 import type { ContractInputSnapshot } from './input-snapshot.js';
 
+import type { NativeContractDecisionState, NativeContractProgress, NativeContractTransportProgress } from './native-decisions.js';
 import { randomBytes } from 'node:crypto';
 import type { Outcome, ReplyReadingName } from '@goodvibes-jev/judgment';
 import type {
@@ -90,7 +92,9 @@ export type AgentManagerLike = Pick<AgentManager, 'spawn' | 'getStatus' | 'list'
 // ── Ids ────────────────────────────────────────────────────────────────────────
 
 /** Schema version of a persisted contract; `deserializeContract` refuses a newer one. */
-export const CURRENT_CONTRACT_SCHEMA_VERSION = 2;
+// Version 5 composes durable admission, immutable native source, semantic ownership and captured input authority.
+// Older v2/v4 readers must refuse it rather than auto-resume a partially understood binding.
+export const CURRENT_CONTRACT_SCHEMA_VERSION = 5;
 
 /** `ctr-<8 hex>`. Also the store's file name, so it is checked before any path is built from it. */
 export const CONTRACT_ID_PATTERN = /^ctr-[0-9a-f]{8}$/;
@@ -120,14 +124,32 @@ export interface UnitRoute {
 /** Picks the route for the planner, a unit, a fresh unit agent, or an integration unit. Required: there is no default model. */
 export type ContractRouteSelector = (request: {
   readonly purpose: 'planner' | 'unit' | 'fresh-unit' | 'integration';
+  readonly signal?: AbortSignal | undefined;
+  readonly beforeAttempt?: (() => void) | undefined;
+  readonly onRetry?: ((progress: import('@goodvibes-jev/judgment').JudgmentRetryProgress) => void) | undefined;
   readonly contract: ContractView;
   readonly unit?: ContractUnitView | undefined;
 }) => Promise<UnitRoute>;
 
 // ── Starting a contract ───────────────────────────────────────────────────────
 
+/** Host-owned immutable native input. Revisions identify exact content; they are not execution authority. */
+export interface NativeContractSource {
+  readonly sourceId: string;
+  readonly sourceRevision: string;
+  readonly inputRevision: string;
+  readonly criteriaId: string;
+  readonly criteriaRevision: string;
+  /** Complete original goal, without trimming or generated summarization. */
+  readonly goal: string;
+  /** Complete original criteria in source order. Empty/missing criteria are invalid. */
+  readonly criteria: readonly string[];
+}
+
 export interface StartContractInput {
-  /** The person's words, verbatim; the authority every stated criterion traces to. */
+  /** Native callers supply the complete immutable source. Absence explicitly retains legacy ask-derived planning. */
+  readonly nativeSource?: NativeContractSource | undefined;
+  /** Legacy request words verbatim; native runs retain this display request separately from authoritative nativeSource. */
   readonly ask: string;
   readonly sessionId: string;
   readonly origin: ContractOrigin;
@@ -393,6 +415,15 @@ export interface JudgmentUsage {
 }
 
 export interface Contract {
+  /** Versioned native semantic receipts/counters, separate from transport waiting progress. */
+  nativeDecisions?: NativeContractDecisionState | undefined;
+  nativeProgress?: NativeContractProgress | undefined;
+  nativeWaiting?: NativeContractTransportProgress | undefined;
+  /** Present only for native source-bound runs; preserved across planning, correction, persistence and verification. */
+  readonly nativeSource?: NativeContractSource | undefined;
+  /** Native-bound contracts are resumed only through resumeDurable with fresh host validation. */
+  readonly durableAdmission?: DurableContractAdmission | undefined;
+  durableLaunchState?: 'prepared' | 'launch-claimed' | undefined;
   readonly id: string;
   /** CURRENT_CONTRACT_SCHEMA_VERSION when written. */
   readonly schemaVersion: number;

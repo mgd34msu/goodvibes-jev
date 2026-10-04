@@ -1,3 +1,8 @@
+import { hashState } from '@goodvibes-jev/judgment';
+import { judgeState } from './evidence.js';
+import { nativeRecordedCheck } from './check.js';
+import type { AutonomousToolSource } from '../permissions/autonomous.js';
+import { nativeContractSourceForAdmission } from './native-source.js';
 /**
  * The seams the sub-agent loop (`runAgentTask`, agents/orchestrator-runner.ts)
  * calls for a contract-bound agent (docs/design/contract-runner.md section
@@ -64,6 +69,8 @@ export interface ContractAgentHooks {
 
 /** The hooks the core turn loop calls: the agent hooks, and binding a session's turn to a session-mode unit (design 6.6). */
 export interface ContractSessionHooks extends ContractAgentHooks {
+  /** Read the original request/ordered source criteria from the live native owner. */
+  actionSource?(record: AgentRecord): AutonomousToolSource | null;
   /**
    * Session mode: binds a session's turn to the session-mode unit waiting for
    * work in that session, and returns the turn's stand-in record (its id is the
@@ -202,6 +209,7 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     if (unit.status !== 'held') run.moveUnit(unit, 'checking');
     const signal = AbortSignal.any([runtime.abort.signal, check.abort.signal, run.abort.signal]);
     let outcome: UnitCheckOutcome;
+    let reusedNativeEvidence = false;
     let output: string;
     try {
       const record = runtime.session?.record ?? (unit.activeAgentId === undefined ? null : deps.agentManager.getStatus(unit.activeAgentId));
@@ -226,7 +234,15 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
         paths: runtime.evidencePaths,
       });
       if (check.superseded || signal.aborted) return;
-      outcome = await runUnitCheck({ contract: run.contract, unit, trigger, evidence, settings: checkSettings(config), now: run.env.now(), signal });
+      const prior = unit.checks.at(-1);
+      if (run.contract.nativeSource !== undefined && prior !== undefined && prior.result !== 'pass'
+        && (prior.problems?.includes('unshown') || prior.goal.verdict === 'unshown' || unit.criteria.some(criterion => criterion.status === 'unshown'))
+        && prior.evidenceDigest === hashState(judgeState(unit, evidence))) {
+        // Dispatch the unchanged recorded uncertainty to native correction. Do not ask until probability crosses a threshold.
+        outcome = nativeRecordedCheck(unit, { ...prior, result: 'native-decision' }); reusedNativeEvidence = true;
+      } else {
+      outcome = await runUnitCheck({ native: { contract: run.contract, services: run.env.native }, contract: run.contract, unit, trigger, evidence, settings: checkSettings(config), now: run.env.now(), signal });
+      }
     } catch (error) {
       if (runtime.check === check) runtime.check = null;
       if (check.superseded || isAbortError(error, signal) || run.terminal) return;
@@ -241,7 +257,7 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
       outcome.recordAction(check.superseded ? 'discarded: superseded by the completion check' : 'discarded: the unit already ended');
       return;
     }
-    record(run, unit, outcome);
+    if (!reusedNativeEvidence) record(run, unit, outcome);
     await act(run, unit, runtime, outcome, output);
     if (runtime.recheckPending && runtime.check === null && WORKING.has(unit.status)) {
       runtime.recheckPending = false;
@@ -405,7 +421,7 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
   /** Severity of the unmet criteria, read after the nudge went out so it never delays one. */
   async function readSeverities(run: ContractRun, unit: ContractUnit, runtime: UnitRuntime, checkId: string, criterionIds: readonly string[]): Promise<void> {
     try {
-      const read = await readUnmetSeverities({ contract: run.contract, unit, criterionIds, signal: runtime.abort.signal });
+      const read = await readUnmetSeverities({ native: { contract: run.contract, services: run.env.native }, contract: run.contract, unit, criterionIds, signal: runtime.abort.signal });
       addJudgmentUsage(run.contract.judgmentUsage, read.usage);
       if (run.terminal) return;
       applySeverities(unit, checkId, read.severities);
@@ -440,7 +456,22 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     return found?.runtime.session?.queued.shift() ?? null;
   }
 
-  return { hooks: { onTurnEnd, holdCompletion, sessionTurn, takeSessionNudge }, runCheck, supersede, passUnit };
+  function actionSource(record: AgentRecord): AutonomousToolSource | null {
+    const found = locate(record);
+    if (!found || found.run.contract.criteria.length === 0) return null;
+    if (found.run.contract.nativeSource !== undefined) return nativeContractSourceForAdmission(found.run.contract);
+    const criteria: string[] = [];
+    for (const criterion of found.run.contract.criteria) {
+      // A planner's rewritten text or a unit brief is not the source request.
+      const text = criterion.origin === 'stated' ? criterion.quote
+        : criterion.origin === 'owner' ? criterion.text : undefined;
+      if (typeof text !== 'string' || !text.trim()) return null;
+      criteria.push(text);
+    }
+    return Object.freeze({ goal: found.run.contract.ask, criteria: Object.freeze(criteria) });
+  }
+
+  return { hooks: { onTurnEnd, holdCompletion, sessionTurn, takeSessionNudge, actionSource }, runCheck, supersede, passUnit };
 }
 
 /**

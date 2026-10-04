@@ -20,7 +20,7 @@ const WF_DIR = resolve(ROOT, '.github/workflows');
 type Job = Record<string, unknown> & {
   needs?: string | string[];
   'runs-on'?: string;
-  'timeout-minutes'?: number;
+  'timeout-minutes'?: number | string;
   uses?: string;
   steps?: Array<Record<string, unknown>>;
   strategy?: { matrix?: Record<string, unknown>; 'fail-fast'?: boolean };
@@ -132,7 +132,14 @@ describe('all workflows: baseline hygiene', () => {
       const wf = load(f);
       for (const [name, job] of jobs(wf)) {
         if (job.uses) continue; // a job that calls a reusable workflow has no runs-on/timeout
-        expect(job['timeout-minutes'], `${f}:${name} needs timeout-minutes`).toBeGreaterThan(0);
+        const timeout = job['timeout-minutes'];
+        if (typeof timeout === 'string') {
+          // Check both outcomes of the one supported matrix expression,
+          // rather than allowing an arbitrary unbounded/dynamic timeout.
+          const branches = /^\$\{\{ matrix\.platform == 'bun' && (\d+) \|\| (\d+) \}\}$/.exec(timeout);
+          expect(branches, `${f}:${name} has an unsupported timeout expression`).not.toBeNull();
+          for (const minutes of branches!.slice(1)) expect(Number(minutes)).toBeGreaterThan(0);
+        } else expect(timeout, `${f}:${name} needs timeout-minutes`).toBeGreaterThan(0);
       }
     }
   });
@@ -231,12 +238,10 @@ describe('ci.yml: build once, restore everywhere', () => {
   test('complete product suites are catalog-driven required lanes with independent unchanged caps', () => {
     const build = ci.jobs!['build']!;
     const products = ci.jobs!['product-tests']!;
-    const platform = ci.jobs!['platform-matrix']!;
     expect(products).toBeDefined();
     expect(products.if).toBeUndefined();
     expect(products['continue-on-error']).toBeUndefined();
     expect(products['timeout-minutes']).toBe(15);
-    expect(platform['timeout-minutes']).toBe(15);
     expect(products.strategy?.['fail-fast']).toBe(false);
     expect(products.strategy?.matrix).toEqual({ product: '${{ fromJSON(needs.build.outputs.products) }}' });
     expect(build.outputs).toEqual({ products: '${{ steps.product-matrix.outputs.products }}' });
@@ -254,6 +259,27 @@ describe('ci.yml: build once, restore everywhere', () => {
     const rootPackage = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
     expect(rootPackage.scripts['products:test']).toBe('bun packages/engine/scripts/product-workspaces.ts test');
     expect(rootPackage.scripts.test).toContain('bun run products:test');
+  });
+
+  test('only the complete Bun suite gets a bounded aggregate budget with cleanup headroom', () => {
+    const platform = ci.jobs!['platform-matrix']!;
+    expect(platform['timeout-minutes']).toBe("${{ matrix.platform == 'bun' && 20 || 15 }}");
+    const include = (platform.strategy?.matrix as { include?: Array<{ platform: string; 'test-cmd': string }> })?.include ?? [];
+    expect(include.find((row) => row.platform === 'bun')?.['test-cmd'])
+      .toBe('GOODVIBES_TEST_CEILING_MS=900000 bun packages/engine/scripts/test.ts');
+    for (const row of include.filter((row) => row.platform !== 'bun')) {
+      expect(row['test-cmd']).not.toContain('GOODVIBES_TEST_CEILING_MS');
+    }
+    // This is one invocation's total budget, never a global default or a
+    // relaxation of the deadlock watchdog or individual test deadlines.
+    expect(stepText(platform)).not.toMatch(/GOODVIBES_TEST_(?:STALL|TIMEOUT)_MS|--timeout/);
+    expect(platform.env).toBeUndefined();
+    for (const step of steps(platform)) {
+      expect(step.env).toBeUndefined();
+      expect(step['continue-on-error']).toBeUndefined();
+    }
+    expect(platform['continue-on-error']).toBeUndefined();
+    expect(platform.strategy?.['fail-fast']).toBe(false);
   });
 
   test('the Agent lane verifies its exact native artifact and owns its terminal prerequisites', () => {
@@ -809,6 +835,7 @@ describe('reusable workflows: workflow_call contracts', () => {
     const wf = load('reusable-release-verify.yml');
     const verify = wf.jobs!['verify']!;
     const capMinutes = verify['timeout-minutes']!;
+    if (typeof capMinutes !== 'number') throw new Error('The verify job must have a numeric timeout-minutes cap');
     expect(capMinutes).toBeGreaterThan(0);
     for (const id of ['pjg-workspace', 'pjg-registry']) {
       const step = steps(verify).find((s) => s.id === id);

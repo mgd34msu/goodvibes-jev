@@ -9,8 +9,8 @@
  * (`enable`/`disable` duplicated by `pause`/`resume`), and an update-verb split
  * (`patch` vs `update`). This module is the forcing function that keeps that
  * from recurring: CORE_VERBS is the closed vocabulary for generic lifecycle
- * operations, BANNED_VERBS are verbs that were retired and must never
- * reappear, and EXEMPT_VERB_CATEGORIES documents the (large, expected) set of
+ * operations, BANNED_VERBS are retired generic aliases, and
+ * EXEMPT_VERB_CATEGORIES documents the (large, expected) set of
  * domain-specific verbs that aren't generic CRUD/lifecycle words, things like
  * `voice.stt`, `homeassistant.homeGraph.askHomeGraph`, or `telemetry.otlp.logs`
  * are real, single-purpose operations, not a coherence bug.
@@ -31,9 +31,9 @@
  * CONFORMANCE: see test/core-verbs-conformance.test.ts, which lints every id
  * in OPERATOR_METHOD_IDS against this file: each verb tail must be in
  * CORE_VERBS, in one of EXEMPT_VERB_CATEGORIES, or the test fails and names
- * the offending id, a new ad hoc verb cannot land silently. BANNED_VERBS are
- * asserted absent outright, so a retired verb can never come back under the
- * same tail.
+ * the offending id, a new ad hoc verb cannot land silently. Retired aliases
+ * stay banned. A distinct operation using the same word needs a documented
+ * exact method-id exception; that grants no sibling or generic alias.
  */
 
 /**
@@ -73,7 +73,7 @@ export type CoreVerb = typeof CORE_VERBS[number];
 
 /**
  * Verbs that were retired by the core-verb ruling (see CHANGELOG 1.0.0) and
- * must never reappear as a method id's final dotted segment. A verb lands
+ * must not reappear as generic aliases. A verb lands
  * here (instead of just being deleted from history) so the conformance test
  * keeps banning it even if someone re-adds it later without knowing why it
  * was removed.
@@ -88,11 +88,37 @@ export type CoreVerb = typeof CORE_VERBS[number];
  * - `pause` / `resume`, retired as a byte-identical redundant lifecycle pair
  *   with `enable`/`disable` (automation.jobs.pause/resume -> deleted;
  *   same `{id, enabled}` output shape, same semantics). A caller-facing
- *   "pause"/"resume" user verb should map onto `disable`/`enable` at the wire.
+ *   "pause"/"resume" user verb for that toggle should map onto
+ *   `disable`/`enable` at the wire. Exact durable native recovery is a different
+ *   operation, documented below; it does not enable a record or replay a run.
  */
 export const BANNED_VERBS = ['patch', 'pause', 'resume'] as const;
 
 export type BannedVerb = typeof BANNED_VERBS[number];
+
+/**
+ * Exact domain operations, not tail or namespace grants.
+ *
+ * `workLedger.project` discovers this selected host's native project identity.
+ * It accepts no project selector and is not generic record CRUD or legacy
+ * planning lookup, so its existing wire name is classified as host discovery.
+ *
+ * `workLedger.execution.resume` explicitly recovers an already prepared durable
+ * attempt under fresh authority and original receipt/source bindings. It is
+ * neither the retired automation enable alias nor permission to replay a
+ * launch-claimed external effect. Keep that distinction at this one full id.
+ */
+const EXACT_METHOD_EXEMPTIONS: Readonly<Record<string, string>> = Object.freeze({
+  'workLedger.project': 'native-work-project-discovery',
+  'workLedger.execution.resume': 'native-work-durable-recovery',
+  // Atomic explicit-source capture, initial work claim and request receipt.
+  // This is not a generic create alias and grants no executor permission.
+  'workLedger.submit': 'native-work-source-submission',
+  // Capture exact source; semantic admission and explicit recovery cannot execute.
+  'workLedger.intake.capture': 'native-conversation-source-capture',
+  'workLedger.intake.admit': 'native-conversation-semantic-admission',
+  'workLedger.intake.resume': 'native-conversation-durable-recovery',
+});
 
 /**
  * Domain-specific verbs that are NOT part of the generic lifecycle vocabulary
@@ -497,11 +523,13 @@ export const SCOPED_EXEMPT_VERB_CATEGORIES: Readonly<Record<string, ScopedVerbEx
 };
 
 /**
- * Flattened set of every exempt (non-core, non-banned) verb, for fast lookup.
+ * Flattened set of category-based exempt (non-core, non-banned) verb tails.
  *
  * Membership here is NOT a grant: a scoped verb appears in this set and is
  * still refused outside its namespaces. Use {@link classifyVerb}, which is
- * given the whole method id, for any decision about a specific method.
+ * given the whole method id, for any decision about a specific method. Exact
+ * method-id exceptions are deliberately absent: a tail alone must not grant
+ * their distinct operation to another method.
  */
 export const EXEMPT_VERBS: ReadonlySet<string> = new Set([
   ...Object.values(EXEMPT_VERB_CATEGORIES).flat(),
@@ -525,6 +553,9 @@ export function verbTailOf(methodId: string): string {
 
 export function classifyVerb(methodId: string): VerbClassification {
   const verb = verbTailOf(methodId);
+  if (Object.hasOwn(EXACT_METHOD_EXEMPTIONS, methodId)) {
+    return { kind: 'exempt', verb, category: EXACT_METHOD_EXEMPTIONS[methodId]! };
+  }
   if ((BANNED_VERBS as readonly string[]).includes(verb)) {
     return { kind: 'banned', verb: verb as BannedVerb };
   }

@@ -40,6 +40,11 @@ function manager(handler: PermissionRequestHandler, store: UserPermissionRuleSto
   } as PermissionConfigReader, new PolicyRuntimeState(), null, null, store);
 }
 
+/** These callback-era fixtures exercise the retained API; autonomous negatives live in autonomous-tool-admission.test.ts. */
+function legacyPermissionConsumer(manager: PermissionManager): PermissionManager {
+  return { check: manager.check.bind(manager), checkDetailed: manager.checkDetailed.bind(manager) } as PermissionManager;
+}
+
 async function revoke(store: UserPermissionRuleStore): Promise<void> {
   const catalog = new GatewayMethodCatalog();
   registerPermissionRulesGatewayMethods(catalog, { userRuleStore: store });
@@ -159,7 +164,7 @@ describe('remembered exec scope', () => {
   });
 });
 
-test('real admission and registry never reach the intercepted executor outside an exact grant or after revocation', async () => {
+test('legacy callback admission and registry never reach the intercepted executor outside an exact grant or after revocation', async () => {
   const store = new UserPermissionRuleStore(':memory:');
   let asks = 0;
   const permissions = manager(async () => ++asks === 1
@@ -172,7 +177,7 @@ test('real admission and registry never reach the intercepted executor outside a
     execute: async (args) => { admitted.push(args); return { success: true, output: 'intercepted' }; },
   });
   const deps: ToolExecutionDeps = {
-    toolRegistry: registry, permissionManager: permissions, hookDispatcher: null, runtimeBus: null,
+    toolRegistry: registry, permissionManager: legacyPermissionConsumer(permissions), hookDispatcher: null, runtimeBus: null,
     sessionId: 'synthetic-scope',
     emitterContext: () => ({ sessionId: 'synthetic-scope', traceId: 'synthetic-trace', source: 'orchestrator' }),
   };
@@ -208,7 +213,7 @@ describe('literal exact command authority', () => {
     ['trailing newline', 'git add src/README.md\n'],
   ] as const;
 
-  test.each(mismatches)('%s mismatch cannot reach the real registry executor through an exact grant', async (_label, changed) => {
+  test.each(mismatches)('%s mismatch cannot reach the legacy callback registry executor through an exact grant', async (_label, changed) => {
     const store = new UserPermissionRuleStore(':memory:');
     let asks = 0;
     const permissions = manager(async () => ++asks === 1
@@ -221,7 +226,7 @@ describe('literal exact command authority', () => {
       execute: async (args) => { admitted.push(args); return { success: true, output: 'intercepted' }; },
     });
     const deps: ToolExecutionDeps = {
-      toolRegistry: registry, permissionManager: permissions, hookDispatcher: null, runtimeBus: null,
+      toolRegistry: registry, permissionManager: legacyPermissionConsumer(permissions), hookDispatcher: null, runtimeBus: null,
       sessionId: 'synthetic-literal',
       emitterContext: () => ({ sessionId: 'synthetic-literal', traceId: 'synthetic-trace', source: 'orchestrator' }),
     };

@@ -1,4 +1,7 @@
+import { builtinGatewayNativeConversationIntakeMethodDescriptors } from '../sdk/src/platform/control-plane/method-catalog-native-intake.ts';
+import { builtinGatewayNativeWorkSubmissionMethodDescriptors } from '../sdk/src/platform/control-plane/method-catalog-native-work-submission.ts';
 import { builtinGatewayWorkLedgerMethodDescriptors } from '../sdk/src/platform/control-plane/method-catalog-work-ledger.ts';
+import { builtinGatewayNativeWorkExecutionMethodDescriptors } from '../sdk/src/platform/control-plane/method-catalog-native-work-execution.ts';
 // foundation-io-catalog.ts
 //
 // The one composition of every builtin gateway method descriptor, used by both
@@ -53,6 +56,9 @@ import type { GatewayMethodDescriptor } from '../sdk/src/platform/control-plane/
 /** Every builtin gateway method descriptor, in method-catalog.ts's own order. */
 export const ALL_GATEWAY_METHOD_DESCRIPTORS: readonly GatewayMethodDescriptor[] = [
   ...builtinGatewayWorkLedgerMethodDescriptors,
+  ...builtinGatewayNativeWorkExecutionMethodDescriptors,
+  ...builtinGatewayNativeWorkSubmissionMethodDescriptors,
+  ...builtinGatewayNativeConversationIntakeMethodDescriptors,
   ...builtinGatewayControlMethodDescriptors,
   ...builtinBrowserJudgmentMethodDescriptors,
   ...builtinGatewayChannelMethodDescriptors,

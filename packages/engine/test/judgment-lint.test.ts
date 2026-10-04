@@ -101,6 +101,13 @@ describe('registered use', () => {
       async function loose(port) { return askAs(port, header, 'battery', 'x', {}); }
       export function defineWidget(spec) { const run = (port) => askAs(port, spec, 'battery', 'x', {}); return run; }
       const answer = await knowledgeService.ask({ query: 'where' });
+      function immutablePort(port) {
+        return { ask(request) {
+          const questions = freeze(structuredClone(request.questions));
+          const forwarded: typeof request = { ...request, questions };
+          return port.ask(forwarded);
+        } };
+      }
     `;
     expect(sourceFindings('y.ts', source, registered).map((finding) => [finding.where, finding.message])).toEqual([
       ['y.ts:2', 'asks Jev with a request built inline, outside a registered decision'],
@@ -280,6 +287,14 @@ describe('registered use', () => {
       const b = defineJudge({ name: 'engine.known', fixtures: [], ...unknown });
     `;
     expect(sourceFindings('spread.ts', source, registered)).toHaveLength(2);
+  });
+
+  test('the native settlement adapter forwards registered checks without defining an inline decision', () => {
+    const path = resolve(import.meta.dir, '../sdk/src/platform/workflow/work-ledger/native-execution-verifier.ts');
+    const source = readFileSync(path, 'utf8');
+    const names = new Set(contractRegistry.list().map((decision) => decision.name));
+    expect(sourceFindings(path, source, names)).toEqual([]);
+    expect(source).toContain('runUnitCheck(');
   });
 
   test('the actual composed contract decisions are clean only with every real registration', () => {

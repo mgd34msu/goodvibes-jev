@@ -8,13 +8,14 @@ import type { ContractRunner, StartedContract } from '../../contract/runner.js';
 import { contractChecks, summarizeCheck, summarizeContract, summarizeContractDecision, summarizeEscalation } from './contract-views.js';
 import { AGENT_TEMPLATES, AgentManager, type AgentRecord } from './manager.js';
 import { evaluateOrchestrationSpawn, ORCHESTRATION_CAP_KEYS } from '../../runtime/orchestration/spawn-policy.js';
+import { isNativeConversationTurn, NATIVE_TURN_EXECUTION_REFUSAL } from '../../core/native-turn-scope.js';
 import { summarizeError } from '../../utils/error-display.js';
 import {
   buildChildFailureEnvelope,
   isChildFailureTerminal,
   type ChildFailureEnvelope,
 } from './child-failure-envelope.js';
-export type { AgentContractRunner, AgentExecutor, AgentRecord, OwnedAgentExecution } from './manager.js';
+export type { AgentContractRunner, AgentExecutor, AgentRecord, AgentFleetOwnership, OwnedAgentExecution } from './manager.js';
 export { AGENT_TEMPLATES, AgentManager, OwnedAgentExecutionUnavailableError } from './manager.js';
 export { isActiveAgent } from './predicates.js';
 export { cancelAllAgentRuns, type CancellableAgentRuns } from './cancel-all.js';
@@ -178,6 +179,9 @@ export function createAgentTool(config: AgentToolConfig): Tool {
       return { success: false, error: 'Missing required parameter: mode' };
     }
     const input = args as unknown as AgentInput;
+    if (isNativeConversationTurn() && (input.mode === 'spawn' || input.mode === 'batch-spawn')) {
+      return { success: false, error: NATIVE_TURN_EXECUTION_REFUSAL };
+    }
 
     if (!input.mode) {
       return { success: false, error: 'Missing required parameter: mode' };

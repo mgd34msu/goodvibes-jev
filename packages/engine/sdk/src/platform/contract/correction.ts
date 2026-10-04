@@ -1,4 +1,6 @@
 import { bindContractInputAuthority } from './input-authority.js';
+import { bindContractActionSource } from '../tools/agent/contract-binding.js';
+import { nativeContractActionSource } from './native-decisions.js';
 /**
  * Correction when nudging stalls (docs/design/contract-runner.md section 5):
  * stall routing, planned-fix groups and fresh agents, for units, groups and
@@ -30,10 +32,12 @@ import { readContractConfig } from './config.js';
 import { headAndTail } from './evidence.js';
 import { failedGates } from './gates.js';
 import { buildFixGroup, buildFixPlannerPrompt, buildFixPlannerRequest, buildFreshGroup, validateFixPlan, type FixBrief, type FixScope } from './fix-plan.js';
+import { nativeContractRoute, decideNativeContract, nativeContractPort, nativeDecisionState, nativeSpent, spendNative } from './native-decisions.js';
+import { assertNativeContractSource } from './native-source.js';
 import { NUDGE_GATE_TAIL_LINES } from './nudge.js';
 import { runUnitShapeChecks } from './plan-checks.js';
 import { renderContractPlan, type ContractPlan, type PlanProblem } from './plan-schema.js';
-import { prepareFixPlannerInput } from './fix-planner-input.js';
+import { prepareFixPlannerInput, type FixPlannerInput } from './fix-planner-input.js';
 import { readPlannerBounds } from './planner.js';
 import { describeStall, detectStall, standingOf, type StallReason } from './progress.js';
 import { failureFromError, isAbortError, type ContractRun } from './run-context.js';
@@ -64,6 +68,7 @@ export interface TargetFinding {
 }
 
 export interface Correction {
+  resumeNative(run: ContractRun): Promise<void>;
   unitStalled(run: ContractRun, unitId: string, check: DecidedCheck): Promise<void>;
   unitMergeConflict(run: ContractRun, unitId: string, files: readonly string[]): Promise<void>;
   /** A group check did not pass: a planned fix, or the owner. */
@@ -108,7 +113,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
   async function readRoute(run: ContractRun, state: Record<string, unknown>): Promise<{ readonly route: StallRoute; readonly act: boolean; readonly decisionId: string | undefined; recordAction(action: string): void }> {
     const usage = emptyJudgmentUsage();
     try {
-      const read = await stallRoute.run(meteredPort(judgmentPort(STALL_ROUTE_SITE), usage), state as Parameters<typeof stallRoute.run>[1], { site: STALL_ROUTE_SITE, signal: run.abort.signal });
+      const read = await stallRoute.run(meteredPort(nativeContractPort(run.contract, context.native, judgmentPort(STALL_ROUTE_SITE), run.abort.signal), usage), state as Parameters<typeof stallRoute.run>[1], { site: STALL_ROUTE_SITE, signal: run.abort.signal });
       const reading = read.readings.route;
       return { route: reading.choice, act: reading.outcome === 'act', decisionId: read.result.decisionId, recordAction: (action) => read.recordAction(action) };
     } finally {
@@ -193,7 +198,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       criteria: brief.criteria.map((criterion) => ({ id: criterion.id, text: criterion.text, quote: undefined })),
       groups: [checked.group],
     };
-    const jev = await runUnitShapeChecks(shaped, { signal: run.abort.signal });
+    const jev = await runUnitShapeChecks(shaped, { signal: run.abort.signal, nativeSource: run.contract.nativeSource, native: { contract: run.contract, services: context.native } });
     addJudgmentUsage(run.contract.judgmentUsage, jev.usage);
     return { group: checked.group, plan: checked.plan, problems: jev.problems, decisionIds: jev.decisionIds };
   }
@@ -206,7 +211,9 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
   async function planFix(run: ContractRun, brief: FixBrief, round: number): Promise<void> {
     const { contract } = run;
     const input = await prepareFixPlannerInput(run);
-    const route = await context.routeSelector({ purpose: 'planner', contract: run.view() });
+    assertNativeContractSource(contract);
+    const route = await nativeContractRoute(context.routeSelector, contract, context.native, { purpose: 'planner', contract: run.view() }, run.abort.signal);
+    if (contract.nativeSource !== undefined) { await planNativeFix(run, brief, round, route, input); return; }
     let repair: { problems: readonly PlanProblem[]; previousPlan: string } | undefined;
     for (let attempt = 0; ; attempt += 1) {
       await input.assertCurrent();
@@ -250,6 +257,56 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     }
   }
 
+  async function planNativeFix(run: ContractRun, brief: FixBrief, round: number, route: Parameters<ContractRun['decide']>[4], prepared?: FixPlannerInput): Promise<void> {
+    const contract = run.contract;
+    const input = prepared ?? await prepareFixPlannerInput(run);
+    const sourceOf = nativeContractActionSource(contract, context.native, run.abort.signal);
+    const state = nativeDecisionState(contract);
+    const key = `fix:${brief.targetId}:${round}`;
+    let output = state.plannerOutputs[key];
+    let needsPlan = output === undefined;
+    let repair: { problems: readonly PlanProblem[]; previousPlan: string } | undefined;
+    for (;;) {
+      if (run.terminal) return;
+      await input.assertCurrent();
+      if (needsPlan) {
+        if (nativeSpent(contract, key) >= config().planRepairLimit + 1) {
+          await decideNativeContract(contract, context.native, { stage: 'fix-plan', targetId: brief.targetId, action: 'Start another fix-planning attempt', allowAct: false,
+            state: () => ({ attempts: nativeSpent(contract, key), limit: config().planRepairLimit + 1 }), continuations: [], signal: run.abort.signal });
+          run.control.fail('planning', 'Native fix planner exhausted its unchanged budget'); return;
+        }
+        const attempt = spendNative(contract, context.native, key);
+        const result = await context.decompositionRunner.run(bindContractActionSource(bindContractInputAuthority({ goal: contract.nativeSource!.goal, workingDir: input.workingDirectory,
+          systemPrompt: buildFixPlannerPrompt(), userPrompt: buildFixPlannerRequest(brief, repair), bounds: readPlannerBounds(context.configManager),
+          attempt: attempt === 1 ? 'initial' : 'repair', route: route!, signal: run.abort.signal }, input.authority), sourceOf, port => nativeContractPort(contract, context.native, port, run.abort.signal)));
+        if (result.agentId !== undefined) contract.plannerAgentIds.push(result.agentId);
+        if (run.terminal) return;
+        await input.assertCurrent();
+        if (result.status !== 'completed') { run.control.fail('planning', 'Native fix planner did not finish'); return; }
+        output = result.output; state.plannerOutputs[key] = output; context.native?.changed(contract);
+      }
+      const checked = await checkFixPlan(run, brief, output!);
+      await input.assertCurrent();
+      const valid = checked.problems.length === 0 && checked.group !== undefined;
+      const canRepair = nativeSpent(contract, key) < config().planRepairLimit + 1;
+      const decision = await decideNativeContract(contract, context.native, { stage: 'fix-plan', targetId: brief.targetId,
+        action: 'Run this exact checked fix group against the existing target criteria', allowAct: valid,
+        state: () => ({ plan: checked.plan ?? null, problems: checked.problems, requiredIds: brief.requiredIds, round, attempts: nativeSpent(contract, key), limit: config().planRepairLimit + 1 }) as unknown as import('@goodvibes-jev/judgment').EntryType,
+        continuations: canRepair ? [{ id: 'repair-fix-plan', kind: 'revise-action', description: 'Use one remaining fix-planner attempt to repair only this derived group.' }] : [],
+        decisionIds: checked.decisionIds, signal: run.abort.signal });
+      await input.assertCurrent();
+      decision.assertCurrent();
+      if (decision.decision.outcome === 'act' && checked.group !== undefined) {
+        decision.recordClaim();
+        const tree = buildFixGroup(brief, round, checked.group);
+        startFixGroup(run, brief, round, tree.group, tree.units, decision.decision.judgmentDecisionIds, route); return;
+      }
+      if (decision.decision.outcome === 'reject') { run.control.fail('planning', 'Jev refused the native fix plan'); return; }
+      if (!canRepair || decision.continuationId !== 'repair-fix-plan') throw new Error('Native fix continuation is no longer eligible');
+      decision.assertCurrent(); repair = { problems: checked.problems, previousPlan: checked.plan === undefined ? output! : renderContractPlan(checked.plan) }; needsPlan = true;
+    }
+  }
+
   function startFixGroup(
     run: ContractRun,
     brief: FixBrief,
@@ -276,6 +333,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     const criteria = judged(unit.criteria);
     const record = unit.activeAgentId === undefined ? null : context.getStatus(unit.activeAgentId);
     return {
+      nativeSource: run.contract.nativeSource,
       scope: 'unit',
       targetId: unit.id,
       title: unit.title,
@@ -297,6 +355,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       ? { id: contract.id, title: contract.goal, goal: contract.goal, criteria: judged(contract.criteria), units: contract.units }
       : { id: group.id, title: group.title, goal: group.goal, criteria: judged(group.criteria), units: contract.units.filter((unit) => unit.groupId === group.id) };
     return {
+      nativeSource: contract.nativeSource,
       scope,
       targetId: target.id,
       title: target.title,
@@ -329,8 +388,17 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
   }
 
   async function freshUnit(run: ContractRun, unit: ContractUnit, reason: string, decisionIds: readonly string[]): Promise<void> {
+    const route = await nativeContractRoute(context.routeSelector, run.contract, context.native, { purpose: 'fresh-unit', contract: run.view(), unit: structuredClone(unit) }, run.abort.signal);
+    if (run.contract.nativeSource !== undefined) {
+      const cost = itemClosed(run, unit) ? 2 : 1;
+      const decision = await decideNativeContract(run.contract, context.native, { stage: 'stall', targetId: unit.id, action: 'Start a fresh worker with this exact unit brief, criteria and selected route',
+        allowAct: run.contract.sessionMode !== true && unit.fixRounds + unit.freshAgents + cost <= config().maxFixRounds,
+        state: () => ({ goal: unit.goal, brief: unit.brief, criteria: unit.criteria.map(c => ({ id: c.id, text: c.text, status: c.status })), route, spent: unit.fixRounds + unit.freshAgents, limit: config().maxFixRounds, cost }) as unknown as import('@goodvibes-jev/judgment').EntryType,
+        continuations: [], decisionIds, signal: run.abort.signal });
+      if (decision.decision.outcome !== 'act') { run.control.fail('other', 'Jev refused a fresh native worker'); return; }
+      decision.recordClaim();
+    }
     unit.freshAgents += 1;
-    const route = await context.routeSelector({ purpose: 'fresh-unit', contract: run.view(), unit: structuredClone(unit) });
     if (run.terminal) return;
     unit.route = route;
     run.decide('fresh-agent', unit.id, reason, decisionIds, route);
@@ -356,6 +424,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
   async function unitStalled(run: ContractRun, unitId: string, check: DecidedCheck): Promise<void> {
     const unit = run.unit(unitId);
     if (unit === undefined || run.terminal) return;
+    if (run.contract.nativeSource !== undefined) { await nativeUnitCorrection(run, unit, check); return; }
     const unmet = [...check.verdicts].filter(([, verdict]) => verdict === 'unmet').map(([id]) => id);
     const unshown = [...check.verdicts].filter(([, verdict]) => verdict === 'unshown').map(([id]) => id);
     const why = check.stall === undefined ? `check ${check.check.id} did not pass after the unit's own agent finished` : describeStall(check.stall);
@@ -392,6 +461,21 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     else toOwner(run, 'unit', unit.id, 'stalled', unmet, unshown, decisionIds);
   }
 
+  async function nativeUnitCorrection(run: ContractRun, unit: ContractUnit, check: DecidedCheck): Promise<void> {
+    const canSplit = run.contract.sessionMode !== true && !exhausted(run, unit.fixRounds + unit.freshAgents);
+    const canFresh = canSplit && unit.fixRounds + unit.freshAgents + (itemClosed(run, unit) ? 2 : 1) <= config().maxFixRounds;
+    const decision = await decideNativeContract(run.contract, context.native, { stage: check.check.result === 'native-decision' || check.check.result === 'await-owner' ? 'evidence' : 'stall', targetId: unit.id,
+      action: 'Plan a bounded correction that must preserve all criteria and produce actual new evidence', allowAct: canSplit,
+      state: () => ({ goal: unit.goal, criteria: unit.criteria.map(c => ({ id: c.id, text: c.text, status: c.status })), check: { id: check.check.id, result: check.check.result, goal: check.check.goal, quality: check.check.quality },
+        fixRounds: unit.fixRounds, freshAgents: unit.freshAgents, limit: config().maxFixRounds, sessionMode: run.contract.sessionMode === true }) as unknown as import('@goodvibes-jev/judgment').EntryType,
+      continuations: canFresh ? [{ id: 'fresh-worker', kind: 'revise-action', description: 'Prepare a fresh worker for the same requirements and obtain a new exact-action decision before starting it.' }] : [],
+      decisionIds: check.check.decisionIds, signal: run.abort.signal });
+    if (decision.decision.outcome === 'reject') { run.control.fail('other', 'Jev refused further native correction without sufficient evidence or remaining budget'); return; }
+    if (decision.decision.outcome === 'act') { decision.recordClaim(); await splitUnit(run, unit); return; }
+    if (decision.continuationId !== 'fresh-worker' || !canFresh) throw new Error('Native correction continuation is no longer eligible');
+    decision.assertCurrent(); await freshUnit(run, unit, 'registered native fresh-worker continuation', decision.decision.judgmentDecisionIds);
+  }
+
   async function unitMergeConflict(run: ContractRun, unitId: string, files: readonly string[]): Promise<void> {
     const unit = run.unit(unitId);
     // A unit already being fixed merged for its fix; its fix planning reads the conflict itself.
@@ -400,6 +484,14 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     const conflict = { branch: item?.worktreeBranch ?? item?.branch ?? unit.id, files };
     const unmet = judged(unit.criteria).filter((criterion) => criterion.status !== 'met').map((criterion) => criterion.id);
     const why = `its branch conflicts with the contract branch in ${files.join(', ') || 'unknown files'}`;
+    if (run.contract.nativeSource !== undefined) {
+      const decision = await decideNativeContract(run.contract, context.native, { stage: 'stall', targetId: unit.id, action: 'Plan a bounded repair of this exact merge conflict without weakening criteria',
+        allowAct: run.contract.sessionMode !== true && !exhausted(run, unit.fixRounds + unit.freshAgents),
+        state: () => ({ conflict: { ...conflict, files: [...conflict.files] }, goal: unit.goal, spent: unit.fixRounds + unit.freshAgents, limit: config().maxFixRounds }), continuations: [], signal: run.abort.signal });
+      if (decision.decision.outcome !== 'act') { run.control.fail('other', 'Jev refused the native merge repair'); return; }
+      decision.recordClaim(); run.runtime(unit).cwd = run.contract.worktreePath ?? run.contract.projectRoot; stopForFix(run, unit); unit.fixRounds += 1;
+      await planFix(run, unitBrief(run, unit, conflict), unit.fixRounds); return;
+    }
     if (exhausted(run, unit.fixRounds + unit.freshAgents)) {
       stalled(run, 'unit', unit.id, 'owner', unmet, `${why}; fix rounds exhausted`);
       toOwner(run, 'unit', unit.id, 'fix-rounds-exhausted', unmet, [], [], `Its branch ${conflict.branch} conflicts with the contract branch in: ${files.join(', ')}.`);
@@ -417,6 +509,17 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
   /** A group or the deliverable whose check did not pass: a planned fix, unless its rounds are spent or it stalled. */
   async function targetFailed(run: ContractRun, scope: 'group' | 'deliverable', target: { readonly id: string; readonly goal: string; readonly criteria: readonly Criterion[]; readonly checks: readonly UnitCheck[]; fixRounds: number }, finding: TargetFinding): Promise<void> {
     const unmet = finding.unmet;
+    if (run.contract.nativeSource !== undefined) {
+      const decision = await decideNativeContract(run.contract, context.native, { stage: 'stall', targetId: target.id, action: 'Plan a bounded correction of this failed target, preserving all original criteria',
+        allowAct: run.contract.sessionMode !== true && !exhausted(run, target.fixRounds),
+        state: () => ({ scope, goal: target.goal, criteria: target.criteria.map(c => ({ id: c.id, text: c.text, status: c.status })), unmet: [...finding.unmet], unshown: [...finding.unshown], spent: target.fixRounds, limit: config().maxFixRounds, sessionMode: run.contract.sessionMode === true }),
+        continuations: [], decisionIds: finding.decisionIds, signal: run.abort.signal });
+      if (decision.decision.outcome !== 'act') { run.control.fail('other', 'Jev refused native target correction'); return; }
+      decision.recordClaim(); target.fixRounds += 1;
+      if (scope === 'group') { const group = run.group(target.id); if (group !== undefined) run.moveGroup(group, 'fixing'); }
+      else run.moveContract('fixing');
+      await planFix(run, targetBrief(run, scope, target.id, finding), target.fixRounds); return;
+    }
     if (run.contract.sessionMode === true) {
       stalled(run, scope, target.id, 'owner', unmet, SESSION_NO_DELEGATION_NOTE);
       toOwner(run, scope, target.id, 'stalled', unmet, finding.unshown, finding.decisionIds, SESSION_NO_DELEGATION_NOTE);
@@ -502,7 +605,28 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     await escalations.rejudgeDeliverable(run);
   }
 
+  async function resumeNative(run: ContractRun): Promise<void> {
+    if (run.contract.nativeSource === undefined) return;
+    const contract = run.contract;
+    const targets: { scope: 'unit' | 'group' | 'deliverable'; targetId: string; round: number }[] = [
+      ...contract.units.filter(unit => unit.status === 'fixing' && unit.fixRounds > 0).map(unit => ({ scope: 'unit' as const, targetId: unit.id, round: unit.fixRounds })),
+      ...contract.groups.filter(group => group.status === 'fixing' && group.fixRounds > 0).map(group => ({ scope: 'group' as const, targetId: group.id, round: group.fixRounds })),
+      ...(contract.status === 'fixing' && contract.fixRounds > 0 ? [{ scope: 'deliverable' as const, targetId: contract.id, round: contract.fixRounds }] : []),
+    ];
+    for (const target of targets) {
+      if (run.terminal) return;
+      if (contract.groups.some(group => group.id === `${target.targetId}.f${target.round}`)) continue;
+      if (target.scope === 'unit') { const unit = run.unit(target.targetId); if (unit !== undefined) await planFix(run, unitBrief(run, unit), target.round); }
+      else {
+        const criteria = target.scope === 'deliverable' ? contract.criteria : run.group(target.targetId)?.criteria ?? [];
+        const finding: TargetFinding = { unmet: criteria.filter(c => c.status === 'unmet').map(c => c.id), unshown: criteria.filter(c => c.status === 'unshown' || c.status === 'unread').map(c => c.id), gates: [], output: '', decisionIds: [] };
+        await planFix(run, targetBrief(run, target.scope, target.targetId, finding), target.round);
+      }
+    }
+  }
+
   return {
+    resumeNative: run => guarded(run, 'native correction could not resume', () => resumeNative(run)),
     unitStalled: (run, unitId, check) => guarded(run, `unit ${unitId}'s stall could not be routed`, () => unitStalled(run, unitId, check)),
     unitMergeConflict: (run, unitId, files) => guarded(run, `unit ${unitId}'s merge conflict could not be routed`, () => unitMergeConflict(run, unitId, files)),
     groupFailed: (run, groupId, finding) => guarded(run, `group ${groupId}'s failed check could not be routed`, () => groupFailed(run, groupId, finding)),
@@ -521,4 +645,3 @@ export async function guarded(run: ContractRun, what: string, step: () => Promis
     run.control.fail(failure.kind, `${what}: ${failure.reason}`);
   }
 }
-

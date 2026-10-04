@@ -62,6 +62,18 @@ export function registerWorkLedgerGatewayMethods(catalog: GatewayMethodCatalog, 
     if (!descriptor) throw new Error(`Missing native ledger method descriptor: ${id}`);
     catalog.register(descriptor, handler, { replace: true });
   };
+  attach('workLedger.project', async invocation => {
+    if (!invocation.context.admin || !invocation.context.principalId
+      || !invocation.context.scopes?.some(scope => scope === WORK_LEDGER_READ_SCOPE || scope === '*')
+      || invocation.isAuthorized?.([WORK_LEDGER_READ_SCOPE]) !== true) {
+      throw new GatewayVerbError('Native ledger discovery requires current owner access and read:work-ledger', 'FORBIDDEN', 403);
+    }
+    const input = readInvocationParams(invocation);
+    for (const key of Object.keys(input)) invalid(key);
+    // This identity is from the native ledger owner already composed by this
+    // host, never from the legacy project-planning service or request payload.
+    return { projectId: reader.projectId };
+  });
   attach('workLedger.snapshot', async invocation => {
     params(invocation, reader, false);
     return read(async () => {

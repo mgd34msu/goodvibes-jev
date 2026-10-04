@@ -16,3 +16,5 @@ export { registry as gateJudgmentRegistry } from './judgment-registry.js';
 
 /** Full-size validated snapshots for asynchronous callers; never a projected reading. */
 export { snapshotJudgmentInput } from './judgment-input.js';
+export { decideAutonomous } from './autonomous-decision.js';
+export type { AutonomousDecisionInput, AutonomousDecision, AutonomousContinuation, AutonomousCondition } from './autonomous-decision.js';

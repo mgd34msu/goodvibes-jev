@@ -91,15 +91,18 @@ interface SharedRegistrationSnapshot {
 
 /**
  * Synchronous read of the shared store's on-disk JSON, mirroring the store's own
- * validation exactly (version 1, workspaces[], declines[]). A missing or
- * unparsable file reads as empty, never throws.
+ * coverage rows from legacy v1 or native v2. Checkpoint eligibility still comes
+ * only from an explicit boolean checkpointEligible flag; native incarnations
+ * are not checkpoint grants. Native execution authority has its own strict
+ * WorkspaceRegistrationStore.currentScope reader. A missing or unparsable file
+ * reads as empty, never throws.
  */
 export function readSharedWorkspaceRegistrationSnapshotSync(shellPaths: StoreShellPaths): SharedRegistrationSnapshot {
   const path = sharedWorkspaceRegistrationStorePath(shellPaths);
   if (!existsSync(path)) return { workspaces: [], declines: [] };
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf-8')) as unknown;
-    if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.workspaces)) {
+    if (!isRecord(parsed) || (parsed.version !== 1 && parsed.version !== 2) || !Array.isArray(parsed.workspaces)) {
       return { workspaces: [], declines: [] };
     }
     const workspaces = parsed.workspaces

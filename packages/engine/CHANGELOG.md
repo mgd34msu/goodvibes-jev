@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Classify the exact native project-discovery and durable recovery wire operations without reviving retired automation pause/resume aliases or granting their verbs to other methods.
+
+- Register shared autonomous disposition and refusal questions with calibration fixtures, while preserving dynamic host choices, caller-site attribution, authority checks and recorded decision lineage.
+
+- Native deferral retains its authority/scope identity through live and restored waits; unit-failure reads honor owned cancellation and avoid shared memo reuse; unchanged quality uncertainty cannot reroll into success; native model routing receives full structural source requirements.
 - Remembered permission rules become live only after persistence succeeds.
   Failed writes leave the last committed rules unchanged, reject the calling
   operation, and cannot leak a grant into a later successful write. Concurrent
@@ -21,6 +26,13 @@
   and stop subsequent stale steps without claiming earlier writes rolled back.
 
 ### Added
+
+- Composed native durable runner with schema-5 migration, exact source/binding validation, PR56 captured authority in initial/corrective planning and members, and construction-bound native planner/member tools using the shared recorded autonomous runtime.
+
+- Native contract semantic ownership routes planning, evidence, correction and attempt selection through shared recorded Jev decisions and bound continuations, with persistent budgets, real-condition deferral and shared transport lifecycle; native owner-approval fallbacks are disabled.
+
+- Optional immutable native contract source snapshots preserve complete original goals, ordered criteria and host revisions through planning, correction, persistence and final verification; generated plans cannot replace native roots.
+- Native durable contract admission keyed by work, criteria revision and attempt, with atomic runner receipts/checkpoints, explicit freshly validated resume, current-authority fencing at executor/wake boundaries, and cross-process execution drainage ownership.
 
 - Session-preserving `sessions.turns.cancel` with required expected execution identity, synchronous currentness fencing, idempotent request acceptance, honest stale/ended outcomes, typed public client contracts, and the existing operator write policy. Terminal events remain settlement authority.
 

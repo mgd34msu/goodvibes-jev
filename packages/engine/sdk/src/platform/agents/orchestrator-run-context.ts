@@ -19,6 +19,9 @@ import type { ContractAgentHooks } from '../contract/agent-hooks.js';
 type EmitterContext = import('../runtime/emitters/index.js').EmitterContext;
 
 export interface AgentOrchestratorRunContext {
+  readonly autonomousPort?: import('../tools/agent/contract-binding.js').ContractActionPort | undefined;
+  /** Nonserialized source getter supplied by the native contract construction binding. */
+  readonly autonomousSource?: (() => import('../permissions/autonomous.js').AutonomousToolSource) | undefined;
   /** Revalidate captured byte authority immediately before each initial/retried provider admission. */
   readonly beforeProviderRequest?: (() => Promise<void>) | undefined;
   readonly workingDirectory: string;

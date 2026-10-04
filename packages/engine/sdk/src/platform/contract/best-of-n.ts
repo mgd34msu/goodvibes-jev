@@ -24,6 +24,8 @@ import { estimateTokens, NONE, type Candidate, type JsonValue, type Selection, t
 import { attemptItemId } from '../orchestration/attempts.js';
 import { emptyWorkItemUsage, type AttemptCandidateDiff, type AttemptJudge, type AttemptJudgeInput, type AttemptJudgeVerdict } from '../orchestration/types.js';
 import { bestOfN } from './batteries/best-of-n.js';
+import { nativeContractPort, decideNativeContract, nativeDecisionState, type NativeContractServices } from './native-decisions.js';
+import type { Contract } from './types.js';
 import { emptyJudgmentUsage, meteredPort } from './check.js';
 import { DIFF_FILE_CAP_CHARS, EVIDENCE_TOKEN_BUDGET, headAndTail, splitUnifiedDiff } from './evidence.js';
 import { failureFromError, isAbortError, type ContractRun } from './run-context.js';
@@ -172,10 +174,10 @@ export function selectionCandidates(
 export function readBestOfN(
   context: JsonValue,
   candidates: readonly Candidate[],
-  options: { readonly usage: JudgmentUsage; readonly signal?: AbortSignal | undefined; readonly selector?: Selector | undefined },
+  options: { readonly usage: JudgmentUsage; readonly native?: { contract: Contract; services: NativeContractServices | undefined } | undefined; readonly signal?: AbortSignal | undefined; readonly selector?: Selector | undefined },
 ): Promise<Selection> {
   const selector = options.selector ?? bestOfN;
-  const port = meteredPort(judgmentPort(BEST_OF_N_SITE), options.usage);
+  const port = meteredPort(options.native === undefined ? judgmentPort(BEST_OF_N_SITE) : nativeContractPort(options.native.contract, options.native.services, judgmentPort(BEST_OF_N_SITE), options.signal), options.usage);
   return selector.select(port, context, candidates, { site: BEST_OF_N_SITE, ...(options.signal === undefined ? {} : { signal: options.signal }) });
 }
 
@@ -227,6 +229,7 @@ export function createSelectAttemptJudge(
     const usage = emptyJudgmentUsage();
     const candidates = selectionCandidates(about.context, held.map((candidate) => ({ id: candidate.itemId, diff: candidate.diff, answer: about.answerOf?.(candidate.itemId) })), about.files);
     let selection: Selection;
+  let nativeCandidates: readonly Candidate[] = [];
     try {
       selection = await readBestOfN(about.context, candidates, { usage, selector });
     } finally {
@@ -324,12 +327,14 @@ export async function selectAttempts(run: ContractRun, engineGroupId: string, de
   run.moveUnit(unit, 'checking');
   const usage = emptyJudgmentUsage();
   let selection: Selection;
+  let nativeCandidates: readonly Candidate[] = [];
   const context = unitSelectionContext(unit);
   try {
     const held = (await engine.listHeldMergeGroups(workstream.id)).find((group) => group.groupId === engineGroupId);
     const diffOf = (id: string): AttemptCandidateDiff | null => held?.candidates.find((candidate) => candidate.itemId === id)?.diff ?? null;
     const candidates = selectionCandidates(context, passing.map((attempt) => ({ id: attempt.id, diff: diffOf(attempt.id), answer: attempt.answer })), unit.files);
-    selection = await readBestOfN(context, candidates, { usage, signal: run.abort.signal, selector: deps.selector });
+    nativeCandidates = candidates;
+    selection = await readBestOfN(context, candidates, { usage, signal: run.abort.signal, selector: deps.selector, native: { contract: run.contract, services: run.env.native } });
   } catch (error) {
     if (run.terminal || isAbortError(error, run.abort.signal)) return;
     const failure = failureFromError(error);
@@ -351,7 +356,7 @@ export async function selectAttempts(run: ContractRun, engineGroupId: string, de
     ...(selection.decisionId === undefined ? {} : { decisionId: selection.decisionId }),
   };
   unit.attemptSelection = record;
-  run.emit({
+  if (run.contract.nativeSource === undefined) run.emit({
     type: 'CONTRACT_ATTEMPTS_SELECTED',
     contractId: run.id,
     unitId: unit.id,
@@ -362,7 +367,33 @@ export async function selectAttempts(run: ContractRun, engineGroupId: string, de
   });
   const decisionIds = selection.decisionId === undefined ? [] : [selection.decisionId];
   try {
-    if (selection.outcome === 'act' && selection.chosen !== undefined) {
+    if (run.contract.nativeSource !== undefined) {
+      const state = nativeDecisionState(run.contract);
+      let chosen = state.attemptChoices[unit.id] ?? selection.chosen ?? record.candidateIds[0]!;
+      const visited = state.attemptedChoices[unit.id] ??= [];
+      for (;;) {
+        state.attemptChoices[unit.id] = chosen;
+        if (!visited.includes(chosen)) visited.push(chosen);
+        run.env.native?.changed(run.contract);
+        const selected = chosen;
+        const alternatives = record.candidateIds.filter(id => id !== selected && !visited.includes(id));
+        const decision = await decideNativeContract(run.contract, run.env.native, { stage: 'attempts', targetId: unit.id,
+          action: `Select the exact passing attempt ${selected} for integration; this does not mark unmet or unshown work as met`,
+          allowAct: record.candidateIds.includes(selected) && run.unit(selected)?.status === 'held-merge',
+          state: () => ({ goal: unit.goal, criteria: unit.criteria.map(c => ({ id: c.id, text: c.text })), selected,
+            candidates: nativeCandidates, current: record.candidateIds.map(id => ({ id, status: run.unit(id)?.status ?? 'missing', output: run.unit(id)?.answer ?? '' })) }) as unknown as import('@goodvibes-jev/judgment').EntryType,
+          continuations: alternatives.map(id => ({ id: `select:${id}`, kind: 'revise-action' as const, description: `Prepare passing attempt ${id} as the exact alternative and freshly judge it before selection.` })),
+          decisionIds, signal: run.abort.signal });
+        if (decision.decision.outcome === 'reject') { deps.failContract(run, 'other', 'Jev refused the native attempt selection'); return; }
+        if (decision.decision.outcome === 'act') {
+          decision.recordClaim(); await acceptAttempt(run, unit.id, selected, 'native semantic act on the exact passing candidate', decision.decision.judgmentDecisionIds); return;
+        }
+        const next = alternatives.find(id => `select:${id}` === decision.continuationId);
+        if (next === undefined) throw new Error('Native attempt continuation is no longer eligible');
+        decision.assertCurrent(); chosen = next;
+      }
+    }
+    if (selection.outcome === 'act'  && selection.chosen !== undefined) {
       selection.recordAction(`picked ${selection.chosen}`);
       await acceptAttempt(run, unit.id, selection.chosen, `selected at act (${record.reasons})`, decisionIds);
       return;

@@ -1,3 +1,4 @@
+import { isNativeConversationTurn, NATIVE_TURN_EXECUTION_REFUSAL } from '../../core/native-turn-scope.js';
 import type { Tool } from '../../types/tools.js';
 import { resolveCredentialEnvScrub, scrubCredentialEnv, type CredentialEnvScrubConfig, type ResolvedCredentialEnvScrub } from '../exec/credential-env.js';
 import type { ContractRunner } from '../../contract/runner.js';
@@ -471,6 +472,7 @@ export function createWorkflowTool(services: WorkflowServices, contracts: Workfl
             return { success: false, error: 'mode "start" requires "task"' };
           }
           if (input.definition === CONTRACT_WORKFLOW_DEFINITION) {
+            if (isNativeConversationTurn()) return { success: false, error: NATIVE_TURN_EXECUTION_REFUSAL };
             const started = contracts.contractRunner.start({
               ask: input.task,
               sessionId: contracts.resolveSessionId(),

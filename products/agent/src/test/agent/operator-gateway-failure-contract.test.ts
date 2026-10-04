@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { forgetFailureReadings, GoodVibesSdkError, installJudgmentPort, SDKErrorCodes } from '@goodvibes-jev/engine/errors';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { invokeOperatorGatewayMethod } from '../../agent/operator-gateway-call.ts';
+import { invokeOperatorGatewayMethod, type OperatorGatewayCallResult } from '../../agent/operator-gateway-call.ts';
+import type { OperatorMethodInput, OperatorMethodOutput } from '@goodvibes-jev/engine/sdk/contracts';
 import { createProfileGatewayInvoke } from '../../agent/owner-profile-gateway.ts';
 import { mockFetch } from '../helpers/typed-fetch-mock.ts';
 
@@ -62,6 +63,14 @@ describe('operator gateway uses the shared engine failure contract through the r
       .toMatchObject({ ok: false, kind: 'auth_required', methodId, route });
     expect(requests).toHaveLength(0);
     expect(log).toHaveLength(0);
+  });
+  test('synchronous SDK setup errors still return a promise and use shared failure classification', async () => {
+    const log = reading('unknown');
+    let pending: ReturnType<typeof invoke> | undefined;
+    expect(() => { pending = invokeOperatorGatewayMethod({ ...connection, baseUrl: 'not a valid URL' }, methodId, route, payload); }).not.toThrow();
+    expect(pending).toBeInstanceOf(Promise);
+    expect(await pending).toMatchObject({ ok: false, kind: 'connected_host_error', methodId, route, baseUrl: 'not a valid URL' });
+    expect(requests).toHaveLength(0); expect(log).toHaveLength(0);
   });
   test('successful mutation forwards authority and preserves method metadata', async () => {
     expect(await invoke()).toEqual({ ok: true, data: success, methodId, route });
@@ -162,3 +171,20 @@ describe('operator gateway uses the shared engine failure contract through the r
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 });
+
+
+// Never executed: CI's test-inclusive compiler must retain method-specific
+// payload and result checks across the generic promise-return boundary.
+function assertNativeGatewayTypes(): void {
+  const nativePayload: OperatorMethodInput<'workLedger.execution.status'> = {
+    projectId: 'p', workId: 'w', attemptId: 'a', expectedRevision: { work: 1, criteria: 1, attempt: 1 },
+  };
+  const pending = invokeOperatorGatewayMethod(connection, 'workLedger.execution.status', 'POST /native/status', nativePayload);
+  const exact: Promise<OperatorGatewayCallResult<OperatorMethodOutput<'workLedger.execution.status'>>> = pending;
+  // @ts-expect-error A method-specific required identity cannot be omitted.
+  void invokeOperatorGatewayMethod(connection, 'workLedger.execution.status', 'POST /native/status', { projectId: 'p' });
+  // @ts-expect-error The returned native union cannot be treated as an unrelated output.
+  const wrong: Promise<OperatorGatewayCallResult<{ unrelated: true }>> = pending;
+  void exact; void wrong;
+}
+void assertNativeGatewayTypes;

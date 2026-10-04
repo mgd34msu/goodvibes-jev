@@ -23,7 +23,7 @@ function wire(input: Request, outcome: 'act' | 'confirm' | 'escalate' = 'act'): 
   const readings = Object.fromEntries(input.input.candidates.map((_, index) => [`candidate_${index}`, {
     kind: 'yes-no' as const, probability: index === 0 ? 0.93 : 0.03, verdict: index === 0 ? 'yes' as const : 'no' as const, outcome: index === 0 ? outcome : 'act' as const,
   }]));
-  const common = { protocolVersion: 1, requestId: input.requestId, battery: input.battery, batteryVersion: 1, readings,
+  const common = { protocolVersion: 1 as const, requestId: input.requestId, battery: input.battery, batteryVersion: 1 as const, readings,
     evidence: input.input.candidates.map((_, i) => ({ decisionId: `fixture-decision-${i}`, model: 'fixture-model-v1', requestedModel: 'fixture-model', usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1 })),
   };
   return outcome === 'act' ? { ...common, status: 'settled', outcome,

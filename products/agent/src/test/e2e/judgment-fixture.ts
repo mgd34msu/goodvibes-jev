@@ -1,3 +1,5 @@
+import nativeRoute from '../fixtures/e2e-judgments/native-route.json';
+import nativeTurn from '../fixtures/e2e-judgments/native-turn.json';
 import conversationRoute from '../fixtures/e2e-judgments/conversation-route.json';
 import modelIdentity from '../fixtures/e2e-judgments/model-identity.json';
 import modelTier from '../fixtures/e2e-judgments/model-tier.json';
@@ -8,8 +10,26 @@ const prompts = ['first words in a brand new workspace', 'please answer the e2e 
 const stable = (value: unknown): string => JSON.stringify(value, (_key, entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
   ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b))) : entry);
 
+/**
+ * Replace only host-generated SHA-256 protocol identities, retaining their
+ * equality relationships. All semantic text, complete questions, keys and
+ * shape must still match the captured synthetic request exactly.
+ */
+export function nativeFixtureShape(value: unknown): string {
+  const identities = new Map<string, string>();
+  return stable(value).replace(/"[a-f0-9]{64}"/g, identity => {
+    let slot = identities.get(identity);
+    if (!slot) { slot = `"<host-sha256-${identities.size}>"`; identities.set(identity, slot); }
+    return slot;
+  });
+}
+const nativePrompt = nativeRoute.state.originalSource.text;
+function nativeRequest(template: typeof nativeRoute | typeof nativeTurn, prompt: string): unknown {
+  return JSON.parse(JSON.stringify(template).split(JSON.stringify(nativePrompt)).join(JSON.stringify(prompt)));
+}
+
 /** Exact captured synthetic requests, never an approval/classification shortcut. */
-export function e2eJudgmentAnswers(body: unknown): { kind: 'tier' | 'identity' | 'route' | 'turn'; answers: unknown } | undefined {
+export function e2eJudgmentAnswers(body: unknown): { kind: 'tier' | 'identity' | 'route' | 'turn' | 'native-route' | 'native-turn'; answers: unknown } | undefined {
   const serialized = stable(body);
   if (serialized === stable(modelTier)) return { kind: 'tier', answers: {
     frontier: { type: 'noul', noul: 0 }, small: { type: 'noul', noul: 1 },
@@ -19,6 +39,12 @@ export function e2eJudgmentAnswers(body: unknown): { kind: 'tier' | 'identity' |
     fits_0: { type: 'noul', noul: 0 }, fits_1: { type: 'noul', noul: 0 },
   } };
   for (const prompt of prompts) {
+    if (nativeFixtureShape(body) === nativeFixtureShape(nativeRequest(nativeRoute, prompt))) return { kind: 'native-route', answers: {
+      route: { type: 'choice', choice: 'converse', confidence: 0.99, probabilities: { converse: 0.99, answer: 0.005, contract: 0.005 } },
+    } };
+    if (nativeFixtureShape(body) === nativeFixtureShape(nativeRequest(nativeTurn, prompt))) return { kind: 'native-turn', answers: {
+      disposition: { type: 'choice', choice: 'act', confidence: 0.99, probabilities: { act: 0.99, reject: 0.005, revise_0: 0.005 } },
+    } };
     if (serialized === stable({ ...conversationRoute, state: { request: prompt } })) return { kind: 'route', answers: {
       route: { type: 'choice', choice: 'converse', confidence: 0.99, probabilities: { converse: 0.99, answer: 0.005, contract: 0.005 } },
     } };
@@ -52,7 +78,7 @@ export function startE2EJudgments() {
     return Response.json({ model: conversationRoute.model, answers: reading.answers, usage: { input_tokens: 10, output_tokens: 3 } });
   } });
   return { baseURL: `http://127.0.0.1:${server.port}`, accepted, rejected, unexpected,
-    assertNoUnexpected: () => { if (unexpected.length) throw new Error(`E2E encountered ${unexpected.length} unknown judgment request(s)`); },
+    assertNoUnexpected: () => { if (unexpected.length) throw new Error(`E2E encountered ${unexpected.length} unknown judgment request(s): ${JSON.stringify(unexpected)}`); },
     stop: () => { void server.stop(true); },
   };
 }

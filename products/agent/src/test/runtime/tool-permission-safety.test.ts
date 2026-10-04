@@ -9,7 +9,7 @@ import { executeToolCalls, type ToolExecutionDeps } from '@goodvibes-jev/engine/
 import { TurnHookOwner } from '@goodvibes-jev/engine/sdk/platform/hooks';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { PermissionManager, PermissionCheckResult, PermissionExecutionOptions } from '@goodvibes-jev/engine/sdk/platform/permissions';
-import { JudgmentError, SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { JudgmentError, SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { RuntimeEventBus } from '@/runtime/index.ts';
 import { composeAgentPermissionManager } from '../../runtime/bootstrap-core.ts';
@@ -61,6 +61,7 @@ function pipeline(services: RuntimeServices, signal?: AbortSignal) {
     execute: async (args) => { executed.push(args); return { success: true, output: 'fixture' }; },
   });
   const deps: ToolExecutionDeps = {
+    autonomousSource: () => ({ goal: 'Read the synthetic fixture through the Agent permission pipeline', criteria: ['Execute only the requested fixture action'] }),
     toolRegistry: registry, permissionManager: composeAgentPermissionManager(services),
     turnSignal: signal, runtimeBus: null, hookDispatcher: null, sessionId: 'fixture',
     emitterContext: () => { throw new Error('No event emitter in fixture'); },
@@ -71,6 +72,22 @@ const allowed: PermissionCheckResult = {
   approved: true, persisted: false, sourceLayer: 'config_policy', reasonCode: 'config_allow',
   analysis: { classification: 'generic', riskLevel: 'low', summary: 'typed fixture', reasons: [] },
 };
+
+/** Replace only external judgment I/O; real preparation, constraints and admission remain live. */
+function record(port: JudgmentPort) {
+  const log = new SqliteDecisionLog(':memory:'); logs.push(log);
+  installJudgmentPort(withDecisionLog(port, log));
+  return log;
+}
+function approvalReadings() {
+  return fakePort((name, question) => {
+    if (name === 'disposition') return choiceAnswer(question, 'act', 0.99);
+    if (name === 'kind') return choiceAnswer(question, 'read', 0.99);
+    if (name === 'family') return choiceAnswer(question, 'generic', 0.99);
+    if (['secrets', 'mutates', 'outward', 'irreversible', 'beyondProject', 'weakensSecurity', 'obfuscated', 'catastrophic', 'cardDetails'].includes(name)) return noulAnswer(0.001);
+    throw new Error(`Unscripted question: ${name}`);
+  });
+}
 
 describe('Agent adopts the shared permission gate without alternate authority', () => {
   test('the compatibility path is the exact shared implementation and bootstrap uses its composition', () => {
@@ -84,9 +101,11 @@ describe('Agent adopts the shared permission gate without alternate authority', 
     for (const failure of ['unavailable', 'throwing'] as const) test(`${tool}: ${failure} authoritative check never admits a fake action`, async () => {
       const services = runtime();
       const error = failure === 'unavailable' ? new JudgmentError('unavailable', 'fixture unavailable') : new Error('fixture manager failed');
-      services.permissionManager.checkDetailed = async () => { throw error; };
+      const log = record({ model: 'jev-1.13.0', ask: async () => { throw error; } });
       const gate = pipeline(services);
-      await expect(gate.run(tool)).rejects.toBe(error);
+      await expect(gate.run(tool)).rejects.toMatchObject({ kind: 'unavailable' });
+      expect(log.query({}).every(entry => entry.status === 'failed')).toBe(true);
+      expect(log.query({}).length).toBeGreaterThan(0);
       expect(gate.executed).toHaveLength(0);
     });
   }
@@ -121,21 +140,34 @@ describe('Agent adopts the shared permission gate without alternate authority', 
     });
   }
 
+  for (const method of ['check', 'checkDetailed'] as const) {
+    for (const failure of ['unavailable', 'throwing'] as const) test(`${method}: the retained guard propagates the exact ${failure} authority failure`, async () => {
+      const error = failure === 'unavailable' ? new JudgmentError('unavailable', 'fixture unavailable') : new Error('fixture manager failed');
+      const manager: Pick<PermissionManager, 'check' | 'checkDetailed' | 'getCategory'> = {
+        check: async () => { throw error; },
+        checkDetailed: async () => { throw error; },
+        getCategory: () => 'read',
+      };
+      sharedGuard(manager);
+      await expect(manager[method]('read', {})).rejects.toBe(error);
+    });
+  }
+
   test('revocation reported by the authority while awaiting is never fallback-approved', async () => {
     const services = runtime();
     const entered = deferred();
     const release = deferred();
-    let revoked = false;
-    services.permissionManager.checkDetailed = async () => {
-      entered.resolve(); await release.promise;
-      if (revoked) throw new Error('fixture authority revoked');
-      return allowed;
-    };
+    const answers = approvalReadings();
+    record({ model: answers.port.model, async ask(request) {
+      if ('disposition' in request.questions) { entered.resolve(); await release.promise; }
+      return answers.port.ask(request);
+    } });
     const gate = pipeline(services);
     const outcome = gate.run('read').catch((error: unknown) => error);
     await entered.promise;
-    revoked = true; release.resolve();
-    expect(await outcome).toMatchObject({ message: 'fixture authority revoked' });
+    services.configManager.set('permissions.mode', 'plan');
+    release.resolve();
+    expect(await outcome).toMatchObject({ message: 'Autonomous admission authority, source or scope changed' });
     expect(gate.executed).toHaveLength(0);
   });
 
@@ -143,15 +175,22 @@ describe('Agent adopts the shared permission gate without alternate authority', 
     const services = runtime();
     const entered = deferred();
     const release = deferred();
-    services.permissionManager.checkDetailed = async () => { entered.resolve(); await release.promise; return allowed; };
+    const answers = approvalReadings();
+    const log = record({ model: answers.port.model, async ask(request) {
+      if ('disposition' in request.questions) { entered.resolve(); await release.promise; }
+      return answers.port.ask(request);
+    } });
     const controller = new AbortController();
     const gate = pipeline(services, controller.signal);
     const outcome = gate.run('fetch').catch((error: unknown) => error);
     await entered.promise; controller.abort('private reason');
-    expect(await outcome).toMatchObject({ name: 'JudgmentError', kind: 'aborted' });
+    try {
+      expect(await Promise.race([outcome, Bun.sleep(1_000).then(() => 'pending after cancellation')])).toMatchObject({ name: 'JudgmentError', kind: 'aborted' });
+      expect(gate.executed).toHaveLength(0);
+    } finally { release.resolve(); await outcome; }
+    await Bun.sleep(0);
     expect(gate.executed).toHaveLength(0);
-    release.resolve(); await Bun.sleep(0);
-    expect(gate.executed).toHaveLength(0);
+    expect(log.query({ site: 'engine.gate.autonomous-tool' })).toMatchObject([{ status: 'failed' }]);
   });
 
   test('failed real judgment retains failure provenance without a fabricated permission decision', async () => {
@@ -173,18 +212,13 @@ describe('Agent adopts the shared permission gate without alternate authority', 
 
   test('real typed Jev approval executes only the fake action and retains decision-log provenance', async () => {
     const services = runtime();
-    const answers = fakePort((name, question) => {
-      if (name === 'kind') return choiceAnswer(question, 'read', 0.99);
-      if (name === 'family') return choiceAnswer(question, 'generic', 0.99);
-      if (['secrets', 'mutates', 'outward', 'irreversible', 'beyondProject', 'weakensSecurity', 'obfuscated', 'catastrophic', 'cardDetails'].includes(name)) return noulAnswer(0.001);
-      throw new Error(`Unscripted question: ${name}`);
-    });
-    const log = new SqliteDecisionLog(':memory:'); logs.push(log);
-    installJudgmentPort(withDecisionLog(answers.port, log));
+    const answers = approvalReadings();
+    const log = record(answers.port);
     const gate = pipeline(services);
     const args = Object.freeze({ path: 'fixture.txt' });
     expect((await gate.run('read', args))[0]?.success).toBe(true);
     expect(gate.executed).toEqual([args]);
+    expect(answers.requests.find(request => request.context?.site === 'engine.gate.autonomous-tool')?.state).toMatchObject({ input: { source: { goal: 'Read the synthetic fixture through the Agent permission pipeline', criteria: ['Execute only the requested fixture action'] } } });
     const entries = log.query({});
     expect(entries.length).toBeGreaterThan(0);
     expect(JSON.stringify(entries)).toContain('engine.gate');

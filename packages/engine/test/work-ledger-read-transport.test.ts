@@ -11,7 +11,7 @@ import { WorkLedgerAccessError, type WorkLedgerEvent } from '../sdk/src/platform
 function event(sequence: number): Exclude<WorkLedgerEvent, { type: 'import_legacy' }> {
   return { sequence, type: 'create', actorId: 'fixture-owner', requestId: `request-${sequence}`, workId: `work-${sequence}`,
     attemptId: null, at: sequence,
-    work: { id: `work-${sequence}`, title: 'Synthetic task', goal: 'Fixture only', criteria: ['Read safely'], revision: sequence,
+    work: { id: `work-${sequence}`, title: 'Synthetic task', goal: 'Fixture only', criteria: ['Read safely'], source: null, revision: sequence,
       criteriaRevision: 1, reportedState: 'pending', currentAttemptId: null, createdAt: sequence, updatedAt: sequence },
     attempts: [], evidence: null, reason: null };
 }
@@ -362,7 +362,7 @@ describe('fresh authorization on every ledger entry point', () => {
   test('ledger read and import methods opt into the fresh-auth gate', () => {
     const host = fixture();
     expect(host.catalog.list().filter(method => method.metadata?.requiresFreshOperatorAuth === true).map(method => method.id).sort())
-      .toEqual(['workLedger.history', 'workLedger.importLegacy', 'workLedger.prepareLegacyImport', 'workLedger.snapshot']);
+      .toEqual(['workLedger.execution.cancel', 'workLedger.execution.resume', 'workLedger.execution.start', 'workLedger.execution.status', 'workLedger.history', 'workLedger.importLegacy', 'workLedger.intake.admit', 'workLedger.intake.cancel', 'workLedger.intake.capture', 'workLedger.intake.get', 'workLedger.intake.resume', 'workLedger.prepareLegacyImport', 'workLedger.project', 'workLedger.snapshot', 'workLedger.submission.get', 'workLedger.submit']);
   });
 });
 

@@ -4,12 +4,14 @@
 
 ```ts
 
-import { Battery } from '@goodvibes-jev/judgment/decisions';
-import { ChoiceItem } from '@goodvibes-jev/judgment/decisions';
+import { Battery } from '@goodvibes-jev/judgment';
+import type { CallOptions } from '@goodvibes-jev/judgment';
+import { ChoiceItem } from '@goodvibes-jev/judgment';
 import { ChoiceReading } from '@goodvibes-jev/judgment/decisions';
 import type { JevDecision } from '@goodvibes-jev/judgment/decisions';
 import type { JudgmentPort } from '@goodvibes-jev/judgment/decisions';
-import { YesNoItem } from '@goodvibes-jev/judgment/decisions';
+import type { JudgmentPort as JudgmentPort_2 } from '@goodvibes-jev/judgment';
+import { YesNoItem } from '@goodvibes-jev/judgment';
 import { YesNoReading } from '@goodvibes-jev/judgment/decisions';
 import { z } from 'zod/v4';
 import type { ZodType } from 'zod/v4';
@@ -434,7 +436,7 @@ export function categoryForCode(code: string | undefined): DaemonErrorCategory |
 export function categoryForStatus(status: number | undefined): DaemonErrorCategory | undefined;
 
 // @public (undocumented)
-export const CHECK_RESULTS: readonly ["pass", "nudge", "await-owner", "stall", "recorded"];
+export const CHECK_RESULTS: readonly ["pass", "nudge", "await-owner", "native-decision", "stall", "recorded"];
 
 // @public (undocumented)
 export const CHECK_SCOPES: readonly ["unit", "group", "deliverable"];
@@ -1789,6 +1791,12 @@ readonly before_response: YesNoItem;
 }>;
 
 // @public
+export interface FailureReadOptions extends Pick<CallOptions, 'signal' | 'beforeAttempt' | 'onRetry'> {
+    // (undocumented)
+    readonly port: JudgmentPort_2;
+}
+
+// @public
 export function failureState(evidence: FailureEvidence): string;
 
 // @public
@@ -1854,7 +1862,7 @@ export { forSession as forSessionRuntime }
 export const FOUNDATION_METADATA: {
     readonly productId: "goodvibes";
     readonly productVersion: "2.0.23";
-    readonly operatorMethodCount: 518;
+    readonly operatorMethodCount: 530;
     readonly operatorEventCount: 34;
     readonly peerEndpointCount: 6;
 };
@@ -2948,7 +2956,7 @@ export function openServerSentEventStream(transport: HttpTransport, pathOrUrl: s
 export const OPERATOR_CONTRACT: OperatorContractManifest;
 
 // @public (undocumented)
-export const OPERATOR_METHOD_IDS: readonly ["accounts.snapshot", "acp.agents.list", "acp.sessions.create", "approvals.approve", "approvals.cancel", "approvals.claim", "approvals.deny", "approvals.list", "approvals.raise", "artifacts.content.get", "artifacts.create", "artifacts.get", "artifacts.list", "automation.heartbeat.list", "automation.heartbeat.run", "automation.integration.snapshot", "automation.jobs.create", "automation.jobs.delete", "automation.jobs.disable", "automation.jobs.enable", "automation.jobs.list", "automation.jobs.run", "automation.jobs.update", "automation.runs.cancel", "automation.runs.get", "automation.runs.list", "automation.runs.retry", "automation.schedules.create", "automation.schedules.delete", "automation.schedules.disable", "automation.schedules.enable", "automation.schedules.list", "automation.schedules.run", "browser.click", "browser.extract", "browser.history.back", "browser.history.forward", "browser.navigate", "browser.press", "browser.provision", "browser.readText", "browser.screenshot", "browser.scroll", "browser.select", "browser.sessions.attach", "browser.sessions.close", "browser.sessions.launch", "browser.sessions.list", "browser.sessions.release", "browser.snapshot", "browser.status", "browser.tabs.close", "browser.tabs.create", "browser.tabs.list", "browser.tabs.switch", "browser.type", "browser.waitFor", "calendar.events.create", "calendar.events.get", "calendar.events.list", "calendar.ics.export", "calendar.ics.import", "channels.accounts.action.default", "channels.accounts.action.named", "channels.accounts.get", "channels.accounts.list", "channels.accounts.surface.list", "channels.actions.invoke", "channels.actions.list", "channels.actions.surface.list", "channels.agent_tools.list", "channels.agent_tools.surface.list", "channels.allowlist.edit", "channels.allowlist.resolve", "channels.authorize", "channels.capabilities.list", "channels.capabilities.surface.list", "channels.directory.query", "channels.doctor.get", "channels.drafts.delete", "channels.drafts.get", "channels.drafts.list", "channels.drafts.save", "channels.inbox.list", "channels.lifecycle.get", "channels.policies.audit", "channels.policies.list", "channels.policies.update", "channels.profiles.delete", "channels.profiles.get", "channels.profiles.list", "channels.profiles.set", "channels.repairs.list", "channels.routing.assign", "channels.routing.delete", "channels.routing.list", "channels.setup.get", "channels.status", "channels.targets.resolve", "channels.test.send", "channels.tools.invoke", "channels.tools.list", "channels.tools.surface.list", "checkin.config.get", "checkin.config.set", "checkin.receipts.list", "checkin.run", "checkpoints.create", "checkpoints.diff", "checkpoints.list", "checkpoints.restore", "checkpoints.restorePreview", "checkpoints.revertHunk", "checkpoints.revertHunkPreview", "ci.status", "ci.watches.create", "ci.watches.delete", "ci.watches.list", "ci.watches.run", "companion.chat.events.stream", "companion.chat.messages.create", "companion.chat.messages.edit", "companion.chat.messages.list", "companion.chat.messages.retry", "companion.chat.messages.steer", "companion.chat.sessions.close", "companion.chat.sessions.create", "companion.chat.sessions.delete", "companion.chat.sessions.get", "companion.chat.sessions.list", "companion.chat.sessions.update", "companion.chat.turns.cancel", "config.get", "config.set", "continuity.snapshot", "contracts.cancel", "contracts.get", "contracts.list", "contracts.reply", "contracts.start", "control.auth.current", "control.auth.login", "control.clients.list", "control.contract", "control.events.catalog", "control.events.stream", "control.messages.list", "control.methods.get", "control.methods.list", "control.snapshot", "control.status", "control.web", "cost.attribution.get", "credentials.delete", "credentials.get", "credentials.set", "deliveries.get", "deliveries.list", "devices.artifacts.list", "devices.artifacts.read", "devices.capability.request", "devices.grants.list", "devices.grants.revoke", "devices.housekeeping.run", "devices.nodes.list", "email.draft.create", "email.expectation.cancel", "email.expectation.list", "email.expectation.open", "email.inbound.status", "email.inbox.list", "email.inbox.read", "email.send", "flags.graduation.report", "fleet.archive", "fleet.archiveFinished", "fleet.archived.list", "fleet.attempts.judge", "fleet.attempts.list", "fleet.attempts.pick", "fleet.conflicts.list", "fleet.conflicts.resolve", "fleet.graph.get", "fleet.list", "fleet.observed.steer", "fleet.snapshot", "fleet.unarchive", "health.snapshot", "homeassistant.homeGraph.askHomeGraph", "homeassistant.homeGraph.browse", "homeassistant.homeGraph.export", "homeassistant.homeGraph.generateHomeGraphPacket", "homeassistant.homeGraph.generateRoomPage", "homeassistant.homeGraph.import", "homeassistant.homeGraph.ingestHomeGraphArtifact", "homeassistant.homeGraph.ingestHomeGraphNote", "homeassistant.homeGraph.ingestHomeGraphUrl", "homeassistant.homeGraph.linkHomeGraphKnowledge", "homeassistant.homeGraph.listHomeGraphIssues", "homeassistant.homeGraph.map", "homeassistant.homeGraph.pages.list", "homeassistant.homeGraph.refinement.run", "homeassistant.homeGraph.refinement.task.cancel", "homeassistant.homeGraph.refinement.task.get", "homeassistant.homeGraph.refinement.tasks.list", "homeassistant.homeGraph.refreshDevicePassport", "homeassistant.homeGraph.reindex", "homeassistant.homeGraph.reset", "homeassistant.homeGraph.reviewHomeGraphFact", "homeassistant.homeGraph.sources.list", "homeassistant.homeGraph.status", "homeassistant.homeGraph.syncHomeGraph", "homeassistant.homeGraph.unlinkHomeGraphKnowledge", "intelligence.snapshot", "judgment.battery.run", "knowledge.ask", "knowledge.candidate.decide", "knowledge.candidate.get", "knowledge.candidates.list", "knowledge.connector.doctor", "knowledge.connector.get", "knowledge.connectors.list", "knowledge.extraction.get", "knowledge.extractions.list", "knowledge.graphql.execute", "knowledge.graphql.schema", "knowledge.ingest.artifact", "knowledge.ingest.bookmarks", "knowledge.ingest.browserHistory", "knowledge.ingest.connector", "knowledge.ingest.url", "knowledge.ingest.urls", "knowledge.issue.review", "knowledge.issues.list", "knowledge.item.get", "knowledge.job-runs.list", "knowledge.job.get", "knowledge.job.run", "knowledge.jobs.list", "knowledge.lint", "knowledge.map", "knowledge.nodes.list", "knowledge.packet", "knowledge.projection.materialize", "knowledge.projection.render", "knowledge.projections.list", "knowledge.refinement.run", "knowledge.refinement.task.cancel", "knowledge.refinement.task.get", "knowledge.refinement.tasks.list", "knowledge.reindex", "knowledge.report.get", "knowledge.reports.list", "knowledge.schedule.delete", "knowledge.schedule.enable", "knowledge.schedule.get", "knowledge.schedule.save", "knowledge.schedules.list", "knowledge.search", "knowledge.source.extraction.get", "knowledge.sources.list", "knowledge.status", "knowledge.usage.list", "local_auth.bootstrap.delete", "local_auth.sessions.delete", "local_auth.status", "local_auth.users.create", "local_auth.users.delete", "local_auth.users.password.rotate", "mcp.config.get", "mcp.config.reload", "mcp.servers.list", "mcp.servers.remove", "mcp.servers.reveal", "mcp.servers.upsert", "mcp.tools.list", "media.analyze", "media.generate", "media.providers.list", "media.transform", "memory.consolidation.receipts", "memory.doctor", "memory.embeddings.default.set", "memory.projections.get", "memory.projections.list", "memory.records.add", "memory.records.delete", "memory.records.export", "memory.records.get", "memory.records.import", "memory.records.links.add", "memory.records.links.list", "memory.records.list", "memory.records.search", "memory.records.search-semantic", "memory.records.update", "memory.records.update-review", "memory.review-queue", "memory.vector.rebuild", "memory.vector.stats", "models.current.get", "models.current.set", "models.list", "multimodal.analyze", "multimodal.packet", "multimodal.providers.list", "multimodal.status", "multimodal.writeback", "occasions.acknowledge", "occasions.answer", "occasions.confirm", "occasions.conflict.resolve", "occasions.gifts", "occasions.interview.answer", "occasions.interview.get", "occasions.interview.record", "occasions.list", "occasions.pending", "occasions.plans.confirm", "occasions.plans.list", "occasions.plans.propose", "occasions.propose", "occasions.remove", "occasions.state", "occasions.sweep", "ops.memory.get", "pairing.handoff.complete", "pairing.handoff.create", "pairing.posture.get", "pairing.tokens.create", "pairing.tokens.delete", "pairing.tokens.list", "pairing.tokens.migrate", "pairing.tokens.rename", "pairing.tokens.revokeShared", "panels.list", "panels.open", "payments.budget.status", "payments.cards.create", "payments.cards.delete", "payments.cards.list", "payments.checkout.begin", "payments.checkout.fillCard", "payments.purchases.list", "permissions.rules.delete", "permissions.rules.list", "power.keepAwake.set", "power.status.get", "principals.create", "principals.delete", "principals.get", "principals.list", "principals.resolve", "principals.update", "profile.append", "profile.forget", "profile.get", "profile.person", "profile.provenance", "profile.read", "profile.set", "profile.status", "profile.undo", "projectPlanning.decisions.list", "projectPlanning.decisions.record", "projectPlanning.evaluate", "projectPlanning.language.get", "projectPlanning.language.upsert", "projectPlanning.state.get", "projectPlanning.state.upsert", "projectPlanning.status", "projectPlanning.workPlan.clearCompleted", "projectPlanning.workPlan.snapshot", "projectPlanning.workPlan.task.create", "projectPlanning.workPlan.task.delete", "projectPlanning.workPlan.task.get", "projectPlanning.workPlan.task.status", "projectPlanning.workPlan.task.update", "projectPlanning.workPlan.tasks.list", "projectPlanning.workPlan.tasks.reorder", "providers.get", "providers.list", "providers.usage.get", "push.subscriptions.create", "push.subscriptions.delete", "push.subscriptions.list", "push.subscriptions.reconcile", "push.subscriptions.verify", "push.vapid.get", "quota.fanout.get", "quota.snapshot.get", "relay.pairing.mint", "relay.reachability.get", "remote.node_host.contract", "remote.pair.requests.approve", "remote.pair.requests.list", "remote.pair.requests.reject", "remote.peers.disconnect", "remote.peers.invoke", "remote.peers.list", "remote.peers.token.revoke", "remote.peers.token.rotate", "remote.snapshot", "remote.work.cancel", "remote.work.list", "review.snapshot", "rewind.apply", "rewind.conversation.host.register", "rewind.conversation.host.release", "rewind.conversation.hosts.list", "rewind.conversation.requests.answer", "rewind.conversation.requests.take", "rewind.plan", "routes.bindings.create", "routes.bindings.delete", "routes.bindings.list", "routes.bindings.update", "routes.snapshot", "runtime.metrics.get", "scheduler.capacity", "security.settings", "services.install", "services.restart", "services.start", "services.status", "services.stop", "services.uninstall", "sessions.changes.get", "sessions.close", "sessions.contextUsage.get", "sessions.create", "sessions.delete", "sessions.detach", "sessions.followUp", "sessions.get", "sessions.hosted.attach", "sessions.hosted.create", "sessions.hosted.detach", "sessions.hosted.kill", "sessions.hosted.list", "sessions.inputs.cancel", "sessions.inputs.deliver", "sessions.inputs.list", "sessions.integration.snapshot", "sessions.list", "sessions.messages.create", "sessions.messages.list", "sessions.permissionMode.get", "sessions.permissionMode.set", "sessions.queuedMessages.delete", "sessions.queuedMessages.edit", "sessions.queuedMessages.list", "sessions.register", "sessions.reopen", "sessions.search", "sessions.steer", "sessions.toolCalls.cancel", "sessions.turns.cancel", "settings.snapshot", "skills.create", "skills.delete", "skills.get", "skills.list", "skills.update", "stepup.challenge.mint", "stepup.credentials.register", "surfaces.list", "tailscale.get", "tailscale.serve.run", "tasks.cancel", "tasks.create", "tasks.get", "tasks.list", "tasks.retry", "tasks.status", "telemetry.errors.list", "telemetry.events.list", "telemetry.metrics.get", "telemetry.otlp.logs", "telemetry.otlp.metrics", "telemetry.otlp.traces", "telemetry.snapshot", "telemetry.stream", "telemetry.traces.list", "update.check", "update.status", "voice.local.install", "voice.local.status", "voice.providers.list", "voice.realtime.session", "voice.status", "voice.stt", "voice.tts", "voice.tts.stream", "voice.voices.list", "voice.wake.model.get", "voice.wake.provision", "voice.wake.status", "watchers.create", "watchers.delete", "watchers.list", "watchers.run", "watchers.start", "watchers.stop", "watchers.update", "web_search.providers.list", "web_search.query", "workLedger.history", "workLedger.importLegacy", "workLedger.prepareLegacyImport", "workLedger.snapshot", "workspaces.registrations.add", "workspaces.registrations.list", "workspaces.registrations.remove", "workspaces.resolve", "worktrees.discard", "worktrees.setup.run", "worktrees.snapshot"];
+export const OPERATOR_METHOD_IDS: readonly ["accounts.snapshot", "acp.agents.list", "acp.sessions.create", "approvals.approve", "approvals.cancel", "approvals.claim", "approvals.deny", "approvals.list", "approvals.raise", "artifacts.content.get", "artifacts.create", "artifacts.get", "artifacts.list", "automation.heartbeat.list", "automation.heartbeat.run", "automation.integration.snapshot", "automation.jobs.create", "automation.jobs.delete", "automation.jobs.disable", "automation.jobs.enable", "automation.jobs.list", "automation.jobs.run", "automation.jobs.update", "automation.runs.cancel", "automation.runs.get", "automation.runs.list", "automation.runs.retry", "automation.schedules.create", "automation.schedules.delete", "automation.schedules.disable", "automation.schedules.enable", "automation.schedules.list", "automation.schedules.run", "browser.click", "browser.extract", "browser.history.back", "browser.history.forward", "browser.navigate", "browser.press", "browser.provision", "browser.readText", "browser.screenshot", "browser.scroll", "browser.select", "browser.sessions.attach", "browser.sessions.close", "browser.sessions.launch", "browser.sessions.list", "browser.sessions.release", "browser.snapshot", "browser.status", "browser.tabs.close", "browser.tabs.create", "browser.tabs.list", "browser.tabs.switch", "browser.type", "browser.waitFor", "calendar.events.create", "calendar.events.get", "calendar.events.list", "calendar.ics.export", "calendar.ics.import", "channels.accounts.action.default", "channels.accounts.action.named", "channels.accounts.get", "channels.accounts.list", "channels.accounts.surface.list", "channels.actions.invoke", "channels.actions.list", "channels.actions.surface.list", "channels.agent_tools.list", "channels.agent_tools.surface.list", "channels.allowlist.edit", "channels.allowlist.resolve", "channels.authorize", "channels.capabilities.list", "channels.capabilities.surface.list", "channels.directory.query", "channels.doctor.get", "channels.drafts.delete", "channels.drafts.get", "channels.drafts.list", "channels.drafts.save", "channels.inbox.list", "channels.lifecycle.get", "channels.policies.audit", "channels.policies.list", "channels.policies.update", "channels.profiles.delete", "channels.profiles.get", "channels.profiles.list", "channels.profiles.set", "channels.repairs.list", "channels.routing.assign", "channels.routing.delete", "channels.routing.list", "channels.setup.get", "channels.status", "channels.targets.resolve", "channels.test.send", "channels.tools.invoke", "channels.tools.list", "channels.tools.surface.list", "checkin.config.get", "checkin.config.set", "checkin.receipts.list", "checkin.run", "checkpoints.create", "checkpoints.diff", "checkpoints.list", "checkpoints.restore", "checkpoints.restorePreview", "checkpoints.revertHunk", "checkpoints.revertHunkPreview", "ci.status", "ci.watches.create", "ci.watches.delete", "ci.watches.list", "ci.watches.run", "companion.chat.events.stream", "companion.chat.messages.create", "companion.chat.messages.edit", "companion.chat.messages.list", "companion.chat.messages.retry", "companion.chat.messages.steer", "companion.chat.sessions.close", "companion.chat.sessions.create", "companion.chat.sessions.delete", "companion.chat.sessions.get", "companion.chat.sessions.list", "companion.chat.sessions.update", "companion.chat.turns.cancel", "config.get", "config.set", "continuity.snapshot", "contracts.cancel", "contracts.get", "contracts.list", "contracts.reply", "contracts.start", "control.auth.current", "control.auth.login", "control.clients.list", "control.contract", "control.events.catalog", "control.events.stream", "control.messages.list", "control.methods.get", "control.methods.list", "control.snapshot", "control.status", "control.web", "cost.attribution.get", "credentials.delete", "credentials.get", "credentials.set", "deliveries.get", "deliveries.list", "devices.artifacts.list", "devices.artifacts.read", "devices.capability.request", "devices.grants.list", "devices.grants.revoke", "devices.housekeeping.run", "devices.nodes.list", "email.draft.create", "email.expectation.cancel", "email.expectation.list", "email.expectation.open", "email.inbound.status", "email.inbox.list", "email.inbox.read", "email.send", "flags.graduation.report", "fleet.archive", "fleet.archiveFinished", "fleet.archived.list", "fleet.attempts.judge", "fleet.attempts.list", "fleet.attempts.pick", "fleet.conflicts.list", "fleet.conflicts.resolve", "fleet.graph.get", "fleet.list", "fleet.observed.steer", "fleet.snapshot", "fleet.unarchive", "health.snapshot", "homeassistant.homeGraph.askHomeGraph", "homeassistant.homeGraph.browse", "homeassistant.homeGraph.export", "homeassistant.homeGraph.generateHomeGraphPacket", "homeassistant.homeGraph.generateRoomPage", "homeassistant.homeGraph.import", "homeassistant.homeGraph.ingestHomeGraphArtifact", "homeassistant.homeGraph.ingestHomeGraphNote", "homeassistant.homeGraph.ingestHomeGraphUrl", "homeassistant.homeGraph.linkHomeGraphKnowledge", "homeassistant.homeGraph.listHomeGraphIssues", "homeassistant.homeGraph.map", "homeassistant.homeGraph.pages.list", "homeassistant.homeGraph.refinement.run", "homeassistant.homeGraph.refinement.task.cancel", "homeassistant.homeGraph.refinement.task.get", "homeassistant.homeGraph.refinement.tasks.list", "homeassistant.homeGraph.refreshDevicePassport", "homeassistant.homeGraph.reindex", "homeassistant.homeGraph.reset", "homeassistant.homeGraph.reviewHomeGraphFact", "homeassistant.homeGraph.sources.list", "homeassistant.homeGraph.status", "homeassistant.homeGraph.syncHomeGraph", "homeassistant.homeGraph.unlinkHomeGraphKnowledge", "intelligence.snapshot", "judgment.battery.run", "knowledge.ask", "knowledge.candidate.decide", "knowledge.candidate.get", "knowledge.candidates.list", "knowledge.connector.doctor", "knowledge.connector.get", "knowledge.connectors.list", "knowledge.extraction.get", "knowledge.extractions.list", "knowledge.graphql.execute", "knowledge.graphql.schema", "knowledge.ingest.artifact", "knowledge.ingest.bookmarks", "knowledge.ingest.browserHistory", "knowledge.ingest.connector", "knowledge.ingest.url", "knowledge.ingest.urls", "knowledge.issue.review", "knowledge.issues.list", "knowledge.item.get", "knowledge.job-runs.list", "knowledge.job.get", "knowledge.job.run", "knowledge.jobs.list", "knowledge.lint", "knowledge.map", "knowledge.nodes.list", "knowledge.packet", "knowledge.projection.materialize", "knowledge.projection.render", "knowledge.projections.list", "knowledge.refinement.run", "knowledge.refinement.task.cancel", "knowledge.refinement.task.get", "knowledge.refinement.tasks.list", "knowledge.reindex", "knowledge.report.get", "knowledge.reports.list", "knowledge.schedule.delete", "knowledge.schedule.enable", "knowledge.schedule.get", "knowledge.schedule.save", "knowledge.schedules.list", "knowledge.search", "knowledge.source.extraction.get", "knowledge.sources.list", "knowledge.status", "knowledge.usage.list", "local_auth.bootstrap.delete", "local_auth.sessions.delete", "local_auth.status", "local_auth.users.create", "local_auth.users.delete", "local_auth.users.password.rotate", "mcp.config.get", "mcp.config.reload", "mcp.servers.list", "mcp.servers.remove", "mcp.servers.reveal", "mcp.servers.upsert", "mcp.tools.list", "media.analyze", "media.generate", "media.providers.list", "media.transform", "memory.consolidation.receipts", "memory.doctor", "memory.embeddings.default.set", "memory.projections.get", "memory.projections.list", "memory.records.add", "memory.records.delete", "memory.records.export", "memory.records.get", "memory.records.import", "memory.records.links.add", "memory.records.links.list", "memory.records.list", "memory.records.search", "memory.records.search-semantic", "memory.records.update", "memory.records.update-review", "memory.review-queue", "memory.vector.rebuild", "memory.vector.stats", "models.current.get", "models.current.set", "models.list", "multimodal.analyze", "multimodal.packet", "multimodal.providers.list", "multimodal.status", "multimodal.writeback", "occasions.acknowledge", "occasions.answer", "occasions.confirm", "occasions.conflict.resolve", "occasions.gifts", "occasions.interview.answer", "occasions.interview.get", "occasions.interview.record", "occasions.list", "occasions.pending", "occasions.plans.confirm", "occasions.plans.list", "occasions.plans.propose", "occasions.propose", "occasions.remove", "occasions.state", "occasions.sweep", "ops.memory.get", "pairing.handoff.complete", "pairing.handoff.create", "pairing.posture.get", "pairing.tokens.create", "pairing.tokens.delete", "pairing.tokens.list", "pairing.tokens.migrate", "pairing.tokens.rename", "pairing.tokens.revokeShared", "panels.list", "panels.open", "payments.budget.status", "payments.cards.create", "payments.cards.delete", "payments.cards.list", "payments.checkout.begin", "payments.checkout.fillCard", "payments.purchases.list", "permissions.rules.delete", "permissions.rules.list", "power.keepAwake.set", "power.status.get", "principals.create", "principals.delete", "principals.get", "principals.list", "principals.resolve", "principals.update", "profile.append", "profile.forget", "profile.get", "profile.person", "profile.provenance", "profile.read", "profile.set", "profile.status", "profile.undo", "projectPlanning.decisions.list", "projectPlanning.decisions.record", "projectPlanning.evaluate", "projectPlanning.language.get", "projectPlanning.language.upsert", "projectPlanning.state.get", "projectPlanning.state.upsert", "projectPlanning.status", "projectPlanning.workPlan.clearCompleted", "projectPlanning.workPlan.snapshot", "projectPlanning.workPlan.task.create", "projectPlanning.workPlan.task.delete", "projectPlanning.workPlan.task.get", "projectPlanning.workPlan.task.status", "projectPlanning.workPlan.task.update", "projectPlanning.workPlan.tasks.list", "projectPlanning.workPlan.tasks.reorder", "providers.get", "providers.list", "providers.usage.get", "push.subscriptions.create", "push.subscriptions.delete", "push.subscriptions.list", "push.subscriptions.reconcile", "push.subscriptions.verify", "push.vapid.get", "quota.fanout.get", "quota.snapshot.get", "relay.pairing.mint", "relay.reachability.get", "remote.node_host.contract", "remote.pair.requests.approve", "remote.pair.requests.list", "remote.pair.requests.reject", "remote.peers.disconnect", "remote.peers.invoke", "remote.peers.list", "remote.peers.token.revoke", "remote.peers.token.rotate", "remote.snapshot", "remote.work.cancel", "remote.work.list", "review.snapshot", "rewind.apply", "rewind.conversation.host.register", "rewind.conversation.host.release", "rewind.conversation.hosts.list", "rewind.conversation.requests.answer", "rewind.conversation.requests.take", "rewind.plan", "routes.bindings.create", "routes.bindings.delete", "routes.bindings.list", "routes.bindings.update", "routes.snapshot", "runtime.metrics.get", "scheduler.capacity", "security.settings", "services.install", "services.restart", "services.start", "services.status", "services.stop", "services.uninstall", "sessions.changes.get", "sessions.close", "sessions.contextUsage.get", "sessions.create", "sessions.delete", "sessions.detach", "sessions.followUp", "sessions.get", "sessions.hosted.attach", "sessions.hosted.create", "sessions.hosted.detach", "sessions.hosted.kill", "sessions.hosted.list", "sessions.inputs.cancel", "sessions.inputs.deliver", "sessions.inputs.list", "sessions.integration.snapshot", "sessions.list", "sessions.messages.create", "sessions.messages.list", "sessions.permissionMode.get", "sessions.permissionMode.set", "sessions.queuedMessages.delete", "sessions.queuedMessages.edit", "sessions.queuedMessages.list", "sessions.register", "sessions.reopen", "sessions.search", "sessions.steer", "sessions.toolCalls.cancel", "sessions.turns.cancel", "settings.snapshot", "skills.create", "skills.delete", "skills.get", "skills.list", "skills.update", "stepup.challenge.mint", "stepup.credentials.register", "surfaces.list", "tailscale.get", "tailscale.serve.run", "tasks.cancel", "tasks.create", "tasks.get", "tasks.list", "tasks.retry", "tasks.status", "telemetry.errors.list", "telemetry.events.list", "telemetry.metrics.get", "telemetry.otlp.logs", "telemetry.otlp.metrics", "telemetry.otlp.traces", "telemetry.snapshot", "telemetry.stream", "telemetry.traces.list", "update.check", "update.status", "voice.local.install", "voice.local.status", "voice.providers.list", "voice.realtime.session", "voice.status", "voice.stt", "voice.tts", "voice.tts.stream", "voice.voices.list", "voice.wake.model.get", "voice.wake.provision", "voice.wake.status", "watchers.create", "watchers.delete", "watchers.list", "watchers.run", "watchers.start", "watchers.stop", "watchers.update", "web_search.providers.list", "web_search.query", "workLedger.execution.cancel", "workLedger.execution.resume", "workLedger.execution.start", "workLedger.execution.status", "workLedger.history", "workLedger.importLegacy", "workLedger.intake.admit", "workLedger.intake.cancel", "workLedger.intake.capture", "workLedger.intake.get", "workLedger.intake.resume", "workLedger.prepareLegacyImport", "workLedger.project", "workLedger.snapshot", "workLedger.submission.get", "workLedger.submit", "workspaces.registrations.add", "workspaces.registrations.list", "workspaces.registrations.remove", "workspaces.resolve", "worktrees.discard", "worktrees.setup.run", "worktrees.snapshot"];
 
 // @public
 export const OPERATOR_WORK_CANCEL_REASON = "cancelled by the requester";
@@ -5151,18 +5159,18 @@ export interface OperatorMethodInputMap {
     "intelligence.snapshot": {};
     // (undocumented)
     "judgment.battery.run": {
-        protocolVersion: number;
+        protocolVersion: 1;
         requestId: string;
         battery: "webui.errors.daemon-refusal";
-        batteryVersion: number;
+        batteryVersion: 1;
         input: {
             errorRef: string;
         };
     } | {
-        protocolVersion: number;
+        protocolVersion: 1;
         requestId: string;
         battery: "webui.status.badge-tone";
-        batteryVersion: number;
+        batteryVersion: 1;
         input: {
             vocabulary: "badge" | "library-dot";
             source: {
@@ -5174,10 +5182,10 @@ export interface OperatorMethodInputMap {
             };
         };
     } | {
-        protocolVersion: number;
+        protocolVersion: 1;
         requestId: string;
         battery: "webui.palette.command-rank";
-        batteryVersion: number;
+        batteryVersion: 1;
         input: {
             query: {
                 kind: "inline";
@@ -7639,6 +7647,50 @@ export interface OperatorMethodInputMap {
         readonly [key: string]: unknown;
     });
     // (undocumented)
+    "workLedger.execution.cancel": {
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+    };
+    // (undocumented)
+    "workLedger.execution.resume": {
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+    };
+    // (undocumented)
+    "workLedger.execution.start": {
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+    };
+    // (undocumented)
+    "workLedger.execution.status": {
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+    };
+    // (undocumented)
     "workLedger.history": {
         projectId: string;
         afterSequence: number;
@@ -7654,13 +7706,56 @@ export interface OperatorMethodInputMap {
         });
     };
     // (undocumented)
+    "workLedger.intake.admit": {
+        inputId: string;
+        sourceRevision: string;
+    };
+    // (undocumented)
+    "workLedger.intake.cancel": {
+        inputId: string;
+        sourceRevision: string;
+    };
+    // (undocumented)
+    "workLedger.intake.capture": {
+        requestId: string;
+        inputId: string;
+        text: string;
+        unsupportedSources: readonly ({
+            kind: "context" | "file" | "image";
+            label: string;
+        })[];
+    };
+    // (undocumented)
+    "workLedger.intake.get": {
+        inputId: string;
+    };
+    // (undocumented)
+    "workLedger.intake.resume": {
+        inputId: string;
+        sourceRevision: string;
+    };
+    // (undocumented)
     "workLedger.prepareLegacyImport": {
         projectId: string;
         sourceIds: readonly string[];
     };
     // (undocumented)
+    "workLedger.project": {};
+    // (undocumented)
     "workLedger.snapshot": {
         projectId: string;
+    };
+    // (undocumented)
+    "workLedger.submission.get": {
+        requestId: string;
+    };
+    // (undocumented)
+    "workLedger.submit": {
+        requestId: string;
+        inputId: string;
+        expectedRevision: number;
+        goal: string;
+        criteria: readonly string[];
     };
     // (undocumented)
     "workspaces.registrations.add": {
@@ -12446,7 +12541,7 @@ export interface OperatorMethodOutputMap {
                         outcome: "act" | "confirm" | "escalate";
                     };
                 };
-                result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
                 problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
                 qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
                 decisionIds: readonly string[];
@@ -12565,7 +12660,7 @@ export interface OperatorMethodOutputMap {
                         outcome: "act" | "confirm" | "escalate";
                     };
                 };
-                result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
                 problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
                 qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
                 decisionIds: readonly string[];
@@ -12711,7 +12806,7 @@ export interface OperatorMethodOutputMap {
                             outcome: "act" | "confirm" | "escalate";
                         };
                     };
-                    result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                    result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
                     problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
                     qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
                     decisionIds: readonly string[];
@@ -12840,7 +12935,7 @@ export interface OperatorMethodOutputMap {
                     outcome: "act" | "confirm" | "escalate";
                 };
             };
-            result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+            result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
             problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
             qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
             decisionIds: readonly string[];
@@ -13057,7 +13152,7 @@ export interface OperatorMethodOutputMap {
                             outcome: "act" | "confirm" | "escalate";
                         };
                     };
-                    result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                    result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
                     problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
                     qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
                     decisionIds: readonly string[];
@@ -13176,7 +13271,7 @@ export interface OperatorMethodOutputMap {
                             outcome: "act" | "confirm" | "escalate";
                         };
                     };
-                    result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                    result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
                     problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
                     qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
                     decisionIds: readonly string[];
@@ -13322,7 +13417,7 @@ export interface OperatorMethodOutputMap {
                                 outcome: "act" | "confirm" | "escalate";
                             };
                         };
-                        result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                        result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
                         problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
                         qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
                         decisionIds: readonly string[];
@@ -13451,7 +13546,7 @@ export interface OperatorMethodOutputMap {
                         outcome: "act" | "confirm" | "escalate";
                     };
                 };
-                result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
                 problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
                 qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
                 decisionIds: readonly string[];
@@ -13677,7 +13772,7 @@ export interface OperatorMethodOutputMap {
                             outcome: "act" | "confirm" | "escalate";
                         };
                     };
-                    result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                    result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
                     problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
                     qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
                     decisionIds: readonly string[];
@@ -13796,7 +13891,7 @@ export interface OperatorMethodOutputMap {
                             outcome: "act" | "confirm" | "escalate";
                         };
                     };
-                    result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                    result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
                     problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
                     qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
                     decisionIds: readonly string[];
@@ -13942,7 +14037,7 @@ export interface OperatorMethodOutputMap {
                                 outcome: "act" | "confirm" | "escalate";
                             };
                         };
-                        result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                        result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
                         problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
                         qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
                         decisionIds: readonly string[];
@@ -14071,7 +14166,7 @@ export interface OperatorMethodOutputMap {
                         outcome: "act" | "confirm" | "escalate";
                     };
                 };
-                result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
                 problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
                 qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
                 decisionIds: readonly string[];
@@ -16880,10 +16975,10 @@ export interface OperatorMethodOutputMap {
     };
     // (undocumented)
     "judgment.battery.run": {
-        protocolVersion: number;
+        protocolVersion: 1;
         requestId: string;
         battery: "webui.errors.daemon-refusal";
-        batteryVersion: number;
+        batteryVersion: 1;
         status: "settled";
         value: {
             session_not_found: boolean;
@@ -16923,10 +17018,10 @@ export interface OperatorMethodOutputMap {
             method_unknown: "http-status-not-404";
         };
     } | {
-        protocolVersion: number;
+        protocolVersion: 1;
         requestId: string;
         battery: "webui.errors.daemon-refusal";
-        batteryVersion: number;
+        batteryVersion: 1;
         status: "held";
         reason: "uncertain";
         readings: ({} & {
@@ -16960,10 +17055,10 @@ export interface OperatorMethodOutputMap {
             method_unknown: "http-status-not-404";
         };
     } | {
-        protocolVersion: number;
+        protocolVersion: 1;
         requestId: string;
         battery: "webui.status.badge-tone";
-        batteryVersion: number;
+        batteryVersion: 1;
         status: "settled";
         value: {
             vocabulary: "badge";
@@ -17000,10 +17095,10 @@ export interface OperatorMethodOutputMap {
             latencyMs: number;
         })[];
     } | {
-        protocolVersion: number;
+        protocolVersion: 1;
         requestId: string;
         battery: "webui.status.badge-tone";
-        batteryVersion: number;
+        batteryVersion: 1;
         status: "held";
         reason: "uncertain";
         readings: ({} & {
@@ -17034,10 +17129,10 @@ export interface OperatorMethodOutputMap {
             latencyMs: number;
         })[];
     } | {
-        protocolVersion: number;
+        protocolVersion: 1;
         requestId: string;
         battery: "webui.palette.command-rank";
-        batteryVersion: number;
+        batteryVersion: 1;
         status: "settled";
         value: {
             registryVersion: string;
@@ -17075,10 +17170,10 @@ export interface OperatorMethodOutputMap {
             latencyMs: number;
         })[];
     } | {
-        protocolVersion: number;
+        protocolVersion: 1;
         requestId: string;
         battery: "webui.palette.command-rank";
-        batteryVersion: number;
+        batteryVersion: 1;
         status: "held";
         reason: "uncertain";
         readings: ({} & {
@@ -27126,6 +27221,354 @@ export interface OperatorMethodOutputMap {
         });
     };
     // (undocumented)
+    "workLedger.execution.cancel": {
+        kind: "execution";
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentRevision: null | {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentAttempt: boolean;
+        stale: boolean;
+        state: "cancelled" | "launch-claimed" | "prepared";
+        recovery: "available" | "cancelled" | "required" | "terminal";
+        receipt: null | {
+            contractId: string;
+            ownerAgentId: string;
+        };
+        settlement?: {
+            state: "failed" | "pending" | "published" | "required";
+            evidenceId?: string;
+            reportSequence?: number;
+            evidenceSequence?: number;
+        };
+        progress: null | {
+            status: "awaiting-owner" | "cancelled" | "checking-plan" | "committing" | "failed" | "fixing" | "judging" | "passed" | "planning" | "queued" | "running" | "shaping";
+            sessionMode: boolean;
+            semanticState: null | "deciding" | "deferred" | "refused";
+            stage: null | string;
+            retrying: boolean;
+            units: {
+                total: number;
+                passed: number;
+                failed: number;
+            };
+            criteria: {
+                total: number;
+                met: number;
+                unmet: number;
+                unshown: number;
+            };
+        };
+    } | {
+        kind: "pending-intent";
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentRevision: null | {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentAttempt: boolean;
+        stale: boolean;
+        state: "admitting" | "refused";
+        recovery: "pending" | "required";
+    } | {
+        kind: "prevented-before-admission";
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentRevision: null | {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentAttempt: boolean;
+        stale: boolean;
+        state: "cancelled";
+        recovery: "cancelled";
+    };
+    // (undocumented)
+    "workLedger.execution.resume": {
+        kind: "execution";
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentRevision: null | {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentAttempt: boolean;
+        stale: boolean;
+        state: "cancelled" | "launch-claimed" | "prepared";
+        recovery: "available" | "cancelled" | "required" | "terminal";
+        receipt: null | {
+            contractId: string;
+            ownerAgentId: string;
+        };
+        settlement?: {
+            state: "failed" | "pending" | "published" | "required";
+            evidenceId?: string;
+            reportSequence?: number;
+            evidenceSequence?: number;
+        };
+        progress: null | {
+            status: "awaiting-owner" | "cancelled" | "checking-plan" | "committing" | "failed" | "fixing" | "judging" | "passed" | "planning" | "queued" | "running" | "shaping";
+            sessionMode: boolean;
+            semanticState: null | "deciding" | "deferred" | "refused";
+            stage: null | string;
+            retrying: boolean;
+            units: {
+                total: number;
+                passed: number;
+                failed: number;
+            };
+            criteria: {
+                total: number;
+                met: number;
+                unmet: number;
+                unshown: number;
+            };
+        };
+    } | {
+        kind: "pending-intent";
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentRevision: null | {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentAttempt: boolean;
+        stale: boolean;
+        state: "admitting" | "refused";
+        recovery: "pending" | "required";
+    } | {
+        kind: "prevented-before-admission";
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentRevision: null | {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentAttempt: boolean;
+        stale: boolean;
+        state: "cancelled";
+        recovery: "cancelled";
+    };
+    // (undocumented)
+    "workLedger.execution.start": {
+        kind: "execution";
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentRevision: null | {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentAttempt: boolean;
+        stale: boolean;
+        state: "cancelled" | "launch-claimed" | "prepared";
+        recovery: "available" | "cancelled" | "required" | "terminal";
+        receipt: null | {
+            contractId: string;
+            ownerAgentId: string;
+        };
+        settlement?: {
+            state: "failed" | "pending" | "published" | "required";
+            evidenceId?: string;
+            reportSequence?: number;
+            evidenceSequence?: number;
+        };
+        progress: null | {
+            status: "awaiting-owner" | "cancelled" | "checking-plan" | "committing" | "failed" | "fixing" | "judging" | "passed" | "planning" | "queued" | "running" | "shaping";
+            sessionMode: boolean;
+            semanticState: null | "deciding" | "deferred" | "refused";
+            stage: null | string;
+            retrying: boolean;
+            units: {
+                total: number;
+                passed: number;
+                failed: number;
+            };
+            criteria: {
+                total: number;
+                met: number;
+                unmet: number;
+                unshown: number;
+            };
+        };
+    } | {
+        kind: "pending-intent";
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentRevision: null | {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentAttempt: boolean;
+        stale: boolean;
+        state: "admitting" | "refused";
+        recovery: "pending" | "required";
+    } | {
+        kind: "prevented-before-admission";
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentRevision: null | {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentAttempt: boolean;
+        stale: boolean;
+        state: "cancelled";
+        recovery: "cancelled";
+    };
+    // (undocumented)
+    "workLedger.execution.status": {
+        kind: "execution";
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentRevision: null | {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentAttempt: boolean;
+        stale: boolean;
+        state: "cancelled" | "launch-claimed" | "prepared";
+        recovery: "available" | "cancelled" | "required" | "terminal";
+        receipt: null | {
+            contractId: string;
+            ownerAgentId: string;
+        };
+        settlement?: {
+            state: "failed" | "pending" | "published" | "required";
+            evidenceId?: string;
+            reportSequence?: number;
+            evidenceSequence?: number;
+        };
+        progress: null | {
+            status: "awaiting-owner" | "cancelled" | "checking-plan" | "committing" | "failed" | "fixing" | "judging" | "passed" | "planning" | "queued" | "running" | "shaping";
+            sessionMode: boolean;
+            semanticState: null | "deciding" | "deferred" | "refused";
+            stage: null | string;
+            retrying: boolean;
+            units: {
+                total: number;
+                passed: number;
+                failed: number;
+            };
+            criteria: {
+                total: number;
+                met: number;
+                unmet: number;
+                unshown: number;
+            };
+        };
+    } | {
+        kind: "pending-intent";
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentRevision: null | {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentAttempt: boolean;
+        stale: boolean;
+        state: "admitting" | "refused";
+        recovery: "pending" | "required";
+    } | {
+        kind: "prevented-before-admission";
+        projectId: string;
+        workId: string;
+        attemptId: string;
+        expectedRevision: {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentRevision: null | {
+            work: number;
+            criteria: number;
+            attempt: number;
+        };
+        currentAttempt: boolean;
+        stale: boolean;
+        state: "cancelled";
+        recovery: "cancelled";
+    };
+    // (undocumented)
     "workLedger.history": {
         projectId: string;
         afterSequence: number;
@@ -27135,7 +27578,7 @@ export interface OperatorMethodOutputMap {
         hasMore: boolean;
         events: readonly ({
             sequence: number;
-            type: "cancel" | "claim" | "create" | "handoff" | "record_evidence" | "release" | "reopen" | "report" | "revise";
+            type: "cancel" | "claim" | "create" | "handoff" | "record_evidence" | "release" | "reopen" | "report" | "revise" | "submit_native";
             actorId: string;
             requestId: string;
             workId: string;
@@ -27146,6 +27589,31 @@ export interface OperatorMethodOutputMap {
                 title: string;
                 goal: string;
                 criteria: readonly string[];
+                source: null | {
+                    version: 1;
+                    sourceId: string;
+                    sourceRevision: string;
+                    inputId: string;
+                    sessionId: string;
+                } | {
+                    version: 2;
+                    sourceId: string;
+                    sourceRevision: string;
+                    inputId: string;
+                    sessionId: string;
+                    extraction: {
+                        version: 1;
+                        offsetEncoding: "utf16";
+                        spans: readonly ({
+                            partId: "input";
+                            start: number;
+                            end: number;
+                        })[];
+                        proposalRevision: string;
+                        admissionDecisionId: string;
+                        judgmentDecisionIds: readonly string[];
+                    };
+                };
                 revision: number;
                 criteriaRevision: number;
                 reportedState: "blocked" | "cancelled" | "complete" | "in_progress" | "pending";
@@ -27205,6 +27673,31 @@ export interface OperatorMethodOutputMap {
                 title: string;
                 goal: string;
                 criteria: readonly string[];
+                source: null | {
+                    version: 1;
+                    sourceId: string;
+                    sourceRevision: string;
+                    inputId: string;
+                    sessionId: string;
+                } | {
+                    version: 2;
+                    sourceId: string;
+                    sourceRevision: string;
+                    inputId: string;
+                    sessionId: string;
+                    extraction: {
+                        version: 1;
+                        offsetEncoding: "utf16";
+                        spans: readonly ({
+                            partId: "input";
+                            start: number;
+                            end: number;
+                        })[];
+                        proposalRevision: string;
+                        admissionDecisionId: string;
+                        judgmentDecisionIds: readonly string[];
+                    };
+                };
                 revision: number;
                 criteriaRevision: number;
                 reportedState: "blocked" | "cancelled" | "complete" | "in_progress" | "pending";
@@ -27221,7 +27714,7 @@ export interface OperatorMethodOutputMap {
         replayed: boolean;
         event: {
             sequence: number;
-            type: "cancel" | "claim" | "create" | "handoff" | "record_evidence" | "release" | "reopen" | "report" | "revise";
+            type: "cancel" | "claim" | "create" | "handoff" | "record_evidence" | "release" | "reopen" | "report" | "revise" | "submit_native";
             actorId: string;
             requestId: string;
             workId: string;
@@ -27232,6 +27725,31 @@ export interface OperatorMethodOutputMap {
                 title: string;
                 goal: string;
                 criteria: readonly string[];
+                source: null | {
+                    version: 1;
+                    sourceId: string;
+                    sourceRevision: string;
+                    inputId: string;
+                    sessionId: string;
+                } | {
+                    version: 2;
+                    sourceId: string;
+                    sourceRevision: string;
+                    inputId: string;
+                    sessionId: string;
+                    extraction: {
+                        version: 1;
+                        offsetEncoding: "utf16";
+                        spans: readonly ({
+                            partId: "input";
+                            start: number;
+                            end: number;
+                        })[];
+                        proposalRevision: string;
+                        admissionDecisionId: string;
+                        judgmentDecisionIds: readonly string[];
+                    };
+                };
                 revision: number;
                 criteriaRevision: number;
                 reportedState: "blocked" | "cancelled" | "complete" | "in_progress" | "pending";
@@ -27291,6 +27809,31 @@ export interface OperatorMethodOutputMap {
                 title: string;
                 goal: string;
                 criteria: readonly string[];
+                source: null | {
+                    version: 1;
+                    sourceId: string;
+                    sourceRevision: string;
+                    inputId: string;
+                    sessionId: string;
+                } | {
+                    version: 2;
+                    sourceId: string;
+                    sourceRevision: string;
+                    inputId: string;
+                    sessionId: string;
+                    extraction: {
+                        version: 1;
+                        offsetEncoding: "utf16";
+                        spans: readonly ({
+                            partId: "input";
+                            start: number;
+                            end: number;
+                        })[];
+                        proposalRevision: string;
+                        admissionDecisionId: string;
+                        judgmentDecisionIds: readonly string[];
+                    };
+                };
                 revision: number;
                 criteriaRevision: number;
                 reportedState: "blocked" | "cancelled" | "complete" | "in_progress" | "pending";
@@ -27311,6 +27854,588 @@ export interface OperatorMethodOutputMap {
         reason: string;
     };
     // (undocumented)
+    "workLedger.intake.admit": {
+        kind: "captured";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+    } | {
+        kind: "processing";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        stage: "checking" | "deciding" | "extracting" | "routing" | "waiting";
+        recovery: "pending" | "required";
+    } | {
+        kind: "turn";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        route: "answer" | "converse";
+        text: string;
+    } | {
+        kind: "blocked";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        reason: "missing-context" | "unsupported-source";
+        recovery: "required";
+    } | {
+        kind: "refused";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        reason: "exhausted" | "semantic";
+    } | {
+        kind: "cancelled";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+    } | {
+        kind: "work";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        receipt: {
+            projectId: string;
+            requestId: string;
+            inputId: string;
+            ledgerRevision: number;
+            workId: string;
+            attemptId: string;
+            expectedRevision: {
+                work: number;
+                criteria: number;
+                attempt: number;
+            };
+            source: {
+                version: 2;
+                sourceId: string;
+                sourceRevision: string;
+                sessionId: string;
+                offsetEncoding: "utf16";
+                proposalRevision: string;
+                spans: readonly ({
+                    partId: "input";
+                    start: number;
+                    end: number;
+                })[];
+                admissionDecisionId: string;
+                judgmentDecisionIds: readonly string[];
+            };
+            goal: string;
+            criteria: readonly string[];
+        };
+    };
+    // (undocumented)
+    "workLedger.intake.cancel": {
+        kind: "captured";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+    } | {
+        kind: "processing";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        stage: "checking" | "deciding" | "extracting" | "routing" | "waiting";
+        recovery: "pending" | "required";
+    } | {
+        kind: "turn";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        route: "answer" | "converse";
+        text: string;
+    } | {
+        kind: "blocked";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        reason: "missing-context" | "unsupported-source";
+        recovery: "required";
+    } | {
+        kind: "refused";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        reason: "exhausted" | "semantic";
+    } | {
+        kind: "cancelled";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+    } | {
+        kind: "work";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        receipt: {
+            projectId: string;
+            requestId: string;
+            inputId: string;
+            ledgerRevision: number;
+            workId: string;
+            attemptId: string;
+            expectedRevision: {
+                work: number;
+                criteria: number;
+                attempt: number;
+            };
+            source: {
+                version: 2;
+                sourceId: string;
+                sourceRevision: string;
+                sessionId: string;
+                offsetEncoding: "utf16";
+                proposalRevision: string;
+                spans: readonly ({
+                    partId: "input";
+                    start: number;
+                    end: number;
+                })[];
+                admissionDecisionId: string;
+                judgmentDecisionIds: readonly string[];
+            };
+            goal: string;
+            criteria: readonly string[];
+        };
+    };
+    // (undocumented)
+    "workLedger.intake.capture": {
+        kind: "captured";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+    } | {
+        kind: "processing";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        stage: "checking" | "deciding" | "extracting" | "routing" | "waiting";
+        recovery: "pending" | "required";
+    } | {
+        kind: "turn";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        route: "answer" | "converse";
+        text: string;
+    } | {
+        kind: "blocked";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        reason: "missing-context" | "unsupported-source";
+        recovery: "required";
+    } | {
+        kind: "refused";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        reason: "exhausted" | "semantic";
+    } | {
+        kind: "cancelled";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+    } | {
+        kind: "work";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        receipt: {
+            projectId: string;
+            requestId: string;
+            inputId: string;
+            ledgerRevision: number;
+            workId: string;
+            attemptId: string;
+            expectedRevision: {
+                work: number;
+                criteria: number;
+                attempt: number;
+            };
+            source: {
+                version: 2;
+                sourceId: string;
+                sourceRevision: string;
+                sessionId: string;
+                offsetEncoding: "utf16";
+                proposalRevision: string;
+                spans: readonly ({
+                    partId: "input";
+                    start: number;
+                    end: number;
+                })[];
+                admissionDecisionId: string;
+                judgmentDecisionIds: readonly string[];
+            };
+            goal: string;
+            criteria: readonly string[];
+        };
+    };
+    // (undocumented)
+    "workLedger.intake.get": {
+        kind: "captured";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+    } | {
+        kind: "processing";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        stage: "checking" | "deciding" | "extracting" | "routing" | "waiting";
+        recovery: "pending" | "required";
+    } | {
+        kind: "turn";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        route: "answer" | "converse";
+        text: string;
+    } | {
+        kind: "blocked";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        reason: "missing-context" | "unsupported-source";
+        recovery: "required";
+    } | {
+        kind: "refused";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        reason: "exhausted" | "semantic";
+    } | {
+        kind: "cancelled";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+    } | {
+        kind: "work";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        receipt: {
+            projectId: string;
+            requestId: string;
+            inputId: string;
+            ledgerRevision: number;
+            workId: string;
+            attemptId: string;
+            expectedRevision: {
+                work: number;
+                criteria: number;
+                attempt: number;
+            };
+            source: {
+                version: 2;
+                sourceId: string;
+                sourceRevision: string;
+                sessionId: string;
+                offsetEncoding: "utf16";
+                proposalRevision: string;
+                spans: readonly ({
+                    partId: "input";
+                    start: number;
+                    end: number;
+                })[];
+                admissionDecisionId: string;
+                judgmentDecisionIds: readonly string[];
+            };
+            goal: string;
+            criteria: readonly string[];
+        };
+    } | {
+        kind: "not-found";
+    };
+    // (undocumented)
+    "workLedger.intake.resume": {
+        kind: "captured";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+    } | {
+        kind: "processing";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        stage: "checking" | "deciding" | "extracting" | "routing" | "waiting";
+        recovery: "pending" | "required";
+    } | {
+        kind: "turn";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        route: "answer" | "converse";
+        text: string;
+    } | {
+        kind: "blocked";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        reason: "missing-context" | "unsupported-source";
+        recovery: "required";
+    } | {
+        kind: "refused";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        reason: "exhausted" | "semantic";
+    } | {
+        kind: "cancelled";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+    } | {
+        kind: "work";
+        projectId: string;
+        requestId: string;
+        sourceRef: {
+            version: 1;
+            inputId: string;
+            sourceId: string;
+            sourceRevision: string;
+            sessionId: string;
+        };
+        receipt: {
+            projectId: string;
+            requestId: string;
+            inputId: string;
+            ledgerRevision: number;
+            workId: string;
+            attemptId: string;
+            expectedRevision: {
+                work: number;
+                criteria: number;
+                attempt: number;
+            };
+            source: {
+                version: 2;
+                sourceId: string;
+                sourceRevision: string;
+                sessionId: string;
+                offsetEncoding: "utf16";
+                proposalRevision: string;
+                spans: readonly ({
+                    partId: "input";
+                    start: number;
+                    end: number;
+                })[];
+                admissionDecisionId: string;
+                judgmentDecisionIds: readonly string[];
+            };
+            goal: string;
+            criteria: readonly string[];
+        };
+    };
+    // (undocumented)
     "workLedger.prepareLegacyImport": {
         kind: "prepared";
         manifest: ({} & {
@@ -27320,6 +28445,10 @@ export interface OperatorMethodOutputMap {
         kind: "blocked";
         code: string;
         reason: string;
+    };
+    // (undocumented)
+    "workLedger.project": {
+        projectId: string;
     };
     // (undocumented)
     "workLedger.snapshot": {
@@ -27333,6 +28462,31 @@ export interface OperatorMethodOutputMap {
                 title: string;
                 goal: string;
                 criteria: readonly string[];
+                source: null | {
+                    version: 1;
+                    sourceId: string;
+                    sourceRevision: string;
+                    inputId: string;
+                    sessionId: string;
+                } | {
+                    version: 2;
+                    sourceId: string;
+                    sourceRevision: string;
+                    inputId: string;
+                    sessionId: string;
+                    extraction: {
+                        version: 1;
+                        offsetEncoding: "utf16";
+                        spans: readonly ({
+                            partId: "input";
+                            start: number;
+                            end: number;
+                        })[];
+                        proposalRevision: string;
+                        admissionDecisionId: string;
+                        judgmentDecisionIds: readonly string[];
+                    };
+                };
                 revision: number;
                 criteriaRevision: number;
                 reportedState: "blocked" | "cancelled" | "complete" | "in_progress" | "pending";
@@ -27386,6 +28540,59 @@ export interface OperatorMethodOutputMap {
                 reason: string;
             })[];
         })[];
+    };
+    // (undocumented)
+    "workLedger.submission.get": {
+        kind: "found";
+        receipt: {
+            projectId: string;
+            requestId: string;
+            inputId: string;
+            ledgerRevision: number;
+            workId: string;
+            attemptId: string;
+            expectedRevision: {
+                work: number;
+                criteria: number;
+                attempt: number;
+            };
+            source: {
+                version: 1;
+                sourceId: string;
+                sourceRevision: string;
+                sessionId: string;
+            };
+            goal: string;
+            criteria: readonly string[];
+        };
+    } | {
+        kind: "not-found";
+    };
+    // (undocumented)
+    "workLedger.submit": {
+        kind: "submitted";
+        replayed: boolean;
+        receipt: {
+            projectId: string;
+            requestId: string;
+            inputId: string;
+            ledgerRevision: number;
+            workId: string;
+            attemptId: string;
+            expectedRevision: {
+                work: number;
+                criteria: number;
+                attempt: number;
+            };
+            source: {
+                version: 1;
+                sourceId: string;
+                sourceRevision: string;
+                sessionId: string;
+            };
+            goal: string;
+            criteria: readonly string[];
+        };
     };
     // (undocumented)
     "workspaces.registrations.add": {
@@ -28947,7 +30154,7 @@ export interface ReactNativeGoodVibesSdkOptions extends GoodVibesSdkOptions {
 }
 
 // @public
-export function readFailure(evidence: FailureEvidence, site: string): Promise<FailureConclusions>;
+export function readFailure(evidence: FailureEvidence, site: string, options?: FailureReadOptions): Promise<FailureConclusions>;
 
 // @public
 export function readFailureTransience(error: unknown, site: string, options?: TransienceOptions): Promise<FailureTransience>;

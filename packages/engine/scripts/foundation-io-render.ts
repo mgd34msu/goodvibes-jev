@@ -12,7 +12,7 @@
 //
 // Scope: intentionally NOT a general JSON-Schema-to-TS compiler. It implements
 // the constructs actually present in the method-catalog schemas: string/number/
-// boolean/null primitives, sorted string enums, arrays, nullable (anyOf [X,
+// boolean/null primitives, sorted string/finite-number enums, arrays, nullable (anyOf [X,
 // {type:'null'}]), general unions, plain objects with required/optional fields,
 // additionalProperties true/false/schema, and the JSON-value family (identity-
 // matched, since those schemas are self-referential and structural recursion
@@ -114,7 +114,16 @@ export function renderType(schema: Record<string, unknown>): string {
     }
     return 'string';
   }
-  if (schema.type === 'number' || schema.type === 'integer') return 'number';
+  if (schema.type === 'number' || schema.type === 'integer') {
+    // Retain literal versions such as { type: 'number', enum: [1] }.
+    // Unrecognized numeric enum shapes retain the existing broad-number fallback.
+    if (Array.isArray(schema.enum) && schema.enum.length > 0
+      && schema.enum.every((value): value is number => typeof value === 'number' && Number.isFinite(value)
+        && (schema.type !== 'integer' || Number.isInteger(value)))) {
+      return [...new Set(schema.enum)].sort((a, b) => a - b).map(String).join(' | ');
+    }
+    return 'number';
+  }
   if (schema.type === 'boolean') return 'boolean';
   if (schema.type === 'null') return 'null';
 
@@ -123,7 +132,7 @@ export function renderType(schema: Record<string, unknown>): string {
     const itemType = renderType(items);
     const isBarePrimitive =
       (items.type === 'string' && !Array.isArray(items.enum)) ||
-      items.type === 'number' || items.type === 'integer' ||
+      ((items.type === 'number' || items.type === 'integer') && itemType === 'number') ||
       items.type === 'boolean';
     return isBarePrimitive ? `readonly ${itemType}[]` : `readonly (${itemType})[]`;
   }

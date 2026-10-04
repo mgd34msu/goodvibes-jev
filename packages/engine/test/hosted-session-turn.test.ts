@@ -37,6 +37,7 @@ import type { ChatRequest, ChatResponse, LLMProvider } from '../sdk/src/platform
 import type { ModelDefinition } from '../sdk/src/platform/providers/registry.ts';
 import type { PermissionPromptDecision } from '../sdk/src/platform/permissions/prompt.ts';
 import { installHostedSessionReadings } from './_helpers/hosted-session-readings.ts';
+import { READ_ONLY } from './_helpers/gate-readings.ts';
 
 const PROVIDER = 'stub';
 const MODEL = 'stub-1';
@@ -51,6 +52,7 @@ let requests: ChatRequest[];
 let answers: ChatResponse[];
 let heldChat: ((request: ChatRequest) => Promise<ChatResponse>) | undefined;
 let readings: ReturnType<typeof installHostedSessionReadings>;
+let approvalRequests: number;
 
 function textAnswer(content: string): ChatResponse {
   return {
@@ -98,6 +100,7 @@ beforeEach(() => {
   requests = [];
   answers = [];
   heldChat = undefined;
+  approvalRequests = 0;
   runtimeBus = new RuntimeEventBus();
 
   const configManager = new ConfigManager({
@@ -106,10 +109,9 @@ beforeEach(() => {
     workingDir: workspace,
     homeDir: root,
   });
-  // Everything this turn does is allowed: the permission gate is not what is
-  // under test here (the trust-gated ask has its own suites), and a decline
-  // would make the tool result an honest refusal rather than a read.
-  const approveEverything = async (): Promise<PermissionPromptDecision> => ({ approved: true });
+  // Legacy prompts remain deterministic. Migrated tool admission uses the
+  // recorded Jev fixture installed below, over the real permission manager.
+  const approveEverything = async (): Promise<PermissionPromptDecision> => { approvalRequests++; return { approved: true }; };
 
   services = createClientRuntimeServices({
     configManager,
@@ -127,7 +129,7 @@ beforeEach(() => {
     replace: true,
   });
   services.providerRegistry.setCurrentModel(`${PROVIDER}:${MODEL}`);
-  readings = installHostedSessionReadings();
+  readings = installHostedSessionReadings({ gate: [['"tool":"read"', READ_ONLY]] });
 });
 
 afterEach(() => {
@@ -186,7 +188,90 @@ test('a tool the model calls actually runs, rooted at this session\'s workspace'
   // The file's real content came back through the registry's read tool, which
   // means the registry was rooted at this workspace and the tool ran here.
   expect(secondCallMessages).toContain('the file this session can read');
+  expect(approvalRequests).toBe(0);
+  const admission = readings.requests.find((request) => request.context?.site === 'engine.gate.autonomous-tool');
+  expect(admission?.state).toMatchObject({ input: { source: { goal: 'read the note', criteria: [] } } });
+  const records = readings.log.query({ site: 'engine.gate.autonomous-tool' });
+  expect(records).toHaveLength(1);
+  const record = records[0];
+  expect(record?.status).toBe('answered');
+  if (record?.status !== 'answered') throw new Error('Expected a recorded act decision');
+  expect(record.answers).toMatchObject({ disposition: { choice: 'act' } });
+  expect(record.notes.some((note) => note.kind === 'action')).toBe(true);
   session.dispose();
+});
+
+for (const disposition of ['reject', 'defer_0'] as const) {
+  test(`recorded hosted ${disposition} returns a refusal without entering the tool body`, async () => {
+    readings.restore();
+    readings = installHostedSessionReadings({ disposition, gate: [['"tool":"read"', READ_ONLY]] });
+    const session = cancellationSession();
+    const calls: string[] = [];
+    const outcomes: string[] = [];
+    runtimeBus.on('TOOL_PERMISSIONED', (event) => {
+      if (event.payload.type === 'TOOL_PERMISSIONED') outcomes.push(event.payload.autonomousDecision?.outcome ?? 'missing');
+    });
+    session.toolRegistry.unregister('read');
+    session.toolRegistry.register({ definition: { name: 'read', description: 'Read a synthetic note.', parameters: { type: 'object', properties: {} } }, execute: async () => { calls.push('read'); return { success: true, output: 'fixture' }; } });
+    answers.push({ content: '', toolCalls: [{ id: 'refused-read', name: 'read', arguments: {} }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse, textAnswer('The read was not admitted.'));
+    try {
+      await session.submit('read the synthetic note');
+      expect(calls).toEqual([]);
+      expect(outcomes).toEqual([disposition === 'reject' ? 'reject' : 'defer']);
+      expect(requests).toHaveLength(2);
+      expect(JSON.stringify(requests[1]!.messages)).toContain('jev_decision');
+      expect(approvalRequests).toBe(0);
+      const records = readings.log.query({ site: 'engine.gate.autonomous-tool' });
+      expect(records).toHaveLength(1);
+      const record = records[0];
+      expect(record?.status).toBe('answered');
+      if (record?.status !== 'answered') throw new Error('Expected a recorded non-executing decision');
+      expect(record.answers).toMatchObject({ disposition: { choice: disposition } });
+    } finally { session.dispose(); }
+  });
+}
+
+test('a hosted turn rejects an unrecorded port before tool admission', async () => {
+  const session = cancellationSession();
+  const recorded = judgmentPort('test');
+  const previous = installJudgmentPort({ model: recorded.model, ask: (request) => recorded.ask(request) });
+  const errors: string[] = [];
+  const executed: string[] = [];
+  runtimeBus.on('TURN_ERROR', (event) => { if (event.payload.type === 'TURN_ERROR') errors.push(event.payload.error); });
+  runtimeBus.on('TOOL_EXECUTING', (event) => { if (event.payload.type === 'TOOL_EXECUTING') executed.push(event.payload.callId); });
+  answers.push({ content: '', toolCalls: [{ id: 'unrecorded-read', name: 'read', arguments: { files: [{ path: 'note.txt' }] } }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse);
+  try {
+    await session.submit('read the note');
+    expect(errors).toEqual(['autonomous admission requires the recorded judgment port']);
+    expect(executed).toEqual([]);
+    expect(requests).toHaveLength(1);
+    expect(readings.log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
+    expect(approvalRequests).toBe(0);
+  } finally { installJudgmentPort(previous); session.dispose(); }
+});
+
+test('the real hosted service boundary still excludes a mutating write from admission', async () => {
+  readings.restore();
+  readings = installHostedSessionReadings({ disposition: 'reject' });
+  const session = cancellationSession();
+  const executed: string[] = [];
+  runtimeBus.on('TOOL_EXECUTING', (event) => { if (event.payload.type === 'TOOL_EXECUTING') executed.push(event.payload.callId); });
+  answers.push({ content: '', toolCalls: [{ id: 'blocked-write', name: 'write', arguments: { files: [{ path: 'blocked.txt', content: 'must not appear' }] } }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse, textAnswer('The write was not admitted.'));
+  try {
+    await session.submit('write blocked.txt');
+    expect(executed).toEqual([]);
+    expect(existsSync(join(workspace, 'blocked.txt'))).toBe(false);
+    const admission = readings.requests.find((request) => request.context?.site === 'engine.gate.autonomous-tool');
+    expect(admission?.state).toMatchObject({ input: { evidence: {
+      boundary: { passed: false, refusedBy: 'surface-authority' },
+      reading: { facts: { mutates: true } },
+      constraints: { allowAct: false },
+    } } });
+    const question = admission?.questions.disposition;
+    expect(question?.type).toBe('choice');
+    if (question?.type === 'choice') expect(Object.hasOwn(question.criteria, 'act')).toBe(false);
+    expect(approvalRequests).toBe(0);
+  } finally { session.dispose(); }
 });
 
 test('turn events reach the runtime bus stamped with this session\'s id', async () => {
@@ -479,7 +564,7 @@ test('whole-turn request aborts a held actual tool and the following turn uses f
   answers.push({ content: '', toolCalls: [{ id: 'held-read', name: 'read', arguments: {} }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse);
   try {
     const turn = session.submit('read');
-    await started;
+    await Promise.race([started, turn.then(() => { throw new Error('Turn ended before the held tool started'); })]);
     expect(signal?.aborted).toBe(false);
     expect(session.liveTurnControls.cancelTurn!(ids[0]!).status).toBe('cancellation-requested');
     expect(signal?.aborted).toBe(true);
@@ -522,14 +607,14 @@ for (const boundary of ['serial-tool', 'permission', 'pre-hook', 'post-hook'] as
     runtimeBus.on('TURN_SUBMITTED', (event) => { if (event.payload.type === 'TURN_SUBMITTED') turnId = event.payload.turnId; });
     runtimeBus.on('TURN_CANCEL', () => { terminal.push('cancel'); });
     runtimeBus.on('TURN_COMPLETED', () => { terminal.push('completed'); });
-    const originalCheck = services.permissionManager.checkDetailed.bind(services.permissionManager);
+    const originalAdmission = services.permissionManager.admitAutonomous.bind(services.permissionManager);
     const originalHook = services.hookDispatcher.fire.bind(services.hookDispatcher);
     let heldHook = false;
     if (boundary === 'pre-hook' || boundary === 'post-hook') services.hookDispatcher.fire = async (event) => {
       if (!heldHook && event.path === `${boundary === 'pre-hook' ? 'Pre' : 'Post'}:tool:read`) { heldHook = true; enter(); await held; }
       return originalHook(event);
     };
-    if (boundary === 'permission') services.permissionManager.checkDetailed = async (...args) => { enter(); await held; return originalCheck(...args); };
+    if (boundary === 'permission') services.permissionManager.admitAutonomous = async (...args) => { enter(); await held; return originalAdmission(...args); };
     session.toolRegistry.unregister('read');
     session.toolRegistry.register({ definition: { name: 'read', description: 'Read test note.', parameters: { type: 'object', properties: {} } }, execute: async () => {
       calls.push('read');
@@ -539,7 +624,7 @@ for (const boundary of ['serial-tool', 'permission', 'pre-hook', 'post-hook'] as
     answers.push({ content: '', toolCalls: [{ id: 'first', name: 'read', arguments: {} }, { id: 'second', name: 'read', arguments: {} }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse);
     try {
       const turn = session.submit('two reads');
-      await entered;
+      await Promise.race([entered, turn.then(() => { throw new Error(`Turn ended before the held ${boundary} started`); })]);
       expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('cancellation-requested');
       expect(terminal).toEqual([]);
       release();
@@ -547,7 +632,7 @@ for (const boundary of ['serial-tool', 'permission', 'pre-hook', 'post-hook'] as
       expect(calls).toEqual(boundary === 'serial-tool' || boundary === 'post-hook' ? ['read'] : []);
       expect(terminal).toEqual(['cancel']);
       expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('already-ended');
-    } finally { release(); services.permissionManager.checkDetailed = originalCheck; services.hookDispatcher.fire = originalHook; session.dispose(); }
+    } finally { release(); services.permissionManager.admitAutonomous = originalAdmission; services.hookDispatcher.fire = originalHook; session.dispose(); }
   });
 }
 
@@ -575,7 +660,7 @@ for (const eventType of ['TOOL_RECEIVED', 'TOOL_PERMISSIONED', 'TOOL_EXECUTING',
 for (const toolName of ['write', 'edit'] as const) {
   for (const success of [true, false]) {
     for (const hookRejects of [false, true]) {
-    test(`cancellation drains admitted ${success ? 'Post' : 'Fail'}:file:${toolName} before ${hookRejects ? 'rejecting' : 'resolving'} settlement`, async () => {
+    test(`owner-origin cancellation drains admitted ${success ? 'Post' : 'Fail'}:file:${toolName} before ${hookRejects ? 'rejecting' : 'resolving'} settlement`, async () => {
       const session = cancellationSession();
       const phase = success ? 'Post' : 'Fail';
       const hookPath = `${phase}:file:${toolName}`;
@@ -583,10 +668,8 @@ for (const toolName of ['write', 'edit'] as const) {
       const entered = new Promise<void>((resolve) => { enter = resolve; });
       let release!: () => void;
       const held = new Promise<void>((resolve) => { release = resolve; });
-      const originalCheck = services.permissionManager.checkDetailed;
-      // This fixture grants write/edit admission explicitly; production hosted
-      // service-surface permission policy is exercised by its own gate tests.
-      services.permissionManager.checkDetailed = async () => ({ approved: true, persisted: false, sourceLayer: 'config_policy', reasonCode: 'config_allow', analysis: { classification: 'generic', riskLevel: 'medium', summary: 'Fixture approval', reasons: [] } });
+      // Recorded fixture readings admit the file operation through the real
+      // manager; only its executor and held hook are deterministic test seams.
       const originalHook = services.hookDispatcher.fire.bind(services.hookDispatcher);
       services.hookDispatcher.fire = async (event) => {
         if (event.path === hookPath) { enter(); await held; if (hookRejects) throw new Error('File hook rejected after release'); }
@@ -595,6 +678,8 @@ for (const toolName of ['write', 'edit'] as const) {
       let turnId = '';
       const terminal: string[] = [];
       const executed: string[] = [];
+      const errors: string[] = [];
+      runtimeBus.on('TURN_ERROR', (event) => { if (event.payload.type === 'TURN_ERROR') errors.push(event.payload.error); });
       runtimeBus.on('TURN_SUBMITTED', (event) => { if (event.payload.type === 'TURN_SUBMITTED') turnId = event.payload.turnId; });
       runtimeBus.on('TURN_CANCEL', () => { terminal.push('cancel'); });
       runtimeBus.on('TURN_COMPLETED', () => { terminal.push('completed'); });
@@ -608,9 +693,19 @@ for (const toolName of ['write', 'edit'] as const) {
         : { edits: [{ path: success ? 'note.txt' : 'missing.txt', find: 'the file', replace: 'edited file' }] };
       answers.push({ content: '', toolCalls: [{ id: 'file-call', name: toolName, arguments: args }, { id: 'later-read', name: 'read', arguments: { files: [{ path: 'note.txt' }] } }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse);
       let settled = false;
-      const turn = session.submit(`please ${toolName} the file`).then(() => { settled = true; });
+      // These lifecycle cases need a representative mutating admission. The
+      // test transport explicitly supplies an owner origin to the same hosted
+      // orchestrator, keeping the normal mutation reading and permission gate.
+      // session.submit itself remains service-origin and cannot grant this.
+      const turn = session.orchestrator.handleUserInput(`please ${toolName} the file`, undefined, {
+        origin: { source: 'operator', surface: 'terminal', ownerDirect: true },
+      }).then(() => { settled = true; });
       try {
-        await Promise.race([entered, turn.then(() => { throw new Error('Turn ended without reaching the expected file hook'); })]);
+        await Promise.race([entered, turn.then(() => { throw new Error(`Turn ended without reaching the expected file hook: ${errors.join('; ')}`); })]);
+        const admission = readings.requests.find((request) => request.context?.site === 'engine.gate.autonomous-tool');
+        expect(admission?.state).toMatchObject({ input: { evidence: {
+          reading: { facts: { mutates: true } }, boundary: { passed: true }, constraints: { allowAct: true },
+        } } });
         expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('cancellation-requested');
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(terminal).toEqual([]);
@@ -621,7 +716,7 @@ for (const toolName of ['write', 'edit'] as const) {
         expect(terminal).toEqual(['cancel']);
         expect(executed).toEqual(['file-call']);
         expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('already-ended');
-      } finally { release(); await turn; services.hookDispatcher.fire = originalHook; services.permissionManager.checkDetailed = originalCheck; session.dispose(); }
+      } finally { release(); await turn; services.hookDispatcher.fire = originalHook; session.dispose(); }
     });
     }
   }
@@ -737,7 +832,7 @@ test('a shared native dispatcher keeps concurrent hosted turn hook ownership iso
   let bEnded = false;
   const second = b.submit('read b').then(() => { bEnded = true; });
   try {
-    await Promise.all(starts);
+    await Promise.race([Promise.all(starts), Promise.all([first, second]).then(() => { throw new Error('Both turns ended before their isolated hooks started'); })]);
     expect(a.liveTurnControls.cancelTurn!(ids['scope-a']!).status).toBe('cancellation-requested');
     expect(records['scope-a']!.signal?.aborted).toBe(true);
     expect(records['scope-b']!.signal?.aborted).toBe(false);

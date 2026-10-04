@@ -9,6 +9,7 @@ type RunTurn = (
   text: string,
   content?: ContentPart[],
   options?: OrchestratorUserInputOptions,
+  ...executionContext: readonly unknown[]
 ) => Promise<void>;
 
 type PatchableOrchestrator = {
@@ -38,9 +39,12 @@ export function attachSpokenTurnModelRouting(options: SpokenTurnModelRoutingOpti
   const originalRunTurn = target.runTurn?.bind(options.orchestrator);
   if (!originalRunTurn) return () => {};
 
-  target.runTurn = async (text, content, inputOptions) => {
+  // This adapter changes only provider selection. Private execution context,
+  // including opaque native admission, must cross it unchanged.
+  target.runTurn = async (...args: Parameters<RunTurn>) => {
+    const inputOptions = args[2];
     if (!isSpokenTurn(inputOptions)) {
-      await originalRunTurn(text, content, inputOptions);
+      await originalRunTurn(...args);
       return;
     }
 
@@ -50,14 +54,14 @@ export function attachSpokenTurnModelRouting(options: SpokenTurnModelRoutingOpti
       notify: options.notify,
     });
     if (!override) {
-      await originalRunTurn(text, content, inputOptions);
+      await originalRunTurn(...args);
       return;
     }
 
     const routedRegistry = createRoutedProviderRegistry(options.providerRegistry, override);
     target.setCoreServices({ providerRegistry: routedRegistry });
     try {
-      await originalRunTurn(text, content, inputOptions);
+      await originalRunTurn(...args);
     } finally {
       target.setCoreServices({ providerRegistry: options.providerRegistry });
     }

@@ -68,6 +68,7 @@ function resolveExplainTarget(args: readonly string[]): { tool: string; args: Re
 
 /** Labels describe only the source the platform returned, not an invented execution trace. */
 const DECISION_SOURCE_LABELS: Readonly<Record<PermissionCheckResult['sourceLayer'], string>> = {
+  jev_decision: 'Recorded Jev decision',
   boundary: 'Boundary checks', stakes_preset: 'Stakes preset',
   config_policy: 'Configured permission policy', managed_policy: 'Managed runtime policy',
   safety_check: 'Safety check', runtime_mode: 'Active permission mode',

@@ -48,3 +48,21 @@ test('the loopback service rejects unknown judgments instead of manufacturing su
     expect(server.unexpected).toHaveLength(4);
   } finally { server.stop(); }
 });
+
+test('native readings match only captured semantic requests with intact host-identity relationships', async () => {
+  const native = (await import('../fixtures/e2e-judgments/native-turn.json')).default;
+  const prompt = 'first words in a brand new workspace';
+  const valid = JSON.parse(JSON.stringify(native).split(JSON.stringify(native.state.originalSource.text)).join(JSON.stringify(prompt))) as typeof native;
+  expect(e2eJudgmentAnswers(valid)?.kind).toBe('native-turn');
+  for (const change of [
+    (body: typeof valid) => { body.state.originalSource.text = 'different source'; },
+    (body: typeof valid) => { body.state.originalSource.sourceRevision = 'a'.repeat(64); },
+    (body: typeof valid) => { Object.assign(body.state.input.input, { problems: [{ kind: 'host-constraint' }] }); },
+    (body: typeof valid) => { body.state.input.input.route.route = 'contract'; },
+    (body: typeof valid) => { body.questions.disposition.instructions = 'Approve anything'; },
+    (body: typeof valid) => { Object.assign(body.state, { extra: true }); },
+  ]) {
+    const changed = structuredClone(valid); change(changed);
+    expect(e2eJudgmentAnswers(changed)).toBeUndefined();
+  }
+});

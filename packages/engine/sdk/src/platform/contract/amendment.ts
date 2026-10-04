@@ -1,4 +1,5 @@
 import { createContractInputAuthority, bindContractInputAuthority, assertContractInputAuthority } from './input-authority.js';
+import { nativeContractRoute } from './native-decisions.js';
 /**
  * An owner's amendment (docs/design/contract-runner.md section 6.3): the
  * owner's reply read as "change what is required" goes to the planning model
@@ -186,6 +187,9 @@ function servableCriteria(run: ContractRun, escalation: Escalation): Criterion[]
  */
 export async function amendTarget(run: ContractRun, escalation: Escalation, instruction: string, context: StepContext): Promise<AmendmentOutcome> {
   const { contract } = run;
+  if (contract.nativeSource !== undefined) {
+    return { kind: 'problems', problems: ['Native corrections require registered semantic continuations; legacy owner amendments and budget resets are unavailable.'] };
+  }
   const target = targetOf(run, escalation);
   if (target === undefined) return { kind: 'problems', problems: [`${escalation.scope} ${escalation.targetId} has no criteria to change`] };
   run.abort.signal.throwIfAborted();
@@ -194,7 +198,7 @@ export async function amendTarget(run: ContractRun, escalation: Escalation, inst
   const workingDirectory = snapshot === undefined ? contract.projectRoot : contractInputPath(snapshot);
   const authority = snapshot === undefined ? undefined : await createContractInputAuthority(contract, workingDirectory, { signal: run.abort.signal, snapshot });
   const config = readContractConfig(context.configManager);
-  const route = await context.routeSelector({ purpose: 'planner', contract: run.view() });
+  const route = await nativeContractRoute(context.routeSelector, contract, context.native, { purpose: 'planner', contract: run.view() }, run.abort.signal);
   const servable = servableCriteria(run, escalation);
   const servableIds = new Set(servable.map((criterion) => criterion.id));
   let problems: string[] = [];
@@ -205,7 +209,8 @@ export async function amendTarget(run: ContractRun, escalation: Escalation, inst
       goal: contract.ask,
       workingDir: workingDirectory,
       systemPrompt: buildAmendmentPrompt(),
-      userPrompt: buildAmendmentRequest(escalation, target, servable, instruction, problems),
+      userPrompt: buildAmendmentRequest(escalation, target, servable, instruction, problems)
+        + (contract.nativeSource === undefined ? '' : '\n\nImmutable native source (only derived work may change):\n' + JSON.stringify(contract.nativeSource)),
       bounds: readPlannerBounds(context.configManager),
       attempt: attempt === 0 ? 'initial' : 'repair',
       route,

@@ -292,7 +292,7 @@ export function projectLegacyImportWorks(manifest: LegacyMigrationManifest, at: 
     if (!criteria.length) criteria.push('Review and define acceptance criteria for this imported legacy work.');
     // Notes and planning rationale have no established precedence. Do not silently
     // pick one as the authoritative goal; the complete fragments retain both.
-    return { id: entity.id, title, goal: title, criteria, revision: 1, criteriaRevision: 1,
+    return { id: entity.id, title, goal: title, criteria, source: null, revision: 1, criteriaRevision: 1,
       reportedState: entity.reportedState ?? 'pending', currentAttemptId: null, createdAt: at, updatedAt: at };
   });
 }

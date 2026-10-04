@@ -21,6 +21,7 @@ The consumer surface is:
 
 - `readSnapshot(actor): Promise<WorkLedgerSnapshot>`
 - `history(afterSequence, actor): Promise<readonly WorkLedgerEvent[]>`
+- `lookupSubmission(requestId, actor): Promise<WorkLedgerSubmission | null>`
 - `subscribe(actor, listener): () => void`
 - `execute(command, actor, {signal}?): Promise<WorkLedgerResult>`
 - `close(): Promise<void>`
@@ -46,6 +47,23 @@ hooks, so reentrant and repeated closes share one drain.
 reads and commands. Already admitted writes can commit. Reads still in flight
 reject `closed` after their underlying read finishes. Hosts must bound storage
 I/O themselves; this module does not pretend a stuck store has drained.
+
+## Explicit source submissions
+
+The trusted `submit_native` command captures exact goal/ordered criteria,
+versioned source provenance, work, its first claimed attempt and its replay
+receipt in one transaction. Source IDs and session come from the host; the
+wire accepts only stable request/input identity, expected revision and explicit
+requirements. This creates no execution or verification receipt. Source-bearing
+work cannot be changed through legacy `revise`; historical source-less work
+retains its existing record editing behavior. Actor-scoped `lookupSubmission`
+returns the immutable original event after an acknowledgement is lost.
+
+KnowledgeStore schema 5 uses ledger format 2. Migration validates old command
+replay/history before adding absent-source markers; it never synthesizes source
+authority for old records. Native execution and intent records are preserved.
+See [native submission](../../../../../../../docs/design/native-work-submission.md)
+for the authenticated host/client and explicit execution boundary.
 
 ## Revision and receipt semantics
 

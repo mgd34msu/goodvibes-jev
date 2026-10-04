@@ -18,6 +18,7 @@
  */
 import type { PlannedRoute, RoutePlanRequest } from '../routing/route-planner.js';
 import type { ContractRouteSelector, UnitRoute } from './types.js';
+import { nativeContractSourceForAdmission } from './native-source.js';
 
 /** What the selector reads from the route planner's answer. */
 export type ContractPlannedRoute = Pick<PlannedRoute, 'model' | 'provider' | 'fallbackModels' | 'reason'>;
@@ -56,8 +57,12 @@ export interface ContractSelectorOptions {
 
 export function createRoutePlannerContractSelector(planner: ContractRoutePlanner, options: ContractSelectorOptions = {}): ContractRouteSelector {
   return async (request) => {
+    request.signal?.throwIfAborted();
     await options.catalogSettled?.();
-    const planned = await planner.planRoute({ purpose: routingPurpose(request), brief: briefFor(request), requires: { toolCalling: true } });
+    request.signal?.throwIfAborted();
+    const planned = await planner.planRoute({ purpose: routingPurpose(request), brief: briefFor(request),
+      ...(request.contract.nativeSource === undefined ? {} : { originalSource: nativeContractSourceForAdmission(request.contract) }),
+      requires: { toolCalling: true }, signal: request.signal, beforeAttempt: request.beforeAttempt, onRetry: request.onRetry });
     const route: UnitRoute = {
       model: planned.model,
       provider: planned.provider,
