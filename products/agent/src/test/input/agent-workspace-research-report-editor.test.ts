@@ -5,6 +5,31 @@ const fields = { title: 'Report', question: 'What is supported?', summary: 'Evid
 const reader = (sources: string) => (id: string): string => ({ ...fields, sources } as Record<string, string>)[id] ?? '';
 
 describe('research report editor source containment', () => {
+  test('contains embedded non-HTTP URI userinfo before editor arguments and prompt dispatch', () => {
+    const uri = 'ftp://sentinel@archive.example.test/paper?edition=2#part';
+    const read = reader(`Read ${uri} carefully | https://example.test/article?id=123#section-2 | high | Before ${uri} after.`);
+    const args = buildAgentResearchReportToolArgs(read, 'Save the report.');
+    const result = buildAgentResearchReportPromptSubmission(createAgentResearchReportEditor(), read, true);
+    expect(result.kind).toBe('prompt');
+    expect(JSON.stringify([args, result])).not.toContain('sentinel');
+    expect(args.sources[0]).toMatchObject({
+      title: 'Read [source URL withheld] carefully',
+      url: 'https://example.test/article?id=123#section-2',
+      credibility: 'high', note: 'Before [source URL withheld] after.', urlOmitted: true,
+    });
+  });
+
+  test('contains declared malformed userinfo aliases before prompt dispatch', () => {
+    const uri = 'ftp://sentinel\\\t@archive.example.test/doc';
+    const alias = uri.replace('ftp:', 'FTP:').replace('archive.example.test', 'ARCHIVE.EXAMPLE.TEST');
+    const read = reader(`Source | ${uri} | high | Before ${alias} after.`);
+    const args = buildAgentResearchReportToolArgs(read, 'Save the report.');
+    const result = buildAgentResearchReportPromptSubmission(createAgentResearchReportEditor(), read, true);
+    expect(result.kind).toBe('prompt');
+    expect(JSON.stringify([args, result])).not.toContain('sentinel');
+    expect(args.sources[0]).toMatchObject({ title: 'Source', note: 'Before [source URL withheld] after.', urlOmitted: true });
+  });
+
   for (const url of [
     'https://example.test/document?token=sentinel',
     'https://example.test/document?auth_token=sentinel',
@@ -26,7 +51,7 @@ describe('research report editor source containment', () => {
     });
   }
 
-  for (const url of ['https://example.test/document?access_token=sentinel', 'https://example.test/document?api_key=sentinel', 'https://sentinel:password@example.test/document']) {
+  for (const url of ['https://example.test/document?access_token=sentinel', 'https://example.test/document?api_key=sentinel', 'https://sentinel:password@example.test/document', 'ftp://user:sentinel@example.test/document']) {
     test(`refuses declared credential syntax before prompt projection: ${url}`, () => {
       for (const sources of [url, `${url} | high`, `${url} | ${url} | high | ${url}`]) {
         expect(() => buildAgentResearchReportToolArgs(reader(sources), 'Save the report.')).toThrow('Refused before judgment');
