@@ -139,9 +139,10 @@ function fixture(storage = new TransactionalTestStore(), clock = testClock()) {
 
 type Fixture = ReturnType<typeof fixture>;
 
-function accepted(result: WorkLedgerResult): WorkLedgerEvent {
+function accepted(result: WorkLedgerResult): Exclude<WorkLedgerEvent, { type: 'import_legacy' }> {
   expect(result.kind).toBe('accepted');
   if (result.kind !== 'accepted') throw new Error(`${result.kind}: ${result.reason}`);
+  if (result.event.type === 'import_legacy') throw new Error('Expected ordinary fixture event');
   return result.event;
 }
 
@@ -211,8 +212,8 @@ describe('native work ledger state and ownership', () => {
     expect(view.attention).toEqual([]);
     const history = await f.service.history(0, f.coordinator);
     expect(history.map(event => event.sequence)).toEqual([1, 2, 3, 4]);
-    expect(history[0]!.work.reportedState).toBe('pending');
-    expect(history[1]!.attempts[0]!.revision).toBe(1);
+    expect(history[0]).toMatchObject({ work: { reportedState: 'pending' } });
+    expect(history[1]).toMatchObject({ attempts: [{ revision: 1 }] });
     expect((await f.service.history(2, f.worker)).map(event => event.type)).toEqual(['report', 'report']);
     await expect(f.service.history(-1, f.worker)).rejects.toThrow('Invalid history cursor');
     await expect(f.service.history(0.5, f.worker)).rejects.toThrow('Invalid history cursor');
@@ -327,7 +328,7 @@ describe('aggregate concurrency and replay', () => {
     const replay = accepted(await f.service.execute(command, f.coordinator));
     expect(replay.work.title).toBe('Original');
     expect((await f.service.readSnapshot(f.worker)).works[0]!.work.criteria).toEqual(['Pass']);
-    expect((await f.service.history(0, f.worker))[0]!.work.title).toBe('Original');
+    expect((await f.service.history(0, f.worker))[0]).toMatchObject({ work: { title: 'Original' } });
   });
 });
 
@@ -729,7 +730,7 @@ describe('stored record integrity', () => {
       state => { state.attempts[0]!.ownerId = 'forged-owner'; },
       state => { state.attempts.push({ ...state.attempts[0]!, id: 'orphan-attempt', state: 'released' }); },
       state => { state.history[1]!.sequence = 9; },
-      state => { state.receipts[0]!.event.work.goal = 'Detached receipt'; },
+      state => { const event = state.receipts[0]!.event; if (event.type !== 'import_legacy') event.work.goal = 'Detached receipt'; },
       state => { state.receipts[0]!.signature = '{}'; },
       state => { state.receipts.pop(); },
     ];

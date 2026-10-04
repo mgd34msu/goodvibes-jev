@@ -54,8 +54,10 @@ export interface JudgmentRequest<Q extends Questions> {
   readonly model?: string;
   /** Cancels the call and any pending retries. */
   readonly signal?: AbortSignal;
-  /** Optional tighter total budget for this logical reading; cannot exceed the port deadline. */
-  readonly totalTimeoutMs?: number;
+  /** Synchronous current-authority check before every wire attempt, including retries. */
+  readonly beforeAttempt?: () => void;
+  /** Observes temporary unavailability without settling the reading. Observer errors are ignored. */
+  readonly onRetry?: (progress: JudgmentRetryProgress) => void;
   /** Attribution for the decision log; never sent to the model. */
   readonly context?: DecisionContext;
 }
@@ -73,9 +75,19 @@ export interface JudgmentAttempt {
   readonly status?: number;
 }
 
+/** Credential-free waiting state for one failed wire attempt, never permission to act. */
+export interface JudgmentRetryProgress {
+  readonly logicalRequestId: string;
+  readonly attempt: JudgmentAttempt;
+  readonly elapsedMs: number;
+  readonly nextDelayMs: number;
+}
+
 export interface JudgmentLineage {
   readonly logicalRequestId: string;
+  /** Most recent attempts; earlier detail is bounded during an arbitrarily long outage. */
   readonly attempts: readonly JudgmentAttempt[];
+  readonly omittedAttempts?: number;
 }
 
 /** Observed health only; it never authorizes an unconfigured target or changes order. */

@@ -82,6 +82,7 @@ export {
   decodeTunnelFrame,
   type TunnelHeader,
   type TunnelRequestHeader,
+  type TunnelRequestCancelHeader,
   type TunnelResponseHeader,
   type TunnelStreamOpenHeader,
   type TunnelStreamDataHeader,

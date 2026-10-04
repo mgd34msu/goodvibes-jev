@@ -14,6 +14,16 @@
 
 - Session-preserving `sessions.turns.cancel` with required expected execution identity, synchronous currentness fencing, idempotent request acceptance, honest stale/ended outcomes, typed public client contracts, and the existing operator write policy. Terminal events remain settlement authority.
 
+### Changed
+
+- Jev availability now retries in the shared judgment transport until recovery or
+  caller/runtime cancellation, with capped jittered backoff and provider rate
+  guidance. Finite retry counts and total judgment deadlines are removed;
+  migrate to timing-only retry settings and owned cancellation signals.
+- Browser, native and relay judgment waits retain authority rechecks and drain
+  cancelled calls before closing their decision log. Retry progress is separate
+  from a final reading; one logical call records one final result.
+
 ## [2.0.23] - 2026-08-23
 
 ### Fixed

@@ -195,3 +195,5 @@ export type {
 export * from './host-handlers.js';
 
 export { registerWorkLedgerGatewayMethods } from './routes/work-ledger.js';
+
+export { registerWorkLedgerImportGatewayMethods } from './routes/work-ledger-import.js';

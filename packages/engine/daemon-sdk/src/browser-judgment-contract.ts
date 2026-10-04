@@ -39,7 +39,7 @@ export type BrowserJudgmentRequest<K extends BrowserJudgmentBatteryId = BrowserJ
 export const BROWSER_JUDGMENT_LIMITS = Object.freeze({
   bodyBytes: 64 * 1024, bodyMs: 5_000, depth: 16, nodes: 4_096, textChars: 32_768,
   arrayItems: 128, candidates: 64, queryChars: 256, referenceChars: 256,
-  runMs: 30_000, closeMs: 5_000, principalRuns: 4, totalRuns: 16, callsPerRun: 64,
+  closeMs: 5_000, principalRuns: 4, totalRuns: 16, callsPerRun: 64,
 });
 
 const REFUSALS = {

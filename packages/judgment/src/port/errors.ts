@@ -2,15 +2,15 @@ import type { JudgmentLineage } from './types.ts';
 
 /**
  * Why a judgment call failed. Every decision site treats a failure as a
- * failure: there is no heuristic path to fall back to. What a site does when
- * Jev cannot answer is not yet decided; the error reaches the caller.
+ * failure: there is no heuristic path to fall back to. Temporary Jev unavailability
+ * stays pending in the shared transport until recovery or cancellation.
  */
 export type JudgmentErrorKind =
   /** The request broke a documented limit and was never sent. */
   | 'invalid-request'
   /** The endpoint rejected the request (4xx other than rate limiting). */
   | 'rejected'
-  /** The endpoint could not answer: rate limit, overload, 5xx, timeout or network failure after retries. */
+  /** The endpoint could not answer: rate limit, overload, 5xx, timeout or network failure (retried until recovery by the configured transport). */
   | 'unavailable'
   /** The caller cancelled the call. */
   | 'aborted'

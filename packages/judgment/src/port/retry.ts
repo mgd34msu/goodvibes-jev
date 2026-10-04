@@ -1,41 +1,45 @@
-import { APIConnectionError, APIError, APITimeoutError, type RetryPolicy } from '@typesafe-ai/sdk';
+import { APIConnectionError, APIError, APITimeoutError } from '@typesafe-ai/sdk';
 import { JudgmentError } from './errors.ts';
 
-/** Bounded defaults matching the SDK's retry policy; the transport owns retries. */
-export function retryPolicy(overrides: Partial<RetryPolicy>): RetryPolicy {
-  const policy: RetryPolicy = {
-    maxRetries: 2, backoffInitialMs: 500, backoffMaxMs: 5_000, backoffJitter: 0.25,
-    httpStatuses: new Set([408, 429, ...Array.from({ length: 100 }, (_, i) => 500 + i)]),
-    respectRetryAfter: true, maxRetryAfterMs: 60_000, apiConnectionError: true, apiTimeoutError: true,
-    ...overrides,
-  };
-  if (!Number.isInteger(policy.maxRetries) || policy.maxRetries < 0 || policy.maxRetries > 10
-    || ![policy.backoffInitialMs, policy.backoffMaxMs, policy.maxRetryAfterMs].every((v) => Number.isFinite(v) && v >= 0 && v <= 60_000)
-    || !Number.isFinite(policy.backoffJitter) || policy.backoffJitter < 0 || policy.backoffJitter > 1
-    || ![policy.respectRetryAfter, policy.apiConnectionError, policy.apiTimeoutError].every((v) => typeof v === 'boolean')
-    || !(policy.httpStatuses instanceof Set) || [...policy.httpStatuses].some((v) => !Number.isInteger(v) || !transientStatus(v))) {
-    throw new JudgmentError('invalid-request', 'invalid bounded judgment retry policy');
+/** Timing only: temporary unavailability never exhausts an attempt budget. */
+export interface JudgmentRetryPolicy {
+  readonly backoffInitialMs: number;
+  readonly backoffMaxMs: number;
+  readonly backoffJitter: number;
+}
+
+export function retryPolicy(overrides: Partial<JudgmentRetryPolicy>): JudgmentRetryPolicy {
+  const policy = { backoffInitialMs: 500, backoffMaxMs: 5_000, backoffJitter: 0.25, ...overrides };
+  if (!overrides || typeof overrides !== 'object' || Object.keys(overrides).some((key) => !['backoffInitialMs', 'backoffMaxMs', 'backoffJitter'].includes(key))
+    || ![policy.backoffInitialMs, policy.backoffMaxMs].every((v) => Number.isFinite(v) && v >= 1 && v <= 60_000)
+    || policy.backoffInitialMs > policy.backoffMaxMs
+    || !Number.isFinite(policy.backoffJitter) || policy.backoffJitter < 0 || policy.backoffJitter > 1) {
+    throw new JudgmentError('invalid-request', 'judgment retries accept only positive bounded backoff timing and jitter; attempt and total-time limits are not supported');
   }
-  return { ...policy, httpStatuses: new Set(policy.httpStatuses) };
+  return policy;
 }
 
 export const transientStatus = (status: number): boolean => status === 408 || status === 429 || (status >= 500 && status <= 599);
 
-export function retryable(error: unknown, policy: RetryPolicy): boolean {
-  if (error instanceof APITimeoutError) return policy.apiTimeoutError;
-  if (error instanceof APIConnectionError) return policy.apiConnectionError;
-  return error instanceof APIError && policy.httpStatuses.has(error.status);
+export function retryable(error: unknown): boolean {
+  return error instanceof APITimeoutError || error instanceof APIConnectionError
+    || (error instanceof APIError && transientStatus(error.status));
 }
 
-/** Server guidance is bounded by both this policy and the logical-call deadline. */
-export function retryDelay(error: unknown, attempt: number, policy: RetryPolicy): number {
-  if (error instanceof APIError && policy.respectRetryAfter) {
-    const ms = error.headers.get('retry-after-ms');
-    const raw = error.headers.get('retry-after');
-    const delay = ms !== null ? Number(ms) : raw === null ? NaN : Number.isFinite(Number(raw)) ? Number(raw) * 1_000 : Date.parse(raw) - Date.now();
-    if (Number.isFinite(delay) && delay >= 0 && delay <= policy.maxRetryAfterMs) return delay;
-  }
-  return Math.round(Math.min(policy.backoffInitialMs * 2 ** attempt, policy.backoffMaxMs) * (1 - Math.random() * policy.backoffJitter));
+/** Provider rate guidance is a minimum, never shortened by local backoff caps. */
+export function retryDelay(error: unknown, attempt: number, policy: JudgmentRetryPolicy): number {
+  // Clamp the exponent before multiplication: arbitrarily long outages must not overflow.
+  const backoff = Math.max(1, Math.round(Math.min(policy.backoffInitialMs * 2 ** Math.min(attempt, 30), policy.backoffMaxMs)
+    * (1 - Math.random() * policy.backoffJitter)));
+  if (!(error instanceof APIError)) return backoff;
+  const ms = error.headers.get('retry-after-ms');
+  const raw = error.headers.get('retry-after');
+  const delays = [
+    ms !== null && ms.trim() ? Number(ms) : NaN,
+    raw !== null && raw.trim() ? (Number.isFinite(Number(raw)) ? Number(raw) * 1_000 : Date.parse(raw) - Date.now()) : NaN,
+  ];
+  const guidance = delays.find((value) => Number.isFinite(value) && value >= 0);
+  return guidance === undefined ? backoff : Math.max(backoff, Math.min(guidance, Number.MAX_SAFE_INTEGER));
 }
 
 /** Race even an injected fetch that ignores AbortSignal, and always clean listeners. */
@@ -54,8 +58,14 @@ export async function interruptible<T>(work: PromiseLike<T>, signal: AbortSignal
   finally { signal.removeEventListener('abort', abort); }
 }
 
+/** Chunk long server-directed waits so setTimeout cannot overflow into a hot loop. */
 export async function delay(ms: number, signal: AbortSignal): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try { await interruptible(new Promise<void>((resolve) => { timer = setTimeout(resolve, ms); }), signal); }
-  finally { clearTimeout(timer); }
+  let remaining = ms;
+  while (remaining > 0) {
+    const chunk = Math.min(remaining, 2_147_483_647);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try { await interruptible(new Promise<void>((resolve) => { timer = setTimeout(resolve, chunk); }), signal); }
+    finally { clearTimeout(timer); }
+    remaining -= chunk;
+  }
 }

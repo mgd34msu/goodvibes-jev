@@ -15,3 +15,5 @@ export { LIMITS, estimateTokens, validateContextBudget, validateQuestions } from
 export { createModelCatalog, type ModelCatalog } from './models.ts';
 export { createSystemOnePort } from './transport.ts';
 export * from './types.ts';
+
+export type { JudgmentRetryPolicy } from './retry.ts';
