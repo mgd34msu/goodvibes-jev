@@ -10,7 +10,9 @@
   hashes do not randomly block ordinary answers; untrusted URI and content
   privacy checks remain unchanged. Revalidate the entire restored-alias batch
   after quality evaluation so byte-identical ledger cache rebuilds cannot leave
-  partial source or link writes.
+  partial source or link writes. If an owned source changes after writing has
+  begun, hold instead of falling back to upsert, preserve the newer correction,
+  and stop subsequent stale steps without claiming earlier writes rolled back.
 
 ### Added
 

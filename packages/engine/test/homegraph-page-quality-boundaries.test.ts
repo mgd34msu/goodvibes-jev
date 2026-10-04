@@ -487,6 +487,64 @@ describe('Home Graph page quality persistence boundaries', () => {
     }
   });
 
+  for (const [changedSource, extraMicrotasks] of [['later', 0], ['current', 0], ['current', 1]] as const) {
+    test(`a public correction to the ${changedSource} owned source after the first edge and ${extraMicrotasks} extra microtasks is never overwritten`, async () => {
+      const context = await fixture();
+      const service = new HomeGraphService(context.store, context.artifactStore);
+      const otherDevice = await seedHomeAssistantObservation(context.store, {
+        id: 'another-reference-device', kind: 'ha_device', slug: 'another-reference-device',
+        title: 'Another reference device', status: 'active',
+        metadata: metadata({ homeAssistant: { objectId: 'another-reference-device', objectKind: 'device' } }),
+      });
+      const sources: KnowledgeSourceRecord[] = [];
+      for (const title of ['First reference manual', 'Second reference manual']) {
+        const ingested = await service.ingestNote({ installationId, title,
+          body: 'The reference device supports 4K UHD resolution.', category: 'manual' });
+        sources.push(context.store.getSource(ingested.source.id)!);
+      }
+      sources.sort((left, right) => left.id.localeCompare(right.id));
+      const first = sources[0]!, later = sources[1]!;
+      const changed = changedSource === 'later' ? later : first;
+      const aliases = sources.map(withKnowledgeSourceAnswerAliases);
+      const askEdges = () => context.store.listEdges().filter((edge) => edge.relation === 'source_for'
+        && edge.metadata.linkedBy === 'homegraph-ask-page-refresh');
+      readings();
+      let settled = false;
+      const result = refreshAsk(context, aliases, [], [context.device, otherDevice])
+        .then(() => undefined, (error: unknown) => error).finally(() => { settled = true; });
+      try {
+        // Observe public state between real async store operations. No store
+        // method is replaced; a public upsert races the next source/edge step.
+        for (let turn = 0; turn < 1_000 && !settled && !askEdges().some((edge) => edge.fromId === first.id); turn++) {
+          await Promise.resolve();
+        }
+        expect(askEdges().some((edge) => edge.fromId === first.id && edge.toId === context.device.id)).toBe(true);
+        for (let turn = 0; turn < extraMicrotasks; turn++) await Promise.resolve();
+        const correction = await context.store.upsertSource({ ...changed,
+          title: 'Newer corrected manual title', summary: 'Newer operator correction after the first valid edge.' });
+        const error = await result;
+        expect(context.store.getSource(changed.id)).toBe(correction);
+        expect(context.store.getSource(changed.id)).toEqual(correction);
+        expect(error).toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
+        expect((error as KnowledgeGeneratedFactSupportHeldError).reason).toBe('stale');
+        expect(askEdges().filter((edge) => edge.fromId === later.id)).toHaveLength(0);
+        if (changedSource === 'current') {
+          expect(askEdges().filter((edge) => edge.fromId === first.id && edge.toId === otherDevice.id)).toHaveLength(0);
+        }
+        // The earlier valid edge may remain: batch is not an atomic rollback.
+        expect(askEdges().some((edge) => edge.fromId === first.id && edge.toId === context.device.id)).toBe(true);
+        const reopened = new KnowledgeStore({ dbPath: context.store.storagePath });
+        try {
+          await reopened.init();
+          expect(reopened.getSource(changed.id)).toEqual(correction);
+        } finally { await reopened.close(); }
+      } finally {
+        await result;
+        service.dispose();
+      }
+    });
+  }
+
   test('ask refresh links accepted-source facts only and leaves rejected and foreign facts unchanged', async () => {
     const context = await fixture();
     const accepted = await addSource(context, 'accepted-answer-reference', { linked: false });

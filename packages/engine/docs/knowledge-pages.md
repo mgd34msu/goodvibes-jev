@@ -75,6 +75,11 @@ source or link writes also remain fenced against changes during quality reads.
 Every restored alias is revalidated together after quality evaluation and before
 the first write. A ledger commit that rebuilds byte-identical cached records
 still invalidates their former object-bound authority and holds the whole pass.
+After admission, an originally owned source that changes identity is held rather
+than passed to ordinary upsert. Ownership is rechecked at the guarded node/edge commit points, after awaited
+write operations, and before returning success. A batch is not an atomic rollback:
+earlier valid writes may remain when a later concurrent correction is detected,
+but that correction must not be overwritten or authorize further stale work.
 
 ## Quality
 
