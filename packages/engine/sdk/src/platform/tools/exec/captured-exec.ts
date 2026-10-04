@@ -1,3 +1,6 @@
+import { collectCommandNodes } from '../../runtime/permissions/normalization/ast.js';
+import { parseAST } from '../../runtime/permissions/normalization/parser.js';
+import { MAX_INPUT_LENGTH, MAX_TOKEN_COUNT, tokenize } from '../../runtime/permissions/normalization/tokenizer.js';
 import { projectCapturedExecNodeRuntime, type CapturedExecNodeRuntimeInput } from './captured-exec-runtime-input.js';
 import type { CapturedPublicationLease } from '../shared/captured-publication.js';
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
@@ -119,6 +122,36 @@ export interface CapturedExecutionObserver {
   readonly onStarted?: ((lease: CapturedExecutionLease) => void) | undefined;
 }
 
+/** Availability only: this never grants runtime/file/process authority. Keep
+ * the existing simple Bun build/test and shell-primitive substrate lightweight.
+ * Indirect Node use inside those Bun workflows remains unavailable unless this
+ * command also requests the Node runtime. Unknown shell shapes take the full
+ * construction-owned admission, never a guessed grant or a host fallback.
+ */
+function needsNodeRuntime(command: string, input: ExecCommandInput): boolean {
+  if (input.env?.PATH !== undefined) return true;
+  if (command.length >= MAX_INPUT_LENGTH || command.includes('\n') || command.includes('\r')) return true;
+  const tokens = tokenize(command.trim());
+  if (tokens.length === 0 || tokens.length >= MAX_TOKEN_COUNT) return true;
+  if (tokens.some((token) => token.type === 'subshell' || token.value.startsWith('<<') ||
+    (token.type !== 'operator' && token.type !== 'pipe' && /[$`\\&(){}#]/.test(token.value)))) return true;
+  const nodes = collectCommandNodes(parseAST(tokens));
+  const consumed = new Set(nodes.flatMap((node) => node.tokens.map((token) => token.position)));
+  if (nodes.length === 0 || nodes.some((node) => node.parseError) ||
+    tokens.some((token) => token.type !== 'operator' && token.type !== 'pipe' && !consumed.has(token.position))) return true;
+  const literal = (value: string | undefined, word: string): boolean =>
+    value === word || value === `'${word}'` || value === `"${word}"`;
+  const primitives = new Set([':', 'true', 'false', 'echo', 'printf', 'sleep', 'pwd', 'cd', 'test', '[']);
+  return nodes.some((node) => {
+    if (node.tokens[0]?.type !== 'command' || !literal(node.tokens[0].value, node.command)) return true;
+    if (primitives.has(node.command)) return false;
+    const argument = (index: number, word: string): boolean =>
+      node.tokens[index]?.type === 'argument' && literal(node.tokens[index]?.value, word);
+    return node.command !== 'bun' || !(argument(1, 'build') || argument(1, 'test') ||
+      (argument(1, 'run') && (argument(2, 'build') || argument(2, 'test'))));
+  });
+}
+
 export async function runCapturedCommand(
   binding: CapturedExecAuthority,
   command: string,
@@ -178,6 +211,17 @@ export async function runCapturedCommand(
     if (!availability.available) return { cmd: command, cwd, exit_code: null, stdout: '', stderr: availability.message, success: false, denied: true,
       sandboxed: false, sandbox_boundary: 'captured boundary unavailable', captured_exec_availability: availability, duration_ms: Date.now() - start };
     if (cwd !== root) await authorize(cwd);
+    // Runtime selection changes availability only. Fixed validators and every
+    // selected command share the existing construction-owned pinned admission.
+    if (!binding.nodeRuntimeInput && binding.nodeRuntimeAdmission && needsNodeRuntime(command, input)) {
+      try {
+        const nodeRuntimeInput = await executePolicyCheck(() => binding.nodeRuntimeAdmission!(operationSignal), operationSignal);
+        binding = Object.freeze({ ...binding, nodeRuntimeInput });
+      } catch {
+        operationSignal.throwIfAborted();
+        await check();
+      }
+    }
     temporary = await mkdtemp(join(tmpdir(), 'goodvibes-captured-exec-'));
     const projection = join(temporary, 'view');
     await mkdir(projection);
@@ -219,7 +263,7 @@ export async function runCapturedCommand(
     const filterPath = join(temporary, 'sockets.bpf');
     await writeFile(filterPath, socketFilter(network));
     const fd = openSync(filterPath, 'r');
-    const argv = runtimeArgv(Boolean(binding.nodeRuntimeInput));
+    const argv = runtimeArgv(Boolean(binding.nodeRuntimeInput || binding.nodeRuntimeAdmission));
     argv.push(...nodeRuntime.argv);
     argv.push(contractInputAuthorityMutable(binding.authority) ? '--bind' : '--ro-bind', projection, root,
       '--chdir', cwd, '--seccomp', '3');

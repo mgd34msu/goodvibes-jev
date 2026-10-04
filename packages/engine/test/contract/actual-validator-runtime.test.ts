@@ -44,14 +44,24 @@ function copyPackage(source: string, target: string, seen = new Set<string>()): 
   }
 }
 
-test.skipIf(!supported)('actual default member typecheck/lint validators use admitted Node/npm and real project dependencies', async () => {
+test.skipIf(!supported)('actual default member direct commands and typecheck/lint share admitted Node/npm and real project dependencies', async () => {
   const root = makeRepo();
   writeFileSync(join(root, '.gitignore'), '.goodvibes/\nnode_modules/\n');
   mkdirSync(join(root, 'src'));
   const original = 'export const answer: number = 1;\n';
   const changed = 'export const answer: number = 42;\n';
   writeFileSync(join(root, 'src/csv.ts'), original);
-  writeFileSync(join(root, 'package.json'), '{"private":true}');
+  writeFileSync(join(root, 'private.txt'), 'SYNTHETIC_DIRECT_RUNTIME_DENIED');
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true, scripts: { proof: 'node direct-proof.cjs' } }));
+  writeFileSync(join(root, 'direct-proof.cjs'), [
+    'const { existsSync, readFileSync, writeFileSync } = require("node:fs");',
+    `if (existsSync(${JSON.stringify(join(root, 'src/csv.ts'))})) throw Error("owner source escaped into direct command");`,
+    'if (existsSync("private.txt") || existsSync(".git") || existsSync("/opt/codex")) throw Error("unadmitted direct inputs visible");',
+    'if (process.env.HOME !== "/home/captured") throw Error("direct runtime is not contained");',
+    'if (!readFileSync("src/csv.ts", "utf8").includes("= 1")) throw Error("wrong captured input");',
+    'writeFileSync("node-proof.txt", "REAL_CONTAINED_DIRECT_NODE\\n");',
+    'console.log("DIRECT_RUNTIME_ALLOWED");',
+  ].join('\n'));
   writeFileSync(join(root, 'tsconfig.json'), '{"compilerOptions":{"strict":true,"skipLibCheck":true},"files":["src/csv.ts"]}');
   writeFileSync(join(root, 'lint-target.js'), 'const answer = 42; console.log(answer);');
   writeFileSync(join(root, 'eslint.config.mjs'), [
@@ -81,6 +91,7 @@ test.skipIf(!supported)('actual default member typecheck/lint validators use adm
     requestApproval: async () => ({ approved: true }),
   });
   await resumeContracts(runtime.contractRunner, root);
+  await runtime.userPermissionRuleStore.add({ rule: { id: 'deny-direct-runtime-original', type: 'path-scope', origin: 'user', effect: 'deny', toolPattern: 'read', pathPatterns: [join(root, 'private.txt')] }, createdAt: Date.now(), tier: 'path', tool: 'read' });
   const previous = installJudgmentPort(runnerPort((context) => context.name === 'family' ? choiceAnswer(context.question, 'file-mutation', 0.99) : undefined).port);
   const results = new Map<string, ToolResult>(); let calls = 0; let memberRoot = ''; let checked = false;
   const assertOwner = (): void => {
@@ -91,16 +102,24 @@ test.skipIf(!supported)('actual default member typecheck/lint validators use adm
   const provider: LLMProvider = { name: 'actual-npx', models: ['fixture'], isConfigured: () => true,
     async chat(request) {
       if (!request.tools?.some((tool) => tool.name === 'write')) return { content: plannerOutput(oneUnitPlan(1)), toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
+      expect(JSON.stringify(request)).not.toContain('SYNTHETIC_DIRECT_RUNTIME_DENIED');
       const turn = ++calls; memberRoot = runtime.agentManager.list().find((record) => record.contractRole === 'unit')!.workingDirectory!;
       expect(memberRoot).not.toBe(root); assertOwner();
       let step: ToolCall | undefined;
-      if (turn === 1) step = { id: 'real-npx', name: 'write', arguments: { files: [{ path: 'src/csv.ts', content: changed, mode: 'overwrite' }], validate: { after: ['typecheck', 'lint'] }, verbosity: 'standard' } };
-      else {
+      if (turn === 1) step = { id: 'direct-node-npm', name: 'exec', arguments: { commands: [{ cmd: 'node --version && npm run proof && npx --version' }] } };
+      else if (turn === 2) {
+        const direct = results.get('direct-node-npm');
+        expect(direct?.success, JSON.stringify(direct)).toBe(true);
+        expect(direct?.output).toContain('DIRECT_RUNTIME_ALLOWED');
+        expect(readFileSync(join(memberRoot, 'node-proof.txt'), 'utf8')).toBe('REAL_CONTAINED_DIRECT_NODE\n');
+        expect(existsSync(join(root, 'node-proof.txt'))).toBe(false);
+        step = { id: 'real-npx', name: 'write', arguments: { files: [{ path: 'src/csv.ts', content: changed, mode: 'overwrite' }], validate: { after: ['typecheck', 'lint'] }, verbosity: 'standard' } };
+      } else {
         const written = results.get('real-npx'); expect(written?.success, JSON.stringify(written)).toBe(true);
         expect(JSON.parse(written!.output!).validation_passed, written!.output).toBe(true);
         expect(readFileSync(join(memberRoot, 'lint-proof.txt'), 'utf8')).toBe('REAL_CONTAINED_ESLINT\n');
         expect(readFileSync(join(memberRoot, 'src/csv.ts'), 'utf8')).toBe(changed);
-        if (turn === 2) step = { id: 'actual-type-error', name: 'edit', arguments: { edits: [{ path: 'src/csv.ts', find: '= 42', replace: '= "wrong"' }], validate: { after: ['typecheck'] }, transaction: { mode: 'atomic' } } };
+        if (turn === 3) step = { id: 'actual-type-error', name: 'edit', arguments: { edits: [{ path: 'src/csv.ts', find: '= 42', replace: '= "wrong"' }], validate: { after: ['typecheck'] }, transaction: { mode: 'atomic' } } };
         else { expect(results.get('actual-type-error')?.success).toBe(false); expect(results.get('actual-type-error')?.error).toContain('TS2322'); }
       }
       return { content: step ? '' : 'Created src/csv.ts. The parser works.', toolCalls: step ? [step] : [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: step ? 'tool_call' : 'completed' };
@@ -127,9 +146,10 @@ test.skipIf(!supported)('actual default member typecheck/lint validators use adm
     id = runner.start({ ask: 'Add a CSV parser module', sessionId: 'actual-npx-fixture', origin: 'cli', projectRoot: root, isolation: 'worktree' }).contract.id;
     await waitFor(() => ['passed', 'failed', 'cancelled', 'awaiting-owner'].includes(runner.get(id!)!.status), 'actual Node/npm validator settlement', 180_000);
     await runner.join(id); const result = runner.get(id)!;
-    expect(result.status, JSON.stringify({ error: result.error, results: [...results], calls })).toBe('passed'); expect(calls).toBe(3); expect(checked).toBe(true);
+    expect(result.status, JSON.stringify({ error: result.error, results: [...results], calls })).toBe('passed'); expect(calls).toBe(4); expect(checked).toBe(true);
     expect(result.commit?.status, result.commit?.note).toBe('applied'); expect(readFileSync(join(root, 'src/csv.ts'), 'utf8')).toBe(changed);
     expect(readFileSync(join(root, 'lint-proof.txt'), 'utf8')).toBe('REAL_CONTAINED_ESLINT\n');
+    expect(readFileSync(join(root, 'node-proof.txt'), 'utf8')).toBe('REAL_CONTAINED_DIRECT_NODE\n');
     expect(readFileSync(join(root, 'owner.txt'), 'utf8')).toBe('unstaged\n'); expect(readFileSync(join(root, '.git/index'))).toEqual(index); expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
   } finally {
     if (id) { runner.cancel(id, 'fixture cleanup'); await runner.join(id); }

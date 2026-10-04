@@ -1,6 +1,9 @@
 import { checkCapturedInputsInBatches } from '../sdk/src/platform/tools/exec/captured-exec-validation.js';
 import { executePolicyCheck } from '../sdk/src/platform/gate/execute-policy-check.js';
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
+import * as fs from 'node:fs';
+import * as childProcess from 'node:child_process';
+import * as asyncFs from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -93,6 +96,230 @@ test.skipIf(!supported)('admitted real Node/npm runs unchanged local typecheck a
   expect(escaped.success).toBe(true);
   expect(escaped.stdout).toMatch(/^v/);
 }, 180000);
+
+test.skipIf(!supported)('direct commands consume the construction-owned Node/npm admission', async () => {
+  const binding = await fixture((path) => !path.endsWith('/private.txt'));
+  const nodeRuntimeAdmission = createCapturedExecNodeRuntimeAdmission(binding);
+  writeFileSync(join(binding.root, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node check.test.cjs' } }));
+  writeFileSync(join(binding.root, 'check.test.cjs'), [
+    'const { test } = require("node:test");',
+    'const assert = require("node:assert/strict");',
+    'const fs = require("node:fs");',
+    'test("contained direct runtime", () => {',
+    '  assert.equal(fs.existsSync("private.txt"), false);',
+    '  assert.equal(fs.existsSync("/opt/codex"), false);',
+    '  assert.equal(fs.existsSync("/home/captured/.npmrc"), false);',
+    '  assert.equal(process.env.HOME, "/home/captured");',
+    '  assert.equal(fs.readFileSync("input.txt", "utf8"), "captured-fixture\\n");',
+    '  fs.writeFileSync("node-proof.txt", "REAL_CONTAINED_NODE\\n");',
+    '});',
+  ].join('\n'));
+  const opened: string[] = [];
+  const read = asyncFs.readFile;
+  const tap = spyOn(asyncFs, 'readFile').mockImplementation(((...args: Parameters<typeof read>) => {
+    opened.push(String(args[0]));
+    return read(...args);
+  }) as typeof read);
+  let result;
+  try { result = await runCapturedCommand({ ...binding, nodeRuntimeAdmission }, 'node --version && npm test && npx --version', {}, binding.root, 30000); }
+  finally { tap.mockRestore(); }
+  expect(opened).toContain(join(binding.root, 'input.txt'));
+  expect(opened.some((path) => path.endsWith('/private.txt'))).toBe(false);
+  expect(result.success, JSON.stringify(result)).toBe(true);
+  expect(result.sandboxed).toBe(true);
+  expect(result.stdout).toContain('contained direct runtime');
+  expect(readFileSync(join(binding.root, 'node-proof.txt'), 'utf8')).toBe('REAL_CONTAINED_NODE\n');
+  expect(existsSync(join(binding.owner, 'node-proof.txt'))).toBe(false);
+  expect(JSON.stringify(result)).not.toContain('SYNTHETIC_DENIED_MARKER');
+}, 120000);
+
+test.skipIf(!supported)('simple Bun and shell commands do not admit an unused npm closure', async () => {
+  const binding = await fixture();
+  writeFileSync(join(binding.root, 'answer.ts'), 'export const answer = 42;');
+  writeFileSync(join(binding.root, 'package.json'), JSON.stringify({ scripts: { build: 'bun build answer.ts --outdir dist' } }));
+  writeFileSync(join(binding.root, 'answer.test.ts'), 'import { test, expect } from "bun:test"; import { answer } from "./answer"; test("answer", () => expect(answer).toBe(42));');
+  let admissions = 0;
+  const nodeRuntimeAdmission = async () => { admissions++; throw new Error('unused runtime must stay lazy'); };
+  const result = await runCapturedCommand({ ...binding, nodeRuntimeAdmission }, `'bun' 'run' 'build' && 'bun' 'test' answer.test.ts && echo node && printf "%s" npm`, {}, binding.root, 10000);
+  expect(result.success, JSON.stringify(result)).toBe(true);
+  expect(result.stdout).toContain('node');
+  expect(result.stdout).toContain('npm');
+  expect(readFileSync(join(binding.root, 'dist/answer.js'), 'utf8')).toContain('42');
+  expect(admissions).toBe(0);
+});
+
+for (const command of [
+  'node',
+  'NODE_ENV=test node',
+  'env NODE_ENV=test node',
+  'sh -c "node"',
+  'command node',
+  '/captured-runtime/bin/node',
+  '/captured-runtime/bin/node test',
+  '>echo node',
+  '"/captured-runtime/bin/node" echo',
+  'printf fixture; node',
+  'echo "$(node)"',
+  'echo fixture\nnode',
+  ': & node',
+  '$(printf node)',
+  `${'echo '.repeat(1100)}; node`,
+  `echo ${'x'.repeat(66000)}; node`,
+])
+  test.skipIf(!supported)(`direct runtime selection supports ${command.length > 100 ? `bounded fallback (${command.length} characters)` : JSON.stringify(command)}`, async () => {
+    const binding = await fixture();
+    const declaration = syntheticRuntime(binding);
+    writeFileSync(declaration.nodeExecutable, '#!/bin/sh\necho SELECTED_RUNTIME\n', { mode: 0o755 });
+    const admit = createCapturedExecNodeRuntimeAdmission(binding, declaration);
+    let admissions = 0;
+    const nodeRuntimeAdmission = (signal?: AbortSignal) => { admissions++; return admit(signal); };
+    const result = await run({ ...binding, nodeRuntimeAdmission }, command);
+    expect(result.success, JSON.stringify(result)).toBe(true);
+    expect(command === '>echo node' ? readFileSync(join(binding.root, 'echo'), 'utf8') : result.stdout).toContain('SELECTED_RUNTIME');
+    expect(admissions).toBe(1);
+  });
+
+test.skipIf(!supported)('a PATH override cannot disguise a project Node wrapper as a shell primitive', async () => {
+  const binding = await fixture();
+  const declaration = syntheticRuntime(binding);
+  writeFileSync(declaration.nodeExecutable, '#!/bin/sh\necho PROJECT_WRAPPER_RUNTIME\n', { mode: 0o755 });
+  writeFileSync(join(binding.root, 'sleep'), '#!/bin/sh\nexec /captured-runtime/bin/node\n', { mode: 0o755 });
+  const nodeRuntimeAdmission = createCapturedExecNodeRuntimeAdmission(binding, declaration);
+  const result = await runCapturedCommand({ ...binding, nodeRuntimeAdmission }, 'sleep', { env: { PATH: `${binding.root}:/captured-runtime/bin:/usr/bin:/bin` } }, binding.root, 5000);
+  expect(result.success, JSON.stringify(result)).toBe(true);
+  expect(result.stdout).toBe('PROJECT_WRAPPER_RUNTIME\n');
+});
+
+for (const deniedSide of ['original', 'alias'] as const)
+  test.skipIf(!supported)(`direct runtime admission respects ${deniedSide} denial without runtime fallback`, async () => {
+    let denied = '';
+    const binding = await fixture((path) => path !== denied);
+    const declaration = syntheticRuntime(binding);
+    writeFileSync(declaration.nodeExecutable, '#!/bin/sh\necho SYNTHETIC_RUNTIME_PRIVATE\n', { mode: 0o755 });
+    denied = deniedSide === 'original' ? declaration.nodeExecutable : '/captured-runtime/bin/node';
+    const nodeRuntimeAdmission = createCapturedExecNodeRuntimeAdmission(binding, declaration);
+    const opened: string[] = [];
+    const read = asyncFs.readFile;
+    const tap = spyOn(asyncFs, 'readFile').mockImplementation(((...args: Parameters<typeof read>) => {
+      opened.push(String(args[0]));
+      return read(...args);
+    }) as typeof read);
+    let result;
+    try { result = await run({ ...binding, nodeRuntimeAdmission }, 'node'); }
+    finally { tap.mockRestore(); }
+    expect(opened).not.toContain(declaration.nodeExecutable);
+    expect(result.success).toBe(false);
+    expect(result.exit_code).toBe(126);
+    expect(result.stdout).toBe('');
+    expect((result.stderr ?? '').length).toBeGreaterThan(0);
+    expect(JSON.stringify(result)).not.toContain('SYNTHETIC_RUNTIME_PRIVATE');
+    expect((await run({ ...binding, nodeRuntimeAdmission }, 'bun -e "console.log(42)"')).stdout).toBe('42\n');
+  });
+
+for (const admitted of [false, true])
+  test.skipIf(!supported)(`known OS runtime aliases stay blocked with ${admitted ? 'admitted' : 'unavailable'} direct runtime`, async () => {
+    const binding = await fixture();
+    const declaration = syntheticRuntime(binding);
+    writeFileSync(declaration.nodeExecutable, '#!/bin/sh\necho ADMITTED_RUNTIME\n', { mode: 0o755 });
+    const nodeRuntimeAdmission = createCapturedExecNodeRuntimeAdmission(binding, admitted ? declaration : {
+      nodeExecutable: '/synthetic-missing/node', npmExecutable: '/synthetic-missing/npm', npxExecutable: '/synthetic-missing/npx',
+    });
+    // Model a system Node alias sharing an existing OS payload. The real
+    // subprocess must see the readonly refusal mount, with no host changes.
+    const exists = fs.existsSync;
+    const canonical = fs.realpathSync;
+    const existsTap = spyOn(fs, 'existsSync').mockImplementation((path) => String(path) === '/usr/bin/node' || exists(path));
+    const canonicalTap = spyOn(fs, 'realpathSync').mockImplementation(((path: fs.PathLike, options?: unknown) =>
+      String(path) === '/usr/bin/node' ? '/usr/bin/true' : canonical(path, options as Parameters<typeof canonical>[1])) as typeof canonical);
+    try {
+      const result = await run({ ...binding, nodeRuntimeAdmission }, '/usr/bin/true');
+      expect(result.success).toBe(false);
+      expect(result.exit_code).toBe(126);
+      expect((result.stderr ?? '').length).toBeGreaterThan(0);
+      if (admitted) expect((await run({ ...binding, nodeRuntimeAdmission }, 'node')).stdout).toBe('ADMITTED_RUNTIME\n');
+    } finally { existsTap.mockRestore(); canonicalTap.mockRestore(); }
+  });
+
+test.skipIf(!supported)('a Node host never binds its executable after optional runtime admission fails', async () => {
+  const binding = await fixture();
+  const nodeRuntimeAdmission = createCapturedExecNodeRuntimeAdmission(binding, {
+    nodeExecutable: '/synthetic-missing/node', npmExecutable: '/synthetic-missing/npm', npxExecutable: '/synthetic-missing/npx',
+  });
+  const hostNode = spawnSync('node', ['-p', 'process.execPath'], { encoding: 'utf8' }).stdout.trim();
+  expect(hostNode).toBeTruthy();
+  const executable = Object.getOwnPropertyDescriptor(process, 'execPath')!;
+  const bun = Object.getOwnPropertyDescriptor(process.versions, 'bun')!;
+  const spawn = childProcess.spawn;
+  const commands: string[][] = [];
+  const tap = spyOn(childProcess, 'spawn').mockImplementation(((...args: Parameters<typeof spawn>) => {
+    if (args[0] === '/usr/bin/bwrap' && Array.isArray(args[1])) commands.push([...args[1]]);
+    return spawn(...args);
+  }) as typeof spawn);
+  try {
+    Object.defineProperty(process.versions, 'bun', { ...bun, value: undefined });
+    Object.defineProperty(process, 'execPath', { ...executable, value: hostNode });
+    const result = await run({ ...binding, nodeRuntimeAdmission }, 'node --version');
+    expect(result.exit_code).toBe(126);
+    expect(result.stdout).toBe('');
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).not.toContain(hostNode);
+  } finally {
+    tap.mockRestore();
+    Object.defineProperty(process.versions, 'bun', bun);
+    Object.defineProperty(process, 'execPath', executable);
+  }
+});
+
+for (const interruption of ['cancel', 'revoke'] as const)
+  test.skipIf(!supported)(`${interruption} during direct runtime admission starts no command or late projection`, async () => {
+    let nodePath = '';
+    let release!: () => void;
+    let reached!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const waiting = new Promise<void>((resolve) => { reached = resolve; });
+    const binding = await fixture(async (path) => {
+      if (path === nodePath) { reached(); await gate; }
+      return true;
+    });
+    const declaration = syntheticRuntime(binding);
+    nodePath = declaration.nodeExecutable;
+    const nodeRuntimeAdmission = createCapturedExecNodeRuntimeAdmission(binding, declaration);
+    const controller = new AbortController();
+    let started = 0;
+    const before = new Set(readdirSync(tmpdir()));
+    const pending = runCapturedCommand({ ...binding, nodeRuntimeAdmission }, 'node; echo LATE > late.txt', {}, binding.root, 5000, controller.signal, 'disabled', {}, { onStarted: () => { started++; } });
+    try {
+      await waiting;
+      if (interruption === 'cancel') controller.abort();
+      else { revokeContractInputAuthority(binding.authority); release(); }
+      const result = await pending;
+      expect(result.denied).toBe(true);
+      expect(result.stdout).toBe('');
+      expect(started).toBe(0);
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(existsSync(join(binding.root, 'late.txt'))).toBe(false);
+      expect(readdirSync(tmpdir()).filter((name) => name.startsWith('goodvibes-captured-exec-') && !before.has(name))).toEqual([]);
+    } finally { controller.abort(); release(); await pending; }
+  });
+
+test.skipIf(!supported)('direct memoized runtime admission never hides changed or forged token failures', async () => {
+  const binding = await fixture();
+  const declaration = syntheticRuntime(binding);
+  writeFileSync(declaration.nodeExecutable, '#!/bin/sh\necho ADMITTED_RUNTIME\n', { mode: 0o755 });
+  const nodeRuntimeAdmission = createCapturedExecNodeRuntimeAdmission(binding, declaration);
+  const admitted = { ...binding, nodeRuntimeAdmission };
+  expect((await run(admitted, 'node')).stdout).toBe('ADMITTED_RUNTIME\n');
+  writeFileSync(declaration.nodeExecutable, '#!/bin/sh\necho CHANGED_RUNTIME\n');
+  const changed = await run(admitted, 'node');
+  expect(changed.denied).toBe(true);
+  expect(changed.stdout).toBe('');
+  let calls = 0;
+  const forged = await run({ ...binding, nodeRuntimeInput: { kind: 'captured-exec-node-runtime' }, nodeRuntimeAdmission: async () => { calls++; return nodeRuntimeAdmission(); } }, 'echo FORGED');
+  expect(forged.denied).toBe(true);
+  expect(forged.stdout).toBe('');
+  expect(calls).toBe(0);
+});
 
 for (const denied of ['/captured-runtime/bin/node', '/captured-runtime/node/lib/node_modules/npm/package.json'])
   test(`runtime admission rejects denied alias ${denied}`, async () => {
@@ -208,6 +435,12 @@ test.skipIf(!supported)('unused unavailable Node runtime preserves an ordinary B
   const result = await run({ ...binding, nodeRuntimeAdmission }, 'bun -e "console.log(42)"');
   expect(result.success).toBe(true); expect(result.stdout).toBe('42\n');
   await expect(nodeRuntimeAdmission()).rejects.toThrow();
+  for (const command of ['node --version', 'npm --version', 'npx --version']) {
+    const absent = await run({ ...binding, nodeRuntimeAdmission }, command);
+    expect(absent.exit_code).toBe(126);
+    expect(absent.success).toBe(false);
+    expect(absent.stdout).toBe('');
+  }
 });
 for (const mutation of ['branch', 'revoke'] as const)
   test(`metadata sweep rechecks ${mutation} changes before provider delivery`, async () => {
