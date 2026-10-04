@@ -62,6 +62,7 @@ function commandMatches(command: SlashCommand, query: string): boolean {
 function describeCommand(command: SlashCommand, lookup?: CommandDetailLookup): Record<string, unknown> {
   const policy = describeCommandPolicy(command.name);
   const modelRoute = previewText(policy.preferredModelTool ?? `workspace action:"command" commandName:"${command.name}"`);
+  const confirmationArgs = policy.requiresConfirmation === false ? '' : ' confirm:true explicitUserRequest:"..."';
   return {
     name: command.name,
     slash: `/${command.name}`,
@@ -72,10 +73,10 @@ function describeCommand(command: SlashCommand, lookup?: CommandDetailLookup): R
     modelRoute,
     modelAccess: {
       inspect: `agent_harness mode:"command" commandName:"${command.name}"`,
-      run: `agent_harness mode:"run_command" commandName:"${command.name}" confirm:true explicitUserRequest:"..."`,
+      run: `agent_harness mode:"run_command" commandName:"${command.name}"${confirmationArgs}`,
       preferred: modelRoute,
       directInspect: `workspace action:"command" commandName:"${command.name}"`,
-      directRun: `workspace action:"run_command" commandName:"${command.name}" confirm:true explicitUserRequest:"..."`,
+      directRun: `workspace action:"run_command" commandName:"${command.name}"${confirmationArgs}`,
     },
     ...(lookup ? {
       lookup: {

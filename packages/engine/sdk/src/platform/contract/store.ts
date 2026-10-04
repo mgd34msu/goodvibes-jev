@@ -14,6 +14,7 @@
  *
  * Modeled on orchestration/persistence.ts.
  */
+import { DurableContractAdmissions, parseDurableAdmission, syncContractDirectory } from './durable-admission.js';
 import { existsSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ContractEvent } from '../../events/contract.js';
@@ -21,6 +22,9 @@ import { CONTRACT_STATUSES } from '../../events/contract.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
 import { writeFileAtomic } from '../utils/atomic-json-store.js';
+import { isContractInputSnapshot } from './input-snapshot.js';
+import { validateNativeDecisionState } from './native-decisions.js';
+import { assertNativeContractSource, bindNativeContractSource } from './native-source.js';
 import { CURRENT_CONTRACT_SCHEMA_VERSION, isContractId, isTerminalContractStatus, type Contract } from './types.js';
 
 const DEBOUNCE_MS = 250;
@@ -63,6 +67,8 @@ export function contractPath(projectRoot: string, contractId: string): string {
 export function serializeContract(contract: Contract, writtenAt: number): string | null {
   const snapshot: ContractSnapshot = { schemaVersion: CURRENT_CONTRACT_SCHEMA_VERSION, writtenAt, contract };
   try {
+    assertNativeContractSource(contract);
+    validateNativeDecisionState(contract);
     return JSON.stringify(snapshot);
   } catch (error) {
     logger.error('contract store: JSON serialization failed', { contractId: contract.id, error: summarizeError(error) });
@@ -77,12 +83,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** The fields a resume or a view reads without checking; anything else is optional or checked where used. */
 function isContractShape(value: unknown): value is Contract {
   if (!isRecord(value)) return false;
+  if (value['durableAdmission'] !== undefined) {
+    try {
+      const admission = parseDurableAdmission(value['durableAdmission']);
+      if (admission.contractId !== value['id'] || admission.ownerAgentId !== value['ownerAgentId']
+        || (value['durableLaunchState'] !== 'prepared' && value['durableLaunchState'] !== 'launch-claimed')) return false;
+      value['durableAdmission'] = admission;
+    } catch { return false; }
+  }
   return isContractId(value['id'])
+    && (value['isolation'] === 'worktree' || value['isolation'] === 'shared')
     && typeof value['status'] === 'string' && (CONTRACT_STATUSES as readonly string[]).includes(value['status'])
     && typeof value['sessionId'] === 'string'
     && typeof value['ownerAgentId'] === 'string'
     && typeof value['ask'] === 'string'
     && typeof value['projectRoot'] === 'string'
+    && (value['inputSnapshot'] === undefined || isContractInputSnapshot(value['inputSnapshot']))
     && typeof value['createdAt'] === 'number'
     && Array.isArray(value['criteria'])
     && Array.isArray(value['groups'])
@@ -111,6 +127,10 @@ export function readContractSnapshot(json: string): { readonly snapshot: Contrac
   }
   if (raw['schemaVersion'] > CURRENT_CONTRACT_SCHEMA_VERSION) return { rejected: 'future-version' };
   if (!isContractShape(raw['contract'])) return { rejected: 'invalid-contract' };
+  if (raw['contract'].nativeDecisions !== undefined && raw['schemaVersion'] < 4) return { rejected: 'invalid-contract' };
+  if (raw['contract'].nativeSource !== undefined && raw['schemaVersion'] < 3) return { rejected: 'invalid-contract' };
+  try { bindNativeContractSource(raw['contract']); validateNativeDecisionState(raw['contract']); } catch { return { rejected: 'invalid-contract' }; }
+  if (raw['contract'].durableAdmission !== undefined && raw['schemaVersion'] < 2) return { rejected: 'invalid-contract' };
   const writtenAt = typeof raw['writtenAt'] === 'number' && Number.isFinite(raw['writtenAt']) ? raw['writtenAt'] : 0;
   return { snapshot: { schemaVersion: raw['schemaVersion'], writtenAt, contract: raw['contract'] } };
 }
@@ -230,7 +250,9 @@ export class ContractStore {
     if (json === null) return false;
     const path = contractPath(this.projectRoot, contract.id);
     try {
+      if (contract.durableAdmission !== undefined) new DurableContractAdmissions(this.projectRoot).update(contract.durableAdmission, json);
       writeFileAtomic(path, json);
+      if (contract.durableAdmission !== undefined) syncContractDirectory(contractsDir(this.projectRoot));
       return true;
     } catch (error) {
       logger.error('contract store: write failed', { path, error: summarizeError(error) });
@@ -278,6 +300,13 @@ export class ContractStore {
       this.quarantine(path, 'invalid-contract');
       return null;
     }
+    try {
+      if (read.snapshot.contract.durableAdmission === undefined
+        && new DurableContractAdmissions(this.projectRoot).findByContractId(contractId) !== null) {
+        this.quarantine(path, 'invalid-contract');
+        return null;
+      }
+    } catch { return null; } // Corrupt authority metadata is not evidence that an unbound alias is safe.
     return read.snapshot.contract;
   }
 
@@ -311,7 +340,11 @@ export class ContractStore {
       return false;
     }
     const contract = read.snapshot.contract;
+    try { if (new DurableContractAdmissions(this.projectRoot).findByContractId(contract.id) !== null) return false; }
+    catch { return false; }
     const existing = this.contracts.get(contract.id) ?? this.load(contract.id);
+    // An imported snapshot must never create/replace a native admission or strip its restart guard.
+    if (contract.durableAdmission !== undefined || existing?.durableAdmission !== undefined) return false;
     if (existing && !isTerminalContractStatus(existing.status) && !force) {
       logger.warn('contract store: import refused, the existing contract is not terminal; pass force to overwrite', {
         contractId: contract.id,
@@ -393,7 +426,7 @@ export class ContractStore {
         continue;
       }
       const read = readContractSnapshot(text);
-      if ('rejected' in read || !isTerminalContractStatus(read.snapshot.contract.status)) continue;
+      if ('rejected' in read || read.snapshot.contract.durableAdmission !== undefined || !isTerminalContractStatus(read.snapshot.contract.status)) continue;
       const completedAt = read.snapshot.contract.completedAt;
       const at = typeof completedAt === 'number' && Number.isFinite(completedAt) ? completedAt : read.snapshot.writtenAt;
       terminal.push({ path, at, id });

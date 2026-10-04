@@ -1,3 +1,4 @@
+import { pinContractInputAdmission } from './input-authority.js';
 /**
  * One running contract's state and bookkeeping (docs/design/contract-runner.md
  * sections 2.3 and 4): the live contract tree, its orchestration engine, and
@@ -8,6 +9,7 @@
  * every runner decision is appended to the contract's decision list. The
  * correction and completion steps (R.6) act on a contract through this class.
  */
+import type { NativeContractServices } from './native-decisions.js';
 import { JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import type { ContractEvent } from '../../events/contract.js';
@@ -115,6 +117,7 @@ export function isAbortError(error: unknown, signal?: AbortSignal): boolean {
 }
 
 export interface RunEnv {
+  readonly native?: NativeContractServices | undefined;
   readonly now: () => number;
   readonly config: () => ContractConfig;
   /** Emits on the runtime bus with the contract's context, and to the runner's listeners. */
@@ -163,7 +166,9 @@ export class ContractRun {
     readonly control: RunControl,
     /** Units an agent-tool batch or AgentInput.proposedUnits proposed, for the planner. */
     readonly proposedUnits?: readonly { readonly task: string; readonly template?: string | undefined }[] | undefined,
-  ) {}
+  ) {
+    if (contract.inputSnapshot) pinContractInputAdmission(contract, this.abort.signal);
+  }
 
   get id(): string {
     return this.contract.id;

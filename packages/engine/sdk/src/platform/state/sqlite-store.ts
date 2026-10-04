@@ -135,6 +135,7 @@ export class SQLiteStore {
   transactPersisted<T>(
     operation: (db: SqlDatabase) => { readonly changed: boolean; readonly value: T },
     onCommit: () => void,
+    afterDurable?: ((value: T, db: SqlDatabase) => void) | undefined,
   ): Promise<{ readonly kind: 'local-changes' } | { readonly kind: 'completed'; readonly value: T }> {
     if (!this.coordinated) return Promise.reject(new Error('SQLiteStore: guarded persistence requires coordinated storage'));
     // Batch callers must not wait for their own save boundary.
@@ -173,6 +174,16 @@ export class SQLiteStore {
           try { onCommit(); } catch { this.fenced = true; }
         } else {
           this.persistence?.confirmDurable();
+        }
+        // Trusted owners may invoke a synchronous execution boundary only after
+        // durable publication/replay confirmation, while file ownership remains held.
+        if (afterDurable) {
+          if (this.fenced) throw new Error('SQLiteStore: publication mirror is fenced');
+          const outcome: unknown = afterDurable(result.value, current ?? this.getDb(true));
+          if (outcome && typeof (outcome as { then?: unknown }).then === 'function') {
+            if (outcome instanceof Promise) void outcome.catch(() => {});
+            throw new TypeError('SQLiteStore: durable boundary must be synchronous');
+          }
         }
         return { kind: 'completed', value: result.value };
       } finally {

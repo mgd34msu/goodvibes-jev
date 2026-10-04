@@ -1,5 +1,94 @@
 # goodvibes-tui
 
+## Jev migration status
+
+This workspace is an unfinished port. The upstream installation instructions,
+screenshots and tour below are reference material, not proof of a published or
+fully autonomous Jev product. The [current decision contract](../../docs/design/autonomous-jev-decisions.md)
+supersedes runtime permission prompts and owner escalation: Jev makes semantic
+decisions, while the UI renders shared outcomes and the one judgment port's
+retry/waiting progress with cancellation. Legacy callers remain [migration gates](../../README.md#status).
+Account login, workspace provisioning/trust and explicit stop/quit controls remain
+legitimate interactions and do not replace deterministic authority enforcement.
+
+## Native work controls (local Jev implementation)
+
+`/work` discovers the authenticated daemon's native project without legacy
+planning lookup; `/work <daemon-project-id>` selects it explicitly.
+In the Native Work modal, select a work item's control row: `s` starts, `i`
+inspects status, `c` cancels, and `r` explicitly resumes. The row names the
+attempt targeted by status/cancel; execution progress paints without a new key.
+
+Start/resume require an existing active attempt and the daemon's current paired
+operator authority. Execution controls do not create work or edit original criteria. Explicit source
+submission is described below; conversational intake is not implemented. Opening a view never starts or resumes
+execution. Status/cancel retain the last observed attempt across a handoff within
+that view; older attempts cannot be rediscovered after reopening this surface.
+
+Reported work state, verified evidence, execution progress, admitted/current
+revisions and recovery state remain distinct. A lost response leaves the server
+outcome unknown. Closing or replacing host, token or workspace only aborts local
+requests and discards their results; use Cancel to request host cancellation.
+Pending and refused admissions, and cancellation before admission, have no
+execution receipt or progress. They display requested revisions, separately from
+admitted executions. Refused/interrupted admission recovery requires explicit
+resume; a cancelled intent requires a new native attempt.
+No control asks for owner approval or automatically retries/resumes execution.
+
+## Explicit native source submission
+
+Both products use the same command contract:
+
+- `/work submit-file <path>` reads a regular UTF-8 JSON file containing exactly
+  `goal` (a string) and `criteria` (an ordered array of strings).
+- `/work submission-status` looks up the retained request without writing work.
+- `/work submission-retry` first looks up that same request. Only a `not-found`
+  result can lead to replay of the exact retained request.
+
+Example source file:
+
+```json
+{"goal":"  Deliver the original goal\nwithout rewriting it  ","criteria":["First criterion","Second criterion","First criterion"]}
+```
+
+Decoded goal/criterion strings are preserved verbatim, including whitespace,
+line breaks, order and duplicates. No model generates or changes criteria.
+Blank/whitespace-only values and missing criteria are rejected locally. Each
+string is limited to 20,000 UTF-16 code units; 1–100 criteria are required. Both
+the source file and complete encoded submission must fit 262,144 UTF-8 bytes.
+For paths containing spaces, use a file URL such as
+`file:///tmp/my%20source.json`, which survives both slash-command parsers.
+
+Initial submission generates request/input IDs and captures the live whole-ledger
+revision once. Before sending, the app durably publishes the exact source, IDs and
+revision in its private `native-work-submission.json` journal under its product
+state directory. The journal binds each request to the exact daemon endpoint,
+canonical workspace, project and live server-verified paired principal. It stores
+no bearer token. The journal has at most 16 bindings and 2 MiB; corrupt, oversized,
+symlink-backed or unconfirmable state fails closed without a submission.
+
+After a restart, use `submission-status` or `submission-retry` to recover the
+original request. Both first look it up using that same identity. Retry does not
+reread the source file, generate new IDs or refresh the revision. Only an explicit
+retry after `not-found` can send the identical durably confirmed request. A
+`not-found` lookup is not proof that a lost in-flight request cannot still arrive.
+A persistence failure sends nothing and retains any uncertain journal publication
+for inspection/recovery; it never deletes or silently replaces that identity.
+Changing credentials to another principal cannot replay the old principal's
+journal. Host, token, project and canonical-workspace changes or cleanup discard
+in-flight results; overlapping submission commands remain single-flight.
+
+A definite stale-ledger conflict permits an explicitly new `submit-file` command
+to capture a new identity/revision. An unresolved retained request must be looked
+up before submitting a new source. Submission/replay never starts execution.
+
+Submission requires an existing paired operator with native ledger read/write
+scopes. It never grants scopes, stores credentials or starts execution. The
+receipt identifies the created work/current attempt and preserves the original
+source; inspect `/work` and use its separate explicit Start control.
+
+## Upstream product reference
+
 [![CI](https://github.com/mgd34msu/goodvibes-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/mgd34msu/goodvibes-tui/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/mgd34msu/goodvibes-tui)
@@ -258,7 +347,7 @@ src/
 
 ## Stability
 
-From 1.0.0 the project follows semver: incompatible changes to CLI flags, config keys, slash commands, key bindings, daemon routes, and on-disk layouts land only in major releases, and deprecations are noted in [CHANGELOG.md](CHANGELOG.md) first. Documentation always describes the **current** behavior, not historical behavior.
+The upstream product follows semver from 1.0.0: incompatible changes to CLI flags, config keys, slash commands, key bindings, daemon routes, and on-disk layouts land only in major releases, and deprecations are noted in [CHANGELOG.md](CHANGELOG.md) first. The product reference above describes inherited upstream behavior; the Jev migration status and current decision contract take precedence for this workspace.
 
 ## License
 

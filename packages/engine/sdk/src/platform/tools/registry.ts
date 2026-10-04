@@ -1,3 +1,8 @@
+import { types as nodeTypes } from 'node:util';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { autonomousRevision } from '../permissions/autonomous.js';
+import { firstJsonSchemaFailure } from '@goodvibes-jev/engine/transport-http';
 import type { Tool, ToolDefinition, ToolExecuteOptions, ToolResult } from '../types/tools.js';
 import { ToolError } from '../types/errors.js';
 import { repairToolCall } from './auto-repair.js';
@@ -10,7 +15,60 @@ import { JudgmentError } from '@goodvibes-jev/judgment';
  * ToolRegistry - Central registry for all tools available to the LLM.
  * Manages registration, discovery, and execution of tools.
  */
+export interface PreparedToolCall {
+  readonly callId: string;
+  readonly name: string;
+  readonly args: Record<string, unknown>;
+  readonly schemaRevision: string;
+  readonly judgmentDecisionIds: readonly string[];
+}
+
+interface PreparedExecution {
+  readonly tool: Tool;
+  readonly executor: Tool['execute'];
+  readonly definitionRevision: string;
+  readonly warnings: readonly string[];
+  claimed: boolean;
+}
+
+const applyIntrinsic = Reflect.apply;
+const abortIntrinsic = AbortSignal.prototype.throwIfAborted;
+
+/** Metadata is inspected without invoking user-defined getters or proxy traps. */
+function dataProperty(value: object, key: string, name: string): unknown {
+  let owner: object | null = value;
+  while (owner) {
+    if (nodeTypes.isProxy(owner)) throw new ToolError('Proxy-backed autonomous metadata is unsupported', name);
+    const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+    if (descriptor) {
+      if (!('value' in descriptor)) throw new ToolError('Accessor-backed autonomous metadata is unsupported', name);
+      return descriptor.value;
+    }
+    owner = Object.getPrototypeOf(owner) as object | null;
+  }
+  return undefined;
+}
+
+function plainMetadata(value: unknown, name: string, seen = new Set<object>()): void {
+  if (!value || typeof value !== 'object' || seen.has(value)) return;
+  if (nodeTypes.isProxy(value)) throw new ToolError('Proxy-backed autonomous metadata is unsupported', name);
+  seen.add(value);
+  for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
+    if (!('value' in descriptor)) throw new ToolError('Accessor-backed autonomous metadata is unsupported', name);
+    plainMetadata(descriptor.value, name, seen);
+  }
+}
+
+function preparationData(tool: Tool, name: string): { executor: Tool['execute']; definition: ToolDefinition } {
+  const definition = dataProperty(tool, 'definition', name);
+  const execute = dataProperty(tool, 'execute', name);
+  if (typeof execute !== 'function' || nodeTypes.isProxy(execute)) throw new ToolError('Autonomous executor must be a data-backed function', name);
+  plainMetadata(definition, name);
+  return { executor: execute as Tool['execute'], definition: snapshotJudgmentInput(definition) as unknown as ToolDefinition };
+}
+
 export class ToolRegistry {
+  private readonly prepared = new WeakMap<PreparedToolCall, PreparedExecution>();
   private tools = new Map<string, Tool>();
 
   /** Register a tool. Throws if a tool with the same name is already registered. */
@@ -95,6 +153,79 @@ export class ToolRegistry {
   /** Returns the ToolDefinition array formatted for LLM function calling. */
   getToolDefinitions(): ToolDefinition[] {
     return Array.from(this.tools.values()).map((t) => t.definition);
+  }
+
+  /** Own and repair before permission; no repair is permitted after admission. */
+  async prepareCall(callId: string, name: string, args: Record<string, unknown>, opts?: ToolExecuteOptions & { readonly port?: JudgmentPort }): Promise<PreparedToolCall> {
+    const signal = opts?.signal;
+    signal?.throwIfAborted();
+    const tool = this.tools.get(name);
+    if (!tool) throw new ToolError('Unknown tool in autonomous preparation', name);
+    const { executor, definition } = preparationData(tool, name);
+    const definitionRevision = autonomousRevision(definition);
+    const captured = snapshotJudgmentInput(args, name) as Record<string, unknown>;
+    const ids: string[] = [];
+    const inner = opts?.port;
+    const assertRegistration = () => {
+      signal?.throwIfAborted();
+      const current = preparationData(tool, name);
+      if (this.tools.get(name) !== tool || current.executor !== executor || autonomousRevision(current.definition) !== definitionRevision)
+        throw new ToolError('Tool registration changed during autonomous preparation', name);
+      signal?.throwIfAborted();
+    };
+    const repairPort: JudgmentPort | undefined = inner ? {
+      get model() { return inner.model; },
+      ...(inner.recorder ? { recorder: inner.recorder } : {}),
+      async ask(request) {
+        const prior = request.beforeAttempt;
+        assertRegistration();
+        const result = await inner.ask({ ...request, beforeAttempt() { prior?.(); assertRegistration(); } });
+        assertRegistration();
+        if (!result.decisionId) throw new JudgmentError('unrecorded', 'argument repair has no recorded provenance');
+        ids.push(result.decisionId);
+        return result;
+      },
+    } : undefined;
+    const repair = await repairToolCall(name, captured, definition, signal, repairPort);
+    signal?.throwIfAborted();
+    const effective = snapshotJudgmentInput(repair.repaired ? repair.fixed : captured, name) as Record<string, unknown>;
+    if (firstJsonSchemaFailure(definition.parameters, effective)) throw new ToolError('Prepared tool arguments do not match the registered schema', name);
+    const call = Object.freeze({ callId, name, args: effective, schemaRevision: definitionRevision, judgmentDecisionIds: Object.freeze(ids) });
+    this.prepared.set(call, { tool, executor, definitionRevision, warnings: [...(repair.warnings ?? [])], claimed: false });
+    this.assertPrepared(call);
+    return call;
+  }
+
+  /** Synchronous registration/snapshot check, suitable for the last admission boundary. */
+  assertPrepared(call: PreparedToolCall): void {
+    const record = this.prepared.get(call);
+    if (!record || record.claimed || this.tools.get(call.name) !== record.tool) {
+      throw new ToolError('Prepared tool registration is stale or already claimed', call.name);
+    }
+    const current = preparationData(record.tool, call.name);
+    if (current.executor !== record.executor || autonomousRevision(current.definition) !== record.definitionRevision) {
+      throw new ToolError('Prepared tool registration is stale or already claimed', call.name);
+    }
+  }
+
+  /** Invoke the exact prepared executor/arguments immediately after its one-use admission claim. */
+  async executePrepared(call: PreparedToolCall, claim: () => void, opts?: ToolExecuteOptions): Promise<ToolResult> {
+    const signal = opts?.signal;
+    signal?.throwIfAborted();
+    this.assertPrepared(call);
+    const record = this.prepared.get(call)!;
+    // claim may synchronously notify/reenter; recheck registration and cancellation
+    // afterwards. There is no await before the body receives the frozen input.
+    claim();
+    // Descriptor/proxy validation makes this a callback-free metadata check.
+    // Capture invocation intrinsics so mutable function.call/AbortSignal methods
+    // cannot substitute a body or run a late revocation callback.
+    this.assertPrepared(call);
+    if (signal) applyIntrinsic(abortIntrinsic, signal, []);
+    record.claimed = true;
+    const result = await applyIntrinsic(record.executor, record.tool, [call.args, opts]);
+    return { ...result, callId: call.callId,
+      ...(record.warnings.length ? { warnings: [...(result.warnings ?? []), ...record.warnings] } : {}) };
   }
 
   /**

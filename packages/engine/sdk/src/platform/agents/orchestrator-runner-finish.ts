@@ -17,7 +17,7 @@ export function cleanupLeakedProcesses(
   const pm = processManager;
   if (!pm) return;
   for (const p of pm.list()) {
-    if (!preAgentProcessIds.has(p.id)) {
+    if (!preAgentProcessIds.has(p.id) && !pm.hasBoundaryOwner(p.id)) {
       pm.stop(p.id);
     }
   }
@@ -46,9 +46,10 @@ export async function finishCancelledRun(
   preAgentProcessIds: Set<string>,
   turn?: number,
 ): Promise<void> {
+  if (context.beforeRunSettlement) await context.beforeRunSettlement();
   record.completedAt = Date.now();
   context.emitAgentCancelledEvent(record.id, 'Agent cancelled');
-  cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
+  if (!context.beforeRunSettlement) cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
   if (!session) return;
   session.appendMessage({
     type: 'session_end',

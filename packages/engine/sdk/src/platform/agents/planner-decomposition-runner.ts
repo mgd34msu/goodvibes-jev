@@ -1,3 +1,5 @@
+import { getContractInputAuthority, assertContractInputAuthority } from '../contract/input-authority.js';
+import { getContractActionSource, getContractActionPort } from '../tools/agent/contract-binding.js';
 /**
  * Production `DecompositionRunner` backed by the real `AgentManager`.
  *
@@ -93,11 +95,13 @@ export function createAgentManagerDecompositionRunner(
   return {
     async run(request: DecompositionRunnerRequest): Promise<DecompositionRunResult> {
       const start = now();
+      if (request.signal?.aborted) return { status: 'cancelled', output: '', elapsedMs: 0, detail: 'stopped before planner admission' };
 
       const spawnInput: AgentInput = {
         mode: 'spawn',
         task: request.userPrompt,
         template: 'planner',
+        workingDirectory: request.workingDir,
         tools: [...PLANNER_DECOMPOSITION_TOOLS],
         restrictTools: true,
         executionIntent: { filesystemPolicy: 'read-only', networkPolicy: 'deny', riskClass: 'safe' },
@@ -109,7 +113,14 @@ export function createAgentManagerDecompositionRunner(
 
       let agentId: string;
       try {
-        const record = deps.agentManager.spawn(spawnInput);
+        const authority = getContractInputAuthority(request);
+        const autonomousSource = getContractActionSource(request);
+        if (authority) await assertContractInputAuthority(authority, request.workingDir, request.signal);
+        request.signal?.throwIfAborted();
+        autonomousSource?.();
+        const binding = autonomousSource ? { autonomousSource, autonomousPort: getContractActionPort(request), ...(authority ? { inputReadAuthority: authority } : {}) }
+          : authority ? { inputReadAuthority: authority } : undefined;
+        const record = deps.agentManager.spawn(spawnInput, binding);
         agentId = record.id;
       } catch (err) {
         return { status: 'failed', output: '', elapsedMs: now() - start, detail: summarizeError(err) };

@@ -27,6 +27,7 @@
  */
 
 import { PersistentStore } from '../../state/persistent-store.js';
+import { acquireCrossProcessLock } from '../checkpoint/cross-process-lock.js';
 import type { DeclinedWorkspaceRecord, RegisteredWorkspaceRecord } from './types.js';
 
 interface PersistedRegistry extends Record<string, unknown> {
@@ -100,22 +101,35 @@ export async function foldLegacyWorkspaceRegister(input: {
 }): Promise<FoldLegacyRegisterResult> {
   const legacyStore = new PersistentStore<PersistedRegistry>(input.legacyPath);
   const sharedStore = new PersistentStore<PersistedRegistry>(input.sharedPath);
+  const release = sharedStore.lockPath
+    ? await acquireCrossProcessLock(sharedStore.lockPath, { strictOwnership: true }) : () => {};
+  try {
+    const rawLegacy = await legacyStore.load();
+    if (rawLegacy !== null && rawLegacy.version !== 1) {
+      throw new Error('Legacy workspace fold refuses a migrated native scope source.');
+    }
+    const legacy = readRows(rawLegacy);
+    const rawDestination = await sharedStore.load();
+    // A legacy union has no authority history. Never erase native incarnations,
+    // overwrite tombstones, or silently stamp the imported rows as new grants.
+    if (rawDestination !== null && rawDestination.version !== 1) {
+      throw new Error('Legacy workspace fold refuses a migrated native scope registry.');
+    }
+    const destination = readRows(rawDestination);
 
-  const legacy = readRows(await legacyStore.load());
-  const destination = readRows(await sharedStore.load());
+    const workspaces = mergeKeyed(destination.workspaces, legacy.workspaces, (row) => row.registeredAt ?? '');
+    const declines = mergeKeyed(destination.declines, legacy.declines, (row) => row.declinedAt ?? '');
 
-  const workspaces = mergeKeyed(destination.workspaces, legacy.workspaces, (row) => row.registeredAt ?? '');
-  const declines = mergeKeyed(destination.declines, legacy.declines, (row) => row.declinedAt ?? '');
+    await sharedStore.persist({
+      version: 1,
+      workspaces: workspaces.rows,
+      declines: declines.rows,
+    });
 
-  await sharedStore.persist({
-    version: 1,
-    workspaces: workspaces.rows,
-    declines: declines.rows,
-  });
-
-  return {
-    added: workspaces.added + declines.added,
-    updated: workspaces.updated + declines.updated,
-    total: workspaces.rows.length + declines.rows.length,
-  };
+    return {
+      added: workspaces.added + declines.added,
+      updated: workspaces.updated + declines.updated,
+      total: workspaces.rows.length + declines.rows.length,
+    };
+  } finally { release(); }
 }

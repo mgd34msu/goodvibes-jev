@@ -251,7 +251,7 @@ export type { AgentGraph, AgentGraphOptions, AgentExecutionGraph, AgentExecution
 
 // Product roots compose these once their actual plans and fleet owners exist.
 export { composeContractRunner, resumeContracts } from './contract-composition.js';
-export type { ContractRunnerCompositionOptions, ComposedContractRunner } from './contract-composition.js';
+export type { ContractRunnerCompositionOptions, ComposedContractRunner, NativeContractCompositionOwner } from './contract-composition.js';
 export { makeRuntimeFleetProbe } from './orchestration/fleet-count.js';
 export { composeJudgment } from './judgment-services.js';
 export type { JudgmentServices, JudgmentServicesInput, JudgmentSettingsSource } from './judgment-services.js';

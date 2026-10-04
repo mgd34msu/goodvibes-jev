@@ -92,7 +92,7 @@ test('the actual product graph leaves browser judgment absent without explicit i
 test('the product injects its recorded port and aborts/drains accepted browser calls before disposing its log', async () => {
   const discovery = spyOn(ProviderRegistry.prototype, 'refreshLiveModelDiscovery').mockResolvedValue([]);
   const intervals = trackIntervals(); const input = configuration();
-  const entered = deferred(); const releases = [deferred(), deferred()]; const aborted = deferred(); const firstRecorded = deferred();
+  const entered = deferred(); const releases = [deferred(), deferred()]; const aborted = deferred();
   const events: string[] = []; const restore: (() => void)[] = [];
   let services: RuntimeServices | undefined; let received: JudgmentServices | undefined;
   let browser: ReturnType<typeof browserCapability> | undefined; const runSignals: AbortSignal[] = [];
@@ -104,7 +104,7 @@ test('the product injects its recorded port and aborts/drains accepted browser c
       expect(judgment.port.recorder).toBeDefined();
       const record = judgment.decisionLog.record.bind(judgment.decisionLog);
       const recordSpy = spyOn(judgment.decisionLog, 'record').mockImplementation((entry) => {
-        const id = record(entry); events.push('failure recorded'); firstRecorded.resolve(); return id;
+        const id = record(entry); events.push('failure recorded'); return id;
       });
       const dispose = judgment.decisionLog[Symbol.dispose].bind(judgment.decisionLog);
       const disposeSpy = spyOn(judgment.decisionLog, Symbol.dispose).mockImplementation(() => {
@@ -129,7 +129,8 @@ test('the product injects its recorded port and aborts/drains accepted browser c
     expect(services.browserJudgment).toBe(browser!.service);
     // Hold only the actual port's configured key acquisition. No credentials are
     // supplied and a missing key cannot start external inference. The real
-    // recording wrapper remains in place throughout abort and delayed drain.
+    // recording wrapper remains in place throughout cancellation; a secret
+    // getter that ignores it cannot strand accepted calls or the owned log.
     const secrets = spyOn(services.secretsManager, 'get').mockImplementation(async (key) => {
       if (key !== 'TYPESAFE_API_KEY') return null;
       const release = releases[keyLookups++];
@@ -152,22 +153,19 @@ test('the product injects its recorded port and aborts/drains accepted browser c
     await aborted.promise;
     expect(runSignals.every((signal) => signal.aborted)).toBe(true);
     expect(browserCloseCalls).toBe(1);
-    expect(logDisposeCalls).toBe(0);
-    expect(closed).toBe(false);
-    expect(services.judgment.decisionLog.query({ battery: BATTERY })).toEqual([]);
     for (const result of await Promise.all(pending)) expect(result).toMatchObject({ code: 'JUDGMENT_SHUTTING_DOWN' });
     await expect(browser!.service.execute(browser!.request, principal, new AbortController().signal, () => principal))
       .rejects.toMatchObject({ code: 'JUDGMENT_SHUTTING_DOWN' });
     expect(() => browser!.references.resolve(browser!.errorRef, () => principal, BATTERY, (state) => state)).toThrow();
 
-    releases[0]!.resolve(); await firstRecorded.promise;
-    expect(services.judgment.decisionLog.query({ battery: BATTERY })).toHaveLength(1);
-    expect(logDisposeCalls).toBe(0);
-    expect(closed).toBe(false);
-    releases[1]!.resolve(); await closing;
+    // Shutdown finishes while both key lookups are still pending. Their late
+    // completion cannot restart work or write to a closed decision log.
+    await closing;
     expect(closed).toBe(true);
     expect(events).toEqual(['browser closing', 'call aborted', 'call aborted', 'failure recorded', 'failure recorded', 'browser drained', 'log disposed']);
     expect(logDisposeCalls).toBe(1);
+    for (const release of releases) release.resolve();
+    await Bun.sleep(5); expect(logDisposeCalls).toBe(1);
     expect(() => services!.judgment.decisionLog.query()).toThrow();
     expect(intervals.remaining()).toEqual([]);
     // Reopen the actual product store after shutdown to prove the accepted calls

@@ -15,6 +15,7 @@ import {
   BANNED_VERBS,
   CORE_VERBS,
   EXEMPT_VERB_CATEGORIES,
+  EXEMPT_VERBS,
   SCOPED_EXEMPT_VERB_CATEGORIES,
   classifyVerb,
   verbTailOf,
@@ -39,8 +40,8 @@ describe('core-verbs conformance', () => {
     ).toEqual([]);
   });
 
-  test('no id uses a banned verb as its tail', () => {
-    const offenders = OPERATOR_METHOD_IDS.filter((id) => (BANNED_VERBS as readonly string[]).includes(verbTailOf(id)));
+  test('no id revives a retired generic alias outside an exact distinct operation', () => {
+    const offenders = OPERATOR_METHOD_IDS.filter((id) => classifyVerb(id).kind === 'banned');
     expect(
       offenders,
       `These ids use a retired verb (${BANNED_VERBS.join(', ')}): ${offenders.join(', ')}. ` +
@@ -51,6 +52,48 @@ describe('core-verbs conformance', () => {
   test('CORE_VERBS and BANNED_VERBS never overlap', () => {
     const overlap = CORE_VERBS.filter((verb) => (BANNED_VERBS as readonly string[]).includes(verb));
     expect(overlap).toEqual([]);
+  });
+
+  test('native host discovery and durable recovery are exact method-id classifications', () => {
+    expect(classifyVerb('workLedger.project')).toEqual({ kind: 'exempt', verb: 'project', category: 'native-work-project-discovery' });
+    expect(classifyVerb('workLedger.execution.resume')).toEqual({ kind: 'exempt', verb: 'resume', category: 'native-work-durable-recovery' });
+    for (const [category, id] of [
+      ['native-work-project-discovery', 'workLedger.project'],
+      ['native-work-durable-recovery', 'workLedger.execution.resume'],
+    ] as const) {
+      expect(OPERATOR_METHOD_IDS.filter(method => {
+        const result = classifyVerb(method);
+        return result.kind === 'exempt' && result.category === category;
+      })).toEqual([id]);
+    }
+    expect(EXEMPT_VERBS.has('project')).toBe(false);
+    expect(EXEMPT_VERBS.has('resume')).toBe(false);
+    for (const id of ['workLedgerExtra.project', 'workLedger.child.project', 'sessions.project', 'constructor', '__proto__', 'toString']) {
+      expect(classifyVerb(id).kind).toBe('unclassified');
+    }
+  });
+
+  test('source submission is one exact domain operation, without a generic submit alias', () => {
+    expect(classifyVerb('workLedger.submit')).toEqual({ kind: 'exempt', verb: 'submit', category: 'native-work-source-submission' });
+    expect(EXEMPT_VERBS.has('submit')).toBe(false);
+    for (const id of ['workLedgerExtra.submit', 'workLedger.child.submit', 'tasks.submit', 'sessions.submit']) expect(classifyVerb(id).kind).toBe('unclassified');
+    expect(classifyVerb('workLedger.submission.get').kind).toBe('core');
+  });
+
+  test('conversation capture, admission and recovery are exact operations without generic aliases', () => {
+    for (const [verb, category] of [['capture', 'native-conversation-source-capture'], ['admit', 'native-conversation-semantic-admission'], ['resume', 'native-conversation-durable-recovery']] as const) {
+      expect(classifyVerb(`workLedger.intake.${verb}`)).toEqual({ kind: 'exempt', verb, category });
+      for (const id of [`workLedger.intake.child.${verb}`, `workLedgerExtra.intake.${verb}`, `tasks.${verb}`]) expect(classifyVerb(id).kind).toBe(verb === 'resume' ? 'banned' : 'unclassified');
+    }
+  });
+
+  test('retired automation aliases and native recovery lookalikes remain banned', () => {
+    expect(BANNED_VERBS as readonly string[]).toContain('resume');
+    for (const id of ['automation.jobs.resume', 'automation.jobs.pause', 'automation.jobs.patch', 'tasks.resume', 'workLedger.resume', 'workLedger.execution.child.resume', 'workLedgerExtra.execution.resume']) {
+      expect(classifyVerb(id).kind).toBe('banned');
+    }
+    expect(OPERATOR_METHOD_IDS.filter(id => (BANNED_VERBS as readonly string[]).includes(verbTailOf(id))))
+      .toEqual(['workLedger.execution.resume', 'workLedger.intake.resume']);
   });
 
   test('no verb is exempted under more than one category', () => {
@@ -120,6 +163,20 @@ describe('core-verbs conformance', () => {
     })).toEqual(['workLedger.history']);
     expect(classifyVerb('workLedgerExtra.history').kind).toBe('unclassified');
     expect(classifyVerb('sessions.history').kind).toBe('unclassified');
+  });
+
+  test('legacy import vocabulary is scoped to the work ledger', () => {
+    for (const verb of ['prepareLegacyImport', 'importLegacy']) {
+      expect(classifyVerb(`workLedger.${verb}`)).toEqual({
+        kind: 'exempt', verb, category: 'work-ledger-legacy-import',
+      });
+      expect(classifyVerb(`workLedgerExtra.${verb}`).kind).toBe('unclassified');
+      expect(classifyVerb(`sessions.${verb}`).kind).toBe('unclassified');
+    }
+    expect(OPERATOR_METHOD_IDS.filter((id) => {
+      const classification = classifyVerb(id);
+      return classification.kind === 'exempt' && classification.category === 'work-ledger-legacy-import';
+    })).toEqual(['workLedger.importLegacy', 'workLedger.prepareLegacyImport']);
   });
 
   test('every scoped exemption names at least one live method id', () => {

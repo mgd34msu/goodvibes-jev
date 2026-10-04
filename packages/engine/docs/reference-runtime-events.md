@@ -1732,7 +1732,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 | `targetId` | string | yes |
 | `checkId` | string | yes |
 | `trigger` | enum: `turn-end`, `completion`, `agent-failed`, `fix-passed`, `resume`, `owner-amend` | yes |
-| `result` | enum: `pass`, `nudge`, `await-owner`, `stall`, `recorded` | yes |
+| `result` | enum: `pass`, `nudge`, `await-owner`, `native-decision`, `stall`, `recorded` | yes |
 | `criteria` | object[] | yes |
 | `criteria[].criterionId` | string | yes |
 | `criteria[].verdict` | enum: `met`, `unmet`, `unshown` | yes |

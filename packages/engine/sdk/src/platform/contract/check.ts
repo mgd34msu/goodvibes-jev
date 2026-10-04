@@ -17,6 +17,8 @@
  * Unmet criteria get a severity reading (`contract.unmet-severity`) after the
  * nudge goes out, so it never delays one.
  */
+import { nativeContractPort, type NativeContractServices } from './native-decisions.js';
+import type { Contract } from './types.js';
 import { hashState, type JudgmentPort, type YesNoReading } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { saysYesAtAct } from './batteries/request-shape.js';
@@ -107,7 +109,10 @@ export function meteredPort(port: JudgmentPort, usage: JudgmentUsage): JudgmentP
 // ── One check ─────────────────────────────────────────────────────────────────
 
 export interface UnitCheckInput {
-  readonly contract: Pick<ContractView, 'shape'>;
+  /** Host-owned non-executing settlement lifetime. Never provided by contract input. */
+  readonly checkPort?: JudgmentPort | undefined;
+  readonly native?: { readonly contract: Contract; readonly services: NativeContractServices | undefined } | undefined;
+  readonly contract: Pick<ContractView, 'shape' | 'nativeSource'>;
   /** The unit as it stands before this check: its criteria's readings and its checks and nudges are the history. */
   readonly unit: ContractUnit;
   readonly trigger: CheckTrigger;
@@ -144,6 +149,14 @@ export interface DecidedCheck {
   readonly usage: JudgmentUsage;
   /** Records what the runner did with this check's readings in the decision log. */
   recordAction(action: string): void;
+}
+
+/** Reuses recorded findings when no evidence changed; no new reading is fabricated or promoted. */
+export function nativeRecordedCheck(unit: ContractUnit, check: UnitCheck): DecidedCheck {
+  const readings = new Map(unit.criteria.flatMap(criterion => { const reading = criterion.readings.find(item => item.checkId === check.id); return reading === undefined ? [] : [[criterion.id, reading] as const]; }));
+  const verdicts = new Map(unit.criteria.filter(criterion => criterion.disposition === 'judged').map(criterion => [criterion.id, readings.get(criterion.id)?.verdict ?? (criterion.status === 'unread' ? 'unshown' : criterion.status)] as const));
+  return { discarded: false, check, readings, verdicts, goalVerdict: check.goal.verdict, regressions: [],
+    unmetCriterionIds: [...verdicts].filter(([, verdict]) => verdict === 'unmet').map(([id]) => id), changedPaths: [...unit.touchedPaths], usage: emptyJudgmentUsage(), recordAction: () => {} };
 }
 
 /** A check whose unit was cancelled while it ran: its readings are dropped. */
@@ -201,7 +214,7 @@ function chooseResult(
   }
   if (findings.kinds.includes('unshown')) {
     const underLimit = consecutiveUnsettledChecks(input.unit) < input.settings.evidenceNudgeLimit;
-    return underLimit ? { result: 'nudge', nudgeKinds: ['unshown'], nudgeQuality: [] } : { result: 'await-owner', nudgeKinds: [], nudgeQuality: [] };
+    return underLimit ? { result: 'nudge', nudgeKinds: ['unshown'], nudgeQuality: [] } : { result: input.contract.nativeSource === undefined ? 'await-owner' : 'native-decision', nudgeKinds: [], nudgeQuality: [] };
   }
   return { result: 'pass', nudgeKinds: [], nudgeQuality: [] };
 }
@@ -231,11 +244,11 @@ export async function runUnitCheck(input: UnitCheckInput): Promise<UnitCheckOutc
   const signal = input.signal === undefined ? {} : { signal: input.signal };
   const [judgment, quality] = await Promise.all([
     UNIT_JUDGES[settings.acceptanceStakes].judge(
-      meteredPort(judgmentPort(CHECK_SITES.judge), usage),
+      meteredPort(input.checkPort ?? (input.native === undefined ? judgmentPort(CHECK_SITES.judge) : nativeContractPort(input.native.contract, input.native.services, judgmentPort(CHECK_SITES.judge), input.signal)), usage),
       { goal: unit.goal, criteria: judged.map((criterion) => criterion.text), output: evidence.output, evidence: judgeEvidence(evidence) },
       { ...signal, site: CHECK_SITES.judge },
     ),
-    unitQuality.run(meteredPort(judgmentPort(CHECK_SITES.quality), usage), qualityState(unit, evidence), { ...signal, site: CHECK_SITES.quality }),
+    unitQuality.run(meteredPort(input.checkPort ?? (input.native === undefined ? judgmentPort(CHECK_SITES.quality) : nativeContractPort(input.native.contract, input.native.services, judgmentPort(CHECK_SITES.quality), input.signal)), usage), qualityState(unit, evidence), { ...signal, site: CHECK_SITES.quality }),
   ]);
   if (input.signal?.aborted === true || unit.status === 'cancelled') {
     judgment.recordAction('discarded: unit cancelled');
@@ -373,12 +386,13 @@ export interface SeverityReading {
  */
 export async function readUnmetSeverities(input: {
   readonly contract: Pick<ContractView, 'ask'>;
+  readonly native?: { readonly contract: Contract; readonly services: NativeContractServices | undefined } | undefined;
   readonly unit: Pick<ContractUnit, 'goal' | 'criteria'>;
   readonly criterionIds: readonly string[];
   readonly signal?: AbortSignal | undefined;
 }): Promise<{ readonly severities: ReadonlyMap<string, SeverityReading>; readonly usage: JudgmentUsage }> {
   const usage = emptyJudgmentUsage();
-  const port = meteredPort(judgmentPort(CHECK_SITES.severity), usage);
+  const port = meteredPort(input.native === undefined ? judgmentPort(CHECK_SITES.severity) : nativeContractPort(input.native.contract, input.native.services, judgmentPort(CHECK_SITES.severity), input.signal), usage);
   const criteria = input.unit.criteria.filter((criterion) => input.criterionIds.includes(criterion.id));
   const entries = await Promise.all(criteria.map(async (criterion): Promise<[string, SeverityReading]> => {
     const run = await unmetSeverity.run(

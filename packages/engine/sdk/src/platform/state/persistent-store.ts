@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { promises as fs, existsSync } from 'fs';
-import { basename, dirname, join } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import { summarizeError } from '../utils/error-display.js';
+import { confirmFileDurable } from '../utils/atomic-json-store.js';
 
 /**
  * PersistentStore, generic JSON file persistence with atomic writes.
@@ -121,26 +122,34 @@ export function resetPersistentStoreTempSweepThrottle(): void {
 }
 
 /**
- * fsync a directory so a completed `rename` survives power loss.
- *
- * Best-effort by design: a directory cannot be opened for reading on Windows,
- * and some filesystems refuse `fsync` on a directory fd. Failing the write over
- * that would trade a durability improvement for an availability regression, so
- * the sync is attempted and its absence is tolerated.
+ * Default callers keep best-effort parent-directory sync for compatibility.
+ * Authority owners opt into required durability: every directory through the
+ * filesystem root must open, sync and close successfully. This also commits
+ * newly created ancestor directory entries, not only the final file rename.
+ * A failure after rename is ambiguous; callers must not restore older bytes.
  */
-async function syncDirectory(dir: string): Promise<void> {
-  let handle: Awaited<ReturnType<typeof fs.open>>;
-  try {
-    handle = await fs.open(dir, 'r');
-  } catch {
-    return;
-  }
-  try {
-    await handle.sync();
-  } catch {
-    // Directory fsync unsupported here. The rename already happened.
-  } finally {
-    await handle.close().catch(() => undefined);
+async function syncDirectory(dir: string, required = false): Promise<void> {
+  let current = required ? resolve(dir) : dir;
+  for (;;) {
+    let handle: Awaited<ReturnType<typeof fs.open>>;
+    try {
+      handle = await fs.open(current, 'r');
+    } catch (error) {
+      if (required) throw error;
+      return;
+    }
+    try {
+      await handle.sync();
+    } catch (error) {
+      if (required) throw error;
+      // The default compatibility path tolerates unsupported directory fsync.
+    } finally {
+      if (required) await handle.close();
+      else await handle.close().catch(() => undefined);
+    }
+    const parent = dirname(current);
+    if (!required || parent === current) return;
+    current = parent;
   }
 }
 
@@ -228,8 +237,12 @@ export class PersistentStore<T extends Record<string, unknown>> {
    * the store path pointing at a zero-length file, and a zero-length file is
    * indistinguishable from a corrupt one, so an unlucky moment turns a
    * perfectly good write into a discarded store.
+   *
+   * Set durable:true for authority-bearing writes: directory open/sync/close
+   * failures propagate, and file plus full path ancestry are confirmed after
+   * publication. Rejection may follow rename; new bytes are never rolled back.
    */
-  async persist(data: T): Promise<void> {
+  async persist(data: T, options: { readonly durable?: boolean } = {}): Promise<void> {
     if (this.inMemory) {
       this.memoryData = structuredClone(data);
       return;
@@ -249,7 +262,8 @@ export class PersistentStore<T extends Record<string, unknown>> {
         await handle.close();
       }
       await fs.rename(tmpPath, this.filePath);
-      await syncDirectory(this.dir);
+      await syncDirectory(this.dir, options.durable === true);
+      if (options.durable === true) confirmFileDurable(this.filePath);
     } catch (error) {
       await fs.rm(tmpPath, { force: true }).catch(() => undefined);
       throw error;

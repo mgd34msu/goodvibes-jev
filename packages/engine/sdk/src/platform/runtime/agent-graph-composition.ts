@@ -37,6 +37,7 @@ export interface AgentExecutionGraphOptions {
   readonly workingDirectory: string;
   readonly configManager: ConfigManager;
   readonly providerRegistry: ProviderRegistry;
+  readonly additionalFleetOwnership?: (() => ReturnType<AgentManager['fleetOwnership']>) | undefined;
 }
 
 export interface AgentGraph extends AgentExecutionGraph {
@@ -46,6 +47,7 @@ export interface AgentGraph extends AgentExecutionGraph {
 }
 
 export interface AgentGraphOptions extends AgentExecutionGraphOptions {
+  readonly readAccessFilter?: import('../tools/shared/read-access.js').ReadAccessFilter | undefined;
   /** Live provider health for the route planner. */
   readonly runtimeStore?: Pick<RuntimeStore, 'getState'> | undefined;
 }
@@ -72,6 +74,7 @@ export function createAgentExecutionGraph(options: AgentExecutionGraphOptions): 
     // The live registry lets a bare model id in a spawn() override resolve
     // through the shared resolver instead of being rejected as unqualified.
     providerRegistry: options.providerRegistry,
+    additionalFleetOwnership: options.additionalFleetOwnership,
   });
   const contextAccountingHolder = new ContextAccountingHolder();
   // Conversation-snapshot bridge (mirrors the SDK's own createRuntimeServices).
@@ -88,6 +91,7 @@ export function createAgentGraph(options: AgentGraphOptions): AgentGraph {
   const graph = createAgentExecutionGraph(options);
   const { agentMessageBus, agentManager } = graph;
   const composed = composeContractRunner({
+    readAccessFilter: options.readAccessFilter,
     runtimeBus: options.runtimeBus,
     agentManager,
     agentMessageBus,

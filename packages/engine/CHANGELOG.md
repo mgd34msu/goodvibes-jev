@@ -2,9 +2,49 @@
 
 ## Unreleased
 
+### Fixed
+
+- Classify the exact native project-discovery and durable recovery wire operations without reviving retired automation pause/resume aliases or granting their verbs to other methods.
+
+- Register shared autonomous disposition and refusal questions with calibration fixtures, while preserving dynamic host choices, caller-site attribution, authority checks and recorded decision lineage.
+
+- Native deferral retains its authority/scope identity through live and restored waits; unit-failure reads honor owned cancellation and avoid shared memo reuse; unchanged quality uncertainty cannot reroll into success; native model routing receives full structural source requirements.
+- Remembered permission rules become live only after persistence succeeds.
+  Failed writes leave the last committed rules unchanged, reject the calling
+  operation, and cannot leak a grant into a later successful write. Concurrent
+  additions and revocations retain call order; failed revocations remain
+  visible and retryable rather than being reported as deleted.
+
+- Home Graph answer-page refresh preserves owned generated-source provenance
+  through response aliases without rewriting the original source. Snapshot
+  sync also registers its freshly minted references, so card-shaped local
+  hashes do not randomly block ordinary answers; untrusted URI and content
+  privacy checks remain unchanged. Revalidate the entire restored-alias batch
+  after quality evaluation so byte-identical ledger cache rebuilds cannot leave
+  partial source or link writes. If an owned source changes after writing has
+  begun, hold instead of falling back to upsert, preserve the newer correction,
+  and stop subsequent stale steps without claiming earlier writes rolled back.
+
 ### Added
 
+- Composed native durable runner with schema-5 migration, exact source/binding validation, PR56 captured authority in initial/corrective planning and members, and construction-bound native planner/member tools using the shared recorded autonomous runtime.
+
+- Native contract semantic ownership routes planning, evidence, correction and attempt selection through shared recorded Jev decisions and bound continuations, with persistent budgets, real-condition deferral and shared transport lifecycle; native owner-approval fallbacks are disabled.
+
+- Optional immutable native contract source snapshots preserve complete original goals, ordered criteria and host revisions through planning, correction, persistence and final verification; generated plans cannot replace native roots.
+- Native durable contract admission keyed by work, criteria revision and attempt, with atomic runner receipts/checkpoints, explicit freshly validated resume, current-authority fencing at executor/wake boundaries, and cross-process execution drainage ownership.
+
 - Session-preserving `sessions.turns.cancel` with required expected execution identity, synchronous currentness fencing, idempotent request acceptance, honest stale/ended outcomes, typed public client contracts, and the existing operator write policy. Terminal events remain settlement authority.
+
+### Changed
+
+- Jev availability now retries in the shared judgment transport until recovery or
+  caller/runtime cancellation, with capped jittered backoff and provider rate
+  guidance. Finite retry counts and total judgment deadlines are removed;
+  migrate to timing-only retry settings and owned cancellation signals.
+- Browser, native and relay judgment waits retain authority rechecks and drain
+  cancelled calls before closing their decision log. Retry progress is separate
+  from a final reading; one logical call records one final result.
 
 ## [2.0.23] - 2026-08-23
 

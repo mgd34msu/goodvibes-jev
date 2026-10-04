@@ -9,7 +9,7 @@ import { modalGeometry, MODAL_PAD_X } from '../../../renderer/surface-kit.ts';
 import { frameFromLayer } from '../../helpers/surface-frame.ts';
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 const snapshot = (projectId = 'host-project', cursor = 0): WorkLedgerReadSnapshot => ({ projectId, revision: cursor, cursor, works: [{
-  work: { id: 'work-1', title: 'Native title', goal: 'Native intent', criteria: ['real criterion'], revision: 3, criteriaRevision: 2, reportedState: 'complete', currentAttemptId: 'attempt-1', createdAt: 1, updatedAt: 2 },
+  work: { source: null, id: 'work-1', title: 'Native title', goal: 'Native intent', criteria: ['real criterion'], revision: 3, criteriaRevision: 2, reportedState: 'complete', currentAttemptId: 'attempt-1', createdAt: 1, updatedAt: 2 },
   attempt: { id: 'attempt-1', workId: 'work-1', predecessorId: null, ownerId: 'worker', revision: 2, state: 'complete', report: 'done', blocker: null, createdAt: 1, updatedAt: 2 },
   verification: { state: 'stale', reason: 'Criteria changed', evidence: null }, attention: [{ kind: 'verification', reason: 'Needs current evidence' }],
 }] });
@@ -228,13 +228,80 @@ test('native row namespaces isolate suffix-like work, criterion, attention and e
   handleConfigModalToken(route, { type: 'key', logicalName: 'escape' } as never); expect(f.disposed()).toBe(1);
 });
 
-test('typed rejected execution remains distinct from verification in native modal', async () => {
-  const f = fixture(); const value = snapshot();
-  const execution = { id: 'execution', contractId: null, target: { workId: 'work-1', workRevision: 3, criteriaRevision: 2, attemptId: 'attempt-1', attemptRevision: 2 }, status: 'rejected' as const, reason: 'Jev rejected the action', decisionIds: ['reading'], evidenceId: null };
-  f.update({ ...value, executionRevision: 1, works: value.works.map(view => ({ ...view, execution })) });
-  const surface = createNativeWorkLedgerModalSurface(() => f.selection);
-  const modal = new ConfigModal(); modal.open(surface); await tick();
-  const text = surface.buildView().tabs.flatMap(tab => tab.rows.map(row => row.label)).join('\n');
-  expect(text).toContain('execution rejected'); expect(text).toContain('verificationState stale'); expect(surface.actions).toEqual([]);
-  modal.close();
+test('real native modal actions target the selected ledger row, display typed progress and never auto-resume', async () => {
+  const f = fixture(); const value = snapshot(); const target = value.works[0]!;
+  f.update({ ...value, works: [{ ...target, work: { ...target.work, reportedState: 'in_progress' }, attempt: { ...target.attempt!, state: 'active' } }] });
+  const calls: string[] = [];
+  const invoke = (action: string): import('@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client').OperatorNativeWorkExecutionClient['start'] => async identity => {
+    calls.push(action); expect(identity).toEqual({ workId: 'work-1', attemptId: 'attempt-1', expectedRevision: { work: 3, criteria: 2, attempt: 2 } });
+    return { kind: 'execution', projectId: 'host-project', ...identity, currentRevision: identity.expectedRevision, currentAttempt: true, stale: false, state: 'launch-claimed', recovery: 'required', receipt: { contractId: 'contract-modal', ownerAgentId: 'worker-modal' }, progress: { status: 'running', sessionMode: true, semanticState: 'deferred', stage: 'verify', retrying: true, units: { total: 2, passed: 1, failed: 0 }, criteria: { total: 1, met: 0, unmet: 0, unshown: 1 } } };
+  };
+  const selection: NativeWorkLedgerSelection = { ...f.selection, bind: fail => ({ ...f.selection.bind(fail), execution: { start: invoke('start'), status: invoke('status'), cancel: invoke('cancel'), resume: invoke('resume'), dispose() { calls.push('dispose'); } } }) };
+  const surface = createNativeWorkLedgerModalSurface(() => selection); const modal = new ConfigModal(); modal.open(surface); await tick();
+  const route = { configModal: modal, requestRender() {}, handleEscape: () => modal.close() };
+  expect(calls).toEqual([]); modal.moveDown();
+  expect(modal.getSelectedRow()?.label).toContain('Control work-1');
+  const structure = surface.buildView().tabs[0]!.rows.map(row => row.id);
+  expect(modal.fireAction('s', { print() {} })).toBe(true); await tick();
+  expect(calls).toEqual(['start']);
+  const text = surface.buildView().tabs[0]!.rows.map(row => row.label).join('\n');
+  expect(text).toContain('recovery required'); expect(text).toContain('semantic deferred'); expect(text).toContain('contract-modal'); expect(text).toContain('verificationState stale');
+  expect(surface.buildView().tabs[0]!.rows.map(row => row.id)).toEqual(structure);
+  for (const key of ['i', 'c', 'r']) { expect(modal.fireAction(key, { print() {} })).toBe(true); await tick(); }
+  expect(calls).toEqual(['start', 'status', 'cancel', 'status', 'resume']);
+  handleConfigModalToken(route, { type: 'key', logicalName: 'escape' } as never);
+  expect(calls).toEqual(['start', 'status', 'cancel', 'status', 'resume', 'dispose']);
+});
+
+test('a captured old-host control row cannot dispatch after replacement, even for the same work ID', async () => {
+  const f = fixture(); let calls = 0;
+  const execute = async () => { calls++; throw new Error('must not dispatch'); };
+  const execution = { start: execute, status: execute, cancel: execute, resume: execute, dispose() {} };
+  let selection: NativeWorkLedgerSelection = { ...f.selection, bind: fail => ({ ...f.selection.bind(fail), execution }) };
+  const surface = createNativeWorkLedgerModalSurface(() => selection); const modal = new ConfigModal(); modal.open(surface); await tick();
+  const row = surface.buildView().tabs[0]!.rows.find(row => row.selectable)!;
+  selection = { ...selection, identity: 'replacement-host' }; surface.buildView(); await tick();
+  surface.onAction?.('status', { row, tabId: 'work', print() {}, requestRender() {}, setStatus() {}, close() {} }); await tick();
+  expect(calls).toBe(0); modal.close();
+});
+
+test('first status/cancel stays on the displayed attempt if a fresh read observes a handoff', async () => {
+  for (const key of ['i', 'c']) {
+    const f = fixture(); const captured: string[] = [];
+    const invoke: import('@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client').OperatorNativeWorkExecutionClient['start'] = async identity => {
+      captured.push(identity.attemptId);
+      return { kind: 'execution', projectId: 'host-project', ...identity, currentRevision: null, currentAttempt: false, stale: true, state: 'launch-claimed', recovery: 'required', receipt: null, progress: null };
+    };
+    const selection: NativeWorkLedgerSelection = { ...f.selection, bind: fail => ({ ...f.selection.bind(fail), execution: { start: invoke, status: invoke, cancel: invoke, resume: invoke, dispose() {} } }) };
+    const surface = createNativeWorkLedgerModalSurface(() => selection); const modal = new ConfigModal(); modal.open(surface); await tick(); modal.moveDown();
+    expect(modal.getSelectedRow()?.label).toContain('status/cancel attempt attempt-1');
+    const next = snapshot(); f.client.readSnapshot = async () => ({ ...next, works: next.works.map(view => ({ ...view, work: { ...view.work, currentAttemptId: 'attempt-new' }, attempt: { ...view.attempt!, id: 'attempt-new' } })) });
+    expect(modal.fireAction(key, { print() {} })).toBe(true); await tick(); expect(captured).toEqual(['attempt-1']); modal.close();
+  }
+});
+
+test('native modal renders intent variants honestly with stable rows and no implicit recovery', async () => {
+  const f = fixture(); let state: 'admitting' | 'refused' | 'cancelled' = 'admitting'; const calls: string[] = [];
+  const execution: import('@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client').OperatorNativeWorkExecutionClient = {
+    start: async () => { calls.push('start'); throw new Error('must not start'); },
+    resume: async () => { calls.push('resume'); throw new Error('must not resume'); },
+    cancel: async () => { calls.push('cancel'); throw new Error('must not cancel while inspecting'); },
+    status: async identity => {
+      calls.push('status'); const common = { projectId: 'host-project', ...identity, currentRevision: identity.expectedRevision, currentAttempt: true, stale: false };
+      return state === 'cancelled' ? { ...common, kind: 'prevented-before-admission', state, recovery: 'cancelled' }
+        : { ...common, kind: 'pending-intent', state, recovery: state === 'admitting' ? 'pending' : 'required' };
+    }, dispose() {},
+  };
+  const surface = createNativeWorkLedgerModalSurface(() => ({ ...f.selection, bind: fail => ({ ...f.selection.bind(fail), execution }) }));
+  const modal = new ConfigModal(); modal.open(surface); await tick(); modal.moveDown(); const ids = surface.buildView().tabs[0]!.rows.map(row => row.id);
+  try {
+    for (const [next, label] of [['admitting', 'Admission pending'], ['refused', 'Admission refused'], ['cancelled', 'Cancelled before admission']] as const) {
+      state = next; expect(modal.fireAction('i', { print() {} })).toBe(true); await tick();
+      const rows = surface.buildView().tabs[0]!.rows; const text = rows.map(row => row.label).join('\n');
+      expect(text).toContain(label); expect(text).toContain('Requested revisions'); expect(text).toContain('verificationState stale');
+      expect(text).not.toContain('Admitted revisions'); expect(text).not.toContain('Receipt:'); expect(text).not.toContain('Progress:');
+      expect(rows.map(row => row.id)).toEqual(ids);
+    }
+    expect(calls).toEqual(['status', 'status', 'status']);
+  } finally { modal.close(); }
 });

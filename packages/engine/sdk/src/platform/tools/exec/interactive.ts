@@ -1,3 +1,4 @@
+import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 /**
  * interactive.ts, PTY-backed prompt-answer path for the exec tool.
  *
@@ -142,14 +143,15 @@ export function pendingPromptLine(transcript: string): string | null {
  * unterminated last line is a question waiting for an answer; any yes
  * surfaces it, since surfacing it is itself asking the owner.
  */
-export async function readPendingPrompt(command: string, transcript: string): Promise<string | null> {
+export async function readPendingPrompt(command: string, transcript: string, signal?: AbortSignal): Promise<string | null> {
   const line = pendingPromptLine(transcript);
   if (line === null) return null;
   const recentOutput = transcript.slice(0, transcript.lastIndexOf('\n') + 1).slice(-RECENT_OUTPUT_CONTEXT_CHARS);
-  const run = await execPrompt.run(judgmentPort(AWAITING_INPUT_SITE), pendingPromptView(command, line, recentOutput), {
+  const run = await executePolicyCheck(() => execPrompt.run(judgmentPort(AWAITING_INPUT_SITE), pendingPromptView(command, line, recentOutput), {
     site: AWAITING_INPUT_SITE,
     only: ['awaiting_input'],
-  });
+  }), signal);
+  signal?.throwIfAborted();
   const awaiting = run.readings.awaiting_input.verdict === 'yes';
   run.recordAction(awaiting ? 'surfaced pending prompt' : 'not a prompt');
   return awaiting ? line : null;
@@ -159,8 +161,9 @@ export async function readPendingPrompt(command: string, transcript: string): Pr
  * Whether a command will most likely stop to ask for terminal input, read by
  * Jev. Only a yes that acts sends the command down the PTY path.
  */
-export async function readWillPrompt(command: string): Promise<boolean> {
-  const run = await execPrompt.run(judgmentPort(WILL_PROMPT_SITE), { command }, { site: WILL_PROMPT_SITE, only: ['will_prompt'] });
+export async function readWillPrompt(command: string, signal?: AbortSignal): Promise<boolean> {
+  const run = await executePolicyCheck(() => execPrompt.run(judgmentPort(WILL_PROMPT_SITE), { command }, { site: WILL_PROMPT_SITE, only: ['will_prompt'] }), signal);
+  signal?.throwIfAborted();
   const reading = run.readings.will_prompt;
   const willPrompt = reading.verdict === 'yes' && reading.outcome === 'act';
   run.recordAction(willPrompt ? 'ran under a PTY' : 'ran on pipes');
@@ -218,17 +221,22 @@ export async function shouldRunInteractive(
   interaction: ExecInteractionRuntime | null,
   cmdInput: ExecCommandInput,
   cmdStr: string,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   if (!interaction?.availability.available) return false;
   if (cmdInput.background || cmdInput.until) return false;
   if (cmdInput.interactive === true) return true;
   if (cmdInput.interactive === false) return false;
-  return readWillPrompt(cmdStr);
+  return readWillPrompt(cmdStr, signal);
 }
 
 // ── The interactive runner ────────────────────────────────────────────────────
 
 interface InteractiveRunInput {
+  /** Trusted boundary resources and delivery checks; never model arguments. */
+  readonly extraStdio?: readonly number[] | undefined;
+  readonly beforeOutput?: (() => Promise<void>) | undefined;
+  readonly maxOutputChars?: number | undefined;
   readonly cmdStr: string;
   readonly cwd: string | undefined;
   readonly env: Record<string, string>;
@@ -250,13 +258,13 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
   const { cmdStr, cwd, env, timeoutMs, startTime, interaction, signal } = input;
   const ptyArgv = buildPtyArgv(interaction.availability, cmdStr);
   const quietWindowMs = interaction.quietWindowMs ?? DEFAULT_QUIET_WINDOW_MS;
+  const lifetime = new AbortController();
+  const policySignal = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
 
   const proc = Bun.spawn([...input.sandboxArgv, ...ptyArgv], {
     ...(cwd !== undefined ? { cwd } : {}),
     env,
-    stdin: 'pipe',
-    stdout: 'pipe',
-    stderr: 'pipe',
+    stdio: ['pipe', 'pipe', 'pipe', ...(input.extraStdio ?? [])],
   } as Parameters<typeof Bun.spawn>[1]);
 
   let transcript = '';
@@ -272,6 +280,7 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
   let askInFlight = false;
 
   const kill = async (): Promise<void> => {
+    lifetime.abort();
     try {
       proc.kill('SIGTERM');
       await sleep(200);
@@ -306,6 +315,12 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
         if (done) break;
         // PTYs emit CRLF; normalize so transcripts and prompt tails are stable.
         transcript += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        if (input.maxOutputChars !== undefined && transcript.length > input.maxOutputChars) {
+          transcript = transcript.slice(0, input.maxOutputChars);
+          judgmentFailure = new Error('Interactive output exceeded its boundary limit');
+          await kill();
+          return;
+        }
         lastDataAt = Date.now();
       }
     } catch (err: unknown) {
@@ -328,12 +343,14 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
   const brokerPrompt = async (prompt: string): Promise<void> => {
     askInFlight = true;
     try {
-      const answer = await interaction.requestPromptAnswer!({
+      await executePolicyCheck(() => input.beforeOutput?.(), policySignal);
+      const answer = await executePolicyCheck(() => interaction.requestPromptAnswer!({
         command: cmdStr,
         prompt,
         recentOutput: transcript.slice(-RECENT_OUTPUT_CONTEXT_CHARS),
         ...(cwd !== undefined ? { workingDirectory: cwd } : {}),
-      });
+      }), policySignal);
+      await executePolicyCheck(() => input.beforeOutput?.(), policySignal);
       if (exited || timedOut || cancelled) return;
       if (answer.answered && typeof answer.text === 'string') {
         pendingPrompt = undefined;
@@ -346,6 +363,7 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
         void kill();
       }
     } catch (err: unknown) {
+      if (policySignal.aborted) return;
       logger.warn('[ExecInteractive] prompt-answer broker failed; prompt left pending', { error: summarizeError(err) });
     } finally {
       askInFlight = false;
@@ -367,8 +385,11 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
       readAtLength = readLength;
       let prompt: string | null;
       try {
-        prompt = await readPendingPrompt(cmdStr, transcript);
+        await executePolicyCheck(() => input.beforeOutput?.(), policySignal);
+        prompt = await readPendingPrompt(cmdStr, transcript, policySignal);
+        await executePolicyCheck(() => input.beforeOutput?.(), policySignal);
       } catch (err: unknown) {
+        if (exited || timedOut || cancelled || promptDeclined) return;
         judgmentFailure = err;
         await kill();
         return;
@@ -388,6 +409,7 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
   ]);
   const exitCode = await proc.exited;
   exited = true;
+  lifetime.abort();
   clearTimeout(killTimer);
   if (signal) signal.removeEventListener('abort', onAbort);
   // Bounded drain, a PTY grandchild can hold the pipe open past the kill.

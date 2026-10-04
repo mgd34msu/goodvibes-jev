@@ -53,7 +53,7 @@ test('native owner uses one lazy project storage and exposes no actor authority 
   expect('issueActor' in fx.owner.service).toBe(false);
   const accepted = await fx.owner.service.execute(command, fx.actor);
   expect(accepted).toMatchObject({ kind: 'accepted', replayed: false });
-  if (accepted.kind === 'accepted') expect(accepted.event.workId).toMatch(/^work:[0-9a-f-]{36}$/);
+  if (accepted.kind === 'accepted' && accepted.event.type !== 'import_legacy') expect(accepted.event.workId).toMatch(/^work:[0-9a-f-]{36}$/);
   expect((await fx.owner.service.readSnapshot(fx.actor)).revision).toBe(1);
   expect(await fx.owner.service.history(0, fx.actor)).toHaveLength(1);
   expect(fx.events.filter(event => event.startsWith('open:'))).toEqual([`open:${projectId}`]);
@@ -168,21 +168,4 @@ test('reverse acquisition drain keeps backing store alive through adapter shutdo
   expect(fx.events).not.toContain('knowledge.close');
   adapterDrain.resolve(); await closing;
   expect(fx.events.slice(-2)).toEqual(['storage.close', 'knowledge.close']);
-});
-
-test('execution journal shares lazy host store and publishes only safe status projection', async () => {
-  const fx = fixture();
-  const created = await fx.owner.service.execute(command, fx.actor);
-  if (created.kind !== 'accepted') throw new Error('create failed');
-  const claimed = await fx.owner.service.execute({ type: 'claim', requestId: 'claim-native', expectedRevision: 1, workId: created.event.workId }, fx.actor);
-  if (claimed.kind !== 'accepted') throw new Error('claim failed');
-  const attempt = claimed.event.attempts[0]!;
-  await fx.owner.executionJournal.prepare({ id: 'native', target: { workId: created.event.workId, workRevision: claimed.event.work.revision, criteriaRevision: 1, attemptId: attempt.id, attemptRevision: attempt.revision }, sessionId: 'session', projectRoot: '/fixture' }, fx.actor);
-  const view = (await fx.owner.service.readSnapshot(fx.actor)).works[0]!;
-  expect(view.execution?.status).toBe('pending');
-  expect('runnerReceipt' in view.execution!).toBe(false);
-  expect('publication' in view.execution!).toBe(false);
-  expect(fx.events.filter(event => event.startsWith('open:'))).toHaveLength(1);
-  await fx.owner.close();
-  await expect(fx.owner.executionJournal.list(fx.actor)).rejects.toThrow('closed');
 });

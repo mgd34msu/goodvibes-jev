@@ -1,3 +1,4 @@
+import { captureNativeConversationInput } from '../runtime/native-conversation-input.ts';
 import type { InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { BlockMeta, ConversationManager } from '../core/conversation';
 import type { InputHistory } from './input-history.ts';
@@ -238,6 +239,7 @@ export function handlePromptKeyToken(state: KeyRouteState, token: InputToken): {
       return { handled: true, prompt, cursorPos, inputScrollTop, commandMode, indicatorFocused };
     }
 
+    const originalInput = captureNativeConversationInput(prompt);
     const text = prompt.trim();
     if (!text && !commandMode) {
       const lineIndex = 0;
@@ -268,13 +270,13 @@ export function handlePromptKeyToken(state: KeyRouteState, token: InputToken): {
       prompt = '';
       cursorPos = 0;
       if (typeof expanded === 'string') {
-        state.commandContext?.submitInput?.(expanded);
+        state.commandContext?.submitInput?.(expanded, undefined, { source: originalInput });
       } else {
         const textOnly = expanded
           .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
           .map(p => p.text)
           .join('');
-        state.commandContext?.submitInput?.(textOnly, expanded);
+        state.commandContext?.submitInput?.(textOnly, expanded, { source: originalInput });
       }
     }
     return { handled: true, prompt, cursorPos, inputScrollTop, commandMode, indicatorFocused };

@@ -60,3 +60,24 @@ test('daemon dependencies compose one runner, count its ACP ownership, and resum
     expect(resumed).toHaveBeenCalledTimes(1);
   } finally { contracts?.dispose(); graph.agentOrchestrator.dispose(); resumed?.mockRestore(); install.mockRestore(); compose.mockRestore(); }
 });
+
+test('explicit native daemon floor supplies both trusted owners without upgrading historical entrypoints', async () => {
+  const { createDaemonNativeWorkExecutionServices } = await import('../../runtime/native-work-execution-composition.js');
+  const { WorkspaceRegistrationStore } = await import('@goodvibes-jev/engine/sdk/platform/workspace');
+  const { SqliteDecisionLog, withDecisionLog } = await import('@goodvibes-jev/judgment');
+  const { fakePort, choiceAnswer } = await import('@goodvibes-jev/judgment/testing');
+  const f = fixture(); const graph = createAgentExecutionGraph(f);
+  const knowledge = new KnowledgeStore({ configManager: f.configManager, dbFileName: 'native-composition.sqlite' });
+  const scopes = new WorkspaceRegistrationStore({ path: join(f.workingDirectory, 'registry.json'), homeDir: join(f.workingDirectory, 'home'), daemonStateDir: join(f.workingDirectory, 'daemon') });
+  const log = new SqliteDecisionLog(':memory:');
+  const fake = fakePort((_name, question) => choiceAnswer(question, 'act', 0.99));
+  const owner = await createDaemonNativeWorkExecutionServices({ ...f, projectRoot: f.workingDirectory, projectId: 'native-project', sessionId: 'native-session',
+    knowledgeStore: knowledge, nativeScopes: scopes, judgmentPort: withDecisionLog(fake.port, log), decisionLog: log,
+    readAccessFilter: async () => false, agentManager: graph.agentManager, agentMessageBus: graph.agentMessageBus, acpHost: { list: () => [] },
+  });
+  try {
+    expect(owner.runner.nativeMode).toBe(true);
+    expect(() => owner.runner.start({ ask: 'No original source', sessionId: 'native-session', projectRoot: f.workingDirectory, origin: 'external' })).toThrow('complete original source');
+    expect(owner.runner.list({ includeTerminal: true })).toHaveLength(0);
+  } finally { await owner.close(); graph.agentOrchestrator.dispose(); await knowledge.close(); log[Symbol.dispose](); }
+});

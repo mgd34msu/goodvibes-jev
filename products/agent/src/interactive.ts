@@ -1,4 +1,7 @@
 #!/usr/bin/env bun
+import type { NativeConversationIntakeState } from './runtime/native-conversation-intake.ts';
+import { captureNativeConversationInput, type ProductInputContext } from './runtime/native-conversation-input.ts';
+import { routeNativeConversationInput, dispatchNativeConversationTurn } from './runtime/native-conversation-ingress.ts';
 import { createNativeWorkLedgerView } from './runtime/native-work-ledger-host.ts';
 import { resolveConnectedHostConnection as resolveNativeLedgerHost } from './runtime/client/daemon-verbs.ts';
 import { homedir } from 'node:os';
@@ -257,8 +260,9 @@ async function main() {
   const unsubs: Array<() => void> = [];
   commandContext.nativeWorkLedger = createNativeWorkLedgerView(() => {
     const host = resolveNativeLedgerHost({ configManager, homeDirectory: ctx.services.shellPaths.homeDirectory });
-    return 'reason' in host ? host : { ...host, workspace: ctx.services.workingDirectory };
+    return 'reason' in host ? host : { ...host, workspace: ctx.services.workingDirectory, journalPath: ctx.services.shellPaths.resolveUserPath('agent', 'native-work-submission.json') };
   }, () => render());
+  commandContext.nativeConversationIntake = commandContext.nativeWorkLedger.intake;
   unsubs.push(() => commandContext.nativeWorkLedger?.close());
   unsubs.push(() => input.settingsModal.close());
   // The work tree's live facts: call/turn timings, agent lanes, the call a permission prompt holds, fold persistence (work-tree-wiring.ts).
@@ -356,7 +360,20 @@ async function main() {
   });
   unsubs.push(() => remoteConversation.dispose());
 
-  const submitInput = (text: string, content?: ContentPart[], options: { readonly spokenOutput?: boolean } = {}) => {
+  const dispatchNativeTurn = async (state: NativeConversationIntakeState, spokenOutput = false): Promise<void> => {
+    if (!state.turnReady || !state.turnPermit || state.result?.kind !== 'turn') return;
+    const inputOptions = { ...(spokenOutput ? createSpokenTurnInputOptions() : {}), nativeConversationTurnPermit: state.turnPermit };
+    if (spokenOutput) spokenTurns.submitNextTurn(state.result.text);
+    try { await dispatchNativeConversationTurn(state, orchestrator, inputOptions); }
+    catch {
+      systemMessageRouter.high('Native turn dispatch requires recovery. Its durable claim was preserved; no legacy fallback was started.');
+      render();
+    }
+  };
+  commandContext.dispatchNativeIntakeTurn = state => dispatchNativeTurn(state);
+
+  const submitInput = (text: string, content?: ContentPart[], options: ProductInputContext = {}) => {
+    const original = options.source ?? { text, unsupportedSources: [{ kind: 'context' as const, label: 'derived-input' }] };
     input.clearModalStack();
     transcript.toBottom(); // Re-lock on user input
     let processedText = applyAtModelSwitches(text, {
@@ -392,15 +409,17 @@ async function main() {
     }
     if (processedText || content) {
       void (async () => {
-        const inputOptions = options.spokenOutput ? createSpokenTurnInputOptions() : undefined;
         const outgoing = shellPassthrough.consumeContext(processedText);
-        if (options.spokenOutput && processedText) {
-          spokenTurns.submitNextTurn(processedText);
-        }
         // Routed to the daemon, or run here with the reason already stated.
         if (await remoteConversation.routeOrExplain(outgoing, Boolean(content?.length))) return;
-        orchestrator.handleUserInput(outgoing, content, inputOptions).catch((err: unknown) => {
-          logger.debug('handleUserInput safety catch (already handled by runTurn)', { error: summarizeError(err) });
+        const unsupportedSources = [...original.unsupportedSources];
+        if (outgoing !== processedText) unsupportedSources.push({ kind: 'context', label: 'shell-context' });
+        if (processedText !== text) unsupportedSources.push({ kind: 'context', label: 'composer-derived-text' });
+        if (content?.some(part => part.type !== 'text')) unsupportedSources.push({ kind: 'image', label: 'attached-content' });
+        await routeNativeConversationInput({ intake: commandContext.nativeConversationIntake,
+          source: { text: original.text, unsupportedSources },
+          notify: message => { systemMessageRouter.high(message); render(); },
+          dispatch: state => dispatchNativeTurn(state, options.spokenOutput),
         });
       })();
     } else {
@@ -424,7 +443,7 @@ async function main() {
   });
 
   commandContext.submitInput = submitInput;
-  commandContext.submitSpokenInput = (text, content) => submitInput(text, content, { spokenOutput: true });
+  commandContext.submitSpokenInput = (text, content) => submitInput(text, content, { spokenOutput: true, source: captureNativeConversationInput(text, content) });
   commandContext.stopSpokenOutput = () => spokenTurns.stop();
   commandContext.pasteFromClipboard = () => input.handlePaste();
   // Composer line prompts: masked for card material, echoed for addresses (see input/handler-line-prompts.ts).
@@ -515,7 +534,7 @@ async function main() {
   // Model picker callback is handled in bootstrap.ts, do not duplicate here.
   input.setHistory(inputHistory);
   // The wake-word capture host: one microphone path, opened only when voice.wake.enabled AND voice.wake.surfaces.agent are both on (shell/voice-capture-shell.ts).
-  voiceCaptureStatus = installVoiceCapture({ configManager, voiceService: ctx.services.voiceService, voiceProviders: ctx.services.voiceProviders, daemonVerbs: ctx.services.daemonVerbs, ensureWakeProvisioned: async () => { const outcome = await ctx.services.voiceSetup.wakeEnsureProvisioned(); return { ready: outcome.ready, message: outcome.message }; }, shellPaths: ctx.services.shellPaths, sessionId: runtime.sessionId, unsubs, buffer: input, submitInput, notify: (m) => { systemMessageRouter.high(m); render(); }, render: () => render() });
+  voiceCaptureStatus = installVoiceCapture({ configManager, voiceService: ctx.services.voiceService, voiceProviders: ctx.services.voiceProviders, daemonVerbs: ctx.services.daemonVerbs, ensureWakeProvisioned: async () => { const outcome = await ctx.services.voiceSetup.wakeEnsureProvisioned(); return { ready: outcome.ready, message: outcome.message }; }, shellPaths: ctx.services.shellPaths, sessionId: runtime.sessionId, unsubs, buffer: input, submitInput: text => submitInput(text, undefined, { source: captureNativeConversationInput(text) }), notify: (m) => { systemMessageRouter.high(m); render(); }, render: () => render() });
 
   const toolCount = toolRegistry.list().length;
   conversation.splashOptions = {

@@ -26,6 +26,9 @@
  *
  * Verdicts, gates and the commit are code; only the two judges are Jev.
  */
+import { assertContractInputOwner, assertContractInputObjects, assertContractExecutionView } from './input-snapshot.js';
+import { applyCapturedInputDelta } from './input-apply.js';
+
 import { spawnSync } from 'node:child_process';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { hashState, type JsonValue } from '@goodvibes-jev/judgment';
@@ -40,6 +43,8 @@ import { GROUP_JUDGES } from './batteries/group-judge.js';
 import { criterionVerdict, emptyJudgmentUsage, meteredPort } from './check.js';
 import { readContractConfig } from './config.js';
 import { guarded, type Correction } from './correction.js';
+import { nativeContractPort } from './native-decisions.js';
+import { assertNativeContractSource } from './native-source.js';
 import { collectChanges, judgeEvidence, trimEvidence, type ContractTurnRecord } from './evidence.js';
 import { failedGates, runContractGates } from './gates.js';
 import type { ContractRun } from './run-context.js';
@@ -138,6 +143,11 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const gates = await runContractGates({ configManager: context.configManager, cwd: tree, runtimeBus: context.runtimeBus, sessionId: contract.sessionId, contractId: contract.id, targetId: input.targetId });
     if (run.terminal) return null;
     const evidence = trimEvidence({ output: input.output, changes, gates, commands: [] }, { goal: input.goal, brief: '', files: [] });
+    const digest = hashState({ goal: input.goal, output: evidence.output, evidence: judgeEvidence(evidence), ...(contract.nativeSource === undefined ? {} : { nativeSource: { ...contract.nativeSource, criteria: [...contract.nativeSource.criteria] } }) });
+    const prior = input.checks.at(-1);
+    if (contract.nativeSource !== undefined && prior !== undefined && prior.result !== 'pass' && prior.evidenceDigest === digest) {
+      return { check: prior, verdicts: new Map(input.criteria.filter(criterion => criterion.disposition === 'judged').map(criterion => [criterion.id, criterion.status === 'unread' ? 'unshown' : criterion.status])), passed: false, output: evidence.output };
+    }
     const judgedCriteria = judged(input.criteria);
     const usage = emptyJudgmentUsage();
     const site = input.scope === 'group' ? COMPLETION_SITES.group : COMPLETION_SITES.deliverable;
@@ -145,8 +155,8 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     let judgment: Awaited<ReturnType<(typeof judges)['high']['judge']>>;
     try {
       judgment = await judges[config().acceptanceStakes].judge(
-        meteredPort(judgmentPort(site), usage),
-        { goal: input.goal, criteria: judgedCriteria.map((criterion) => criterion.text), output: evidence.output, evidence: { ...(judgeEvidence(evidence) as Record<string, JsonValue>), [input.scope === 'group' ? 'units' : 'criteria']: input.summaries } },
+        meteredPort(nativeContractPort(contract, context.native, judgmentPort(site), run.abort.signal), usage),
+        { goal: input.goal, criteria: judgedCriteria.map((criterion) => criterion.text), output: evidence.output, evidence: { ...(judgeEvidence(evidence) as Record<string, JsonValue>), ...(contract.nativeSource === undefined ? {} : { nativeSource: { ...contract.nativeSource, criteria: [...contract.nativeSource.criteria] } }), [input.scope === 'group' ? 'units' : 'criteria']: input.summaries } },
         { site, signal: run.abort.signal },
       );
     } finally {
@@ -186,7 +196,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       problems,
       qualityProblems: [],
       decisionIds: judgment.decisionId === undefined ? [] : [judgment.decisionId],
-      evidenceDigest: hashState({ goal: input.goal, output: evidence.output, evidence: judgeEvidence(evidence) }),
+      evidenceDigest: digest,
     };
     input.checks.push(check);
     judgment.recordAction(`${input.scope} check ${checkId}: ${passed ? 'pass' : 'to correction'}`);
@@ -269,6 +279,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
   async function judgeDeliverable(run: ContractRun, trigger: CheckTrigger): Promise<void> {
     const { contract } = run;
     if (run.terminal) return;
+    assertNativeContractSource(contract);
     if (contract.status !== 'judging') run.moveContract('judging');
     context.ownerProgress(run);
     const judgedCriteria = judged(contract.criteria);
@@ -318,25 +329,40 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
 
   // ── The commit (6.5) ──────────────────────────────────────────────────────────
 
-  async function commitWorktree(contract: Contract, commitOn: boolean): Promise<NonNullable<Contract['commit']>> {
+  async function commitWorktree(run: ContractRun, commitOn: boolean): Promise<NonNullable<Contract['commit']>> {
+    const { contract } = run;
     const root = contract.projectRoot;
     const branch = contract.branch!;
+    if (contract.inputSnapshot === undefined) return { status: 'failed', note: `not applied: legacy contract has no recorded input receipt; the work stays on branch ${branch}` };
+    try {
+      assertContractInputObjects(contract.inputSnapshot, contract.projectRoot);
+      assertContractExecutionView(contract.inputSnapshot, contract.worktreePath!, branch);
+      await assertContractInputOwner(contract.inputSnapshot, run.abort.signal);
+    }
+    catch (error) { return { status: 'failed', note: `not applied: ${summarizeError(error)}; the work stays on branch ${branch}` }; }
+    if (contract.inputSnapshot.dirty) {
+      try {
+        const files = await applyCapturedInputDelta(contract, context.plannerDeps(run).readAccessFilter, run.abort.signal);
+        if (files === 0) return { status: 'skipped', note: 'commit skipped: the contract changed no files; owner changes preserved' };
+        return { status: 'applied', note: `applied ${files} file${files === 1 ? '' : 's'} as uncommitted changes; pre-existing owner edits and staging preserved${commitOn ? '; automatic commit deferred for the dirty input baseline' : ''}` };
+      } catch (error) {
+        return { status: 'failed', note: `not applied: ${summarizeError(error)}; the work stays on branch ${branch}` };
+      }
+    }
     const changed = git(root, ['diff', '--name-only', `HEAD...${branch}`]);
     const files = changed.ok ? changed.out.split('\n').filter(Boolean) : [];
     if (changed.ok && files.length === 0) return { status: 'skipped', note: describeCommitOutcome(null, [], true) };
     if (commitOn) {
       const merged = git(root, ['merge', '--no-ff', '-m', buildContractCommitMessage(contract), branch]);
       if (!merged.ok) {
-        git(root, ['merge', '--abort']);
-        return { status: 'failed', note: `commit failed: ${merged.err || 'git merge did not complete'}; the work stays on branch ${branch}` };
+        return { status: 'failed', note: `commit failed: ${merged.err || 'git merge did not complete'}; inspect owner Git state before retrying; the work stays on branch ${branch}` };
       }
       const head = git(root, ['rev-parse', 'HEAD']).out;
       return { status: 'committed', hash: head, note: describeCommitOutcome(head, [], false) };
     }
     const squashed = git(root, ['merge', '--squash', branch]);
     if (!squashed.ok) {
-      git(root, ['reset', '--merge']);
-      return { status: 'failed', note: `apply failed: ${squashed.err || 'git merge --squash did not complete'}; the work stays on branch ${branch}` };
+      return { status: 'failed', note: `apply failed: ${squashed.err || 'git merge --squash did not complete'}; inspect owner Git state before retrying; the work stays on branch ${branch}` };
     }
     // Unstage exactly what the squash staged: the work is left as uncommitted changes.
     git(root, ['reset', '-q', '--', ...files]);
@@ -371,7 +397,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const commitOn = settings.autoCommit && settings.commitScope !== 'off';
     try {
       if (contract.isolation === 'worktree' && contract.branch !== undefined && contract.worktreePath !== undefined) {
-        const outcome = await commitWorktree(contract, commitOn);
+        const outcome = await commitWorktree(run, commitOn);
         if (outcome.status === 'committed' || outcome.status === 'applied' || outcome.status === 'skipped') {
           // The branch's work reached the project's tree: the contract worktree goes; the branch stays as the record of the work.
           await new IsolatedWorktree(contract.projectRoot, contract.worktreePath, contract.branch, contract.baseBranch ?? 'main').evict()

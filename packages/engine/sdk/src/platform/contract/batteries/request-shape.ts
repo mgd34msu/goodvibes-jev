@@ -127,9 +127,9 @@ function toShapeReading(reading: YesNoReading): ShapeReading {
 export async function readRequestShape(
   port: JudgmentPort,
   ask: string,
-  options: { readonly signal?: AbortSignal | undefined } = {},
+  options: { readonly signal?: AbortSignal | undefined; readonly nativeSource?: import('../types.js').NativeContractSource | undefined } = {},
 ): Promise<{ readonly shape: RequestShape; readonly usage: { readonly inputTokens: number; readonly outputTokens: number } }> {
-  const run = await requestShape.run(port, { request: ask }, {
+  const run = await requestShape.run(port, { request: ask, ...(options.nativeSource === undefined ? {} : { nativeSource: { ...options.nativeSource, criteria: [...options.nativeSource.criteria] } }) }, {
     site: REQUEST_SHAPE_SITE,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });

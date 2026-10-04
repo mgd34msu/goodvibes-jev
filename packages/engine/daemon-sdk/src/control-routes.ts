@@ -62,6 +62,7 @@ interface ControlRouteContext {
   readonly invokeGatewayMethodCall: (input: {
     readonly authToken: string;
     readonly methodId: string;
+    readonly signal?: AbortSignal | undefined;
     readonly query?: Record<string, unknown> | undefined;
     readonly body?: unknown | undefined;
     readonly context?: {
@@ -281,6 +282,7 @@ export function createDaemonControlRouteHandlers(
       if (payload instanceof Response) return payload;
       const response = await context.invokeGatewayMethodCall({
         authToken: context.extractAuthToken(req),
+        signal: req.signal,
         methodId,
         query: payload.query,
         body: payload.body,
@@ -330,6 +332,7 @@ export function createDaemonControlRouteHandlers(
       }
       const response = await context.invokeGatewayMethodCall({
         authToken: context.extractAuthToken(req),
+        signal: req.signal,
         methodId,
         query,
         body: { ...params, ...bodyRecord },

@@ -272,6 +272,7 @@ Importing any path not in this table will produce an `ERR_PACKAGE_PATH_NOT_EXPOR
 | `platform/payments/browser` | Browser-safe card-entry surface policy and CVV prompt trade-off warning; no stores, card scanning, judgment runtime or checkout execution | beta |
 | `platform/judgment-browser/catalogs` | Browser-safe fixed WebUI command descriptors and exhaustive producer status-tone catalogs; no provider, private source resolver or decision log | beta |
 | `platform/contract` | The contract runner: `createContractRunner`, the contract data model, turn intake (`createContractIntake`), the fleet controls, the operator service behind `contracts.*` (`createContractOperatorService`), the command line (`runContractCli`), the external work seam, and the Jev batteries and registry for contract decisions | beta |
+| `platform/workflow/work-ledger/native-execution` | Explicit paired-authority native work-attempt host, durable runner association and recovery refusal; does not switch product entrypoints | beta |
 | `platform/control-plane` | Control-plane gateway, method catalog, contracts, and session broker | beta |
 | `platform/core` | Orchestrator, transcript events, execution plan | beta |
 | `platform/daemon` | HTTP server, routes, port-in-use checks | beta |
@@ -309,6 +310,7 @@ Importing any path not in this table will produce an `ERR_PACKAGE_PATH_NOT_EXPOR
 | `platform/personal-capture` | Capture authority (whether a turn may write to the owner profile) and the narrow store/service surface a conversational capture tool calls | beta |
 | `platform/plugins` | Plugin API, loader, and manager | beta |
 | `platform/power` | Sleep ownership: automatic work inhibition, sleep-edge handling, and the owner's keep-awake toggle | beta |
+| `platform/presentation/editor-message` | Typed editor-message blocking battery and privacy-checked asynchronous reader; presentation only | beta |
 | `platform/presentation` | The shared presentation contract used by both the TUI and the agent renderer: glyphs, tone tokens, thinking phrases, and waiting-state wording | beta |
 | `platform/profiles` | Profile manager and profile shape helpers | beta |
 | `platform/providers` | LLM provider registry, catalog, capabilities; includes `inferFallbackContextWindow` and `FALLBACK_CONTEXT_WINDOW` (added in 0.35.0), plus the shared bare-model-id resolver (`resolveModelReference`, `findClosestModelIds`, `ModelIdCandidate`, `ModelIdResolutionOptions`) so consumers stop vendoring it | beta |

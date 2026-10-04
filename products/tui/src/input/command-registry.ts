@@ -1,3 +1,5 @@
+import type { ProductInputContext } from '../runtime/native-conversation-input.ts';
+import type { NativeConversationIntakeActions, NativeConversationIntakeState } from '../runtime/native-conversation-intake.ts';
 import type { McpRegistry } from '@goodvibes-jev/engine/sdk/platform/mcp';
 import type { ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { ConversationManager } from '../core/conversation';
@@ -73,7 +75,9 @@ export interface CommandUiActions {
   exit: () => void;
   /** Open the current composer draft in the user's $EDITOR and load back the edited text. */
   openComposerEditor?: () => void;
-  submitInput?: (text: string, content?: import('@goodvibes-jev/engine/sdk/platform/providers').ContentPart[]) => void;
+  nativeConversationIntake?: NativeConversationIntakeActions;
+  dispatchNativeIntakeTurn?: (state: NativeConversationIntakeState) => Promise<void>;
+  submitInput?: (text: string, content?: import('@goodvibes-jev/engine/sdk/platform/providers').ContentPart[], context?: ProductInputContext) => void;
   submitSpokenInput?: (text: string, content?: import('@goodvibes-jev/engine/sdk/platform/providers').ContentPart[]) => void;
   stopSpokenOutput?: () => void;
   pasteFromClipboard?: () => {

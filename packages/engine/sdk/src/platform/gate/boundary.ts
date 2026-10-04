@@ -1,3 +1,4 @@
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
 /**
  * The gate's boundary: the checks every call passes before explicit owner
  * rules or a preset are consulted. No preset, remembered approval or phrase in
@@ -88,6 +89,8 @@ export function stringFieldsOf(args: Record<string, unknown>, prefix = ''): Reco
 }
 
 export interface BoundaryInput {
+  readonly signal?: AbortSignal | undefined;
+  readonly port?: JudgmentPort | undefined;
   readonly toolName: string;
   readonly args: Record<string, unknown>;
   /** Jev's reading of the call; null for a known read-only tool the gate did not read. */
@@ -138,7 +141,7 @@ async function outwardCheck(input: BoundaryInput, content: Record<string, string
       reason: 'Untrusted source text contains protected material and cannot be sent for a derivation reading. The owner must approve this exact outward call.',
     };
   }
-  const findings = await findContentTaint(content, recentSources);
+  const findings = await findContentTaint(content, recentSources, { signal: input.signal, port: input.port });
   if (findings.length === 0) {
     return { check: 'outward-effect', result: 'pass', detail: 'does not derive from untrusted text', approvable: false };
   }
@@ -184,6 +187,7 @@ function snapshotRefusal(error: unknown): BoundaryVerdict {
  * checks list records every check that ran and those it skipped.
  */
 export async function runBoundary(input: BoundaryInput): Promise<BoundaryVerdict> {
+  input.signal?.throwIfAborted();
   let args: Record<string, unknown>;
   try { args = snapshotJudgmentInput(input.args, input.toolName) as Record<string, unknown>; }
   catch (error) { return snapshotRefusal(error); }
@@ -230,6 +234,7 @@ export async function runBoundary(input: BoundaryInput): Promise<BoundaryVerdict
   checks.push({ check: 'card-details', result: 'pass', ...(card === 'uncertain' ? { detail: 'owner approved this exact content' } : {}) });
 
   const outward = await outwardCheck(input, content);
+  input.signal?.throwIfAborted();
   if (outward.result === 'refuse') {
     return refuse({ check: 'outward-effect', result: 'refuse', detail: outward.detail }, outward.reason ?? 'outward effect refused', {
       fix: APPROVAL_FIX,

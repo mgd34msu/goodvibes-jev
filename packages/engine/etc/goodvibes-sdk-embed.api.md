@@ -4,8 +4,14 @@
 
 ```ts
 
-import type { CallOptions } from '@goodvibes-jev/judgment';
+import { CallOptions } from '@goodvibes-jev/judgment';
+import { JevContinuation } from '@goodvibes-jev/judgment/decisions';
+import { JevDecision } from '@goodvibes-jev/judgment/decisions';
+import type { JevDecisionBinding } from '@goodvibes-jev/judgment/decisions';
+import { JevDecisionContext } from '@goodvibes-jev/judgment/decisions';
+import { JevVersionRef } from '@goodvibes-jev/judgment/decisions';
 import { JudgmentPort } from '@goodvibes-jev/judgment';
+import { JudgmentRetryProgress } from '@goodvibes-jev/judgment';
 import type { Outcome } from '@goodvibes-jev/judgment';
 import type { ReplyReadingName } from '@goodvibes-jev/judgment';
 import type { SimpleGit } from 'simple-git';

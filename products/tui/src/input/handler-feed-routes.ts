@@ -1,3 +1,4 @@
+import { captureNativeConversationInput } from '../runtime/native-conversation-input.ts';
 import type { InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { FooterTarget } from '../renderer/footer-targets.ts';
 import type { BlockMeta, ConversationManager } from '../core/conversation';
@@ -262,6 +263,7 @@ export function handlePromptKeyToken(state: KeyRouteState, token: InputToken): {
       return { handled: true, prompt, cursorPos, inputScrollTop, commandMode, indicatorFocused };
     }
 
+    const originalInput = captureNativeConversationInput(prompt);
     const text = prompt.trim();
     if (!text && !commandMode) {
       // Target the block the user is actually reading, not the conversation's
@@ -301,7 +303,7 @@ export function handlePromptKeyToken(state: KeyRouteState, token: InputToken): {
           const executeCommand = state.commandContext.executeCommand;
           void executeCommand(name, args).then((handled) => {
             if (!handled) {
-              state.commandContext?.submitInput?.(text);
+              state.commandContext?.submitInput?.(text, undefined, { source: originalInput });
             }
             state.requestRender();
           });
@@ -319,13 +321,13 @@ export function handlePromptKeyToken(state: KeyRouteState, token: InputToken): {
       prompt = '';
       cursorPos = 0;
       if (typeof expanded === 'string') {
-        state.commandContext?.submitInput?.(expanded);
+        state.commandContext?.submitInput?.(expanded, undefined, { source: originalInput });
       } else {
         const textOnly = expanded
           .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
           .map(p => p.text)
           .join('');
-        state.commandContext?.submitInput?.(textOnly, expanded);
+        state.commandContext?.submitInput?.(textOnly, expanded, { source: originalInput });
       }
     }
     return { handled: true, prompt, cursorPos, inputScrollTop, commandMode, indicatorFocused };

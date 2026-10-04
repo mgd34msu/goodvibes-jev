@@ -11,6 +11,7 @@
  * Each module acts on a contract through `ContractRun`, its `RunControl`, and
  * the runner parts in `StepContext`.
  */
+import type { NativeContractServices } from './native-decisions.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 import type { AgentManager, AgentRecord } from '../tools/agent/index.js';
 import type { DecompositionRunner } from '../core/plan-decomposition.js';
@@ -29,6 +30,7 @@ export interface ContractSteps extends UnitCheckEscalations, GroupSteps {}
 
 /** The runner parts the steps act through. */
 export interface StepContext {
+  readonly native?: NativeContractServices | undefined;
   readonly agentManager: Pick<AgentManager, 'getStatus' | 'cancel'>;
   readonly configManager: ContractConfigReader;
   readonly runtimeBus: RuntimeEventBus;
@@ -47,6 +49,8 @@ export interface StepContext {
 }
 
 export interface ContractStepsWithReplies extends ContractSteps {
+  /** Reconstruct an interrupted native fix planner from its existing target and spent counters. */
+  resumeNative(run: ContractRun): Promise<void>;
   /** An owner's free-text reply to an open escalation, read with the reply pattern (design 6.3). */
   reply(run: ContractRun, escalationId: string, text: string): Promise<OwnerReplyOutcome>;
   /** An operator's pick of a unit's attempt (fleet.attempts.pick); closes the unit's attempts-undecided escalation. */
@@ -71,8 +75,9 @@ export function createContractSteps(context: StepContext): ContractStepsWithRepl
   });
   const completion = createCompletion(context, correction);
   return {
+    resumeNative: correction.resumeNative,
     unitStalled: correction.unitStalled,
-    unitAwaitsOwner: escalations.unitAwaitsOwner,
+    unitAwaitsOwner: (run, unitId, check) => run.contract.nativeSource === undefined ? escalations.unitAwaitsOwner(run, unitId, check) : correction.unitStalled(run, unitId, check),
     unitMergeConflict: correction.unitMergeConflict,
     attemptsUndecided: escalations.attemptsUndecided,
     groupUnitsPassed: completion.groupUnitsPassed,

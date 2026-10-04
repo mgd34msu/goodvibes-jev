@@ -537,3 +537,15 @@ describe('secondary reading paths and errors', () => {
     } finally { ledger.dispose(); }
   });
 });
+
+
+test('explicit credential field syntax remains protected across casing, with references preserved', () => {
+  for (const key of ['API_KEY', 'Api_Key', 'PASSWORD', 'Access_Token', 'CLIENT-SECRET', 'PrivateKey']) {
+    expect(judgmentInputProblem({ [key]: SECRET })).toBe('credential-material');
+    expect(judgmentInputProblem({ text: `${key}=${SECRET}` })).toBe('credential-material');
+    expect(judgmentInputProblem({ text: `--${key} ${SECRET}` })).toBe('credential-material');
+    expect(judgmentInputProblem({ [key]: REF })).toBeUndefined();
+    expect(judgmentInputProblem({ text: `${key}=${REF}` })).toBeUndefined();
+  }
+  expect(judgmentInputProblem({ API_KEY_NOTE: 'ordinary documentation' })).toBeUndefined();
+});

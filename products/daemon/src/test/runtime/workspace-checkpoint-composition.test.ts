@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { WorkspaceRegistrationStore } from '@goodvibes-jev/engine/sdk/platform/workspace';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { createSessionSurface, RuntimeEventBus } from '../../runtime/index.js';
 import { createWorkspaceCheckpointing } from '../../runtime/workspace-checkpointing.js';
@@ -24,7 +25,7 @@ function fixture() {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, JSON.stringify({ version: 1, workspaces: eligible ? [{ root: workspaceRoot, registeredAt: '2026-09-30T00:00:00.000Z', checkpointEligible: true }] : [], declines: [] }));
   };
-  return { composition, workspaceRoot, surface, values, register };
+  return { composition, workspaceRoot, surface, values, register, shellPaths };
 }
 
 test('automatic and gateway checkpoint creation honor live registration without hiding existing reads', async () => {
@@ -59,5 +60,33 @@ test('the explicit guarded-workspace setting is read live and retains snapshot g
     expect(created?.sessionId).toBe('explicit-fixture-session');
     f.values.checkpoints.unregisteredWorkspaces = 'off';
     expect(f.composition.currentlyAllowed()).toBe(false);
+  } finally { f.composition.manager.dispose(); }
+});
+
+
+test('running checkpoint composition retains a legacy grant after unrelated v2 registration', async () => {
+  const f = fixture();
+  try {
+    await f.composition.manager.init();
+    f.register(true);
+    expect(f.composition.currentlyAllowed()).toBe(true);
+    const store = new WorkspaceRegistrationStore({
+      path: f.shellPaths.resolveUserPath('shared', 'workspace-registrations.json'),
+      homeDir: f.shellPaths.homeDirectory, daemonStateDir: f.shellPaths.resolveUserPath(), probe: () => ({}),
+    });
+    const otherRoot = join(f.shellPaths.homeDirectory, 'unrelated-root');
+    mkdirSync(otherRoot);
+    await store.add(otherRoot);
+    expect(f.composition.currentlyAllowed()).toBe(true);
+    expect(() => store.currentScope(f.workspaceRoot)).toThrow('unmigrated');
+    writeFileSync(join(f.workspaceRoot, 'fixture.txt'), 'checkpoint permission survives v2 promotion\n');
+    const manual = await f.composition.gatewayManager.create({ kind: 'manual', label: 'legacy permission after v2' });
+    expect(manual).not.toBeNull();
+    writeFileSync(join(f.workspaceRoot, 'fixture.txt'), 'automatic checkpoint permission also survives\n');
+    expect(await f.composition.manager.create({ kind: 'turn', label: 'automatic after v2' })).not.toBeNull();
+    await store.remove(f.workspaceRoot);
+    expect(f.composition.currentlyAllowed()).toBe(false);
+    expect(await f.composition.manager.create({ kind: 'turn', label: 'removed after v2' })).toBeNull();
+    expect((await f.composition.gatewayManager.list()).some((checkpoint) => checkpoint.id === manual?.id)).toBe(true);
   } finally { f.composition.manager.dispose(); }
 });

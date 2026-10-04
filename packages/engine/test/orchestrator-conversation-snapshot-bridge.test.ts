@@ -39,16 +39,16 @@ useFailureReadings([
 ]);
 
 describe('AgentOrchestrator: conversation-sink wiring', () => {
-  test('setConversationSink wires register/release into createRunContext(); unset → both undefined so orchestrator-runner\'s ?.() calls are no-ops', () => {
+  test('setConversationSink wires register/release into createRunContext(); unset → both undefined so orchestrator-runner\'s ?.() calls are no-ops', async () => {
     const orchestrator = new AgentOrchestrator({ messageBus: new AgentMessageBus() });
     // createRunContext() reads this.toolDeps!.providerRegistry! directly,
     // give it just enough to not throw; the actual routing methods are not
     // exercised by this test (it only asserts the register/release wiring).
     (orchestrator as unknown as { toolDeps: { providerRegistry: object } }).toolDeps = { providerRegistry: {} };
-    const createRunContext = (): AgentOrchestratorRunContext =>
-      (orchestrator as unknown as { createRunContext(): AgentOrchestratorRunContext }).createRunContext();
+    const createRunContext = (): Promise<AgentOrchestratorRunContext> =>
+      (orchestrator as unknown as { createRunContext(): Promise<AgentOrchestratorRunContext> }).createRunContext();
 
-    const bareContext = createRunContext();
+    const bareContext = await createRunContext();
     expect(bareContext.registerConversationSource).toBeUndefined();
     expect(bareContext.releaseConversationSource).toBeUndefined();
 
@@ -58,14 +58,14 @@ describe('AgentOrchestrator: conversation-sink wiring', () => {
       register: (agentId) => { registered.push(agentId); },
       release: (agentId) => { released.push(agentId); },
     });
-    const wiredContext = createRunContext();
+    const wiredContext = await createRunContext();
     wiredContext.registerConversationSource?.('ag-1', () => []);
     wiredContext.releaseConversationSource?.('ag-1');
     expect(registered).toEqual(['ag-1']);
     expect(released).toEqual(['ag-1']);
 
     orchestrator.setConversationSink(null);
-    const detachedContext = createRunContext();
+    const detachedContext = await createRunContext();
     expect(detachedContext.registerConversationSource).toBeUndefined();
     expect(detachedContext.releaseConversationSource).toBeUndefined();
   });

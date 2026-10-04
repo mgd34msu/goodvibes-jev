@@ -38,6 +38,27 @@ export interface RegisteredWorkspaceRecord {
    * that owns checkpointing re-stamps its own roots on boot.
    */
   readonly checkpointEligible?: boolean;
+  /** Prospective native authority, minted only by a new registration event. Never inferred for legacy rows. */
+  readonly nativeScope?: {
+    readonly id: string;
+    readonly canonicalRoot: string;
+    readonly generation: number;
+  };
+}
+
+/** A host-owned current scope reference. Data alone is not an execution capability. */
+export interface NativeWorkspaceScope {
+  /** Canonical directory whose direct registration coverage was checked. */
+  readonly root: string;
+  readonly scopeId: string;
+  readonly scopeRevision: string;
+}
+
+export class NativeWorkspaceScopeError extends Error {
+  constructor(readonly code: 'unavailable' | 'unmigrated' | 'changed' | 'callback') {
+    super(`Native workspace scope: ${code}`);
+    this.name = 'NativeWorkspaceScopeError';
+  }
 }
 
 /**
@@ -52,7 +73,7 @@ export interface DeclinedWorkspaceRecord {
   readonly declinedAt: string;
 }
 
-/** The persisted registry document. `workspaces` is agent-migration-compatible; `declines` is additive. */
+/** Public coverage snapshot. Registry generations and removal tombstones remain store-owned. */
 export interface WorkspaceRegistrySnapshot {
   readonly workspaces: readonly RegisteredWorkspaceRecord[];
   readonly declines: readonly DeclinedWorkspaceRecord[];

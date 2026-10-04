@@ -1,6 +1,6 @@
 import { getOperatorContract } from '@goodvibes-jev/engine/contracts';
 import { firstJsonSchemaFailure } from '@goodvibes-jev/engine/transport-http';
-import type { WorkLedgerEvent } from './types.js';
+import type { WorkLedgerReadEvent } from './types.js';
 import type { WorkLedgerReadClient, WorkLedgerReadSnapshot } from './read-client.js';
 import type { OperatorRemoteClient } from '@goodvibes-jev/engine/operator-sdk';
 
@@ -10,7 +10,8 @@ interface HistoryPage {
   readonly cursor: number;
   readonly throughSequence: number;
   readonly hasMore: boolean;
-  readonly events: readonly WorkLedgerEvent[];
+  readonly provenance?: 'available' | 'requires_read_knowledge';
+  readonly events: readonly WorkLedgerReadEvent[];
 }
 const MAX_PAGE_BYTES = 1_048_576;
 const MAX_HISTORY_BYTES = 8 * MAX_PAGE_BYTES;
@@ -57,6 +58,32 @@ export function createOperatorWorkLedgerReadClient(
   let generation = 0;
   let failures = 0;
   let observedCursor = -1;
+  let requestSequence = 0;
+  let projectionSequence = 0;
+  let projection: 'available' | 'requires_read_knowledge' = 'requires_read_knowledge';
+  let lastSnapshot: WorkLedgerReadSnapshot | undefined;
+  function observeProjection(value: WorkLedgerReadSnapshot | HistoryPage, sequence: number): void {
+    const next = value.provenance ?? 'requires_read_knowledge';
+    // A restriction is authoritative even when its request started earlier but
+    // was evaluated later. Fence every already-launched upgrade, not only the
+    // request that happened to reveal the downgrade.
+    if (next === 'available' && (sequence < projectionSequence || (projection !== 'available' && sequence <= projectionSequence))) return;
+    projectionSequence = next === 'requires_read_knowledge' ? Math.max(projectionSequence, requestSequence) : sequence;
+    const changed = next !== projection;
+    projection = next;
+    if (changed && lastSnapshot) {
+      lastSnapshot = { ...lastSnapshot, provenance: projection };
+      for (const listener of [...listeners.values()]) {
+        if (disposed) break;
+        notifyObserver(() => listener(structuredClone(lastSnapshot!)));
+      }
+    }
+  }
+  function protect(events: readonly WorkLedgerReadEvent[]): WorkLedgerReadEvent[] {
+    return events.map(event => event.type === 'import_legacy' && projection !== 'available'
+      ? { type: event.type, sequence: event.sequence, actorId: event.actorId, requestId: event.requestId, at: event.at,
+        works: event.works, manifest: null, provenance: 'requires_read_knowledge' } : event);
+  }
   const requests = new Set<AbortController>();
   const listeners = new Map<symbol, (snapshot: WorkLedgerReadSnapshot) => void>();
   function active(): void { if (disposed) throw error('reader is disposed'); }
@@ -65,8 +92,9 @@ export function createOperatorWorkLedgerReadClient(
     if (!schema || firstJsonSchemaFailure(schema, value)) throw error('invalid read response');
     if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_PAGE_BYTES) throw error('response exceeds the read limit');
   }
-  async function invoke<T>(method: string, input: Record<string, unknown>, controller = new AbortController()): Promise<T> {
+  async function invoke<T>(method: string, input: Record<string, unknown>, controller = new AbortController()): Promise<{ value: T; sequence: number }> {
     active();
+    const sequence = ++requestSequence;
     if (requests.size >= 16) throw error('too many concurrent reads');
     requests.add(controller);
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -82,16 +110,19 @@ export function createOperatorWorkLedgerReadClient(
       active();
       if (controller.signal.aborted) throw error('read was cancelled');
       validate(method, value);
-      return value;
+      return { value, sequence };
     } finally {
       clearTimeout(timeout); controller.signal.removeEventListener('abort', cancel); requests.delete(controller);
     }
   }
   async function snapshot(controller?: AbortController): Promise<WorkLedgerReadSnapshot> {
-    const value = await invoke<WorkLedgerReadSnapshot>('workLedger.snapshot', { projectId }, controller);
+    const { value, sequence } = await invoke<WorkLedgerReadSnapshot>('workLedger.snapshot', { projectId }, controller);
     active();
     if (value.projectId !== projectId || !validCursor(value.cursor) || value.revision !== value.cursor) throw error('host project or cursor mismatch');
-    return value;
+    observeProjection(value, sequence);
+    const projected = { ...value, provenance: projection };
+    if (!lastSnapshot || value.cursor >= lastSnapshot.cursor) lastSnapshot = projected;
+    return projected;
   }
   function stopObservation(): void {
     generation += 1;
@@ -144,10 +175,10 @@ export function createOperatorWorkLedgerReadClient(
       let throughSequence: number | undefined;
       let bytes = 0;
       let pages = 0;
-      const events: WorkLedgerEvent[] = [];
+      const events: WorkLedgerReadEvent[] = [];
       do {
         if (++pages > 128) throw error('history catch-up exceeds the page limit; read a fresh snapshot');
-        const page = await invoke<HistoryPage>('workLedger.history', {
+        const { value: page, sequence } = await invoke<HistoryPage>('workLedger.history', {
           projectId, afterSequence: current, ...(throughSequence === undefined ? {} : { throughSequence }),
         });
         active();
@@ -156,6 +187,7 @@ export function createOperatorWorkLedgerReadClient(
           || page.cursor < current || page.throughSequence < page.cursor
           || (throughSequence !== undefined && page.throughSequence !== throughSequence)
           || page.events.length > MAX_PAGE_EVENTS || page.hasMore !== (page.cursor < page.throughSequence)) throw error('invalid history page');
+        observeProjection(page, sequence);
         throughSequence = page.throughSequence;
         for (const event of page.events) {
           if (event.sequence !== current + 1) throw error('history contains a cursor gap');
@@ -167,7 +199,7 @@ export function createOperatorWorkLedgerReadClient(
           throw error('history catch-up exceeds the bounded read limit; read a fresh snapshot');
         }
         events.push(...page.events);
-        if (!page.hasMore) return events;
+        if (!page.hasMore) return protect(events);
       } while (true);
     },
     subscribe(listener) {

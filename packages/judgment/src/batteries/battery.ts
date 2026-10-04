@@ -26,7 +26,7 @@ import {
   type ScoreReading,
   type YesNoReading,
 } from '../readings/readings.ts';
-import { askAs, recordAction, recordReadings, type PatternName } from './asking.ts';
+import { askAs, recordAction, recordReadings, type CallOptions, type PatternName } from './asking.ts';
 import { checkEachFixture, decisionHeader, fixtureCheck, type FixtureCheck, type NamedDecision } from './decision.ts';
 
 export interface YesNoItem {
@@ -119,12 +119,9 @@ export interface BatteryRun<Items extends BatteryItems> {
   recordAction(action: string): void;
 }
 
-export interface RunOptions<Items extends BatteryItems> {
-  readonly signal?: AbortSignal;
+export interface RunOptions<Items extends BatteryItems> extends CallOptions {
   /** Ask only these questions; the rest are left out of the request. */
   readonly only?: readonly (keyof Items & string)[];
-  /** The decision site, recorded in the decision log. */
-  readonly site?: string;
   /** The pattern running this battery, recorded in the decision log. */
   readonly pattern?: PatternName;
 }

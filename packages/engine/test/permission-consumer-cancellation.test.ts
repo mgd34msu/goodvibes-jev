@@ -74,7 +74,7 @@ test('one coalesced consumer cancels without dismissing the live prompt or its r
   held.resolve({ approved: true, rememberTier: 'tool' });
   expect((await active).approved).toBe(true); await turn();
   expect(firstStore.list()).toHaveLength(0); expect(secondStore.list()).toHaveLength(1);
-  expect((await secondManager.checkDetailed('write', args)).sourceLayer).toBe('session_override');
+  expect((await secondManager.checkDetailed('write', args)).sourceLayer).toBe('user_rule');
   next = { approved: false };
   expect(await firstManager.checkDetailed('write', args)).toMatchObject({ approved: false, sourceLayer: 'user_prompt' });
   expect(firstStore.list()).toHaveLength(0); expect(prompts).toBe(2);

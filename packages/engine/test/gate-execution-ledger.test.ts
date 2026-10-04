@@ -54,6 +54,7 @@ describe('AgentExecutionLedger', () => {
 
     const kinds = Object.fromEntries(ledger.getSnapshot().records.map((record) => [record.tool, record.routeKind]));
     expect(kinds).toEqual({ browser: 'browser', exec: 'shell', read: 'read', fetch: 'network', sleep: 'other' });
+    expect(ledger.getSnapshot().records.find((record) => record.callId === 'c2')?.commandPreview).toBe('git status');
     const routeRequests = readings.requests.filter((request) => JSON.stringify(request.state).includes('"arguments"'));
     expect(routeRequests).toHaveLength(5);
     expect(JSON.stringify(routeRequests[0])).toContain(EXECUTION_LEDGER_SITE);
@@ -132,7 +133,8 @@ describe('AgentExecutionLedger', () => {
     }
     const [record] = ledger.getSnapshot().records;
     expect(record?.routeKind).toBe('other');
-    expect(record?.routeKindError).toContain('No judgment port is installed');
+    expect(record?.routeKindError).toContain('judgment unavailable');
+    expect(record?.argsReadingError).toContain('values withheld');
   });
 
   test('subscribers hear each change; dispose stops the ledger', async () => {
@@ -142,7 +144,7 @@ describe('AgentExecutionLedger', () => {
     ledger.subscribe(() => { notified += 1; });
     received(bus, 'c1', 'read');
     await settle(ledger);
-    expect(notified).toBe(1);
+    expect(notified).toBe(2);
 
     ledger.dispose();
     received(bus, 'c2', 'read');

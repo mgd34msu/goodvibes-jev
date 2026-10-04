@@ -19,6 +19,8 @@ export interface RoutingRequest {
   /** Who does the work: 'planner', 'unit', 'fresh-unit', 'integration', 'conversation', or another short label. */
   readonly purpose: string;
   readonly brief: string;
+  /** Complete immutable requirements for native work, separate from the bounded display/derived brief. */
+  readonly originalSource?: { readonly goal: string; readonly criteria: readonly string[] } | undefined;
 }
 
 export interface RequestReading {
@@ -42,8 +44,10 @@ export interface RequestReading {
 const MAX_BRIEF_CHARS = 6_000;
 
 /** The state every request battery reads. */
-export function requestState(request: RoutingRequest): { purpose: string; work: string } {
-  return { purpose: request.purpose, work: request.brief.slice(0, MAX_BRIEF_CHARS) };
+export function requestState(request: RoutingRequest): { purpose: string; work: string; originalSource?: { goal: string; criteria: string[] } } {
+  return { purpose: request.purpose, work: request.brief.slice(0, MAX_BRIEF_CHARS),
+    ...(request.originalSource === undefined ? {} : { originalSource: { goal: request.originalSource.goal, criteria: [...request.originalSource.criteria] } }),
+  };
 }
 
 const pct = (value: number): string => value.toFixed(2);
@@ -84,13 +88,15 @@ export function composeTier(
 /** Reads the work with every request battery in one request and composes its tier. */
 export async function readRequest(
   request: RoutingRequest,
-  options: { readonly site?: string; readonly signal?: AbortSignal } = {},
+  options: import('@goodvibes-jev/judgment').CallOptions = {},
 ): Promise<RequestReading> {
   const site = options.site ?? 'routing.request';
   const run = await fanOut(judgmentPort(site), requestState(request), REQUEST_BATTERIES, {
     site,
     label: 'routing.request',
     ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(options.beforeAttempt === undefined ? {} : { beforeAttempt: options.beforeAttempt }),
+    ...(options.onRetry === undefined ? {} : { onRetry: options.onRetry }),
   });
   const readings = {
     tier: run.readings.tier.tier,

@@ -15,7 +15,7 @@
  * No rule names a vendor or a model: every judgment is about the work and
  * the model's published facts.
  */
-import { NONE, type Candidate, type Selection } from '@goodvibes-jev/judgment';
+import { NONE, type Candidate, type JsonValue, type Selection } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { ModelDefinition } from '../providers/registry-types.js';
 import type { ResolvedModelPricing } from '../providers/model-pricing.js';
@@ -56,6 +56,8 @@ export interface RouteRequirements {
 }
 
 export interface RoutePlanRequest extends RoutingRequest {
+  readonly beforeAttempt?: (() => void) | undefined;
+  readonly onRetry?: ((progress: import('@goodvibes-jev/judgment').JudgmentRetryProgress) => void) | undefined;
   readonly requires?: RouteRequirements | undefined;
   readonly signal?: AbortSignal | undefined;
 }
@@ -153,7 +155,7 @@ export function eligibleModels(deps: RoutePlannerDeps, requires: RouteRequiremen
   });
 }
 
-function choiceContext(request: RoutePlanRequest, reading: RequestReading): { [key: string]: string } {
+function choiceContext(request: RoutePlanRequest, reading: RequestReading): { [key: string]: JsonValue } {
   return {
     work: request.brief,
     purpose: request.purpose,
@@ -161,6 +163,7 @@ function choiceContext(request: RoutePlanRequest, reading: RequestReading): { [k
     intent: reading.readings.intent.choice,
     domain: reading.readings.domain.choice,
     language: reading.readings.language.choice,
+    ...(request.originalSource === undefined ? {} : { originalSource: { goal: request.originalSource.goal, criteria: [...request.originalSource.criteria] } }),
   };
 }
 
@@ -181,7 +184,7 @@ async function poolFor(deps: RoutePlannerDeps, candidates: readonly ModelFacts[]
     if (sorted.filter(inTier).length >= CHOICE_SHORTLIST) break;
     const unread = sorted.filter((facts) => deps.tiers.known(facts) === undefined).slice(0, TIER_READ_SHORTLIST);
     if (unread.length === 0) break;
-    await deps.tiers.readMany(unread, { site: 'routing.route-planner.model-tier', ...(request.signal ? { signal: request.signal } : {}) });
+    await deps.tiers.readMany(unread, { site: 'routing.route-planner.model-tier', ...(request.signal ? { signal: request.signal } : {}), ...(request.beforeAttempt ? { beforeAttempt: request.beforeAttempt } : {}), ...(request.onRetry ? { onRetry: request.onRetry } : {}) });
   }
   return { tier, members: sorted.filter(inTier) };
 }
@@ -201,7 +204,7 @@ export function createRoutePlanner(deps: RoutePlannerDeps): RoutePlanner {
   return {
     async planRoute(request) {
       request.signal?.throwIfAborted();
-      const signalOption = request.signal ? { signal: request.signal } : {};
+      const signalOption = { ...(request.signal ? { signal: request.signal } : {}), ...(request.beforeAttempt ? { beforeAttempt: request.beforeAttempt } : {}), ...(request.onRetry ? { onRetry: request.onRetry } : {}) };
       const reading = await readRequest(request, { site: 'routing.route-planner.request', ...signalOption });
       const eligible = eligibleModels(deps, request.requires);
       if (eligible.length === 0) {

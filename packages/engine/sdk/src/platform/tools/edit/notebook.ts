@@ -6,6 +6,7 @@ import { FileUndoManager } from '../../state/file-undo.js';
 import { logger } from '../../utils/logger.js';
 import { resolveAndValidatePath } from '../../utils/path-safety.js';
 import type { EditInput, JupyterNotebook, NotebookCell, NotebookOperation, NotebookOperationsInput, EditResult } from './types.js';
+import { assertCapturedToolMutationCurrent, assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
 import { summarizeError } from '../../utils/error-display.js';
 
 export function normalizeSource(source: string | string[]): string[] {
@@ -216,7 +217,7 @@ export function formatNotebookOutput(
   return `Notebook operations applied: ${opsResult.applied}, failed: 0${dryRun ? ' (dry run)' : ''}\n${opsResult.summary}\n${diff}`;
 }
 
-export function executeNotebookEdit(
+export async function executeNotebookEdit(
   input: EditInput,
   env: { fileCache: FileStateCache; cwd: string; fileUndoManager?: FileUndoManager | undefined },
 ): Promise<{ success: boolean; output?: string; error?: string }> {
@@ -243,6 +244,7 @@ export function executeNotebookEdit(
     return Promise.resolve({ success: false, error: `notebook_operations requires a .ipynb file, got: ${nbOps.path}` });
   }
 
+  await assertCapturedToolReadAccess(resolvedPath);
   const notebookRead = readNotebookFile(resolvedPath, env.fileCache);
   if ('error' in notebookRead) {
     return Promise.resolve({ success: false, error: notebookRead.error });
@@ -260,6 +262,8 @@ export function executeNotebookEdit(
     return Promise.resolve({ success: true, output: formatNotebookOutput(opsResult, outputFormat, true, rawContent, newContent, resolvedPath, diffContext) });
   }
 
+  await assertCapturedToolReadAccess(resolvedPath);
+  assertCapturedToolMutationCurrent(resolvedPath);
   try {
     writeFileSync(resolvedPath, newContent, 'utf-8');
   } catch (err) {

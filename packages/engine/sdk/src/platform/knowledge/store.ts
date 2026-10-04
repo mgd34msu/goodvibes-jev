@@ -1,4 +1,8 @@
-import { createKnowledgeWorkLedgerStorage, createWorkLedgerTable, validateWorkLedgerTable, type KnowledgeWorkLedgerStorage } from './store-work-ledger.js';
+import { createNativeConversationStorage, validateNativeConversationCaptureTable, migrateNativeConversationCaptureTable } from './store-native-intake.js';
+import type { NativeConversationStorage } from '../workflow/work-ledger/native-intake-types.js';
+import { migrateNativeWorkSettlementTable, validateNativeWorkSettlementTable, createNativeWorkExecutionStorage, createNativeWorkExecutionTable, validateNativeWorkExecutionTable, createNativeWorkExecutionIntentTable, validateNativeWorkExecutionIntentTable } from './store-native-work-execution.js';
+import type { NativeWorkExecutionStorage } from '../workflow/work-ledger/native-execution-types.js';
+import { createKnowledgeWorkLedgerStorage, createWorkLedgerTable, validateWorkLedgerTable, migrateWorkLedgerTableToVersion2, type KnowledgeWorkLedgerStorage } from './store-work-ledger.js';
 import { randomUUID } from 'node:crypto';
 import { readKnowledgeSourceSnapshot, type KnowledgeSourceSnapshot, type KnowledgeSourceWriteResult } from './store-source-generation.js';
 import { applyKnowledgeImport, type KnowledgeImportInput, type PrepareKnowledgeImportGraph } from './store-import.js';
@@ -143,6 +147,7 @@ export class KnowledgeStore {
   private ready = false;
   private closed = false;
   private closePromise: Promise<void> | undefined;
+  private readonly nativeConversationStorage = new Map<string, NativeConversationStorage>();
   private readonly ledgerStorage = new Map<string, KnowledgeWorkLedgerStorage>();
   private initPromise: Promise<void> | null = null;
   private readonly sources = new Map<string, KnowledgeSourceRecord>();
@@ -200,6 +205,32 @@ export class KnowledgeStore {
     }
   }
 
+  private readonly nativeExecutionStorage = new Map<string, NativeWorkExecutionStorage>();
+
+  /** Trusted native host only. The runtime must not expose this storage capability. */
+  async openNativeWorkExecutionStorage(projectId: string): Promise<NativeWorkExecutionStorage> {
+    await this.init();
+    if (this.closed) throw new Error('KnowledgeStore is closed');
+    let storage = this.nativeExecutionStorage.get(projectId);
+    if (!storage) {
+      storage = createNativeWorkExecutionStorage(this.sqlite, projectId, () => this.refreshSnapshot());
+      this.nativeExecutionStorage.set(projectId, storage);
+    }
+    return storage;
+  }
+
+  /** Host-owned conversation capture shares the ledger's coordinated database. */
+  async openNativeConversationStorage(projectId: string): Promise<NativeConversationStorage> {
+    await this.init();
+    if (this.closed) throw new Error('KnowledgeStore is closed');
+    let storage = this.nativeConversationStorage.get(projectId);
+    if (!storage) {
+      storage = createNativeConversationStorage(this.sqlite, projectId, () => this.refreshSnapshot());
+      this.nativeConversationStorage.set(projectId, storage);
+    }
+    return storage;
+  }
+
   /** Trusted host seam: reuses this owner's coordinated database. */
   async openWorkLedgerStorage(projectId: string): Promise<KnowledgeWorkLedgerStorage> {
     await this.init();
@@ -215,7 +246,7 @@ export class KnowledgeStore {
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closed = true;
-    const drains = [...this.ledgerStorage.values()].map(storage => storage.close());
+    const drains = [...this.ledgerStorage.values(), ...this.nativeExecutionStorage.values(), ...this.nativeConversationStorage.values()].map(storage => storage.close());
     this.closePromise = (async () => {
       await this.initPromise?.catch(() => {});
       await Promise.all(drains);
@@ -1050,7 +1081,19 @@ export class KnowledgeStore {
   }
 
   private async initialize(): Promise<void> {
-    await this.sqlite.init(createSchema, { storeName: 'knowledge store', schemaVersion: 2, validateCurrentSchema: validateWorkLedgerTable, migrations: [{ toVersion: 1, migrate: createSchema }, { toVersion: 2, migrate: createWorkLedgerTable }] });
+    await this.sqlite.init(createSchema, {
+      storeName: 'knowledge store', schemaVersion: 7,
+      validateCurrentSchema: db => { validateWorkLedgerTable(db); validateNativeWorkExecutionTable(db); validateNativeWorkExecutionIntentTable(db); validateNativeConversationCaptureTable(db); validateNativeWorkSettlementTable(db); },
+      migrations: [
+        { toVersion: 1, migrate: createSchema },
+        { toVersion: 2, migrate: createWorkLedgerTable },
+        { toVersion: 3, migrate: db => { validateWorkLedgerTable(db); createNativeWorkExecutionTable(db); } },
+        { toVersion: 4, migrate: db => { validateWorkLedgerTable(db); validateNativeWorkExecutionTable(db); createNativeWorkExecutionIntentTable(db); } },
+        { toVersion: 5, migrate: db => { validateNativeWorkExecutionTable(db); validateNativeWorkExecutionIntentTable(db); migrateWorkLedgerTableToVersion2(db); } },
+        { toVersion: 6, migrate: db => { validateWorkLedgerTable(db); validateNativeWorkExecutionTable(db); validateNativeWorkExecutionIntentTable(db); migrateNativeConversationCaptureTable(db); } },
+        { toVersion: 7, migrate: db => { validateNativeConversationCaptureTable(db); migrateNativeWorkSettlementTable(db); } },
+      ],
+    });
     try {
       this.refreshSnapshot();
       // Retention is an initialization mutation, never a side effect of adopting

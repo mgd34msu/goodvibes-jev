@@ -859,6 +859,11 @@
       "types": "./sdk/dist/platform/power/index.d.ts",
       "import": "./sdk/dist/platform/power/index.js"
     },
+    "./sdk/platform/presentation/editor-message": {
+      "bun": "./sdk/src/platform/presentation/editor-message.ts",
+      "types": "./sdk/dist/platform/presentation/editor-message.d.ts",
+      "import": "./sdk/dist/platform/presentation/editor-message.js"
+    },
     "./sdk/platform/presentation": {
       "bun": "./sdk/src/platform/presentation/index.ts",
       "types": "./sdk/dist/platform/presentation/index.d.ts",
@@ -1069,6 +1074,11 @@
       "types": "./sdk/dist/platform/state/index.d.ts",
       "import": "./sdk/dist/platform/state/index.js"
     },
+    "./sdk/platform/state/durable-file-io": {
+      "bun": "./sdk/src/platform/state/durable-file-io.ts",
+      "types": "./sdk/dist/platform/state/durable-file-io.d.ts",
+      "import": "./sdk/dist/platform/state/durable-file-io.js"
+    },
     "./sdk/platform/state/store-snapshots": {
       "bun": "./sdk/src/platform/state/store-snapshots.ts",
       "types": "./sdk/dist/platform/state/store-snapshots.d.ts",
@@ -1144,10 +1154,20 @@
       "types": "./sdk/dist/platform/workflow/work-ledger/index.d.ts",
       "import": "./sdk/dist/platform/workflow/work-ledger/index.js"
     },
+    "./sdk/platform/workflow/work-ledger/native-execution": {
+      "bun": "./sdk/src/platform/workflow/work-ledger/native-execution.ts",
+      "types": "./sdk/dist/platform/workflow/work-ledger/native-execution.d.ts",
+      "import": "./sdk/dist/platform/workflow/work-ledger/native-execution.js"
+    },
     "./sdk/platform/workflow/work-ledger/operator-read-client": {
       "bun": "./sdk/src/platform/workflow/work-ledger/operator-read-client.ts",
       "types": "./sdk/dist/platform/workflow/work-ledger/operator-read-client.d.ts",
       "import": "./sdk/dist/platform/workflow/work-ledger/operator-read-client.js"
+    },
+    "./sdk/platform/workflow/work-ledger/native-execution-client": {
+      "bun": "./sdk/src/platform/workflow/work-ledger/native-execution-client.ts",
+      "types": "./sdk/dist/platform/workflow/work-ledger/native-execution-client.d.ts",
+      "import": "./sdk/dist/platform/workflow/work-ledger/native-execution-client.js"
     },
     "./sdk/platform/workspace": {
       "bun": "./sdk/src/platform/workspace/index.ts",
@@ -1358,7 +1378,32 @@
       "types": "./transport-realtime/dist/relay-transport.d.ts",
       "import": "./transport-realtime/dist/relay-transport.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./terminal-shell/legacy-work-ledger-import": {
+      "bun": "./terminal-shell/src/legacy-work-ledger-import.ts",
+      "types": "./terminal-shell/dist/legacy-work-ledger-import.d.ts",
+      "import": "./terminal-shell/dist/legacy-work-ledger-import.js"
+    },
+    "./sdk/platform/workflow/work-ledger/native-intake-client": {
+      "bun": "./sdk/src/platform/workflow/work-ledger/native-intake-client.ts",
+      "types": "./sdk/dist/platform/workflow/work-ledger/native-intake-client.d.ts",
+      "import": "./sdk/dist/platform/workflow/work-ledger/native-intake-client.js"
+    },
+    "./sdk/platform/workflow/work-ledger/native-intake": {
+      "bun": "./sdk/src/platform/workflow/work-ledger/native-intake.ts",
+      "types": "./sdk/dist/platform/workflow/work-ledger/native-intake.d.ts",
+      "import": "./sdk/dist/platform/workflow/work-ledger/native-intake.js"
+    },
+    "./sdk/platform/workflow/work-ledger/native-submission-client": {
+      "bun": "./sdk/src/platform/workflow/work-ledger/native-submission-client.ts",
+      "types": "./sdk/dist/platform/workflow/work-ledger/native-submission-client.d.ts",
+      "import": "./sdk/dist/platform/workflow/work-ledger/native-submission-client.js"
+    },
+    "./sdk/platform/workflow/work-ledger/native-submission": {
+      "bun": "./sdk/src/platform/workflow/work-ledger/native-submission.ts",
+      "types": "./sdk/dist/platform/workflow/work-ledger/native-submission.d.ts",
+      "import": "./sdk/dist/platform/workflow/work-ledger/native-submission.js"
+    }
   },
   "publishConfig": {
     "access": "public"

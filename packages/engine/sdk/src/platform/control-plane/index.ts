@@ -195,3 +195,9 @@ export type {
 export * from './host-handlers.js';
 
 export { registerWorkLedgerGatewayMethods } from './routes/work-ledger.js';
+export { registerNativeWorkExecutionGatewayMethods } from './routes/native-work-execution.js';
+export { registerNativeWorkSubmissionGatewayMethods } from './routes/native-work-submission.js';
+
+export { registerWorkLedgerImportGatewayMethods } from './routes/work-ledger-import.js';
+
+export { registerNativeConversationIntakeGatewayMethods } from './routes/native-intake.js';

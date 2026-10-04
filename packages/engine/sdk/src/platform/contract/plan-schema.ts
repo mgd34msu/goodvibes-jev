@@ -5,13 +5,14 @@
  * check. Everything here is code: ids, graphs, counts and string matches are
  * never judged.
  */
+import { checkNativeSourcePlan } from './native-source.js';
 import { normalizeForMatch } from '@goodvibes-jev/judgment';
 import { GROUP_KINDS, UNIT_ROLES, type ContractPlanProblem } from '../../events/contract.js';
 import { PLANNER_DECOMPOSITION_TOOLS } from '../agents/planner-decomposition-runner.js';
 import { wouldCreateCycle, type GraphNode } from '../orchestration/graph-dynamics.js';
 import { MAX_ATTEMPTS } from '../orchestration/types.js';
 import { delegationForbidden, saysYesAtAct } from './batteries/request-shape.js';
-import type { GroupKind, RequestShape, UnitRole } from './types.js';
+import type { GroupKind, NativeContractSource, RequestShape, UnitRole } from './types.js';
 
 // ── The plan ──────────────────────────────────────────────────────────────────
 
@@ -86,7 +87,7 @@ export const PLAN_PROBLEM_CODES = [
   // Check 8: size.
   'too-many-units',
   // A drafted plan kept (draft-plan.ts).
-  'draft-changed',
+  'draft-changed', 'native-source-changed',
   // Jev checks (plan-checks.ts).
   'untraced', 'uncovered-requirement', 'not-checkable', 'verification-unit', 'role-mismatch', 'narrows',
 ] as const;
@@ -481,13 +482,13 @@ function checkSize(plan: ContractPlan, shape: RequestShape, limits: PlanLimits):
  * that forbids writing) is enforced rather than checked: `unitToolContract`
  * makes every unit read-only.
  */
-export function validateContractPlan(plan: ContractPlan, ask: string, shape: RequestShape, limits: PlanLimits): PlanProblem[] {
+export function validateContractPlan(plan: ContractPlan, ask: string, shape: RequestShape, limits: PlanLimits, nativeSource?: NativeContractSource): PlanProblem[] {
   return [
     ...checkIdsAndGraphs(plan),
     ...checkCriteriaLinks(plan),
     ...checkRolesAndKinds(plan),
     ...checkCoverage(plan),
-    ...checkQuotes(plan, ask),
+    ...(nativeSource === undefined ? checkQuotes(plan, ask) : checkNativeSourcePlan(plan, nativeSource)),
     ...checkIntegration(plan),
     ...checkParallel(plan, shape),
     ...checkAttempts(plan, shape, limits),
@@ -502,7 +503,7 @@ export function validateContractPlan(plan: ContractPlan, ask: string, shape: Req
  * support.
  */
 export const UNRUNNABLE_PLAN_PROBLEMS: ReadonlySet<PlanProblemCode> = new Set([
-  'unparseable', 'bad-id', 'duplicate-id', 'unknown-dependency', 'cycle', 'no-units', 'empty-group', 'unknown-role', 'group-kind', 'attempts', 'too-many-units',
+  'native-source-changed', 'unparseable', 'bad-id', 'duplicate-id', 'unknown-dependency', 'cycle', 'no-units', 'empty-group', 'unknown-role', 'group-kind', 'attempts', 'too-many-units',
 ]);
 
 // ── The tool contract (section 3.4, and check 9) ──────────────────────────────

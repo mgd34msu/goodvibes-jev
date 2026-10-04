@@ -7,6 +7,9 @@ import {
   withDecisionLog,
   type JudgmentConfig,
   type JudgmentPort,
+  type JudgmentRequest,
+  type JudgmentResult,
+  type Questions,
   type SqliteDecisionLog,
 } from '@goodvibes-jev/judgment';
 import type { JudgmentKeySource } from '../config/schema-types-judgment.js';
@@ -63,6 +66,20 @@ export async function judgmentConfigFromSettings(source: JudgmentSettingsSource)
 const sameConfig = (a: JudgmentConfig, b: JudgmentConfig): boolean =>
   a.endpoint.baseURL === b.endpoint.baseURL && a.endpoint.apiKey === b.endpoint.apiKey && a.model === b.model && a.timeoutMs === b.timeoutMs;
 
+/** A secret-store read cannot strand runtime cancellation or its decision log. */
+async function activeSettings(source: JudgmentSettingsSource, signal?: AbortSignal): Promise<JudgmentConfig> {
+  if (!signal) return judgmentConfigFromSettings(source);
+  signal.throwIfAborted();
+  let cancelled = () => {};
+  const interrupted = new Promise<never>((_, reject) => {
+    cancelled = () => reject(new JudgmentError('aborted', 'the judgment call was cancelled'));
+    signal.addEventListener('abort', cancelled, { once: true });
+    if (signal.aborted) cancelled();
+  });
+  try { return await Promise.race([interrupted, judgmentConfigFromSettings(source)]); }
+  finally { signal.removeEventListener('abort', cancelled); }
+}
+
 /**
  * A port over the live settings. Each call reads the settings, so a changed
  * endpoint, key or model applies on the next judgment with no restart; the
@@ -76,7 +93,10 @@ export function createSettingsJudgmentPort(source: JudgmentSettingsSource): Judg
       return settingsModel(source);
     },
     async ask(request) {
-      const config = await judgmentConfigFromSettings(source);
+      const config = await activeSettings(source, request.signal);
+      // Key acquisition may finish after runtime shutdown or caller cancellation.
+      // Never create another transport or send a late request in that case.
+      request.signal?.throwIfAborted();
       if (current === undefined || !sameConfig(current.config, config)) current = { config, port: createSystemOnePort(config) };
       return current.port.ask(request);
     },
@@ -100,20 +120,44 @@ export interface JudgmentServicesInput extends JudgmentSettingsSource {
   readonly config: JudgmentSettingsSource['config'] & { announceUnknownSettingForms?(): Promise<void> };
   /** The composition's state root; the decision log opens here. */
   readonly stateRoot: string;
-  /** Closes the log and uninstalls the port when the composition is disposed. */
+  /** Cancels owned calls, drains their records, then closes the log on disposal. */
   readonly disposal: DisposalRegistry;
 }
 
 /**
  * Builds a composition's judgment port from the judgment settings, recording
  * every call to the state root's decision log, and installs it as the port
- * every engine decision site reads through. Disposal closes the log and, when
- * this port is still the installed one, puts back the port it replaced unless
- * that one's composition is gone too.
+ * every engine decision site reads through. Disposal retires the port and
+ * cancels its outstanding calls before closing the log after their records
+ * settle. Awaitable scopes wait for this drain; synchronous scopes start it.
+ * When still installed, the port it replaced is restored unless retired too.
  */
 export function composeJudgment(input: JudgmentServicesInput): JudgmentServices {
   const decisionLog = openStateDecisionLog(input.stateRoot);
-  const port = withDecisionLog(createSettingsJudgmentPort(input), decisionLog);
+  const recorded = withDecisionLog(createSettingsJudgmentPort(input), decisionLog);
+  const lifetime = new AbortController();
+  const active = new Set<Promise<unknown>>();
+  const port: JudgmentPort = {
+    get model() { return recorded.model; },
+    recorder: recorded.recorder!,
+    ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>> {
+      // Retained port references must not reopen a retired runtime or write to
+      // its closed log. Calls admitted before retirement still record failure.
+      if (lifetime.signal.aborted) return Promise.reject(new JudgmentError('aborted', 'the judgment runtime is shutting down'));
+      // Reserve ownership before reading borrowed inputs or live settings:
+      // their accessors can synchronously initiate runtime disposal.
+      const { promise: work, resolve, reject } = Promise.withResolvers<JudgmentResult<Q>>();
+      active.add(work);
+      const release = () => { active.delete(work); };
+      void work.then(release, release);
+      try {
+        const callerSignal = request.signal;
+        const signal = callerSignal === undefined ? lifetime.signal : AbortSignal.any([lifetime.signal, callerSignal]);
+        void recorded.ask({ ...request, signal }).then(resolve, reject);
+      } catch (error) { reject(error); }
+      return work;
+    },
+  };
   const previous = installJudgmentPort(port);
   // Config loaded before this port existed; what its load kept for a reading is read now.
   void input.config.announceUnknownSettingForms?.();
@@ -121,7 +165,11 @@ export function composeJudgment(input: JudgmentServicesInput): JudgmentServices 
     retired.add(port);
     const installed = installJudgmentPort(previous !== undefined && !retired.has(previous) ? previous : undefined);
     if (installed !== port) installJudgmentPort(installed);
-    decisionLog[Symbol.dispose]();
+    lifetime.abort(new JudgmentError('aborted', 'the judgment runtime is shutting down'));
+    if (active.size === 0) { decisionLog[Symbol.dispose](); return; }
+    // Keep returning the promise even through DisposalRegistry's legacy void
+    // shape: AsyncDisposalRegistry observes it and waits before older owners.
+    return Promise.allSettled([...active]).then(() => { decisionLog[Symbol.dispose](); });
   });
   return { port, decisionLog };
 }

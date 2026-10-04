@@ -53,11 +53,10 @@ export class BrowserJudgmentService {
     const abort = new AbortController();
     const cancelled = () => abort.abort(new BrowserJudgmentError('JUDGMENT_ABORTED'));
     if (signal.aborted) cancelled(); else signal.addEventListener('abort', cancelled, { once: true });
-    const timer = setTimeout(() => abort.abort(new BrowserJudgmentError('JUDGMENT_DEADLINE')), LIMIT.runMs);
     // Defer the resolver until after the run is owned, including synchronous throws.
     const work = Promise.resolve().then(() => this.run(request, battery, principal, abort, currentPrincipal));
     this.#active.set(work, { principal: principal.principalId, abort });
-    const release = () => { clearTimeout(timer); signal.removeEventListener('abort', cancelled); this.#active.delete(work); };
+    const release = () => { signal.removeEventListener('abort', cancelled); this.#active.delete(work); };
     void work.then(release, release);
     let stop = () => {};
     const interrupted = new Promise<never>((_, reject) => {
@@ -83,79 +82,94 @@ export class BrowserJudgmentService {
       return actor;
     };
     const resolved = await battery.resolve(request.input, { principal: authenticate(), currentPrincipal: authenticate, signal, references: this.options.references });
-    authenticate(); requireSynchronousAssertion(() => resolved.assertCurrent(), 'JUDGMENT_REFERENCE_HELD');
-    let state: unknown;
-    try { state = captureBrowserJudgmentJson(snapshotJudgmentInput(resolved.state)); }
-    catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
-    const route = this.options.currentRoute();
-    if (!route || 'then' in route) { consumeRejectedHook(route); throw new BrowserJudgmentError('JUDGMENT_UNAVAILABLE'); }
-    const authorized = () => {
-      const actor = authenticate();
-      requireSynchronousAssertion(() => resolved.assertCurrent(), 'JUDGMENT_REFERENCE_HELD');
-      requireSynchronousAssertion(() => route.assertCurrent(), 'JUDGMENT_PERMISSION_HELD');
-      if (!granted(this.options.authorize({ principal: actor, battery: request.battery, batteryVersion: 1, sourceBinding: resolved.sourceBinding,
-        route: { revision: route.revision, kind: route.kind } }))) throw new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD');
-    };
-    authorized();
-    if (!route.port.recorder) throw new BrowserJudgmentError('JUDGMENT_UNRECORDED');
-    const evidence: Evidence[] = [];
-    let calls = 0; let pending = 0; let open = true;
-    const perRun = new BrowserJudgmentCallLimit(4, battery.maxCalls);
-    const ownedCalls = new Set<Promise<unknown>>();
-    const port: JudgmentPort = {
-      model: route.port.model,
-      recorder: route.port.recorder,
-      ask: (questionRequest) => {
-        if (!open) return Promise.reject(new BrowserJudgmentError('JUDGMENT_ABORTED'));
-        if (++calls > battery.maxCalls) return Promise.reject(new BrowserJudgmentError('JUDGMENT_INPUT_TOO_LARGE'));
-        pending++;
-        const work = perRun.run(signal, () => this.#providerCalls.run(signal, async () => {
-          authorized();
-          if (questionRequest.model !== undefined && questionRequest.model !== route.port.model) throw new BrowserJudgmentError('JUDGMENT_UNAVAILABLE');
-          const names = Object.keys(questionRequest.questions);
-          if (!names.length || names.some((name) => !Object.hasOwn(battery.questions, name)
-            || JSON.stringify(questionRequest.questions[name]) !== JSON.stringify(battery.questions[name]))) throw new BrowserJudgmentError('JUDGMENT_INVALID_RESPONSE');
-          let safeState: unknown;
-          try { safeState = snapshotJudgmentInput(questionRequest.state); }
-          catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
-          const result = await route.port.ask({ ...questionRequest, state: safeState as typeof questionRequest.state, signal,
-            context: { battery: request.battery, batteryVersion: 1, site: 'browser.judgment' }, totalTimeoutMs: LIMIT.runMs });
-          authorized();
-          if (!result.decisionId) throw new BrowserJudgmentError('JUDGMENT_UNRECORDED');
-          evidence.push({ decisionId: result.decisionId, model: result.model, requestedModel: result.requestedModel, usage: result.usage, latencyMs: result.latencyMs });
-          return result;
-        }));
-        ownedCalls.add(work);
-        const release = () => { pending--; ownedCalls.delete(work); };
-        void work.then(release, release);
-        return work;
-      },
-    };
-    let result: unknown;
+    const referenceSignal = resolved.signal;
+    const revoked = () => abort.abort(new BrowserJudgmentError('JUDGMENT_REFERENCE_HELD'));
+    referenceSignal?.addEventListener('abort', revoked, { once: true });
+    if (referenceSignal?.aborted) revoked();
     try {
-      result = await battery.run(port, state, { signal });
-      if (pending) throw new BrowserJudgmentError('JUDGMENT_INVALID_RESPONSE');
-    } catch (error) {
-      abort.abort(normalizedError(error, signal)); throw error;
-    } finally { open = false; await Promise.allSettled([...ownedCalls]); } // Drain siblings before closing the log.
-    authorized();
-    if (!evidence.length) throw new BrowserJudgmentError('JUDGMENT_UNRECORDED');
-    let projected: BrowserJudgmentProjection<unknown>;
-    try { projected = captureBrowserJudgmentJson(battery.project(result)) as BrowserJudgmentProjection<unknown>; }
-    catch { throw new BrowserJudgmentError('JUDGMENT_INVALID_RESPONSE'); }
-    validateBrowserJudgmentProjection(request, projected, state);
-    const outcomes = Object.values(projected.readings).map((reading) => reading.outcome);
-    if (projected.status === 'held' && projected.compoundOutcome !== undefined) outcomes.push(projected.compoundOutcome);
-    const outcome = outcomes.includes('escalate') ? 'escalate' : outcomes.includes('confirm') ? 'confirm' : 'act';
-    // The minimum compound outcome is an adapter instruction, not a second wire
-    // outcome. Structural facts stay visible and never masquerade as readings.
-    const wireProjection = projected.status === 'held'
-      ? { status: projected.status, reason: projected.reason, readings: projected.readings,
-          ...(projected.structuralBasis === undefined ? {} : { structuralBasis: projected.structuralBasis }) }
-      : projected;
-    const response = { protocolVersion: 1, requestId: request.requestId, battery: request.battery, batteryVersion: 1, ...wireProjection, outcome, evidence };
-    if (new TextEncoder().encode(JSON.stringify(response)).byteLength > LIMIT.bodyBytes) throw new BrowserJudgmentError('JUDGMENT_INVALID_RESPONSE');
-    return response;
+      authenticate(); requireSynchronousAssertion(() => resolved.assertCurrent(), 'JUDGMENT_REFERENCE_HELD');
+      let state: unknown;
+      try { state = captureBrowserJudgmentJson(snapshotJudgmentInput(resolved.state)); }
+      catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
+      const route = this.options.currentRoute();
+      if (!route || 'then' in route) { consumeRejectedHook(route); throw new BrowserJudgmentError('JUDGMENT_UNAVAILABLE'); }
+      const authorized = () => {
+        const actor = authenticate();
+        requireSynchronousAssertion(() => resolved.assertCurrent(), 'JUDGMENT_REFERENCE_HELD');
+        requireSynchronousAssertion(() => route.assertCurrent(), 'JUDGMENT_PERMISSION_HELD');
+        if (!granted(this.options.authorize({ principal: actor, battery: request.battery, batteryVersion: 1, sourceBinding: resolved.sourceBinding,
+          route: { revision: route.revision, kind: route.kind } }))) throw new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD');
+      };
+      authorized();
+      if (!route.port.recorder) throw new BrowserJudgmentError('JUDGMENT_UNRECORDED');
+      const evidence: Evidence[] = [];
+      let calls = 0; let pending = 0; let open = true;
+      const perRun = new BrowserJudgmentCallLimit(4, battery.maxCalls);
+      const ownedCalls = new Set<Promise<unknown>>();
+      const port: JudgmentPort = {
+        model: route.port.model,
+        recorder: route.port.recorder,
+        ask: (questionRequest) => {
+          if (!open) return Promise.reject(new BrowserJudgmentError('JUDGMENT_ABORTED'));
+          if (++calls > battery.maxCalls) return Promise.reject(new BrowserJudgmentError('JUDGMENT_INPUT_TOO_LARGE'));
+          pending++;
+          const work = perRun.run(signal, () => this.#providerCalls.run(signal, async () => {
+            authorized();
+            if (questionRequest.model !== undefined && questionRequest.model !== route.port.model) throw new BrowserJudgmentError('JUDGMENT_UNAVAILABLE');
+            const names = Object.keys(questionRequest.questions);
+            if (!names.length || names.some((name) => !Object.hasOwn(battery.questions, name)
+              || JSON.stringify(questionRequest.questions[name]) !== JSON.stringify(battery.questions[name]))) throw new BrowserJudgmentError('JUDGMENT_INVALID_RESPONSE');
+            let safeState: unknown;
+            try { safeState = snapshotJudgmentInput(questionRequest.state); }
+            catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
+            const result = await route.port.ask({ ...questionRequest, state: safeState as typeof questionRequest.state, signal,
+              context: { battery: request.battery, batteryVersion: 1, site: 'browser.judgment' },
+              beforeAttempt: () => {
+                // Availability retries may outlive references, authentication, or
+                // route grants. Recheck after backoff, before every transmission.
+                try {
+                  authorized();
+                  requireSynchronousAssertion(() => questionRequest.beforeAttempt?.(), 'JUDGMENT_REFERENCE_HELD');
+                }
+                catch (error) { abort.abort(normalizedError(error, signal)); throw error; }
+              } });
+            authorized();
+            if (!result.decisionId) throw new BrowserJudgmentError('JUDGMENT_UNRECORDED');
+            evidence.push({ decisionId: result.decisionId, model: result.model, requestedModel: result.requestedModel, usage: result.usage, latencyMs: result.latencyMs });
+            return result;
+          }));
+          ownedCalls.add(work);
+          const release = () => { pending--; ownedCalls.delete(work); };
+          void work.then(release, release);
+          return work;
+        },
+      };
+      let result: unknown;
+      try {
+        result = await battery.run(port, state, { signal });
+        if (pending) throw new BrowserJudgmentError('JUDGMENT_INVALID_RESPONSE');
+      } catch (error) {
+        abort.abort(normalizedError(error, signal)); throw error;
+      } finally { open = false; await Promise.allSettled([...ownedCalls]); } // Drain siblings before closing the log.
+      authorized();
+      if (!evidence.length) throw new BrowserJudgmentError('JUDGMENT_UNRECORDED');
+      let projected: BrowserJudgmentProjection<unknown>;
+      try { projected = captureBrowserJudgmentJson(battery.project(result)) as BrowserJudgmentProjection<unknown>; }
+      catch { throw new BrowserJudgmentError('JUDGMENT_INVALID_RESPONSE'); }
+      validateBrowserJudgmentProjection(request, projected, state);
+      const outcomes = Object.values(projected.readings).map((reading) => reading.outcome);
+      if (projected.status === 'held' && projected.compoundOutcome !== undefined) outcomes.push(projected.compoundOutcome);
+      const outcome = outcomes.includes('escalate') ? 'escalate' : outcomes.includes('confirm') ? 'confirm' : 'act';
+      // The minimum compound outcome is an adapter instruction, not a second wire
+      // outcome. Structural facts stay visible and never masquerade as readings.
+      const wireProjection = projected.status === 'held'
+        ? { status: projected.status, reason: projected.reason, readings: projected.readings,
+            ...(projected.structuralBasis === undefined ? {} : { structuralBasis: projected.structuralBasis }) }
+        : projected;
+      const response = { protocolVersion: 1, requestId: request.requestId, battery: request.battery, batteryVersion: 1, ...wireProjection, outcome, evidence };
+      if (new TextEncoder().encode(JSON.stringify(response)).byteLength > LIMIT.bodyBytes) throw new BrowserJudgmentError('JUDGMENT_INVALID_RESPONSE');
+      return response;
+    } finally { referenceSignal?.removeEventListener('abort', revoked); }
   }
 
   close(): Promise<void> {

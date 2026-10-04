@@ -10,7 +10,7 @@ const plain = (workspace: AgentWorkspace) => renderAgentWorkspace(workspace, 132
 test('/work selects daemon project, opens real renderer and scrolls to stable evidence; close/reopen owns reader lifecycle', async () => {
   const calls: string[] = [];
   const state: NativeWorkLedgerState = { status: 'ready', cursor: 0, history: [], snapshot: { projectId: 'project-host', cursor: 0, revision: 0, works: [{
-    work: { id: 'work-stable', title: 'Deliver', goal: 'Native intent', revision: 4, criteriaRevision: 2, reportedState: 'complete', currentAttemptId: 'attempt-stable', createdAt: 1, updatedAt: 2, criteria: Array.from({ length: 15 }, (_, i) => `Criterion ${i}`) },
+    work: { source: null, id: 'work-stable', title: 'Deliver', goal: 'Native intent', revision: 4, criteriaRevision: 2, reportedState: 'complete', currentAttemptId: 'attempt-stable', createdAt: 1, updatedAt: 2, criteria: Array.from({ length: 15 }, (_, i) => `Criterion ${i}`) },
     attempt: { id: 'attempt-stable', workId: 'work-stable', predecessorId: 'attempt-old', ownerId: 'owner', revision: 3, state: 'complete', report: 'Reported finished', blocker: null, createdAt: 1, updatedAt: 2 },
     verification: { state: 'stale', reason: 'Criteria changed', evidence: { id: 'evidence-stable', target: { workId: 'work-stable', workRevision: 3, criteriaRevision: 1, attemptId: 'attempt-old', attemptRevision: 2 }, outcome: 'verified', reason: 'Previous revision passed', source: 'host_check', criteriaResults: [], actorId: 'verifier', at: 1, references: [{ kind: 'commit', ref: 'commit-abc', digest: 'sha256:old' }] } },
     attention: [{ kind: 'verification', reason: 'Recheck current criteria' }],

@@ -5,10 +5,46 @@
 import { setAgentProgress } from '../../agents/progress-audience.js';
 import { emitAgentProgress, emitAgentRunning } from '../../runtime/emitters/index.js';
 import type { RuntimeEventBus } from '../../runtime/events/index.js';
+import type { ContractInputAuthority } from '../../contract/input-authority.js';
 import type { AgentRecord } from './record.js';
+import type { AutonomousToolSource } from '../../permissions/autonomous.js';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+
+const actionSources = new WeakMap<object, () => AutonomousToolSource>();
+export type ContractActionPort = (port: JudgmentPort) => JudgmentPort;
+const actionPorts = new WeakMap<object, ContractActionPort>();
+/** Construction metadata is never recovered from serialized AgentInput or AgentRecord fields. */
+export function bindContractActionSource<T extends object>(target: T, sourceOf: (() => AutonomousToolSource) | undefined, port?: ContractActionPort): T {
+  if (sourceOf !== undefined) actionSources.set(target, sourceOf);
+  if (port !== undefined) actionPorts.set(target, port);
+  return target;
+}
+export function getContractActionSource(target: object): (() => AutonomousToolSource) | undefined {
+  return actionSources.get(target);
+}
+export function getContractActionPort(target: object): ContractActionPort | undefined { return actionPorts.get(target); }
 
 /** Binds a spawn to a contract unit: the turn loop calls the contract hooks for it. */
+export interface ContractPlannerBinding {
+  readonly autonomousPort?: ContractActionPort | undefined;
+  readonly inputReadAuthority: ContractInputAuthority;
+  readonly autonomousSource?: (() => AutonomousToolSource) | undefined;
+}
+
+export interface NativePlannerBinding {
+  readonly autonomousPort?: ContractActionPort | undefined;
+  readonly autonomousSource: () => AutonomousToolSource;
+  readonly inputReadAuthority?: ContractInputAuthority | undefined;
+}
+
+export type AgentConstructionBinding = ContractUnitBinding | ContractOwnerBinding | ContractPlannerBinding | NativePlannerBinding;
+
 export interface ContractUnitBinding {
+  readonly autonomousPort?: ContractActionPort | undefined;
+  readonly autonomousSource?: (() => AutonomousToolSource) | undefined;
+  readonly inputReadAuthority?: ContractInputAuthority | undefined;
+  /** Trusted, nonserialized native execution fence, invoked after spawning hooks and on every wake. */
+  readonly withCurrentExecution?: ((execute: () => Promise<void>) => Promise<void>) | undefined;
   readonly contractId: string;
   readonly contractUnitId: string;
   /** The route selector's reason for the unit's model, copied to AgentRecord.routeReason. */
@@ -30,12 +66,12 @@ export interface ContractOwnerBinding {
 }
 
 /** Which of the two bindings a spawn carries, if any. */
-export function splitContractBinding(binding: ContractUnitBinding | ContractOwnerBinding | undefined): {
+export function splitContractBinding(binding: AgentConstructionBinding | undefined): {
   readonly unit: ContractUnitBinding | undefined;
   readonly owner: ContractOwnerBinding | undefined;
 } {
   if (binding !== undefined && 'contractRole' in binding) return { unit: undefined, owner: binding };
-  return { unit: binding, owner: undefined };
+  return { unit: binding !== undefined && 'contractUnitId' in binding ? binding : undefined, owner: undefined };
 }
 
 /** Marks a freshly spawned owner record running, announces it, and returns it without running an executor. */

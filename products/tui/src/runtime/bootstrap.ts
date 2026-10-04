@@ -331,6 +331,7 @@ export async function bootstrapRuntime(
   // FIX 2: dispose the header's live-repo-state poll (git-status.ts
   // startPolling) on shutdown, same pattern as acpTaskSyncInterval above.
   bootstrapUnsubs.push(() => gitStatusProvider.stopPolling());
+  if (shell.closeNativeWorkSubmission) bootstrapUnsubs.push(shell.closeNativeWorkSubmission);
   const pluginCommandRegistry = {
     register(command: {
       readonly name: string;

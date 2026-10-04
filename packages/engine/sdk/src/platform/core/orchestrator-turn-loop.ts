@@ -1,3 +1,5 @@
+import type { AutonomousToolSource } from '../permissions/autonomous.js';
+import { isNativeConversationTurn, markNativeConversationTurnEffectsPossible } from './native-turn-scope.js';
 import { publishTurnTerminal } from './turn-cancellation.js';
 import { resolveSystemPrompt } from './orchestrator-system-prompt.js';
 import type { ClassificationResult } from './intent-classifier.js';
@@ -154,7 +156,7 @@ export interface OrchestratorTurnLoopContext {
   readonly content?: ContentPart[] | undefined;
   readonly turnId: string;
   readonly emitterContext: (turnId: string) => EmitterContext;
-  readonly executeToolCalls: (turnId: string, calls: ToolCall[]) => Promise<ToolResult[]>;
+  readonly executeToolCalls: (turnId: string, calls: ToolCall[], sourceOf?: () => AutonomousToolSource) => Promise<ToolResult[]>;
   readonly checkContextWindowPreflight: (turnId: string, model: ModelDefinition) => Promise<'ok' | 'compacted' | 'error'>;
   readonly normalizeUsage: (usage: Awaited<ReturnType<LLMProvider['chat']>>['usage']) => Awaited<ReturnType<LLMProvider['chat']>>['usage'];
   readonly estimateFreshTurnInputTokens: (
@@ -269,10 +271,11 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
   // cannot compound. Reset implicitly to null on every NEW executeOrchestratorTurnLoop()
   // call (a fresh runTurn() always recomputes from scratch on its own iteration 1).
   let turnKnowledgeBlock: string | null = null;
-  const contractSession = bindContractSession(context.contractHooks, context.sessionId, context.turnId);
+  const nativeTurn = isNativeConversationTurn();
+  const contractSession = nativeTurn ? undefined : bindContractSession(context.contractHooks, context.sessionId, context.turnId);
 
   // A turn that is a session-mode unit's work is not read again: the runner already owns it.
-  if (contractSession === undefined) {
+  if (!nativeTurn && contractSession === undefined) {
     const intake = await context.contractIntake.intake({ text: context.text, sessionId: context.sessionId, signal });
     assertActiveTurn();
     if (intake.kind !== 'turn') {
@@ -286,7 +289,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
     }
   }
 
-  if (contractSession === undefined && context.turnClassification) {
+  if (!nativeTurn && contractSession === undefined && context.turnClassification) {
     primeConversationForTurn(context.conversation, context.turnClassification, context.planManager?.getActive(context.sessionId) ?? null);
   }
 
@@ -296,6 +299,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
     let reasoningAccumulated = '';
     let streamSessionStarted = false;
     const onDelta = (delta: StreamDelta) => {
+      if (delta.content || delta.reasoning || delta.toolCalls?.length) markNativeConversationTurnEffectsPossible();
       if (delta.content) {
         streamAccumulated += delta.content;
         if (streamEnabled) {
@@ -325,6 +329,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
 
     const preflightResult = await context.checkContextWindowPreflight(context.turnId, model);
     assertActiveTurn();
+    if (preflightResult !== 'ok') markNativeConversationTurnEffectsPossible();
     if (preflightResult === 'error') {
       if (streamEnabled) {
         context.setStreamingActive(false);
@@ -365,6 +370,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
     const tokenLimits = context.providerRegistry.getTokenLimitsForModel(model);
 
     if (context.hookDispatcher) {
+      markNativeConversationTurnEffectsPossible();
       const preEvent: HookEvent = {
         path: 'Pre:llm:chat',
         phase: 'Pre',
@@ -752,7 +758,12 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         turnId: context.turnId,
         response: enrichedResponse,
         userText: context.text,
-        executeToolCalls: (id, calls) => context.executeToolCalls(id, calls),
+        executeToolCalls: (id, calls) => context.executeToolCalls(id, calls, () => {
+          if (!contractSession) return { goal: context.text, criteria: [] };
+          const source = contractSession.hooks.actionSource?.(contractSession.record);
+          if (!source) throw new Error('The contract owner has no current original action source');
+          return source;
+        }),
         setPendingToolCalls: (calls) => { context.setPendingToolCalls(calls); },
         messageQueueLength: context.getMessageQueueLength(),
         requestRender: context.requestRender,

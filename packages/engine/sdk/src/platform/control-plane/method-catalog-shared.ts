@@ -1,4 +1,6 @@
 import type { RuntimeEventDomain } from '../runtime/events/index.js';
+import type { NativeExecutionAuthority } from '../security/http-auth.js';
+export type { NativeExecutionAuthority, NativePairedSnapshot } from '../security/http-auth.js';
 
 export type GatewayMethodTransport = 'http' | 'ws' | 'internal';
 export type GatewayMethodSource = 'builtin' | 'plugin';
@@ -84,6 +86,11 @@ export interface GatewayMethodInvocationContext {
 }
 
 export interface GatewayMethodInvocation {
+  /** Transport-created, nonserialized paired owner. Never copied from body/context metadata. */
+  readonly nativeExecutionAuthority?: NativeExecutionAuthority | undefined;
+  /** Trusted transport lifecycle and live authorization; never parsed from payloads. */
+  readonly signal?: AbortSignal | undefined;
+  readonly isAuthorized?: ((requiredScopes?: readonly string[]) => boolean) | undefined;
   readonly body?: unknown | undefined;
   readonly query?: Record<string, unknown> | undefined;
   readonly context: GatewayMethodInvocationContext;

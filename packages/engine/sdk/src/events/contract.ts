@@ -106,7 +106,7 @@ export type YesNoVerdict = (typeof YES_NO_VERDICTS)[number];
 export const CHECK_TRIGGERS = ['turn-end', 'completion', 'agent-failed', 'fix-passed', 'resume', 'owner-amend'] as const;
 export type CheckTrigger = (typeof CHECK_TRIGGERS)[number];
 
-export const CHECK_RESULTS = ['pass', 'nudge', 'await-owner', 'stall', 'recorded'] as const;
+export const CHECK_RESULTS = ['pass', 'nudge', 'await-owner', 'native-decision', 'stall', 'recorded'] as const;
 export type CheckResult = (typeof CHECK_RESULTS)[number];
 
 export const CHECK_SCOPES = ['unit', 'group', 'deliverable'] as const;

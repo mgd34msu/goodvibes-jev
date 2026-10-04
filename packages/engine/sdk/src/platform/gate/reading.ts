@@ -10,7 +10,7 @@
 import { snapshotJudgmentInput } from './judgment-input.js';
 import { executePolicyCheck } from './execute-policy-check.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import type { JsonValue, Stakes, YesNoReading } from '@goodvibes-jev/judgment';
+import type { JsonValue, Stakes, YesNoReading, JudgmentPort } from '@goodvibes-jev/judgment';
 import { riskFamily, type GateRiskFamily } from './batteries/risk-family.js';
 import { sideEffect, type SideEffectKind } from './batteries/side-effect.js';
 import { boundaryReading } from './batteries/boundary.js';
@@ -37,6 +37,7 @@ export interface GateFacts {
 export type GateFactName = Exclude<keyof GateFacts, 'catastrophicUncertain'>;
 
 export interface GateReading extends GateFacts {
+  readonly judgmentDecisionIds?: readonly string[] | undefined;
   readonly family: GateRiskFamily;
   /** Whether the family reading reached act; the accept-edits allowance needs it. */
   readonly familyConfident: boolean;
@@ -114,6 +115,8 @@ export function readingState(toolName: string, args: Record<string, unknown>, wo
 const factOf = (reading: YesNoReading): boolean => reading.verdict !== 'no';
 
 export interface ReadToolCallInput {
+  /** A host-scoped recorded port carrying lifecycle/authority checks. */
+  readonly port?: JudgmentPort | undefined;
   readonly toolName: string;
   readonly args: Record<string, unknown>;
   readonly workingDirectory?: string | undefined;
@@ -129,13 +132,13 @@ export const GATE_SITE = 'engine.gate';
 
 /** Reads one tool call through the gate's two batteries, in parallel. */
 export async function readToolCall(input: ReadToolCallInput, site: string = GATE_SITE): Promise<GateReading> {
-  const { toolName, args, workingDirectory, signal: abortSignal, askKind = false, askObfuscated = false } = input;
+  const { toolName, args, workingDirectory, signal: abortSignal, askKind = false, askObfuscated = false, port: scopedPort } = input;
   const state = readingState(toolName, args, workingDirectory);
   const shell = askObfuscated === true;
   // Bind cache publication to the owned input actually sent, not borrowed
   // arguments or options that may change while the readings are in flight.
   const judgedCommands = shell ? shellCommandsIn(state.arguments as Record<string, unknown>) : [];
-  const port = judgmentPort(site);
+  const port = scopedPort ?? judgmentPort(site);
   const signal = abortSignal === undefined ? {} : { signal: abortSignal };
   const [effect, risk, edge] = await Promise.all([
     sideEffect.run(port, state, {
@@ -172,6 +175,7 @@ export async function readToolCall(input: ReadToolCallInput, site: string = GATE
   const uncertain = (Object.keys(yesNo) as GateFactName[]).filter((name) => yesNo[name]!.verdict === 'uncertain');
   const kindReading = askKind ? effect.readings.kind : undefined;
   return {
+    judgmentDecisionIds: Object.freeze([effect.result.decisionId, risk.result.decisionId, edge.result.decisionId].filter((id): id is string => id !== undefined)),
     ...facts,
     family: risk.readings.family.choice,
     familyConfident: risk.readings.family.outcome === 'act',
@@ -229,9 +233,9 @@ export function categoryForSideEffectKind(kind: SideEffectKind): PermissionCateg
 }
 
 /** Reads only the side-effect kind of a call (the execution ledger's route kind). */
-export async function readSideEffectKind(toolName: string, args: Record<string, unknown>, site: string): Promise<{ readonly kind: SideEffectKind; readonly confident: boolean }> {
+export async function readSideEffectKind(toolName: string, args: Record<string, unknown>, site: string, signal?: AbortSignal): Promise<{ readonly kind: SideEffectKind; readonly confident: boolean }> {
   const state = readingState(toolName, args);
-  const run = await sideEffect.run(judgmentPort(site), state, { site, only: ['kind'] });
+  const run = await sideEffect.run(judgmentPort(site), state, { site, only: ['kind'], ...(signal === undefined ? {} : { signal }) });
   return { kind: run.readings.kind.choice, confident: run.readings.kind.outcome === 'act' };
 }
 

@@ -15,6 +15,7 @@ import { unitShape } from './batteries/unit-shape.js';
 import { UNIT_JUDGES } from './batteries/unit-judge.js';
 import { unitQuality } from './batteries/unit-quality.js';
 import { unmetSeverity } from './batteries/unmet-severity.js';
+import { nativeIntakeCoverage } from '../workflow/work-ledger/native-intake-decisions.js';
 
 /** Every named decision the contract runner makes, for calibration (`bun run calibrate --registry`). */
 export const registry = new BatteryRegistry();
@@ -22,6 +23,7 @@ export const registry = new BatteryRegistry();
 // Intake (section 10.3).
 registry.register(requestRoute);
 registry.register(escalationTurn);
+registry.register(nativeIntakeCoverage);
 
 // Planning (section 3).
 registry.register(requestShape);

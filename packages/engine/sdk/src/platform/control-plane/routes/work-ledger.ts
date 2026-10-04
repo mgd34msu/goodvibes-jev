@@ -50,6 +50,11 @@ async function read<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
+function provenance(invocation: GatewayMethodInvocation): 'available' | 'requires_read_knowledge' {
+  return invocation.context.scopes?.some(scope => scope === '*' || scope === 'read:knowledge')
+    && invocation.isAuthorized?.(['read:knowledge']) === true ? 'available' : 'requires_read_knowledge';
+}
+
 /** One trusted host reader, already scoped to the selected project. No path or actor inputs. */
 export function registerWorkLedgerGatewayMethods(catalog: GatewayMethodCatalog, reader: WorkLedgerReadClient): void {
   const attach = (id: string, handler: (invocation: GatewayMethodInvocation) => Promise<unknown>) => {
@@ -57,12 +62,25 @@ export function registerWorkLedgerGatewayMethods(catalog: GatewayMethodCatalog, 
     if (!descriptor) throw new Error(`Missing native ledger method descriptor: ${id}`);
     catalog.register(descriptor, handler, { replace: true });
   };
+  attach('workLedger.project', async invocation => {
+    if (!invocation.context.admin || !invocation.context.principalId
+      || !invocation.context.scopes?.some(scope => scope === WORK_LEDGER_READ_SCOPE || scope === '*')
+      || invocation.isAuthorized?.([WORK_LEDGER_READ_SCOPE]) !== true) {
+      throw new GatewayVerbError('Native ledger discovery requires current owner access and read:work-ledger', 'FORBIDDEN', 403);
+    }
+    const input = readInvocationParams(invocation);
+    for (const key of Object.keys(input)) invalid(key);
+    // This identity is from the native ledger owner already composed by this
+    // host, never from the legacy project-planning service or request payload.
+    return { projectId: reader.projectId };
+  });
   attach('workLedger.snapshot', async invocation => {
     params(invocation, reader, false);
     return read(async () => {
       const snapshot = workLedgerReadSnapshotSchema.parse(await reader.readSnapshot());
       if (snapshot.projectId !== reader.projectId) throw new Error('Host reader project mismatch');
-      return bounded(snapshot);
+      if (invocation.isAuthorized?.() === false) throw new GatewayVerbError('Owner authorization changed', 'FORBIDDEN', 403);
+      return bounded({ ...snapshot, provenance: provenance(invocation) });
     });
   });
   attach('workLedger.history', async invocation => {
@@ -80,10 +98,14 @@ export function registerWorkLedgerGatewayMethods(catalog: GatewayMethodCatalog, 
       const all = await reader.history(afterSequence);
       const page: WorkLedgerHistoryPage = {
         projectId: reader.projectId, afterSequence, cursor: afterSequence, throughSequence,
-        hasMore: afterSequence < throughSequence, events: [],
+        hasMore: afterSequence < throughSequence, provenance: provenance(invocation), events: [],
       };
-      for (const event of all) {
+      for (const rawEvent of all) {
+        const event = rawEvent.type === 'import_legacy' && page.provenance !== 'available'
+          ? { type: rawEvent.type, sequence: rawEvent.sequence, actorId: rawEvent.actorId, requestId: rawEvent.requestId,
+            at: rawEvent.at, works: rawEvent.works, manifest: null, provenance: 'requires_read_knowledge' as const } : rawEvent;
         if (event.sequence > throughSequence) break;
+        if (invocation.isAuthorized?.() === false) throw new GatewayVerbError('Owner authorization changed', 'FORBIDDEN', 403);
         if (event.sequence !== page.cursor + 1) throw new Error('History cursor is not contiguous');
         const next = { ...page, cursor: event.sequence, hasMore: event.sequence < throughSequence, events: [...page.events, event] };
         if (new TextEncoder().encode(JSON.stringify(next)).byteLength > WORK_LEDGER_READ_MAX_BYTES) {

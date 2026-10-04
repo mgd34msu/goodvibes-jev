@@ -47,11 +47,11 @@ import type { ConfigManager } from '../sdk/src/platform/config/manager.js';
 type PrivateOrchestrator = {
   toolDeps: Record<string, unknown>;
   getFullRegistry(workingDirectory?: string): ToolRegistry;
-  createRunContext(workingDirectory?: string): AgentOrchestratorRunContext;
+  createRunContext(workingDirectory?: string): Promise<AgentOrchestratorRunContext>;
 };
 
 describe('AgentOrchestrator: createRunContext cwd threading (wiring)', () => {
-  test('an override reaches BOTH workingDirectory and the bound getFullRegistry closure; omitted matches the default toolDeps cwd', () => {
+  test('an override reaches BOTH workingDirectory and the bound getFullRegistry closure; omitted matches the default toolDeps cwd', async () => {
     const orchestrator = new AgentOrchestrator({ messageBus: new AgentMessageBus() }) as unknown as PrivateOrchestrator;
     orchestrator.toolDeps = { providerRegistry: {}, workingDirectory: '/default/cwd' };
 
@@ -62,11 +62,11 @@ describe('AgentOrchestrator: createRunContext cwd threading (wiring)', () => {
       return registryByCwd.get(key)!;
     }) as PrivateOrchestrator['getFullRegistry'];
 
-    const defaultCtx = orchestrator.createRunContext();
+    const defaultCtx = await orchestrator.createRunContext();
     expect(defaultCtx.workingDirectory).toBe('/default/cwd');
     expect(defaultCtx.getFullRegistry()).toBe(registryByCwd.get('/default/cwd')!);
 
-    const overrideCtx = orchestrator.createRunContext('/item/worktree/path');
+    const overrideCtx = await orchestrator.createRunContext('/item/worktree/path');
     expect(overrideCtx.workingDirectory).toBe('/item/worktree/path');
     expect(overrideCtx.getFullRegistry()).toBe(registryByCwd.get('/item/worktree/path')!);
     expect(overrideCtx.getFullRegistry()).not.toBe(defaultCtx.getFullRegistry());
@@ -74,7 +74,7 @@ describe('AgentOrchestrator: createRunContext cwd threading (wiring)', () => {
     // Calling with the SAME override twice returns the identical cached
     // registry instance, a second worktree-mode phase for the same item
     // must not pay a second registration cost.
-    const overrideCtxAgain = orchestrator.createRunContext('/item/worktree/path');
+    const overrideCtxAgain = await orchestrator.createRunContext('/item/worktree/path');
     expect(overrideCtxAgain.getFullRegistry()).toBe(overrideCtx.getFullRegistry());
   });
 });
@@ -167,7 +167,7 @@ describe('AgentOrchestrator: getFullRegistry(cwd) against REAL tool deps', () =>
       // Exactly what runAgent(record) does internally when
       // record.workingDirectory is set (orchestrator.ts): resolve a run
       // context bound to that cwd, then pull its tool registry.
-      const worktreeContext = orchestrator.createRunContext(worktreeDir);
+      const worktreeContext = await orchestrator.createRunContext(worktreeDir);
       const worktreeRegistry = worktreeContext.getFullRegistry();
 
       const result = await worktreeRegistry.execute('call-1', 'write', {

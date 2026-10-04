@@ -1,11 +1,3 @@
-// Ported from goodvibes-agent src/test/runtime/tool-permission-safety.test.ts.
-//
-// The agent pinned about twenty hand-kept tables of tool names and action
-// strings that classified a call when the permission manager threw. In the
-// engine that classification is Jev's reading of the call's side-effect kind,
-// so these tests answer the `kind` question with a fake port and pin what the
-// guard composes from it: approve only a confident read, refuse everything
-// else, and never approve without a reading.
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Question } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
@@ -86,6 +78,37 @@ describe('readPermissionCategory: the side-effect kind, mapped to a category', (
     expect(await readPermissionCategory('memory', { action: 'unsure' })).toEqual({ category: 'read', confident: false });
   });
 
+  test('category input is captured before the cancellation helper yields', async () => {
+    const args = { mode: 'summary' };
+    const pending = readPermissionCategory('agent_harness', args);
+    args.mode = 'learning_auto_promote';
+    expect(await pending).toEqual({ category: 'read', confident: true });
+    expect(JSON.stringify(requests[0])).toContain('summary');
+    expect(JSON.stringify(requests[0])).not.toContain('learning_auto_promote');
+  });
+
+  test('category cancellation reaches Jev and discards a late non-cooperative answer', async () => {
+    const controller = new AbortController();
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    let seenSignal: AbortSignal | undefined;
+    const fixture = fakePort((_name, question) => choiceAnswer(question, 'read', 0.99));
+    installJudgmentPort({ model: fixture.port.model, async ask(request) {
+      seenSignal = request.signal; enter(); await pending; return fixture.port.ask(request);
+    } });
+    const outcome = readPermissionCategory('read', {}, undefined, controller.signal).catch((error: unknown) => error);
+    await entered;
+    expect(seenSignal).toBe(controller.signal);
+    controller.abort('private caller reason');
+    expect(await outcome).toMatchObject({ name: 'JudgmentError', kind: 'aborted' });
+    expect(JSON.stringify(await outcome)).not.toContain('private caller reason');
+    release();
+    await Bun.sleep(0);
+    expect(await outcome).toMatchObject({ kind: 'aborted' });
+  });
+
   test('the reading is asked at the tool-permission-safety site, one question per call', async () => {
     await readPermissionCategory('agent_harness', { mode: 'summary' });
     expect(requests).toHaveLength(1);
@@ -102,53 +125,25 @@ describe('installPermissionManagerSafetyGuard', () => {
     expect(requests).toHaveLength(0);
   });
 
-  test('when the manager throws, only a confident read is approved', async () => {
-    const manager = throwingPermissionManager();
-    installPermissionManagerSafetyGuard(manager);
-    await expect(manager.check('agent_harness', { mode: 'summary' })).resolves.toBe(true);
-    await expect(manager.check('fetch', { url: 'docs_page' })).resolves.toBe(true);
-    await expect(manager.check('agent_harness', { mode: 'learning_auto_promote' })).resolves.toBe(false);
-    await expect(manager.check('process', { action: 'kill' })).resolves.toBe(false);
-    await expect(manager.check('agent', { mode: 'spawn' })).resolves.toBe(false);
-    await expect(manager.check('browser', { action: 'navigate' })).resolves.toBe(false);
-    // A read Jev is unsure of is not approved: doubt never approves.
-    await expect(manager.check('memory', { action: 'unsure' })).resolves.toBe(false);
-  });
+  for (const tool of ['read', 'fetch', 'agent_harness']) {
+    test(`${tool}: a manager failure is never replaced by a category allowance`, async () => {
+      const manager = throwingPermissionManager();
+      installPermissionManagerSafetyGuard(manager);
+      await expect(manager.check(tool, { mode: 'summary' })).rejects.toThrow('category table unavailable');
+      await expect(manager.checkDetailed(tool, { mode: 'summary' })).rejects.toThrow('category table unavailable');
+      expect(requests).toHaveLength(0);
+    });
+  }
 
-  test('checkDetailed states the fallback: approval, reason code, risk and the manager\'s error', async () => {
-    const manager = throwingPermissionManager();
-    installPermissionManagerSafetyGuard(manager);
-
-    const read = await manager.checkDetailed('agent_harness', { mode: 'summary' });
-    expect(read.approved).toBe(true);
-    expect(read.reasonCode).toBe('config_allow');
-    expect(read.analysis.riskLevel).toBe('low');
-    expect(read.analysis.reasons).toContain('permission-manager-exception');
-    expect(read.analysis.summary).toBe('Permission fallback for agent_harness: category table unavailable');
-
-    const mutating = await manager.checkDetailed('agent_harness', { mode: 'learning_auto_promote' });
-    expect(mutating.approved).toBe(false);
-    expect(mutating.reasonCode).toBe('config_deny');
-    expect(mutating.analysis.riskLevel).toBe('high');
-    expect(mutating.analysis.reasons).toContain('permission-manager-exception');
-  });
-
-  test('a failed reading is not an approval: the error reaches the caller', async () => {
-    const manager = throwingPermissionManager();
-    installPermissionManagerSafetyGuard(manager);
-    installJudgmentPort(undefined);
-    await expect(manager.check('agent_harness', { mode: 'summary' })).rejects.toThrow('judgment port');
-  });
-
-  test('installing twice wraps once, and the category lookup is left alone', async () => {
-    const manager = throwingPermissionManager();
+  test('installing twice wraps once and leaves category authority untouched', async () => {
+    const manager = denyingPermissionManager();
     const getCategory = manager.getCategory;
     installPermissionManagerSafetyGuard(manager);
     const check = manager.check;
     installPermissionManagerSafetyGuard(manager);
     expect(manager.check).toBe(check);
     expect(manager.getCategory).toBe(getCategory);
-    await manager.check('agent_harness', { mode: 'summary' });
-    expect(requests).toHaveLength(1);
+    expect(await manager.check('read', {})).toBe(false);
+    expect(requests).toHaveLength(0);
   });
 });

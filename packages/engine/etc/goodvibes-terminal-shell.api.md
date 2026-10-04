@@ -4,6 +4,12 @@
 
 ```ts
 
+import { CallOptions } from '@goodvibes-jev/judgment';
+import { JevDecision } from '@goodvibes-jev/judgment/decisions';
+import type { JevDecisionBinding } from '@goodvibes-jev/judgment/decisions';
+import { JevVersionRef } from '@goodvibes-jev/judgment/decisions';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { JudgmentRetryProgress } from '@goodvibes-jev/judgment';
 import type { Outcome } from '@goodvibes-jev/judgment';
 import type { ReplyReadingName } from '@goodvibes-jev/judgment';
 import type { Socket } from 'node:net';

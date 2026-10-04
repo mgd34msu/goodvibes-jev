@@ -1,3 +1,5 @@
+import { createContractInputAuthority, type ContractInputAuthority } from './input-authority.js';
+import { nativeContractRoute } from './native-decisions.js';
 /**
  * Groups on the orchestration engine (docs/design/contract-runner.md sections
  * 6.1, 7.3 and 7.4): one engine per contract, a workstream per group started
@@ -21,6 +23,8 @@
  *   merged. In shared mode the engine cannot run siblings apart, so the unit
  *   runs once and the decision says so.
  */
+import { initializeContractMemberWorktree } from './input-snapshot.js';
+
 import { spawnSync } from 'node:child_process';
 import type { CreateWorkstreamInput, OrchestrationEngine } from '../orchestration/engine.js';
 import type { FleetCapacityFn } from '../orchestration/elastic-pool.js';
@@ -45,6 +49,8 @@ export interface ContractEngineInput {
   readonly stateRoot: string;
   /** The contract id: its snapshots get their own directory, since every contract names its groups g1, g2... */
   readonly stateNamespace: string;
+  readonly initializeWorktree?: import('../orchestration/worktree-isolation.js').WorktreeIsolationManagerDeps['initializeWorktree'];
+  readonly prepareInputAuthority?: ((worktree: { readonly path: string; readonly branch: string }, signal: AbortSignal) => Promise<ContractInputAuthority>) | undefined;
   readonly contractUnitSettlement: ContractUnitSettlement;
   readonly fleetCapacity: FleetCapacityFn;
   /** The `contract.best-of-n` selector over this contract's attempts, for `fleet.attempts.judge` (design 6.2). */
@@ -137,6 +143,12 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
       projectRoot: contract.worktreePath ?? contract.projectRoot,
       stateRoot: contract.projectRoot,
       stateNamespace: contract.id,
+      ...(contract.inputSnapshot === undefined ? {} : { prepareInputAuthority: async (worktree: { readonly path: string; readonly branch: string }, signal: AbortSignal) => {
+        signal.throwIfAborted();
+        const authority = await createContractInputAuthority(contract, worktree.path, { signal: AbortSignal.any([run.abort.signal, signal]), mutable: true, branch: worktree.branch });
+        signal.throwIfAborted();
+        return authority;
+      }, initializeWorktree: (worktree: import('../agents/worktree.js').IsolatedWorktree) => initializeContractMemberWorktree(contract.worktreePath!, worktree) }),
       contractUnitSettlement: deps.settlement,
       fleetCapacity: deps.fleetCapacity,
       judgeAttempts: createContractAttemptJudge(run),
@@ -193,7 +205,7 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
       const runsAgent = units.flatMap((unit) => unit.attemptUnits ?? [unit]);
       for (const unit of runsAgent) {
         if (unit.route !== undefined) continue;
-        unit.route = await deps.routeSelector({ purpose: unit.role === 'integration' ? 'integration' : 'unit', contract: run.view(), unit: structuredClone(unit) });
+        unit.route = await nativeContractRoute(deps.routeSelector, run.contract, run.env.native, { purpose: unit.role === 'integration' ? 'integration' : 'unit', contract: run.view(), unit: structuredClone(unit) }, run.abort.signal);
         if (run.terminal) return;
       }
       rollUpContractUsage(contract, deps.getStatus, deps.pricing);

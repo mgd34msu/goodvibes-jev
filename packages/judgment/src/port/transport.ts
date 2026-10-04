@@ -8,14 +8,13 @@ import { withRequestId } from './request-id.ts';
 import { delay, interruptible, retryable, retryDelay, retryPolicy } from './retry.ts';
 import type { JudgmentAttempt, JudgmentEndpointHealth, JudgmentPort, JudgmentRequest, JudgmentResult } from './types.ts';
 
-/** An ordered, bounded System One chain. Only configured, calibration-compatible targets can answer. */
+/** One retry owner for every configured System One exposure; outages remain pending until cancelled. */
 export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
   validateJudgmentConfig(config);
   const targets = [{ endpoint: { ...config.endpoint }, model: config.model }, ...(config.fallbacks ?? []).map((t) => ({ ...t, endpoint: { ...t.endpoint } }))];
-  const clients = targets.map(({ endpoint, model }) => clientFor({ ...config, endpoint, model, retry: { maxRetries: 0 } }));
+  const clients = targets.map(({ endpoint, model }) => clientFor({ ...config, endpoint, model }, true));
   const policy = retryPolicy(config.retry);
   const timeoutMs = config.timeoutMs;
-  const configuredTotalTimeoutMs = config.totalTimeoutMs ?? 120_000;
   const strictModel = targets.length > 1;
   const defaultModel = config.model;
   const health: JudgmentEndpointHealth[] = targets.map(({ endpoint, model }, endpointIndex) => ({ endpointIndex, endpointKind: endpoint.kind, model, attempts: 0, consecutiveFailures: 0 }));
@@ -32,24 +31,26 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
       const started = performance.now();
       const logicalRequestId = crypto.randomUUID();
       const attempts: JudgmentAttempt[] = [];
-      const { signal } = request;
-      const totalTimeoutMs = Math.min(configuredTotalTimeoutMs, request.totalTimeoutMs ?? configuredTotalTimeoutMs);
+      let attemptCount = 0;
+      const lineage = () => ({ logicalRequestId, attempts: [...attempts],
+        ...(attemptCount > attempts.length ? { omittedAttempts: attemptCount - attempts.length } : {}) });
+      const remember = (attempt: JudgmentAttempt) => {
+        attempts.push(attempt);
+        if (attempts.length > 128) attempts.shift();
+      };
+      const { signal, beforeAttempt, onRetry } = request;
       const requestedModel = request.model ?? defaultModel;
       const controller = new AbortController();
       const cancelled = () => controller.abort(new JudgmentError('aborted', 'the judgment call was cancelled'));
       if (signal?.aborted) cancelled();
       signal?.addEventListener('abort', cancelled, { once: true });
-      const timer = setTimeout(() => controller.abort(new JudgmentError('unavailable', 'the judgment total deadline expired')), Math.max(1, Number.isFinite(totalTimeoutMs) ? totalTimeoutMs : configuredTotalTimeoutMs));
-      const checkDeadline = () => {
+      const checkCancellation = () => {
         if (signal?.aborted) cancelled();
-        if (!controller.signal.aborted && performance.now() - started >= totalTimeoutMs) controller.abort(new JudgmentError('unavailable', 'the judgment total deadline expired'));
         if (controller.signal.aborted) throw controller.signal.reason;
       };
       try {
-        if (request.totalTimeoutMs !== undefined && (!Number.isInteger(request.totalTimeoutMs) || request.totalTimeoutMs < 1)) {
-          throw new JudgmentError('invalid-request', 'the requested judgment deadline must be positive integer milliseconds');
-        }
-        checkDeadline();
+        if ('totalTimeoutMs' in request) throw new JudgmentError('invalid-request', 'judgment total-time limits are not supported; cancel through the owning signal');
+        checkCancellation();
         let input: Pick<JudgmentRequest<Q>, 'state' | 'questions'>;
         try { input = JSON.parse(JSON.stringify({ state: request.state, questions: request.questions })) as typeof input; }
         catch { throw new JudgmentError('invalid-request', 'judgment input must be JSON-serializable'); }
@@ -57,25 +58,38 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
         validateQuestions(questions);
         validateContextBudget(state, questions);
         if (strictModel && !isPinnedJudgmentModel(requestedModel)) throw new JudgmentError('invalid-request', 'judgment failover requires a pinned requested model, not an alias');
-        let last: JudgmentError | undefined;
-        for (const [endpointIndex, target] of targets.entries()) {
-          // A different calibrated model is not an eligible substitute for this logical reading.
-          if (endpointIndex > 0 && target.model !== requestedModel) continue;
-          for (let retry = 0; retry <= policy.maxRetries; retry += 1) {
-            checkDeadline();
+        // Visit compatible configured targets once per round, then repeat without an outage budget.
+        const eligible = targets.map((target, endpointIndex) => ({ target, endpointIndex }))
+          .filter(({ target, endpointIndex }) => endpointIndex === 0 || target.model === requestedModel);
+        let retry = 0;
+        for (;;) {
+          for (const { target, endpointIndex } of eligible) {
+            checkCancellation();
+            try {
+              const checked: unknown = beforeAttempt?.();
+              if (checked !== undefined && checked !== null && (typeof checked === 'object' || typeof checked === 'function') && 'then' in checked) {
+                void Promise.resolve(checked).catch(() => {});
+                throw new JudgmentError('invalid-request', 'the judgment attempt guard must be synchronous');
+              }
+            } catch (error) {
+              checkCancellation();
+              throw error instanceof JudgmentError ? error : new JudgmentError('rejected', 'the judgment attempt is no longer authorized');
+            }
+            checkCancellation();
+            attemptCount += 1;
             const attemptStarted = performance.now();
             let requestId: string | undefined;
             const attemptController = new AbortController();
             const abortAttempt = () => attemptController.abort(controller.signal.reason);
             controller.signal.addEventListener('abort', abortAttempt, { once: true });
-            const attemptTimer = setTimeout(() => attemptController.abort(new APITimeoutError(timeoutMs)), Math.min(timeoutMs, Math.max(1, totalTimeoutMs - (performance.now() - started))));
+            const attemptTimer = setTimeout(() => attemptController.abort(new APITimeoutError(timeoutMs)), timeoutMs);
             let failure: unknown;
             try {
               const response = await interruptible(withRequestId(
                 () => clients[endpointIndex]!.systemOne({ state, questions, model: requestedModel }, { signal: attemptController.signal }),
                 (id) => { requestId = safeId(id); },
               ), attemptController.signal);
-              checkDeadline();
+              checkCancellation();
               const result = response.result;
               if (!result || typeof result.model !== 'string' || keys.some((key) => result.model.includes(key)) || !result.answers || !result.usage
                 || ![result.usage.input_tokens, result.usage.output_tokens].every((n) => Number.isFinite(n) && n >= 0)) {
@@ -85,46 +99,53 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
               catch { throw new JudgmentError('invalid-response', 'System One returned answers that do not match the requested questions'); }
               if (strictModel && result.model !== requestedModel) throw new JudgmentError('invalid-response', 'System One returned a different model version; calibration compatibility is not established');
               const attempt: JudgmentAttempt = {
-                attempt: attempts.length + 1, endpointIndex, endpointKind: target.endpoint.kind, requestedModel,
+                attempt: attemptCount, endpointIndex, endpointKind: target.endpoint.kind, requestedModel,
                 latencyMs: performance.now() - attemptStarted, outcome: 'answered', ...(requestId ? { requestId } : {}),
               };
-              attempts.push(attempt);
+              remember(attempt);
               health[endpointIndex] = { ...health[endpointIndex]!, attempts: health[endpointIndex]!.attempts + 1, consecutiveFailures: 0, lastOutcome: 'answered' };
               return {
                 answers: projectAnswers(questions, result.answers), requestedModel, model: result.model,
                 usage: { inputTokens: result.usage.input_tokens, outputTokens: result.usage.output_tokens },
-                latencyMs: performance.now() - started, requestId, lineage: { logicalRequestId, attempts },
+                latencyMs: performance.now() - started, requestId, lineage: lineage(),
               };
             } catch (error) {
               failure = controller.signal.aborted ? controller.signal.reason : attemptController.signal.aborted ? attemptController.signal.reason : error;
-              last = toJudgmentError(failure);
+              const last = toJudgmentError(failure);
               requestId = safeId(last.requestId) ?? requestId;
-              attempts.push({
-                attempt: attempts.length + 1, endpointIndex, endpointKind: target.endpoint.kind, requestedModel,
+              remember({
+                attempt: attemptCount, endpointIndex, endpointKind: target.endpoint.kind, requestedModel,
                 latencyMs: performance.now() - attemptStarted, outcome: last.kind,
                 ...(last.status === undefined ? {} : { status: last.status }), ...(requestId ? { requestId } : {}),
               });
               health[endpointIndex] = { ...health[endpointIndex]!, attempts: health[endpointIndex]!.attempts + 1, consecutiveFailures: health[endpointIndex]!.consecutiveFailures + 1, lastOutcome: last.kind };
-              if (last.kind !== 'unavailable' || !retryable(failure, policy)) throw last;
+              if (last.kind !== 'unavailable' || !retryable(failure)) throw last;
             } finally {
               clearTimeout(attemptTimer);
               controller.signal.removeEventListener('abort', abortAttempt);
             }
-            checkDeadline();
-            if (retry < policy.maxRetries) await delay(retryDelay(failure, retry, policy), controller.signal);
+            checkCancellation();
+            const nextDelayMs = retryDelay(failure, retry, policy);
+            retry = Math.min(retry + 1, 30);
+            // Observers cannot change evidence or turn an outage into a terminal failure.
+            try {
+              const observed = onRetry?.(Object.freeze({ logicalRequestId,
+                attempt: Object.freeze({ ...attempts[attempts.length - 1]! }),
+                elapsedMs: performance.now() - started, nextDelayMs }));
+              void Promise.resolve(observed).catch(() => {});
+            } catch { /* Progress reporting never decides the reading. */ }
+            await delay(nextDelayMs, controller.signal);
           }
         }
-        throw last ?? new JudgmentError('unavailable', 'no compatible judgment target could answer');
       } catch (error) {
         const failure = toJudgmentError(error);
         // Do not retain upstream causes, bodies, headers, URLs or API keys in a public error/log.
         const requestId = safeId(failure.requestId) ?? attempts.at(-1)?.requestId;
         throw new JudgmentError(failure.kind, keys.reduce((message, key) => message.replaceAll(key, '[redacted]'), failure.message), {
           ...(failure.status === undefined ? {} : { status: failure.status }), ...(requestId ? { requestId } : {}),
-          lineage: { logicalRequestId, attempts },
+          lineage: lineage(),
         });
       } finally {
-        clearTimeout(timer);
         signal?.removeEventListener('abort', cancelled);
       }
     },

@@ -5,7 +5,7 @@ import { nativeWorkLedgerLines } from '../../renderer/native-work-ledger.ts';
 import type { WorkLedgerReadClient, WorkLedgerReadSnapshot, WorkLedgerEvent } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
 const flush = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); };
 const snapshot = (cursor = 0, projectId = 'p'): WorkLedgerReadSnapshot => ({ projectId, revision: cursor, cursor, works: [] });
-const event = (sequence: number): WorkLedgerEvent => ({ sequence, type: 'create', actorId: 'owner', requestId: `r${sequence}`, workId: 'work-stable', attemptId: null, at: 1, attempts: [], evidence: null, reason: null, work: { id: 'work-stable', title: 'Ship', goal: 'Working feature', criteria: ['Tests pass'], revision: sequence, criteriaRevision: 1, reportedState: 'complete', currentAttemptId: null, createdAt: 1, updatedAt: 1 } });
+const event = (sequence: number): Exclude<WorkLedgerEvent, { type: 'import_legacy' }> => ({ sequence, type: 'create', actorId: 'owner', requestId: `r${sequence}`, workId: 'work-stable', attemptId: null, at: 1, attempts: [], evidence: null, reason: null, work: { source: null, id: 'work-stable', title: 'Ship', goal: 'Working feature', criteria: ['Tests pass'], revision: sequence, criteriaRevision: 1, reportedState: 'complete', currentAttemptId: null, createdAt: 1, updatedAt: 1 } });
 function fixture() {
   const calls: string[] = []; let listener: (s: WorkLedgerReadSnapshot) => void = () => {};
   let current = snapshot(); let history: readonly WorkLedgerEvent[] = [];
@@ -88,21 +88,66 @@ test('interactive native host wiring preserves executable entrypoint syntax', as
   expect(() => new Bun.Transpiler({ loader: 'ts' }).transformSync(source)).not.toThrow();
 });
 
-test('journal-only revisions advance and delayed snapshots cannot regress them', async () => {
-  let notify!: (value: WorkLedgerReadSnapshot) => void;
-  const model = new NativeWorkLedgerModel();
-  model.open({ available: true, client: { projectId: 'p', readSnapshot: async () => snapshot(), history: async () => [], subscribe: listener => { notify = listener; return () => {}; }, dispose: () => {} } });
-  await flush();
-  notify({ ...snapshot(), executionRevision: 2 }); await flush();
-  expect(model.state.status === 'ready' && model.state.snapshot.executionRevision).toBe(2);
-  notify({ ...snapshot(), executionRevision: 1 }); await flush();
-  expect(model.state.status === 'ready' && model.state.snapshot.executionRevision).toBe(2);
-  model.close();
+test('an explicit command waiting on discovery cannot retarget a newly selected project', async () => {
+  const calls: string[] = []; let finish!: (id: string) => void;
+  const host = { baseUrl: 'https://one.invalid', token: 'synthetic', workspace: '/one' };
+  const view = createNativeWorkLedgerView(() => host, () => {}, (_host, project) => ({ available: true,
+    client: { ...fixture().client, projectId: project, readSnapshot: async () => snapshot(0, project) },
+    execution: { start: async () => { calls.push('start'); throw new Error(); }, status: async () => { throw new Error(); }, cancel: async () => { throw new Error(); }, resume: async () => { throw new Error(); }, dispose() {} },
+  }), () => new Promise(resolve => { finish = resolve; }));
+  const pending = view.execute!('start', 'work-stable'); await flush();
+  view.selectProject('new-project'); finish('old-project'); await pending; await flush();
+  expect(calls).toEqual([]); expect(view.state.status === 'ready' && view.state.snapshot.projectId).toBe('new-project'); view.close();
 });
 
-test('execution deferral is presented separately from verification', () => {
-  const view = { work: event(1).work, attempt: null, verification: { state: 'unverified' as const, reason: 'No evidence', evidence: null }, attention: [],
-    execution: { id: 'execution', contractId: null, target: { workId: 'work-stable', workRevision: 1, criteriaRevision: 1, attemptId: 'attempt', attemptRevision: 1 }, status: 'deferred' as const, reason: 'Waiting for a condition', decisionIds: ['reading'], evidenceId: null } };
-  const text = nativeWorkLedgerLines({ status: 'ready', cursor: 0, history: [], snapshot: { ...snapshot(), works: [view] } }).join('\n');
-  expect(text).toContain('Execution: deferred'); expect(text).toContain('Verification: unverified'); expect(text).not.toContain('awaiting owner');
+for (const replacement of ['baseUrl', 'token', 'workspace'] as const) {
+  test(`${replacement} replacement aborts pending native execution and discards the response`, async () => {
+    let host = { baseUrl: 'https://one.invalid', token: 'synthetic', workspace: '/one' };
+    let signal: AbortSignal | undefined; let finish!: (value: import('@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client').NativeWorkExecutionSnapshot) => void;
+    let identity!: import('@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client').NativeWorkExecutionIdentity;
+    const f = fixture(); const base = event(1).work;
+    f.client.readSnapshot = async () => ({ ...snapshot(), works: [{ work: { ...base, reportedState: 'in_progress', currentAttemptId: 'attempt' }, attempt: { id: 'attempt', workId: base.id, predecessorId: null, ownerId: 'owner', revision: 1, state: 'active', report: null, blocker: null, createdAt: 1, updatedAt: 1 }, verification: { state: 'unverified', reason: 'No proof', evidence: null }, attention: [] }] });
+    const view = createNativeWorkLedgerView(() => host, () => {}, () => ({ available: true, client: f.client, execution: {
+      start: (input, options) => { identity = input; signal = options?.signal; return new Promise(resolve => { finish = resolve; }); },
+      status: async () => { throw new Error(); }, cancel: async () => { throw new Error('Close must not cancel the server'); }, resume: async () => { throw new Error(); }, dispose() {},
+    } }));
+    view.selectProject('p'); view.open(); await flush(); const pending = view.execute!('start', base.id); await flush();
+    host = { ...host, [replacement]: 'replacement' }; view.sync(); expect(signal?.aborted).toBe(true);
+    finish({ kind: 'execution', projectId: 'p', ...identity, currentRevision: identity.expectedRevision, currentAttempt: true, stale: false, state: 'launch-claimed', recovery: 'required', receipt: null, progress: null }); await pending;
+    expect(view.state.status).toBe('unavailable'); expect(nativeWorkLedgerLines(view.state).join(' ')).not.toContain('launch-claimed'); view.close();
+  });
+}
+
+test('synchronous host binding revocation cannot resurrect read or execution clients', async () => {
+  let executionsDisposed = 0; const f = fixture();
+  const view = createNativeWorkLedgerView(() => ({ baseUrl: 'https://one.invalid', token: 'synthetic', workspace: '/one' }), () => {}, (_host, _project, unavailable) => {
+    unavailable(new Error('Revoked during binding'));
+    return { available: true, client: f.client, execution: { start: async () => { throw new Error(); }, status: async () => { throw new Error(); }, cancel: async () => { throw new Error(); }, resume: async () => { throw new Error(); }, dispose() { executionsDisposed++; } } };
+  });
+  view.selectProject('p'); view.open(); await flush();
+  expect(view.state.status).toBe('unavailable'); expect(f.calls).toEqual(['dispose']); expect(executionsDisposed).toBe(1); view.close();
+});
+
+test('reentrant reader cleanup keeps the newer Agent lifecycle and drops the outer binding', async () => {
+  const old = fixture(); const fresh = fixture(); const discarded = fixture(); const model = new NativeWorkLedgerModel();
+  old.client.subscribe = () => () => { model.open({ available: true, client: fresh.client }); };
+  model.open({ available: true, client: old.client }); await flush(); model.open({ available: true, client: discarded.client }); await flush();
+  expect(model.state.status).toBe('ready'); expect(fresh.calls).toContain('snapshot'); expect(discarded.calls).toEqual(['dispose']); model.close();
+});
+
+test('native command prints its admitted result even while ledger history is still loading', async () => {
+  const { CommandRegistry } = await import('../../input/command-registry.ts');
+  const { registerAgentWorkspaceRuntimeCommands } = await import('../../input/commands/agent-workspace-runtime.ts');
+  const f = fixture(); const base = event(1).work; let finish!: (events: readonly WorkLedgerEvent[]) => void;
+  f.client.readSnapshot = async () => ({ ...snapshot(), works: [{ work: { ...base, reportedState: 'in_progress', currentAttemptId: 'attempt' }, attempt: { id: 'attempt', workId: base.id, predecessorId: null, ownerId: 'owner', revision: 1, state: 'active', report: null, blocker: null, createdAt: 1, updatedAt: 1 }, verification: { state: 'unverified', reason: 'No proof', evidence: null }, attention: [] }] });
+  f.client.history = () => new Promise(resolve => { finish = resolve; });
+  const view = createNativeWorkLedgerView(() => ({ baseUrl: 'https://one.invalid', token: 'synthetic', workspace: '/one' }), () => {}, () => ({ available: true, client: f.client, execution: {
+    start: async identity => ({ kind: 'execution', projectId: 'p', ...identity, currentRevision: identity.expectedRevision, currentAttempt: true, stale: false, state: 'launch-claimed', recovery: 'required', receipt: { contractId: 'receipt-despite-history', ownerAgentId: 'owner' }, progress: null }),
+    status: async () => { throw new Error(); }, cancel: async () => { throw new Error(); }, resume: async () => { throw new Error(); }, dispose() {},
+  } }));
+  view.selectProject('p'); view.open(); await flush();
+  const printed: string[] = []; const registry = new CommandRegistry(); registerAgentWorkspaceRuntimeCommands(registry);
+  await registry.execute('work', ['start', base.id], { nativeWorkLedger: view, print: (text: string) => printed.push(text) } as unknown as import('../../input/command-registry.ts').CommandContext);
+  expect(view.state.status).toBe('loading'); expect(printed.join(' ')).toContain('receipt-despite-history'); expect(printed.join(' ')).toContain('recovery required');
+  finish([]); await flush(); view.close();
 });

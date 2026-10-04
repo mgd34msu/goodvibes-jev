@@ -23,7 +23,7 @@
  * A retry is not a stall and not a fix round: the unit keeps its checks, and
  * the fresh agent's brief carries a "Previous checks" section.
  */
-import { readFailure } from '@goodvibes-jev/engine/errors';
+import { judgmentPort, readFailure } from '@goodvibes-jev/engine/errors';
 import type { AgentEvent } from '../../events/agents.js';
 import type { CommunicationEvent } from '../../events/communication.js';
 import { TURN_BUDGET_EXHAUSTED } from '../agents/turn-budget.js';
@@ -35,6 +35,7 @@ import type { UnitCheckLoop } from './agent-hooks.js';
 import { failureFromError, type ContractRun, type SpawnPurpose } from './run-context.js';
 import { isTerminalUnitStatus, type ContractFailureKind, type ContractUnit } from './types.js';
 import type { WatchedAgent } from './watchdog.js';
+import { nativeContractPort } from './native-decisions.js';
 
 /** The decision site the transport reading is logged under. */
 export const TRANSPORT_RETRY_SITE = 'contract.transport-retry';
@@ -148,7 +149,10 @@ export function createUnitFailureHandling(deps: UnitFailureDeps): UnitFailureHan
     let network: boolean;
     let readingIds: readonly string[];
     try {
-      const reading = await readFailure({ message }, TRANSPORT_RETRY_SITE);
+      const signal = AbortSignal.any([run.abort.signal, runtime.abort.signal]);
+      const reading = await readFailure({ message }, TRANSPORT_RETRY_SITE, run.contract.nativeSource === undefined ? undefined : {
+        port: nativeContractPort(run.contract, run.env.native, judgmentPort(TRANSPORT_RETRY_SITE), signal), signal,
+      });
       network = reading.transientNetwork || reading.beforeResponse;
       readingIds = reading.decisionId === undefined ? [] : [reading.decisionId];
     } catch (error) {

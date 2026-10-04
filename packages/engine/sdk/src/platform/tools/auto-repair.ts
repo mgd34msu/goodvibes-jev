@@ -45,6 +45,7 @@ export async function repairToolCall(
   args: Record<string, unknown>,
   schema: ToolDefinition,
   signal?: AbortSignal,
+  scopedPort?: JudgmentPort,
 ): Promise<RepairResult> {
   assertRepairActive(signal);
   let fixed: Record<string, unknown>;
@@ -133,7 +134,7 @@ export async function repairToolCall(
   for (const { key, value } of booleanStrings) {
     const description = properties[key]?.['description'];
     const run = await booleanValue.run(
-      repairPort(BOOLEAN_VALUE_SITE, signal),
+      repairPort(BOOLEAN_VALUE_SITE, signal, scopedPort),
       booleanValueView(toolName, key, typeof description === 'string' ? description : undefined, value),
       { site: BOOLEAN_VALUE_SITE, ...(signal === undefined ? {} : { signal }) },
     );
@@ -153,7 +154,7 @@ export async function repairToolCall(
     if (requiredKey in fixed) continue;
     const targetSchema = properties[requiredKey];
     if (targetSchema?.['type'] !== 'string') continue; // only string params
-    const candidate = await _pickStringCandidate(toolName, schema, requiredKey, fixed, properties, required, signal);
+    const candidate = await _pickStringCandidate(toolName, schema, requiredKey, fixed, properties, required, signal, scopedPort);
     assertRepairActive(signal);
     if (candidate !== null) {
       fixed[requiredKey] = candidate.value;
@@ -192,9 +193,9 @@ function assertRepairActive(signal?: AbortSignal): void {
  * answer. The existing wait helper drains late rejections and removes this
  * caller's listener; it never cancels another caller's reading.
  */
-function repairPort(site: string, signal?: AbortSignal): JudgmentPort {
+function repairPort(site: string, signal?: AbortSignal, scopedPort?: JudgmentPort): JudgmentPort {
   assertRepairActive(signal);
-  const port = judgmentPort(site);
+  const port = scopedPort ?? judgmentPort(site);
   if (!signal) return port;
   const recorder = port.recorder;
   return {
@@ -247,6 +248,7 @@ async function _pickStringCandidate(
   properties: Record<string, Record<string, unknown>>,
   required: string[],
   signal?: AbortSignal,
+  scopedPort?: JudgmentPort,
 ): Promise<{ sourceKey: string; value: string } | null> {
   const spare = Object.entries(args).filter(([key, value]) => {
     if (required.includes(key)) return false;
@@ -261,7 +263,7 @@ async function _pickStringCandidate(
     return typeof description === 'string' ? description : undefined;
   };
   const selection = await paramFill.select(
-    repairPort(PARAM_FILL_SITE, signal),
+    repairPort(PARAM_FILL_SITE, signal, scopedPort),
     paramFillContext(toolName, schema.description, targetKey, describe(targetKey)),
     spare.map(([key, value]) => paramFillCandidate(key, value, describe(key))),
     { site: PARAM_FILL_SITE, ...(signal === undefined ? {} : { signal }) },

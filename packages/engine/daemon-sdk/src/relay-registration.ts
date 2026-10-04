@@ -154,33 +154,48 @@ const DEFAULT_MAX_PIPES = 512;
 const DEFAULT_MAX_IN_FLIGHT_REQUESTS = 1024;
 /** Ceiling on one tunneled response body; larger (or endless) bodies are refused with 502. */
 const MAX_TUNNEL_RESPONSE_BYTES = 32 * 1024 * 1024;
+const MAX_QUEUED_FRAME_BYTES = 64 * 1024 * 1024;
+interface FrameQueue { tail: Promise<void>; count: number; bytes: number; }
+interface OwnedRequest { readonly abort: AbortController; cancelled: boolean; }
+const cancelRequest = (request: OwnedRequest): void => { request.cancelled = true; request.abort.abort(); };
 
 /** Read a response body with a hard byte ceiling; over-ceiling reads are cancelled and refused. */
-async function readTunnelBodyBounded(response: Response, maxBytes: number): Promise<{ ok: true; bytes: Uint8Array<ArrayBuffer> } | { ok: false }> {
+async function readTunnelBodyBounded(response: Response, maxBytes: number, signal: AbortSignal): Promise<{ ok: true; bytes: Uint8Array<ArrayBuffer> } | { ok: false }> {
   const body = response.body;
   if (!body) return { ok: true, bytes: new Uint8Array(0) };
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => {});
-        return { ok: false };
+  // Native reader cancellation settles pending read requests immediately even
+  // when the underlying source's cancellation promise never settles.
+  const abort = () => { void reader.cancel().catch(() => {}); };
+  signal.addEventListener('abort', abort, { once: true });
+  if (signal.aborted) abort();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      signal.throwIfAborted();
+      if (done) break;
+      if (value) {
+        total += value.byteLength;
+        if (total > maxBytes) {
+          void reader.cancel().catch(() => {});
+          return { ok: false };
+        }
+        chunks.push(value);
       }
-      chunks.push(value);
     }
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      merged.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return { ok: true, bytes: merged };
+  } finally {
+    signal.removeEventListener('abort', abort);
+    reader.releaseLock();
   }
-  const merged = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return { ok: true, bytes: merged };
 }
 
 /**
@@ -201,9 +216,7 @@ class DaemonStreamPump {
 
   constructor(
     private readonly streamId: string,
-    private readonly channel: RelaySecureChannel,
-    private readonly pipeIdBytes: Uint8Array<ArrayBuffer>,
-    private readonly ws: RelayClientWebSocket,
+    private readonly send: (frame: Uint8Array<ArrayBuffer>, wanted?: () => boolean) => Promise<void>,
     private readonly bufferCap: number,
     private readonly onError: (error: unknown) => void,
   ) {}
@@ -225,12 +238,12 @@ class DaemonStreamPump {
       while (this.queue.length > 0 && !this.closed) {
         const chunk = this.queue.shift()!;
         const frame = encodeTunnelFrame({ id: this.streamId, kind: 'stream-data', seq: this.seq++ }, chunk);
-        this.ws.send(framePipePayload(this.pipeIdBytes, await this.channel.seal(frame)));
+        await this.send(frame);
         if (this.dropped > 0 && !this.closed) {
           const dropped = this.dropped;
           this.dropped = 0;
           const notice = encodeTunnelFrame({ id: this.streamId, kind: 'stream-overflow', dropped }, new Uint8Array(0));
-          this.ws.send(framePipePayload(this.pipeIdBytes, await this.channel.seal(notice)));
+          await this.send(notice);
         }
       }
     } catch (error) {
@@ -246,7 +259,7 @@ class DaemonStreamPump {
     this.queue.length = 0;
     try {
       const frame = encodeTunnelFrame({ id: this.streamId, kind: 'stream-close', ...(reason ? { reason } : {}) }, new Uint8Array(0));
-      this.ws.send(framePipePayload(this.pipeIdBytes, await this.channel.seal(frame)));
+      await this.send(frame);
     } catch (error) {
       this.onError(error);
     }
@@ -283,6 +296,46 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
   const channels = new Map<string, RelaySecureChannel>();
   // Per-pipe live event subscriptions: pipeKey -> (streamId -> record).
   const pipeStreams = new Map<string, Map<string, DaemonStreamRecord>>();
+  // Unary requests remain owned until dispatch/body buffering actually drain.
+  const pipeRequests = new Map<string, Map<string, OwnedRequest>>();
+  const outgoing = new WeakMap<RelaySecureChannel, FrameQueue>();
+  // Serialize decryption and admission, never the pending dispatch itself: a
+  // cancel frame must be admitted after its request even with asynchronous crypto.
+  const admissions = new WeakMap<RelaySecureChannel, { tail: Promise<void>; queued: number; bytes: number }>();
+
+  function abortPipeRequests(pipeKey: string): void {
+    for (const request of pipeRequests.get(pipeKey)?.values() ?? []) cancelRequest(request);
+  }
+  function abortAllRequests(): void {
+    for (const pipeKey of pipeRequests.keys()) abortPipeRequests(pipeKey);
+  }
+
+  /** Every encrypted daemon frame shares this bounded seal-and-send order. */
+  function sendFrame(frame: Uint8Array<ArrayBuffer>, channel: RelaySecureChannel, pipeIdBytes: Uint8Array<ArrayBuffer>,
+    ws: RelayClientWebSocket, wanted: () => boolean = () => true): Promise<void> {
+    const pipeKey = toBase64Url(pipeIdBytes);
+    const attached = () => !stopped && socket === ws && channels.get(pipeKey) === channel;
+    const retire = () => {
+      if (!attached()) return;
+      channels.delete(pipeKey); abortPipeRequests(pipeKey); closePipeStreams(pipeKey);
+      ws.send(encodeControlFrame({ t: 'pipe-close', pipe: pipeKey, reason: 'send-failed' }));
+    };
+    if (!attached() || !wanted()) return Promise.resolve();
+    const queue = outgoing.get(channel) ?? { tail: Promise.resolve(), count: 0, bytes: 0 };
+    if (queue.count >= maxInFlightRequests + maxStreamsPerPipe * 2 + 1 || queue.bytes + frame.byteLength > MAX_QUEUED_FRAME_BYTES) {
+      retire();
+      return Promise.reject(new Error('relay outbound frame queue limit exceeded'));
+    }
+    queue.count++; queue.bytes += frame.byteLength;
+    const work = queue.tail.then(async () => {
+      if (!attached() || !wanted()) return;
+      const sealed = await channel.seal(frame);
+      if (attached() && wanted()) ws.send(framePipePayload(pipeIdBytes, sealed));
+    }).catch((error: unknown) => { retire(); throw error; });
+    queue.tail = work.then(() => {}, () => {}).finally(() => { queue.count--; queue.bytes -= frame.byteLength; });
+    outgoing.set(channel, queue);
+    return work;
+  }
 
   function countStreams(): number {
     let total = 0;
@@ -309,7 +362,9 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
       const oldest = channels.keys().next().value as string | undefined;
       if (oldest === undefined) break;
       channels.delete(oldest);
+      abortPipeRequests(oldest);
       closePipeStreams(oldest);
+      socket?.send(encodeControlFrame({ t: 'pipe-close', pipe: oldest }));
       droppedPipes += 1;
       logger.warn('relay pipe cap exceeded, evicted coldest pipe', {
         maxPipes,
@@ -343,18 +398,32 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
   }
 
   async function handleDaemonFrame(pipeIdBytes: Uint8Array<ArrayBuffer>, payload: Uint8Array<ArrayBuffer>, ws: RelayClientWebSocket): Promise<void> {
+    if (stopped || socket !== ws) return;
     const pipeKey = toBase64Url(pipeIdBytes);
     const existing = channels.get(pipeKey);
     if (!existing) {
       // First frame on a new pipe is the client's handshake initiation.
       const { keys, message2 } = await respondToHandshake(options.identity, ridBytes, payload);
+      if (stopped || socket !== ws) return;
       channels.set(pipeKey, new RelaySecureChannel(keys, 'daemon'));
       enforcePipeCap();
       ws.send(framePipePayload(pipeIdBytes, message2));
       return;
     }
     touchPipe(pipeKey);
-    await serveTunneledFrame(pipeKey, existing, pipeIdBytes, payload, ws);
+    const admission = admissions.get(existing) ?? { tail: Promise.resolve(), queued: 0, bytes: 0 };
+    // Reserve control-frame headroom even when the request admission cap is one.
+    if (admission.queued >= maxInFlightRequests + maxStreamsPerPipe + 1 || admission.bytes + payload.byteLength > MAX_QUEUED_FRAME_BYTES) {
+      channels.delete(pipeKey); abortPipeRequests(pipeKey); closePipeStreams(pipeKey);
+      logger.warn('relay pipe frame admission cap exceeded');
+      ws.send(encodeControlFrame({ t: 'pipe-close', pipe: pipeKey, reason: 'frame-limit' }));
+      return;
+    }
+    admission.queued++; admission.bytes += payload.byteLength;
+    const work = admission.tail.then(() => serveTunneledFrame(pipeKey, existing, pipeIdBytes, payload, ws));
+    admission.tail = work.then(() => {}, () => {}).finally(() => { admission.queued--; admission.bytes -= payload.byteLength; });
+    admissions.set(existing, admission);
+    await work;
   }
 
   async function serveTunneledFrame(
@@ -364,15 +433,25 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
     sealed: Uint8Array<ArrayBuffer>,
     ws: RelayClientWebSocket,
   ): Promise<void> {
+    if (stopped || socket !== ws || channels.get(pipeKey) !== channel) return;
     const framed = decodeTunnelFrame(await channel.open(sealed));
-    if (!framed) return;
+    if (!framed || stopped || socket !== ws || channels.get(pipeKey) !== channel) return;
     const header = framed.header;
     if (header.kind === 'request') {
-      await serveTunneledRequest(header, framed.body, channel, pipeIdBytes, ws);
+      void serveTunneledRequest(pipeKey, header, framed.body, channel, pipeIdBytes, ws).catch((error: unknown) => {
+        logger.error('relay request handling failed', { error: String(error) });
+      });
+      return;
+    }
+    if (header.kind === 'request-cancel') {
+      const request = pipeRequests.get(pipeKey)?.get(header.id);
+      if (request) cancelRequest(request);
       return;
     }
     if (header.kind === 'stream-open') {
-      await openTunneledStream(pipeKey, header, channel, pipeIdBytes, ws);
+      void openTunneledStream(pipeKey, header, channel, pipeIdBytes, ws).catch((error: unknown) => {
+        logger.error('relay stream handling failed', { error: String(error) });
+      });
       return;
     }
     if (header.kind === 'stream-close') {
@@ -384,12 +463,14 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
   }
 
   async function serveTunneledRequest(
+    pipeKey: string,
     header: { id: string; method: string; path: string; headers: ReadonlyArray<readonly [string, string]> },
     body: Uint8Array<ArrayBuffer>,
     channel: RelaySecureChannel,
     pipeIdBytes: Uint8Array<ArrayBuffer>,
     ws: RelayClientWebSocket,
   ): Promise<void> {
+    if (pipeRequests.get(pipeKey)?.has(header.id)) return;
     // In-flight request cap: refuse (don't retain) when saturated. Each in-flight
     // request pins its reconstructed Request, headers carry the operator-token
     // Authorization header, until dispatch resolves, so an unbounded backlog is
@@ -405,7 +486,7 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
         { id: header.id, kind: 'response', status: 503, headers: [['content-type', 'application/json'], ['retry-after', '1']] },
         encodeUtf8(JSON.stringify({ error: 'relay-overloaded', message: 'Daemon relay is at its in-flight request cap; retry shortly.' })),
       );
-      ws.send(framePipePayload(pipeIdBytes, await channel.seal(busy)));
+      await sendFrame(busy, channel, pipeIdBytes, ws);
       return;
     }
     // Abortable request: a streaming endpoint reached as a plain tunneled
@@ -422,6 +503,12 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
     // response buffering. Buffering is the max-memory phase; releasing the slot
     // at dispatch-resolve would let N buffering requests bypass the cap.
     inFlightRequests += 1;
+    const requests = pipeRequests.get(pipeKey) ?? new Map<string, OwnedRequest>();
+    pipeRequests.set(pipeKey, requests);
+    const owned: OwnedRequest = { abort, cancelled: false };
+    requests.set(header.id, owned);
+    const isCurrent = () => !owned.cancelled && !stopped && socket === ws && channels.get(pipeKey) === channel;
+    const send = (frame: Uint8Array<ArrayBuffer>): Promise<void> => sendFrame(frame, channel, pipeIdBytes, ws, isCurrent);
     try {
       let response: Response;
       try {
@@ -430,28 +517,32 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
         logger.error('relay dispatch failed', { error: String(err) });
         response = new Response('Internal error', { status: 500 });
       }
+      if (!isCurrent()) { void response.body?.cancel().catch(() => {}); return; }
       // A plain tunneled request must never buffer an event stream: refuse
       // honestly and tear the producer down (the stream-open frame kind is the
       // supported path for subscriptions).
       const contentType = response.headers.get('content-type') ?? '';
       if (contentType.includes('text/event-stream')) {
         abort.abort();
-        await response.body?.cancel().catch(() => {});
+        void response.body?.cancel().catch(() => {});
         const refused = encodeTunnelFrame(
           { id: header.id, kind: 'response', status: 501, headers: [['content-type', 'application/json']] },
           encodeUtf8(JSON.stringify({ error: 'streaming-not-supported', message: 'This path serves an event stream; open it with a stream-open frame instead of a plain request.' })),
         );
-        ws.send(framePipePayload(pipeIdBytes, await channel.seal(refused)));
+        await send(refused);
         return;
       }
-      const bounded = await readTunnelBodyBounded(response, MAX_TUNNEL_RESPONSE_BYTES);
+      let bounded: Awaited<ReturnType<typeof readTunnelBodyBounded>>;
+      try { bounded = await readTunnelBodyBounded(response, MAX_TUNNEL_RESPONSE_BYTES, abort.signal); }
+      catch (error) { if (abort.signal.aborted) return; throw error; }
+      if (!isCurrent()) return;
       if (!bounded.ok) {
         abort.abort();
         const refused = encodeTunnelFrame(
           { id: header.id, kind: 'response', status: 502, headers: [['content-type', 'application/json']] },
           encodeUtf8(JSON.stringify({ error: 'response-too-large', message: `Response exceeded the ${MAX_TUNNEL_RESPONSE_BYTES}-byte tunneled-request ceiling.` })),
         );
-        ws.send(framePipePayload(pipeIdBytes, await channel.seal(refused)));
+        await send(refused);
         return;
       }
       const bodyBytes = bounded.bytes;
@@ -461,8 +552,10 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
         { id: header.id, kind: 'response', status: response.status, headers: respHeaders },
         bodyBytes,
       );
-      ws.send(framePipePayload(pipeIdBytes, await channel.seal(out)));
+      await send(out);
     } finally {
+      requests.delete(header.id);
+      if (requests.size === 0 && pipeRequests.get(pipeKey) === requests) pipeRequests.delete(pipeKey);
       inFlightRequests -= 1;
     }
   }
@@ -476,7 +569,7 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
   ): Promise<void> {
     const streams = pipeStreams.get(pipeKey) ?? new Map<string, DaemonStreamRecord>();
     pipeStreams.set(pipeKey, streams);
-    const pump = new DaemonStreamPump(header.id, channel, pipeIdBytes, ws, streamBufferChunks, (error) =>
+    const pump = new DaemonStreamPump(header.id, (frame, wanted) => sendFrame(frame, channel, pipeIdBytes, ws, wanted), streamBufferChunks, (error) =>
       logger.error('relay stream send failed', { error: String(error) }),
     );
     // Per-pipe stream cap: refuse a new stream with an immediate close notice.
@@ -540,6 +633,7 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
     if (stopped) return;
     reconnectTimer = null;
     setStatus(attempt === 0 ? 'connecting' : 'reconnecting');
+    abortAllRequests();
     for (const pipeKey of [...pipeStreams.keys()]) closePipeStreams(pipeKey);
     channels.clear();
     let ws: RelayClientWebSocket;
@@ -556,6 +650,7 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
       ws.send(encodeControlFrame({ t: 'register', role: 'daemon', protocol: RELAY_PROTOCOL_VERSION, rid: options.rid }));
     });
     ws.addEventListener('message', (event) => {
+      if (socket !== ws || stopped) return;
       const data = (event as { data: unknown }).data;
       void (async () => {
         try {
@@ -568,6 +663,7 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
               logger.info('relay registered', { rid: options.rid });
             } else if (frame.t === 'pipe-close') {
               channels.delete(frame.pipe);
+              abortPipeRequests(frame.pipe);
               closePipeStreams(frame.pipe);
             } else if (frame.t === 'error') {
               logger.warn('relay error frame', { code: frame.code, message: frame.message });
@@ -585,7 +681,11 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
       })();
     });
     ws.addEventListener('close', () => {
+      if (socket !== ws) return;
       socket = null;
+      abortAllRequests();
+      for (const pipeKey of [...pipeStreams.keys()]) closePipeStreams(pipeKey);
+      channels.clear();
       if (!stopped) scheduleReconnect();
     });
     ws.addEventListener('error', () => {
@@ -604,6 +704,7 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
       stopped = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
       reconnectTimer = null;
+      abortAllRequests();
       for (const pipeKey of [...pipeStreams.keys()]) closePipeStreams(pipeKey);
       channels.clear();
       try {

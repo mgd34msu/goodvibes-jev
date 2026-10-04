@@ -150,7 +150,7 @@ for (const method of ['check', 'checkDetailed'] as const) {
       }
       installPermissionManagerSafetyGuard(manager);
       const outcome = manager[method]('read', {}, undefined, options).catch((error: unknown) => error);
-      expect(await outcome).toMatchObject({ name: 'AbortError', message: 'The permission request was cancelled' });
+      expect(await outcome).toMatchObject({ name: 'JudgmentError', kind: 'aborted', message: 'the permission request was cancelled' });
       expect(JSON.stringify(await outcome)).not.toContain('synthetic private racing reason');
     });
   }

@@ -5,6 +5,7 @@
 // collaborators (ConversationManager, ToolRegistry, AgentSession, etc.).
 // It does not own any state beyond the duration of a single runAgentLoop() call.
 import { ConversationManager } from '../core/conversation.js';
+import { executeToolCalls as executeAutonomousToolCalls } from '../core/orchestrator-tool-runtime.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import { logger } from '../utils/logger.js';
 import { CIRCUIT_BREAKER_TRIPPED, ConsecutiveErrorBreaker } from '../core/circuit-breaker.js';
@@ -105,12 +106,12 @@ async function executeToolCalls(
     const callSig = `${call.name}::${JSON.stringify(call.arguments)}`;
     // Push a result AND log the matching session record, so the denied /
     // executed / threw branches below stay uniform.
-    const recordResult = (result: ToolResult, argsJson: string): void => {
+    const recordResult = (result: ToolResult, argsJson: string, toolName = call.name): void => {
       results.push(result);
       session.appendMessage({
         type: 'tool_execution',
         turn,
-        toolName: call.name,
+        toolName,
         toolCallId: call.id,
         success: result.success !== false,
         args: argsJson.slice(0, 500),
@@ -119,6 +120,27 @@ async function executeToolCalls(
       });
     };
     try {
+      if (context.autonomousSource !== undefined) {
+        const manager = context.permissionManager;
+        if (!manager?.admitAutonomous || !manager.autonomousPreparation) throw new Error('Native contract tool execution requires its autonomous permission owner');
+        let executedName = call.name;
+        let executedArgs = call.arguments;
+        // Use the same prepared-action owner as foreground/native sessions. The
+        // source getter is a construction binding, not agent prose or AgentInput.
+        const [result] = await executeAutonomousToolCalls({
+          autonomousSource: context.autonomousSource, autonomousPort: context.autonomousPort, turnSignal: signal, toolRegistry,
+          permissionManager: { check: manager.check.bind(manager), checkDetailed: manager.checkDetailed.bind(manager),
+            admitAutonomous: manager.admitAutonomous.bind(manager), autonomousPreparation: manager.autonomousPreparation.bind(manager) },
+          hookDispatcher: null, runtimeBus: context.runtimeBus, sessionId: record.id,
+          emitterContext: () => context.emitterContext(record.id),
+          onToolExecuted(name, args, success) {
+            executedName = name; executedArgs = args;
+            context.onToolExecuted?.(name, args, success);
+          },
+        }, `${record.id}:turn:${turn}`, [call]);
+        if (result === undefined) throw new Error('Native tool runtime returned no result');
+        recordResult(result, JSON.stringify(executedArgs), executedName);
+      } else {
       // Background permission gate: consult the session permission mode exactly
       // like the foreground turn loop (denials return a structured ToolDenial).
       assertPermissionActive(signal);
@@ -140,6 +162,7 @@ async function executeToolCalls(
         }
         recordResult({ ...result, callId: call.id }, JSON.stringify(effectiveArgs));
       }
+      }
     } catch (err) {
       const toolErr = signal?.aborted ? 'cancelled by user' : summarizeError(err);
       recordResult({ callId: call.id, success: false, error: toolErr, ...(signal?.aborted ? { cancelled: true } : {}) }, JSON.stringify(call.arguments));
@@ -158,13 +181,14 @@ async function finalizeAgentRun(
   session: AgentSession | null,
   preAgentProcessIds: Set<string>,
 ): Promise<void> {
+  if (context.beforeRunSettlement) await context.beforeRunSettlement();
   const statusAfterLoop = (record as { status: string }).status;
   if (statusAfterLoop !== 'failed' && statusAfterLoop !== 'cancelled') {
     record.status = 'completed';
   }
   record.completedAt = Date.now();
   recoverEmptyConversationalReply(record);
-  cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
+  if (!context.beforeRunSettlement) cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
 
   if (context.runtimeBus && record.status !== 'failed' && statusAfterLoop !== 'cancelled') {
     context.emitAgentCompletedEvent(record.id, (record.completedAt ?? Date.now()) - record.startedAt, record.fullOutput ?? '', record.toolCallCount, record.usage);
@@ -214,10 +238,11 @@ async function handleAgentRunFailure(
       record.fullOutput = typeof lastAssistant.content === 'string' ? lastAssistant.content : '';
     }
   }
+  if (context.beforeRunSettlement) await context.beforeRunSettlement();
   record.status = 'failed';
   record.error = message;
   record.completedAt = Date.now();
-  cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
+  if (!context.beforeRunSettlement) cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
   context.emitAgentFailedEvent(record.id, message, Date.now() - record.startedAt);
   logger.error(`Agent ${record.id} failed`, { error: message });
   if (session) {
@@ -553,6 +578,7 @@ export async function runAgentTask(
             context.emitStreamDelta(record.id, delta.content ?? '', streamAccumulated);
           };
 
+          await context.beforeProviderRequest?.();
           try {
             // Thread the agent's cancellation signal into the in-flight LLM
             // request so a cancel/kill aborts the provider call mid-stream, not

@@ -20,10 +20,14 @@
  *
  * Storage is synchronous JSON at mode 0600 (the same custody posture as the
  * shared operator token file), because the auth path that consults it is itself
- * synchronous, one in-memory index, flushed on every mutation.
+ * synchronous. Every writer reloads under a shared ownership lock, persists
+ * atomically, then publishes its new in-memory index. Native launches hold the
+ * same lock across their final authorization/launch boundary.
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { readJsonFileOrQuarantine, writeJsonFileAtomic } from '../utils/atomic-json-store.js';
+import { lstatSync, mkdirSync, readFileSync, rmdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { AtomicWriteDurabilityError, confirmFileDurable, readJsonFileOrQuarantine, writeJsonFileAtomic } from '../utils/atomic-json-store.js';
 import { logger } from '../utils/logger.js';
 
 const TOKEN_PREFIX = 'gvp_';
@@ -38,6 +42,11 @@ interface StoredPairingToken {
   readonly tokenHash: string;
   readonly createdAt: number;
   lastSeenAt?: number | undefined;
+}
+
+interface PairingOwnerLock {
+  assertOwned(): void;
+  release(): void;
 }
 
 interface PairingTokenSnapshot {
@@ -63,7 +72,50 @@ export interface MintedPairingToken {
   readonly createdAt: number;
 }
 
-/** What a successful authenticate resolves to: the identity behind the token. */
+/** Private native authority identity. It never carries the token or its hash. */
+export interface AuthenticatedNativePairingToken {
+  readonly kind: 'pairing-token';
+  readonly tokenId: string;
+  readonly principalId: string;
+  readonly authorityId: string;
+  /** The unique persisted pairing ID is its incarnation, not an invented epoch. */
+  readonly authorityRevision: string;
+}
+
+export class PairingTokenStoreBusyError extends Error {
+  readonly code = 'PAIRING_TOKEN_STORE_BUSY';
+  constructor() {
+    super('Pairing token authority is busy or its ownership lock needs recovery');
+    this.name = 'PairingTokenStoreBusyError';
+  }
+}
+
+function validateSnapshot(parsed: unknown): PairingTokenSnapshot {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('pairing token store is not a JSON object');
+  }
+  const snapshot = parsed as Partial<PairingTokenSnapshot>;
+  if (!Array.isArray(snapshot.tokens)) throw new Error('pairing token store is missing its tokens array');
+  if (snapshot.legacyRevoked !== undefined && typeof snapshot.legacyRevoked !== 'boolean') {
+    throw new Error('pairing token store has an invalid legacy revocation flag');
+  }
+  const ids = new Set<string>(), hashes = new Set<string>();
+  for (const record of snapshot.tokens) {
+    if (!record || typeof record !== 'object' || Array.isArray(record)
+      || typeof record.id !== 'string' || !/^pair-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.id)
+      || typeof record.tokenHash !== 'string' || !/^[0-9a-f]{64}$/.test(record.tokenHash)
+      || typeof record.name !== 'string' || !record.name.trim()
+      || typeof record.createdAt !== 'number' || !Number.isFinite(record.createdAt)
+      || (record.lastSeenAt !== undefined && (typeof record.lastSeenAt !== 'number' || !Number.isFinite(record.lastSeenAt)))
+      || ids.has(record.id) || hashes.has(record.tokenHash)) {
+      throw new Error('pairing token store has an invalid or duplicate record');
+    }
+    ids.add(record.id); hashes.add(record.tokenHash);
+  }
+  return { tokens: snapshot.tokens, legacyRevoked: snapshot.legacyRevoked === true };
+}
+
+/** What ordinary authentication resolves to: the identity behind the token. */
 export interface AuthenticatedPairingToken {
   readonly id: string;
   readonly name: string;
@@ -117,15 +169,27 @@ export interface PairingTokenManagerOptions {
 export class PairingTokenManager {
   private readonly filePath: string;
   private snapshot: PairingTokenSnapshot;
-  /** hash -> record, for O(1) synchronous auth lookup. */
+  /** Live hash -> identity index, paired with fresh disk proof for native auth. */
   private index = new Map<string, StoredPairingToken>();
   private lastSeenFlushAt = 0;
+  /** Any failed write blocks native admission until a successful owner mutation. */
+  private nativePersistenceFailed = false;
   private readonly readMaxPaired: (() => number | undefined) | null;
 
   constructor(filePath: string, options: PairingTokenManagerOptions = {}) {
     this.filePath = filePath;
     this.readMaxPaired = options.maxPaired ?? null;
-    this.snapshot = this.load();
+    this.snapshot = { tokens: [] };
+    let lock: PairingOwnerLock | undefined;
+    try {
+      lock = this.acquireOwnerLock();
+      this.snapshot = this.load();
+    } catch {
+      // A live owner may be launching, or this process may lack write access.
+      // Reading a complete file is safe; quarantining/repairing it without
+      // ownership is not. Ordinary auth retains its read-only startup behavior.
+      try { this.snapshot = this.readPersisted() ?? { tokens: [] }; } catch { /* fail closed */ }
+    } finally { lock?.release(); }
     this.reindex();
   }
 
@@ -153,19 +217,6 @@ export class PairingTokenManager {
     return this.snapshot.tokens.length;
   }
 
-  /**
-   * Whether `name` is a node that is already paired (case/whitespace-insensitive).
-   *
-   * The pairing exchange carries a name and nothing else, so the name IS the
-   * node's identity here. A device re-pairing under the name it already holds is
-   * the same node, not an additional one.
-   */
-  private findByName(name: string): StoredPairingToken | undefined {
-    const normalized = name.trim().toLowerCase();
-    if (!normalized) return undefined;
-    return this.snapshot.tokens.find((t) => t.name.trim().toLowerCase() === normalized);
-  }
-
   private load(): PairingTokenSnapshot {
     // A corrupt file must not brick auth: start clean rather than throw. The
     // unreadable file is quarantined (moved aside with a receipt) instead of
@@ -176,16 +227,7 @@ export class PairingTokenManager {
         readJsonFileOrQuarantine<PairingTokenSnapshot>(this.filePath, {
           label: 'pairing/pairing-token-store',
           recovery: 'Every previously paired device must pair again; no device keeps access on a token this store can no longer verify.',
-          validate: (parsed) => {
-            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-              throw new Error('pairing token store is not a JSON object');
-            }
-            const snapshot = parsed as Partial<PairingTokenSnapshot>;
-            if (!Array.isArray(snapshot.tokens)) {
-              throw new Error('pairing token store is missing its tokens array');
-            }
-            return { tokens: snapshot.tokens, legacyRevoked: snapshot.legacyRevoked === true };
-          },
+          validate: validateSnapshot,
         }) ?? { tokens: [] }
       );
     } catch {
@@ -197,12 +239,123 @@ export class PairingTokenManager {
     this.index = new Map(this.snapshot.tokens.map((t) => [t.tokenHash, t]));
   }
 
-  private flush(): void {
+  /** Never quarantine or repair as a side effect of authenticating a request. */
+  private readPersisted(): PairingTokenSnapshot | null {
     try {
-      writeJsonFileAtomic(this.filePath, this.snapshot, { mode: 0o600, trailingNewline: false });
+      return validateSnapshot(JSON.parse(readFileSync(this.filePath, 'utf8')));
     } catch (error) {
-      logger.warn('Pairing token store flush failed', { path: this.filePath, error: String(error) });
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
     }
+  }
+
+  /**
+   * One owner lock for EVERY writer and the native launch boundary, including
+   * other managers/processes. Acquisition never waits on the JS thread. No
+   * age-based stealing: a suspended live owner is still an owner. A crash leaves
+   * a fail-closed lock requiring explicit recovery, never guessed authority.
+   */
+  private acquireOwnerLock(): PairingOwnerLock {
+    mkdirSync(dirname(this.filePath), { recursive: true });
+    const lockPath = `${this.filePath}.owner-lock`;
+    try { mkdirSync(lockPath); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new PairingTokenStoreBusyError();
+      throw error;
+    }
+    const owned = lstatSync(lockPath);
+    const assertOwned = () => {
+      let current;
+      try { current = lstatSync(lockPath); } catch { throw new PairingTokenStoreBusyError(); }
+      if (!current.isDirectory() || current.dev !== owned.dev || current.ino !== owned.ino
+        || current.birthtimeMs !== owned.birthtimeMs) throw new PairingTokenStoreBusyError();
+    };
+    return { assertOwned, release: () => { assertOwned(); rmdirSync(lockPath); } };
+  }
+
+  private publish(snapshot: PairingTokenSnapshot): void {
+    this.snapshot = snapshot;
+    this.reindex();
+  }
+
+  /** Reload under ownership, persist, THEN expose a successful mutation. */
+  private mutate<T>(operation: (snapshot: PairingTokenSnapshot) => { readonly value: T; readonly changed: boolean }, nativeRecovery = true): T {
+    const lock = this.acquireOwnerLock();
+    try {
+      const persisted = this.readPersisted();
+      const snapshot = persisted ?? { tokens: [] };
+      const result = operation(snapshot);
+      try {
+        lock.assertOwned();
+        if (result.changed) {
+          writeJsonFileAtomic(this.filePath, snapshot, { mode: 0o600, trailingNewline: false, durable: true });
+        } else if (nativeRecovery && persisted !== null) {
+          // Retrying an indeterminate revoke can find the record already absent.
+          // Readable bytes alone do not clear uncertainty; confirm the full
+          // publication even when the retry has no new bytes to write.
+          confirmFileDurable(this.filePath);
+        }
+      } catch (error) {
+        this.nativePersistenceFailed = true;
+        throw error;
+      }
+      if (nativeRecovery && (result.changed || persisted !== null)) this.nativePersistenceFailed = false;
+      lock.assertOwned();
+      this.publish(snapshot);
+      return result.value;
+    } finally { lock.release(); }
+  }
+
+  /**
+   * Strict native reads prove that the immutable live identity is still present
+   * in a freshly read, valid persisted snapshot. Last-seen and labels are not
+   * authority generations. Reads confirm durability without stamping last-seen
+   * or rewriting the file; failed confirmation never grants authority.
+   */
+  authenticateNative(token: string): AuthenticatedNativePairingToken | null {
+    const normalized = token.trim();
+    if (this.nativePersistenceFailed || !normalized.startsWith(TOKEN_PREFIX)) return null;
+    const hash = hashToken(normalized);
+    const live = this.index.get(hash);
+    if (!live) return null;
+    let persisted: StoredPairingToken | undefined;
+    try {
+      // A fresh manager cannot treat post-rename, unconfirmed bytes as durable
+      // authority. Confirmation also makes recovery after restart explicit.
+      const before = readFileSync(this.filePath, 'utf8');
+      const snapshot = validateSnapshot(JSON.parse(before));
+      confirmFileDurable(this.filePath);
+      if (readFileSync(this.filePath, 'utf8') !== before) return null;
+      persisted = snapshot.tokens.find(record => record.tokenHash === hash);
+    } catch (error) {
+      if (error instanceof AtomicWriteDurabilityError) this.nativePersistenceFailed = true;
+      return null;
+    }
+    if (!persisted || persisted.id !== live.id || persisted.createdAt !== live.createdAt) return null;
+    const principalId = pairingPrincipalId(persisted.id);
+    return Object.freeze({ kind: 'pairing-token', tokenId: persisted.id, principalId,
+      authorityId: principalId, authorityRevision: persisted.id });
+  }
+
+  /** Hold paired ownership through the caller's workspace/ledger/launch boundary. */
+  async withNativeAuthority<T>(token: string, expected: AuthenticatedNativePairingToken,
+    operation: (assertCurrent: () => AuthenticatedNativePairingToken) => T | Promise<T>): Promise<T> {
+    const lock = this.acquireOwnerLock();
+    let active = true;
+    try {
+      const assertCurrent = () => {
+        lock.assertOwned();
+        const current = active ? this.authenticateNative(token) : null;
+        if (!current || current.kind !== expected.kind || current.tokenId !== expected.tokenId
+          || current.principalId !== expected.principalId || current.authorityId !== expected.authorityId
+          || current.authorityRevision !== expected.authorityRevision) {
+          throw new Error('Persisted native pairing authority is no longer valid');
+        }
+        return current;
+      };
+      assertCurrent();
+      return await operation(assertCurrent);
+    } finally { active = false; lock.release(); }
   }
 
   /**
@@ -230,34 +383,25 @@ export class PairingTokenManager {
     input: { readonly name: string },
     options: { readonly enforceCap: boolean },
   ): MintedPairingToken {
-    const cap = options.enforceCap ? this.currentCap() : null;
-    if (cap !== null && this.snapshot.tokens.length >= cap) {
-      const existing = this.findByName(input.name);
-      if (!existing) {
-        throw new PairingLimitReachedError(cap, this.snapshot.tokens.length);
+    return this.mutate((snapshot) => {
+      const cap = options.enforceCap ? this.currentCap() : null;
+      if (cap !== null && snapshot.tokens.length >= cap) {
+        const normalized = input.name.trim().toLowerCase();
+        const existing = normalized ? snapshot.tokens.find(record => record.name.trim().toLowerCase() === normalized) : undefined;
+        if (!existing) throw new PairingLimitReachedError(cap, snapshot.tokens.length);
+        logger.info('Pairing at the device.nodes.maxPaired cap: re-pairing an already paired node', {
+          name: existing.name, maxPaired: cap, pairedCount: snapshot.tokens.length,
+        });
+        snapshot.tokens = snapshot.tokens.filter(record => record.id !== existing.id);
       }
-      // The same node pairing again. Its previous token is superseded (and
-      // therefore stops authenticating), which is what "re-pair this device"
-      // means; it is not an unpairing of some other device.
-      logger.info('Pairing at the device.nodes.maxPaired cap: re-pairing an already paired node', {
-        name: existing.name,
-        maxPaired: cap,
-        pairedCount: this.snapshot.tokens.length,
-      });
-      this.snapshot.tokens = this.snapshot.tokens.filter((t) => t.id !== existing.id);
-      this.reindex();
-    }
-    const token = generateTokenValue();
-    const record: StoredPairingToken = {
-      id: `pair-${randomUUID()}`,
-      name: input.name.trim() || 'Unnamed device',
-      tokenHash: hashToken(token),
-      createdAt: Date.now(),
-    };
-    this.snapshot.tokens.push(record);
-    this.index.set(record.tokenHash, record);
-    this.flush();
-    return { id: record.id, name: record.name, token, createdAt: record.createdAt };
+      const token = generateTokenValue();
+      const record: StoredPairingToken = {
+        id: `pair-${randomUUID()}`, name: input.name.trim() || 'Unnamed device',
+        tokenHash: hashToken(token), createdAt: Date.now(),
+      };
+      snapshot.tokens.push(record);
+      return { value: { id: record.id, name: record.name, token, createdAt: record.createdAt }, changed: true };
+    });
   }
 
   /**
@@ -283,14 +427,30 @@ export class PairingTokenManager {
   authenticate(token: string): AuthenticatedPairingToken | null {
     const normalized = token.trim();
     if (!normalized.startsWith(TOKEN_PREFIX)) return null;
-    const record = this.index.get(hashToken(normalized));
+    let snapshot: PairingTokenSnapshot | null;
+    try { snapshot = this.readPersisted(); } catch { return null; }
+    if (!snapshot) return null;
+    this.publish(snapshot);
+    const hash = hashToken(normalized);
+    let record = this.index.get(hash);
     if (!record) return null;
     const now = Date.now();
-    record.lastSeenAt = now;
     if (now - this.lastSeenFlushAt >= LAST_SEEN_FLUSH_INTERVAL_MS) {
-      this.lastSeenFlushAt = now;
-      this.flush();
+      try {
+        record = this.mutate(current => {
+          const found = current.tokens.find(item => item.tokenHash === hash);
+          if (found) found.lastSeenAt = now;
+          return { value: found, changed: found !== undefined };
+        }, false);
+        this.lastSeenFlushAt = now;
+      } catch (error) {
+        // Telemetry persistence never grants access or resurrects cached records.
+        logger.warn('Pairing token last-seen update failed', { path: this.filePath, error: String(error) });
+        try { record = this.readPersisted()?.tokens.find(item => item.tokenHash === hash); }
+        catch { return null; }
+      }
     }
+    if (!record) return null;
     return { id: record.id, name: record.name, principalId: pairingPrincipalId(record.id) };
   }
 
@@ -306,35 +466,39 @@ export class PairingTokenManager {
 
   /** Rename a token's user-visible label. False when the id is unknown. */
   rename(id: string, name: string): boolean {
-    const record = this.snapshot.tokens.find((t) => t.id === id);
-    if (!record) return false;
-    record.name = name.trim() || record.name;
-    this.flush();
-    return true;
+    return this.mutate(snapshot => {
+      const record = snapshot.tokens.find(item => item.id === id);
+      if (!record) return { value: false, changed: false };
+      record.name = name.trim() || record.name;
+      return { value: true, changed: true };
+    });
   }
 
-  /**
-   * Revoke a single device's token. Delete means delete: the record is dropped
-   * and the token fails the very next authenticate. False when already absent.
-   */
+  /** Revoke one pairing. A persistence failure throws instead of reporting success. */
   revoke(id: string): boolean {
-    const before = this.snapshot.tokens.length;
-    this.snapshot.tokens = this.snapshot.tokens.filter((t) => t.id !== id);
-    if (this.snapshot.tokens.length === before) return false;
-    this.reindex();
-    this.flush();
-    return true;
+    return this.mutate(snapshot => {
+      const before = snapshot.tokens.length;
+      snapshot.tokens = snapshot.tokens.filter(record => record.id !== id);
+      const changed = snapshot.tokens.length !== before;
+      return { value: changed, changed };
+    });
   }
 
   /** Whether the legacy single shared token has been revoked here. */
   isLegacyRevoked(): boolean {
-    return this.snapshot.legacyRevoked === true;
+    try {
+      const snapshot = this.readPersisted();
+      if (snapshot) this.publish(snapshot);
+      return snapshot?.legacyRevoked === true || this.snapshot.legacyRevoked === true;
+    } catch { return this.snapshot.legacyRevoked === true; }
   }
 
-  /** Revoke the legacy single shared token; it stops authenticating immediately. */
+  /** Revoke the legacy single shared token; report only persisted success. */
   revokeLegacyShared(): void {
-    if (this.snapshot.legacyRevoked === true) return;
-    this.snapshot.legacyRevoked = true;
-    this.flush();
+    this.mutate(snapshot => {
+      const changed = snapshot.legacyRevoked !== true;
+      snapshot.legacyRevoked = true;
+      return { value: undefined, changed };
+    });
   }
 }

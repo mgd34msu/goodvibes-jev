@@ -8,6 +8,7 @@ import { settingsHazard } from './batteries/settings-hazard.js';
 import { mcpScopeArg } from './batteries/mcp-scope-arg.js';
 import { policyBreadth } from './batteries/policy-breadth.js';
 import { ledgerArg } from './batteries/ledger-arg.js';
+import { autonomousDisposition, autonomousRefusal } from './batteries/autonomous.js';
 
 /**
  * Every named decision the gate makes, for calibration:
@@ -25,6 +26,8 @@ registry.register(settingsHazard);
 registry.register(mcpScopeArg);
 registry.register(policyBreadth);
 registry.register(ledgerArg);
+registry.register(autonomousDisposition);
+registry.register(autonomousRefusal);
 
 import { editTarget } from '../tools/batteries/edit-target.js';
 import { contentRank } from '../tools/batteries/content-rank.js';

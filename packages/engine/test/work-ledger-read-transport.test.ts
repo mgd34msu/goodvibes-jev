@@ -8,10 +8,10 @@ import type { OperatorRemoteClient } from '../operator-sdk/src/client-core.js';
 import { createOperatorWorkLedgerReadClient } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/operator-read-client';
 import { WorkLedgerAccessError, type WorkLedgerEvent } from '../sdk/src/platform/workflow/work-ledger/types.js';
 
-function event(sequence: number): WorkLedgerEvent {
+function event(sequence: number): Exclude<WorkLedgerEvent, { type: 'import_legacy' }> {
   return { sequence, type: 'create', actorId: 'fixture-owner', requestId: `request-${sequence}`, workId: `work-${sequence}`,
     attemptId: null, at: sequence,
-    work: { id: `work-${sequence}`, title: 'Synthetic task', goal: 'Fixture only', criteria: ['Read safely'], revision: sequence,
+    work: { id: `work-${sequence}`, title: 'Synthetic task', goal: 'Fixture only', criteria: ['Read safely'], source: null, revision: sequence,
       criteriaRevision: 1, reportedState: 'pending', currentAttemptId: null, createdAt: sequence, updatedAt: sequence },
     attempts: [], evidence: null, reason: null };
 }
@@ -30,7 +30,7 @@ function fixture(count = 0) {
     async readSnapshot() {
       snapshotCalls += 1;
       if (closed) throw new WorkLedgerAccessError('closed', 'closed');
-      return { projectId: 'fixture-project', cursor: events.length, revision: events.length, works: [] as Array<{ work: WorkLedgerEvent['work']; attempt: null; verification: { state: 'unverified'; reason: string; evidence: null }; attention: [] }> };
+      return { projectId: 'fixture-project', cursor: events.length, revision: events.length, works: [] as Array<{ work: Exclude<WorkLedgerEvent, { type: 'import_legacy' }>['work']; attempt: null; verification: { state: 'unverified'; reason: string; evidence: null }; attention: [] }> };
     },
     subscribe() { return () => {}; },
     dispose() {},
@@ -79,7 +79,7 @@ describe('native ledger authenticated read transport', () => {
   test('owner auth reaches matching host; read-only user and unrelated scopes cannot read', async () => {
     const host = fixture();
     const reader = createOperatorWorkLedgerReadClient(host.sdk(), 'fixture-project');
-    expect(await reader.readSnapshot()).toEqual({ projectId: 'fixture-project', cursor: 0, revision: 0, works: [] });
+    expect(await reader.readSnapshot()).toEqual({ projectId: 'fixture-project', cursor: 0, revision: 0, provenance: 'available', works: [] });
     expect(host.requests[0]?.headers.get('authorization')).toBe('Bearer synthetic-owner-token');
     await expect(createOperatorWorkLedgerReadClient(host.sdk('synthetic-reader-token'), 'fixture-project').readSnapshot()).rejects.toMatchObject({ status: 403 });
     const descriptor = host.catalog.get('workLedger.snapshot')!;
@@ -359,10 +359,10 @@ describe('fresh authorization on every ledger entry point', () => {
     expect((await ws.call(method, { body: { actorId: 'forged', authority: {}, context: { admin: true, scopes: ['*'] } } }))?.status).toBe(400);
     expect(host.snapshotCalls).toBe(0); expect(host.historyCalls).toBe(0);
   });
-  test('only these two catalog methods opt into the new fresh-auth gate', () => {
+  test('ledger read and import methods opt into the fresh-auth gate', () => {
     const host = fixture();
     expect(host.catalog.list().filter(method => method.metadata?.requiresFreshOperatorAuth === true).map(method => method.id).sort())
-      .toEqual(['workLedger.history', 'workLedger.snapshot']);
+      .toEqual(['workLedger.execution.cancel', 'workLedger.execution.resume', 'workLedger.execution.start', 'workLedger.execution.status', 'workLedger.history', 'workLedger.importLegacy', 'workLedger.intake.admit', 'workLedger.intake.cancel', 'workLedger.intake.capture', 'workLedger.intake.get', 'workLedger.intake.resume', 'workLedger.prepareLegacyImport', 'workLedger.project', 'workLedger.snapshot', 'workLedger.submission.get', 'workLedger.submit']);
   });
 });
 

@@ -26,6 +26,8 @@ import { mapLimit } from '@goodvibes-jev/judgment';
 import type { ConfigManager } from '../config/manager.js';
 import { ContractStore } from '../contract/store.js';
 import { createContractRunner, type ContractRunner } from '../contract/runner.js';
+import type { NativeContractDecisionHost } from '../contract/native-decisions.js';
+import type { DurableContractBoundary } from '../contract/durable-admission.js';
 import { createRoutePlannerContractSelector } from '../contract/route.js';
 import type { ResumeReport } from '../contract/resume.js';
 import type { ExecutionPlans, WorkPlanService } from '../contract/plan-sync.js';
@@ -47,6 +49,11 @@ import { makeRuntimeFleetProbe } from './orchestration/fleet-count.js';
 import type { RuntimeStore } from './store/index.js';
 import type { ProviderStatus } from './store/domains/provider-health.js';
 
+export interface NativeContractCompositionOwner {
+  readonly decisions: NativeContractDecisionHost;
+  readonly admission: DurableContractBoundary;
+}
+
 export interface ContractRunnerCompositionOptions {
   readonly runtimeBus: RuntimeEventBus;
   readonly agentManager: AgentManager;
@@ -60,7 +67,10 @@ export interface ContractRunnerCompositionOptions {
   /** Live provider health, so the route planner skips providers that are down. */
   readonly runtimeStore?: Pick<RuntimeStore, 'getState'> | undefined;
   readonly workPlanService?: WorkPlanService | undefined;
+  readonly readAccessFilter?: import('../tools/shared/read-access.js').ReadAccessFilter | undefined;
   readonly planManager?: ExecutionPlans | undefined;
+  /** Trusted paired native owners. Absent keeps historical composition; never sourced from config or wire input. */
+  readonly nativeOwner?: NativeContractCompositionOwner | undefined;
 }
 
 /**
@@ -193,6 +203,9 @@ export interface ComposedContractRunner {
 }
 
 export function composeContractRunner(options: ContractRunnerCompositionOptions): ComposedContractRunner {
+  if (options.nativeOwner && (typeof options.readAccessFilter !== 'function' || typeof options.nativeOwner.decisions?.authorityOf !== 'function' || typeof options.nativeOwner.admission?.withCurrent !== 'function')) {
+    throw new Error('Native composition requires both authenticated owners and the original read authorization');
+  }
   const store = new ContractStore({ projectRoot: options.projectRoot });
   const { priceUsage, priceProvenance } = buildPricingSeams(options.providerRegistry);
   const planner = createBenchmarkRoutePlanner({
@@ -201,11 +214,13 @@ export function composeContractRunner(options: ContractRunnerCompositionOptions)
     providerHealth: routeProviderHealth(options.providerRegistry, options.runtimeStore),
   }, options.providerRegistry.benchmarks);
   const runner = createContractRunner({
+    ...(options.nativeOwner === undefined ? {} : { nativeDecisions: options.nativeOwner.decisions, durableAdmission: options.nativeOwner.admission }),
     agentManager: options.agentManager,
     messageBus: options.agentMessageBus,
     runtimeBus: options.runtimeBus,
     configManager: options.configManager,
     projectRoot: options.projectRoot,
+    readAccessFilter: options.readAccessFilter,
     routeSelector: createRoutePlannerContractSelector(planner, {
       catalogSettled: async () => {
         await Promise.all([options.providerRegistry.modelDiscoverySettled(), options.providerRegistry.benchmarks.benchmarksSettled()]);
@@ -217,6 +232,8 @@ export function composeContractRunner(options: ContractRunnerCompositionOptions)
       configManager: options.configManager,
       runtimeBus: options.runtimeBus,
       projectRoot: input.projectRoot,
+      initializeWorktree: input.initializeWorktree,
+      prepareInputAuthority: input.prepareInputAuthority,
       stateRoot: input.stateRoot,
       stateNamespace: input.stateNamespace,
       contractUnitSettlement: input.contractUnitSettlement,

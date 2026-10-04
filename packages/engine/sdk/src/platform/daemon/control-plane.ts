@@ -8,6 +8,8 @@ import {
   extractOperatorAuthToken,
   isOperatorAdmin,
   type PairingTokenAuthenticator,
+  type NativeExecutionAuthority,
+  type NativePairedSnapshot,
 } from '../security/http-auth.js';
 import type { ControlPlaneGateway, SharedSessionBroker } from '../control-plane/index.js';
 import type { GatewayMethodCatalog, GatewayMethodDescriptor } from '../control-plane/index.js';
@@ -214,6 +216,55 @@ export class DaemonControlPlaneHelper {
       admin,
       scopes: this.getGrantedGatewayScopes(admin),
     };
+  }
+
+  /**
+   * Resolve only persisted per-pairing native authority. In particular, a
+   * session named `pairing:...` and the legacy operator token never qualify.
+   * This path must not call ordinary authentication and its last-seen writer.
+   */
+  describeNativeExecutionAuthority(token: string): NativePairedSnapshot | null {
+    const paired = this.context.pairingTokens?.authenticateNative?.(token);
+    if (!paired || paired.kind !== 'pairing-token') return null;
+    return Object.freeze({ ...paired, scopes: Object.freeze([...this.getGrantedGatewayScopes(true)]) });
+  }
+
+  /**
+   * Only the transport constructs this capability. The credential stays in its
+   * closure, outside native state, durable records and returned identities.
+   * Cached transport scopes are a ceiling; a later catalog cannot widen them.
+   */
+  createNativeExecutionAuthority(token: string, capturedScopes?: readonly string[]): NativeExecutionAuthority | null {
+    const owner = this.context.pairingTokens;
+    if (!owner?.authenticateNative || !owner.withNativeAuthority) return null;
+    const initial = this.describeNativeExecutionAuthority(token);
+    if (!initial) return null;
+    const ceiling = new Set(capturedScopes ?? initial.scopes);
+    const current = (): NativePairedSnapshot | null => {
+      const fresh = this.describeNativeExecutionAuthority(token);
+      if (!fresh || fresh.tokenId !== initial.tokenId || fresh.authorityRevision !== initial.authorityRevision) return null;
+      const scopes = ceiling.has('*') ? fresh.scopes : fresh.scopes.includes('*') ? [...ceiling]
+        : fresh.scopes.filter(scope => ceiling.has(scope));
+      return Object.freeze({ ...fresh, scopes: Object.freeze([...scopes].sort()) });
+    };
+    return Object.freeze({
+      current,
+      withCurrent: <T>(expected: NativePairedSnapshot,
+        operation: (assertCurrent: () => NativePairedSnapshot) => T | Promise<T>): Promise<T> =>
+        owner.withNativeAuthority!(token, expected, (assertPaired) => {
+          const assertCurrent = (): NativePairedSnapshot => {
+            assertPaired();
+            const fresh = current();
+            if (!fresh || fresh.scopes.length !== expected.scopes.length
+              || fresh.scopes.some((scope, index) => scope !== expected.scopes[index])) {
+              throw new Error('Native pairing scopes are no longer current');
+            }
+            return fresh;
+          };
+          assertCurrent();
+          return operation(assertCurrent);
+        }),
+    });
   }
 
   getGrantedGatewayScopes(includeWrite: boolean): readonly string[] {
@@ -616,6 +667,7 @@ export class DaemonControlPlaneHelper {
   async invokeGatewayMethodCall(input: {
     readonly authToken: string;
     readonly methodId: string;
+    readonly signal?: AbortSignal | undefined;
     readonly query?: Record<string, unknown> | undefined;
     readonly body?: unknown | undefined;
     readonly context?: {
@@ -709,6 +761,17 @@ export class DaemonControlPlaneHelper {
         const body = await this.context.gatewayMethods.invoke(input.methodId, {
           body: input.body,
           query: input.query,
+          signal: input.signal,
+          nativeExecutionAuthority: this.createNativeExecutionAuthority(input.authToken, context?.scopes ?? []) ?? undefined,
+          isAuthorized: (requiredScopes = []) => {
+            if (descriptor.metadata?.requiresFreshOperatorAuth !== true) return true;
+            const fresh = this.describeAuthenticatedPrincipal(input.authToken);
+            return fresh !== null && fresh.principalId === context?.principalId
+              && requiredScopes.every(scope => (fresh.scopes.includes('*') || fresh.scopes.includes(scope))
+                && (context?.scopes?.includes('*') || context?.scopes?.includes(scope)))
+              && this.validateGatewayInvocation(descriptor, fresh) === null
+              && this.validateGatewayInvocation(descriptor, context) === null;
+          },
           context: {
             authToken: input.authToken,
             principalId: context?.principalId,

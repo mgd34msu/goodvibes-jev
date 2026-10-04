@@ -1,3 +1,4 @@
+import { prepareAgentResearchReportInput, type AgentResearchReportSource as ResearchSource } from '../agent/research-report-input.ts';
 import type { ArtifactDescriptor, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -24,16 +25,6 @@ export interface AgentResearchReportToolArgs {
 
 type AgentResearchReportArtifactStore = Pick<ArtifactStore, 'create'>;
 
-interface ResearchSource {
-  readonly title: string;
-  readonly url?: string;
-  readonly publisher?: string;
-  readonly publishedAt?: string;
-  readonly accessedAt?: string;
-  readonly credibility: string;
-  readonly note?: string;
-}
-
 interface CitationCoverage {
   readonly sourceCount: number;
   readonly citedSourceIds: readonly string[];
@@ -45,8 +36,6 @@ interface CitationCoverage {
 }
 
 const MAX_REPORT_CHARS = 80_000;
-const MAX_SOURCE_COUNT = 50;
-const SECRETISH = /token|secret|password|authorization|credential|api[-_]?key/i;
 
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -73,63 +62,6 @@ function previewText(value: string, limit = 240): string {
   const normalized = value.replace(/\s+/g, ' ').trim();
   if (normalized.length <= limit) return normalized;
   return `${normalized.slice(0, Math.max(0, limit - 3)).trimEnd()}...`;
-}
-
-function readSource(value: unknown): ResearchSource | null {
-  if (typeof value === 'string') {
-    const text = value.trim();
-    if (!text) return null;
-    const parts = text.split('|').map((part) => part.trim()).filter(Boolean);
-    const maybeUrlIndex = parts.findIndex((part) => /^https?:\/\//i.test(part));
-    const maybeUrl = maybeUrlIndex >= 0 ? parts[maybeUrlIndex] : '';
-    const detailStart = maybeUrlIndex >= 0 ? maybeUrlIndex + 1 : 1;
-    const noteParts = parts.slice(detailStart + 1);
-    const nonUrlParts = parts.filter((_, index) => index !== maybeUrlIndex);
-    const title = maybeUrlIndex === 0 ? (nonUrlParts.length > 1 ? nonUrlParts[0] : maybeUrl) : (parts[0] ?? maybeUrl ?? text);
-    return {
-      title: title || text,
-      ...(maybeUrl ? { url: sanitizeSourceUrl(maybeUrl) } : {}),
-      credibility: parts[detailStart] ?? 'unreviewed',
-      ...(noteParts.length > 0 ? { note: noteParts.join(' | ') } : {}),
-    };
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  const title = readString(record.title) || readString(record.name) || readString(record.url);
-  if (!title) return null;
-  return {
-    title,
-    ...(readString(record.url) ? { url: sanitizeSourceUrl(readString(record.url)) } : {}),
-    ...(readString(record.publisher) ? { publisher: readString(record.publisher) } : {}),
-    ...(readString(record.publishedAt) ? { publishedAt: readString(record.publishedAt) } : {}),
-    ...(readString(record.accessedAt) ? { accessedAt: readString(record.accessedAt) } : {}),
-    credibility: readString(record.credibility) || 'unreviewed',
-    ...(readString(record.note) ? { note: readString(record.note) } : {}),
-  };
-}
-
-function readSources(value: unknown): readonly ResearchSource[] {
-  const raw = Array.isArray(value) ? value : readList(value);
-  const sources: ResearchSource[] = [];
-  for (const entry of raw) {
-    const source = readSource(entry);
-    if (!source) continue;
-    sources.push(source);
-    if (sources.length >= MAX_SOURCE_COUNT) break;
-  }
-  return sources;
-}
-
-function sanitizeSourceUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    for (const key of [...url.searchParams.keys()]) {
-      if (SECRETISH.test(key)) url.searchParams.set(key, '<redacted>');
-    }
-    return url.toString();
-  } catch {
-    return value.replace(/([?&\s](?:token|secret|password|authorization|credential|api[-_]?key)=)[^\s&]+/gi, '$1<redacted>');
-  }
 }
 
 function slug(value: string): string {
@@ -276,6 +208,7 @@ function sourceMapSection(sources: readonly ResearchSource[]): string {
     const id = `S${index + 1}`;
     lines.push(`- [${id}] ${source.title}`);
     if (source.url) lines.push(`  - URL: ${source.url}`);
+    if (source.urlOmitted) lines.push('  - URL status: withheld before transmission; the original reference was not retained.');
     if (source.publisher) lines.push(`  - Publisher: ${source.publisher}`);
     if (source.publishedAt) lines.push(`  - Published: ${source.publishedAt}`);
     if (source.accessedAt) lines.push(`  - Accessed: ${source.accessedAt}`);
@@ -380,6 +313,7 @@ function sourceMetadata(sources: readonly ResearchSource[]): readonly Record<str
     id: `S${index + 1}`,
     title: source.title,
     ...(source.url ? { url: source.url } : {}),
+    ...(source.urlOmitted ? { urlOmitted: true } : {}),
     ...(source.publisher ? { publisher: source.publisher } : {}),
     ...(source.publishedAt ? { publishedAt: source.publishedAt } : {}),
     ...(source.accessedAt ? { accessedAt: source.accessedAt } : {}),
@@ -448,13 +382,13 @@ function reportNextRouteLines(descriptor: ArtifactDescriptor, args: AgentResearc
 
 async function saveResearchReport(
   artifactStore: AgentResearchReportArtifactStore,
-  args: AgentResearchReportToolArgs,
+  args: AgentResearchReportToolArgs & { readonly sources: readonly ResearchSource[] },
 ): Promise<ArtifactDescriptor> {
   const title = readString(args.title);
   const question = readString(args.question);
   if (!title) throw new Error('title is required.');
   if (!question) throw new Error('question is required.');
-  const sources = readSources(args.sources);
+  const sources = args.sources;
   if (sources.length === 0) throw new Error('At least one reviewed source is required for a research report artifact.');
   if (!readString(args.summary) && !readString(args.reportMarkdown) && readList(args.findings).length === 0) {
     throw new Error('summary, reportMarkdown, or findings are required.');
@@ -535,7 +469,7 @@ export function createAgentResearchReportTool(
           sources: {
             type: 'array',
             items: { type: 'object' },
-            description: 'Reviewed sources with title, url, and credibility.',
+            description: 'Reviewed sources with title, url, and credibility. Credential-redacted, userinfo-bearing or malformed URLs are withheld in full with urlOmitted:true; ordinary query and section references are preserved.',
           },
           findings: {
             type: 'array',
@@ -572,8 +506,8 @@ export function createAgentResearchReportTool(
     },
     execute: async (rawArgs: Record<string, unknown>) => {
       if (!artifactStore?.create) return failure('Research report export is unavailable because this runtime did not provide an artifact store.');
-      const args = rawArgs as AgentResearchReportToolArgs;
       try {
+        const args = prepareAgentResearchReportInput(rawArgs as AgentResearchReportToolArgs);
         const descriptor = await saveResearchReport(artifactStore, args);
         const coverage = coverageFromMetadata(descriptor.metadata);
         const lines = [
@@ -582,7 +516,7 @@ export function createAgentResearchReportTool(
           `  filename ${descriptor.filename ?? '(none)'}`,
           `  bytes ${descriptor.sizeBytes}`,
           `  mime ${descriptor.mimeType}`,
-          `  sources ${readSources(args.sources).length}`,
+          `  sources ${args.sources.length}`,
           readBoolean(args.visualReport) ? '  visualReport markdown-visual-report-packet' : '',
           coverage ? `  citationCoverage ${coverage.citedSourceIds.length}/${coverage.sourceCount} cited; uncited ${coverage.missingSourceIds.length}; unknown ${coverage.unknownCitationIds.length}` : '',
           coverage && coverage.repairSuggestions.length > 0 ? `  citationRepair ${coverage.repairSuggestions.join(' ')}` : '',

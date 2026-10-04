@@ -20,13 +20,15 @@ import { UNIT_ROLES } from '../../events/contract.js';
 import type { ContractConfig } from './config.js';
 import { latestSeverity } from './nudge.js';
 import { parseContractPlan, type ContractPlan, type PlannedGroup, type PlanProblem } from './plan-schema.js';
-import type { ContractGroup, ContractUnit, Criterion, UnitRole } from './types.js';
+import type { ContractGroup, ContractUnit, Criterion, NativeContractSource, UnitRole } from './types.js';
 
 /** The part a fix group repairs. */
 export type FixScope = 'unit' | 'group' | 'deliverable';
 
 /** What the fix planner is told about the target. */
 export interface FixBrief {
+  /** Complete root source, retained even when repairing only one derived unit. */
+  readonly nativeSource?: NativeContractSource | undefined;
   readonly scope: FixScope;
   readonly targetId: string;
   readonly title: string;
@@ -99,6 +101,7 @@ export function buildFixPlannerRequest(brief: FixBrief, repair?: { readonly prob
     '## Its criteria\n' + brief.criteria.map(criterionLine).join('\n'),
     '## Criteria the repair must serve\n' + brief.requiredIds.join(', '),
   ];
+  if (brief.nativeSource !== undefined) sections.push('## Immutable native source\nPreserve this complete goal and ordered criteria; repair only derived work.\n' + JSON.stringify(brief.nativeSource));
   if (brief.conflict !== undefined) {
     sections.push(`## Merge conflict\nThe work on branch ${brief.conflict.branch} conflicts with the contract's branch in: ${brief.conflict.files.join(', ')}. Bring that branch's changes in (git merge ${brief.conflict.branch}) and resolve the conflicts so both sides' behaviour is kept.`);
   }

@@ -322,11 +322,33 @@ describe('recording port trust boundary', () => {
     using log = new SqliteDecisionLog(':memory:');
     const input = { state: 'x', questions: { q: { type: 'noul', instructions: 'Q?' } } } as const;
     const port: JudgmentPort = { model: 'jev-1.13.0', async ask(incoming) {
-      (incoming.questions as Record<string, unknown>).q = { type: SECRET };
+      expect(Reflect.set(incoming.questions, 'q', { type: SECRET })).toBe(false);
       return { ...result(), answers: { q: { type: SECRET } } } as never;
     } };
     expect(exposedError(await withDecisionLog(port, log).ask(input).catch((e: unknown) => e)).kind).toBe('invalid-response');
     expect(JSON.stringify(log.query())).not.toContain(SECRET);
+  });
+
+  test('freezes the detached admitted graph and request envelope before borrowed I/O', async () => {
+    using log = new SqliteDecisionLog(':memory:');
+    const state = { nested: { items: [{ value: 'original' }] } };
+    const input = { state, questions: request.questions, context: { site: 'frozen-test' } };
+    const port: JudgmentPort = { model: 'jev-1.13.0', async ask(incoming) {
+      const admitted = incoming.state as typeof state;
+      for (const value of [incoming, admitted, admitted.nested, admitted.nested.items, admitted.nested.items[0], incoming.questions, incoming.questions.q, incoming.context]) {
+        expect(Object.isFrozen(value)).toBe(true);
+      }
+      expect(admitted).not.toBe(state);
+      expect(Reflect.set(admitted.nested.items[0]!, 'value', 'changed')).toBe(false);
+      expect(Reflect.set(incoming, 'state', 'changed')).toBe(false);
+      expect(Reflect.set(incoming, 'model', 'changed')).toBe(false);
+      expect(Reflect.set(incoming, 'questions', {})).toBe(false);
+      return result() as never;
+    } };
+    await withDecisionLog(port, log).ask(input);
+    expect(state.nested.items[0]!.value).toBe('original');
+    expect(Object.isFrozen(state)).toBe(false);
+    expect(log.query()).toHaveLength(1);
   });
 
   test.each(['answer', 'failure', 'action', 'readings'])('log-write failure during %s is value-free and unrecorded', async (stage) => {
