@@ -1,4 +1,5 @@
 import { withCapturedAnalyzeInput } from '../analyze/captured-git.js';
+import { captureCapturedWriteRevision, type CapturedWriteRevision } from './captured-write-revision.js';
 import { prepareCapturedWriteBackup } from './captured-write-backup.js';
 import { withCapturedPublication, type CapturedPublicationLease } from './captured-publication.js';
 import { isCapturedRegistryTool } from '../registry-tool/index.js';
@@ -24,6 +25,7 @@ const deliveryReads = new AsyncLocalStorage<{
   readonly paths: Set<string>;
   readonly checks: Set<() => Promise<void>>;
   readonly assertMutable: (path?: string) => void;
+  readonly captureRevision: (path: string, bytes: Buffer) => CapturedWriteRevision;
   readonly prepareBackup: (path: string) => ReturnType<typeof prepareCapturedWriteBackup>;
   readonly publicationLease?: CapturedPublicationLease | undefined;
   readonly signal?: AbortSignal | undefined;
@@ -45,12 +47,22 @@ export function hasCapturedToolInvocation(): boolean {
 export function assertCapturedToolMutationCurrent(path?: string): void {
   deliveryReads.getStore()?.assertMutable(path);
 }
-export async function prepareCapturedToolBackup(path: string): ReturnType<typeof prepareCapturedWriteBackup> {
+export async function prepareCapturedToolBackup(path: string, dryRun = false): ReturnType<typeof prepareCapturedWriteBackup> {
   const context = deliveryReads.getStore();
   if (!context) throw new Error('captured backup requires an owned invocation');
   const backup = await context.prepareBackup(path);
-  context.checks.add(backup.assertCurrent);
-  return backup;
+  if (dryRun) context.checks.add(backup.assertCurrent);
+  return { ...backup, create: (revision?: CapturedWriteRevision) => {
+    backup.create(revision);
+    context.checks.add(backup.assertCurrent);
+  } };
+}
+
+export function captureCapturedToolWriteRevision(path: string, bytes: Buffer): CapturedWriteRevision {
+  const context = deliveryReads.getStore();
+  if (!context) throw new Error('owned write revision requires a captured invocation');
+  context.assertMutable(path);
+  return context.captureRevision(path, bytes);
 }
 
 export function capturedToolPublicationContext(): { readonly lease: CapturedPublicationLease; readonly signal?: AbortSignal | undefined } {
@@ -117,10 +129,11 @@ export function capturedInputTool(
                 }
               }
             },
+            captureRevision: (path, bytes) => captureCapturedWriteRevision(authority, capturedToolPublicationContext().lease, path, bytes),
             prepareBackup: (path) => {
               const callSignal = options?.signal;
               const combined = signal && callSignal ? AbortSignal.any([signal, callSignal]) : (signal ?? callSignal);
-              return prepareCapturedWriteBackup({ authority, root, readAccessFilter: filter, signal: combined }, path, combined);
+              return prepareCapturedWriteBackup({ authority, root, readAccessFilter: filter, signal: combined }, path, combined, capturedToolPublicationContext().lease);
             },
             signal: options?.signal,
             authorize: async (path) => {

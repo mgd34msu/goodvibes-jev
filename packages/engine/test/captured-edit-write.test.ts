@@ -2,7 +2,7 @@ import { useToolReadings } from './_helpers/tool-readings.js';
 useToolReadings();
 import { afterEach, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { captureContractInput, contractInputPath, materializeContractInput } from '../sdk/src/platform/contract/input-snapshot.js';
@@ -197,6 +197,7 @@ test.skipIf(!supported)('contained validator and competing write remain serializ
   writeFileSync(join(f.root, 'package.json'), JSON.stringify({ scripts: { build: 'sleep 0.3; cp source.txt validated.txt' } }));
   const { write } = f.tools();
   const first = write.execute({ files: [{ path: 'source.txt', content: 'first', mode: 'overwrite' }], validate: { after: ['build'] } });
+  while (readFileSync(join(f.root, 'source.txt'), 'utf8') !== 'first') await new Promise((resolve) => setTimeout(resolve, 1));
   const second = write.execute({ files: [{ path: 'source.txt', content: 'second', mode: 'overwrite' }] });
   const results = await Promise.all([first, second]);
   expect(results.every((result) => result.success)).toBe(true);
@@ -293,4 +294,48 @@ test('captured validator command names cannot select arbitrary commands or fall 
   const unbound = capturedInputTool(createWriteTool({ projectRoot: f.root }), f.authority, f.root, async () => true, undefined);
   const held = await unbound.execute({ files: [{ path: 'source.txt', content: 'newer', mode: 'overwrite' }], validate: { after: ['build'] } });
   expect(JSON.parse(held.output!).validation_error).toContain('construction-owned contained runner');
+});
+
+
+test('captured atomic repeated backups preserve each owned intermediate revision and final bytes', async () => {
+  const f = await fixture();
+  const result = await f.tools().write.execute({ files: [
+    { path: 'source.txt', content: 'first', mode: 'backup' },
+    { path: 'source.txt', content: 'second', mode: 'backup' },
+    { path: 'source.txt', content: 'third', mode: 'backup' },
+  ], transaction: { mode: 'atomic' }, verbosity: 'standard' });
+  expect(result.success).toBe(true);
+  const files = JSON.parse(result.output!).files as { backup_path: string }[];
+  expect(new Set(files.map((file) => file.backup_path)).size).toBe(3);
+  expect(files.map((file) => readFileSync(file.backup_path, 'utf8'))).toEqual(['original source', 'first', 'second']);
+  expect(readFileSync(join(f.root, 'source.txt'), 'utf8')).toBe('third');
+  expect(readFileSync(join(f.owner, 'source.txt'), 'utf8')).toBe('original source');
+});
+
+test('captured atomic create-then-backup uses an owned destination and cannot fall back to runtime paths', async () => {
+  const f = await fixture();
+  const result = await f.tools().write.execute({ files: [
+    { path: 'new.txt', content: 'created' }, { path: 'new.txt', content: 'replaced', mode: 'backup' },
+  ], transaction: { mode: 'atomic' }, verbosity: 'standard' });
+  expect(result.success).toBe(true);
+  const path = JSON.parse(result.output!).files[1].backup_path;
+  expect(path).toStartWith(join(f.root, '.goodvibes', '.backups', 'new.txt.owned_'));
+  expect(readFileSync(path, 'utf8')).toBe('created'); expect(readFileSync(join(f.root, 'new.txt'), 'utf8')).toBe('replaced');
+  expect(existsSync(join(f.owner, 'new.txt'))).toBe(false);
+  const denied = await fixture();
+  const held = await denied.tools(async (path) => !path.startsWith(join(denied.root, '.goodvibes', '.backups'))).write.execute({ files: [
+    { path: 'new.txt', content: 'created' }, { path: 'new.txt', content: 'replaced', mode: 'backup' },
+  ], transaction: { mode: 'atomic' } });
+  expect(held.success).toBe(false); expect(existsSync(join(denied.root, 'new.txt'))).toBe(false);
+});
+
+test('failed repeated-backup atomic publication restores original bytes and executable mode', async () => {
+  const f = await fixture(); chmodSync(join(f.root, 'source.txt'), 0o755);
+  const result = await f.tools().write.execute({ files: [
+    { path: 'source.txt', content: 'first', mode: 'backup' }, { path: 'source.txt', content: 'second', mode: 'backup' },
+    { path: 'parent', content: 'regular file' }, { path: 'parent/child', content: 'cannot exist' },
+  ], transaction: { mode: 'atomic' }, verbosity: 'standard' });
+  expect(result.success).toBe(false); expect(result.error).toContain('Rolled back 2 file(s)');
+  expect(readFileSync(join(f.root, 'source.txt'), 'utf8')).toBe('original source');
+  expect(statSync(join(f.root, 'source.txt')).mode & 0o777).toBe(0o755); expect(existsSync(join(f.root, 'parent'))).toBe(false);
 });

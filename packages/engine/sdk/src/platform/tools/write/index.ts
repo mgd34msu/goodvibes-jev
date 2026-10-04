@@ -1,6 +1,7 @@
-import { assertCapturedToolMutationCurrent, assertCapturedToolReadAccess, hasCapturedToolInvocation, prepareCapturedToolBackup } from '../shared/captured-input-tools.js';
+import type { CapturedWriteRevision } from '../shared/captured-write-revision.js';
+import { captureCapturedToolWriteRevision, assertCapturedToolMutationCurrent, assertCapturedToolReadAccess, hasCapturedToolInvocation, prepareCapturedToolBackup } from '../shared/captured-input-tools.js';
 import type { ReadAccessFilter } from '../shared/read-access.js';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, unlinkSync } from 'node:fs';
+import { chmodSync, lstatSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, unlinkSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Tool, ToolDefinition } from '../../types/tools.js';
@@ -181,6 +182,7 @@ function processSingleWrite(
   projectRoot: string,
   dryRun: boolean,
   capturedBackup?: Awaited<ReturnType<typeof prepareCapturedToolBackup>>,
+  sourceRevision?: CapturedWriteRevision,
 ): { ok: true; result: FileWriteResult } | { ok: false; error: string } {
   // Resolve and validate path
   let resolvedPath: string;
@@ -258,9 +260,10 @@ function processSingleWrite(
 
   // Backup if needed
   if (alreadyExists && mode === 'backup') {
+    if (hasCapturedToolInvocation() && !capturedBackup) return { ok: false, error: 'Captured backup requires its prepared owned destination' };
     const backupPath = capturedBackup?.path ?? buildBackupPath(resolvedPath, projectRoot);
     try {
-      if (capturedBackup) capturedBackup.create();
+      if (capturedBackup) capturedBackup.create(sourceRevision);
       else {
         mkdirSync(dirname(backupPath), { recursive: true });
         copyFileSync(resolvedPath, backupPath);
@@ -392,8 +395,10 @@ export function createWriteTool(options?: {
       const transactionMode = input.transaction?.mode ?? 'none';
       // Snapshots for atomic rollback: map from resolvedPath -> original content (null = new file)
       const snapshots = new Map<string, string | Buffer | null>();
+      const snapshotModes = new Map<string, number>();
       const captured = hasCapturedToolInvocation();
       const capturedAtomic = captured && transactionMode === 'atomic';
+      const revisions = new Map<string, CapturedWriteRevision>();
       const backups = new Map<WriteFileInput, Awaited<ReturnType<typeof prepareCapturedToolBackup>>>();
 
       // Atomic captured batches admit and validate every path before effects.
@@ -413,15 +418,18 @@ export function createWriteTool(options?: {
           if (willExist.has(path) && (fileInput.mode ?? 'fail_if_exists') === 'fail_if_exists')
             return { success: false, error: `Atomic transaction would create '${fileInput.path}' more than once` };
           willExist.add(path);
-          if (!snapshots.has(path)) snapshots.set(path, existsSync(path) ? readFileSync(path) : null);
-          if (fileInput.mode === 'backup' && existsSync(path)) backups.set(fileInput, await prepareCapturedToolBackup(path));
+          if (!snapshots.has(path)) {
+            snapshots.set(path, existsSync(path) ? readFileSync(path) : null);
+            if (existsSync(path)) snapshotModes.set(path, lstatSync(path).mode & 0o777);
+          }
+          if (fileInput.mode === 'backup') backups.set(fileInput, await prepareCapturedToolBackup(path, dryRun));
         }
         for (const path of snapshots.keys()) await assertCapturedToolReadAccess(path);
         for (const backup of backups.values()) await backup.assertCurrent();
         assertCapturedToolMutationCurrent();
         for (const [path, before] of snapshots) {
           assertCapturedToolMutationCurrent(path);
-          if (before === null ? existsSync(path) : !existsSync(path) || !Buffer.from(before).equals(readFileSync(path)))
+          if (before === null ? existsSync(path) : !existsSync(path) || !Buffer.from(before).equals(readFileSync(path)) || (snapshotModes.has(path) && (lstatSync(path).mode & 0o777) !== snapshotModes.get(path)))
             throw new Error('Captured atomic write conflicts with changed input');
         }
       }
@@ -439,7 +447,7 @@ export function createWriteTool(options?: {
             errors.push('Captured write path is access-restricted');
             continue;
           }
-          if (captured && fileInput.mode === 'backup' && existsSync(path)) backups.set(fileInput, await prepareCapturedToolBackup(path));
+          if (captured && fileInput.mode === 'backup') backups.set(fileInput, await prepareCapturedToolBackup(path, dryRun));
         }
         let preparationError: string | undefined;
         try {
@@ -480,12 +488,13 @@ export function createWriteTool(options?: {
           // Store snapshot for atomic transaction rollback
           if (transactionMode === 'atomic' && resolvedForUndo && !snapshots.has(resolvedForUndo)) {
             snapshots.set(resolvedForUndo, existedBeforeWrite ? beforeContent : null);
+            if (existedBeforeWrite) snapshotModes.set(resolvedForUndo, lstatSync(resolvedForUndo).mode & 0o777);
           }
         }
 
         const outcome = preparationError
           ? { ok: false as const, error: preparationError }
-          : processSingleWrite(fileInput, projectRoot, dryRun, backups.get(fileInput));
+          : processSingleWrite(fileInput, projectRoot, dryRun, backups.get(fileInput), capturedAtomic ? revisions.get(resolveAndValidatePath(fileInput.path, projectRoot)) : undefined);
 
         if (!outcome.ok) {
           errors.push(outcome.error);
@@ -505,6 +514,8 @@ export function createWriteTool(options?: {
                 } else {
                   // File existed before - restore original
                   atomicWrite(written.resolved_path, snapshot);
+                  const mode = snapshotModes.get(written.resolved_path);
+                  if (mode !== undefined) chmodSync(written.resolved_path, mode);
                   options.fileCache?.update(written.resolved_path, snapshot.toString());
                 }
                 rolledBack.push(written.path);
@@ -532,6 +543,10 @@ export function createWriteTool(options?: {
         }
 
         results.push(outcome.result);
+        if (capturedAtomic && !dryRun) {
+          revisions.set(outcome.result.resolved_path, captureCapturedToolWriteRevision(outcome.result.resolved_path,
+            Buffer.from(outcome.result._content ?? '', (fileInput.encoding as BufferEncoding) ?? 'utf-8')));
+        }
 
         // State integration, only for real writes, not dry runs
         if (!dryRun) {

@@ -9,6 +9,11 @@ const tails = new WeakMap<ContractInputAuthority, Promise<void>>();
 export interface CapturedPublicationLease { readonly kind: 'captured-publication-lease' }
 interface PublicationState { authority: ContractInputAuthority; active: boolean; publishing: boolean; draining?: Promise<void> | undefined }
 const leases = new WeakMap<CapturedPublicationLease, PublicationState>();
+export function assertCapturedPublicationOwner(lease: CapturedPublicationLease, authority: ContractInputAuthority): void {
+  const state = leases.get(lease);
+  if (!state || !state.active || state.publishing || state.authority !== authority)
+    throw new Error('captured write requires its active exclusive publication owner');
+}
 export async function publishWithinCapturedLease<T>(
   lease: CapturedPublicationLease,
   authority: ContractInputAuthority,

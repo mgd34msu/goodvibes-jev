@@ -221,3 +221,57 @@ test('a stalled destination permission callback is cancellable and never creates
   await expect(pending).rejects.toThrow();
   expect(existsSync(join(f.root, '.goodvibes'))).toBe(false);
 });
+
+import { withCapturedPublication, type CapturedPublicationLease } from '../sdk/src/platform/tools/shared/captured-publication.js';
+import { captureCapturedWriteRevision } from '../sdk/src/platform/tools/shared/captured-write-revision.js';
+test('backup accepts only the exact intermediate revision issued by its still-active batch', async () => {
+  const f = await fixture(); let previousLease!: CapturedPublicationLease;
+  await withCapturedPublication(f.authority, async (lease) => { previousLease = lease; });
+  await withCapturedPublication(f.authority, async (lease) => {
+    const backup = await prepareCapturedWriteBackup(f.binding, f.source, undefined, lease);
+    writeFileSync(f.source, 'owned replacement');
+    expect(() => backup.create()).toThrow('changed');
+    const revision = captureCapturedWriteRevision(f.authority, lease, f.source, Buffer.from('owned replacement'));
+    expect(() => backup.create({ ...revision })).toThrow('matching');
+    expect(() => captureCapturedWriteRevision(f.authority, previousLease, f.source, Buffer.from('owned replacement'))).toThrow('owner');
+    writeFileSync(join(f.root, 'other'), 'other owned');
+    const other = captureCapturedWriteRevision(f.authority, lease, join(f.root, 'other'), Buffer.from('other owned'));
+    expect(() => backup.create(other)).toThrow('matching');
+    backup.create(revision);
+    expect(readFileSync(backup.path, 'utf8')).toBe('owned replacement');
+    await backup.assertCurrent();
+  });
+});
+
+test('an owned revision cannot authorize later external changes or survive its publication owner', async () => {
+  const f = await fixture(); let retained!: ReturnType<typeof captureCapturedWriteRevision>;
+  let plan!: Awaited<ReturnType<typeof prepareCapturedWriteBackup>>;
+  await withCapturedPublication(f.authority, async (lease) => {
+    plan = await prepareCapturedWriteBackup(f.binding, f.source, undefined, lease);
+    writeFileSync(f.source, 'owned'); retained = captureCapturedWriteRevision(f.authority, lease, f.source, Buffer.from('owned'));
+    writeFileSync(f.source, 'external replacement');
+    expect(() => plan.create(retained)).toThrow('changed');
+    expect(existsSync(plan.path)).toBe(false);
+  });
+  expect(() => plan.create(retained)).toThrow('owner'); expect(existsSync(plan.path)).toBe(false);
+});
+
+test('missing backup source requires a lease-bound revision from its own batch creation', async () => {
+  const f = await fixture(); const source = join(f.root, 'new.txt');
+  await expect(prepareCapturedWriteBackup(f.binding, source)).rejects.toThrow('regular source');
+  await withCapturedPublication(f.authority, async (lease) => {
+    const plan = await prepareCapturedWriteBackup(f.binding, source, undefined, lease);
+    expect(() => plan.create()).toThrow('not been created');
+    writeFileSync(source, 'created by batch');
+    expect(() => plan.create()).toThrow('changed');
+    const revision = captureCapturedWriteRevision(f.authority, lease, source, Buffer.from('created by batch'));
+    plan.create(revision); expect(readFileSync(plan.path, 'utf8')).toBe('created by batch');
+  });
+});
+
+
+test('an uncreated backup plan cannot write after its batch lease settles', async () => {
+  const f = await fixture(); let plan!: Awaited<ReturnType<typeof prepareCapturedWriteBackup>>;
+  await withCapturedPublication(f.authority, async (lease) => { plan = await prepareCapturedWriteBackup(f.binding, f.source, undefined, lease); });
+  expect(() => plan.create()).toThrow('owner'); expect(existsSync(plan.path)).toBe(false);
+});

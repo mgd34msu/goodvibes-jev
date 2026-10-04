@@ -1,3 +1,5 @@
+import { assertCapturedWriteRevision, type CapturedWriteRevision } from './captured-write-revision.js';
+import { assertCapturedPublicationOwner, type CapturedPublicationLease } from './captured-publication.js';
 /** One generated backup of an admitted member file, never general runtime access. */
 import { randomUUID } from 'node:crypto';
 import {
@@ -52,7 +54,8 @@ export async function prepareCapturedWriteBackup(
   binding: CapturedExecAuthority,
   source: string,
   signal?: AbortSignal,
-): Promise<{ path: string; create: () => void; assertCurrent: () => Promise<void> }> {
+  publicationLease?: CapturedPublicationLease,
+): Promise<{ path: string; create: (revision?: CapturedWriteRevision) => void; assertCurrent: () => Promise<void> }> {
   // Pin construction-owned inputs before the first external callback.
   const authority = binding.authority;
   const root = resolve(binding.root);
@@ -77,11 +80,13 @@ export async function prepareCapturedWriteBackup(
   const backupRelative = join('.goodvibes', '.backups', `${rel}.owned_${artifactId}`);
   const path = join(root, backupRelative);
   const original = join(owner, backupRelative);
+  if (publicationLease) assertCapturedPublicationOwner(publicationLease, authority);
   let sourceFingerprint: string | undefined;
+  let sourcePinned = false;
   let backupFingerprint: string | undefined;
   let attempted = false;
 
-  const assertPhysical = (): BigIntStats => {
+  const assertPhysical = (): BigIntStats | undefined => {
     combined?.throwIfAborted();
     // These accessors also reject revoked, forged or cancelled authority and
     // changed admission, without yielding between this check and a sync write.
@@ -95,11 +100,11 @@ export async function prepareCapturedWriteBackup(
     }
     const ownerSource = physical(owner, rel);
     const copySource = physical(root, rel);
-    if ((ownerSource && !ownerSource.isFile()) || !copySource?.isFile())
+    if ((ownerSource && !ownerSource.isFile()) || (copySource ? !copySource.isFile() : !publicationLease))
       throw new Error('captured backup requires a regular source');
     // A successful write normally replaces the source inode. Only the backup
     // stays pinned after creation; both current source permissions still apply.
-    if (backupFingerprint === undefined && sourceFingerprint !== undefined && fingerprint(copySource) !== sourceFingerprint)
+    if (backupFingerprint === undefined && sourcePinned && (copySource ? fingerprint(copySource) : undefined) !== sourceFingerprint)
       throw new Error('captured backup source changed before creation');
     // The original counterpart must be absent BEFORE invoking a filter that
     // might read bytes. Runtime content in the owner is never a backup input.
@@ -110,7 +115,9 @@ export async function prepareCapturedWriteBackup(
       throw new Error('captured backup destination exists or changed');
     return copySource;
   };
-  sourceFingerprint = fingerprint(assertPhysical());
+  const initialSource = assertPhysical();
+  sourceFingerprint = initialSource ? fingerprint(initialSource) : undefined;
+  sourcePinned = true;
 
   const guardedFilter = async (candidate: string): Promise<boolean> => {
     assertPhysical();
@@ -133,9 +140,15 @@ export async function prepareCapturedWriteBackup(
   }, combined);
 
   await assertCurrent();
-  const create = (): void => {
+  const create = (revision?: CapturedWriteRevision): void => {
+    if (publicationLease) assertCapturedPublicationOwner(publicationLease, authority);
     if (attempted) throw new Error('captured backup creation is single-use');
+    if (revision) {
+      if (!publicationLease) throw new Error('backup revision requires the owned batch lease');
+      sourceFingerprint = assertCapturedWriteRevision(revision, authority, publicationLease, sourcePath);
+    }
     const sourceStat = assertPhysical();
+    if (!sourceStat || sourceFingerprint === undefined) throw new Error('backup source has not been created by its owned batch');
     attempted = true;
     // Read through a no-follow descriptor and verify it is the admitted source.
     const sourceFd = openSync(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW);

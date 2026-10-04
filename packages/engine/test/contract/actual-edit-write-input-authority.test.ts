@@ -150,6 +150,7 @@ for (const scenario of ['deliver', 'deny-original', 'deny-copy'] as const) {
           id: 'backup-atomic-with-validators', name: 'write', arguments: {
             files: [
               { path: 'src/csv.ts', mode: 'backup', content: deliveredSource },
+              { path: 'src/csv.ts', mode: 'backup', content: deliveredSource },
               { path: 'member-only.txt', content: 'MEMBER_ONLY\n' },
             ],
             transaction: { mode: 'atomic' }, validate: { after: ['build', 'test'] }, verbosity: 'standard',
@@ -250,7 +251,9 @@ for (const scenario of ['deliver', 'deny-original', 'deny-copy'] as const) {
             const backupPath = output.files.find((file) => file.backup_path !== undefined)?.backup_path;
             expect(backupPath).toStartWith(join(memberRoot, '.goodvibes', '.backups'));
             expect(readFileSync(backupPath!, 'utf8')).toBe(editedSource);
-            expect(readdirSync(join(memberRoot, '.goodvibes', '.backups', 'src'))).toHaveLength(1);
+            const backupPaths = output.files.flatMap((file) => file.backup_path ? [file.backup_path] : []);
+            expect(backupPaths.map((path) => readFileSync(path, 'utf8'))).toEqual([editedSource, deliveredSource]);
+            expect(readdirSync(join(memberRoot, '.goodvibes', '.backups', 'src'))).toHaveLength(2);
             expect(readFileSync(join(memberRoot, 'src/csv.ts'), 'utf8')).toBe(deliveredSource);
             expect(artifactSources()).toEqual([originalSource, editedSource, deliveredSource]);
             if (turn === 8) {
