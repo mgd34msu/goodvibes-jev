@@ -1,3 +1,4 @@
+import { checkCapturedInputsInBatches } from './captured-exec-validation.js';
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 /** Construction-admitted immutable dependency inputs. No prefix is a read grant. */
 import { lstat, mkdir, readFile, readdir, realpath, symlink, unlink, writeFile } from 'node:fs/promises';
@@ -111,9 +112,8 @@ export async function admitCapturedExecDependency(
     // This metadata-only sweep never releases bytes or grants another operation.
     // Full recorded-view/Git validation brackets it; each entry still checks
     // the live opaque token, source-root identity, current original/alias
-    // permissions and immutable file identity. Admission byte reads use the
-    // full checkRead default before their bytes can enter the admitted input.
-    for (const read of reads) await checkRead(read, false, signal);
+    // permissions and immutable file identity. No grant survives this sweep.
+    await checkCapturedInputsInBatches(reads, (read, current) => checkRead(read, false, current), signal);
     for (const link of workspaceLinks) {
       if (fingerprint(await lstat(link.source, { bigint: true })) !== link.identity || await realpath(link.source) !== link.canonical)
         throw new Error('workspace dependency link changed after admission');
@@ -141,7 +141,7 @@ export async function admitCapturedExecDependency(
     }
     if (excluded(relative(sourceRoot, canonical))) throw new Error('dependency alias escapes declared input');
     if (!await readAllowed(source) || !await readAllowed(canonical) || !await readAllowed(alias)) return;
-    await checkRoot();
+    await checkRoot(false);
     const stat = await lstat(canonical, { bigint: true });
     if (stat.isDirectory()) {
       reads.push({ source, canonical, alias, identity: fingerprint(stat) });
@@ -157,13 +157,17 @@ export async function admitCapturedExecDependency(
         throw new Error('dependency input exceeds resource limit');
       const read = { source, canonical, alias, identity: fingerprint(stat) };
       const data = await readFile(canonical);
-      await checkRead(read);
+      await checkRead(read, false);
       bytes += data.length;
       if (bytes > 256 * 1024 * 1024) throw new Error('dependency input exceeds byte limit');
       reads.push(read);
       files.push({ path, data, mode: Number(stat.mode & 0o777n) });
     } else throw new Error('dependency special-file input is unsupported');
   };
+  // Admission bytes remain private until the complete fresh sweep succeeds.
+  // Each read retains current permission/root/file identity checks; full
+  // recorded-view validation brackets collection before a token can escape.
+  await checkRoot();
   await visit(sourceRoot, target, '', new Set());
   await check();
   const token = Object.freeze({ kind: 'captured-exec-dependency-input' as const });

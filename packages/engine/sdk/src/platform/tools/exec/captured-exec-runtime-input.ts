@@ -1,9 +1,10 @@
+import { checkCapturedInputsInBatches } from './captured-exec-validation.js';
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 /** Trusted runtime declarations are separate from model arguments and project dependencies. */
 import { accessSync, constants, lstatSync, realpathSync } from 'node:fs';
 import { access, chmod, lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { assertContractInputAuthority, registerContractInputReadAssertion } from '../../contract/input-authority.js';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { assertContractInputAuthority, contractInputAuthorityRoot, registerContractInputReadAssertion } from '../../contract/input-authority.js';
 import type { CapturedExecAuthority } from './captured-exec.js';
 
 type Binding = Pick<CapturedExecAuthority, 'authority' | 'root' | 'readAccessFilter' | 'signal'>;
@@ -113,6 +114,7 @@ export async function admitCapturedExecNodeRuntime(
   const files: { path: string; data: Buffer; mode: number }[] = [];
   const checkRead = async (read: typeof reads[number], signal: AbortSignal | undefined = binding.signal): Promise<void> => {
     signal?.throwIfAborted();
+    if (contractInputAuthorityRoot(binding.authority) !== resolve(binding.root)) throw new Error('Node runtime authority changed');
     if (!await executePolicyCheck(() => filter(read.source), signal) || !await executePolicyCheck(() => filter(read.canonical), signal) || !await executePolicyCheck(() => filter(read.alias), signal))
       throw new Error('Node runtime input is access-restricted');
     if (await realpath(read.source) !== read.canonical || identity(await lstat(read.canonical, { bigint: true })) !== read.identity)
@@ -122,7 +124,7 @@ export async function admitCapturedExecNodeRuntime(
   const check = async (signal: AbortSignal | undefined = binding.signal): Promise<void> => {
     signal = binding.signal && signal ? AbortSignal.any([binding.signal, signal]) : binding.signal ?? signal;
     await assertContractInputAuthority(binding.authority, binding.root, signal);
-    for (const read of reads) await checkRead(read, signal);
+    await checkCapturedInputsInBatches(reads, (read, current) => checkRead(read, current), signal);
     await assertContractInputAuthority(binding.authority, binding.root, signal);
   };
   let bytes = 0;
