@@ -114,3 +114,26 @@ test('native command distinguishes intent wire variants without manufacturing ad
     expect(operations).toEqual(['status', 'status', 'status']);
   } finally { view.close(); server.stop(true); }
 });
+
+test('ordinary intake preserves the missing-host setup reason without dispatching discovery', async () => {
+  let discoveries = 0;
+  const view = createNativeWorkLedgerView(() => ({ reason: 'Connected-host operator token is required.' }), () => {}, undefined,
+    async () => { discoveries++; throw new Error('Discovery must not run'); });
+  try {
+    expect(await view.intake!.submit({ text: 'Original first input', unsupportedSources: [] })).toEqual({
+      status: 'unavailable', message: 'Connected-host operator token is required.',
+    });
+    expect(discoveries).toBe(0);
+  } finally { view.close(); }
+});
+
+test('ordinary intake preserves a disconnected discovery reason and sends no source', async () => {
+  const fixture = serverFixture(); fixture.denyDiscovery();
+  const view = createNativeWorkLedgerView(() => ({ ...fixture.host, workspace: process.cwd() }), () => {});
+  try {
+    const result = await view.intake!.submit({ text: 'Original first input', unsupportedSources: [] });
+    expect(result?.status).toBe('unavailable');
+    expect(result?.message).toContain('Project discovery unavailable');
+    expect(fixture.requests.every(request => new URL(request.url).pathname === '/api/work-ledger/project')).toBe(true);
+  } finally { view.close(); fixture.close(); }
+});

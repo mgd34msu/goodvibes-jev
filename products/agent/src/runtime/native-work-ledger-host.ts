@@ -130,9 +130,12 @@ export function createNativeWorkLedgerView(
     return active && generation === selectionEpoch ? result : undefined;
   };
   const intakeAction = (action: () => Promise<NativeConversationIntakeState | undefined>): Promise<NativeConversationIntakeState | undefined> => intakePreflight.run(async (_signal, current) => {
+    const host = resolve();
+    if ('reason' in host) return { status: 'unavailable', message: host.reason };
     if (!active) open();
     const generation = selectionEpoch; await opening; sync();
-    if (!active || generation !== selectionEpoch || !current()) return;
+    if (generation !== selectionEpoch || !current()) return;
+    if (!active) return model.state.status === 'unavailable' ? { status: 'unavailable', message: model.state.reason } : undefined;
     const result = await action(); sync();
     return active && generation === selectionEpoch ? result : undefined;
   });

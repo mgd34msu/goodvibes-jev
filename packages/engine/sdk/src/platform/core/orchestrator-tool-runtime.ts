@@ -1,4 +1,6 @@
-import { autonomousRevision, type AutonomousToolSource } from '../permissions/autonomous.js';
+import { hashState } from '@goodvibes-jev/judgment';
+import { captureAutonomousChoices, type AutonomousToolSource } from '../permissions/autonomous.js';
+import { UnknownPreparedToolError } from '../tools/preparation-error.js';
 import type { PreparedToolCall } from '../tools/registry.js';
 import type { AutonomousPermissionAdmission } from '../permissions/manager.js';
 import type { TurnHookOwner } from '../hooks/turn-ownership.js';
@@ -148,7 +150,15 @@ export async function executeToolCalls(
     // retained only for pre-existing duck-typed test/embedding implementations.
     const autonomous = typeof deps.permissionManager.admitAutonomous === 'function'
       && typeof deps.toolRegistry.prepareCall === 'function';
-    const sourceId = autonomousRevision({ session: deps.sessionId, turn: turnId, call: call.id });
+    const sourceIdentity = { session: deps.sessionId, turn: turnId, call: call.id };
+    // These are protocol references, never the request or tool arguments. Use
+    // the existing typed-reference privacy checks before hashing: UUID digit
+    // runs are not payment-card input. Non-identity content still fails closed.
+    captureAutonomousChoices({ resumeConditions: [
+      { id: sourceIdentity.session, revision: sourceIdentity.turn },
+      { id: sourceIdentity.call, revision: 'tool-call' },
+    ] });
+    const sourceId = hashState(sourceIdentity);
     const sourceOf = deps.autonomousSource;
     if (autonomous && !sourceOf) throw new Error('Autonomous execution requires the host source goal and criteria');
     const earlyCallSignal = autonomous ? deps.toolCallSignals?.open(call.id) : undefined;
@@ -156,7 +166,22 @@ export async function executeToolCalls(
     try {
       if (autonomous) {
         const preparation = deps.permissionManager.autonomousPreparation(sourceId, sourceOf!, admissionSignal, deps.autonomousPort);
-        prepared = await deps.toolRegistry.prepareCall(call.id, call.name, call.arguments, { ...(admissionSignal ? { signal: admissionSignal } : {}), port: preparation.port });
+        try {
+          prepared = await deps.toolRegistry.prepareCall(call.id, call.name, call.arguments, { ...(admissionSignal ? { signal: admissionSignal } : {}), port: preparation.port });
+        } catch (error) {
+          // A hallucinated tool remains a failed call so the model can recover
+          // and repeated failures still reach the turn-loop circuit breaker.
+          // Authority, privacy, schema and judgment failures are not converted.
+          if (!(error instanceof UnknownPreparedToolError)) throw error;
+          preparation.assertCurrent();
+          const result: ToolResult = { callId: call.id, success: false, error: error.message };
+          if (deps.runtimeBus) emitToolFailed(deps.runtimeBus, deps.emitterContext(turnId), {
+            callId: call.id, turnId, tool: call.name, error: error.message,
+            durationMs: 0, result: toToolResultSummary(result),
+          });
+          results.push(result);
+          continue;
+        }
         preparation.assertCurrent();
         call = { id: prepared.callId, name: prepared.name, arguments: prepared.args };
       }

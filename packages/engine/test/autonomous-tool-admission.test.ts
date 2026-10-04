@@ -2,7 +2,7 @@ import { RuntimeEventBus, type ToolEvent } from '../sdk/src/platform/runtime/eve
 import { decideAutonomousTool as publicSelector } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { decideAutonomousTool } from '../sdk/src/platform/permissions/autonomous.ts';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { withDecisionLog, SqliteDecisionLog, createSystemOnePort, PINNED_MODEL, type JudgmentPort, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
+import { withDecisionLog, SqliteDecisionLog, createSystemOnePort, PINNED_MODEL, hashState, type JudgmentPort, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
 import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { gateReadingsPort, forgetGateReadings } from './_helpers/gate-readings.ts';
@@ -14,6 +14,7 @@ import { UserPermissionRuleStore } from '../sdk/src/platform/permissions/user-ru
 import { buildDurableRuleForDecision } from '../sdk/src/platform/permissions/approval-rules.ts';
 import { InspectTool } from '../sdk/src/platform/tools/inspect/index.ts';
 import { UntrustedContentLedger } from '../sdk/src/platform/security/untrusted-content.ts';
+import { judgmentInputProblem } from '../sdk/src/platform/gate/judgment-input.ts';
 import { EXEC_TOOL_SCHEMA } from '../sdk/src/platform/tools/exec/schema.ts';
 
 let previous: ReturnType<typeof installJudgmentPort>;
@@ -605,4 +606,182 @@ test.each(['act', 'reject', 'defer_0'])('real event projection retains the bound
     expect(settled).toBeDefined();
     if (settled?.type === 'TOOL_SUCCEEDED' || settled?.type === 'TOOL_FAILED') expect(settled.result?.autonomousDecision).toEqual(result?.autonomousDecision);
   } finally { stop(); }
+});
+
+test('an unknown tool returns a recoverable failure without admission and preserves the next real call', async () => {
+  const { deps, executed } = fixture();
+  const bus = new RuntimeEventBus(); const events: ToolEvent[] = [];
+  bus.onDomain('tools', event => events.push(event.payload));
+  deps.runtimeBus = bus;
+  const [missing, known] = await executeToolCalls(deps, 'turn-1', [
+    { id: 'missing-call', name: 'missing_tool', arguments: {} },
+    { id: 'known-call', name: 'exec', arguments: args() },
+  ]);
+  expect(missing).toEqual({ callId: 'missing-call', success: false, error: 'Unknown tool in autonomous preparation' });
+  expect(known?.success).toBe(true); expect(executed).toHaveLength(1);
+  expect(events.filter(event => 'callId' in event && event.callId === 'missing-call').map(event => event.type)).toEqual(['TOOL_FAILED']);
+  expect(requests.filter(request => request.context?.site === 'engine.gate.autonomous-tool')).toHaveLength(1);
+});
+
+test('unknown-tool recovery does not bypass original-source or protected-input guards', async () => {
+  const { deps, executed } = fixture();
+  const bus = new RuntimeEventBus(); const events: ToolEvent[] = [];
+  bus.onDomain('tools', event => events.push(event.payload)); deps.runtimeBus = bus;
+  await expect(executeToolCalls({ ...deps, autonomousSource: undefined }, 'turn-1', [{ id: 'missing-source', name: 'missing_tool', arguments: {} }])).rejects.toThrow('host source');
+  await expect(executeToolCalls(deps, 'turn-1', [{ id: 'protected-input', name: 'missing_tool', arguments: { apiKey: 'SYNTHETIC_PROTECTED_CREDENTIAL' } }])).rejects.toMatchObject({ name: 'JudgmentInputError' });
+  expect(events).toHaveLength(0); expect(requests).toHaveLength(0); expect(executed).toHaveLength(0);
+});
+
+test.each(['preparation', 'supporting', 'disposition'] as const)('cancellation releases non-cooperative %s judgment and discards its late answer', async stage => {
+  const { deps, registry, executed } = fixture(); const controller = new AbortController();
+  deps.turnSignal = controller.signal;
+  if (stage === 'preparation') {
+    registry.unregister('exec');
+    registry.register({ definition: { name: 'exec', description: 'boolean fixture', parameters: { type: 'object', properties: { enabled: { type: 'boolean' } }, required: ['enabled'] } },
+      execute: async input => { executed.push(input); return { success: true }; } });
+  }
+  const entered = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();
+  const gate = gateReadingsPort();
+  const semantic = fakePort((name, question) => choiceAnswer(question, name === 'boolean_value' ? 'true' : 'act', 0.97));
+  installJudgmentPort(withDecisionLog({ model: gate.port.model, async ask(request) {
+    const selected = stage === 'preparation' ? 'boolean_value' in request.questions
+      : stage === 'supporting' ? 'mutates' in request.questions : 'disposition' in request.questions;
+    if (selected) { entered.resolve(); await release.promise; }
+    return 'boolean_value' in request.questions || 'disposition' in request.questions ? semantic.port.ask(request) : gate.port.ask(request);
+  } }, log));
+  const pending = executeToolCalls(deps, 'turn-1', [{ id: 'cancel-pending', name: 'exec', arguments: stage === 'preparation' ? { enabled: 'please enable' } : args() }]).catch((error: unknown) => error);
+  await entered.promise; controller.abort('private fixture reason');
+  try {
+    expect(await Promise.race([pending, Bun.sleep(1_000).then(() => 'still pending')])).toMatchObject({ name: 'JudgmentError', kind: 'aborted' });
+    expect(executed).toHaveLength(0);
+  } finally { release.resolve(); await pending; }
+  await Bun.sleep(0);
+  expect(executed).toHaveLength(0);
+  expect(log.query({}).some(entry => entry.status === 'failed' && entry.error?.kind === 'aborted')).toBe(true);
+  expect(log.query({}).flatMap(entry => entry.status === 'answered' ? entry.notes : []).filter(note => note.kind === 'action' && note.action.startsWith('autonomous:claim:'))).toHaveLength(0);
+});
+
+
+const sourceConditionCallId = 'call-130';
+const sourceConditionId = hashState({ session: 'autonomous-fixture', turn: 'turn-1', call: sourceConditionCallId });
+
+test('engine-owned source condition keeps canonical identity without raw card false positives', async () => {
+  // This real generated hash has a Luhn-shaped digit run. Only typed protocol
+  // fields recognize the hash; raw content must still fail before transmission.
+  expect(judgmentInputProblem(sourceConditionId)).toBe('card-material');
+  const { deps, executed } = fixture();
+  const [result] = await run(deps, args(), sourceConditionCallId);
+  expect(result?.success).toBe(true);
+  expect(result?.autonomousDecision?.binding.sourceId).toBe(sourceConditionId);
+  expect(executed).toHaveLength(1);
+  const request = requests.find(entry => entry.context?.site === 'engine.gate.autonomous-tool');
+  expect(request?.state).toMatchObject({ offeredChoices: { resumeConditions: [{ ref: { id: sourceConditionId } }] } });
+});
+
+test('canonical source condition defers until a new source revision is admitted', async () => {
+  choice = 'defer_0';
+  const { deps, executed } = fixture();
+  const [deferred] = await run(deps, args(), sourceConditionCallId);
+  expect(deferred?.autonomousDecision).toMatchObject({ outcome: 'defer', until: { id: sourceConditionId } });
+  expect(executed).toEqual([]);
+  await expect(run(deps, args(), sourceConditionCallId)).rejects.toThrow('waiting for a new input revision');
+  deps.autonomousSource = () => ({ goal: 'Carry out the revised synthetic project change', criteria: ['Preserve fixture identity', 'Execute once'] });
+  choice = 'act';
+  expect((await run(deps, args(), sourceConditionCallId))[0]?.success).toBe(true);
+  expect(executed).toHaveLength(1);
+});
+
+test('host conditions cannot replace the manager-owned canonical source condition', async () => {
+  const { deps, executed } = fixture({ autonomousChoices: () => ({ resumeConditions: [{ id: sourceConditionId, revision: 'host-condition' }] }) });
+  await expect(run(deps, args(), sourceConditionCallId)).rejects.toThrow('Host condition conflicts with the source condition');
+  expect(executed).toEqual([]);
+  expect(requests.some(request => request.context?.site === 'engine.gate.autonomous-tool')).toBe(false);
+});
+
+test('canonical condition handling does not exempt PAN-shaped hashes in the source goal', async () => {
+  const { deps, executed } = fixture();
+  deps.autonomousSource = () => ({ goal: sourceConditionId, criteria: [] });
+  await expect(run(deps, args(), sourceConditionCallId)).rejects.toMatchObject({ problem: 'card-material' });
+  expect(executed).toEqual([]);
+  expect(requests).toHaveLength(0);
+});
+
+
+test('legacy source-condition namespace remains reserved from host conditions', async () => {
+  const sourceId = hashState({ session: 'autonomous-fixture', turn: 'turn-1', call: 'call-1' });
+  const { deps, executed } = fixture({ autonomousChoices: () => ({ resumeConditions: [{ id: `source-${sourceId}`, revision: 'host-condition' }] }) });
+  await expect(run(deps)).rejects.toThrow('Host condition conflicts with the source condition');
+  expect(executed).toEqual([]);
+});
+
+test.each(['password=synthetic-private', '4111111111111111'])('typed source identity still rejects raw protected material: %s', async (sourceId) => {
+  const { deps, manager, executed } = fixture();
+  await expect(manager.admitAutonomous(sourceId, 'exec', args(), { sourceOf: deps.autonomousSource!, schemaRevision: 'synthetic' })).rejects.toMatchObject({ problem: sourceId.startsWith('password') ? 'credential-material' : 'card-material' });
+  expect(requests).toHaveLength(0);
+  expect(executed).toEqual([]);
+});
+
+
+test.each(['session', 'turn', 'call'] as const)('PAN-shaped UUID in the %s protocol identity does not become raw action content', async (field) => {
+  const id = '01a10407-1f79-7006-8320-47790069cb8a';
+  expect(judgmentInputProblem(id)).toBe('card-material');
+  const { deps, executed } = fixture();
+  if (field === 'session') deps.sessionId = id;
+  const [result] = await executeToolCalls(deps, field === 'turn' ? id : 'turn-1', [{ id: field === 'call' ? id : 'call-1', name: 'exec', arguments: args() }]);
+  expect(result?.success).toBe(true);
+  expect(executed).toHaveLength(1);
+});
+
+test.each(['session', 'turn', 'call'] as const)('raw protected content in the %s identity still fails before judgment', async (field) => {
+  const id = 'password=synthetic-private';
+  const { deps, executed } = fixture();
+  if (field === 'session') deps.sessionId = id;
+  await expect(executeToolCalls(deps, field === 'turn' ? id : 'turn-1', [{ id: field === 'call' ? id : 'call-1', name: 'exec', arguments: args() }])).rejects.toMatchObject({ problem: 'credential-material' });
+  expect(requests).toHaveLength(0);
+  expect(executed).toEqual([]);
+});
+
+test('schema revision metadata keeps canonical identity while original definitions stay guarded', async () => {
+  const { deps, manager, executed, registry } = fixture();
+  const admission = await manager.admitAutonomous('schema-source', 'exec', args(), { sourceOf: deps.autonomousSource!, schemaRevision: sourceConditionId });
+  expect(admission.result.approved).toBe(true);
+  const before = requests.length;
+  registry.list()[0]!.definition.description = sourceConditionId;
+  await expect(run(deps)).rejects.toMatchObject({ problem: 'card-material' });
+  expect(requests.length).toBe(before);
+  expect(executed).toEqual([]);
+});
+
+test('protocol UUID handling never exempts the same string in raw tool arguments', async () => {
+  const { deps, executed } = fixture();
+  await expect(run(deps, { commands: [{ cmd: 'echo 01a10407-1f79-7006-8320-47790069cb8a' }] })).rejects.toMatchObject({ problem: 'card-material' });
+  expect(requests).toHaveLength(0);
+  expect(executed).toEqual([]);
+});
+
+
+test('optional schema metadata preserves the existing unversioned input binding', async () => {
+  const { deps, manager } = fixture();
+  const admission = await manager.admitAutonomous('unversioned-source', 'exec', args(), { sourceOf: deps.autonomousSource! });
+  expect(admission.result.approved).toBe(true);
+  expect(admission.result.autonomousDecision?.binding.inputRevision).toBe(hashState({
+    toolName: 'exec', args: args(), directory: '/synthetic/autonomous-gate',
+    source: { goal: 'Carry out the synthetic project change', criteria: ['Preserve fixture identity', 'Execute once'] },
+  }));
+});
+
+
+test('schema identity is captured once before validation and hashing', async () => {
+  const { deps, manager } = fixture();
+  let reads = 0;
+  const admission = await manager.admitAutonomous('single-read-schema', 'exec', args(), {
+    sourceOf: deps.autonomousSource!,
+    get schemaRevision() { return ++reads === 1 ? 'original-schema' : 'password=synthetic-private'; },
+  });
+  expect(reads).toBe(1);
+  expect(admission.result.approved).toBe(true);
+  expect(admission.result.autonomousDecision?.binding.inputRevision).toBe(hashState({
+    toolName: 'exec', args: args(), directory: '/synthetic/autonomous-gate', schemaRevision: 'original-schema',
+    source: { goal: 'Carry out the synthetic project change', criteria: ['Preserve fixture identity', 'Execute once'] },
+  }));
 });

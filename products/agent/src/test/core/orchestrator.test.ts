@@ -12,6 +12,7 @@ import { PolicyRuntimeState } from '@/runtime/index.ts';
 import { createTestManagers } from '../helpers/test-managers.ts';
 import { resetSettingsControlPlaneStore } from '../helpers/settings-control-plane.ts';
 import { AgentManager } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 
@@ -46,6 +47,7 @@ function _makeMockProvider(responses: MockChatResponse[]) {
 // ---------------------------------------------------------------------------
 
 describe('Orchestrator', () => {
+  let judgmentLog: SqliteDecisionLog;
   let previousJudgmentPort: ReturnType<typeof installJudgmentPort>;
   let runtimeBus: RuntimeEventBus;
   let toolRegistry: ToolRegistry;
@@ -66,7 +68,9 @@ describe('Orchestrator', () => {
     toolRegistry = new ToolRegistry();
     // Core turn and tool-permission semantics are external readings. Keep
     // this suite focused on token accounting, hooks and turn-loop behavior.
-    previousJudgmentPort = installJudgmentPort(fakePort((name, question) => {
+    judgmentLog = new SqliteDecisionLog(':memory:');
+    previousJudgmentPort = installJudgmentPort(withDecisionLog(fakePort((name, question) => {
+      if (name === 'disposition') return choiceAnswer(question, 'act', 0.97);
       if (name === 'intent') return choiceAnswer(question, 'chat', 0.97);
       if (name === 'risk') return scoreAnswer(question, 0, 0.97);
       if (name === 'family') return choiceAnswer(question, 'generic', 0.97);
@@ -76,11 +80,12 @@ describe('Orchestrator', () => {
       if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.97);
       if (question.type === 'noul') return noulAnswer(name === 'mutates' ? 0.97 : 0.03);
       throw new Error(`Unexpected orchestrator reading: ${name}`);
-    }).port);
+    }).port, judgmentLog));
   });
 
   afterEach(() => {
     installJudgmentPort(previousJudgmentPort);
+    judgmentLog[Symbol.dispose]();
     resetSettingsControlPlaneStore(configManager);
     releaseTestExecutionLock?.();
     releaseTestExecutionLock = null;
@@ -623,8 +628,11 @@ describe('Orchestrator', () => {
       executeToolCalls: (
         turnId: string,
         calls: Array<{ id: string; name: string; arguments: Record<string, unknown> }>,
+        sourceOf: () => { goal: string; criteria: readonly string[] },
       ) => Promise<Array<{ callId: string; success: boolean; output?: string; error?: string }>>;
     };
+
+    const sourceOf = () => ({ goal: 'Run the registered fixture tool and report its result', criteria: ['Preserve tool hook ordering'] });
 
     test('Pre hook fires before tool execution with correct event shape', async () => {
       const dispatcher = new HookDispatcher();
@@ -646,7 +654,7 @@ describe('Orchestrator', () => {
       registerSuccessTool('mytool');
       const { orch } = await buildOrchestratorWithHooks(dispatcher);
       const internal = orch as unknown as OrchestratorInternal;
-      await internal.executeToolCalls('turn-1', [{ id: 'c1', name: 'mytool', arguments: {} }]);
+      await internal.executeToolCalls('turn-1', [{ id: 'c1', name: 'mytool', arguments: {} }], sourceOf);
 
       const preEvent = firedEvents.find(e => e.phase === 'Pre');
       expect(preEvent).toEqual(expect.objectContaining({
@@ -670,7 +678,7 @@ describe('Orchestrator', () => {
       registerSuccessTool('goodtool', 'done');
       const { orch } = await buildOrchestratorWithHooks(dispatcher);
       const internal = orch as unknown as OrchestratorInternal;
-      const results = await internal.executeToolCalls('turn-2', [{ id: 'c2', name: 'goodtool', arguments: {} }]);
+      const results = await internal.executeToolCalls('turn-2', [{ id: 'c2', name: 'goodtool', arguments: {} }], sourceOf);
 
       expect(results[0].success).toBe(true);
       const postEvent = firedEvents.find(e => e.phase === 'Post');
@@ -691,7 +699,7 @@ describe('Orchestrator', () => {
       registerThrowingTool('badtool', 'something went wrong');
       const { orch } = await buildOrchestratorWithHooks(dispatcher);
       const internal = orch as unknown as OrchestratorInternal;
-      const results = await internal.executeToolCalls('turn-3', [{ id: 'c3', name: 'badtool', arguments: {} }]);
+      const results = await internal.executeToolCalls('turn-3', [{ id: 'c3', name: 'badtool', arguments: {} }], sourceOf);
 
       expect(results[0].success).toBe(false);
       expect(results[0].error).toContain('something went wrong');
@@ -725,7 +733,7 @@ describe('Orchestrator', () => {
 
       const { orch } = await buildOrchestratorWithHooks(dispatcher);
       const internal = orch as unknown as OrchestratorInternal;
-      const results = await internal.executeToolCalls('turn-4', [{ id: 'c4', name: 'restricted', arguments: {} }]);
+      const results = await internal.executeToolCalls('turn-4', [{ id: 'c4', name: 'restricted', arguments: {} }], sourceOf);
 
       expect(results[0].success).toBe(false);
       expect(results[0].error).toContain('blocked by policy');
@@ -737,7 +745,7 @@ describe('Orchestrator', () => {
       registerSuccessTool('plaintool', 'plain result');
       const { orch } = await buildOrchestrator();
       const internal = orch as unknown as OrchestratorInternal;
-      const results = await internal.executeToolCalls('turn-5', [{ id: 'c5', name: 'plaintool', arguments: {} }]);
+      const results = await internal.executeToolCalls('turn-5', [{ id: 'c5', name: 'plaintool', arguments: {} }], sourceOf);
 
       expect(results[0].success).toBe(true);
       expect(results[0].output).toBe('plain result');
@@ -752,7 +760,7 @@ describe('Orchestrator', () => {
       registerSuccessTool('robusttool', 'still works');
       const { orch } = await buildOrchestratorWithHooks(dispatcher);
       const internal = orch as unknown as OrchestratorInternal;
-      const results = await internal.executeToolCalls('turn-6', [{ id: 'c6', name: 'robusttool', arguments: {} }]);
+      const results = await internal.executeToolCalls('turn-6', [{ id: 'c6', name: 'robusttool', arguments: {} }], sourceOf);
 
       // Tool should still execute and succeed despite hook failure
       expect(results[0].success).toBe(true);

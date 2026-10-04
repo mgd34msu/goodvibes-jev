@@ -12,6 +12,7 @@
  * screen does not draw, while the shell held the next keystroke (or a whole
  * paste) as its answer: the prompt below lost its first chunk.
  */
+import { startE2ENativeHost } from './native-host-fixture.ts';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
@@ -37,12 +38,14 @@ const model = startStubModel((request) => (
 ));
 let agent: AgentSession | null = null;
 let home: E2EHome | null = null;
-afterAll(() => { agent?.stop(); model.stop(); removeHome(home); });
+let host: Awaited<ReturnType<typeof startE2ENativeHost>> | null = null;
+afterAll(async () => { agent?.stop(); try { await host?.stop(); } finally { model.stop(); removeHome(home); } });
 
 describe('first start in a new workspace', () => {
   test('the workspace question is drawn, and the first typed prompt reaches the conversation whole', async () => {
     home = await makeHome(model);
-    agent = launchAgent(home, { cols: 100, rows: 30 });
+    host = await startE2ENativeHost(home);
+    agent = launchAgent(home, { cols: 100, rows: 30, env: host.env });
     await agent.waitForScreen('the main screen', inputAreaVisible, 45_000);
 
     const asked = await answerWorkspaceQuestion(agent, 'decline');
@@ -62,8 +65,12 @@ describe('first start in a new workspace', () => {
     expect(existsSync(register)).toBe(true);
     const recorded = JSON.parse(readFileSync(register, 'utf8')) as { declines?: Array<{ root: string }> };
     expect((recorded.declines ?? []).map((entry) => entry.root)).toContain(realpathSync(home.workspace));
-    expect(home.judgments.accepted).toContain('route');
-    expect(home.judgments.accepted).toContain('turn');
+    expect(home.judgments.accepted).toContain('native-route');
+    expect(home.judgments.accepted).toContain('native-turn');
+    expect(home.judgments.accepted).not.toContain('route');
+    expect(home.judgments.accepted).not.toContain('turn');
+    expect(host.daemon.services.contractRunner.list({ includeTerminal: true })).toHaveLength(0);
+    expect(host.daemon.services.agentManager.list()).toHaveLength(0);
     expect(agent.alive()).toBe(true);
   }, 150_000);
 });

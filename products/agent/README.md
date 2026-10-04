@@ -21,7 +21,7 @@ item. Commands derive attempt identity and revisions from the live ledger.
 
 Start/resume require an existing active attempt and the daemon's current paired
 operator authority. Execution controls do not create work or edit original criteria. Explicit source
-submission is described below; conversational intake is not implemented. Opening a view never starts or resumes
+submission is described below; ordinary text uses the native intake described next. Opening a view never starts or resumes
 execution. Status/cancel retain the last observed attempt across a handoff within
 that view; older attempts cannot be rediscovered after reopening this surface.
 
@@ -34,6 +34,26 @@ execution receipt or progress. They display requested revisions, separately from
 admitted executions. Refused/interrupted admission recovery requires explicit
 resume; a cancelled intent requires a new native attempt.
 No control asks for owner approval or automatically retries/resumes execution.
+
+## Ordinary conversation and first-start prerequisites
+
+Ordinary text now passes through the selected daemon's original-source intake
+before the local model receives it. This requires an already paired operator,
+`read:work-ledger` and `write:work-ledger`, a registered host workspace, and Jev.
+A durable source-bound turn permit preserves the exact input and prevents a
+second legacy classification or source-less work start. An unavailable host or
+missing authority produces a visible diagnostic; there is no offline legacy
+conversation fallback.
+
+Pairing remains explicit setup. The existing `pairing.tokens.migrate` operator
+method accepts `{ "name": "Agent" }` from an authenticated existing shared-token
+operator with `write:control-plane`, and returns a per-device token once. The
+new token must then be configured for Agent's selected host. Agent's current
+confirmed local-token provisioning route only prepares the legacy shared token;
+it does not perform that migration or install the returned paired token. Fresh
+onboarding into native authority remains an unresolved integration step. Merely
+opening Agent, finishing its onboarding marker, or answering the first-start
+checkpoint question does not grant that authority.
 
 ## Explicit native source submission
 

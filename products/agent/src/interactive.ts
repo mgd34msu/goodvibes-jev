@@ -366,7 +366,7 @@ async function main() {
     if (spokenOutput) spokenTurns.submitNextTurn(state.result.text);
     try { await dispatchNativeConversationTurn(state, orchestrator, inputOptions); }
     catch {
-      systemMessageRouter.high('Native turn dispatch requires recovery. Its durable claim was preserved; no legacy fallback was started.');
+      systemMessageRouter.userAction('Native turn dispatch requires recovery. Its durable claim was preserved; no legacy fallback was started.');
       render();
     }
   };
@@ -418,7 +418,7 @@ async function main() {
         if (content?.some(part => part.type !== 'text')) unsupportedSources.push({ kind: 'image', label: 'attached-content' });
         await routeNativeConversationInput({ intake: commandContext.nativeConversationIntake,
           source: { text: original.text, unsupportedSources },
-          notify: message => { systemMessageRouter.high(message); render(); },
+          notify: message => { systemMessageRouter.userAction(message); render(); },
           dispatch: state => dispatchNativeTurn(state, options.spokenOutput),
         });
       })();

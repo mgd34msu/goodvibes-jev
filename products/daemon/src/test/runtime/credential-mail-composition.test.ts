@@ -7,6 +7,8 @@ import { composeMailDeps } from '../../runtime/mail-composition.ts';
 import { makeOwnedTempDir } from '../helpers/owned-temp.ts';
 
 const roots: string[] = [];
+// Persisted metadata uses the real ID/hash format without creating a bearer token.
+const pairingMetadata = Object.freeze({ id: 'pair-00000000-0000-4000-8000-000000000001', name: 'Fixture device', tokenHash: '0'.repeat(64), createdAt: 1 });
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function fixture() {
   const root = makeOwnedTempDir('daemon-credential-composition'); roots.push(root);
@@ -38,12 +40,25 @@ test('absence of an override retains the explicitly supplied home and historical
 
 test('pairing metadata is read only from its injected fixture path without minting a token', () => {
   const input = fixture();
-  const contents = JSON.stringify({ tokens: [{ id: 'fixture', name: 'Fixture device', tokenHash: 'non-authenticating-fixture-hash', createdAt: 1 }] });
+  const contents = JSON.stringify({ tokens: [pairingMetadata] });
   writeFileSync(input.pairingTokenPath, contents);
   const services = composeCredentialServices(input);
   expect(services.pairingTokens.pairedCount()).toBe(1);
+  expect(services.pairingTokens.list()).toEqual([{ id: pairingMetadata.id, name: pairingMetadata.name, createdAt: pairingMetadata.createdAt }]);
+  expect(services.pairingTokens.authenticate('gvp_fixture_no_token_issued')).toBeNull();
   expect(readFileSync(input.pairingTokenPath, 'utf8')).toBe(contents);
 });
+
+for (const [field, value] of [['id', 'fixture'], ['tokenHash', 'non-authenticating-fixture-hash']] as const) {
+  test(`malformed pairing ${field} metadata cannot create a paired identity`, () => {
+    const input = fixture();
+    writeFileSync(input.pairingTokenPath, JSON.stringify({ tokens: [{ ...pairingMetadata, [field]: value }] }));
+    const services = composeCredentialServices(input);
+    expect(services.pairingTokens.pairedCount()).toBe(0);
+    expect(services.pairingTokens.list()).toEqual([]);
+    expect(services.pairingTokens.authenticate('gvp_fixture_no_token_issued')).toBeNull();
+  });
+}
 
 test('the step-up verifier reads the same composed secret store and refuses absent enrollment', async () => {
   const services = composeCredentialServices(fixture());

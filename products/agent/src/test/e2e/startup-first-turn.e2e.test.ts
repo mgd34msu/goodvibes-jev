@@ -10,7 +10,10 @@
  *   first turn  a typed prompt reaches the model with that text, and the
  *               model's reply is drawn in the transcript.
  */
-import { afterAll, describe, expect, test } from 'bun:test';
+import { startE2ENativeHost } from './native-host-fixture.ts';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import {
   answerWorkspaceQuestion,
   binaryVersion,
@@ -33,12 +36,18 @@ const model = startStubModel((request) => (
 ));
 let agent: AgentSession | null = null;
 let home: E2EHome | null = null;
-afterAll(() => { agent?.stop(); model.stop(); removeHome(home); });
+let host: Awaited<ReturnType<typeof startE2ENativeHost>> | null = null;
+afterEach(async () => {
+  agent?.stop(); agent = null;
+  try { await host?.stop(); } finally { host = null; removeHome(home); home = null; }
+});
+afterAll(() => model.stop());
 
 describe('main screen and first turn', () => {
   test('startup draws the main screen, and a typed prompt is answered on it', async () => {
     home = await makeHome(model);
-    agent = launchAgent(home, { cols: 100, rows: 30 });
+    host = await startE2ENativeHost(home);
+    agent = launchAgent(home, { cols: 100, rows: 30, env: host.env });
 
     await agent.waitForScreen('the main screen', (s) => inputAreaVisible(s) && /context/.test(s), 45_000);
     // A workspace this home has never seen: the first-start question comes first.
@@ -57,8 +66,29 @@ describe('main screen and first turn', () => {
     const answered = await agent.waitForScreen('the scripted reply', (s) => screenText(s).includes(REPLY), 45_000);
     expect(model.requests.some((request) => lastUserText(request).includes(PROMPT))).toBe(true);
     expect(screenText(answered)).toContain(PROMPT);
-    expect(home.judgments.accepted).toContain('route');
-    expect(home.judgments.accepted).toContain('turn');
+    expect(home.judgments.accepted).toContain('native-route');
+    expect(home.judgments.accepted).toContain('native-turn');
+    expect(home.judgments.accepted).not.toContain('route');
+    expect(home.judgments.accepted).not.toContain('turn');
+    expect(host.daemon.services.contractRunner.list({ includeTerminal: true })).toHaveLength(0);
+    expect(host.daemon.services.agentManager.list()).toHaveLength(0);
     expect(agent.alive()).toBe(true);
   }, 120_000);
 });
+
+
+test('without a paired host, the first prompt gets a visible setup diagnostic and never reaches the model', async () => {
+  home = await makeHome(model);
+  agent = launchAgent(home, { cols: 100, rows: 30 });
+  await agent.waitForScreen('the main screen', inputAreaVisible, 45_000);
+  await answerWorkspaceQuestion(agent, 'decline');
+  const before = model.requests.length;
+  agent.type(PROMPT); agent.key('Enter');
+  const refused = await agent.waitForScreen('the missing-host diagnostic', s => screenText(s).includes('Connected-host operator token is required.'), 10_000);
+  expect(screenText(refused)).not.toContain(REPLY);
+  expect(model.requests).toHaveLength(before);
+  expect(home.judgments.accepted).not.toContain('native-route');
+  expect(home.judgments.accepted).not.toContain('route');
+  expect(existsSync(join(home.home, '.goodvibes/agent/native-work-submission.json.intake'))).toBe(false);
+  expect(agent.alive()).toBe(true);
+}, 120_000);

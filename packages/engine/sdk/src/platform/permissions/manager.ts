@@ -313,7 +313,9 @@ export class PermissionManager {
       ask(request) {
         assertCurrent();
         const prior = request.beforeAttempt;
-        return installed.ask({ ...request, beforeAttempt() { assertCurrent(); prior?.(); } });
+        // A transport may ignore abort. Release the permission caller while
+        // draining its late recorded answer; aborted authority cannot claim it.
+        return awaitPermission(() => installed.ask({ ...request, beforeAttempt() { assertCurrent(); prior?.(); } }), signal);
       },
     };
     return { port, assertCurrent };
@@ -354,15 +356,26 @@ export class PermissionManager {
     const authorityRevision = hashState(capturedAuthority as unknown as EntryType);
     const offered = (capturedAuthority as { autonomousChoices: AutonomousToolChoices }).autonomousChoices;
     const directory = capturedAuthority.directory ?? undefined;
-    const inputRevision = autonomousRevision({ toolName, args, directory, schemaRevision: options.schemaRevision, source });
+    // Raw action/source/scope data was inspected above. Schema revisions and
+    // source handles are typed protocol identities and retain that validation.
+    const schemaRevision = options.schemaRevision;
+    captureAutonomousChoices({ resumeConditions: [{ id: sourceId, revision: schemaRevision ?? 'unversioned-schema' }] });
+    const inputRevision = hashState({ toolName, args, directory, schemaRevision, source } as unknown as EntryType);
+    // A source condition is a typed protocol reference, not raw action text.
+    // Keep its canonical identity intact: prefixing a generated SHA can make
+    // an incidental digit run look like card material to the raw-input guard.
+    const sourceCondition = captureAutonomousChoices({ resumeConditions: [{ id: sourceId, revision: inputRevision }] }).resumeConditions![0]!;
+    const legacySourceConditionId = `source-${sourceId}`;
     let deferred = this.autonomousDeferred.get(sourceId);
     if (deferred?.inputRevision === inputRevision) {
-      if (deferred.until.id === `source-${sourceId}`) throw new Error('Autonomous source is waiting for a new input revision');
+      if (deferred.until.id === sourceCondition.id || deferred.until.id === legacySourceConditionId) throw new Error('Autonomous source is waiting for a new input revision');
       const waitingFor = deferred.until;
       const condition = offered.resumeConditions?.find(item => item.id === waitingFor.id);
       if (!condition || condition.revision === deferred.until.revision) throw new Error('Autonomous source is waiting for its registered condition');
     }
-    const actionId = autonomousRevision({ sourceId, toolName });
+    // sourceId was inspected as protocol metadata above; toolName and args
+    // passed raw-input inspection. Do not rescan the generated hash as text.
+    const actionId = hashState({ sourceId, toolName });
     const binding: JevDecisionBinding = Object.freeze({
       sourceId, inputRevision, actionId, actionRevision: inputRevision,
       authorityId: 'engine.permission-runtime', authorityRevision,
@@ -393,7 +406,7 @@ export class PermissionManager {
       ...(installed.recorder ? { recorder: installed.recorder } : {}),
       async ask(request) {
         const prior = request.beforeAttempt;
-        const result = await installed.ask({ ...request, beforeAttempt() { prior?.(); assertCurrent(); } });
+        const result = await awaitPermission(() => installed.ask({ ...request, beforeAttempt() { prior?.(); assertCurrent(); } }), signal);
         assertCurrent();
         if (!result.decisionId) throw new JudgmentError('unrecorded', 'autonomous supporting read has no recorded provenance');
         supportingIds.push(result.decisionId);
@@ -421,12 +434,12 @@ export class PermissionManager {
       : null;
     const allowAct = boundary.passed && !explicitToolDeny && durable?.approved !== false && policy?.approved !== false
       && !(preset.readOnly && reading !== null && (reading.mutates || reading.outward));
-    if (offered.resumeConditions?.some(condition => condition.id === `source-${sourceId}`)) throw new Error('Host condition conflicts with the source condition');
+    if (offered.resumeConditions?.some(condition => condition.id === sourceCondition.id || condition.id === legacySourceConditionId)) throw new Error('Host condition conflicts with the source condition');
     const choices = {
       revisions: (offered.revisions ?? []).filter(item => !options.consumedRevisions?.includes(item.ref.id) && (!options.permittedRevisionIds || options.permittedRevisionIds.includes(item.ref.id))),
       // The manager owns this source revision condition. A changed source must
       // enter through fresh admission; this receipt never becomes a later grant.
-      resumeConditions: [{ id: `source-${sourceId}`, revision: inputRevision }, ...(offered.resumeConditions ?? [])],
+      resumeConditions: [sourceCondition, ...(offered.resumeConditions ?? [])],
     };
     const decision = await decideAutonomousTool({
       port: scopedPort, binding,

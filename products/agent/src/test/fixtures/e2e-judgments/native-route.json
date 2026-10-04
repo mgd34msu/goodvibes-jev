@@ -1,0 +1,34 @@
+{
+  "state": {
+    "input": {
+      "request": "  Hello from the original conversational source \u2603.  "
+    },
+    "originalSource": {
+      "text": "  Hello from the original conversational source \u2603.  ",
+      "sourceRevision": "ca307a4bf5747378f287fe017a65affa1d3aed5db1843979672fa7410eb468e6",
+      "sourceIssues": []
+    },
+    "binding": {
+      "sourceId": "f9d9f1ac899e4e6b595b6cdd27ac8586a910972e0720c7856e2669d265c12957",
+      "inputRevision": "ca307a4bf5747378f287fe017a65affa1d3aed5db1843979672fa7410eb468e6",
+      "actionId": "1db6acd9269fc2a33231de182be145e8973f065dfda96d8f4ea6251c2910560f",
+      "actionRevision": "db7499ed99606e730b41752eac952c1ea5f8e8d18d7511c5e654c669ea2745a7",
+      "authorityId": "f9aac947245208c080682cd6885c612666bd58e9701c3b4d8c215518aea1b921",
+      "authorityRevision": "c3fbd5fe22c420102362caccdeafa51dcb48dc15118445113eab72934f0cd16e",
+      "scopeId": "77dd195ae80ce3bc2d416adaa7ab27bf6e5888f826540675db7612cb4f114f3a",
+      "scopeRevision": "7354cde16541a632ad3b7b825b126a7b99e22ecc8283be697bca1f748f2fde69"
+    }
+  },
+  "questions": {
+    "route": {
+      "type": "choice",
+      "instructions": "What does the person ask for in `request`? Judge the whole message: what they want done, not the words it uses.",
+      "criteria": {
+        "converse": "Conversation, a question about the conversation, or a request needing no work on files or systems",
+        "answer": "A question answered from knowledge or by reading, with no change to anything",
+        "contract": "Work that produces or changes something: code, files, documents, configuration, or a multi-step task"
+      }
+    }
+  },
+  "model": "jev-1.13.0"
+}

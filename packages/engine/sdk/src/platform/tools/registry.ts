@@ -4,6 +4,7 @@ import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { autonomousRevision } from '../permissions/autonomous.js';
 import { firstJsonSchemaFailure } from '@goodvibes-jev/engine/transport-http';
 import type { Tool, ToolDefinition, ToolExecuteOptions, ToolResult } from '../types/tools.js';
+import { UnknownPreparedToolError } from './preparation-error.js';
 import { ToolError } from '../types/errors.js';
 import { repairToolCall } from './auto-repair.js';
 import { ToolContractVerifier } from '../runtime/tools/contract-verifier.js';
@@ -160,7 +161,12 @@ export class ToolRegistry {
     const signal = opts?.signal;
     signal?.throwIfAborted();
     const tool = this.tools.get(name);
-    if (!tool) throw new ToolError('Unknown tool in autonomous preparation', name);
+    if (!tool) {
+      // Even an unknown call must pass the input boundary before its name can
+      // be emitted as a recoverable tool failure. No judgment or claim occurs.
+      snapshotJudgmentInput(args, name);
+      throw new UnknownPreparedToolError(name);
+    }
     const { executor, definition } = preparationData(tool, name);
     const definitionRevision = autonomousRevision(definition);
     const captured = snapshotJudgmentInput(args, name) as Record<string, unknown>;

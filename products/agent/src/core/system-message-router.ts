@@ -134,6 +134,12 @@ export class SystemMessageRouter {
     this.routeSystemMessage(message, 'high');
   }
 
+  /** Direct response to a user action, always visible on the main screen once. */
+  userAction(message: string): void {
+    this.conversation.addSystemMessage(message);
+    this.feed?.push(message, 'high');
+  }
+
   /** Low-priority shortcut, activity feed only. */
   low(message: string): void {
     this.routeSystemMessage(message, 'low');
