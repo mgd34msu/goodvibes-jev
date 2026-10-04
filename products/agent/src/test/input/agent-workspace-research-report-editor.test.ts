@@ -83,6 +83,18 @@ describe('research report editor source containment', () => {
     }
   });
 
+  test('contains declared host-case aliases in editor args and prompts', () => {
+    const url = 'https://example.test/doc\tument?token=sentinel';
+    const alias = url.replace('example.test', 'EXAMPLE.TEST');
+    const read = reader(`Source | ${url} | high | See ${alias}`);
+    const args = buildAgentResearchReportToolArgs(read, 'Save the report.');
+    expect(JSON.stringify(args)).not.toContain('sentinel');
+    expect(args.sources[0]?.note).toBe('See [source URL withheld]');
+    const result = buildAgentResearchReportPromptSubmission(createAgentResearchReportEditor(), read, true);
+    expect(result.kind).toBe('prompt');
+    expect(JSON.stringify(result)).not.toContain('sentinel');
+  });
+
   test.todo('contains unbound control-split prompt prose once a source-span screening boundary exists', () => {
     const sources = 'See https://example.test/doc\tument?token=sentinel';
     const args = buildAgentResearchReportToolArgs(reader(sources), 'Save the report.');

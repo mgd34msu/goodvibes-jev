@@ -14,6 +14,29 @@ export interface AgentResearchReportSource {
 
 const WITHHELD_URL = '[source URL withheld]';
 
+function literalReferencePattern(value: string, foldCase = false): string {
+  return [...value].map((character) => foldCase && /[a-z]/i.test(character)
+    ? `[${character.toLowerCase()}${character.toUpperCase()}]`
+    : character.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('');
+}
+
+/** Fold ASCII case only in scheme and hostname, never userinfo, path or query text. */
+function omittedReferencePattern(value: string): string {
+  const scheme = /^https?:/i.exec(value)?.[0] ?? '';
+  const authority = /^https?:\/\/([^/?#\\]*)/i.exec(value);
+  if (!authority) return literalReferencePattern(scheme, true) + literalReferencePattern(value.slice(scheme.length));
+  const authorityText = authority[1]!;
+  const hostStart = authority[0].length - authorityText.length + authorityText.lastIndexOf('@') + 1;
+  const hostAndPort = value.slice(hostStart, authority[0].length);
+  const hostname = hostAndPort.startsWith('[')
+    ? /^\[[^\]]*\]/.exec(hostAndPort)?.[0] ?? ''
+    : hostAndPort.split(':', 1)[0]!;
+  return literalReferencePattern(scheme, true)
+    + literalReferencePattern(value.slice(scheme.length, hostStart))
+    + literalReferencePattern(hostname, true)
+    + literalReferencePattern(value.slice(hostStart + hostname.length));
+}
+
 /**
  * Preserve complete usable citations. Reuse the existing source-registry URL
  * sanitizer, rather than adding a second parameter-name heuristic. If that
@@ -60,12 +83,7 @@ function omittedSourceReferences(values: readonly unknown[]): RegExp | undefined
   }
   if (urls.size === 0) return undefined;
   const literals = [...urls].sort((left, right) => right.length - left.length)
-    .map((url) => {
-      const scheme = /^https?:/i.exec(url)?.[0] ?? '';
-      const prefix = [...scheme].map((character) => /[a-z]/i.test(character)
-        ? `[${character.toLowerCase()}${character.toUpperCase()}]` : character).join('');
-      return prefix + url.slice(scheme.length).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    });
+    .map(omittedReferencePattern);
   try { return new RegExp(literals.join('|'), 'g'); }
   catch { throw new Error('Research source aliases could not be prepared before transmission.'); }
 }

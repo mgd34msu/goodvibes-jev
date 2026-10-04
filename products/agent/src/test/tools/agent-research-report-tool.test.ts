@@ -3,6 +3,8 @@ import { describe, expect, test } from 'bun:test';
 import type { ArtifactCreateInput, ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { createAgentResearchReportTool, registerAgentResearchReportTool } from '../../tools/agent-research-report-tool.ts';
+import { createAgentResearchTool } from '../../tools/agent-research-tool.ts';
+import type { CommandContext, CommandRegistry } from '../../input/command-registry.ts';
 
 class ResearchReportArtifactStore implements Pick<ArtifactStore, 'create'> {
   readonly records: ArtifactRecord[] = [];
@@ -32,6 +34,33 @@ class ResearchReportArtifactStore implements Pick<ArtifactStore, 'create'> {
 }
 
 describe('agent_research_report tool', () => {
+  test('the public research adapter protects the actual report artifact path', async () => {
+    const store = new ResearchReportArtifactStore();
+    const tool = createAgentResearchTool({ commandRegistry: {} as CommandRegistry,
+      commandContext: { workspace: {}, platform: { artifactStore: store } } as unknown as CommandContext,
+      toolRegistry: new ToolRegistry() });
+    const base = { action: 'report', title: 'Report', question: 'What is supported?', summary: 'Evidence [S1].',
+      confirm: true, explicitUserRequest: 'Save the report.' };
+    let reads = 0;
+    const refused = await tool.execute({ ...base, get sources() { reads++; return [{ title: 'Getter source' }]; } });
+    expect(refused.success).toBe(false);
+    expect(reads).toBe(0);
+    expect(store.records).toHaveLength(0);
+    const unsafe = 'https://example.test/doc\tument?token=sentinel';
+    const safe = 'https://example.test/article?id=123#section-2';
+    const result = await tool.execute({ ...base, sources: [
+      { title: `See ${unsafe}`, url: unsafe, note: `Before ${unsafe} after.` },
+      { title: 'Safe source', url: safe, note: 'Ordinary prose.' },
+    ] });
+    expect(result.success).toBe(true);
+    expect(store.records).toHaveLength(1);
+    expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
+    expect(store.records[0]?.metadata.sources).toMatchObject([
+      { title: 'See [source URL withheld]', urlOmitted: true, note: 'Before [source URL withheld] after.' },
+      { title: 'Safe source', url: safe, note: 'Ordinary prose.' },
+    ]);
+  });
+
   test('saves a sourced markdown report artifact without printing report content', async () => {
     const store = new ResearchReportArtifactStore();
     const tool = createAgentResearchReportTool(store);
@@ -355,6 +384,27 @@ describe('research report source containment', () => {
         }
       }
     }
+  });
+
+  test('contains declared malformed aliases with case-equivalent hosts without folding paths', async () => {
+    for (const control of ['\t', '\n', '\r']) {
+      const url = `https://example.test/doc${control}ument?token=sentinel`;
+      const alias = url.replace('https://example.test', 'HTTPS://EXAMPLE.TEST');
+      const store = new ResearchReportArtifactStore();
+      const result = await createAgentResearchReportTool(store).execute({ ...base,
+        sources: [{ title: `See ${alias}`, url, note: `Before ${alias} after.` }] });
+      expect(result.success).toBe(true);
+      expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
+      expect(store.records[0]?.metadata.sources).toMatchObject([
+        { title: 'See [source URL withheld]', note: 'Before [source URL withheld] after.', urlOmitted: true },
+      ]);
+    }
+    const prepared = prepareAgentResearchReportInput({ sources: [
+      { title: 'Declared source', url: 'https://example.test/guide\nPart' },
+      { title: 'Distinct path followed by ordinary prose', note: 'https://EXAMPLE.TEST/Guide\nPart' },
+    ] });
+    expect(prepared.sources[1]?.note).toBe('https://example.test/Guide\nPart');
+    expect(prepared.sources[1]?.urlOmitted).toBeUndefined();
   });
 
   test.todo('contains unbound control-split prose once a source-span screening boundary exists', async () => {
