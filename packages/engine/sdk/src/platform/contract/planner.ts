@@ -1,3 +1,4 @@
+import { createContractInputAuthority, bindContractInputAuthority, assertContractInputAdmission, pinContractInputAdmission, authorizeContractInputPath, assertContractInputReadAccess, withContractInputAuthority } from './input-authority.js';
 /**
  * Planning (docs/design/contract-runner.md section 3): read the request's
  * shape, run the planning model as a read-only sub-agent, check its plan in
@@ -10,6 +11,9 @@
  * cannot produce a plan fails the contract with `failureKind: 'planning'`;
  * there is no single-item fallback.
  */
+import { assertContractInputView, contractInputPath } from './input-snapshot.js';
+import type { ReadAccessFilter } from '../tools/shared/read-access.js';
+
 import { JudgmentPortMissingError, judgmentPort } from '@goodvibes-jev/engine/errors';
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import type { ContractEvent } from '../../events/contract.js';
@@ -64,6 +68,7 @@ export interface ContractPlannerDeps {
   readonly emit: (event: ContractEvent) => void;
   /** The repository summary the planner is shown; defaults to the repo_map tool over the project root. */
   readonly repositoryMap?: ((projectRoot: string) => Promise<string>) | undefined;
+  readonly readAccessFilter?: ReadAccessFilter | undefined;
   readonly now?: (() => number) | undefined;
 }
 
@@ -406,8 +411,8 @@ export function readPlannerBounds(configManager: ContractConfigReader): Decompos
 }
 
 /** The repository summary the planner starts from: the repo_map tool's ranked map. */
-export async function defaultRepositoryMap(projectRoot: string): Promise<string> {
-  const result = await createRepoMapTool({ projectRoot }).execute({ budgetTokens: 2_000 });
+export async function defaultRepositoryMap(projectRoot: string, readAccessFilter?: ReadAccessFilter, capturedReadAccess?: ReadAccessFilter): Promise<string> {
+  const result = await createRepoMapTool({ projectRoot, ...(capturedReadAccess === undefined ? {} : { capturedReadAccess }), ...(readAccessFilter === undefined ? {} : { readAccessFilter }) }).execute({ budgetTokens: 2_000 });
   return result.success ? (result.output ?? '') : `No repository map: ${result.error ?? 'the map could not be built'}. Use your read tools.`;
 }
 
@@ -463,6 +468,25 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
   if (contract.shape === undefined) throw new Error(`contract ${contract.id} has no request shape; shape it before planning`);
   const context = new PlanningContext(contract, deps);
   const { signal } = input;
+  if (signal?.aborted) return { kind: 'cancelled' };
+  // Keep the admitted receipt owned by this invocation across every await.
+  // A replacement receipt must not silently re-ground a partially produced plan.
+  const admitted = contract.inputSnapshot;
+  if (admitted !== undefined) pinContractInputAdmission(contract, signal);
+  const snapshot = admitted === undefined ? undefined : structuredClone(admitted);
+  const receipt = JSON.stringify(admitted);
+  const assertCurrent = async (): Promise<void> => {
+    signal?.throwIfAborted();
+    if (admitted !== undefined) assertContractInputAdmission(contract);
+    if (contract.inputSnapshot !== admitted || JSON.stringify(contract.inputSnapshot) !== receipt) throw new Error('contract input receipt changed during planning');
+    if (snapshot !== undefined) await assertContractInputView(snapshot, signal);
+    signal?.throwIfAborted();
+    if (contract.inputSnapshot !== admitted || JSON.stringify(contract.inputSnapshot) !== receipt) throw new Error('contract input receipt changed during planning');
+  };
+  await assertCurrent();
+  if (snapshot !== undefined && deps.readAccessFilter === undefined) throw new Error('captured planning requires original-owner read authorization');
+  const workingDirectory = snapshot === undefined ? contract.projectRoot : contractInputPath(snapshot);
+  const authority = snapshot === undefined ? undefined : await createContractInputAuthority(contract, workingDirectory, { signal, snapshot });
   context.move('planning');
 
   let route: UnitRoute;
@@ -476,7 +500,17 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
     return context.fail('planning', `no route for the planner: ${summarizeError(error)}`);
   }
   context.decide('spawned', `planner route: ${route.reason}`, [], route);
-  const repositoryMap = await (deps.repositoryMap ?? defaultRepositoryMap)(contract.projectRoot);
+  // Both the original path and the unique generation must pass the existing read boundary.
+  // Snapshot membership is only provenance; a source-path denial is not erased by copying.
+  await assertCurrent();
+  const filter = deps.readAccessFilter;
+  const readAccessFilter: ReadAccessFilter | undefined = authority === undefined ? filter : async (path) => {
+    try { await authorizeContractInputPath(authority, path, filter, signal); return true; }
+    catch { return false; }
+  };
+  const map = () => deps.repositoryMap === undefined ? defaultRepositoryMap(workingDirectory, readAccessFilter, authority ? readAccessFilter : undefined) : deps.repositoryMap(workingDirectory);
+  const repositoryMap = await (authority ? withContractInputAuthority(authority, map) : map());
+  if (authority) await assertContractInputReadAccess(authority, filter, signal);
   const bounds = readPlannerBounds(deps.configManager);
   const systemPrompt = buildContractPlannerPrompt();
 
@@ -485,6 +519,7 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
   try {
     for (;;) {
       if (signal?.aborted) return { kind: 'cancelled' };
+      await assertCurrent();
       const userPrompt = buildContractPlannerRequest({
         ask: contract.ask,
         shape: contract.shape,
@@ -496,21 +531,23 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
         previousPlan: input.previousPlan,
         repair: previous,
       });
-      const run = await deps.decompositionRunner.run({
+      const run = await deps.decompositionRunner.run(bindContractInputAuthority({
         goal: contract.ask,
-        workingDir: contract.projectRoot,
+        workingDir: workingDirectory,
         systemPrompt,
         userPrompt,
         bounds,
         attempt: repair === 0 ? 'initial' : 'repair',
         route,
         ...(signal === undefined ? {} : { signal }),
-      });
+      }, authority));
       if (run.agentId !== undefined) contract.plannerAgentIds.push(run.agentId);
       if (signal?.aborted) return { kind: 'cancelled' };
+      await assertCurrent();
       if (run.status !== 'completed') return context.fail('planning', runFailureReason(run));
 
       const checked = await checkPlanText(context, run.output, repair, signal);
+      await assertCurrent();
       if (checked.problems.length === 0 && checked.plan !== undefined) {
         const decisionIds = [...contract.shape.decisionIds, ...(checked.verdict?.decisionIds ?? [])];
         acceptPlan(contract, checked.plan, checked.verdict?.dispositions ?? new Map(), context, decisionIds);

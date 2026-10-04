@@ -1,3 +1,4 @@
+import { assertCapturedToolAccessCurrent } from '../shared/captured-input-tools.js';
 import { stat as statAsync } from 'node:fs/promises';
 import { relative } from 'node:path';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
@@ -37,7 +38,10 @@ async function rankMatchedFiles(
     id: file,
     content: contentMatchView(relative(projectRoot, file) || file, matches),
   }));
-  const { ranked } = await contentRank.rerank(judgmentPort(CONTENT_RANK_SITE), pattern, candidates, { site: CONTENT_RANK_SITE });
+  await assertCapturedToolAccessCurrent();
+  const { ranked } = await contentRank.rerank(judgmentPort(CONTENT_RANK_SITE), pattern, candidates, {
+    site: CONTENT_RANK_SITE,
+  });
   return new Map(ranked.map(({ id }) => [id, matchedFiles.get(id)!] as const));
 }
 
@@ -83,11 +87,7 @@ async function executeContentQuery(
     rawPattern = `\\b(?:${rawPattern})\\b`;
   }
 
-  const flags = [
-    query.case_sensitive === false ? 'i' : '',
-    query.multiline ? 'm' : '',
-    'g',
-  ].join('');
+  const flags = [query.case_sensitive === false ? 'i' : '', query.multiline ? 'm' : '', 'g'].join('');
 
   let regex: RegExp;
   try {
@@ -132,6 +132,7 @@ async function executeContentQuery(
   }
 
   const cacheKey: CacheKey = { pattern: rawPattern, glob: query.glob ?? '', path: basePath, flags };
+  await assertCapturedToolAccessCurrent();
   const cachedEntry = runtime.searchCacheGet(cacheKey);
   const cacheValid = cachedEntry ? await runtime.searchCacheIsValid(cachedEntry) : false;
 
@@ -233,7 +234,10 @@ async function executeContentQuery(
             m.endLine = scope.endLine;
           }
         } catch (err) {
-          addFindWarning(diagnostics, `Could not expand match scope in '${file}' at line ${m.line}: ${summarizeError(err)}`);
+          addFindWarning(
+            diagnostics,
+            `Could not expand match scope in '${file}' at line ${m.line}: ${summarizeError(err)}`,
+          );
         }
       }
     }
@@ -305,10 +309,10 @@ async function executeContentQuery(
           importedBy: importGraph.findDependents(file),
         };
       }
-      return withFindWarnings(
-        { matches: results, count: totalMatches, relationships: relMap },
-        [...diagnostics.warnings, ...(importGraph.getWarnings?.() ?? [])],
-      );
+      return withFindWarnings({ matches: results, count: totalMatches, relationships: relMap }, [
+        ...diagnostics.warnings,
+        ...(importGraph.getWarnings?.() ?? []),
+      ]);
     }
 
     return withFindWarnings({ matches: results, count: totalMatches }, diagnostics.warnings);

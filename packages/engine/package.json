@@ -859,6 +859,11 @@
       "types": "./sdk/dist/platform/power/index.d.ts",
       "import": "./sdk/dist/platform/power/index.js"
     },
+    "./sdk/platform/presentation/editor-message": {
+      "bun": "./sdk/src/platform/presentation/editor-message.ts",
+      "types": "./sdk/dist/platform/presentation/editor-message.d.ts",
+      "import": "./sdk/dist/platform/presentation/editor-message.js"
+    },
     "./sdk/platform/presentation": {
       "bun": "./sdk/src/platform/presentation/index.ts",
       "types": "./sdk/dist/platform/presentation/index.d.ts",

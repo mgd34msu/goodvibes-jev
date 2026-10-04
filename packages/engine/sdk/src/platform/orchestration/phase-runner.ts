@@ -101,6 +101,7 @@ export type ContractPreSpawn =
   | { readonly kind: 'settled'; readonly outcome: ContractUnitOutcome };
 
 export interface PhaseRunnerDeps {
+  readonly prepareInputAuthority?: import('../contract/group-runner.js').ContractEngineInput['prepareInputAuthority'];
   readonly agentManager: PhaseRunnerAgentManagerLike;
   readonly configManager: Pick<ConfigManager, 'get' | 'getCategory'>;
   readonly runtimeBus: RuntimeEventBus;
@@ -505,6 +506,11 @@ async function runPhaseWithSignal(
     if (decided.route !== undefined) Object.assign(item, { route: decided.route });
   }
   const unitSpawn = contractUnitSpawn(item);
+  const inputReadAuthority = deps.prepareInputAuthority && deps.itemWorktree
+    ? await deps.prepareInputAuthority({ path: deps.itemWorktree.path, branch: item.worktreeBranch ?? '' }, signal)
+    : undefined;
+  if (deps.prepareInputAuthority && !deps.itemWorktree) throw new Error('captured contract member requires its isolated workspace');
+  if (signal.aborted) return settleWithoutAgent(item, phase, 'cancelled', startedAt, worktree, deps);
   const termination = observeAgentTermination(deps.runtimeBus, deps.agentManager);
   let record: AgentRecord | undefined;
   let outcome: AgentOutcome;
@@ -518,7 +524,7 @@ async function runPhaseWithSignal(
       ...unitSpawn?.input,
       // An isolated item's tools run inside its own worktree.
       ...(deps.itemWorktree ? { workingDirectory: deps.itemWorktree.path } : {}),
-    } as Parameters<PhaseRunnerAgentManagerLike['spawn']>[0], unitSpawn?.binding);
+    } as Parameters<PhaseRunnerAgentManagerLike['spawn']>[0], unitSpawn ? { ...unitSpawn.binding, ...(inputReadAuthority ? { inputReadAuthority } : {}) } : undefined);
 
     record.workItemId = item.id;
     if (!signal.aborted) item.agentId = record.id;

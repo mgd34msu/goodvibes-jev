@@ -203,6 +203,10 @@ export function executeFileOp(op: ExecFileOp, projectRoot: string): FileOpResult
 export async function executeFileOperations(
   fileOps: ExecFileOp[] | undefined,
   projectRoot: string,
+  access?: {
+    beforeOperation: (op: ExecFileOp) => Promise<void>;
+    beforeImportUpdates: () => Promise<void>;
+  },
 ): Promise<{ fileOpResults: FileOpResult[]; fileOpError?: string; fileOpWarnings?: string[] }> {
   const fileOpResults: FileOpResult[] = [];
   const pendingImportUpdates: Array<{ src: string; dst: string }> = [];
@@ -213,6 +217,9 @@ export async function executeFileOperations(
   }
 
   for (const op of fileOps) {
+    // Boundary failures propagate to the owner of the disposable view. They
+    // must not be downgraded into ordinary operation errors or import warnings.
+    if (access) await access.beforeOperation(op);
     try {
       const opResult = executeFileOp(op, projectRoot);
       fileOpResults.push(opResult);
@@ -231,6 +238,7 @@ export async function executeFileOperations(
   }
 
   for (const { src, dst } of pendingImportUpdates) {
+    if (access) await access.beforeImportUpdates();
     const matchingResult = fileOpResults.find((r) => r.source === src && r.destination === dst);
     try {
       const updateResult = await updateImportsAfterMove(src, dst, projectRoot);

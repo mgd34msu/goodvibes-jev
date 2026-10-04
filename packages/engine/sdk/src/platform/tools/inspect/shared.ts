@@ -1,3 +1,4 @@
+import { assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { readdir } from 'node:fs/promises';
@@ -147,7 +148,10 @@ export function summarizeInspectValue(mode: InspectMode, value: unknown): unknow
     case 'api_spec':
       return {
         openapi: record.openapi ?? null,
-        pathCount: record.paths && typeof record.paths === 'object' ? Object.keys(record.paths as Record<string, unknown>).length : 0,
+        pathCount:
+          record.paths && typeof record.paths === 'object'
+            ? Object.keys(record.paths as Record<string, unknown>).length
+            : 0,
         paths: takeSample(Object.keys((record.paths as Record<string, unknown>) ?? {})),
       };
     case 'api_validate':
@@ -160,10 +164,12 @@ export function summarizeInspectValue(mode: InspectMode, value: unknown): unknow
       return {
         driftDetected: record.drift_detected ?? false,
         fetchCallCount: Array.isArray(record.fetch_calls) ? record.fetch_calls.length : 0,
-        unmatchedFetches: takeSample(record.unmatched_fetches as Array<Record<string, unknown>> | undefined).map((call) => ({
-          url: call.url ?? null,
-          file: call.file ?? null,
-        })),
+        unmatchedFetches: takeSample(record.unmatched_fetches as Array<Record<string, unknown>> | undefined).map(
+          (call) => ({
+            url: call.url ?? null,
+            file: call.file ?? null,
+          }),
+        ),
         unmatchedRoutes: takeSample(record.unmatched_routes as string[] | undefined),
       };
     case 'scaffold':
@@ -225,7 +231,9 @@ export function summarizeInspectValue(mode: InspectMode, value: unknown): unknow
       return {
         hasMobileFirst: record.hasMobileFirst ?? false,
         breakpointCount: Array.isArray(record.breakpoints) ? record.breakpoints.length : 0,
-        breakpoints: takeSample(record.breakpoints as Array<Record<string, unknown>> | undefined).map((bp) => bp.prefix ?? null),
+        breakpoints: takeSample(record.breakpoints as Array<Record<string, unknown>> | undefined).map(
+          (bp) => bp.prefix ?? null,
+        ),
       };
     case 'events':
       return {
@@ -287,7 +295,8 @@ export async function walk(
   return results;
 }
 
-export function safeRead(filePath: string): string {
+export async function safeRead(filePath: string): Promise<string> {
+  await assertCapturedToolReadAccess(filePath);
   try {
     return readFileSync(filePath, 'utf-8');
   } catch {
@@ -303,16 +312,15 @@ export function createInspectSuccess(output: unknown, format: string, mode: Insp
   return { success: true, output: serializeInspectOutput(output, format, mode) };
 }
 
-export function readRequiredFile(
+export async function readRequiredFile(
   projectRoot: string,
   inputFile: string | undefined,
   mode: string,
   errorMessage: string,
-): { filePath: string; content: string } | InspectToolResult {
+): Promise<{ filePath: string; content: string } | InspectToolResult> {
   if (!inputFile) {
     return createInspectFailure(`file is required for ${mode} mode`);
   }
   const filePath = requireExistingFilePath(projectRoot, inputFile, errorMessage);
-  return { filePath, content: safeRead(filePath) };
+  return { filePath, content: await safeRead(filePath) };
 }
-

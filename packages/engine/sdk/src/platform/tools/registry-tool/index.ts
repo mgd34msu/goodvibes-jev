@@ -1,4 +1,3 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import { logger } from '../../utils/logger.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
@@ -8,15 +7,21 @@ import {
   extractMarkdownPreview,
   normalizeFrontmatterList,
   parseMarkdownFrontmatter,
-  readMarkdownDisclosure,
-  materializeMarkdownBody,
 } from '../../utils/markdown-disclosure.js';
-import type { Tool, ToolDefinition } from '../../types/tools.js';
+import type { Tool, ToolDefinition, ToolExecuteOptions } from '../../types/tools.js';
 import type { ToolRegistry } from '../registry.js';
 import { REGISTRY_TOOL_SCHEMA } from './schema.js';
 import { toRecord } from '../../utils/record-coerce.js';
 import type { RegistryInput } from './schema.js';
 import { summarizeError } from '../../utils/error-display.js';
+import type { ContractInputAuthority } from '../../contract/input-authority.js';
+import { liveRegistrySource, registryMarkdown, materializeRegistryMarkdown, type RegistryToolSource } from './source.js';
+import { capturedRegistryAdmission, type CapturedRegistryContext } from './captured-source.js';
+
+const capturedTools = new WeakMap<Tool, ContractInputAuthority>();
+export function isCapturedRegistryTool(tool: Tool, authority: ContractInputAuthority): boolean {
+  return capturedTools.get(tool) === authority;
+}
 
 // ---------------------------------------------------------------------------
 // Directory scanning helpers
@@ -36,17 +41,19 @@ interface RegistryMatch {
 export interface RegistryToolRoots {
   readonly workingDirectory: string;
   readonly homeDirectory?: string | undefined;
+  readonly capturedInput?: CapturedRegistryContext | undefined;
 }
 
-function scanDirectoryAll(
+async function scanDirectoryAll(
   dir: string,
   itemType: 'skill' | 'agent',
-): RegistryMatch[] {
-  if (!existsSync(dir)) return [];
+  source: RegistryToolSource,
+): Promise<RegistryMatch[]> {
+  if (!await source.exists(dir)) return [];
   const results: RegistryMatch[] = [];
-  let entries: string[];
+  let entries: readonly string[];
   try {
-    entries = readdirSync(dir);
+    entries = await source.list(dir);
   } catch {
     return [];
   }
@@ -56,7 +63,7 @@ function scanDirectoryAll(
       const filePath = join(dir, entry);
       let content = '';
       try {
-        content = readFileSync(filePath, 'utf-8');
+        content = await source.read(filePath);
       } catch {
         continue;
       }
@@ -78,10 +85,10 @@ function scanDirectoryAll(
     // Strategy 2: directory with SKILL.md or AGENT.md (e.g., skills/foo/SKILL.md)
     const markerFile = itemType === 'skill' ? 'SKILL.md' : 'AGENT.md';
     const markerPath = join(dir, entry, markerFile);
-    if (existsSync(markerPath)) {
+    if (await source.exists(markerPath)) {
       let content = '';
       try {
-        content = readFileSync(markerPath, 'utf-8');
+        content = await source.read(markerPath);
       } catch {
         continue;
       }
@@ -125,11 +132,35 @@ function dedupe(items: readonly RegistryMatch[]): RegistryMatch[] {
 async function rankAgainst(
   items: readonly RegistryMatch[],
   query: string,
+  source: RegistryToolSource,
 ): Promise<{ matching: RegistryMatch[]; rest: RegistryMatch[] }> {
   if (items.length === 0) return { matching: [], rest: [] };
   const byId = new Map(items.map((item) => [`${item.type}:${item.name}`, item]));
   const candidates = Array.from(byId, ([id, item]) => ({ id, content: registryCandidateView(item) }));
-  const { ranked } = await registryRank.rerank(judgmentPort(REGISTRY_RANK_SITE), query, candidates, { site: REGISTRY_RANK_SITE });
+  const port = judgmentPort(REGISTRY_RANK_SITE);
+  // Captured candidates are dispatched one at a time so a revocation during one
+  // judgment cannot leave another queued candidate carrying stale authorization.
+  let priorJudgment = Promise.resolve();
+  const guardedPort: typeof port = {
+    model: port.model,
+    ...(port.recorder === undefined ? {} : { recorder: port.recorder }),
+    ...(port.health === undefined ? {} : { health: port.health }),
+    ask: async (request) => {
+      if (source === liveRegistrySource) return port.ask(request);
+      const previous = priorJudgment;
+      let release!: () => void;
+      priorJudgment = new Promise<void>((resolve) => { release = resolve; });
+      await previous;
+      try {
+        await source.assertCurrent();
+        const signal = source.signal && request.signal ? AbortSignal.any([source.signal, request.signal]) : (source.signal ?? request.signal);
+        const result = await port.ask({ ...request, ...(signal === undefined ? {} : { signal }) });
+        await source.assertCurrent();
+        return result;
+      } finally { release(); }
+    },
+  };
+  const { ranked } = await registryRank.rerank(guardedPort, query, candidates, { site: REGISTRY_RANK_SITE });
   const matching = ranked.filter((entry) => entry.reading.verdict !== 'no').map((entry) => byId.get(entry.id)!);
   const rest = ranked
     .filter((entry) => entry.reading.verdict === 'no')
@@ -182,6 +213,10 @@ function getAgentDirs(roots: RegistryToolRoots): string[] {
  * Never throws from execute().
  */
 export function createRegistryTool(toolRegistry: ToolRegistry, roots: RegistryToolRoots): Tool {
+  const captured = roots.capturedInput === undefined ? undefined : capturedRegistryAdmission(roots.capturedInput);
+  roots = Object.freeze(captured
+    ? { workingDirectory: captured.workingDirectory, homeDirectory: captured.homeDirectory }
+    : { workingDirectory: roots.workingDirectory, homeDirectory: roots.homeDirectory });
   const definition: ToolDefinition = {
     name: 'registry',
     description:
@@ -195,32 +230,44 @@ export function createRegistryTool(toolRegistry: ToolRegistry, roots: RegistryTo
 
   async function execute(
     args: Record<string, unknown>,
+    options?: ToolExecuteOptions,
   ): Promise<{ success: boolean; output?: string; error?: string }> {
+    const signal = options?.signal;
+    const source = captured?.source(signal) ?? liveRegistrySource;
     try {
+      args = structuredClone(args);
+      signal?.throwIfAborted();
+      await source.assertCurrent();
       if (!args.mode || typeof args.mode !== 'string') {
         return { success: false, error: 'Missing required "mode" field' };
       }
       const input = args as unknown as RegistryInput;
       const { mode } = input;
 
-      switch (mode) {
-        case 'search':       return runSearch(input, toolRegistry, roots);
-        case 'recommend':    return runRecommend(input, toolRegistry, roots);
-        case 'dependencies': return runDependencies(input, roots);
-        case 'preview':      return runPreview(input, roots);
-        case 'content':      return runContent(input, roots);
-        default: {
-          return { success: false, error: `Unknown mode: ${String(mode)}` };
+      const result = await (async () => {
+        switch (mode) {
+          case 'search':       return runSearch(input, toolRegistry, roots, source);
+          case 'recommend':    return runRecommend(input, toolRegistry, roots, source);
+          case 'dependencies': return runDependencies(input, roots, source);
+          case 'preview':      return runPreview(input, roots, source);
+          case 'content':      return runContent(input, roots, source);
+          default: return { success: false, error: `Unknown mode: ${String(mode)}` };
         }
-      }
+      })();
+      await source.assertCurrent();
+      signal?.throwIfAborted();
+      return result;
     } catch (err) {
+      if (captured) return { success: false, error: 'Captured registry input held: missing, changed, cancelled or restricted original-owner authority. Output withheld.' };
       const message = summarizeError(err);
       logger.error('registry tool: unexpected error', { error: message });
       return { success: false, error: `Unexpected error: ${message}` };
     }
   }
 
-  return { definition, execute };
+  const tool = { definition, execute };
+  if (captured) capturedTools.set(tool, captured.authority);
+  return tool;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,23 +278,24 @@ async function runSearch(
   input: RegistryInput,
   toolRegistry: ToolRegistry,
   roots: RegistryToolRoots,
+  source: RegistryToolSource,
 ): Promise<{ success: boolean; output?: string; error?: string }> {
   const query = input.query ?? '';
   const typeFilter = input.type ?? 'all';
   const all: RegistryMatch[] = [];
 
   if (typeFilter === 'skills' || typeFilter === 'all') {
-    for (const dir of getSkillDirs(roots)) all.push(...scanDirectoryAll(dir, 'skill'));
+    for (const dir of getSkillDirs(roots)) all.push(...await scanDirectoryAll(dir, 'skill', source));
   }
   if (typeFilter === 'agents' || typeFilter === 'all') {
-    for (const dir of getAgentDirs(roots)) all.push(...scanDirectoryAll(dir, 'agent'));
+    for (const dir of getAgentDirs(roots)) all.push(...await scanDirectoryAll(dir, 'agent', source));
   }
   if (typeFilter === 'tools' || typeFilter === 'all') {
     all.push(...listTools(toolRegistry));
   }
 
   const candidates = dedupe(all);
-  const results = query ? (await rankAgainst(candidates, query)).matching : candidates;
+  const results = query ? (await rankAgainst(candidates, query, source)).matching : candidates;
 
   return {
     success: true,
@@ -264,6 +312,7 @@ async function runRecommend(
   input: RegistryInput,
   toolRegistry: ToolRegistry,
   roots: RegistryToolRoots,
+  source: RegistryToolSource,
 ): Promise<{ success: boolean; output?: string; error?: string }> {
   const task = input.task ?? '';
   const scope = input.scope ?? 'skills';
@@ -274,7 +323,7 @@ async function runRecommend(
   } else {
     candidates = [];
     for (const dir of getSkillDirs(roots)) {
-      candidates.push(...scanDirectoryAll(dir, 'skill'));
+      candidates.push(...await scanDirectoryAll(dir, 'skill', source));
     }
     candidates = dedupe(candidates);
   }
@@ -283,7 +332,7 @@ async function runRecommend(
   // alphabetically. Without one: every candidate alphabetically.
   let sorted: RegistryMatch[];
   if (task) {
-    const { matching, rest } = await rankAgainst(candidates, task);
+    const { matching, rest } = await rankAgainst(candidates, task, source);
     sorted = [...matching, ...rest];
   } else {
     sorted = [...candidates].sort((a, b) => a.name.localeCompare(b.name));
@@ -301,9 +350,10 @@ async function runRecommend(
   };
 }
 
-function runDependencies(
+async function runDependencies(
   input: RegistryInput,
   roots: RegistryToolRoots,
+  source: RegistryToolSource,
 ): Promise<{ success: boolean; output?: string; error?: string }> {
   const skillName = input.skillName;
   if (!skillName) {
@@ -317,13 +367,13 @@ function runDependencies(
 
   for (const dir of getSkillDirs(roots)) {
     const candidate = join(dir, `${skillName}.md`);
-    if (existsSync(candidate)) {
+    if (await source.exists(candidate)) {
       filePath = candidate;
       break;
     }
     // Also try exact match without .md appended (caller may have included extension)
     const candidateExact = join(dir, skillName);
-    if (existsSync(candidateExact)) {
+    if (await source.exists(candidateExact)) {
       filePath = candidateExact;
       break;
     }
@@ -338,7 +388,7 @@ function runDependencies(
 
   let content: string;
   try {
-    content = readFileSync(filePath, 'utf-8');
+    content = await source.read(filePath);
   } catch (err) {
     return Promise.resolve({
       success: false,
@@ -364,15 +414,16 @@ function runDependencies(
   });
 }
 
-function runPreview(
+async function runPreview(
   input: RegistryInput,
   roots: RegistryToolRoots,
+  source: RegistryToolSource,
 ): Promise<{ success: boolean; output?: string; error?: string }> {
-  const resolvedPath = resolveRegistryPath(input.path, roots);
+  const resolvedPath = await resolveRegistryPath(input.path, roots, source);
   if (!resolvedPath.ok) return Promise.resolve({ success: false, error: resolvedPath.error });
 
   try {
-    const disclosure = readMarkdownDisclosure(resolvedPath.path);
+    const disclosure = await registryMarkdown(source, resolvedPath.path);
     return Promise.resolve({
       success: true,
       output: JSON.stringify({
@@ -393,27 +444,29 @@ function runPreview(
   }
 }
 
-function runContent(
+async function runContent(
   input: RegistryInput,
   roots: RegistryToolRoots,
+  source: RegistryToolSource,
 ): Promise<{ success: boolean; output?: string; error?: string }> {
-  const resolvedPath = resolveRegistryPath(input.path, roots);
+  const resolvedPath = await resolveRegistryPath(input.path, roots, source);
   if (!resolvedPath.ok) return Promise.resolve({ success: false, error: resolvedPath.error });
 
+  const disclosure = await registryMarkdown(source, resolvedPath.path);
   return Promise.resolve({
     success: true,
     output: JSON.stringify({
       mode: 'content',
       path: resolvedPath.path,
-      metadata: readMarkdownDisclosure(resolvedPath.path).metadata,
-      content: materializeMarkdownBody(resolvedPath.path),
+      metadata: disclosure.metadata,
+      content: await materializeRegistryMarkdown(source, resolvedPath.path, disclosure.body),
     }),
   });
 }
 
-function resolveRegistryPath(path: string | undefined, roots: RegistryToolRoots):
+async function resolveRegistryPath(path: string | undefined, roots: RegistryToolRoots, source: RegistryToolSource): Promise<
   | { ok: true; path: string }
-  | { ok: false; error: string } {
+  | { ok: false; error: string }> {
   if (!path) {
     return {
       ok: false,
@@ -432,7 +485,7 @@ function resolveRegistryPath(path: string | undefined, roots: RegistryToolRoots)
     };
   }
 
-  if (!existsSync(resolvedPath)) {
+  if (!await source.exists(resolvedPath)) {
     return {
       ok: false,
       error: `File not found: ${resolvedPath}`,

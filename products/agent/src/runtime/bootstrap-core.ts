@@ -38,7 +38,7 @@ import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { importVibeFilesIntoMemoryOnce } from '../agent/vibe-file.ts';
 import { createUiRuntimeServices, type UiRuntimeServices } from './ui-services.ts';
 import { getTerminalSize } from '../shell/terminal-size.ts';
-import { installPermissionManagerSafetyGuard } from './tool-permission-safety.ts';
+import { installPermissionManagerSafetyGuard } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
 import { composeAgentToolRegistry } from './agent-tool-registry.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../config/surface.ts';
 import { registerAgentRuntimeEvents } from './agent-runtime-events.ts';
@@ -90,6 +90,13 @@ export {
   companionMessageToOrchestratorInputOptions,
   registerWebhookNotifier,
 } from './bootstrap-core-helpers.ts';
+
+/** The live Agent permission composition, shared by main and background calls. */
+export function composeAgentPermissionManager(services: Pick<RuntimeServices, 'permissionManager'>): PermissionManager {
+  const manager = services.permissionManager;
+  installPermissionManagerSafetyGuard(manager);
+  return manager;
+}
 
 export async function initializeBootstrapCore(
   stdout: NodeJS.WriteStream,
@@ -478,8 +485,7 @@ export async function initializeBootstrapCore(
   // fleet plane's `state: 'awaiting-approval'` is carried by the shared free
   // function the manager is built through, not by a local copy of that
   // mapping.
-  const permissionManager = services.permissionManager;
-  installPermissionManagerSafetyGuard(permissionManager);
+  const permissionManager = composeAgentPermissionManager(services);
   // Wire permissionManager into the SAME AgentOrchestrator instance that runs
   // spawned/background agent tool calls (services.agentOrchestrator, set up
   // above with agentOrchestratorToolDeps before permissionManager existed).

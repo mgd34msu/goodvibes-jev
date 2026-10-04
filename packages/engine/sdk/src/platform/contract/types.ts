@@ -11,6 +11,8 @@
  * vocabulary (events/contract.ts) and re-exported here, so the persisted tree
  * and the wire events cannot drift apart.
  */
+import type { ContractInputSnapshot } from './input-snapshot.js';
+
 import { randomBytes } from 'node:crypto';
 import type { Outcome, ReplyReadingName } from '@goodvibes-jev/judgment';
 import type {
@@ -88,7 +90,7 @@ export type AgentManagerLike = Pick<AgentManager, 'spawn' | 'getStatus' | 'list'
 // ── Ids ────────────────────────────────────────────────────────────────────────
 
 /** Schema version of a persisted contract; `deserializeContract` refuses a newer one. */
-export const CURRENT_CONTRACT_SCHEMA_VERSION = 1;
+export const CURRENT_CONTRACT_SCHEMA_VERSION = 2;
 
 /** `ctr-<8 hex>`. Also the store's file name, so it is checked before any path is built from it. */
 export const CONTRACT_ID_PATTERN = /^ctr-[0-9a-f]{8}$/;
@@ -400,6 +402,8 @@ export interface Contract {
   readonly ownerAgentId: string;
   readonly parentAgentId?: string | undefined;
   readonly projectRoot: string;
+  /** Versioned local input provenance; absent on legacy/shared contracts, never a content permission grant. */
+  inputSnapshot?: ContractInputSnapshot | undefined;
   /** Settled when the contract is shaped: a session-mode contract (design 6.6) works in the shared tree. */
   isolation: 'worktree' | 'shared';
   /** Worktree mode: `contract/<short>`. */

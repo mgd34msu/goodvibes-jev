@@ -1,3 +1,4 @@
+import { assertCapturedToolReadAccess, assertCapturedToolAccessCurrent } from '../shared/captured-input-tools.js';
 /**
  * The analyze modes whose findings are read by Jev: `security` (secrets,
  * env files, world-writable files) and `permissions` (dangerous calls). Each
@@ -57,19 +58,26 @@ interface ScannedFile {
 }
 
 /** The candidate lines of every file: the lines the existence check finds in each block. */
-async function scanCandidates(files: readonly ScannedFile[], existence: Existence, site: string, query: (file: string) => string): Promise<ScanCandidate[]> {
+async function scanCandidates(
+  files: readonly ScannedFile[],
+  existence: Existence,
+  site: string,
+  query: (file: string) => string,
+): Promise<ScanCandidate[]> {
   const blocks = files.flatMap((scanned) => scanBlocks(scanned.lines).map((block) => ({ scanned, block })));
-  const found = await mapWithConcurrency(blocks, SCAN_READ_CONCURRENCY, ({ scanned, block }) => findScanLines(existence, site, query(scanned.file), block));
-  return blocks.flatMap(({ scanned }, index) => found[index]!.map((line) => ({ file: scanned.file, lines: scanned.lines, index: line })));
+  const found = await mapWithConcurrency(blocks, SCAN_READ_CONCURRENCY, ({ scanned, block }) =>
+    findScanLines(existence, site, query(scanned.file), block),
+  );
+  return blocks.flatMap(({ scanned }, index) =>
+    found[index]!.map((line) => ({ file: scanned.file, lines: scanned.lines, index: line })),
+  );
 }
 
 /** The matched line as the report shows it. */
-const matchText = (candidate: ScanCandidate, max: number): string => (candidate.lines[candidate.index] ?? '').trim().slice(0, max);
+const matchText = (candidate: ScanCandidate, max: number): string =>
+  (candidate.lines[candidate.index] ?? '').trim().slice(0, max);
 
-export async function runSecurity(
-  input: AnalyzeInput,
-  projectRoot: string,
-): Promise<Record<string, unknown>> {
+export async function runSecurity(input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
   const scope = input.securityScope ?? 'all';
   const results: Record<string, unknown> = {};
   const scanRoot = resolveScanRoot(input, projectRoot);
@@ -83,7 +91,12 @@ export async function runSecurity(
     const candidates = await scanCandidates(scanned, secretLine, SECRET_LINE_SITE, secretLineQuery);
 
     const readings = await mapWithConcurrency(candidates, SCAN_READ_CONCURRENCY, async (candidate) => {
-      const run = await secretFinding.run(judgmentPort(SECRET_SITE), scanCandidateView(candidate.file, candidate.lines, candidate.index), { site: SECRET_SITE });
+      await assertCapturedToolAccessCurrent();
+      const run = await secretFinding.run(
+        judgmentPort(SECRET_SITE),
+        scanCandidateView(candidate.file, candidate.lines, candidate.index),
+        { site: SECRET_SITE },
+      );
       const reading = findingReading(run.readings.real_secret);
       run.recordAction(reading === 'dismissed' ? 'dismissed' : `reported as ${reading}`);
       return reading;
@@ -123,10 +136,7 @@ export async function runSecurity(
   return results;
 }
 
-export async function runPermissions(
-  input: AnalyzeInput,
-  projectRoot: string,
-): Promise<Record<string, unknown>> {
+export async function runPermissions(input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
   const scanRoot = resolveScanRoot(input, projectRoot);
   const deadline = Date.now() + MAX_SCAN_MS;
   const files = await collectTextFiles(scanRoot, MAX_SCAN_FILES, deadline);
@@ -136,6 +146,7 @@ export async function runPermissions(
     if (Date.now() > deadline) break;
     let content: string;
     try {
+      await assertCapturedToolReadAccess(file);
       content = await Bun.file(file).text();
     } catch {
       continue;
@@ -145,7 +156,12 @@ export async function runPermissions(
   const candidates = await scanCandidates(scanned, dangerousLine, DANGER_LINE_SITE, dangerousLineQuery);
 
   const readings = await mapWithConcurrency(candidates, SCAN_READ_CONCURRENCY, async (candidate) => {
-    const run = await dangerousCall.run(judgmentPort(DANGER_SITE), scanCandidateView(candidate.file, candidate.lines, candidate.index), { site: DANGER_SITE });
+    await assertCapturedToolAccessCurrent();
+    const run = await dangerousCall.run(
+      judgmentPort(DANGER_SITE),
+      scanCandidateView(candidate.file, candidate.lines, candidate.index),
+      { site: DANGER_SITE },
+    );
     const reading = findingReading(run.readings.risky);
     const rated = run.readings.severity.outcome !== 'escalate';
     const severity: DangerSeverity | 'unrated' = rated ? run.readings.severity.choice : 'unrated';
@@ -177,4 +193,3 @@ export async function runPermissions(
     },
   };
 }
-

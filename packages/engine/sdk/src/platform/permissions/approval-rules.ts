@@ -9,9 +9,9 @@
  *   - 'session'      , the classic in-memory session cache only
  *
  * A tiered decision becomes a durable user-origin PolicyRule (the same shape
- * evaluateRuntimePolicy consults), stored per project. The session approval
- * map is a cache over these rules. The tier options ride on the broker's ask
- * payload so ANY surface can offer them.
+ * evaluateRuntimePolicy consults), stored per project and matched live. The
+ * session approval map holds only session-tier decisions. The tier options
+ * ride on the broker's ask payload so ANY surface can offer them.
  */
 
 import { dirname } from 'node:path';
@@ -123,7 +123,7 @@ export function buildDurableRuleForDecision(input: {
         origin: 'user',
         effect,
         toolPattern: toolName,
-        exactCommands: uniqueSorted(commands.map((cmd) => cmd.trim())),
+        exactCommands: uniqueSorted(commands),
         description: `${effect} exactly: ${commands.join(' ; ')}`,
       };
     }
@@ -141,6 +141,7 @@ export function buildDurableRuleForDecision(input: {
         // covered but `gitfoo ...` never is.
         commandPrefixes: classes.map((cls) => `${cls} `),
         exactCommands: classes,
+        exactCommandMatch: 'command-class',
         description: `${effect} the ${classes.join('/')} command class`,
       };
     }
@@ -178,8 +179,8 @@ export interface DurableRuleMatch {
 
 /**
  * First-match-wins evaluation of durable user rules against a call, the
- * lightweight matcher behind the session-cache layer (it must work with the
- * policy engine flag on OR off, so it does not go through the full layered
+ * lightweight matcher alongside explicit session decisions (it must work
+ * with the policy engine flag on OR off, so it does not go through the full layered
  * evaluator).
  */
 export function matchDurableRules(

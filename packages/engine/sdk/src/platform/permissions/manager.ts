@@ -212,6 +212,7 @@ const readingRecord = (reading: GateReading): GateReadingRecord => ({
  *   6. An ask goes to the owner through the surface's approval prompt.
  */
 export class PermissionManager {
+  /** Explicit session-tier decisions only; durable rules are always matched live. */
   private sessionApprovals = new Map<string, boolean>();
   private readonly requestPermission: PermissionRequestHandler;
   private readonly configReader: PermissionConfigReader;
@@ -318,7 +319,7 @@ export class PermissionManager {
       forceAsk = true;
     }
     const key = this.getApprovalKey(toolName, args);
-    const remembered = this.rememberedDecision(key, toolName, args, signal);
+    const remembered = this.rememberedDecision(key, toolName, args);
     // Plan is read-only: a remembered allow does not carry a change into it.
     if (remembered && !(preset.readOnly && remembered.approved)) {
       return done(this.result(remembered.approved, true, remembered.source, remembered.reason, analysis, base));
@@ -438,12 +439,11 @@ export class PermissionManager {
     return this.result(true, false, 'user_prompt', 'owner_approved_outward', analysis, { boundary: boundaryRecord(cleared) });
   }
 
-  /** A remembered decision for this call: the session cache, then the durable rules. */
+  /** Explicit session decisions, then current durable rules with their own scope. */
   private rememberedDecision(
     key: string,
     toolName: string,
     args: Record<string, unknown>,
-    signal?: AbortSignal,
   ): { approved: boolean; source: PermissionDecisionSource; reason: PermissionDecisionReasonCode } | null {
     if (this.sessionApprovals.has(key)) {
       const approved = this.sessionApprovals.get(key)!;
@@ -454,8 +454,6 @@ export class PermissionManager {
       : null;
     if (!durable) return null;
     const approved = durable.effect === 'allow';
-    assertPermissionActive(signal);
-    this.sessionApprovals.set(key, approved);
     return { approved, source: 'user_rule', reason: approved ? 'user_rule_allow' : 'user_rule_deny' };
   }
 
@@ -500,16 +498,20 @@ export class PermissionManager {
       ? buildDurableRuleForDecision({ toolName, args, tier, effect: approved ? 'allow' : 'deny' })
       : null;
     assertPermissionActive(signal);
-    if (tier) {
+    let persisted = false;
+    if (tier === 'session') {
       this.sessionApprovals.set(key, approved);
-      if (rule && tier !== 'session' && this.userRuleStore) {
-        // Once admitted while active, this owned write is awaited rather than
-        // rolled back if its caller later cancels during persistence.
-        await this.userRuleStore.add({ rule, createdAt: Date.now(), tier, tool: toolName });
-      }
+      persisted = true;
+    } else if (rule && tier && this.userRuleStore) {
+      // Never copy a durable decision into the session map: its key may be
+      // broader than the chosen rule, and the rule can be revoked live.
+      // Once admitted while active, this owned write is awaited rather than
+      // rolled back if its caller later cancels during persistence.
+      await this.userRuleStore.add({ rule, createdAt: Date.now(), tier, tool: toolName });
+      persisted = true;
     }
     return {
-      ...this.result(approved, Boolean(tier), 'user_prompt', approved ? 'user_approved' : 'user_denied', analysis, extra),
+      ...this.result(approved, persisted, 'user_prompt', approved ? 'user_approved' : 'user_denied', analysis, extra),
       modifiedArgs,
       userReason,
     };

@@ -90,6 +90,7 @@ function sandboxFields(result: ExecCommandResult): Record<string, unknown> {
   if (result.sandboxed === undefined) return {};
   return {
     sandboxed: result.sandboxed,
+    ...(result.captured_exec_availability && { captured_exec_availability: result.captured_exec_availability }),
     ...(result.sandbox_boundary && { sandbox_boundary: result.sandbox_boundary }),
     ...(result.sandbox_note && { sandbox_note: result.sandbox_note }),
     ...(result.sandbox_network && { sandbox_network: result.sandbox_network }),
@@ -114,6 +115,8 @@ export function formatResult(result: ExecCommandResult, verbosity: ExecVerbosity
       exit_code: result.exit_code,
       success: false,
       denied: true,
+      ...(result.captured_exec_unsupported_options && { captured_exec_unsupported_options: result.captured_exec_unsupported_options }),
+      ...sandboxFields(result),
       // `stderr` stays populated so existing consumers keep reading the reason
       // where they always have; `denial_reason` adds the same text under a name
       // that says what it is, alongside the structured segment breakdown.

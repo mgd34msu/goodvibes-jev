@@ -1,3 +1,4 @@
+import { createContractInputAuthority, bindContractInputAuthority, assertContractInputAuthority } from './input-authority.js';
 /**
  * An owner's amendment (docs/design/contract-runner.md section 6.3): the
  * owner's reply read as "change what is required" goes to the planning model
@@ -13,6 +14,7 @@
  * An amendment gives the target a fresh fix-round budget: the owner changed
  * what is required, so the rounds spent on the old requirement do not count.
  */
+import { assertContractInputView, contractInputPath } from './input-snapshot.js';
 import { readContractConfig } from './config.js';
 import { lastFencedBlock } from './plan-schema.js';
 import { readPlannerBounds } from './planner.js';
@@ -186,22 +188,31 @@ export async function amendTarget(run: ContractRun, escalation: Escalation, inst
   const { contract } = run;
   const target = targetOf(run, escalation);
   if (target === undefined) return { kind: 'problems', problems: [`${escalation.scope} ${escalation.targetId} has no criteria to change`] };
+  run.abort.signal.throwIfAborted();
+  const snapshot = contract.inputSnapshot;
+  if (snapshot !== undefined) await assertContractInputView(snapshot, run.abort.signal);
+  const workingDirectory = snapshot === undefined ? contract.projectRoot : contractInputPath(snapshot);
+  const authority = snapshot === undefined ? undefined : await createContractInputAuthority(contract, workingDirectory, { signal: run.abort.signal, snapshot });
   const config = readContractConfig(context.configManager);
   const route = await context.routeSelector({ purpose: 'planner', contract: run.view() });
   const servable = servableCriteria(run, escalation);
   const servableIds = new Set(servable.map((criterion) => criterion.id));
   let problems: string[] = [];
   for (let attempt = 0; attempt <= config.planRepairLimit; attempt += 1) {
-    const result = await context.decompositionRunner.run({
+    run.abort.signal.throwIfAborted();
+    if (authority) await assertContractInputAuthority(authority, workingDirectory, run.abort.signal);
+    const result = await context.decompositionRunner.run(bindContractInputAuthority({
       goal: contract.ask,
-      workingDir: contract.projectRoot,
+      workingDir: workingDirectory,
       systemPrompt: buildAmendmentPrompt(),
       userPrompt: buildAmendmentRequest(escalation, target, servable, instruction, problems),
       bounds: readPlannerBounds(context.configManager),
       attempt: attempt === 0 ? 'initial' : 'repair',
       route,
       signal: run.abort.signal,
-    });
+    }, authority));
+    run.abort.signal.throwIfAborted();
+    if (authority) await assertContractInputAuthority(authority, workingDirectory, run.abort.signal);
     if (result.agentId !== undefined) contract.plannerAgentIds.push(result.agentId);
     if (result.status !== 'completed') return { kind: 'problems', problems: [`the planner did not finish (${result.status}${result.detail === undefined ? '' : `: ${result.detail}`})`] };
     const parsed = parseAmendment(result.output, target, servableIds);
