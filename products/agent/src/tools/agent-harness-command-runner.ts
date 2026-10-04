@@ -12,9 +12,11 @@ function safeCommandDisplay(name: string): string {
 }
 
 export async function runCommand(deps: AgentHarnessToolDeps, args: AgentHarnessToolArgs): Promise<{ readonly success: boolean; readonly output?: string; readonly error?: string }> {
-  const confirmationError = requireConfirmedAction(args, 'Slash command invocation');
-  if (confirmationError) return error(confirmationError);
   const resolved = resolveHarnessCommandDetail(deps.commandRegistry, args);
+  if (!resolved || resolved.status === 'ambiguous' || resolved.command.name !== 'work-import') {
+    const confirmationError = requireConfirmedAction(args, 'Slash command invocation');
+    if (confirmationError) return error(confirmationError);
+  }
   if (resolved?.status === 'ambiguous') {
     return error(`Ambiguous slash command ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
   }
