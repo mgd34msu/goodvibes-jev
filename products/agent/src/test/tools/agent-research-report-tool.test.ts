@@ -55,6 +55,22 @@ describe('agent_research_report tool', () => {
     }]);
   });
 
+  test('contains declared malformed userinfo aliases in public report artifacts', async () => {
+    const store = new ResearchReportArtifactStore();
+    const tool = createAgentResearchTool({ commandRegistry: {} as CommandRegistry,
+      commandContext: { workspace: {}, platform: { artifactStore: store } } as unknown as CommandContext,
+      toolRegistry: new ToolRegistry() });
+    const uri = 'ftp://sentinel\\\t@archive.example.test/doc';
+    const alias = uri.replace('ftp:', 'FTP:').replace('archive.example.test', 'ARCHIVE.EXAMPLE.TEST');
+    const result = await tool.execute({ action: 'report', title: 'Report', question: 'What is supported?',
+      summary: 'Evidence [S1].', confirm: true, explicitUserRequest: 'Save the report.',
+      sources: [{ title: 'Source', url: uri, note: `Before ${alias} after.` }] });
+    expect(result.success).toBe(true);
+    expect(store.records).toHaveLength(1);
+    expect(JSON.stringify([result, store.records, [...store.contents.values()]])).not.toContain('sentinel');
+    expect(store.records[0]?.metadata.sources).toMatchObject([{ title: 'Source', note: 'Before [source URL withheld] after.', urlOmitted: true }]);
+  });
+
   test('the public research adapter protects the actual report artifact path', async () => {
     const store = new ResearchReportArtifactStore();
     const tool = createAgentResearchTool({ commandRegistry: {} as CommandRegistry,
@@ -404,6 +420,16 @@ describe('research report source containment', () => {
         { title: 'Other source', note: 'Compare [source URL withheld]\nOrdinary prose follows.', urlOmitted: true },
       ]);
     }
+  });
+
+  test('keeps malformed backslash path identity case-sensitive when matching userinfo aliases', () => {
+    const uri = 'ftp://sentinel@archive.example.test\\doc\tOrdinary-tail';
+    const alias = uri.replace('ftp:', 'FTP:').replace('archive.example.test', 'ARCHIVE.EXAMPLE.TEST').replace('doc', 'Doc');
+    const prepared = prepareAgentResearchReportInput({ sources: [{ title: 'Source', url: uri, note: `Before ${alias} after.` }] });
+    // This is not the declared reference's literal path. Its bounded userinfo
+    // token is still withheld, while the distinct following text stays intact.
+    expect(prepared.sources[0]?.note).toBe('Before [source URL withheld]\tOrdinary-tail after.');
+    expect(JSON.stringify(prepared)).not.toContain('sentinel');
   });
 
   for (const url of [

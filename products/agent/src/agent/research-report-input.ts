@@ -28,11 +28,19 @@ function literalReferencePattern(value: string, foldCase = false): string {
 /** Fold ASCII case only in scheme and hostname, never userinfo, path or query text. */
 function omittedReferencePattern(value: string): string {
   const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(value)?.[0] ?? '';
-  const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/?#\\]*)/i.exec(value);
+  // Rejected non-HTTP userinfo references use the same literal RFC authority
+  // span as containment. Do not repair a backslash/control in userinfo into a
+  // path before locating its hostname alias. This only matches omitted input;
+  // it never declares a repaired URI usable. Preserve HTTP(S) handling.
+  const authorityPattern = !/^https?:/i.test(value) && hasUriUserinfo(value)
+    ? /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i
+    : /^[a-z][a-z0-9+.-]*:\/\/([^/?#\\]*)/i;
+  const authority = authorityPattern.exec(value);
   if (!authority) return literalReferencePattern(scheme, true) + literalReferencePattern(value.slice(scheme.length));
   const authorityText = authority[1]!;
   const hostStart = authority[0].length - authorityText.length + authorityText.lastIndexOf('@') + 1;
-  const hostAndPort = value.slice(hostStart, authority[0].length);
+  // A malformed backslash suffix is literal identity, never hostname case.
+  const hostAndPort = value.slice(hostStart, authority[0].length).split('\\', 1)[0]!;
   const hostname = hostAndPort.startsWith('[')
     ? /^\[[^\]]*\]/.exec(hostAndPort)?.[0] ?? ''
     : hostAndPort.split(':', 1)[0]!;

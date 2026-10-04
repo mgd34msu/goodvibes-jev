@@ -19,6 +19,17 @@ describe('research report editor source containment', () => {
     });
   });
 
+  test('contains declared malformed userinfo aliases before prompt dispatch', () => {
+    const uri = 'ftp://sentinel\\\t@archive.example.test/doc';
+    const alias = uri.replace('ftp:', 'FTP:').replace('archive.example.test', 'ARCHIVE.EXAMPLE.TEST');
+    const read = reader(`Source | ${uri} | high | Before ${alias} after.`);
+    const args = buildAgentResearchReportToolArgs(read, 'Save the report.');
+    const result = buildAgentResearchReportPromptSubmission(createAgentResearchReportEditor(), read, true);
+    expect(result.kind).toBe('prompt');
+    expect(JSON.stringify([args, result])).not.toContain('sentinel');
+    expect(args.sources[0]).toMatchObject({ title: 'Source', note: 'Before [source URL withheld] after.', urlOmitted: true });
+  });
+
   for (const url of [
     'https://example.test/document?token=sentinel',
     'https://example.test/document?auth_token=sentinel',
