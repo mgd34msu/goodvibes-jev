@@ -172,8 +172,12 @@ export function capturedInputTool(
               await assertContractInputAuthority(authority, root, signal);
               options?.signal?.throwIfAborted();
               // No content, cached output, diagnostics or errors leave after revocation.
+              const callSignal = options?.signal;
+              const combined = signal && callSignal ? AbortSignal.any([signal, callSignal]) : (signal ?? callSignal);
               for (const path of deliveryReads.getStore()!.paths)
-                await authorizeContractInputPath(authority, path, filter, signal);
+                await authorizeContractInputPath(authority, path, filter, combined);
+              await assertCapturedToolAccessCurrent();
+              combined?.throwIfAborted();
               return result;
             } catch (error) {
               if (error instanceof UnsupportedCapturedWorkflow) return { success: false, error: error.message };

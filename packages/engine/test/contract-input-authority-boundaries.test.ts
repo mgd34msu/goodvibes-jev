@@ -599,3 +599,37 @@ for (const scenario of ['allowed', 'denied', 'immutable', 'cancelled'] as const)
       if (scenario === 'allowed') expect(readFileSync(target, 'utf8')).toContain("export * from './widget.js'");
     }, scenario !== 'immutable'));
 }
+
+
+test('per-call cancellation during final delivery reauthorization withholds actual read result', async () =>
+  fixture(async ({ view, token }) => {
+    const cancel = new AbortController();
+    let backendDone = false;
+    const filter = async () => {
+      await Promise.resolve();
+      if (backendDone) cancel.abort();
+      return true;
+    };
+    const index = new ProjectIndex(view);
+    const access = capturedInputReadFilter(token, view, filter, undefined, new Set());
+    const read = new ReadTool(index, undefined, undefined, access);
+    const observed: import('../sdk/src/platform/types/tools.js').Tool = {
+      definition: read.definition,
+      execute: async (args, options) => {
+        const result = await read.execute(args, options);
+        expect(result.success).toBe(true);
+        expect(result.output).toContain('synthetic-owned');
+        backendDone = true;
+        return result;
+      },
+    };
+    const guarded = capturedInputTool(observed, token, view, filter, undefined);
+    try {
+      const result = await guarded.execute({ files: [{ path: 'a.txt' }] }, { signal: cancel.signal });
+      expect(cancel.signal.aborted).toBe(true);
+      expect(result.success).toBe(false);
+      expect(result.output ?? '').not.toContain('synthetic-owned');
+    } finally {
+      await index.dispose();
+    }
+  }, true));
