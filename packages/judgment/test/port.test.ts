@@ -18,7 +18,7 @@ function portWith(handler: Handler) {
     endpoint: { kind: 'hosted', baseURL: 'https://judge.test', apiKey: 'test-key' },
     model: 'jev-1.13.0',
     timeoutMs: 1_000,
-    retry: { maxRetries: 0 },
+    retry: { backoffInitialMs: 1, backoffMaxMs: 1 },
     fetch: async (_url, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       calls.push(body);
@@ -115,9 +115,6 @@ describe('createSystemOnePort', () => {
   test.each([
     [401, 'rejected'],
     [422, 'rejected'],
-    [429, 'unavailable'],
-    [500, 'unavailable'],
-    [529, 'unavailable'],
   ] as const)('maps HTTP %i to %s', async (status, kind) => {
     const { port } = portWith(() => json(status, { error: 'nope' }, { 'x-typesafe-request-id': 'req-9' }));
     const error = (await port.ask({ state: 'x', questions: { urgent: QUESTIONS.urgent } }).catch((e: unknown) => e)) as JudgmentError;
@@ -126,18 +123,21 @@ describe('createSystemOnePort', () => {
     expect(error.requestId).toBe('req-9');
   });
 
-  test('a network failure is unavailable', async () => {
+  test('a network failure retries without surfacing a terminal unavailability', async () => {
+    let calls = 0;
     const port = createSystemOnePort({
       endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:9', apiKey: 'k' },
       model: 'jev-1.13.0',
       timeoutMs: 1_000,
-      retry: { maxRetries: 0 },
+      retry: { backoffInitialMs: 1, backoffMaxMs: 1 },
       fetch: async () => {
-        throw new TypeError('connection refused');
+        if (++calls < 5) throw new TypeError('connection refused');
+        return json(200, { model: 'jev-1.13.0', answers: { urgent: GOOD_ANSWERS.urgent }, usage: { input_tokens: 1, output_tokens: 1 } });
       },
     });
-    const error = (await port.ask({ state: 'x', questions: { urgent: QUESTIONS.urgent } }).catch((e: unknown) => e)) as JudgmentError;
-    expect(error.kind).toBe('unavailable');
+    const result = await port.ask({ state: 'x', questions: { urgent: QUESTIONS.urgent } });
+    expect(result.answers.urgent.noul).toBe(0.9);
+    expect(calls).toBe(5);
   });
 
   test('a cancelled call is aborted', async () => {

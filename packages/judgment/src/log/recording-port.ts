@@ -33,6 +33,15 @@ function identifier(value: unknown, model = false): string | undefined {
 
 const invalidResponse = (): JudgmentError => new JudgmentError('invalid-response', FAILURE_MESSAGES['invalid-response']);
 
+/** Freeze detached JSON recursively before handing it to a borrowed transport. */
+function freezeSnapshot<T>(value: T): T {
+  if (value !== null && typeof value === 'object') {
+    for (const child of Object.values(value)) freezeSnapshot(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 /** Only documented, validated attempt evidence may cross the log boundary. */
 function projectLineage(value: unknown): JudgmentLineage | undefined {
   if (value === undefined) return undefined;
@@ -59,7 +68,9 @@ function projectLineage(value: unknown): JudgmentLineage | undefined {
       ...(statusCode(status) ? { status } : {}),
     });
   }
-  return { logicalRequestId, attempts };
+  const omittedAttempts = value.omittedAttempts;
+  if (omittedAttempts !== undefined && (!nonnegative(omittedAttempts) || !Number.isSafeInteger(omittedAttempts))) throw invalidResponse();
+  return { logicalRequestId, attempts, ...(omittedAttempts === undefined ? {} : { omittedAttempts }) };
 }
 
 /** A broken optional provider field must not erase other independently valid evidence. */
@@ -152,12 +163,14 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
       const started = performance.now();
       let requestedModel: string | undefined;
       const signal = request.signal;
-      // Snapshot caller-owned inputs before a borrowed port can mutate them.
-      const questions = toJson(request.questions);
+      // Admit one immutable payload before settings/key acquisition can await.
+      // Keep a separate question snapshot so a borrowed port cannot alter validation.
+      const input = freezeSnapshot(toJson({ state: request.state, questions: request.questions })) as unknown as Pick<JudgmentRequest<Q>, 'state' | 'questions'>;
+      const questions = toJson(input.questions);
       const call = {
         at: isoTime(now()),
-        context: { ...request.context },
-        stateHash: hashState(request.state),
+        context: Object.freeze({ ...request.context }),
+        stateHash: hashState(input.state),
         questions,
       };
       let result: JudgmentResult<Q>;
@@ -165,7 +178,7 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
         requestedModel = identifier(request.model ?? inner.model, true);
         if (requestedModel === undefined) throw new JudgmentError('invalid-request', FAILURE_MESSAGES['invalid-request']);
         checkCancellation(signal);
-        const response = await inner.ask(request);
+        const response = await inner.ask(Object.freeze({ ...request, ...input, context: call.context, model: requestedModel }));
         checkCancellation(signal);
         result = projectResult(questions as unknown as Q, requestedModel, response);
         checkCancellation(signal);

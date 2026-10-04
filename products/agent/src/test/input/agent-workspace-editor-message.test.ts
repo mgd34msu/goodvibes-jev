@@ -115,7 +115,7 @@ describe('workspace editor message reading', () => {
     const port = createSystemOnePort({
       endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:9999', apiKey: 'fixture-only' },
       model: PINNED_MODEL, timeoutMs: 5_000,
-      retry: { maxRetries: 1, backoffInitialMs: 0, backoffMaxMs: 0, backoffJitter: 0 },
+      retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
       fetch: async () => {
         calls++;
         if (calls === 1) return Response.json({ error: 'unavailable' }, { status: 503 });

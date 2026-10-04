@@ -164,3 +164,23 @@ describe('RelayHub lifecycle cleanup', () => {
     expect(hub.stats()).toEqual({ daemons: 0, pipes: 0 });
   });
 });
+
+
+describe('daemon-owned relay pipe close', () => {
+  test('a daemon can close its own pipe but never another daemon pipe', () => {
+    const hub = new RelayHub();
+    const owner = registerDaemon(hub, 'close-owner');
+    const other = registerDaemon(hub, 'close-other');
+    const client = connectClient(hub, 'close-owner');
+    const connected = client.sock.lastControl();
+    const pipe = connected?.t === 'connected' ? connected.pipe : '';
+    other.conn.handleText(encodeControlFrame({ t: 'pipe-close', pipe }));
+    expect(hub.stats().pipes).toBe(1);
+    expect(client.sock.lastControl()?.t).toBe('connected');
+    owner.conn.handleText(encodeControlFrame({ t: 'pipe-close', pipe }));
+    expect(hub.stats().pipes).toBe(0);
+    expect(client.sock.lastControl()).toEqual({ t: 'pipe-close', pipe, reason: 'daemon-closed' });
+    expect(owner.sock.closed).toBeNull();
+    expect(other.sock.closed).toBeNull();
+  });
+});
