@@ -288,7 +288,7 @@ describe('model listing', () => {
       endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:7000', apiKey: 'k' },
       model: 'jev-1.13.0',
       timeoutMs: 1_000,
-      retry: { maxRetries: 0 },
+      retry: {},
       fetch: async () => new Response(JSON.stringify({ models: [{ name: 'local-s1', description: 'local', release_date: '2026-09-01' }] }), { status: 200 }),
     }).list();
     expect(models.map((m) => m.name)).toEqual(['local-s1']);

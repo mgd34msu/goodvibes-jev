@@ -131,11 +131,14 @@ describe('owned browser reference retention', () => {
     const clear = spyOn(globalThis, 'clearTimeout');
     try {
       const first = refs.issue(source()); const second = refs.issue(source());
+      const firstLease = resolve(refs, first); const secondLease = resolve(refs, second);
       refs.revoke(first);
+      expect(firstLease.signal?.aborted).toBe(true); expect(secondLease.signal?.aborted).toBe(false);
       expect(clear).toHaveBeenCalledWith(clock.scheduled[0]!.handle);
       expect(() => resolve(refs, first)).toThrow(BrowserJudgmentError);
       expect(() => resolve(refs, second)).not.toThrow();
       refs.close();
+      expect(secondLease.signal?.aborted).toBe(true);
       expect(clear).toHaveBeenCalledWith(clock.scheduled[1]!.handle);
       expect(() => resolve(refs, second)).toThrow(BrowserJudgmentError);
       expect(() => refs.issue(source())).toThrow(BrowserJudgmentError);
@@ -152,9 +155,10 @@ describe('owned browser reference retention', () => {
       expect(() => refs.issue(source())).toThrow(BrowserJudgmentError);
       refs.revoke(id); expect(refs.issue(source())).toBe(id);
       const current = resolve(refs, id);
+      expect(old.signal?.aborted).toBe(true); expect(current.signal?.aborted).toBe(false);
       expect(old.assertCurrent).toThrow(BrowserJudgmentError);
-      clock.scheduled[0]!.fire(); expect(current.assertCurrent).not.toThrow();
-      clock.scheduled[1]!.fire(); expect(current.assertCurrent).toThrow(BrowserJudgmentError);
+      clock.scheduled[0]!.fire(); expect(current.assertCurrent).not.toThrow(); expect(current.signal?.aborted).toBe(false);
+      clock.scheduled[1]!.fire(); expect(current.assertCurrent).toThrow(BrowserJudgmentError); expect(current.signal?.aborted).toBe(true);
     } finally { uuid.mockRestore(); refs.close(); clock.restore(); }
   });
 

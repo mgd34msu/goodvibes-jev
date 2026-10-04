@@ -187,6 +187,13 @@ export class RelayHub {
     return true;
   }
 
+  /** @internal A daemon may close only a pipe owned by its own registered socket. */
+  _closeDaemonPipe(pipeId: PipeId, daemon: RelayServerSocket): boolean {
+    if (this.pipes.get(pipeId)?.daemon !== daemon) return false;
+    this._closePipe(pipeId, 'client', 'daemon-closed');
+    return true;
+  }
+
   /** @internal Tear down a single pipe, notifying the surviving peer. */
   _closePipe(pipeId: PipeId, notify: 'client' | 'daemon' | 'both', reason?: string): void {
     const pipe = this.pipes.get(pipeId);
@@ -238,6 +245,11 @@ export class RelayConnection {
     }
     if (frame.t === 'connect' && this.role === 'unknown') {
       this.onConnect(frame.protocol, frame.rid);
+      return;
+    }
+    if (frame.t === 'pipe-close' && this.role === 'daemon') {
+      // The pipe id alone grants no authority over another daemon's clients.
+      this.hub._closeDaemonPipe(frame.pipe, this.socket);
       return;
     }
     // Any other control frame from an endpoint is out of protocol.

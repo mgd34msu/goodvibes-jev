@@ -25,13 +25,13 @@ validation are implemented; they are not a semantic evaluator, authorization
 service or atomic execution ledger. Historical band/log outcomes `confirm` and
 `escalate` remain readable and must never be converted into `act`.
 
-Transient outages must stay pending through one shared port-owned retry
+Transient outages stay pending through one shared port-owned retry
 implementation until recovery, with backoff and responsive lifecycle
 cancellation. Products consume waiting progress, not a terminal outage decision,
 and must not wrap the port in local retry loops. Permanent request/authentication/
-format failures remain operational errors. This lifecycle and the legacy
-consumer migration are unfinished; the bounded transport documented below is
-the current implementation, not fulfillment of that requirement. See the
+format and decision-log failures remain terminal operational errors. The managed
+transport, native runtime disposal and browser/relay cancellation implement this
+lifecycle; legacy autonomous consumer migration remains unfinished. See the
 [repository status](../../README.md#status) for the open admission and
 grant/revocation work. No live-provider proof is established by these interfaces.
 
@@ -67,8 +67,8 @@ MIT
 
 ## Explicit endpoint failover
 
-This section describes the current bounded transport, pending the shared
-retry-until-available lifecycle described above.
+This section describes the shared retry-until-available transport and its owned
+cancellation lifecycle.
 
 `createSystemOnePort` still accepts the existing single `endpoint`, `model`,
 `timeoutMs` and `retry` configuration. Add `fallbacks: [{ endpoint, model }]` to
@@ -76,16 +76,45 @@ try other explicitly configured **System One** endpoints in order. Each endpoint
 uses the same `POST /v1/systemone` protocol, including owner-run loopback servers.
 A chat/completions provider is not a compatible substitute. Redirects are refused.
 
-The transport owns retries, with SDK retries disabled. The default is two extra
-attempts per endpoint, capped at ten. It honors bounded Retry-After guidance,
-uses capped exponential backoff, and has a `totalTimeoutMs` deadline (120 seconds
-by default) across every attempt and delay. Connection failures, timeouts, 408,
-429 and 5xx can retry and fail over. Authentication, other 4xx, invalid requests
-and invalid responses fail immediately. Cancellation stops retries and failover.
-No reading or heuristic answer is returned when the chain is exhausted. Each
-request may supply a tighter `totalTimeoutMs`; it cannot extend the configured
-deadline. State and questions are snapshotted once so retries cannot evaluate
-a mutated payload under the original logical reading.
+The transport is the one retry owner; SDK retries are disabled for judgments.
+Connection failures, per-attempt timeouts, HTTP 408, 429 and 5xx stay pending and
+retry until an answer arrives or the owning signal cancels. Each round visits
+eligible configured endpoints in order. There is no attempt-count or total-time
+outage ceiling. The default capped exponential backoff starts at 500 ms, caps at
+5 seconds, and applies 25% jitter; every delay is at least 1 ms. Valid Retry-After
+or Retry-After-Ms guidance is a minimum wait, even when longer than the local cap.
+Both in-flight attempts and backoff waits are cancellable, including long waits
+that must be split to fit the platform timer range.
+
+Authentication and other non-transient HTTP errors terminate as `rejected`.
+Invalid configuration/input terminates as `invalid-request`; malformed response
+bodies, answer schemas or model drift terminate as `invalid-response`. A broken
+decision log terminates as `unrecorded`. These failures cannot be repaired by
+blindly replaying the same judgment and must never become a heuristic reading.
+Per-attempt `timeoutMs` is retained. Legacy `retry.maxRetries`, retry opt-outs and
+`totalTimeoutMs` are rejected; migrate to timing-only `retry` settings and an
+owner-controlled `AbortSignal` for cancellation, shutdown or real authority
+expiry. No persisted engine retry-count setting exists to migrate.
+
+State and questions are snapshotted once so retries cannot evaluate a mutated
+payload under the original logical reading. `beforeAttempt` is a synchronous,
+fail-closed authority check immediately before each wire transmission, including
+after backoff. Browser callers use it to revalidate live principal, route, source
+and outbound authorization. A progress-only `onRetry` observer receives
+`JudgmentRetryProgress` containing the stable logical request ID, immutable last
+attempt metadata, elapsed time and next delay. Observer failures are ignored;
+progress is neither a semantic result nor authority to act. The retry loop owns
+only the judgment request. Provider writes, tools, cursor advancement and other
+business effects stay outside it and may run only after the final reading.
+
+Native composition aborts and drains its recorded calls before closing the
+log. Awaitable disposal scopes wait for that drain; legacy synchronous scopes
+start the owned drain while preserving their synchronous API. Browser calls keep admission/concurrency limits, body-read budgets,
+capability expiry/revocation and bounded shutdown; they do not impose a separate
+Jev availability deadline. Owned browser references signal expiry/revocation
+immediately, including during long provider-directed waits. Custom authority
+sources with no invalidation signal are rechecked before every transmission. Caller cancellation or shutdown ends the pending
+reading without an answer.
 
 Failover requires pinned `jev-X.Y.Z` model identifiers, with optional version
 suffixes. A fallback is eligible only when its model equals the logical request's
@@ -96,7 +125,9 @@ calibration: run the relevant batteries against that version before selecting it
 
 Results and failures contain `lineage`: one logical request ID and ordered wire
 attempts with endpoint index/kind, model, latency, HTTP status, outcome and safe
-server request ID. `withDecisionLog` stores this in the one answered/failed entry
+server request ID. The most recent 128 attempts are retained; `omittedAttempts`
+counts earlier attempts so an indefinite outage does not grow memory without
+bound. Attempt numbers remain absolute within the logical reading. `withDecisionLog` stores this in the one answered/failed entry
 for the logical reading. It never records endpoint URLs, credentials, upstream
 error bodies or causes as attempt metadata. `port.health()` reports per-target
 observed attempts, consecutive failures and last outcome without changing order.
@@ -124,7 +155,12 @@ the returned error or decision entry. Diagnose failures through the typed kind,
 validated HTTP status/request ID/attempt lineage when available, and the log's
 decision/site context; do not match provider error text. Inspect configuration
 through the owning setup/settings surface when a provider is unconfigured.
-Cancellation remains `aborted`, explicit deadline failures remain `unavailable`,
-and a decision-log write failure remains `unrecorded`.
+Managed transport cancellation remains `aborted`; the recording wrapper keeps
+`unavailable` attribution only for an explicitly timeout-typed owner signal.
+No default outage deadline is introduced. A decision-log write failure remains
+`unrecorded`. Borrowed/injected ports own their own transport contract;
+`withDecisionLog` validates and records them but does not install another retry
+loop. Production native, browser and gateway judgment exposures all acquire the
+managed System One port. Test doubles may intentionally return terminal failures.
 
 Engine-managed persisted failover settings are a separate integration. Until that integration is enabled, pass the complete explicit chain to `createSystemOnePort`.

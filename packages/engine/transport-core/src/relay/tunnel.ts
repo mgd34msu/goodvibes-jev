@@ -35,6 +35,12 @@ export interface TunnelRequestHeader {
   readonly headers: ReadonlyArray<readonly [string, string]>;
 }
 
+/** Cancel one owned unary request (surface → daemon). No reason or credential crosses this boundary. */
+export interface TunnelRequestCancelHeader {
+  readonly id: string;
+  readonly kind: 'request-cancel';
+}
+
 /** A tunneled HTTP response (daemon → surface). */
 export interface TunnelResponseHeader {
   readonly id: string;
@@ -78,6 +84,7 @@ export interface TunnelStreamCloseHeader {
 /** Any tunnel frame header. */
 export type TunnelHeader =
   | TunnelRequestHeader
+  | TunnelRequestCancelHeader
   | TunnelResponseHeader
   | TunnelStreamOpenHeader
   | TunnelStreamDataHeader
@@ -116,6 +123,7 @@ function isTunnelHeader(value: unknown): value is TunnelHeader {
   if (v['kind'] === 'request' || v['kind'] === 'stream-open') {
     return Array.isArray(v['headers']) && typeof v['method'] === 'string' && typeof v['path'] === 'string';
   }
+  if (v['kind'] === 'request-cancel') return true;
   if (v['kind'] === 'response') return Array.isArray(v['headers']) && typeof v['status'] === 'number';
   if (v['kind'] === 'stream-data') return typeof v['seq'] === 'number';
   if (v['kind'] === 'stream-overflow') return typeof v['dropped'] === 'number';

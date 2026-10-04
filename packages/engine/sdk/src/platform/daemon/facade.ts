@@ -69,9 +69,11 @@ import type { DaemonConfig, DaemonDangerConfig, PendingSurfaceReply } from './ty
 import { requirePortAvailable } from './port-check.js';
 import { resolveHostBinding } from './host-resolver.js';
 import { createHostModeRestartWatcher } from './host-mode-watcher.js';
+import { configureJudgmentRequestLifetime } from './http/judgment-request-lifetime.js';
 
 interface UpgradeCapableServer {
   upgrade(req: Request, options?: { data?: unknown }): boolean;
+  timeout?(req: Request, seconds: number): void;
 }
 
 type JsonBody = Record<string, unknown>;
@@ -460,6 +462,7 @@ export class DaemonServer {
         idleTimeout: sseIdleTimeoutSeconds(),
         ...(this.tlsState.tls ? { tls: this.tlsState.tls } : {}),
         async fetch(req: Request, server: UpgradeCapableServer): Promise<Response | undefined> {
+          configureJudgmentRequestLifetime(req, server);
           const upgrade = self.tryUpgradeControlPlaneWebSocket(req, server);
           if (upgrade === 'upgraded') return;
           if (upgrade) return upgrade;

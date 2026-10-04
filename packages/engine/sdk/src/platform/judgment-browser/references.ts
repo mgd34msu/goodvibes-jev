@@ -9,7 +9,7 @@ export interface BrowserJudgmentReferenceSource {
   readonly mayRead: (principal: AuthenticatedPrincipal) => boolean;
 }
 const held = (): never => { throw new BrowserJudgmentError('JUDGMENT_REFERENCE_HELD'); };
-type OwnedReference = BrowserJudgmentReferenceSource & { readonly identity: symbol };
+type OwnedReference = BrowserJudgmentReferenceSource & { readonly identity: symbol; readonly lifetime: AbortController };
 
 /** Ephemeral owned references. No HTTP mint endpoint and no persistence or implicit access grant. */
 export class BrowserJudgmentReferences {
@@ -45,7 +45,7 @@ export class BrowserJudgmentReferences {
     if (this.#closed || this.#entries.size >= 64 || this.#entries.has(id)
       || !Number.isFinite(admittedAt) || expiresAt <= admittedAt) return held();
     const identity = Symbol();
-    this.#entries.set(id, { principalId, battery, revision, expiresAt, snapshot, identity,
+    this.#entries.set(id, { principalId, battery, revision, expiresAt, snapshot, identity, lifetime: new AbortController(),
       assertCurrent: assertCurrent.bind(entry), mayRead: mayRead.bind(entry),
     });
     // This is an owned retention deadline, not only a check on the next read.
@@ -93,18 +93,19 @@ export class BrowserJudgmentReferences {
     // as a successful lease, even when the parser returned the original data.
     assertCurrent();
     // The binding stays server-side; it is not an approval token and is never emitted.
-    return { state, sourceBinding: id, assertCurrent };
+    return { state, sourceBinding: id, assertCurrent, signal: current().lifetime.signal };
   }
   revoke(id: string): void {
+    const entry = this.#entries.get(id);
     this.#entries.delete(id);
     const timer = this.#timers.get(id);
     if (timer !== undefined) clearTimeout(timer);
     this.#timers.delete(id);
+    entry?.lifetime.abort(new BrowserJudgmentError('JUDGMENT_REFERENCE_HELD'));
   }
   close(): void {
     this.#closed = true;
-    for (const timer of this.#timers.values()) clearTimeout(timer);
-    this.#timers.clear(); this.#entries.clear();
+    for (const id of this.#entries.keys()) this.revoke(id);
   }
   private sweep(): void {
     for (const [id, entry] of this.#entries) if (entry.expiresAt <= this.now()) this.revoke(id);
