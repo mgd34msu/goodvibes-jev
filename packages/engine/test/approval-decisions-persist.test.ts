@@ -263,7 +263,10 @@ describe('permissions.rules.* settings surface', () => {
     try {
       const store = new UserPermissionRuleStore(join(dir, 'permission-rules.json'));
       await store.init();
-      const manager = makeManager(store, async () => ({ approved: true, rememberTier: 'command-class' }));
+      let prompts = 0;
+      const manager = makeManager(store, async () => ++prompts === 1
+        ? { approved: true, rememberTier: 'command-class' }
+        : { approved: false });
       await manager.checkDetailed('exec', execArgs('git commit -m "x"'));
 
       const catalog = new GatewayMethodCatalog();
@@ -285,15 +288,11 @@ describe('permissions.rules.* settings surface', () => {
       const relisted = await catalog.invoke('permissions.rules.list', { ...ctx, body: {} }) as { rules: unknown[] };
       expect(relisted.rules).toHaveLength(0);
 
-      // Deleting the grant means the next ask prompts again.
-      let asked = false;
-      const askAgain = makeManager(store, async () => {
-        asked = true;
-        return { approved: false };
-      });
-      // The old manager's session cache would suppress; a fresh manager models a new session.
-      await askAgain.checkDetailed('exec', execArgs('git commit -m "y"'));
-      expect(asked).toBe(true);
+      // Revocation is live: the same manager must consult the next decision.
+      const afterDelete = await manager.checkDetailed('exec', execArgs('git commit -m "y"'));
+      expect(afterDelete.approved).toBe(false);
+      expect(afterDelete.sourceLayer).toBe('user_prompt');
+      expect(prompts).toBe(2);
 
       const missing = await catalog.invoke('permissions.rules.delete', { ...ctx, body: { ruleId: 'nope' } }) as { deleted: boolean };
       expect(missing.deleted).toBe(false);

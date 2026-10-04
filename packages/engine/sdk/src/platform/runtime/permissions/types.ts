@@ -345,11 +345,17 @@ export interface PrefixRule extends BaseRule {
   commandPrefixes?: string[] | undefined;
   /**
    * Full-command match(es): a command must equal one of these strings
-   * (trimmed, case-insensitive), the "this exact command" approval tier.
+   * literally, including case and whitespace, for the "this exact command" tier.
    * `<command> && rm -rf x` never matches an exactCommands entry of
    * `<command>`, unlike a prefix.
    */
   exactCommands?: string[] | undefined;
+  /**
+   * Literal by default. Explicit command-class rules may normalize only bare
+   * executable tokens for case/outer whitespace; command arguments stay literal.
+   * Unknown values must never widen an exact match.
+   */
+  exactCommandMatch?: 'literal' | 'command-class' | undefined;
 }
 
 /**
