@@ -191,3 +191,76 @@ client. Its return type is the same `WorkLedgerReadClient` used by local binding
 The local ledger barrel does not import this transport. The SDK's existing
 operator-sdk dependency remains one-way; no operator-sdk-to-SDK reference or
 copied reader authority/type contract is introduced.
+
+## Bounded legacy import (THE-105)
+
+This is a deterministic storage/transport foundation. Current owner authentication
+and capability checks are host authority boundaries, not human approval prompts.
+Any semantic reconciliation or decision to submit an import belongs to the
+shared autonomous Jev admission path described in
+[`autonomous-jev-decisions.md`](../../../../../../../docs/design/autonomous-jev-decisions.md).
+That production admission/recovery integration remains separate unfinished work;
+this foundation alone does not complete THE-105 or retire the old planning UX.
+
+The selected daemon exposes `workLedger.prepareLegacyImport` and
+`workLedger.importLegacy` at `POST /api/work-ledger/legacy-import/prepare` and
+`POST /api/work-ledger/legacy-import`. Both require current owner authentication
+and both `write:work-ledger-import` and `read:knowledge`; the ledger read scope grants no import permission.
+Preparation accepts `{projectId, sourceIds}` and captures complete persisted
+KnowledgeSourceRecords and their host-generated generation fingerprints. It
+returns the version-1 canonical preparation manifest. Preparation is read-only.
+The gateway captures persisted source images, not uncommitted in-memory edits.
+During an active KnowledgeStore batch it can therefore prepare the earlier
+persisted version. Import admission still refuses active batches or dirty local
+state, then revalidates every source image and generation under the transaction.
+Surfacing the host's pending-edit state during remote preparation remains
+follow-on integration work; this endpoint does not currently expose that state.
+The manifest contains source-qualified fragments, original IDs, links and full
+source records; the engine and products share one preparation implementation.
+
+Submit `{type:'import_legacy', requestId, expectedRevision, manifest}`. The entire
+serialized command is limited to 256 KiB, without truncation. The host supplies
+an instance nonce, project and a private coordinator actor derived from the
+freshly authenticated principal. Clients cannot supply actor authority, choose
+a database, or turn an old executionApproved/verified/reported flag into current
+execution or verification authority. No attempts, ownership claims or evidence
+are created. Missing native criteria require explicit reconciliation; legacy
+records remain intact in the event provenance and the source rows are untouched.
+
+One import is one atomic event and receipt. Under the existing durable SQLite
+transaction, admission checks the host binding, aggregate revision, every full
+source image and generation, all target identities and live authorization.
+Cancellation before admission rejects without mutation. A source generation
+string alone cannot authenticate altered source bytes. The dedicated event is
+`{type:'import_legacy', sequence, actorId, requestId, at, manifest, works}`;
+readers discriminate its type before inspecting ordinary single-work fields.
+The event and resulting snapshot must fit the existing bounded read transport.
+
+A host restart changes its preparation nonce, invalidating new use of old
+preparations. A known durable receipt is checked first, so an exact same-principal
+request replay still reconciles a lost response after restart, source edits or
+later cancellation. Changed request content with the same requestId fails.
+Storage publication ambiguity returns `indeterminate`; retry the identical
+command against the same authoritative store, never a new requestId. Revoked
+credentials cannot replay receipts. Pending unsaved local changes block the
+existing store transaction; no import discards those changes. This transport
+has no automatic runner, provider call, destructive migration or background
+execution side effect. Imports are explicitly bounded; oversized selections
+require an independently reviewed smaller source selection.
+
+Read history uses `WorkLedgerReadEvent`. Without current `read:knowledge`, an
+import keeps its sequence and native work projection but returns `manifest:null`
+and `provenance:'requires_read_knowledge'`. No raw source, fragment, command or
+receipt is returned. Authorized knowledge readers recover the complete manifest.
+Local read bindings likewise require explicit `allowLegacyProvenance:true` from
+trusted host composition. Products show protected provenance honestly while
+keeping ordinary work and history cursor continuity available.
+
+Snapshots and history pages also carry current `provenance` visibility. A scope
+change is observable even when no ledger revision changes. Remote readers notify
+subscribers on projection changes, apply every newly observed restriction, and
+fence already-launched permissive responses until a new authorized read succeeds.
+Agent and TUI immediately discard protected cached manifests, keep native work and
+history continuity, and refetch provenance after a new grant. TUI rotates its view
+identity at this permission boundary so interaction-frozen rows cannot retain raw
+source text. These are projection signals, never execution grants.

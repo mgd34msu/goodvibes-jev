@@ -17,7 +17,7 @@ export function createNativeWorkLedgerModalSurface(select: NativeWorkLedgerSelec
       model.synchronize();
       const snapshot = model.snapshot;
       const work: ConfigModalRow[] = []; const intent: ConfigModalRow[] = [];
-      const attention: ConfigModalRow[] = []; const evidence: ConfigModalRow[] = [];
+      const attention: ConfigModalRow[] = []; const evidence: ConfigModalRow[] = []; const imports: ConfigModalRow[] = [];
       for (const view of snapshot?.works ?? []) {
         const w = view.work; const a = view.attempt;
         work.push(row(key('work', w.id, 'summary'), `${w.id} · ${w.title} · work revision ${w.revision} · criteria revision ${w.criteriaRevision}`));
@@ -28,17 +28,28 @@ export function createNativeWorkLedgerModalSurface(select: NativeWorkLedgerSelec
         view.attention.forEach((item, index) => attention.push(row(key('attention', w.id, 'item', index), `${w.id} · attempt ${a?.id ?? 'none'} · ${item.kind}: ${item.reason}`)));
       }
       // Retain durable historical references without calling old evidence current success.
-      const proofs = new Map(model.history.flatMap(event => event.evidence ? [[event.evidence.id, event.evidence] as const] : []));
+      const proofs = new Map(model.history.flatMap(event => event.type !== 'import_legacy' && event.evidence ? [[event.evidence.id, event.evidence] as const] : []));
       for (const view of snapshot?.works ?? []) if (view.verification.evidence) proofs.set(view.verification.evidence.id, view.verification.evidence);
       for (const e of proofs.values()) {
         const t = e.target;
         evidence.push(row(key('evidence', e.id, 'summary'), `${e.id} · historical outcome ${e.outcome} · work ${t.workId}@${t.workRevision} · criteria revision ${t.criteriaRevision} · attempt ${t.attemptId}@${t.attemptRevision} · ${e.reason}`));
         e.references.forEach((ref, i) => evidence.push(row(key('evidence', e.id, 'reference', i), `${ref.kind}: ${ref.ref}${ref.digest ? ` · digest ${ref.digest}` : ''}`)));
       }
+      for (const event of model.history) {
+        if (event.type !== 'import_legacy') continue;
+        const eventId = String(event.sequence);
+        imports.push(row(key('imports', eventId, 'summary'), `Import #${event.sequence} · ${event.works.length} work records · actor ${event.actorId} · request ${event.requestId}`));
+        imports.push(row(key('imports', eventId, 'authority'), 'Historical approval and completion are source claims, not execution authority or verified evidence.'));
+        event.works.forEach((work, index) => imports.push(row(key('imports', eventId, 'work', index), `${work.id} · ${work.title} · reported ${work.reportedState} · imported unverified`)));
+        if (!event.manifest) { imports.push(row(key('imports', eventId, 'protected'), 'Protected legacy provenance requires read:knowledge authorization.')); continue; }
+        imports.push(row(key('imports', eventId, 'digest'), `Preparation ${event.manifest.digest}`));
+        event.manifest.sources.forEach((source, index) => imports.push(row(key('imports', eventId, 'source', index), `Preserved source ${String(source.source.id)} · generation ${source.generation} · ${JSON.stringify(source.source)}`)));
+        event.manifest.links.forEach((link, index) => imports.push(row(key('imports', eventId, 'link', index), `Link ${link.from} · ${link.relation} · ${link.to} · source ${link.sourceId} ${link.pointer}`)));
+      }
       return { title: 'Native Work (read-only)', bindingIdentity: model.identity, scrollInformationalLines: true,
         deferredStructureMessage: 'Native rows changed; press an arrow key to show the current layout.',
         ...(model.reason ? { degraded: safe(model.reason) } : {}),
-        tabs: [['work', 'Work', work], ['intent', 'Intent', intent], ['attention', 'Attention', attention], ['evidence', 'Evidence', evidence]].map(([id, label, rows]) => ({
+        tabs: [['work', 'Work', work], ['intent', 'Intent', intent], ['attention', 'Attention', attention], ['evidence', 'Evidence', evidence], ['imports', 'Legacy imports', imports]].map(([id, label, rows]) => ({
           id: id as string, label: label as string, rows: rows as ConfigModalRow[],
           header: [snapshot ? safe(`project ${snapshot.projectId} · durable cursor ${snapshot.cursor}`) : 'No native host data.', 'Read-only. Planning approvals do not authorize native execution.'],
           emptyText: safe(model.reason) || 'No native records in this view.',

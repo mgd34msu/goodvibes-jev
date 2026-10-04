@@ -186,8 +186,10 @@ describe('the shape that shipped writes NOTHING once the output guard is on', ()
     const home = makeHomeDir('legacy-home');
     const run = runAgent(entry.binary, home);
     expect(run.status).toBe(1);
-    expect(run.stdout).toHaveLength(0);
-    expect(run.stderr).toHaveLength(0);
+    // Preserve the zero-byte contract while showing unexpected output in a
+    // failure, rather than only its length (which hid the CI failure's cause).
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toBe('');
   });
 });
 

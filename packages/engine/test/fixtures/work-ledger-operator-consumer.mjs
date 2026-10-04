@@ -21,7 +21,7 @@ const operator = createOperatorSdk({
 const reader = createOperatorWorkLedgerReadClient(operator, projectId);
 try {
   assert.equal(reader.projectId, projectId);
-  assert.deepEqual(await reader.readSnapshot(), { projectId, revision: 0, cursor: 0, works: [] });
+  assert.deepEqual(await reader.readSnapshot(), { projectId, revision: 0, cursor: 0, provenance: 'requires_read_knowledge', works: [] });
   assert.deepEqual(await reader.history(0), []);
   assert.equal(reader.execute, undefined);
   assert.equal(reader.authority, undefined);
