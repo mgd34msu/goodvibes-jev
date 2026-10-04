@@ -12,7 +12,7 @@ let harness: Harness | undefined;
 afterEach(() => { harness?.dispose(); harness = undefined; for (const root of extraRoots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 for (const stale of [false, true]) {
-  test(`${stale ? 'stale clean' : 'dirty'} owner input is retained with zero automatic apply/index/history writes`, async () => {
+  test(`${stale ? 'stale clean owner input is retained' : 'dirty owner input applies only result delta'} without changing index/history`, async () => {
     let ownerAtApply = '';
     let indexAtApply: Buffer<ArrayBuffer>;
     let headAtApply = '';
@@ -29,15 +29,17 @@ for (const stale of [false, true]) {
     const { contract } = startContract(h);
     await waitFor(() => terminal(h, contract.id), 'retained result', 15_000);
     const done = h.store.get(contract.id)!;
-    expect(done.status).toBe('passed'); expect(done.commit?.status).toBe('failed'); expect(done.commit?.note).toStartWith('not applied:');
-    expect(done.commit?.note).toContain(stale ? 'owner changed' : 'pre-existing owner changes');
-    expect(done.statusLine).toContain('; not applied:');
+    expect(done.status).toBe('passed');
+    expect(done.commit?.status).toBe(stale ? 'failed' : 'applied');
+    expect(done.commit?.note).toContain(stale ? 'owner changed' : 'uncommitted changes');
+    expect(done.commit?.hash).toBeUndefined();
+    expect(done.statusLine).toContain(stale ? '; not applied:' : '; applied');
     expect(h.manager.getStatus(done.ownerAgentId)?.progress).toBe(done.statusLine);
-    expect(h.events.find((event) => event.type === 'CONTRACT_COMMITTED')).toMatchObject({ status: 'failed', note: done.commit!.note });
+    expect(h.events.find((event) => event.type === 'CONTRACT_COMMITTED')).toMatchObject({ status: stale ? 'failed' : 'applied', note: done.commit!.note });
     expect(readFileSync(join(h.root, 'README.md'), 'utf8')).toBe(ownerAtApply);
     expect(readFileSync(join(h.root, '.git/index'))).toEqual(indexAtApply!); expect(git(h.root, 'rev-parse', 'HEAD')).toBe(headAtApply);
-    expect(existsSync(join(h.root, 'src/csv.ts'))).toBe(false);
-    expect(readFileSync(join(done.worktreePath!, 'src/csv.ts'), 'utf8')).toBe('export const parse = 10;\n');
+    expect(existsSync(join(h.root, 'src/csv.ts'))).toBe(!stale);
+    expect(readFileSync(join(stale ? done.worktreePath! : h.root, 'src/csv.ts'), 'utf8')).toBe('export const parse = 10;\n');
     expect(existsSync(contractInputPath(done.inputSnapshot!))).toBe(true);
   }, 20_000);
 }

@@ -27,6 +27,7 @@
  * Verdicts, gates and the commit are code; only the two judges are Jev.
  */
 import { assertContractInputOwner, assertContractInputObjects, assertContractExecutionView } from './input-snapshot.js';
+import { applyCapturedInputDelta } from './input-apply.js';
 
 import { spawnSync } from 'node:child_process';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
@@ -331,7 +332,15 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       await assertContractInputOwner(contract.inputSnapshot, run.abort.signal);
     }
     catch (error) { return { status: 'failed', note: `not applied: ${summarizeError(error)}; the work stays on branch ${branch}` }; }
-    if (contract.inputSnapshot.dirty) return { status: 'failed', note: `not applied: captured input includes pre-existing owner changes; snapshot-to-result application is not implemented; the work stays on branch ${branch}` };
+    if (contract.inputSnapshot.dirty) {
+      try {
+        const files = await applyCapturedInputDelta(contract, context.plannerDeps(run).readAccessFilter, run.abort.signal);
+        if (files === 0) return { status: 'skipped', note: 'commit skipped: the contract changed no files; owner changes preserved' };
+        return { status: 'applied', note: `applied ${files} file${files === 1 ? '' : 's'} as uncommitted changes; pre-existing owner edits and staging preserved${commitOn ? '; automatic commit deferred for the dirty input baseline' : ''}` };
+      } catch (error) {
+        return { status: 'failed', note: `not applied: ${summarizeError(error)}; the work stays on branch ${branch}` };
+      }
+    }
     const changed = git(root, ['diff', '--name-only', `HEAD...${branch}`]);
     const files = changed.ok ? changed.out.split('\n').filter(Boolean) : [];
     if (changed.ok && files.length === 0) return { status: 'skipped', note: describeCommitOutcome(null, [], true) };

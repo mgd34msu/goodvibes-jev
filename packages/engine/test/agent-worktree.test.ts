@@ -13,10 +13,11 @@ function runGit(cwd: string, args: string[]): string {
 }
 
 describe('AgentWorktree', () => {
-  test('commitWorkingTree commits project changes without staging GoodVibes internal state', async () => {
+  for (const ignored of [false, true]) test(`commitWorkingTree commits project changes without staging GoodVibes internal state (ignored=${ignored})`, async () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-worktree-'));
     runGit(root, ['init']);
 
+    if (ignored) writeFileSync(join(root, '.gitignore'), '.goodvibes/\n');
     writeFileSync(join(root, 'feature.ts'), 'export const ok = true;\n');
     mkdirSync(join(root, '.goodvibes', 'sessions'), { recursive: true });
     writeFileSync(join(root, '.goodvibes', 'sessions', 'internal.json'), '{}\n');

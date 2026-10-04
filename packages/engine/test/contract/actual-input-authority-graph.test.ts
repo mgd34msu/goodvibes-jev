@@ -31,7 +31,7 @@ const capturedExecAvailable = (await probeCapturedExecAvailability()).available;
 if (process.env.GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT === '1' && !capturedExecAvailable)
   throw new Error('required captured runner execution backend is unavailable');
 
-for (const mode of ['normal', 'revoke-map', 'resume'] as const)
+for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty'] as const)
   test.skipIf(!capturedExecAvailable && mode !== 'revoke-map')(
     `actual contract input authority through all construction handoffs (${mode})`,
     async () => {
@@ -58,7 +58,7 @@ for (const mode of ['normal', 'revoke-map', 'resume'] as const)
       const commit = spawnSync('git', ['-C', root, 'add', '.']);
       expect(commit.status).toBe(0);
       expect(spawnSync('git', ['-C', root, 'commit', '-qm', 'fixture sources']).status).toBe(0);
-      // Dirty user input must remain outside automatic apply-back.
+      // Dirty owner bytes are context, never part of the delivered result delta.
       writeFileSync(join(root, 'allowed.ts'), 'export const ALLOWED_GRAPH_MARKER = 2;\n');
       const config = new ConfigManager({
         surfaceRoot: 'agent',
@@ -168,7 +168,7 @@ for (const mode of ['normal', 'revoke-map', 'resume'] as const)
               else request.signal.addEventListener('abort', abort, { once: true });
             });
           }
-          if (!planner && turn === 6)
+          if (!planner && turn === 6 && mode !== 'apply-dirty')
             writeFileSync(
               join(workspacePackage, 'index.ts'),
               "export const compilerInput = 'const value: number = 999;';\n",
@@ -400,6 +400,8 @@ for (const mode of ['normal', 'revoke-map', 'resume'] as const)
         },
       });
       let id: string | undefined;
+      const ownerIndex = readFileSync(join(root, '.git/index'));
+      const ownerHead = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD']).stdout.toString();
       try {
         const started = runner.start({
           ask: 'Add a CSV parser module',
@@ -536,7 +538,15 @@ for (const mode of ['normal', 'revoke-map', 'resume'] as const)
               message.content?.includes('REGISTRY_OWNED_MARKER'),
           ),
         ).toBe(true);
-        expect(result.commit?.note).toContain('not applied');
+        if (mode === 'apply-dirty') {
+          expect(result.commit?.status, JSON.stringify(result.commit)).toBe('applied');
+          expect(result.commit?.hash).toBeUndefined();
+          expect(result.commit?.note).toContain('uncommitted');
+          expect(readFileSync(join(root, 'src/csv.ts'), 'utf8')).toContain('ts.transpileModule');
+          expect(readFileSync(join(root, 'schema.prisma'), 'utf8')).toContain('CapturedRecord');
+          expect(readFileSync(join(root, '.git/index'))).toEqual(ownerIndex);
+          expect(spawnSync('git', ['-C', root, 'rev-parse', 'HEAD']).stdout.toString()).toBe(ownerHead);
+        } else expect(result.commit?.note).toContain('not applied');
         expect(readFileSync(join(root, 'allowed.ts'), 'utf8')).toContain(mode === 'resume' ? '= 99' : '= 2');
         await runner.join(id);
       } finally {

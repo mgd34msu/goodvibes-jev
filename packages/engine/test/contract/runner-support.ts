@@ -177,6 +177,7 @@ export interface Harness {
 }
 
 export interface HarnessOptions {
+  readonly readAccessFilter?: ContractRunnerDeps['readAccessFilter'];
   readonly createEngine?: ContractRunnerDeps['createEngine'];
   readonly plan?: DraftPlan;
   readonly contract?: Record<string, unknown>;
@@ -325,7 +326,7 @@ export function makeHarness(options: HarnessOptions): Harness {
     ...(options.steps === undefined ? {} : { steps: options.steps }),
     ...(options.workPlanService === undefined ? {} : { workPlanService: options.workPlanService }),
     ...(options.planManager === undefined ? {} : { planManager: options.planManager }),
-    readAccessFilter: async () => true, // Owned synthetic fixtures have no denied source paths.
+    readAccessFilter: options.readAccessFilter ?? (async () => true), // Owned synthetic fixtures default to allowed source paths.
     repositoryMap: options.repositoryMap ?? (async () => 'README.md'),
   });
   runner.on((event) => events.push(event));

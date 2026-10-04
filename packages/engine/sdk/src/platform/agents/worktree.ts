@@ -167,7 +167,14 @@ export class AgentWorktree {
         logger.debug('AgentWorktree.commitWorkingTree: no direct working tree changes');
         return { hash: null, skippedIgnored };
       }
-      stagedPathspecs = ['.', ':(exclude).goodvibes', ':(exclude).goodvibes/**'];
+      // Negative pathspecs naming an ignored directory can make git add fail
+      // after staging its valid siblings. Enumerate eligible entries instead;
+      // cached paths include deletions, and --exclude-standard omits ignored
+      // untracked data without forcing it into the index.
+      const eligible: string = await git.raw(['ls-files', '--cached', '--others', '--exclude-standard', '-z']);
+      stagedPathspecs = [...new Set(eligible.split('\0').filter((path) => path.length > 0 && path !== '.goodvibes' && !path.startsWith('.goodvibes/')))]
+        .map((path) => `:(literal)${path}`);
+      if (stagedPathspecs.length === 0) return { hash: null, skippedIgnored };
       addFlag = '--all';
     }
 
