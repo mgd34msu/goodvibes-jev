@@ -1,3 +1,4 @@
+import { assertCapturedToolReadAccess, assertCapturedToolAccessCurrent } from '../shared/captured-input-tools.js';
 import { existsSync, readdirSync, type Dirent } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -6,7 +7,12 @@ import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { Candidate } from '@goodvibes-jev/judgment';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { envTemplate, envTemplateCandidate, envTemplateContext } from '../batteries/env-template.js';
-import { TEST_CANDIDATES_PER_READING, testOfSource, testOfSourceCandidate, testOfSourceContext } from '../batteries/test-of-source.js';
+import {
+  TEST_CANDIDATES_PER_READING,
+  testOfSource,
+  testOfSourceCandidate,
+  testOfSourceContext,
+} from '../batteries/test-of-source.js';
 import type { AnalyzeInput, ExportedSymbol } from './types.js';
 
 export { runPermissions, runSecurity } from './scan-findings.js';
@@ -54,10 +60,7 @@ function extractExportedSymbols(content: string): Array<{ name: string; kind: st
   return symbols;
 }
 
-async function collectExportedSymbols(
-  files: string[],
-  intelligence: CodeIntelligence,
-): Promise<ExportedSymbol[]> {
+async function collectExportedSymbols(files: string[], intelligence: CodeIntelligence): Promise<ExportedSymbol[]> {
   const exported: ExportedSymbol[] = [];
 
   for (const file of files) {
@@ -82,10 +85,7 @@ async function collectExportedSymbols(
   return exported;
 }
 
-export async function runImpact(
-  input: AnalyzeInput,
-  projectRoot: string,
-): Promise<Record<string, unknown>> {
+export async function runImpact(input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
   const targetFiles = input.files ?? [];
   if (targetFiles.length === 0) {
     return { error: 'impact mode requires at least one file in files[]' };
@@ -144,10 +144,7 @@ interface DepGraph {
   [file: string]: string[];
 }
 
-async function buildDepGraph(
-  files: string[],
-  projectRoot: string,
-): Promise<DepGraph> {
+async function buildDepGraph(files: string[], projectRoot: string): Promise<DepGraph> {
   const graph: DepGraph = {};
   for (const file of files) {
     const content = await readTextFile(file);
@@ -208,10 +205,7 @@ function detectCycles(graph: DepGraph): string[][] {
   return cycles;
 }
 
-export async function runDependencies(
-  input: AnalyzeInput,
-  projectRoot: string,
-): Promise<Record<string, unknown>> {
+export async function runDependencies(input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
   const submode = input.submode ?? 'analyze';
   const targetFiles = await collectInputFiles(input.files, projectRoot, { expandDirectories: true });
   const graph = await buildDepGraph(targetFiles, projectRoot);
@@ -246,16 +240,10 @@ export async function runDependencies(
   return { error: `Unknown dependencies submode: ${submode}` };
 }
 
-export async function runDeadCode(
-  input: AnalyzeInput,
-  projectRoot: string,
-): Promise<Record<string, unknown>> {
+export async function runDeadCode(input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
   const deadline = Date.now() + MAX_SCAN_MS;
   const intelligence = new CodeIntelligence({});
-  const scanRoot =
-    input.files && input.files.length > 0
-      ? resolve(projectRoot, input.files[0]!)
-      : projectRoot;
+  const scanRoot = input.files && input.files.length > 0 ? resolve(projectRoot, input.files[0]!) : projectRoot;
 
   const allFiles = await collectTextFiles(scanRoot, MAX_SCAN_FILES, deadline);
   const exports = await collectExportedSymbols(allFiles, intelligence);
@@ -298,10 +286,7 @@ export async function runDeadCode(
   };
 }
 
-export async function runCoverage(
-  _input: AnalyzeInput,
-  projectRoot: string,
-): Promise<Record<string, unknown>> {
+export async function runCoverage(_input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
   const summaryPath = join(projectRoot, 'coverage', 'coverage-summary.json');
   if (existsSync(summaryPath)) {
     const raw = await readJsonFile(summaryPath);
@@ -322,7 +307,7 @@ export async function runCoverage(
   const lcovPath = join(projectRoot, 'coverage', 'lcov.info');
   if (existsSync(lcovPath)) {
     try {
-      const content = await Bun.file(lcovPath).text();
+      const content = (await assertCapturedToolReadAccess(lcovPath), await Bun.file(lcovPath).text());
       let linesFound = 0;
       let linesHit = 0;
       let branchesFound = 0;
@@ -342,8 +327,16 @@ export async function runCoverage(
       return {
         source: 'lcov.info',
         lines: { total: linesFound, covered: linesHit, pct: linesFound > 0 ? (linesHit / linesFound) * 100 : 0 },
-        branches: { total: branchesFound, covered: branchesHit, pct: branchesFound > 0 ? (branchesHit / branchesFound) * 100 : 0 },
-        functions: { total: functionsFound, covered: functionsHit, pct: functionsFound > 0 ? (functionsHit / functionsFound) * 100 : 0 },
+        branches: {
+          total: branchesFound,
+          covered: branchesHit,
+          pct: branchesFound > 0 ? (branchesHit / branchesFound) * 100 : 0,
+        },
+        functions: {
+          total: functionsFound,
+          covered: functionsHit,
+          pct: functionsFound > 0 ? (functionsHit / functionsFound) * 100 : 0,
+        },
       };
     } catch {
       // Fall through
@@ -353,10 +346,7 @@ export async function runCoverage(
   return { error: 'No coverage data found', searched: ['coverage/coverage-summary.json', 'coverage/lcov.info'] };
 }
 
-export async function runBundle(
-  _input: AnalyzeInput,
-  projectRoot: string,
-): Promise<Record<string, unknown>> {
+export async function runBundle(_input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
   const candidates = [
     join(projectRoot, 'stats.json'),
     join(projectRoot, 'bundle-stats.json'),
@@ -378,10 +368,7 @@ export async function runBundle(
   };
 }
 
-export async function runSurface(
-  input: AnalyzeInput,
-  projectRoot: string,
-): Promise<Record<string, unknown>> {
+export async function runSurface(input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
   const intelligence = new CodeIntelligence({});
   const targetFiles: string[] = [];
 
@@ -401,7 +388,13 @@ export async function runSurface(
       }
     }
   } else {
-    const rootEntry = findEntryPoint(projectRoot, ['index.ts', 'index.tsx', 'index.js', 'src/index.ts', 'src/index.js']);
+    const rootEntry = findEntryPoint(projectRoot, [
+      'index.ts',
+      'index.tsx',
+      'index.js',
+      'src/index.ts',
+      'src/index.js',
+    ]);
     if (rootEntry) targetFiles.push(rootEntry);
   }
 
@@ -429,10 +422,7 @@ export async function runSurface(
   };
 }
 
-export async function runPreview(
-  input: AnalyzeInput,
-  projectRoot: string,
-): Promise<Record<string, unknown>> {
+export async function runPreview(input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
   if (!input.files || input.files.length === 0) {
     return { error: 'preview mode requires files[]' };
   }
@@ -447,7 +437,7 @@ export async function runPreview(
 
   let original: string;
   try {
-    original = await Bun.file(filePath).text();
+    original = (await assertCapturedToolReadAccess(filePath), await Bun.file(filePath).text());
   } catch {
     return { error: `Cannot read file: ${relPath}` };
   }
@@ -513,8 +503,8 @@ function generateUnifiedDiff(filename: string, before: string, after: string): s
     }
 
     if (changed.length > 0) {
-      const hunk = `@@ -${hunkStartI + 1},${i - hunkStartI} +${hunkStartJ + 1},${j - hunkStartJ} @@\n` +
-        changed.join('\n');
+      const hunk =
+        `@@ -${hunkStartI + 1},${i - hunkStartI} +${hunkStartJ + 1},${j - hunkStartJ} @@\n` + changed.join('\n');
       hunks.push(hunk);
     }
   }
@@ -527,10 +517,7 @@ const TEST_OF_SOURCE_SITE = 'tools.analyze.test-of-source';
 /** Importer groups read at once when a source has more importers than one selection takes. */
 const TEST_GROUP_CONCURRENCY = 4;
 
-export async function runEnvAudit(
-  _input: AnalyzeInput,
-  projectRoot: string,
-): Promise<Record<string, unknown>> {
+export async function runEnvAudit(_input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
   // The dotenv convention names its files `.env` and `.env.<suffix>`; every such file at the root is audited.
   let rootEntries: Dirent[] = [];
   try {
@@ -538,14 +525,19 @@ export async function runEnvAudit(
   } catch {
     rootEntries = [];
   }
-  const envNames = rootEntries.filter((entry) => entry.isFile() && (entry.name === '.env' || entry.name.startsWith('.env.'))).map((entry) => entry.name).sort();
+  const envNames = rootEntries
+    .filter((entry) => entry.isFile() && (entry.name === '.env' || entry.name.startsWith('.env.')))
+    .map((entry) => entry.name)
+    .sort();
   const found: Array<{ name: string; keys: string[]; variables: Array<{ key: string; blank: boolean }> }> = [];
 
   for (const name of envNames) {
     const p = join(projectRoot, name);
     try {
-      const content = await Bun.file(p).text();
-      const variables = [...parseEnvVariables(content)].map(([key, blank]) => ({ key, blank })).sort((a, b) => a.key.localeCompare(b.key));
+      const content = (await assertCapturedToolReadAccess(p), await Bun.file(p).text());
+      const variables = [...parseEnvVariables(content)]
+        .map(([key, blank]) => ({ key, blank }))
+        .sort((a, b) => a.key.localeCompare(b.key));
       found.push({ name, keys: variables.map(({ key }) => key), variables });
     } catch {
       continue;
@@ -557,6 +549,7 @@ export async function runEnvAudit(
   }
 
   // Which file, if any, is the template listing every expected variable is read by `engine.tools.env-template`.
+  await assertCapturedToolAccessCurrent();
   const selection = await envTemplate.select(
     judgmentPort(ENV_TEMPLATE_SITE),
     envTemplateContext(found.map(({ name }) => name)),
@@ -567,7 +560,13 @@ export async function runEnvAudit(
   selection.recordAction(reference ? `compared against ${reference.name}` : 'compared nothing');
   const files = found.map((f) => ({ name: f.name, key_count: f.keys.length }));
   if (!reference) {
-    return { files, reference: null, missing: [], extra: [], message: 'No env file reads as a template of the expected variables; nothing to compare against' };
+    return {
+      files,
+      reference: null,
+      missing: [],
+      extra: [],
+      message: 'No env file reads as a template of the expected variables; nothing to compare against',
+    };
   }
 
   const referenceKeys = new Set(reference.keys);
@@ -600,7 +599,9 @@ export async function runEnvAudit(
 }
 
 /** Each project file's relative imports, resolved to the files they name. */
-async function resolvedImports(files: readonly string[]): Promise<Array<{ file: string; lines: string[]; imports: Array<{ target: string; line: number }> }>> {
+async function resolvedImports(
+  files: readonly string[],
+): Promise<Array<{ file: string; lines: string[]; imports: Array<{ target: string; line: number }> }>> {
   const read: Array<{ file: string; lines: string[]; imports: Array<{ target: string; line: number }> }> = [];
   for (const file of files) {
     const content = await readTextFile(file);
@@ -620,25 +621,35 @@ async function resolvedImports(files: readonly string[]): Promise<Array<{ file: 
  * groups than one, each group's pick goes on to a selection among the picks.
  * A pick counts when it acts or confirms.
  */
-async function pickTestOf(source: string, candidates: readonly Candidate[]): Promise<{ test: string | null; uncertain: boolean }> {
+async function pickTestOf(
+  source: string,
+  candidates: readonly Candidate[],
+): Promise<{ test: string | null; uncertain: boolean }> {
   let round = [...candidates];
   for (;;) {
     const groups: Candidate[][] = [];
-    for (let start = 0; start < round.length; start += TEST_CANDIDATES_PER_READING) groups.push(round.slice(start, start + TEST_CANDIDATES_PER_READING));
-    const picks = await mapWithConcurrency(groups, TEST_GROUP_CONCURRENCY, (group) =>
-      testOfSource.select(judgmentPort(TEST_OF_SOURCE_SITE), testOfSourceContext(source), group, { site: TEST_OF_SOURCE_SITE }));
-    const counted = picks.map((pick) => (pick.chosen !== undefined && pick.outcome !== 'escalate' ? pick.chosen : undefined));
-    picks.forEach((pick, index) => pick.recordAction(counted[index] !== undefined ? `picked ${counted[index]}` : 'picked none'));
-    if (groups.length === 1) return { test: counted[0] ?? null, uncertain: counted[0] === undefined && picks[0]!.chosen !== undefined };
+    for (let start = 0; start < round.length; start += TEST_CANDIDATES_PER_READING)
+      groups.push(round.slice(start, start + TEST_CANDIDATES_PER_READING));
+    const picks = await mapWithConcurrency(groups, TEST_GROUP_CONCURRENCY, async (group) => {
+      await assertCapturedToolAccessCurrent();
+      return testOfSource.select(judgmentPort(TEST_OF_SOURCE_SITE), testOfSourceContext(source), group, {
+        site: TEST_OF_SOURCE_SITE,
+      });
+    });
+    const counted = picks.map((pick) =>
+      pick.chosen !== undefined && pick.outcome !== 'escalate' ? pick.chosen : undefined,
+    );
+    picks.forEach((pick, index) =>
+      pick.recordAction(counted[index] !== undefined ? `picked ${counted[index]}` : 'picked none'),
+    );
+    if (groups.length === 1)
+      return { test: counted[0] ?? null, uncertain: counted[0] === undefined && picks[0]!.chosen !== undefined };
     round = round.filter((candidate) => counted.includes(candidate.id));
     if (round.length === 0) return { test: null, uncertain: false };
   }
 }
 
-export async function runTestFind(
-  input: AnalyzeInput,
-  projectRoot: string,
-): Promise<Record<string, unknown>> {
+export async function runTestFind(input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
   const sourceFiles = input.files ?? [];
 
   if (sourceFiles.length === 0) {
@@ -647,15 +658,26 @@ export async function runTestFind(
 
   // Every project file is read for its imports, so a test is found wherever it lives.
   const importing = await resolvedImports(await collectTextFiles(projectRoot, Number.POSITIVE_INFINITY));
-  const mappings: Array<{ source: string; test: string | null; exists: boolean; candidates_checked: number; reading?: 'uncertain' }> = [];
+  const mappings: Array<{
+    source: string;
+    test: string | null;
+    exists: boolean;
+    candidates_checked: number;
+    reading?: 'uncertain';
+  }> = [];
 
   for (const srcFile of sourceFiles) {
     const source = resolve(projectRoot, srcFile);
     const candidates = importing.flatMap(({ file, lines, imports }) => {
       const importLines = imports.filter(({ target }) => target === source).map(({ line }) => lines[line - 1] ?? '');
-      return file !== source && importLines.length > 0 ? [testOfSourceCandidate(relative(projectRoot, file), importLines, lines)] : [];
+      return file !== source && importLines.length > 0
+        ? [testOfSourceCandidate(relative(projectRoot, file), importLines, lines)]
+        : [];
     });
-    const { test, uncertain } = candidates.length === 0 ? { test: null, uncertain: false } : await pickTestOf(relative(projectRoot, source), candidates);
+    const { test, uncertain } =
+      candidates.length === 0
+        ? { test: null, uncertain: false }
+        : await pickTestOf(relative(projectRoot, source), candidates);
     mappings.push({
       source: srcFile,
       test,

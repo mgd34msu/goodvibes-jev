@@ -859,6 +859,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // The contract runner, over the project's work plan and execution plans; its
   // units share the fleet ceiling (fleetCapacityProbe, hoisted below).
   const contracts = composeContractRunner({
+    readAccessFilter: async (path) => (await backgroundPermissionManager.readAccess(path)) === 'allow',
     runtimeBus: options.runtimeBus,
     agentManager,
     agentMessageBus,

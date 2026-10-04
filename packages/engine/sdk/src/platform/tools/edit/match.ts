@@ -1,3 +1,4 @@
+import { assertCapturedToolAccessCurrent } from '../shared/captured-input-tools.js';
 import { extname } from 'node:path';
 import { logger } from '../../utils/logger.js';
 import { CodeIntelligence } from '../../intelligence/index.js';
@@ -267,7 +268,10 @@ export function selectOccurrences(
   occurrence: OccurrenceSpec | undefined,
 ): { selected: { start: number; end: number }[] } | { error: string; hint?: string } {
   if (positions.length === 0) {
-    return { error: 'Find string not found in file', hint: 'Check that the find string matches the file content exactly, including whitespace and line endings.' };
+    return {
+      error: 'Find string not found in file',
+      hint: 'Check that the find string matches the file content exactly, including whitespace and line endings.',
+    };
   }
 
   if (occurrence === undefined) {
@@ -321,7 +325,10 @@ export function applyReplacements(
 
 type AstGrepNode = {
   text(): string;
-  range(): { start: { line: number; column: number; index: number }; end: { line: number; column: number; index: number } };
+  range(): {
+    start: { line: number; column: number; index: number };
+    end: { line: number; column: number; index: number };
+  };
   getMatch(name: string): AstGrepNode | null;
   getMultipleMatches(name: string): AstGrepNode[];
 };
@@ -337,16 +344,22 @@ async function loadAstGrep(): Promise<AstGrepModule> {
 function getAstGrepLang(astGrep: AstGrepModule, filePath: string): AstGrepParser | null {
   const lang = extname(filePath).slice(1).toLowerCase();
   switch (lang) {
-    case 'ts': return astGrep.ts as unknown as AstGrepParser;
-    case 'tsx': return astGrep.tsx as unknown as AstGrepParser;
+    case 'ts':
+      return astGrep.ts as unknown as AstGrepParser;
+    case 'tsx':
+      return astGrep.tsx as unknown as AstGrepParser;
     case 'js':
     case 'mjs':
     case 'cjs':
       return astGrep.js as unknown as AstGrepParser;
-    case 'jsx': return astGrep.jsx as unknown as AstGrepParser;
-    case 'css': return astGrep.css as unknown as AstGrepParser;
-    case 'html': return astGrep.html as unknown as AstGrepParser;
-    default: return null;
+    case 'jsx':
+      return astGrep.jsx as unknown as AstGrepParser;
+    case 'css':
+      return astGrep.css as unknown as AstGrepParser;
+    case 'html':
+      return astGrep.html as unknown as AstGrepParser;
+    default:
+      return null;
   }
 }
 
@@ -369,11 +382,7 @@ export function computeExactEdit(
   return { newContent, occurrencesReplaced: selResult.selected.length };
 }
 
-export function computeAstEdit(
-  fileContent: string,
-  item: EditItem,
-  filePath: string,
-): Promise<EditComputationResult> {
+export function computeAstEdit(fileContent: string, item: EditItem, filePath: string): Promise<EditComputationResult> {
   const findStr = item.find_base64 ? decodeBase64(item.find_base64) : item.find;
   const replaceStr = item.replace_base64 ? decodeBase64(item.replace_base64) : item.replace;
   let intel: CodeIntelligence;
@@ -381,55 +390,61 @@ export function computeAstEdit(
     intel = new CodeIntelligence({});
   } catch (e) {
     logger.debug('CodeIntelligence instance not available', { error: summarizeError(e) });
-    return Promise.resolve(withExactFallbackWarning(
-      computeExactEdit(fileContent, item),
-      'AST match unavailable; used exact match instead.',
-    ));
+    return Promise.resolve(
+      withExactFallbackWarning(computeExactEdit(fileContent, item), 'AST match unavailable; used exact match instead.'),
+    );
   }
 
   if (!intel.hasTreeSitter(filePath)) {
-    return Promise.resolve(withExactFallbackWarning(
-      computeExactEdit(fileContent, item),
-      'AST match unavailable for this file type; used exact match instead.',
-    ));
+    return Promise.resolve(
+      withExactFallbackWarning(
+        computeExactEdit(fileContent, item),
+        'AST match unavailable for this file type; used exact match instead.',
+      ),
+    );
   }
 
-  return intel.getSymbols(filePath, fileContent).then((symbols) => {
-    const normalizedFind = findStr.replace(/\s+/g, ' ').trim();
-    const positions: { start: number; end: number }[] = [];
-    const lines = fileContent.split('\n');
+  return intel
+    .getSymbols(filePath, fileContent)
+    .then((symbols) => {
+      const normalizedFind = findStr.replace(/\s+/g, ' ').trim();
+      const positions: { start: number; end: number }[] = [];
+      const lines = fileContent.split('\n');
 
-    for (const symbol of symbols) {
-      const sig = (symbol.signature ?? symbol.name ?? '').replace(/\s+/g, ' ').trim();
-      if (sig.includes(normalizedFind) || normalizedFind.includes(sig)) {
-        let lineOffset = 0;
-        for (let i = 0; i < symbol.line - 1 && i < lines.length; i++) {
-          lineOffset += (lines[i]?.length ?? 0) + 1;
-        }
-        const lineText = lines[symbol.line - 1] ?? '';
-        const col = lineText.indexOf(findStr);
-        if (col >= 0) {
-          positions.push({ start: lineOffset + col, end: lineOffset + col + findStr.length });
+      for (const symbol of symbols) {
+        const sig = (symbol.signature ?? symbol.name ?? '').replace(/\s+/g, ' ').trim();
+        if (sig.includes(normalizedFind) || normalizedFind.includes(sig)) {
+          let lineOffset = 0;
+          for (let i = 0; i < symbol.line - 1 && i < lines.length; i++) {
+            lineOffset += (lines[i]?.length ?? 0) + 1;
+          }
+          const lineText = lines[symbol.line - 1] ?? '';
+          const col = lineText.indexOf(findStr);
+          if (col >= 0) {
+            positions.push({ start: lineOffset + col, end: lineOffset + col + findStr.length });
+          }
         }
       }
-    }
 
-    if (positions.length === 0) {
-      return withExactFallbackWarning(
+      if (positions.length === 0) {
+        return withExactFallbackWarning(
+          computeExactEdit(fileContent, item),
+          'AST match found no symbols; used exact match instead.',
+        );
+      }
+
+      const selResult = selectOccurrences(positions, item.occurrence);
+      if ('error' in selResult) return selResult;
+
+      const newContent = applyReplacements(fileContent, selResult.selected, findStr, replaceStr, 'exact', true);
+      return { newContent, occurrencesReplaced: selResult.selected.length };
+    })
+    .catch((err) =>
+      withExactFallbackWarning(
         computeExactEdit(fileContent, item),
-        'AST match found no symbols; used exact match instead.',
-      );
-    }
-
-    const selResult = selectOccurrences(positions, item.occurrence);
-    if ('error' in selResult) return selResult;
-
-    const newContent = applyReplacements(fileContent, selResult.selected, findStr, replaceStr, 'exact', true);
-    return { newContent, occurrencesReplaced: selResult.selected.length };
-  }).catch((err) => withExactFallbackWarning(
-    computeExactEdit(fileContent, item),
-    `AST match failed (${summarizeError(err)}); used exact match instead.`,
-  ));
+        `AST match failed (${summarizeError(err)}); used exact match instead.`,
+      ),
+    );
 }
 
 export async function computeAstPatternEdit(
@@ -480,12 +495,19 @@ export async function computeAstPatternEdit(
     return { error: `ast_pattern: no matches found for pattern '${findStr}'` };
   }
 
-  const positions = matches.map((m) => ({ start: m.range().start.index, end: m.range().end.index, text: m.text(), node: m }));
+  const positions = matches.map((m) => ({
+    start: m.range().start.index,
+    end: m.range().end.index,
+    text: m.text(),
+    node: m,
+  }));
   const occSpec = item.occurrence;
   let selected: typeof positions;
   if (occSpec === undefined) {
     if (positions.length > 1) {
-      return { error: `ast_pattern: ${positions.length} matches found, set occurrence to 'first', 'last', 'all', or N to disambiguate` };
+      return {
+        error: `ast_pattern: ${positions.length} matches found, set occurrence to 'first', 'last', 'all', or N to disambiguate`,
+      };
     }
     selected = positions;
   } else if (occSpec === 'all') {
@@ -541,11 +563,7 @@ export function classifyEditFallbackWarning(warning: string): 'whitespace' | 'fu
   return null;
 }
 
-export function buildFailedEditResult(
-  item: EditItem,
-  error: string,
-  status: EditResultStatus,
-): EditResult {
+export function buildFailedEditResult(item: EditItem, error: string, status: EditResultStatus): EditResult {
   return {
     id: item.id,
     path: item.path,
@@ -561,8 +579,14 @@ export function buildFailedEditResult(
  * refused and shown back as a "Did you mean this?" hint, so the caller
  * confirms by resending the corrected find text.
  */
-async function acceptsEditTarget(findStr: string, windowLines: readonly string[]): Promise<{ accepted: boolean; probability: number }> {
-  const run = await editTarget.run(judgmentPort(EDIT_TARGET_SITE), editTargetView(findStr, windowLines), { site: EDIT_TARGET_SITE });
+async function acceptsEditTarget(
+  findStr: string,
+  windowLines: readonly string[],
+): Promise<{ accepted: boolean; probability: number }> {
+  await assertCapturedToolAccessCurrent();
+  const run = await editTarget.run(judgmentPort(EDIT_TARGET_SITE), editTargetView(findStr, windowLines), {
+    site: EDIT_TARGET_SITE,
+  });
   const reading = run.readings.same_target;
   const accepted = reading.verdict === 'yes' && reading.outcome === 'act';
   run.recordAction(accepted ? 'applied fuzzy line match' : 'refused fuzzy line match');
@@ -576,7 +600,10 @@ export async function computeSingleEdit(
   caseSensitive: boolean,
   whitespaceSensitive: boolean = true,
   multiline: boolean = false,
-): Promise<{ newContent: string; occurrencesReplaced: number; warning?: string | undefined } | { error: string; hint?: string | undefined }> {
+): Promise<
+  | { newContent: string; occurrencesReplaced: number; warning?: string | undefined }
+  | { error: string; hint?: string | undefined }
+> {
   const findStr = item.find_base64 ? decodeBase64(item.find_base64) : item.find;
   const replaceStr = item.replace_base64 ? decodeBase64(item.replace_base64) : item.replace;
 
@@ -623,7 +650,10 @@ export async function computeSingleEdit(
           hint: `Did you mean this? (from line ${startLine}):\n${candidatePreview}`,
         };
       } else {
-        return { error: 'Find string not found in file', hint: 'The find string was not found. Check spelling, whitespace, and that the file has been read recently.' };
+        return {
+          error: 'Find string not found in file',
+          hint: 'The find string was not found. Check spelling, whitespace, and that the file has been read recently.',
+        };
       }
     }
   }
@@ -631,14 +661,7 @@ export async function computeSingleEdit(
   const selResult = selectOccurrences(positions, item.occurrence);
   if ('error' in selResult) return selResult;
 
-  const newContent = applyReplacements(
-    fileContent,
-    selResult.selected,
-    findStr,
-    replaceStr,
-    mode,
-    caseSensitive,
-  );
+  const newContent = applyReplacements(fileContent, selResult.selected, findStr, replaceStr, mode, caseSensitive);
 
   let warning: string | undefined = hintsWarning;
   if (usedFallback === 'whitespace') {

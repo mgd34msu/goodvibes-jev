@@ -1,3 +1,4 @@
+import { pinContractInputAdmission } from './input-authority.js';
 /**
  * One running contract's state and bookkeeping (docs/design/contract-runner.md
  * sections 2.3 and 4): the live contract tree, its orchestration engine, and
@@ -163,7 +164,9 @@ export class ContractRun {
     readonly control: RunControl,
     /** Units an agent-tool batch or AgentInput.proposedUnits proposed, for the planner. */
     readonly proposedUnits?: readonly { readonly task: string; readonly template?: string | undefined }[] | undefined,
-  ) {}
+  ) {
+    if (contract.inputSnapshot) pinContractInputAdmission(contract, this.abort.signal);
+  }
 
   get id(): string {
     return this.contract.id;

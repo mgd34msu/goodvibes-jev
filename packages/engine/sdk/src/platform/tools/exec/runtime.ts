@@ -1,3 +1,5 @@
+import { startCapturedBackground } from './captured-exec-background.js';
+import { capturedExecUnsupportedOptions, runCapturedCommand, type CapturedExecAuthority } from './captured-exec.js';
 import { join, resolve, isAbsolute } from 'node:path';
 import { randomInt, randomUUID } from 'node:crypto';
 import type { Tool } from '../../types/tools.js';
@@ -255,6 +257,26 @@ async function runCommand(
   policy: ExecRunPolicy,
   signal?: AbortSignal,
 ): Promise<ExecCommandResult> {
+  if (policy.capturedInput) {
+    // Preserve the existing trusted exec policy's network decision. Captured
+    // filesystem authority neither grants network access nor vetoes a grant.
+    const plan = await resolveRuntimeSandboxPlan(policy.sandbox, cmdStr, workingDirectory, resolveCwd(cmdInput.cwd, workingDirectory));
+    const escalation = await brokerSandboxEscalation(policy.sandbox, plan, cmdStr, workingDirectory);
+    signal?.throwIfAborted();
+    if (escalation) return {
+      cmd: cmdStr, exit_code: null, stdout: '', stderr: `Sandbox escalation denied: ${escalation.deniedEscalations.join('; ')}`,
+      success: false, denied: true,
+    };
+    const scrubbed = await scrubCredentialEnv(buildCleanEnv(), scrub);
+    signal?.throwIfAborted();
+    const withheld = scrubbed.withheld.filter((name) => !(cmdInput.env && name in cmdInput.env));
+    const network = !plan || plan.network === 'enabled' ? 'enabled' : 'disabled';
+    const interactive = await shouldRunInteractive(policy.interaction, cmdInput, cmdStr, signal);
+    const result = cmdInput.background || (cmdInput.until && !cmdInput.until.kill_after)
+      ? await startCapturedBackground(processManager, policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal, network, scrubbed.env)
+      : await runCapturedCommand(policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal, network, scrubbed.env, interactive && policy.interaction ? { interaction: policy.interaction } : {});
+    return withheld.length > 0 ? { ...result, withheld_env: withheld } : result;
+  }
   const sandbox = policy.sandbox;
   const interaction = policy.interaction;
   // The frozen catastrophic block ran in executeResolvedCommand, ahead of every
@@ -301,7 +323,7 @@ async function runCommand(
   // run under a PTY nested INSIDE the sandbox argv (the boundary, when active,
   // wraps the PTY allocation). Detected prompts ride the approval machinery
   // via the interaction seam; the runner + detection live in interactive.ts.
-  if (await shouldRunInteractive(interaction, cmdInput, cmdStr)) {
+  if (await shouldRunInteractive(interaction, cmdInput, cmdStr, signal)) {
     return attachWithheld(await runInteractiveCommand({
       cmdStr, cwd, env: mergedEnv, timeoutMs, startTime, sandboxArgv,
       interaction: interaction!, signal,
@@ -778,6 +800,14 @@ async function executeResolvedCommand(
   const terminalRefusal = await ownerTerminalRefusal(policy, cmdStr, signal);
   signal?.throwIfAborted();
   if (terminalRefusal) return terminalRefusal;
+  // A captured command never reaches the host ProcessManager's special commands.
+  if (policy.capturedInput) {
+    const backgroundResult = await processManager.handleOwnedBoundaryCommand(cmdStr, policy.capturedInput.authority);
+    if (backgroundResult) return backgroundResult;
+    return cmdInput.background
+      ? runCommand(processManager, overflowHandler, featureFlags, cmdStr, cmdInput, workingDirectory, globalTimeout, scrub, policy, signal)
+      : runWithRetry(processManager, overflowHandler, featureFlags, cmdStr, cmdInput, workingDirectory, globalTimeout, scrub, policy, signal);
+  }
   const bgSpecial = handleBgSpecialCommand(processManager, cmdStr);
   if (bgSpecial) return bgSpecial;
   if (cmdInput.background) {
@@ -839,9 +869,17 @@ async function executeResolvedCommands(
   return results;
 }
 
+const capturedExecTools = new WeakMap<Tool, CapturedExecAuthority['authority']>();
+
+/** Tool names/model arguments cannot manufacture a captured backend binding. */
+export function isCapturedExecTool(tool: Tool, authority: CapturedExecAuthority['authority']): boolean {
+  return capturedExecTools.get(tool) === authority;
+}
+
 export function createExecTool(
   processManager: ProcessManager,
   options: {
+    readonly capturedInput?: CapturedExecAuthority | undefined;
     readonly featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined;
     readonly overflowHandler?: OverflowHandler | undefined;
     /**
@@ -897,13 +935,14 @@ export function createExecTool(
   const featureFlags = options.featureFlags ?? null;
   const credentialEnvScrub = resolveCredentialEnvScrub(options.credentialEnvScrub);
   const policy: ExecRunPolicy = {
+    capturedInput: options.capturedInput ? Object.freeze({ ...options.capturedInput, dependencyInputs: options.capturedInput.dependencyInputs ? Object.freeze([...options.capturedInput.dependencyInputs]) : undefined }) : undefined,
     sandbox: options.sandbox ?? null,
     interaction: options.interaction ?? null,
     containment: options.containment ?? null,
     ownerTerminal: options.ownerTerminal ?? null,
   };
 
-  return {
+  const tool: Tool = {
     definition: {
       name: 'exec',
       description:
@@ -919,13 +958,22 @@ export function createExecTool(
     async execute(args: Record<string, unknown>, opts?: { readonly signal?: AbortSignal | undefined }) {
       let signal: AbortSignal | undefined;
       try {
-        signal = opts?.signal;
+        const lifecycleSignal = policy.capturedInput?.signal;
+        signal = lifecycleSignal && opts?.signal ? AbortSignal.any([lifecycleSignal, opts.signal]) : lifecycleSignal ?? opts?.signal;
         signal?.throwIfAborted();
         if (!Array.isArray(args['commands']) || (args['commands'] as unknown[]).length === 0) {
           return { success: false, error: 'commands must be a non-empty array' };
         }
         if ((args['commands'] as unknown[]).length > MAX_EXEC_COMMANDS) {
           return { success: false, error: `Too many commands: maximum ${MAX_EXEC_COMMANDS} per exec call` };
+        }
+        if (policy.capturedInput) {
+          const unsupported = capturedExecUnsupportedOptions(args);
+          if (unsupported.length > 0) return {
+            success: false,
+            error: 'Captured exec does not support stdin/input options; use a shell pipe or an authorized input file.',
+            output: JSON.stringify({ denied: true, captured_exec_unsupported_options: unsupported }),
+          };
         }
         const input = normalizeExecInput(args as unknown as ExecInput);
         const workingDirectory = requireWorkingDirectory(input, options.defaultWorkingDirectory);
@@ -934,7 +982,19 @@ export function createExecTool(
         const failFast = input.fail_fast === true || input.stop_on_error === true;
         const projectRoot = resolve(workingDirectory);
 
-        const { fileOpResults, fileOpError, fileOpWarnings } = await executeFileOperations(input.file_ops, projectRoot);
+        let fileOperations: Awaited<ReturnType<typeof executeFileOperations>>;
+        if (policy.capturedInput && input.file_ops?.length) {
+          let capturedOperations: Awaited<ReturnType<typeof executeFileOperations>> | undefined;
+          const applied = await runCapturedCommand(policy.capturedInput, ':', {}, workingDirectory, globalTimeout, signal,
+            'disabled', {}, { fileOps: input.file_ops.map((operation) => ({ ...operation,
+              source: resolve(projectRoot, operation.source),
+              ...(operation.destination ? { destination: resolve(projectRoot, operation.destination) } : {}),
+            })), onFileOperations: (result) => { capturedOperations = result; } });
+          if (applied.denied || applied.cancelled || applied.timed_out || !capturedOperations)
+            return { success: false, error: applied.stderr || 'Captured file operations did not complete.' };
+          fileOperations = capturedOperations;
+        } else fileOperations = await executeFileOperations(input.file_ops, projectRoot);
+        const { fileOpResults, fileOpError, fileOpWarnings } = fileOperations;
         signal?.throwIfAborted();
         if (fileOpError) {
           return {
@@ -1002,4 +1062,6 @@ export function createExecTool(
       }
     },
   };
+  if (policy.capturedInput) capturedExecTools.set(tool, policy.capturedInput.authority);
+  return tool;
 }

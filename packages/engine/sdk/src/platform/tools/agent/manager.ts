@@ -1,3 +1,5 @@
+import { bindContractInputAuthority } from '../../contract/input-authority.js';
+import type { AgentConstructionBinding } from './contract-binding.js';
 import { ArchetypeLoader } from '../../agents/archetypes.js';
 import { AgentOrchestrator } from '../../agents/orchestrator.js';
 import { AgentMessageBus } from '../../agents/message-bus.js';
@@ -271,7 +273,7 @@ export class AgentManager {
    * without `outsideContract` becomes the owner of a new contract through the
    * composed contract runner's startForOwner, and runs no executor.
    */
-  spawn(input: AgentInput, spawnBinding?: ContractUnitBinding | ContractOwnerBinding): AgentRecord {
+  spawn(input: AgentInput, spawnBinding?: AgentConstructionBinding): AgentRecord {
     return this.spawnInternal(input, spawnBinding);
   }
 
@@ -344,7 +346,7 @@ export class AgentManager {
     }
   }
 
-  private spawnInternal(input: AgentInput, spawnBinding?: ContractUnitBinding | ContractOwnerBinding, owned?: OwnedSpawnContext): AgentRecord {
+  private spawnInternal(input: AgentInput, spawnBinding?: AgentConstructionBinding, owned?: OwnedSpawnContext): AgentRecord {
     const { unit: binding, owner: ownerBinding } = splitContractBinding(spawnBinding);
     const task = input.task;
     if (!task || typeof task !== 'string' || task.trim() === '') {
@@ -496,6 +498,7 @@ export class AgentManager {
       ...(input.writeScope ? { writeScope: [...input.writeScope] } : {}),
     };
 
+    if (spawnBinding && 'inputReadAuthority' in spawnBinding) bindContractInputAuthority(record, spawnBinding.inputReadAuthority);
     this.agents.set(id, record);
     // Reserve before publishing the record or invoking any re-entrant callback.
     const { begin, controller, slot } = this.reserveExecution(id);

@@ -25,6 +25,8 @@
  * Every choice here is code over recorded statuses; nothing is judged. The
  * checks the resumed units get are ordinary unit checks (check.ts).
  */
+import { assertContractInputObjects, assertContractInputView, assertContractExecutionView } from './input-snapshot.js';
+
 import { existsSync } from 'node:fs';
 import { loadWorkstreamSnapshot } from '../orchestration/persistence.js';
 import { logger } from '../utils/logger.js';
@@ -88,6 +90,18 @@ export function resumeStepOf(contract: Pick<Contract, 'status' | 'statusBeforeOw
  * worktree. A session-mode contract has no engine and no worktree.
  */
 export function findZombieCause(contract: Contract): string | null {
+  if (contract.isolation === 'worktree') {
+    if (contract.inputSnapshot === undefined) {
+      if (contract.schemaVersion >= 2 && contract.status === 'queued' && contract.resumeFrom === undefined && contract.shape === undefined) return null;
+      return 'no recorded input receipt; legacy or interrupted admission needs manual recovery';
+    }
+    if (contract.worktreePath === undefined || !existsSync(contract.worktreePath)) return `its contract worktree ${contract.worktreePath ?? '(unrecorded)'} no longer exists`;
+    try {
+      assertContractInputObjects(contract.inputSnapshot, contract.projectRoot);
+      assertContractExecutionView(contract.inputSnapshot, contract.worktreePath!, contract.branch!);
+    }
+    catch (error) { return `recorded input is unavailable: ${error instanceof Error ? error.message : String(error)}`; }
+  }
   if (contract.sessionMode === true) return null;
   const status = resumeStatus(contract);
   if (WORK_STATUSES.has(status) && contract.isolation === 'worktree' && contract.worktreePath !== undefined && !existsSync(contract.worktreePath)) {
@@ -193,6 +207,7 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
     const from = resumeStatus(contract);
     contract.resumeFrom = undefined;
     try {
+      if (contract.inputSnapshot !== undefined) await assertContractInputView(contract.inputSnapshot, run.abort.signal);
       switch (step) {
         case 'start':
           await deps.activate(run);

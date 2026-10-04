@@ -27,6 +27,7 @@ export function createFindTool(
    * flagged in path listings. Omitted → all files allowed (unchanged behavior).
    */
   readAccessFilter?: ReadAccessFilter,
+  capturedReadAccess?: ReadAccessFilter,
 ): Tool {
   if (typeof projectRoot !== 'string' || projectRoot.trim().length === 0) {
     throw new Error('createFindTool requires projectRoot');
@@ -51,7 +52,7 @@ export function createFindTool(
           let result: Record<string, unknown>;
           switch (query.mode) {
             case 'files':
-              result = await executeFilesQuery(query, output, projectRoot, readAccessFilter);
+              result = await executeFilesQuery(query, output, projectRoot, readAccessFilter, capturedReadAccess);
               break;
             case 'content':
               result = await executeContentQuery(query, output, runtime, projectRoot, readAccessFilter);
