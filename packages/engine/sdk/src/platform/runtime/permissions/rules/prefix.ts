@@ -60,8 +60,8 @@ export function extractCommandArgs(args: Record<string, unknown>): string[] {
  *   1. The tool name matches the rule's `toolPattern`, AND
  *   2. Either no command constraint is specified, OR the call's command
  *      string(s) match the rule's exactCommands / commandPrefixes
- *      (case-insensitive; allow rules need EVERY command to match, deny
- *      rules need ANY).
+ *      (exact commands are literal; prefixes are case-insensitive; allow rules
+ *      need EVERY command to match, deny rules need ANY).
  *
  * @param rule    , The PrefixRule to evaluate.
  * @param toolName, Name of the tool being called.
@@ -116,8 +116,12 @@ export function evaluatePrefixRule(
   }
 
   const commandMatches = (command: string): boolean => {
+    if (rule.exactCommands?.some((exact) => command === exact)) return true;
     const normalized = command.trim().toLowerCase();
-    if (rule.exactCommands?.some((exact) => normalized === exact.trim().toLowerCase())) return true;
+    // Only an explicitly broad class rule may normalize a bare executable.
+    // Never lowercase or trim an exact command's arguments or target path.
+    if (rule.exactCommandMatch === 'command-class' && normalized.length > 0 && !/\s/.test(normalized)
+      && rule.exactCommands?.some((exact) => normalized === exact.trim().toLowerCase())) return true;
     return rule.commandPrefixes?.some((prefix) => normalized.startsWith(prefix.toLowerCase())) ?? false;
   };
 
