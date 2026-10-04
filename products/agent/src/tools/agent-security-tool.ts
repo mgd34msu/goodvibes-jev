@@ -1,3 +1,4 @@
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
@@ -117,15 +118,16 @@ export function createAgentSecurityTool(deps: AgentSecurityToolDeps): Tool {
       sideEffects: [],
       concurrency: 'parallel',
     },
-    execute: async (rawArgs: unknown) => {
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentSecurityToolArgs;
+    execute: async (rawArgs: unknown, options) => {
+      // Capture before routing: even action/mode must never invoke caller accessors.
+      const args = snapshotJudgmentInput(rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentSecurityToolArgs;
       const action = readAction(args);
       if (!action) return error('Unknown security action. Use action:"status" or action:"explain".');
 
       if (action === 'status') return harnessTool.execute(statusArgs(args));
       if (action === 'finding') return harnessTool.execute(findingArgs(args));
       if (action === 'explain') {
-        const resolved = explainAgentPolicyDecision(deps.commandContext, deps.toolRegistry, args);
+        const resolved = await explainAgentPolicyDecision(deps.commandContext, deps.toolRegistry, args, options?.signal);
         if (resolved.status === 'found') return output(resolved.explanation);
         if (resolved.status === 'ambiguous') return error(`Ambiguous security policy target ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
         return error(resolved.usage);

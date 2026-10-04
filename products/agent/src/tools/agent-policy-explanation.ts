@@ -3,7 +3,8 @@ import { analyzePermissionRequest } from '@goodvibes-jev/engine/sdk/platform/per
 import type { ToolDefinition } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../input/command-registry.ts';
-import { fallbackPermissionCategoryForArgs } from '../runtime/tool-permission-safety.ts';
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { readPermissionCategory } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
 import { HARNESS_MODE_DESCRIPTORS } from './agent-harness-mode-catalog.ts';
 import { explainAgentToolPolicyInvocation } from './agent-tool-policy-guard.ts';
 import { computeApprovalPosture, type ApprovalPosture } from '../permissions/approval-posture.ts';
@@ -281,12 +282,16 @@ function userExplanation(status: PolicyExplanationStatus, category: PermissionCa
   return `This ${category} action is held pending live permission evaluation. Configuration alone cannot establish approval; argument readings and boundary checks are still required.`;
 }
 
-export function explainAgentPolicyDecision(
+export async function explainAgentPolicyDecision(
   context: CommandContext,
   toolRegistry: ToolRegistry,
   args: AgentPolicyExplainArgs,
-): AgentPolicyExplanationResolution {
-  const resolved = resolveToolName(toolRegistry, args);
+  signal?: AbortSignal,
+): Promise<AgentPolicyExplanationResolution> {
+  // Capture before any lookup or await: classification and explanation must
+  // describe the same immutable, fully inspected call, without invoking getters.
+  const input = snapshotJudgmentInput(args) as AgentPolicyExplainArgs;
+  const resolved = resolveToolName(toolRegistry, input);
   if (resolved.status === 'missing_lookup') {
     return {
       status: 'missing_lookup',
@@ -302,9 +307,10 @@ export function explainAgentPolicyDecision(
   }
 
   const toolName = resolved.toolName!;
-  const toolArgs = readToolArgs(args);
+  const toolArgs = readToolArgs(input);
   const definition = findToolDefinition(toolRegistry, toolName);
-  const category = fallbackPermissionCategoryForArgs(toolName, toolArgs);
+  const categoryReading = await readPermissionCategory(toolName, toolArgs, 'agent.policy-explanation.category', signal);
+  const category = categoryReading.category;
   const analysis = analyzePermissionRequest(toolName, toolArgs, category);
   const guard = explainAgentToolPolicyInvocation(toolName, toolArgs);
   const permission = predictPermission(context, toolName);
@@ -326,7 +332,10 @@ export function explainAgentPolicyDecision(
       toolName,
       registered: definition !== undefined,
       category,
-      userExplanation: userExplanation(status, category),
+      categoryConfident: categoryReading.confident,
+      userExplanation: categoryReading.confident
+        ? userExplanation(status, category)
+        : 'The category reading is uncertain. The live permission gate must evaluate this exact call before execution.',
       posture: {
         label: posture.label,
         autoApprove: posture.autoApprove,
@@ -377,7 +386,7 @@ export function explainAgentPolicyDecision(
         'This is a read-only explanation: no live permission evaluation, owner prompt, or tool execution was performed.',
         'Secret-looking argument values are redacted in this explanation.',
       ],
-      ...(args.includeParameters === true && definition ? {
+      ...(input.includeParameters === true && definition ? {
         toolDefinition: {
           name: definition.name,
           description: definition.description,

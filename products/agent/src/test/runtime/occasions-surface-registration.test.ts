@@ -24,7 +24,9 @@ import {
   SETTINGS_CATEGORY_GROUPS,
 } from '../../input/settings-modal-types.ts';
 import { CATEGORY_LABELS } from '../../renderer/settings-modal-helpers.ts';
-import { fallbackPermissionCategoryForArgs } from '../../runtime/tool-permission-safety.ts';
+import { readPermissionCategory } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import { OCCASIONS_ACTIONS } from '../../tools/agent-occasions-types.ts';
 
 /**
@@ -90,48 +92,21 @@ describe('occasions settings registration', () => {
   });
 });
 
-describe('occasions tool permission classification', () => {
-  test('the five lookups classify as reads', () => {
-    for (const action of ['list', 'pending', 'state', 'gifts', 'plans']) {
-      expect(fallbackPermissionCategoryForArgs('occasions', { action }), action).toBe('read');
-    }
+describe('occasions tool category is a Jev reading, never permission', () => {
+  for (const kind of ['read', 'write'] as const) test(`uses the typed ${kind} reading`, async () => {
+    const fixture = fakePort((name, question) => {
+      if (name !== 'kind') throw new Error(`Unexpected question: ${name}`);
+      return choiceAnswer(question, kind, 0.99);
+    });
+    const previous = installJudgmentPort(fixture.port);
+    try {
+      expect(await readPermissionCategory('occasions', { action: 'fixture_action' })).toEqual({ category: kind, confident: true });
+      expect(fixture.requests).toHaveLength(1);
+    } finally { installJudgmentPort(previous); }
   });
-
-  test('the two proposals classify as reads, because they write nothing', () => {
-    // docs/occasions.md §4.5 and the SDK's own proposeOccasion/proposePlan: a
-    // proposal works out what WOULD be written and hands back the one line to put
-    // to him. Classifying it as a write would put a confirmation prompt in front
-    // of the confirmation prompt, and the whole point of the two-step is that
-    // step one is free.
-    for (const action of ['propose', 'plan_propose']) {
-      expect(fallbackPermissionCategoryForArgs('occasions', { action }), action).toBe('read');
-    }
-  });
-
-  test('everything that changes durable state classifies as a write', () => {
-    const writes = [
-      // The machine-owned acknowledgement store.
-      'answer', 'interview_answer', 'interview_record', 'resolve_conflict', 'sweep',
-      // The owner's own profile file.
-      'confirm', 'plan_confirm', 'remove',
-    ];
-    for (const action of writes) {
-      expect(fallbackPermissionCategoryForArgs('occasions', { action }), action).toBe('write');
-    }
-  });
-
-  test('an unrecognised or absent action is a write, never auto-approved as a read', () => {
-    expect(fallbackPermissionCategoryForArgs('occasions', { action: 'sing' })).toBe('write');
-    expect(fallbackPermissionCategoryForArgs('occasions', {})).toBe('write');
-  });
-
-  test('every action the tool accepts is classified, so none falls through unlabelled', () => {
-    // The two sides read the same vocabulary; this asserts the vocabulary is
-    // fully covered rather than that the two lists happen to agree today.
-    for (const action of OCCASIONS_ACTIONS) {
-      const category = fallbackPermissionCategoryForArgs('occasions', { action });
-      expect(['read', 'write'], action).toContain(category);
-    }
+  test('an unavailable reading is not replaced by an action table', async () => {
+    const previous = installJudgmentPort(undefined);
+    try { await expect(readPermissionCategory('occasions', { action: 'read' })).rejects.toThrow('judgment port'); }
+    finally { installJudgmentPort(previous); }
   });
 });
-
