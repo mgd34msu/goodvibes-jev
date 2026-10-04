@@ -16,6 +16,18 @@ const identitySchema = strictObject({
   role: enumSchema(['coordinator', 'worker', 'verifier']),
 });
 
+const nativeAbortState = Object.getOwnPropertyDescriptor(AbortSignal.prototype, 'aborted')?.get;
+
+/** Observe a standard host signal without invoking its shadowed public getter. */
+function readNativeAbortState(signal: AbortSignal | undefined): boolean {
+  if (!signal || !nativeAbortState) return false;
+  try { return nativeAbortState.call(signal) === true; } catch {
+    // Structural host/test signals have no native slot. Their ordinary
+    // accessor is still observed before the final authorization callback.
+    return false;
+  }
+}
+
 export function createEmptyWorkLedgerState(projectId: string): WorkLedgerState {
   return workLedgerStateSchema.parse({
     version: 1, projectId, revision: 0, works: [], attempts: [], evidence: [], history: [], receipts: [],
@@ -512,8 +524,12 @@ export function createWorkLedger(options: {
         // a host-provided getter can itself synchronously revoke the actor.
         const aborted = signal?.aborted;
         const authorized = !executeOptions?.isAuthorized || executeOptions.isAuthorized() === true;
+        // Authorization itself may synchronously cancel a genuine host signal.
+        // Do not call its extensible getter again after sampling authorization:
+        // that would reopen the inverse getter-to-revocation race above.
+        const nativelyAborted = readNativeAbortState(signal);
         if (!authorized || !identity(actor)) return { next: null, value: rejected('forbidden', 'Host actor was revoked before commit.', initialRevision) };
-        if (aborted) return { next: null, value: rejected('cancelled', 'Command was cancelled before commit.', initialRevision) };
+        if (aborted || nativelyAborted) return { next: null, value: rejected('cancelled', 'Command was cancelled before commit.', initialRevision) };
         return { next, value: result };
       })).catch((): WorkLedgerResult => ({ kind: 'indeterminate', requestId: command.requestId, actorId,
         reason: 'Storage outcome is unknown. Reconcile by exact retry against the authoritative store.' }));
