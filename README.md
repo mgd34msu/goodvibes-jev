@@ -58,7 +58,7 @@ The work is tracked in the Finish GoodVibes Jev Linear project. The current
 upstream targets and implementation sequence are recorded in
 [`docs/design/upstream-reconciliation.md`](docs/design/upstream-reconciliation.md).
 
-- **`packages/judgment`:** the foundation and shared autonomous receipt schema/validation are implemented. The current transport still has bounded retries and a total deadline; retry-until-available and its consumer lifecycle integration remain unfinished.
+- **`packages/judgment`:** the foundation, shared autonomous receipt schema/validation and shared availability-retry transport are implemented. Transient Jev outages stay pending until recovery or owned cancellation, with per-attempt timeouts, backoff and bounded attempt history. Native runtime disposal and browser/relay cancellation use that lifecycle. Permanent request/authentication/format and decision-log failures remain terminal; autonomous consumer migration and live-provider proof remain unfinished.
 - **Autonomous execution:** tool admission ([THE-118](https://linear.app/the-artificery/issue/THE-118/integrate-autonomous-jev-tool-admission)) and remembered grant scope/revocation ([THE-115](https://linear.app/the-artificery/issue/THE-115/preserve-remembered-grant-scope-and-revocation)) remain in progress as of October 3. Legacy gate, runner and product callers are migration/release gates. Shared types and passing synthetic checks do not establish autonomous execution or live-provider proof.
 - **`packages/engine`:** in progress. It holds the whole sdk tree, and its subsystems are being converted one at a time.
 - **The contract runner:** in progress.
@@ -94,7 +94,7 @@ Published as `@goodvibes-jev/judgment`, it provides:
 - **The decision log.** SQLite, one entry per reading, queryable by battery, time range and outcome.
 - **Calibration.** Runs every battery's fixtures live and reports accuracy against confidence. It fails when a battery falls below its floor.
 
-The old heuristics are being removed, not kept as backups. Legacy uncertainty must never be promoted to `act` or relabeled as approval. The default port uses one configured System One endpoint; an explicit failover chain is supported, while persisted failover settings and live calibration remain unfinished. The [judgment package README](packages/judgment/README.md) distinguishes the current bounded transport from the required shared retry-until-available lifecycle. Remaining callers must consume that shared lifecycle and prove cancellation and zero effects while waiting.
+The old heuristics are being removed, not kept as backups. Legacy uncertainty must never be promoted to `act` or relabeled as approval. The default port uses one configured System One endpoint; an explicit failover chain is supported, while persisted failover settings and live calibration remain unfinished. The [judgment package README](packages/judgment/README.md) documents shared retry-until-available, owned cancellation and terminal permanent failures. Products must consume that shared lifecycle and preserve cancellation and zero effects while waiting; transport recovery does not establish autonomous consumer migration or live-provider proof.
 
 ## The engine (`packages/engine`)
 

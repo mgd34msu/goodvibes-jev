@@ -25,13 +25,13 @@ validation are implemented; they are not a semantic evaluator, authorization
 service or atomic execution ledger. Historical band/log outcomes `confirm` and
 `escalate` remain readable and must never be converted into `act`.
 
-Transient outages must stay pending through one shared port-owned retry
+Transient outages stay pending through one shared port-owned retry
 implementation until recovery, with backoff and responsive lifecycle
 cancellation. Products consume waiting progress, not a terminal outage decision,
 and must not wrap the port in local retry loops. Permanent request/authentication/
-format failures remain operational errors. This lifecycle and the legacy
-consumer migration are unfinished; the bounded transport documented below is
-the current implementation, not fulfillment of that requirement. See the
+format and decision-log failures remain terminal operational errors. The managed
+transport, native runtime disposal and browser/relay cancellation implement this
+lifecycle; legacy autonomous consumer migration remains unfinished. See the
 [repository status](../../README.md#status) for the open admission and
 grant/revocation work. No live-provider proof is established by these interfaces.
 
@@ -67,8 +67,8 @@ MIT
 
 ## Explicit endpoint failover
 
-This section describes the current bounded transport, pending the shared
-retry-until-available lifecycle described above.
+This section describes the shared retry-until-available transport and its owned
+cancellation lifecycle.
 
 `createSystemOnePort` still accepts the existing single `endpoint`, `model`,
 `timeoutMs` and `retry` configuration. Add `fallbacks: [{ endpoint, model }]` to
