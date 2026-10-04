@@ -39,7 +39,12 @@ export function approvalPostureReadings() {
     const fixture: Fixture | undefined = Object.values(POSTURE_CALLS).find((candidate) =>
       candidate.tool === call.tool && isDeepStrictEqual(candidate.args, call.arguments));
     if (!fixture) throw new Error('approval-posture: no reading for this exact tool call');
-    if (name === 'kind' && fixture.kind) return choiceAnswer(question, fixture.kind, 0.99);
+    if (name === 'kind') {
+      const kinds = { read: 'read', exec: 'shell', write: 'write', fetch: 'network', agent: 'delegation', notes_preview: 'read' };
+      const kind = kinds[fixture.tool as keyof typeof kinds];
+      if (!kind) throw new Error('approval-posture: no kind for fixture');
+      return choiceAnswer(question, kind, 0.99);
+    }
     if (name === 'family') return choiceAnswer(question, fixture.family, 0.99);
     if ((FACTS as readonly string[]).includes(name)) return noulAnswer(fixture.uncertain?.includes(name as Fact) ? 0.5 : fixture.yes.includes(name as Fact) ? 0.99 : 0.01);
     throw new Error(`approval-posture: no reading for question ${name}`);

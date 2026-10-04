@@ -1,39 +1,18 @@
 /**
- * Tool permission safety: what a permission check answers when the permission
- * manager itself throws.
- *
- * Hoisted from the agent (src/runtime/tool-permission-safety.ts) into the
- * engine gate. The agent answered from about twenty hand-kept tables of tool
- * names and action strings (fallbackPermissionCategory /
- * fallbackPermissionCategoryForArgs). That classification is now Jev's
- * reading of the call: the side-effect battery's `kind` question
- * (`readSideEffectKind`, asked at the `engine.gate.tool-permission-safety`
- * site), mapped to a permission category by `categoryForSideEffectKind`. No
- * table remains behind it.
- *
- * The composition, in code: a call whose check threw is approved only when
- * Jev confidently reads it as a read; anything else, including a read Jev is
- * unsure of, is refused. A failed reading is not approval either: the error
- * reaches the caller.
- *
- * The manager's own category lookup (`getCategory`) is not wrapped. It is
- * synchronous and cannot wait on a reading, and the engine's permission
- * manager already reads the kind of any tool its closed tool table does not
- * name before it decides (permissions/manager.ts, step 1), which is what the
- * agent's category override supplied.
+ * Shared permission lifetime guard. Agent bootstrap installs this implementation;
+ * product adapters must not decide permissions when the authoritative gate fails.
  */
-import type { PermissionCategory, PermissionCheckResult } from '../../permissions/types.js';
-import { summarizeError } from '../../utils/error-display.js';
+import type { PermissionCategory } from '../../permissions/types.js';
+import type { PermissionManager } from '../../permissions/manager.js';
+import { assertPermissionActive, awaitPermission } from '../../permissions/cancellation.js';
+import { snapshotJudgmentInput } from '../judgment-input.js';
 import { categoryForSideEffectKind, readSideEffectKind } from '../reading.js';
 
-/** The decision site the fallback readings are logged under. */
+/** Default decision site for standalone category readings, never an approval. */
 export const TOOL_PERMISSION_SAFETY_SITE = 'engine.gate.tool-permission-safety';
 
-export type PermissionManagerLike = {
-  check(toolName: string, args: Record<string, unknown>): Promise<boolean>;
-  checkDetailed?: (toolName: string, args: Record<string, unknown>) => Promise<PermissionCheckResult>;
-  getCategory(toolName: string, args?: Record<string, unknown>): PermissionCategory;
-};
+export type PermissionManagerLike = Pick<PermissionManager, 'check' | 'getCategory'>
+  & Partial<Pick<PermissionManager, 'checkDetailed'>>;
 
 const SAFETY_MARKER = Symbol.for('goodvibes-agent.permission-safety-installed');
 
@@ -50,15 +29,24 @@ export async function readPermissionCategory(
   toolName: string,
   args: Record<string, unknown>,
   site: string = TOOL_PERMISSION_SAFETY_SITE,
+  signal?: AbortSignal,
 ): Promise<PermissionCategoryReading> {
-  const reading = await readSideEffectKind(toolName, args, site);
+  assertPermissionActive(signal);
+  const snapshot = snapshotJudgmentInput(args, toolName) as Record<string, unknown>;
+  const reading = await awaitPermission(() => readSideEffectKind(toolName, snapshot, site, signal), signal);
   return { category: categoryForSideEffectKind(reading.kind), confident: reading.confident };
 }
 
-/** Approve only a confident read; doubt never approves. */
-const approvesAsRead = (reading: PermissionCategoryReading): boolean => reading.category === 'read' && reading.confident;
-
-export function installPermissionManagerSafetyGuard(manager: PermissionManagerLike, site: string = TOOL_PERMISSION_SAFETY_SITE): void {
+/**
+ * Preserve the one authoritative permission decision and its execution lifetime.
+ * A side-effect category is not permission: it cannot replace a failed boundary,
+ * revoked authority, unavailable judgment, or a manager's typed decision.
+ *
+ * Retry belongs to the shared judgment/gate executor (THE116), never this wrapper.
+ * Until that executor supplies a decision, its pending promise or typed failure
+ * propagates unchanged. No outage is converted into a local allow or deny.
+ */
+export function installPermissionManagerSafetyGuard(manager: PermissionManagerLike, _site: string = TOOL_PERMISSION_SAFETY_SITE): void {
   const marked = manager as MarkedPermissionManager;
   if (marked[SAFETY_MARKER]) return;
   marked[SAFETY_MARKER] = true;
@@ -66,33 +54,19 @@ export function installPermissionManagerSafetyGuard(manager: PermissionManagerLi
   const originalCheck = manager.check.bind(manager);
   const originalCheckDetailed = manager.checkDetailed?.bind(manager);
 
-  manager.check = async (toolName, args) => {
-    try {
-      return await originalCheck(toolName, args);
-    } catch {
-      return approvesAsRead(await readPermissionCategory(toolName, args, site));
-    }
+  manager.check = async (...input: Parameters<PermissionManager['check']>) => {
+    if (input[3]) input[3] = { ...input[3] };
+    const signal = input[3]?.signal;
+    assertPermissionActive(signal);
+    return awaitPermission(() => originalCheck(...input), signal);
   };
 
   if (originalCheckDetailed) {
-    manager.checkDetailed = async (toolName, args) => {
-      try {
-        return await originalCheckDetailed(toolName, args);
-      } catch (error) {
-        const approved = approvesAsRead(await readPermissionCategory(toolName, args, site));
-        return {
-          approved,
-          persisted: false,
-          sourceLayer: 'runtime_mode',
-          reasonCode: approved ? 'config_allow' : 'config_deny',
-          analysis: {
-            classification: 'generic',
-            riskLevel: approved ? 'low' : 'high',
-            summary: `Permission fallback for ${toolName}: ${summarizeError(error)}`,
-            reasons: ['permission-manager-exception'],
-          },
-        };
-      }
+    manager.checkDetailed = async (...input: Parameters<PermissionManager['checkDetailed']>) => {
+      if (input[3]) input[3] = { ...input[3] };
+      const signal = input[3]?.signal;
+      assertPermissionActive(signal);
+      return awaitPermission(() => originalCheckDetailed(...input), signal);
     };
   }
 }

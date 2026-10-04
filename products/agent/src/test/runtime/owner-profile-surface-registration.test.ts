@@ -24,7 +24,9 @@ import {
   SETTINGS_CATEGORY_GROUPS,
 } from '../../input/settings-modal-types.ts';
 import { CATEGORY_LABELS } from '../../renderer/settings-modal-helpers.ts';
-import { fallbackPermissionCategoryForArgs } from '../../runtime/tool-permission-safety.ts';
+import { readPermissionCategory } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 
 /**
  * Derived from the live schema, never written out as literals. The verification
@@ -86,20 +88,21 @@ describe('owner profile settings registration', () => {
   });
 });
 
-describe('owner profile tool permission classification', () => {
-  test('the four lookup actions classify as reads', () => {
-    for (const action of ['read', 'get', 'person', 'provenance', 'status']) {
-      expect(fallbackPermissionCategoryForArgs('profile', { action }), action).toBe('read');
-    }
+describe('owner profile tool category is a Jev reading, never permission', () => {
+  for (const kind of ['read', 'write'] as const) test(`uses the typed ${kind} reading`, async () => {
+    const fixture = fakePort((name, question) => {
+      if (name !== 'kind') throw new Error(`Unexpected question: ${name}`);
+      return choiceAnswer(question, kind, 0.99);
+    });
+    const previous = installJudgmentPort(fixture.port);
+    try {
+      expect(await readPermissionCategory('profile', { action: 'fixture_action' })).toEqual({ category: kind, confident: true });
+      expect(fixture.requests).toHaveLength(1);
+    } finally { installJudgmentPort(previous); }
   });
-
-  test('the four changing actions classify as writes', () => {
-    for (const action of ['set', 'append', 'forget', 'undo']) {
-      expect(fallbackPermissionCategoryForArgs('profile', { action }), action).toBe('write');
-    }
-  });
-
-  test('an unrecognized action is a write, never auto-approved as a read', () => {
-    expect(fallbackPermissionCategoryForArgs('profile', { action: 'not_a_real_action' })).toBe('write');
+  test('an unavailable reading is not replaced by an action table', async () => {
+    const previous = installJudgmentPort(undefined);
+    try { await expect(readPermissionCategory('profile', { action: 'read' })).rejects.toThrow('judgment port'); }
+    finally { installJudgmentPort(previous); }
   });
 });

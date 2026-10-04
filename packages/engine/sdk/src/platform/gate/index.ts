@@ -13,3 +13,6 @@ export { riskFamily, RISK_FAMILY_OPTIONS, type GateRiskFamily } from './batterie
 export { sideEffect, SIDE_EFFECT_KIND_OPTIONS, MCP_CAPABILITY_OPTIONS, type SideEffectKind } from './batteries/side-effect.js';
 export { sandboxAdvisory } from './batteries/sandbox-advisory.js';
 export { registry as gateJudgmentRegistry } from './judgment-registry.js';
+
+/** Full-size validated snapshots for asynchronous callers; never a projected reading. */
+export { snapshotJudgmentInput } from './judgment-input.js';
