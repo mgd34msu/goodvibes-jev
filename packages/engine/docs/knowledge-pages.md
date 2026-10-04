@@ -72,6 +72,9 @@ the owning answer pipeline in the same store. It does not rewrite that exact
 stored source just to add display aliases. JSON copies, caller-built aliases,
 reopened stores, and changed records do not inherit structural authority;
 source or link writes also remain fenced against changes during quality reads.
+Every restored alias is revalidated together after quality evaluation and before
+the first write. A ledger commit that rebuilds byte-identical cached records
+still invalidates their former object-bound authority and holds the whole pass.
 
 ## Quality
 

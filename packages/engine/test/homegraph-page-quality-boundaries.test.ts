@@ -1,11 +1,14 @@
+import * as crypto from 'node:crypto';
+import { createWorkLedger } from '../sdk/src/platform/workflow/work-ledger/service.js';
+import { KnowledgeGeneratedFactSupportHeldError } from '../sdk/src/platform/knowledge/semantic/verification/types.js';
 import { HomeGraphService } from '../sdk/src/platform/knowledge/home-graph/service.js';
 import { withKnowledgeSourceAnswerAliases } from '../sdk/src/platform/knowledge/source-structural-references.js';
 import { createKnowledgeNodeOperatorMutation } from '../sdk/src/platform/knowledge/store-node-authority.js';
 import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -434,6 +437,52 @@ describe('Home Graph page quality persistence boundaries', () => {
     } finally {
       pause.release();
       await result;
+      service.dispose();
+    }
+  });
+
+  test('a ledger cache rebuild during quality rejects all owned aliases before the first write', async () => {
+    const context = await fixture();
+    const service = new HomeGraphService(context.store, context.artifactStore);
+    const random = spyOn(crypto, 'randomUUID').mockReturnValue('00001af0-0000-4000-8000-000000000000');
+    let ingested: Awaited<ReturnType<HomeGraphService['ingestNote']>>;
+    try {
+      ingested = await service.ingestNote({ installationId, title: 'Reference device manual',
+        body: 'The reference device supports 4K UHD resolution.', category: 'manual' });
+    } finally { random.mockRestore(); }
+    const source = context.store.getSource(ingested.source.id)!;
+    const alias = withKnowledgeSourceAnswerAliases(source);
+    // This valid new source sorts before the stale owned alias. A per-source
+    // check would admit a partial write: SQLiteStore.batch flushes in finally.
+    const responseOnly = { ...source, id: 'a-response-first',
+      canonicalUri: 'https://reference.example.test/response-first', sourceUri: undefined };
+    const projectId = 'alias-cache-rebuild';
+    const storage = await context.store.openWorkLedgerStorage(projectId);
+    const ledger = createWorkLedger({ projectId, storage, clock: { now: () => 100, newId: kind => `${kind}-fixture` } });
+    const actor = ledger.authority.issueActor({ projectId, actorId: 'fixture-owner', role: 'coordinator' });
+    const pause = pauseReading();
+    const result = refreshAsk(context, [responseOnly, alias]).then(() => undefined, (error: unknown) => error);
+    try {
+      await withTestTimeout(pause.entered);
+      expect(await ledger.service.execute({ type: 'create', requestId: 'create-ledger-work', expectedRevision: 0,
+        title: 'Independent ledger work', goal: 'Commit a normal ledger transaction', criteria: ['Durable revision'] }, actor))
+        .toMatchObject({ kind: 'accepted' });
+      const current = context.store.getSource(source.id)!;
+      expect(current).not.toBe(source);
+      expect(current).toEqual(source);
+      const afterLedger = persisted(context);
+      const bytesAfterLedger = readFileSync(context.store.storagePath);
+      pause.release();
+      const error = await result;
+      expect(context.store.getSource(responseOnly.id)).toBeNull();
+      expect(persisted(context)).toBe(afterLedger);
+      expect(readFileSync(context.store.storagePath)).toEqual(bytesAfterLedger);
+      expect(error).toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
+      expect((error as KnowledgeGeneratedFactSupportHeldError).reason).toBe('stale');
+    } finally {
+      pause.release();
+      await result;
+      await ledger.service.close();
       service.dispose();
     }
   });

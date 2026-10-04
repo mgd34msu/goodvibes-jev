@@ -8,7 +8,9 @@
   through response aliases without rewriting the original source. Snapshot
   sync also registers its freshly minted references, so card-shaped local
   hashes do not randomly block ordinary answers; untrusted URI and content
-  privacy checks remain unchanged.
+  privacy checks remain unchanged. Revalidate the entire restored-alias batch
+  after quality evaluation so byte-identical ledger cache rebuilds cannot leave
+  partial source or link writes.
 
 ### Added
 

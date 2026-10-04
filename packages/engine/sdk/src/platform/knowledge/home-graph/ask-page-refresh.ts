@@ -98,13 +98,17 @@ async function persistAnswerFactSubjectLinks(input: {
   const facts = input.facts.filter((fact) => getKnowledgeSpaceId(fact) === input.spaceId);
   for (const fact of facts) guard.node(fact.id);
   const restoredSources = new Set<KnowledgeSourceRecord>();
+  const restoredAliases = new Set<KnowledgeSourceRecord>();
   const candidates = input.sources.filter((source) => getKnowledgeSpaceId(source) === input.spaceId)
     .filter((source) => {
       const existing = guard.source(source.id);
       return !existing || getKnowledgeSpaceId(existing) === input.spaceId;
     }).slice(0, MAX_ASK_PAGE_SOURCES_TO_CONSIDER).map((responseSource) => {
     const source = restoreKnowledgeSourceAnswerAliases(input.store, responseSource);
-    if (source !== responseSource) restoredSources.add(source);
+    if (source !== responseSource) {
+      restoredSources.add(source);
+      restoredAliases.add(responseSource);
+    }
     const existing = input.store.getSource(source.id) ?? undefined;
     return { source, existing, status: mergeSourceStatus(source.status, existing?.status) };
   });
@@ -116,6 +120,9 @@ async function persistAnswerFactSubjectLinks(input: {
   await input.store.batch(async () => {
     // No source/link mutation follows a stale model await.
     guard.assertCurrent();
+    // A ledger commit can rebuild byte-identical records during quality reads.
+    // Recheck every object-bound alias before any write; batch flushes even on a hold.
+    for (const alias of restoredAliases) restoreKnowledgeSourceAnswerAliases(input.store, alias);
     const devicesById = new Map(input.devices.map((device) => [device.id, device]));
     for (const reading of pageSources) {
       const storedSource = await upsertAnswerPageSource(input, reading.source, restoredSources.has(reading.source));
