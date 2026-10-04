@@ -102,9 +102,8 @@ describe('UserPermissionRuleStore: a revoked rule does not come back', () => {
       await rules.init();
 
       // The remembered decision's write is the slow one, it is the one the
-      // revocation overtakes. The record is in the in-memory list the moment
-      // `add` is called, so a settings surface can revoke it while that write
-      // is still in flight, which is the whole window.
+      // revocation must follow. Even if the caller knows the rule id before
+      // the add commits, its queued delete must see the completed addition.
       store.delayNextMs = 250;
       const adding = rules.add(alwaysAllowRule('rule-always-allow-git-push'));
       await waitFor(() => store.started >= 1);

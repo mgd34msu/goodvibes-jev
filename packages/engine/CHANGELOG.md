@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- Remembered permission rules become live only after persistence succeeds.
+  Failed writes leave the last committed rules unchanged, reject the calling
+  operation, and cannot leak a grant into a later successful write. Concurrent
+  additions and revocations retain call order; failed revocations remain
+  visible and retryable rather than being reported as deleted.
+
 ### Added
 
 - Session-preserving `sessions.turns.cancel` with required expected execution identity, synchronous currentness fencing, idempotent request acceptance, honest stale/ended outcomes, typed public client contracts, and the existing operator write policy. Terminal events remain settlement authority.
