@@ -104,13 +104,12 @@ export function capturedInputTool(
                 if (!contractInputAuthorityMutable(authority))
                   throw new UnsupportedCapturedWorkflow('immutable captured planner input cannot be edited');
                 if (
-                  args.notebook_operations !== undefined ||
                   (Array.isArray(object(args.validate).before) &&
                     (object(args.validate).before as unknown[]).length > 0) ||
                   (Array.isArray(object(args.validate).after) && (object(args.validate).after as unknown[]).length > 0)
                 )
                   throw new UnsupportedCapturedWorkflow(
-                    'captured notebook edits and validators need an authorized backend',
+                    'captured edit validators need an authorized backend',
                   );
               } else if (name === 'registry') {
                 if (!isCapturedRegistryTool(tool, authority))
