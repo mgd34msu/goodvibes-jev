@@ -395,7 +395,7 @@ describe('planContract: failure, with no single-item fallback', () => {
     const contract = shapedContract();
     const outcome = await planContract(contract, harness([plannerOutput(validPlan())]).deps, { signal: controller.signal });
     expect(outcome.kind).toBe('cancelled');
-    expect(contract.status).toBe('planning');
+    expect(contract.status).toBe('shaping');
   });
 
   test('the planner never reaches the heuristic decomposition or a single-item proposal', () => {

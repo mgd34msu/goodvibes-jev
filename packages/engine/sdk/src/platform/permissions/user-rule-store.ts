@@ -3,8 +3,8 @@
  *
  * A "remember" decision with a generalizing tier (exact command / command
  * class / path scope / whole tool) writes a PolicyRule with origin 'user'
- * here. PermissionManager consults these rules before ever prompting (the
- * in-memory session map is just a cache in front), and evaluateRuntimePolicy
+ * here. PermissionManager consults these rules live before ever prompting
+ * (without copying them into its session-only map), and evaluateRuntimePolicy
  * folds them into the layered evaluator when the policy engine flag is on,
  * user rules are evaluated ahead of managed rules there.
  *
@@ -33,6 +33,22 @@ export interface StoredUserPermissionRule {
 interface UserRuleFile extends Record<string, unknown> {
   version: 1;
   rules: StoredUserPermissionRule[];
+}
+
+/** Preserve the bare-token behavior of stored, explicitly class-scoped rules. */
+function ruleForEvaluation(record: StoredUserPermissionRule): PolicyRule {
+  const { rule, tier } = record;
+  if (tier !== 'command-class' || rule.type !== 'prefix' || rule.exactCommandMatch !== undefined) return rule;
+  const classes = rule.exactCommands;
+  const prefixes = rule.commandPrefixes;
+  // The old class builder emitted exactly this shape. A missing/invalid tier,
+  // arbitrary exact payload, or unknown match option does not gain breadth.
+  if (!Array.isArray(classes) || classes.length === 0 || !Array.isArray(prefixes)
+    || prefixes.length !== classes.length || new Set(classes).size !== classes.length
+    || new Set(prefixes).size !== prefixes.length || !classes.every((command) =>
+      typeof command === 'string' && command.length > 0 && !/\s/.test(command)
+      && command === command.toLowerCase() && prefixes.includes(`${command} `))) return rule;
+  return { ...rule, exactCommandMatch: 'command-class' };
 }
 
 export class UserPermissionRuleStore {
@@ -75,7 +91,7 @@ export class UserPermissionRuleStore {
 
   /** Just the PolicyRules, for evaluation (insertion order, first match wins). */
   rules(): readonly PolicyRule[] {
-    return this.records.map((record) => record.rule);
+    return this.records.map(ruleForEvaluation);
   }
 
   async add(record: StoredUserPermissionRule): Promise<void> {

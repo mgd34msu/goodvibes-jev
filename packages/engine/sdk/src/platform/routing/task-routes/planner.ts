@@ -4,27 +4,27 @@
  * route selection (route-selector.ts) and the slot readings (slots.ts); code
  * then composes the plan.
  *
- * - The preferred route is the selection's pick when that route fits; when
- *   the pick is none, or the picked route does not read as fitting, the plan
- *   prefers the main conversation.
- * - Alternatives are the other routes whose fit reads yes, best first by fit
- *   probability; routesConsidered counts the preferred route and those.
- * - confidence is the reading's outcome (act high, confirm medium, escalate
- *   low): the selection's for the preferred route, the fit reading's for an
- *   alternative. score, shown with includeParameters, is the fit probability
- *   (for the main conversation, the pick's probability of none).
+ * A plan is ready only when the selected route, slots, named targets and
+ * supplied catalog readings permit action. Unresolved readings remain typed
+ * diagnostics in an uncertain plan, with no executable route recommendation.
+ * Confident none means main conversation; uncertainty never implies none.
+ * Alternatives contain only actionable fitting routes. All original readings
+ * and decision ids remain available under judgment, independent of display limits.
  */
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { NONE, type Outcome, type Selection } from '@goodvibes-jev/judgment';
 import { mainConversationRoute, TASK_ROUTES } from './catalog.js';
 import { routeCandidates, taskRoutePick } from './route-selector.js';
 import { readSlots } from './slots.js';
+import { NAMED_ID_KINDS, type NamedIdSources } from './named-ids.js';
 import { previewText } from './text.js';
 import type {
   MissingRequestPlan,
   ReadyPlan,
   TaskRouteArgs,
   TaskRouteCandidate,
+  TaskRouteCatalogResult,
+  TaskRouteJudgment,
   TaskRouteConfidence,
   TaskRouteDeps,
   TaskRouteDraft,
@@ -81,7 +81,7 @@ function describeRoute(route: RankedRoute, includeParameters: boolean): TaskRout
 export function rankRoutes(request: string, selection: Selection, slots: TaskRouteSlots): readonly RankedRoute[] {
   const fitting = TASK_ROUTES
     .map((entry) => ({ entry, fit: selection.fits[entry.id]! }))
-    .filter(({ entry, fit }) => fit.verdict === 'yes' && entry.id !== selection.chosen)
+    .filter(({ entry, fit }) => fit.verdict === 'yes' && fit.outcome === 'act' && entry.id !== selection.chosen)
     .sort((left, right) => right.fit.probability - left.fit.probability)
     .map(({ entry, fit }) => ({ draft: entry.build(request, slots), outcome: fit.outcome, score: fit.probability }));
   const chosen = selection.chosen === undefined ? undefined : TASK_ROUTES.find((entry) => entry.id === selection.chosen);
@@ -92,16 +92,28 @@ export function rankRoutes(request: string, selection: Selection, slots: TaskRou
 }
 
 async function catalogMatches(
-  lookup: ((request: string, limit: number) => readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>) | undefined,
+  lookup: ((request: string, limit: number) => TaskRouteCatalogResult | Promise<TaskRouteCatalogResult>) | undefined,
   request: string,
   limit: number,
-): Promise<readonly Record<string, unknown>[]> {
-  if (lookup === undefined) return [];
-  try {
-    return (await lookup(request, limit)).slice(0, limit);
-  } catch {
-    return [];
-  }
+): Promise<{ matches: readonly Record<string, unknown>[]; ranked: TaskRouteJudgment['workspace'] }> {
+  if (lookup === undefined) return { matches: [], ranked: [] };
+  const result = await lookup(request, limit);
+  if (!('ranked' in result)) return { matches: result.slice(0, limit), ranked: [] };
+  const byId = new Map(result.records.map(record => [String(record.id), record]));
+  return {
+    matches: result.ranked.filter(entry => entry.reading.verdict === 'yes' && entry.reading.outcome === 'act')
+      .slice(0, limit).map(entry => {
+        const record = byId.get(entry.id);
+        if (!record) throw new Error(`Task-route catalog reading names an absent record: ${entry.id}`);
+        return { ...record, judgment: entry };
+      }),
+    ranked: result.ranked,
+  };
+}
+
+function selectionEvidence(selection: Selection): Omit<Selection, 'recordAction'> {
+  const { recordAction: _recordAction, ...evidence } = selection;
+  return evidence;
 }
 
 const MISSING_REQUEST: MissingRequestPlan = {
@@ -129,6 +141,7 @@ export async function planTaskRoute(
   const request = readString(args.query) || readString(args.target);
   if (!request) return MISSING_REQUEST;
 
+  options.signal?.throwIfAborted();
   const includeParameters = args.includeParameters === true;
   const limit = readLimit(args.limit, includeParameters ? 8 : 5);
   const port = judgmentPort(TASK_ROUTE_SITE);
@@ -136,13 +149,48 @@ export async function planTaskRoute(
   const asked = request.slice(0, MAX_REQUEST_CHARS);
   const matchLimit = includeParameters ? 6 : 3;
 
+  // Bind judgments to this pass's exact live listings. A later registry edit
+  // invalidates the pass; it must not publish routes for removed/replaced ids.
+  const snapshots = Object.entries(deps.namedIds ?? {}).map(([kind, source]) => ({
+    kind: kind as keyof typeof NAMED_ID_KINDS, source,
+    ids: (source?.() ?? []).map(({ id, names }) => ({ id, names: [...names] })),
+  }));
+  const namedIds: NamedIdSources = Object.fromEntries(snapshots.map(({ kind, ids }) => [kind, () => ids]));
   const [selection, slotRun, workspaceMatches, harnessModeMatches] = await Promise.all([
     taskRoutePick.select(port, { request: asked }, routeCandidates(), call),
-    readSlots(port, asked, { ...call, namedIds: deps.namedIds }),
+    readSlots(port, asked, { ...call, namedIds }),
     catalogMatches(deps.workspaceMatches, request, matchLimit),
     catalogMatches(deps.modeMatches, request, matchLimit),
   ]);
 
+  options.signal?.throwIfAborted();
+  for (const { source, ids } of snapshots) {
+    if (JSON.stringify((source?.() ?? []).map(({ id, names }) => ({ id, names: [...names] }))) !== JSON.stringify(ids)) {
+      selection.recordAction('stale context: no route published');
+      slotRun.recordAction('stale context: no route published');
+      throw new Error('Task-route context changed while judgment was pending; no route published.');
+    }
+  }
+  const judgment: TaskRouteJudgment = {
+    selection: selectionEvidence(selection),
+    slots: { readings: slotRun.readings, decisionId: slotRun.decisionId },
+    named: Object.fromEntries(Object.entries(slotRun.named).map(([kind, value]) => [kind, selectionEvidence(value)])),
+    workspace: workspaceMatches.ranked,
+    harness: harnessModeMatches.ranked,
+  };
+  const unresolved = selection.outcome !== 'act'
+    || Object.values(slotRun.readings).some(reading => reading.outcome !== 'act')
+    || Object.values(slotRun.named).some(reading => reading.outcome !== 'act')
+    || [...workspaceMatches.ranked, ...harnessModeMatches.ranked].some(entry => entry.reading.outcome !== 'act');
+  if (unresolved) {
+    selection.recordAction('uncertain: no route published');
+    slotRun.recordAction('uncertain: no route published');
+    return {
+      status: 'uncertain', request: previewText(request, includeParameters ? 220 : 120), judgment,
+      nextAction: 'Resolve the outstanding Jev readings against current context before choosing a route.',
+      policy: 'This incomplete read-only plan authorizes no dispatch or effects.',
+    };
+  }
   const ranked = rankRoutes(request, selection, slotRun.slots);
   const candidates = ranked.slice(0, limit).map((route) => describeRoute(route, includeParameters));
   const preferred = candidates[0]!;
@@ -151,6 +199,7 @@ export async function planTaskRoute(
 
   const plan: ReadyPlan = {
     status: 'ready',
+    judgment,
     request: previewText(request, includeParameters ? 220 : 120),
     preferred,
     alternatives: candidates.slice(1),
@@ -164,8 +213,8 @@ export async function planTaskRoute(
     nextAction: preferred.requiresConfirmation
       ? 'Inspect the preferred route, collect missing fields, then run the returned confirmed route only after the user explicitly asks for that effect.'
       : 'Use the preferred read-only route first; only move to a confirmed route if the returned plan asks for one and the user requested the effect.',
-    workspaceMatches,
-    harnessModeMatches,
+    workspaceMatches: workspaceMatches.matches,
+    harnessModeMatches: harnessModeMatches.matches,
     policy: 'GoodVibes Agent routes by user outcome. Package, daemon, TUI, SDK, and host ownership are diagnostic details; the model should choose the visible route that is easiest and safest for the user.',
   };
   return plan;

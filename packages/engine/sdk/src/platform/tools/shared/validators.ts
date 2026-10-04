@@ -1,3 +1,4 @@
+import { hasCapturedToolInvocation } from './captured-input-tools.js';
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 /**
@@ -15,6 +16,14 @@ const VALIDATOR_COMMANDS: Record<ValidatorName, string[]> = {
   build: ['bun', 'run', 'build'],
 };
 
+export function validatorCommand(name: ValidatorName): readonly string[] {
+  const command = VALIDATOR_COMMANDS[name];
+  if (!Object.hasOwn(VALIDATOR_COMMANDS, name) || !command) throw new Error('Unsupported validator');
+  return command;
+}
+
+export type ValidatorRunner = (name: ValidatorName, cwd: string) => Promise<ValidatorResult>;
+
 export interface ValidatorResult {
   validator: ValidatorName;
   passed: boolean;
@@ -27,10 +36,11 @@ export interface ValidatorResult {
  * Run a single validator via Bun.spawn. Times out after 30 seconds.
  */
 export async function runValidator(name: ValidatorName, cwd: string): Promise<ValidatorResult> {
-  const cmd = VALIDATOR_COMMANDS[name]!;
+  if (hasCapturedToolInvocation()) throw new Error('Captured validators require a construction-owned contained runner');
+  const cmd = validatorCommand(name);
   const TIMEOUT_MS = 30_000;
 
-  const proc = Bun.spawn(cmd, {
+  const proc = Bun.spawn([...cmd], {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
@@ -76,10 +86,11 @@ export async function runValidator(name: ValidatorName, cwd: string): Promise<Va
 export async function runValidators(
   validators: ValidatorName[],
   cwd: string,
+  runner: ValidatorRunner = runValidator,
 ): Promise<ValidatorResult[]> {
   const failures: ValidatorResult[] = [];
   for (const name of validators) {
-    const result = await runValidator(name, cwd);
+    const result = await runner(name, cwd);
     if (!result.passed) failures.push(result);
   }
   return failures;

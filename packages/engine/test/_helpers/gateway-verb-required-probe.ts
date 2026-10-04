@@ -182,6 +182,11 @@ const ROUTE_REGISTRARS: ReadonlyArray<readonly [string, (catalog: GatewayMethodC
  * others, and `registerFleetGatewayMethods` / `registerCheckpointGatewayMethods`
  * / `registerContractGatewayMethods` are reached through
  * `registerFleetCheckpointsSearchGatewayMethods`.
+ * `registerWorkLedgerImportGatewayMethods` requires a trusted selected host,
+ * opaque actor authority and a live authorization callback; probing it with
+ * generic stubs would stop at FORBIDDEN before validating any input. Its
+ * required-field conformance is exercised through authenticated real-host
+ * prepare/import requests in work-ledger-import-transport.test.ts instead.
  */
 export const EXPECTED_ROUTE_REGISTRARS: readonly string[] = [
   'registerAcpGatewayMethods',
@@ -228,6 +233,7 @@ export const EXPECTED_ROUTE_REGISTRARS: readonly string[] = [
   'registerUpdateGatewayMethods',
   'registerVoiceSetupGatewayMethods',
   'registerWorkLedgerGatewayMethods',
+  'registerWorkLedgerImportGatewayMethods',
   'registerWorkspacesGatewayMethods',
   'registerWorktreeSetupGatewayMethods',
 ];

@@ -7,6 +7,14 @@ per-file inventory rulings control: legacy migration modules carry forward,
 and WRFC/permission views are adapted to the contract runner and gate rather
 than discarded merely because an earlier scope paragraph called them DROP.
 
+The later [autonomous Jev decision contract](autonomous-jev-decisions.md)
+controls runtime semantics: retained views render Jev's `act`, `revise`, `defer`
+and `reject` outcomes and the shared port's waiting/cancellation progress, with
+no human approval or owner-escalation loop. Provisioning and login remain
+legitimate interactions. Legacy callers must migrate with their engine/native
+owners and evidence; preserving an inventory mapping does not complete that
+migration. See the [current admission, grant/revocation and retry gaps](../../README.md#status).
+
 ## Applied source accounting and forward targets
 
 `docs/inventory/product-sources.json` records the complete tracked-file list used

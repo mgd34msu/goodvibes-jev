@@ -1,6 +1,8 @@
 # goodvibes-jev: the intended scope of the work
 
-This document sets out what goodvibes-jev is meant to be, how it is built, and the complete list of work. It is self-contained. The only other sources it relies on are the existing goodvibes repos in `~/Projects`:
+This document sets out the original scope and complete work inventory. Read it with the later [autonomous Jev decision contract](docs/design/autonomous-jev-decisions.md), which controls runtime decision semantics, and the [current implementation status](README.md#status). References below to approval brokers, confirmation or owner escalation describe legacy surfaces to migrate, not exceptions to the no-human-runtime-loop requirement. Provisioning, login, deterministic authority boundaries and user cancellation remain distinct from semantic decisions.
+
+The original source repositories are in `~/Projects`:
 
 | Old repo | What it holds |
 |---|---|
@@ -14,7 +16,7 @@ The TypeSafe documentation at `https://docs.typesafe.ai/llms-full.txt` describes
 
 ## The goal
 
-goodvibes-jev is the goodvibes platform with Jev (TypeSafe's System One judgment model) built in wherever it fits. Everything goodvibes does today carries over. Jev replaces the places where the old code made decisions with guesswork: keyword lists, regexes over prose, length cutoffs and guessed classifications.
+goodvibes-jev is the goodvibes platform with Jev (TypeSafe's System One judgment model) making every semantic decision. Existing behavior carries over subject to the current autonomous contract. Jev replaces the places where the old code made decisions with guesswork: keyword lists, regexes over prose, length cutoffs and guessed classifications.
 
 The work is a new monorepo at `~/Projects/goodvibes-jev`. It never modifies the old repos.
 
@@ -29,7 +31,7 @@ Go through everything goodvibes does, systematically. Every module in the old re
 | HOIST | A module in a product that is really platform behaviour. It moves into the engine, and the product calls it from there. |
 | DROP | Not carried forward. What replaces it is named below. |
 
-**The UI is not redesigned.** Every screen, panel, command, style and interaction in the TUI, agent and web UI looks and behaves as it does in the old products.
+**The UI is not independently redesigned.** The [pinned upstream interfaces](docs/design/upstream-reconciliation.md) are the parity target. Runtime confirmation/escalation views must render the shared autonomous decisions and waiting progress instead of retaining a human decision loop; the remaining UI and provisioning behavior carry over.
 
 ## Structure
 
@@ -58,15 +60,17 @@ Out of scope:
 - **Compound patterns:** combinations of the above, plus patterns of the project's own.
 - **Infrastructure:** a decision log recording every reading, and calibration tooling that runs every battery's fixtures.
 
-**Everywhere it fits.** Every decision point and workflow step is a candidate:
+**Every semantic decision.** Audit every decision point and workflow step:
 - **While porting:** each decision point is given its disposition (Jev, compound, or plain code) at the moment it is read.
 - **After each part:** once a part closes, it is audited again for further places the foundation applies, and those are implemented before the next part starts.
 
 **Rules for judgment:**
-- **No fallbacks.** The judgment port is required everywhere, and no site keeps the old heuristic as a backup. Outage handling is the model provider failover chain.
+- **Autonomous decisions (2026-10-03 direction).** Jev makes the product's semantic decisions with no human approval or escalation loop. The shared `JevDecision` contract is `act`, `revise`, `defer` or `reject`, bound to current input, action, authority, scope and evidence. This supersedes older human-confirmation descriptions below; those legacy callers still require explicit migration. See [the autonomous decision contract](docs/design/autonomous-jev-decisions.md).
+- **One retry owner.** Transient Jev unavailability stays pending and retries with backoff through one shared implementation until recovery or lifecycle cancellation. Waiting is operational progress, never a fabricated semantic answer or approval.
+- **No semantic fallbacks.** The judgment port is required everywhere meaning is decided, and no site keeps the old heuristic as a backup. Any configured endpoint failover belongs to the shared transport; it does not replace the retry-until-available requirement or authorize a caller-local loop.
 - **No vendor names.** Routing and tier rules describe the work, never a vendor or model. The route planner picks from the whole catalog of providers and models, with failover.
 - **Local option.** A configurable setting points the platform at a local System One model instead of the hosted Jev key, with the same wire protocol.
-- **Deterministic boundaries stay code.** Security checks, money arithmetic and fixed formats are never judged.
+- **Deterministic boundaries stay code.** Authentication, capability/scope membership, revocation, fixed formats, monetary arithmetic and execution idempotency stay code. Questions of meaning still go to Jev, including semantic decisions within security workflows.
 
 ## Replacing WRFC: the contract runner
 

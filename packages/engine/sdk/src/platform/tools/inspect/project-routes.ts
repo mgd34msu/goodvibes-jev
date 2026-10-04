@@ -1,3 +1,4 @@
+import { assertCapturedToolAccessCurrent } from '../shared/captured-input-tools.js';
 /**
  * The HTTP routes a project declares, for inspect modes `api`, `api_spec`,
  * `api_validate` and `api_sync`. Next.js App Router routes are facts of the
@@ -29,7 +30,13 @@ function routeReading(reading: YesNoReading): RouteReading {
   return reading.verdict === 'no' ? 'dismissed' : 'uncertain';
 }
 
-function route(method: string, path: string, file: string, line: number, reading: Exclude<RouteReading, 'dismissed'>): ApiRoute {
+function route(
+  method: string,
+  path: string,
+  file: string,
+  line: number,
+  reading: Exclude<RouteReading, 'dismissed'>,
+): ApiRoute {
   return reading === 'uncertain' ? { method, path, file, line, reading } : { method, path, file, line };
 }
 
@@ -40,13 +47,15 @@ async function findNextjsAppRoutes(root: string): Promise<ApiRoute[]> {
 
   const files = await walk(appDir, (p) => p.endsWith('route.ts') || p.endsWith('route.js'));
   for (const file of files) {
-    const content = safeRead(file);
+    const content = await safeRead(file);
     const relFile = relative(root, file);
     const lines = content.split('\n');
-    const routePath = '/' + relative(join(root, 'app'), file)
-      .replace(/\/route\.[tj]s$/, '')
-      .replace(/\[(.+?)\]/g, ':$1')
-      .replace(/\((.+?)\)\//g, '') || '/';
+    const routePath =
+      '/' +
+        relative(join(root, 'app'), file)
+          .replace(/\/route\.[tj]s$/, '')
+          .replace(/\[(.+?)\]/g, ':$1')
+          .replace(/\((.+?)\)\//g, '') || '/';
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
@@ -71,10 +80,17 @@ async function findNextjsPagesRoutes(root: string): Promise<ApiRoute[]> {
   const files = await walk(apiDir, (p) => /\.[tj]sx?$/.test(p));
   const perFile = await mapWithConcurrency(files, READ_CONCURRENCY, async (file) => {
     const relFile = relative(root, file);
-    const routePath = '/' + relative(join(root, 'pages'), file)
-      .replace(/\.[tj]sx?$/, '')
-      .replace(/\[(.+?)\]/g, ':$1');
-    const run = await apiRoutes.run(judgmentPort(SITE), handlerView(relFile, safeRead(file)), { site: SITE, only: HANDLER_METHODS.map(servesQuestion) });
+    const routePath =
+      '/' +
+      relative(join(root, 'pages'), file)
+        .replace(/\.[tj]sx?$/, '')
+        .replace(/\[(.+?)\]/g, ':$1');
+    const content = await safeRead(file);
+    await assertCapturedToolAccessCurrent();
+    const run = await apiRoutes.run(judgmentPort(SITE), handlerView(relFile, content), {
+      site: SITE,
+      only: HANDLER_METHODS.map(servesQuestion),
+    });
     const routes = HANDLER_METHODS.flatMap((method) => {
       const reading = routeReading(run.readings[servesQuestion(method)]);
       return reading === 'dismissed' ? [] : [route(method, routePath, relFile, 1, reading)];
@@ -96,16 +112,22 @@ const VERB_CALL = /\.(get|post|put|delete|patch|options|head)\s*\(\s*(['"`])(.*?
 /** Verb calls read by `route_registration` for one framework; each is a route unless the reading is a no. */
 async function findCallRoutes(root: string, framework: ConcreteFramework): Promise<ApiRoute[]> {
   const files = await walk(root, (p) => /\.[tj]sx?$/.test(p));
-  const candidates = files.flatMap((file) => {
-    const relFile = relative(root, file);
-    const lines = safeRead(file).split('\n');
-    return lines.flatMap((text, index) => {
-      const m = VERB_CALL.exec(text);
-      return m ? [{ relFile, lines, index, method: m[1]!.toUpperCase(), path: m[3] || '/' }] : [];
-    });
-  });
+  const candidates = (
+    await mapWithConcurrency(files, READ_CONCURRENCY, async (file) => {
+      const relFile = relative(root, file);
+      const lines = (await safeRead(file)).split('\n');
+      return lines.flatMap((text, index) => {
+        const m = VERB_CALL.exec(text);
+        return m ? [{ relFile, lines, index, method: m[1]!.toUpperCase(), path: m[3] || '/' }] : [];
+      });
+    })
+  ).flat();
   const readings = await mapWithConcurrency(candidates, READ_CONCURRENCY, async ({ relFile, lines, index }) => {
-    const run = await apiRoutes.run(judgmentPort(SITE), routeLineView(framework, relFile, lines, index), { site: SITE, only: ['route_registration'] });
+    await assertCapturedToolAccessCurrent();
+    const run = await apiRoutes.run(judgmentPort(SITE), routeLineView(framework, relFile, lines, index), {
+      site: SITE,
+      only: ['route_registration'],
+    });
     const reading = routeReading(run.readings.route_registration);
     run.recordAction(`${relFile}:${index + 1} ${framework}: ${reading}`);
     return reading;
@@ -124,8 +146,8 @@ const FRAMEWORK_PACKAGES: ReadonlyArray<readonly [pkg: string, framework: Concre
 ];
 
 /** The API frameworks package.json declares as dependencies (facts, no preference among them). */
-export function declaredApiFrameworks(root: string): ConcreteFramework[] {
-  const raw = safeRead(join(root, 'package.json'));
+export async function declaredApiFrameworks(root: string): Promise<ConcreteFramework[]> {
+  const raw = await safeRead(join(root, 'package.json'));
   if (!raw) return [];
   try {
     const pkg = JSON.parse(raw);
@@ -137,7 +159,7 @@ export function declaredApiFrameworks(root: string): ConcreteFramework[] {
 }
 
 async function routesFor(root: string, framework: ConcreteFramework): Promise<ApiRoute[]> {
-  if (framework === 'nextjs') return [...await findNextjsAppRoutes(root), ...await findNextjsPagesRoutes(root)];
+  if (framework === 'nextjs') return [...(await findNextjsAppRoutes(root)), ...(await findNextjsPagesRoutes(root))];
   return findCallRoutes(root, framework);
 }
 
@@ -149,9 +171,9 @@ async function routesFor(root: string, framework: ConcreteFramework): Promise<Ap
  */
 export async function inspectApi(root: string, framework: ApiFramework): Promise<ApiRoute[]> {
   if (framework !== 'auto') return routesFor(root, framework);
-  const declared = declaredApiFrameworks(root);
+  const declared = await declaredApiFrameworks(root);
   const frameworks = declared.length > 0 ? declared : FRAMEWORK_PACKAGES.map(([, fw]) => fw);
   const routes: ApiRoute[] = [];
-  for (const fw of frameworks) routes.push(...await routesFor(root, fw));
+  for (const fw of frameworks) routes.push(...(await routesFor(root, fw)));
   return routes;
 }

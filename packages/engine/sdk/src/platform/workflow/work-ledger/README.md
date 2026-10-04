@@ -194,6 +194,14 @@ copied reader authority/type contract is introduced.
 
 ## Bounded legacy import (THE-105)
 
+This is a deterministic storage/transport foundation. Current owner authentication
+and capability checks are host authority boundaries, not human approval prompts.
+Any semantic reconciliation or decision to submit an import belongs to the
+shared autonomous Jev admission path described in
+[`autonomous-jev-decisions.md`](../../../../../../../docs/design/autonomous-jev-decisions.md).
+That production admission/recovery integration remains separate unfinished work;
+this foundation alone does not complete THE-105 or retire the old planning UX.
+
 The selected daemon exposes `workLedger.prepareLegacyImport` and
 `workLedger.importLegacy` at `POST /api/work-ledger/legacy-import/prepare` and
 `POST /api/work-ledger/legacy-import`. Both require current owner authentication

@@ -51,6 +51,31 @@ async function fixture() {
   }
   return { file, store, catalog, helper, request, prepared, revoke() { revoked = true; }, downgrade() { roles = []; } };
 }
+test('import descriptors require exactly the fields accepted by authenticated real-host handlers', async () => {
+  const host = await fixture();
+  const preparation = { projectId: 'project', sourceIds: ['source'] };
+  const command = await host.prepared();
+  const bytes = readFileSync(host.file);
+  for (const [id, path, body] of [
+    ['workLedger.prepareLegacyImport', '/api/work-ledger/legacy-import/prepare', preparation],
+    ['workLedger.importLegacy', '/api/work-ledger/legacy-import', command],
+  ] as const) {
+    const schema = host.catalog.get(id)!.inputSchema as { required: string[] };
+    expect([...schema.required].sort()).toEqual(Object.keys(body).sort());
+    for (const field of schema.required) {
+      const incomplete: Record<string, unknown> = { ...body };
+      delete incomplete[field];
+      expect((await host.request(path, incomplete)).status).toBe(400);
+      expect(readFileSync(host.file)).toEqual(bytes);
+    }
+  }
+  expect(await (await host.request('/api/work-ledger/legacy-import/prepare', preparation)).json())
+    .toMatchObject({ kind: 'prepared', manifest: command.manifest });
+  expect(readFileSync(host.file)).toEqual(bytes);
+  expect(await (await host.request('/api/work-ledger/legacy-import', command)).json())
+    .toMatchObject({ kind: 'accepted', replayed: false });
+});
+
 test('authenticated HTTP preparation/import/replay and bounded existing read transport preserve source provenance', async () => {
   const host = await fixture(); const request = await host.prepared(); const before = host.store.getSourceSnapshot({ id: 'source' });
   expect(await (await host.request('/api/work-ledger/legacy-import', request)).json()).toMatchObject({ kind: 'accepted', replayed: false });

@@ -130,7 +130,7 @@ test.each(['active', 'pending', 'handoff'] as const)('actual Agent permission li
     } : {
       cancelled: false, pendingAfterCancel: 1, settledBeforeLateAnswer: false,
       lateApprovalStatus: 'approved', fileWritten: true, rememberedRuleCount: 1,
-      subsequentApproved: true, subsequentSource: 'session_override', finalAgentStatus: 'completed',
+      subsequentApproved: true, subsequentSource: 'user_rule', finalAgentStatus: 'completed',
     });
   } finally {
     for (const item of broker.listApprovals()) if (item.status === 'pending' || item.status === 'claimed') await broker.cancelApproval(item.id, 'fixture-cleanup');

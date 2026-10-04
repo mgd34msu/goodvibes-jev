@@ -62,10 +62,14 @@ are neutralized, and long source records remain scrollable.
 - Product history tests use actual Agent and TUI models/renderers, including TUI
   keyboard navigation, narrow-width scrolling, close, and subscription cleanup.
 
-A user-facing import submission/recovery flow still needs the authenticated host
-prepare/execute contract, review of the complete bounded command, stable request
-identity across indeterminate outcomes, same-request receipt reconciliation,
+A user-facing import submission/recovery flow still needs shared autonomous Jev
+admission bound to the authenticated host prepare/execute contract and the complete
+bounded command, stable request identity across indeterminate outcomes,
+same-request receipt reconciliation,
 closed/revoked/conflicting-state handling, and real product recovery tests. No
 planning-interview retirement is authorized by these preparation/history tests.
+Semantic reconciliation and submission decisions must follow the shared Jev
+contract without a human approval or escalation loop. Authentication, grant
+revocation and cancellation remain deterministic host boundaries.
 Full engine integration, independent review, exact-head CI and compiled startup
 qualification are required before this can be called a completed migration.

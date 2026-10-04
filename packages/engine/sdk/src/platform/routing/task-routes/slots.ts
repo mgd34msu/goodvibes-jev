@@ -232,6 +232,9 @@ export function composeSlots(readings: SlotReadings, named: Readonly<Partial<Rec
 
 export interface SlotRun {
   readonly slots: TaskRouteSlots;
+  readonly readings: SlotReadings;
+  readonly decisionId: string | undefined;
+  readonly named: Partial<Record<NamedIdKind, Selection>>;
   recordAction(action: string): void;
 }
 
@@ -255,5 +258,11 @@ export async function readSlots(
     )),
   ]);
   const named = Object.fromEntries(listed.map(({ kind }, index) => [kind, selections[index]!])) as Partial<Record<NamedIdKind, Selection>>;
-  return { slots: composeSlots(run.readings, named), recordAction: run.recordAction };
+  return {
+    slots: composeSlots(run.readings, named), readings: run.readings, decisionId: run.result.decisionId, named,
+    recordAction(action) {
+      run.recordAction(action);
+      for (const selection of selections) selection.recordAction(action);
+    },
+  };
 }

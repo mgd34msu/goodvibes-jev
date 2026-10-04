@@ -21,6 +21,7 @@ import { CONTRACT_STATUSES } from '../../events/contract.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
 import { writeFileAtomic } from '../utils/atomic-json-store.js';
+import { isContractInputSnapshot } from './input-snapshot.js';
 import { CURRENT_CONTRACT_SCHEMA_VERSION, isContractId, isTerminalContractStatus, type Contract } from './types.js';
 
 const DEBOUNCE_MS = 250;
@@ -83,6 +84,7 @@ function isContractShape(value: unknown): value is Contract {
     && typeof value['ownerAgentId'] === 'string'
     && typeof value['ask'] === 'string'
     && typeof value['projectRoot'] === 'string'
+    && (value['inputSnapshot'] === undefined || isContractInputSnapshot(value['inputSnapshot']))
     && typeof value['createdAt'] === 'number'
     && Array.isArray(value['criteria'])
     && Array.isArray(value['groups'])

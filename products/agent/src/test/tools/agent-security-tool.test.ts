@@ -1,7 +1,10 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { CommandContext, CommandRegistry } from '../../input/command-registry.ts';
+import { createAgentHarnessTool } from '../../tools/agent-harness-tool.ts';
 import { createAgentSecurityTool, registerAgentSecurityTool } from '../../tools/agent-security-tool.ts';
 
 function fakeHarness(calls: Record<string, unknown>[]): Tool {
@@ -66,6 +69,135 @@ function makeTool(calls: Record<string, unknown>[] = [], registry = new ToolRegi
 }
 
 describe('security adapter', () => {
+  let previous: ReturnType<typeof installJudgmentPort>;
+  beforeEach(() => { previous = installJudgmentPort(fakePort((name, question, state) => {
+    const call = state as { tool: string; arguments: { action?: string } };
+    if (name !== 'kind') throw new Error(`Unexpected classification question: ${name}`);
+    if (call.tool === 'exec') return choiceAnswer(question, 'shell', 0.99);
+    if (call.tool === 'settings') return choiceAnswer(question, call.arguments.action === 'get' ? 'read' : 'write', 0.99);
+    throw new Error(`Unscripted classification fixture: ${call.tool}`);
+  }).port); });
+  afterEach(() => { installJudgmentPort(previous); });
+  test('harness dispatch uses its inspected mode descriptor instead of a later proxy read', async () => {
+    const fixture = fakePort((_name, question) => choiceAnswer(question, 'read', 0.99));
+    installJudgmentPort(fixture.port);
+    const registry = new ToolRegistry(); registerSettingsTool(registry);
+    const tool = createAgentHarnessTool({
+      commandRegistry: {} as CommandRegistry, commandContext: fakeContext(), toolRegistry: registry,
+    });
+    let modeReads = 0;
+    const input = new Proxy({ mode: 'modes', toolName: 'settings', toolArgs: { action: 'get' } }, {
+      get(target, key, receiver) {
+        if (key === 'mode') { modeReads++; return 'policy_explain'; }
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const result = await tool.execute(input);
+    expect(result.success).toBe(true);
+    expect(modeReads).toBe(0);
+    expect(fixture.requests).toHaveLength(0);
+    expect(JSON.parse(result.output!)).not.toHaveProperty('preflight');
+  });
+
+  for (const caller of ['security', 'harness'] as const) {
+    test(`${caller} explanation keeps the complete detached call stable while Jev is pending`, async () => {
+      let enter!: () => void;
+      const entered = new Promise<void>((resolve) => { enter = resolve; });
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => { release = resolve; });
+      const fixture = fakePort((_name, question) => choiceAnswer(question, 'read', 0.99));
+      installJudgmentPort({ model: fixture.port.model, async ask(request) {
+        enter(); await pending; return fixture.port.ask(request);
+      } });
+      const registry = new ToolRegistry(); registerSettingsTool(registry);
+      const tool = caller === 'security' ? makeTool([], registry) : createAgentHarnessTool({
+        commandRegistry: {} as CommandRegistry, commandContext: fakeContext(), toolRegistry: registry,
+      });
+      const nested = { message: 'original nested value' };
+      const toolArgs = { action: 'get', key: 'ui.theme', confirm: false, nested };
+      const input = { action: 'explain', mode: 'policy_explain', toolName: 'settings', toolArgs, includeParameters: true };
+      const outcome = tool.execute(input);
+      await entered;
+      toolArgs.action = 'set'; toolArgs.key = 'permissions.mode'; toolArgs.confirm = true;
+      nested.message = 'mutated after judgment started';
+      input.toolName = 'exec'; input.includeParameters = false;
+      release();
+      const result = await outcome;
+      expect(result.success).toBe(true);
+      const body = JSON.parse(result.output!);
+      expect(body).toMatchObject({
+        toolName: 'settings', category: 'read', categoryConfident: true,
+        toolArgs: { action: 'get', key: 'ui.theme', confirm: false, nested: { message: 'original nested value' } },
+        preflight: { permissionEvaluated: false, approvedWithoutMoreInput: false, toolConfirmationRequired: false },
+        toolDefinition: { name: 'settings' },
+      });
+      expect(fixture.requests[0]!.state).toMatchObject({ tool: 'settings', arguments: body.toolArgs });
+    });
+
+    for (const routingKey of ['action', 'mode'] as const) test(`${caller} refuses outer routing ${routingKey} accessors before dispatch`, async () => {
+      let reads = 0;
+      const fixture = fakePort((_name, question) => choiceAnswer(question, 'read', 0.99));
+      installJudgmentPort(fixture.port);
+      const registry = new ToolRegistry(); registerSettingsTool(registry);
+      const calls: Record<string, unknown>[] = [];
+      const tool = caller === 'security' ? makeTool(calls, registry) : createAgentHarnessTool({
+        commandRegistry: {} as CommandRegistry, commandContext: fakeContext(), toolRegistry: registry,
+      });
+      const input = { action: 'explain', mode: 'policy_explain', toolName: 'settings', toolArgs: { action: 'get' } };
+      // Exercise the security mode alias as well as its primary action route.
+      if (caller === 'security' && routingKey === 'mode') input.action = '';
+      Object.defineProperty(input, routingKey, {
+        enumerable: true, get() { reads++; return routingKey === 'action' ? 'explain' : 'policy_explain'; },
+      });
+      await expect(tool.execute(input)).rejects.toMatchObject({ name: 'JudgmentInputError', problem: 'unsupported-input' });
+      expect(reads).toBe(0);
+      expect(fixture.requests).toHaveLength(0);
+      expect(calls).toHaveLength(0);
+    });
+
+    for (const location of ['input', 'toolArgs'] as const) test(`${caller} explanation refuses a ${location} getter without invoking it or Jev`, async () => {
+      let reads = 0;
+      const fixture = fakePort((_name, question) => choiceAnswer(question, 'read', 0.99));
+      installJudgmentPort(fixture.port);
+      const registry = new ToolRegistry(); registerSettingsTool(registry);
+      const tool = caller === 'security' ? makeTool([], registry) : createAgentHarnessTool({
+        commandRegistry: {} as CommandRegistry, commandContext: fakeContext(), toolRegistry: registry,
+      });
+      const toolArgs: Record<string, unknown> = { action: 'get', key: 'ui.theme' };
+      const input: Record<string, unknown> = { action: 'explain', mode: 'policy_explain', toolName: 'settings', toolArgs };
+      Object.defineProperty(location === 'input' ? input : toolArgs, location === 'input' ? 'toolArgs' : 'action', {
+        enumerable: true, get() { reads++; return location === 'input' ? toolArgs : 'get'; },
+      });
+      await expect(tool.execute(input)).rejects.toMatchObject({ name: 'JudgmentInputError', problem: 'unsupported-input' });
+      expect(reads).toBe(0);
+      expect(fixture.requests).toHaveLength(0);
+    });
+  }
+
+  for (const caller of ['security', 'harness'] as const) test(`${caller} explanation forwards its caller signal and cannot return a late category after cancellation`, async () => {
+    const controller = new AbortController();
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    let seenSignal: AbortSignal | undefined;
+    const fixture = fakePort((_name, question) => choiceAnswer(question, 'read', 0.99));
+    installJudgmentPort({ model: fixture.port.model, async ask(request) {
+      seenSignal = request.signal; enter(); await pending; return fixture.port.ask(request);
+    } });
+    const registry = new ToolRegistry(); registerSettingsTool(registry);
+    const tool = caller === 'security' ? makeTool([], registry) : createAgentHarnessTool({
+      commandRegistry: {} as CommandRegistry, commandContext: fakeContext(), toolRegistry: registry,
+    });
+    const outcome = tool.execute({ action: 'explain', mode: 'policy_explain', toolName: 'settings', toolArgs: { action: 'get', key: 'ui.theme' } }, { signal: controller.signal }).catch((error: unknown) => error);
+    await entered;
+    expect(seenSignal).toBe(controller.signal);
+    controller.abort('private reason');
+    expect(await outcome).toMatchObject({ name: 'JudgmentError', kind: 'aborted' });
+    release(); await Bun.sleep(0);
+    expect(await outcome).toMatchObject({ kind: 'aborted' });
+  });
+
   test('routes security posture and findings through the harness', async () => {
     const calls: Record<string, unknown>[] = [];
     const tool = makeTool(calls);
