@@ -22,22 +22,22 @@ function setup() {
 test('lost postcommit response survives reopen and exact receipt wins over later rejection', () => {
   const f = setup(); let journal = new LegacyImportJournal(f.path);
   try {
-    journal.reserve(f.binding, () => f.command); journal.dispatch(f.binding); journal.close(); journal = new LegacyImportJournal(f.path);
+    journal.reserve(f.binding, () => f.command); journal.dispatch(f.binding, f.command); journal.close(); journal = new LegacyImportJournal(f.path);
     expect(journal.read(f.binding)).toMatchObject({ state: 'unknown', attempts: 1, command: f.command });
     expect(journal.reserve(f.binding, () => { throw new Error('Must not regenerate request'); }).command).toEqual(f.command);
-    journal.dispatch(f.binding);
+    journal.dispatch(f.binding, f.command);
     const result = { kind: 'accepted' as const, replayed: true, event: { type: 'import_legacy' as const, sequence: 1, actorId: 'opaque-host-actor', requestId: f.command.requestId, at: 1, manifest: f.command.manifest, works: projectLegacyImportWorks(f.command.manifest, 1) } };
-    expect(journal.record(f.binding, result).state).toBe('accepted');
-    expect(journal.record(f.binding, { kind: 'rejected', code: 'forbidden', reason: 'revoked', revision: null }).state).toBe('accepted');
+    expect(journal.record(f.binding, f.command, result).state).toBe('accepted');
+    expect(journal.record(f.binding, f.command, { kind: 'rejected', code: 'forbidden', reason: 'revoked', revision: null }).state).toBe('accepted');
     expect(statSync(f.path).mode & 0o777).toBe(0o600);
   } finally { journal.close(); }
 });
 test('malformed receipts cannot release uncertainty and cancellation cannot claim post-dispatch rollback', () => {
   const f = setup(); const journal = new LegacyImportJournal(f.path);
   try {
-    journal.reserve(f.binding, () => f.command); journal.dispatch(f.binding);
-    expect(() => journal.record(f.binding, { kind: 'rejected' } as never)).toThrow();
-    expect(journal.cancel(f.binding)?.state).toBe('unknown');
+    journal.reserve(f.binding, () => f.command); journal.dispatch(f.binding, f.command);
+    expect(() => journal.record(f.binding, f.command, { kind: 'rejected' } as never)).toThrow();
+    expect(journal.cancel(f.binding, f.command)?.state).toBe('unknown');
     expect(() => journal.reserve(f.binding, () => f.command, f.command.requestId)).toThrow('Unresolved');
     expect(() => journal.read({ ...f.binding, principalId: 'changed' })).toThrow('another');
     expect(() => journal.read({ ...f.binding, endpoint: 'http://other' })).toThrow('another');

@@ -104,13 +104,21 @@ export class LegacyImportJournal {
       return this.read(binding)!;
     }).immediate();
   }
-  cancel(binding: LegacyImportBinding): LegacyImportEntry | null {
-    return this.db.transaction(() => { if (this.read(binding)?.state === 'pending') this.db.exec("UPDATE legacy_import SET state='cancelled' WHERE slot=1"); return this.read(binding); }).immediate();
+  /** Call only inside an immediate transaction, before changing the current slot. */
+  private readExpected(binding: LegacyImportBinding, command: LegacyImportCommand): LegacyImportEntry | null {
+    const expected = workLedgerCommandSchema.parse(command);
+    if (expected.type !== 'import_legacy' || expected.manifest.projectId !== binding.projectId) throw new Error('Invalid import target');
+    const current = this.read(binding);
+    if (current && JSON.stringify(current.command) !== JSON.stringify(expected)) throw new Error('Import command changed');
+    return current;
   }
-  /** Only call at the authenticated host transport boundary, after real gate admission. */
-  dispatch(binding: LegacyImportBinding): LegacyImportEntry {
+  cancel(binding: LegacyImportBinding, command: LegacyImportCommand): LegacyImportEntry | null {
+    return this.db.transaction(() => { if (this.readExpected(binding, command)?.state === 'pending') this.db.exec("UPDATE legacy_import SET state='cancelled' WHERE slot=1"); return this.read(binding); }).immediate();
+  }
+  /** Only call at the authenticated host transport boundary, after real gate admission of this exact command. */
+  dispatch(binding: LegacyImportBinding, command: LegacyImportCommand): LegacyImportEntry {
     return this.db.transaction(() => {
-      const current = this.read(binding);
+      const current = this.readExpected(binding, command);
       if (!current || !['pending', 'unknown'].includes(current.state)) throw new Error('Import cannot be dispatched');
       this.db.exec("UPDATE legacy_import SET state='unknown', attempts=attempts+1 WHERE slot=1"); return this.read(binding)!;
     }).immediate();
@@ -125,10 +133,10 @@ export class LegacyImportJournal {
       this.db.query('UPDATE legacy_import SET decisions=? WHERE slot=1').run(JSON.stringify([...current.decisions, decision])); return this.read(binding)!;
     }).immediate();
   }
-  record(binding: LegacyImportBinding, raw: WorkLedgerResult): LegacyImportEntry {
+  record(binding: LegacyImportBinding, command: LegacyImportCommand, raw: WorkLedgerResult): LegacyImportEntry {
     const result = legacyImportResultSchema.parse(raw);
     return this.db.transaction(() => {
-      const current = this.read(binding);
+      const current = this.readExpected(binding, command);
       if (!current || current.attempts === 0) throw new Error('No dispatched import');
       if (result.kind === 'accepted' && (result.event.type !== 'import_legacy' || result.event.requestId !== current.command.requestId || JSON.stringify(result.event.manifest) !== JSON.stringify(current.command.manifest))) throw new Error('Receipt command mismatch');
       if (result.kind === 'indeterminate' && result.requestId !== current.command.requestId) throw new Error('Receipt request mismatch');
