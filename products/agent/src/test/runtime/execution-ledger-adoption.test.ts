@@ -9,6 +9,7 @@ import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/test
 import { getTestRuntimeServices, resetTestRuntimeServices } from '../helpers/runtime-services.ts';
 import { AgentExecutionLedger as CompatibilityLedger } from '../../runtime/execution-ledger.ts';
 import type { RuntimeServices } from '../../runtime/services.ts';
+import { composeAgentPermissionManager } from '../../runtime/bootstrap-core.ts';
 import { executionHistorySummary } from '../../tools/agent-harness-execution-history.ts';
 import type { CommandContext } from '../../input/command-registry.ts';
 
@@ -76,7 +77,7 @@ test('real Agent composition withholds declared credential input before model ca
   expect(JSON.stringify(runtime.executionLedger.getSnapshot())).not.toContain('SYNTHETIC_DECLARED_CREDENTIAL');
 });
 
-test('the real tool execution path emits into the composed shared ledger without an approval callback', async () => {
+test('the real tool execution path combines the shared permission guard and ledger without an approval callback', async () => {
   const { runtime, requests } = compose();
   let executions = 0;
   const registry = new ToolRegistry();
@@ -85,7 +86,7 @@ test('the real tool execution path emits into the composed shared ledger without
     async execute() { executions++; return { success: true, output: 'synthetic result' }; },
   });
   const results = await executeToolCalls({
-    toolRegistry: registry, permissionManager: runtime.permissionManager,
+    toolRegistry: registry, permissionManager: composeAgentPermissionManager(runtime),
     hookDispatcher: null, runtimeBus: runtime.runtimeBus,
     sessionId: ctx.sessionId, emitterContext: () => ctx,
   }, 'live-turn', [{ id: 'live-call', name: 'read_local', arguments: { recipient: 'fixture-target' } }]);
