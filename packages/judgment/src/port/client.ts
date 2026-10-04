@@ -2,7 +2,7 @@ import { APIConnectionError, APIError, APIUserAbortError, TypeSafeClient, TypeSa
 import type { JudgmentConfig } from './config.ts';
 import { JudgmentError } from './errors.ts';
 import { recordingRequestIds } from './request-id.ts';
-import { transientStatus } from './retry.ts';
+import { interruptible, transientStatus } from './retry.ts';
 
 export function toJudgmentError(error: unknown): JudgmentError {
   if (error instanceof JudgmentError) return error;
@@ -23,14 +23,18 @@ export function toJudgmentError(error: unknown): JudgmentError {
   if (error instanceof TypeSafeError) {
     return new JudgmentError('invalid-request', 'System One rejected the client request configuration');
   }
-  return new JudgmentError('unavailable', 'System One did not return a usable response');
+  return new JudgmentError('invalid-response', 'System One did not return a usable response');
 }
 
 /** An SDK client for the configured endpoint, recording each response's request id. */
-export function clientFor(config: JudgmentConfig): TypeSafeClient {
+export function clientFor(config: JudgmentConfig, singleAttempt = false): TypeSafeClient {
   const { endpoint, model, timeoutMs, retry } = config;
   const { apiKey, baseURL } = endpoint;
   const base: Fetch = config.fetch ?? ((input, init) => fetch(input, init));
-  return new TypeSafeClient({ apiKey, baseURL, defaultModel: model, timeout: timeoutMs, retry, logLevel: 'off', fetch: recordingRequestIds((input, init) => base(input, { ...init, redirect: 'error' })) });
+  return new TypeSafeClient({ apiKey, baseURL, defaultModel: model, timeout: timeoutMs, retry: { ...retry, ...(singleAttempt ? { maxRetries: 0 } : {}) }, logLevel: 'off', fetch: recordingRequestIds((input, init) => {
+    const pending = base(input, { ...init, redirect: 'error' });
+    // Unwind SDK timers/listeners even when a custom fetch ignores cancellation.
+    return init?.signal ? interruptible(pending, init.signal) : pending;
+  }) });
 }
 

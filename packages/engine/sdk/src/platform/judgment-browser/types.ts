@@ -16,6 +16,8 @@ export type BrowserJudgmentProjection<V> =
 export interface BrowserJudgmentResolvedInput<S> {
   readonly state: S;
   readonly sourceBinding: string;
+  /** Optional owned lifetime; expiry or revocation cancels an admitted wait immediately. */
+  readonly signal?: AbortSignal;
   /** Throws a value-free hold if source revision, permission, or lifetime changed. */
   readonly assertCurrent: () => void;
 }

@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test';
-import { SqliteDecisionLog, withDecisionLog, noul, readYesNo, STAKES_BANDS, type JudgmentPort, type YesNoReading } from '@goodvibes-jev/judgment';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { createSystemOnePort, SqliteDecisionLog, withDecisionLog, noul, readYesNo, STAKES_BANDS, type JudgmentPort, type YesNoReading } from '@goodvibes-jev/judgment';
 import { BrowserJudgmentError, type AuthenticatedPrincipal } from '../daemon-sdk/src/index.ts';
 import { BrowserJudgmentRegistry, BrowserJudgmentReferences, BrowserJudgmentService, type BrowserJudgmentResolvedInput } from '../sdk/src/platform/judgment-browser/index.ts';
 
@@ -11,6 +11,10 @@ const body = (errorRef = 'reference') => ({ protocolVersion: 1, requestId: crypt
 
 function fixture(options: { probability?: number; authorized?: boolean; state?: unknown; fanOut?: number;
   assertCurrent?: () => void; routeAssertion?: () => void; resolveBarrier?: () => Promise<void>; authorize?: () => boolean;
+  transport?: JudgmentPort;
+  beforeAttempt?: () => void;
+  onRetry?: () => void;
+  useReference?: boolean;
   beforeAnswer?: (signal: AbortSignal | undefined) => Promise<void> } = {}) {
   const log = new SqliteDecisionLog(':memory:');
   const references = new BrowserJudgmentReferences();
@@ -18,21 +22,25 @@ function fixture(options: { probability?: number; authorized?: boolean; state?: 
   let calls = 0; let current = true;
   const inner: JudgmentPort = { model: 'jev-1.13.0', ask: async (request) => {
     calls++;
+    if (options.transport) return options.transport.ask(request);
     await options.beforeAnswer?.(request.signal);
     return { answers: Object.fromEntries(Object.keys(request.questions).map((name) => [name, { type: 'noul', noul: options.probability ?? 0.01 }])) as never,
       requestedModel: 'jev-1.13.0', model: 'jev-1.13.0', usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1, requestId: undefined };
   } };
   const port = withDecisionLog(inner, log);
   registry.register({ id: ID, version: 1, questions, maxCalls: options.fanOut ?? 1,
-    resolve: async () => {
+    resolve: async (input, context) => {
       await options.resolveBarrier?.();
+      if (options.useReference) return references.resolve(input.errorRef, context.currentPrincipal, ID, (value) => value);
       const resolved: BrowserJudgmentResolvedInput<unknown> = { state: options.state ?? { message: 'Fixture error', status: 404 }, sourceBinding: 'fixture-only', assertCurrent() {
         if (!current || this.sourceBinding !== 'fixture-only') throw new BrowserJudgmentError('JUDGMENT_REFERENCE_HELD'); return options.assertCurrent?.();
       } };
       return resolved;
     },
     run: async (active, state, { signal }) => {
-      const [result] = await Promise.all(Array.from({ length: options.fanOut ?? 1 }, () => active.ask({ state: state as never, questions, signal })));
+      const [result] = await Promise.all(Array.from({ length: options.fanOut ?? 1 }, () => active.ask({ state: state as never, questions, signal,
+        ...(options.beforeAttempt === undefined ? {} : { beforeAttempt: options.beforeAttempt }),
+        ...(options.onRetry === undefined ? {} : { onRetry: options.onRetry }) })));
       if (!result) throw new Error('missing fixture result');
       return Object.fromEntries(names.map((name) => [name, readYesNo(result.answers[name] as never, STAKES_BANDS.medium.yesNo)])) as Record<typeof names[number], YesNoReading>;
     },
@@ -53,6 +61,129 @@ function fixture(options: { probability?: number; authorized?: boolean; state?: 
 }
 
 describe('browser judgment service (synthetic port only)', () => {
+  test('does not impose the former 30-second availability deadline', async () => {
+    const original = globalThis.setTimeout;
+    const scheduled: (() => void)[] = [];
+    const replacement = new Proxy(original, { apply(target, receiver: unknown, args: unknown[]) {
+      if (Number(args[1]) === 30_000 && typeof args[0] === 'function') {
+        const callback = args[0]; scheduled.push(() => Reflect.apply(callback, undefined, args.slice(2)));
+      }
+      return Reflect.apply(target, receiver, args);
+    } });
+    const timers = spyOn(globalThis, 'setTimeout').mockImplementation(replacement);
+    let entered!: () => void; const started = new Promise<void>((resolve) => { entered = resolve; });
+    let finish!: () => void; let signal: AbortSignal | undefined;
+    const f = fixture({ beforeAnswer: (active) => {
+      signal = active; entered(); return new Promise<void>((resolve) => { finish = resolve; });
+    } });
+    const pending = f.service.execute(body(), owner, new AbortController().signal, () => owner);
+    try {
+      await started;
+      for (const deadline of scheduled) deadline();
+      expect(signal?.aborted).toBe(false);
+      expect(scheduled).toHaveLength(0);
+      finish(); expect(await pending).toMatchObject({ status: 'settled' });
+    } finally { finish?.(); await pending.catch(() => {}); await f.service.close(); f.log[Symbol.dispose](); timers.mockRestore(); }
+  });
+
+  test('one browser call survives repeated provider outages through the shared transport', async () => {
+    let attempts = 0;
+    const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' }, model: 'jev-1.13.0', timeoutMs: 1000,
+      retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
+      fetch: async () => {
+        if (++attempts < 9) return new Response('', { status: 503 });
+        return Response.json({ model: 'jev-1.13.0', answers: Object.fromEntries(names.map((name) => [name, { type: 'noul', noul: 0.01 }])), usage: { input_tokens: 1, output_tokens: 1 } });
+      },
+    });
+    const f = fixture({ transport });
+    try {
+      expect(await f.service.execute(body(), owner, new AbortController().signal, () => owner)).toMatchObject({ status: 'settled' });
+      expect(attempts).toBe(9); expect(f.calls()).toBe(1);
+      const records = f.log.query(); expect(records).toHaveLength(1); expect(records[0]?.lineage?.attempts).toHaveLength(9);
+    } finally { await f.service.close(); f.log[Symbol.dispose](); }
+  });
+
+  test.each(['source', 'route', 'permission', 'authentication'] as const)('%s revocation during outage prevents another transmission', async (kind) => {
+    let current = true; let attempts = 0;
+    const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' }, model: 'jev-1.13.0', timeoutMs: 1000,
+      retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
+      fetch: async () => { attempts++; current = false; return new Response('', { status: 503 }); },
+    });
+    const code = kind === 'source' ? 'JUDGMENT_REFERENCE_HELD' : kind === 'authentication' ? 'JUDGMENT_AUTH_REQUIRED' : 'JUDGMENT_PERMISSION_HELD';
+    const guard = () => { if (!current) throw new BrowserJudgmentError(code); };
+    const f = fixture({ transport, ...(kind === 'source' ? { assertCurrent: guard } : {}),
+      ...(kind === 'route' ? { routeAssertion: guard } : {}), ...(kind === 'permission' ? { authorize: () => current } : {}),
+    });
+    try {
+      await expect(f.service.execute(body(), owner, new AbortController().signal, () => { if (kind === 'authentication') guard(); return owner; }))
+        .rejects.toMatchObject({ code });
+      await f.service.close();
+      expect(attempts).toBe(1); expect(f.calls()).toBe(1);
+      expect(f.log.query()).toMatchObject([{ status: 'failed', error: { kind: 'aborted' } }]);
+    } finally { await f.service.close(); f.log[Symbol.dispose](); }
+  });
+
+  test.each(['synchronous', 'asynchronous'] as const)('preserves a registered battery\'s %s attempt guard without weakening it', async (kind) => {
+    let attempts = 0; let guarded = 0;
+    const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' }, model: 'jev-1.13.0', timeoutMs: 1000,
+      retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
+      fetch: async () => { attempts++; return new Response('', { status: 503 }); },
+    });
+    const f = fixture({ transport, beforeAttempt() {
+      guarded++;
+      if (kind === 'asynchronous') return Promise.reject(new Error('synthetic private guard error'));
+      if (guarded > 1) throw new BrowserJudgmentError('JUDGMENT_REFERENCE_HELD');
+    } });
+    try {
+      await expect(f.service.execute(body(), owner, new AbortController().signal, () => owner)).rejects.toMatchObject({ code: 'JUDGMENT_REFERENCE_HELD' });
+      await f.service.close();
+      expect(attempts).toBe(kind === 'synchronous' ? 1 : 0);
+      expect(guarded).toBe(kind === 'synchronous' ? 2 : 1);
+      expect(f.log.query()).toMatchObject([{ status: 'failed', error: { kind: 'aborted' } }]);
+    } finally { await f.service.close(); f.log[Symbol.dispose](); }
+  });
+
+  test.each(['expiry', 'revocation'] as const)('owned reference %s interrupts long Retry-After and releases admission', async (kind) => {
+    let attempts = 0; let retries = 0; let recover = false;
+    let ready!: () => void; const waiting = new Promise<void>((resolve) => { ready = resolve; });
+    const transport = createSystemOnePort({ endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' }, model: 'jev-1.13.0', timeoutMs: 1000,
+      retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
+      fetch: async () => {
+        attempts++;
+        if (!recover) return new Response('', { status: 503, headers: { 'Retry-After': '3600' } });
+        return Response.json({ model: 'jev-1.13.0', answers: Object.fromEntries(names.map((name) => [name, { type: 'noul', noul: 0.01 }])), usage: { input_tokens: 1, output_tokens: 1 } });
+      },
+    });
+    const f = fixture({ transport, useReference: true, onRetry: () => { if (++retries === 4) ready(); } });
+    const source = { principalId: owner.principalId, battery: ID, revision: 'fixture-r1', expiresAt: Date.now() + 60_000,
+      snapshot: { message: 'Synthetic referenced source' }, mayRead: () => true, assertCurrent() {} };
+    let expire!: () => void;
+    const original = globalThis.setTimeout;
+    const timer = spyOn(globalThis, 'setTimeout').mockImplementation(new Proxy(original, { apply(target, receiver: unknown, args: unknown[]) {
+      if (typeof args[0] === 'function') { const callback = args[0]; expire = () => Reflect.apply(callback, undefined, args.slice(2)); }
+      return Reflect.apply(target, receiver, args);
+    } }));
+    const reference = f.references.issue(source);
+    timer.mockRestore();
+    try {
+      const pending = Array.from({ length: 4 }, () => f.service.execute(body(reference), owner, new AbortController().signal, () => owner).catch((error: unknown) => error));
+      await waiting;
+      expect(attempts).toBe(4);
+      await expect(f.service.execute(body(reference), owner, new AbortController().signal, () => owner)).rejects.toMatchObject({ code: 'JUDGMENT_BUSY' });
+      if (kind === 'expiry') expire(); else f.references.revoke(reference);
+      for (const result of await Promise.all(pending)) expect(result).toMatchObject({ code: 'JUDGMENT_REFERENCE_HELD' });
+      // Accepted calls drain without the provider's hour-long cooldown or a
+      // fifth transmission; the same principal can admit fresh work again.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(attempts).toBe(4);
+      recover = true;
+      const fresh = f.references.issue({ ...source, expiresAt: Date.now() + 60_000 });
+      expect(await f.service.execute(body(fresh), owner, new AbortController().signal, () => owner)).toMatchObject({ status: 'settled' });
+      expect(attempts).toBe(5);
+      expect(f.log.query({ status: 'failed' })).toHaveLength(4);
+    } finally { timer.mockRestore(); await f.service.close(); f.log[Symbol.dispose](); }
+  });
+
   test('records genuine fixture readings and returns typed evidence without raw state', async () => {
     const f = fixture();
     try {

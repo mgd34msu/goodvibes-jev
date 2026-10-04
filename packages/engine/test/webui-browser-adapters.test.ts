@@ -190,6 +190,26 @@ describe('actual WebUI descriptors through the published service', () => {
     } finally { await f.close(); }
   });
 
+  test('palette preserves source lifetime cancellation across its resolver wrapper and drains fan-out', async () => {
+    const lifetime = new AbortController(); const sources = paletteSources(rankState(8));
+    let entered!: () => void; const started = new Promise<void>((resolve) => { entered = resolve; });
+    let active = 0;
+    const f = harness({ sources: { async resolve(input, context) {
+      return { ...await sources.resolve(input, context), signal: lifetime.signal };
+    } }, beforeAnswer: ({ signal }) => new Promise((_, reject) => {
+      signal!.addEventListener('abort', () => reject(signal!.reason), { once: true });
+      if (++active === 4) entered();
+    }) });
+    try {
+      const pending = f.execute(rankBody(8)).catch((error: unknown) => error);
+      await started; lifetime.abort();
+      expect(await pending).toMatchObject({ code: 'JUDGMENT_REFERENCE_HELD' });
+      await f.service.close();
+      expect(active).toBe(4); expect(f.requests).toHaveLength(0);
+      expect(f.log.query({ status: 'failed' })).toHaveLength(4);
+    } finally { await f.close(); }
+  });
+
   test('all 64 candidates are read with at most four active provider calls', async () => {
     const f = harness({ sources: paletteSources(rankState(64)), answer: () => noulAnswer(0.01), beforeAnswer: () => new Promise((resolve) => setTimeout(resolve, 1)) });
     try {

@@ -1,6 +1,6 @@
-import type { Fetch, RetryPolicy } from '@typesafe-ai/sdk';
+import type { Fetch } from '@typesafe-ai/sdk';
 import { JudgmentError } from './errors.ts';
-import { retryPolicy } from './retry.ts';
+import { retryPolicy, type JudgmentRetryPolicy } from './retry.ts';
 import { isPinnedJudgmentModel, validEndpointURL } from './endpoint-validation.ts';
 export { isPinnedJudgmentModel, validEndpointURL } from './endpoint-validation.ts';
 
@@ -38,12 +38,10 @@ export interface JudgmentConfig {
   readonly model: string;
   /** Timeout per attempt in milliseconds. */
   readonly timeoutMs: number;
-  /** Retry overrides for rate limits, overload and connection failures. */
-  readonly retry: Partial<RetryPolicy>;
+  /** Backoff timing for persistent retry of rate limits, overload and connection failures. */
+  readonly retry: Partial<JudgmentRetryPolicy>;
   /** Additional System One targets. No discovery or implicit alternate providers. */
   readonly fallbacks?: readonly JudgmentFallback[];
-  /** Deadline for all attempts and backoffs together. Default 120 seconds. */
-  readonly totalTimeoutMs?: number;
   /** Custom fetch, for tests and transport configuration. */
   readonly fetch?: Fetch;
 }
@@ -77,7 +75,6 @@ export function judgmentConfigFromEnv(
     timeoutMs: overrides.timeoutMs ?? 10_000,
     retry: overrides.retry ?? {},
     ...(overrides.fallbacks === undefined ? {} : { fallbacks: overrides.fallbacks }),
-    ...(overrides.totalTimeoutMs === undefined ? {} : { totalTimeoutMs: overrides.totalTimeoutMs }),
     ...(overrides.fetch === undefined ? {} : { fetch: overrides.fetch }),
   };
 }
@@ -97,8 +94,8 @@ export function validateJudgmentConfig(config: JudgmentConfig): void {
     }
   }
   if (!Number.isInteger(config.timeoutMs) || config.timeoutMs < 1 || config.timeoutMs > 120_000
-    || !Number.isInteger(config.totalTimeoutMs ?? 120_000) || (config.totalTimeoutMs ?? 120_000) < 1 || (config.totalTimeoutMs ?? 120_000) > 3_600_000) {
-    throw new JudgmentError('invalid-request', 'judgment timeouts must be positive bounded milliseconds');
+    || 'totalTimeoutMs' in config) {
+    throw new JudgmentError('invalid-request', 'judgment attempt timeout must be positive bounded milliseconds; total-time limits are not supported');
   }
   retryPolicy(config.retry);
 }

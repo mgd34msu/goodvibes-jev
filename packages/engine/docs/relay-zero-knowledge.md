@@ -199,3 +199,31 @@ Because the client exposes this through its relay-backed `fetch`, the existing
 Server-Sent-Events connector idiom (`openServerSentEventStream`, which just calls
 `fetch` and reads the streaming body) works over the relay unchanged, a surface
 that today rejects SSE over relay can drop that rejection and call it directly.
+
+
+### Unary judgment cancellation
+
+The exact `POST /api/judgment/batteries/run` route waits for its daemon-owned
+judgment without a relay unary timeout. Other unary routes retain the configured
+request timeout. This adds no relay retry loop and does not extend authentication,
+source-reference expiry, or outbound authority; the judgment service rechecks
+those boundaries independently.
+
+Caller cancellation and ordinary unary timeout send an encrypted `request-cancel`
+frame for the same request id. The daemon owns that request's AbortController
+through dispatch and response buffering, and also aborts it on pipe closure,
+pipe eviction, disconnect, reconnect, and registration shutdown. In-flight slots
+remain occupied until dispatch actually drains, including a dispatch that ignores
+abort; a late answer is never delivered. Response readers cancel without waiting
+for an uncooperative source cancellation hook. Request/cancel admission and client
+encrypted sends are ordered so cancellation cannot overtake its request. All
+unary/refusal/stream daemon sends share the same per-channel seal-and-send queue,
+and client frame opening is serialized in wire order; asynchronous crypto cannot
+reverse AEAD counters. Queues are bounded by frame count and 64 MiB of queued
+frame bytes. Saturation closes the owning pipe rather than retaining unbounded
+work. Ownership is rechecked after encryption, including overload/size/streaming
+refusals, so a retired or cancelled request cannot send a late response.
+
+A daemon can ask the relay to close only a pipe belonging to its registered
+socket. Eviction therefore releases the client wait as well as daemon work,
+without allowing one daemon to close another daemon's pipes.

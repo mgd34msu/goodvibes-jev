@@ -138,7 +138,8 @@ export function createWebuiCommandRankAdapter(sources: WebuiPaletteSources): Bro
       const state = preflight(() => snapshotWebuiCommandRank(resolved.state));
       if (state.registryVersion !== input.registryVersion || state.candidates.length !== input.candidates.length
         || (input.query.kind === 'inline' && state.query !== input.query.text)) return referenceHeld();
-      return { state, sourceBinding: resolved.sourceBinding, assertCurrent: () => resolved.assertCurrent() };
+      return { state, sourceBinding: resolved.sourceBinding, assertCurrent: () => resolved.assertCurrent(),
+        ...(resolved.signal === undefined ? {} : { signal: resolved.signal }) };
     },
     async run(port, raw, { signal }) {
       checkAbort(signal);
