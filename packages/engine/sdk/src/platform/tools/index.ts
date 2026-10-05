@@ -46,6 +46,7 @@ import { createPacketTool } from './packet/index.js';
 import { createQueryTool } from './query/index.js';
 import { createRemoteTool } from './remote-trigger/index.js';
 import { createReplTool } from './repl/index.js';
+import { createCapturedReplTool } from './repl/captured.js';
 import { controlTool } from './control/index.js';
 import { createProfileTool } from './profile/index.js';
 import { createChannelTool } from './channel/index.js';
@@ -653,9 +654,11 @@ export function registerAllTools(
     registerTool(createRemoteTool(remoteRunnerRegistry));
   }
   registerTool(
-    createReplTool(deps.configManager, deps.sandboxSessionRegistry, {
-      surfaceRoot: deps.surfaceRoot,
-    }),
+    deps.capturedExec
+      ? createCapturedReplTool(deps.capturedExec, deps.featureFlags)
+      : createReplTool(deps.configManager, deps.sandboxSessionRegistry, {
+          surfaceRoot: deps.surfaceRoot,
+        }),
   );
   registerTool(controlTool);
   registerTool(createChannelTool(channelRegistry));

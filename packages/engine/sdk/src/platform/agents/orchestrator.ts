@@ -889,7 +889,7 @@ export class AgentOrchestrator {
         authority,
         signal,
         runKey,
-        record.tools.some((name) => ['exec', 'write', 'edit'].includes(name)),
+        record.tools.some((name) => ['exec', 'write', 'edit', 'repl'].includes(name)),
         record.tools.includes('registry'),
         autonomousSource,
         getContractActionPort(record),

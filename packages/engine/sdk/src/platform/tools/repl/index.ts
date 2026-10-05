@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { isCapturedInputPath } from '../../contract/input-authority.js';
 import { type ConfigManagerLike } from '../../runtime/sandbox/manager.js';
 import { SandboxSessionRegistry } from '../../runtime/sandbox/session-registry.js';
 import { requireSurfaceRoot } from '../../runtime/surface-root.js';
@@ -84,6 +85,8 @@ export function createReplTool(
       if (!input.workspaceRoot || input.workspaceRoot.trim().length === 0) {
         return { success: false, error: 'repl requires workspaceRoot.' };
       }
+      if (isCapturedInputPath(input.workspaceRoot))
+        return { success: false, error: 'Captured REPL requires its construction-owned execution backend.' };
       const historyPath = resolveHistoryPath(input.workspaceRoot, surfaceRoot);
       const history = await loadHistory(historyPath);
 
