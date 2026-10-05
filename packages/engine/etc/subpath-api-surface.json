@@ -31165,6 +31165,11 @@
       "text": "export declare function decodePageCursor(raw: string): InboxPosition;"
     },
     {
+      "name": "digestSender",
+      "kind": "function",
+      "text": "export declare function digestSender(senderExternalId: string): string;"
+    },
+    {
       "name": "encodePageCursor",
       "kind": "function",
       "text": "export declare function encodePageCursor(position: InboxPosition): string;"
@@ -31178,6 +31183,11 @@
       "name": "normalizeInboxQuery",
       "kind": "function",
       "text": "export declare function normalizeInboxQuery(body: unknown, query?: Readonly<Record<string, string>>): InboxListQuery; ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "normalizeWhitespace",
+      "kind": "function",
+      "text": "export declare function normalizeWhitespace(input: string): string;"
     },
     {
       "name": "parseIntakeFetchResponse",
@@ -31203,6 +31213,16 @@
       "name": "resolveIntakeRouteId",
       "kind": "function",
       "text": "export declare function resolveRouteId(ctx: AdapterContext, provider: string, fromDigest: string, kind: InboundChannelItem['kind']): Promise<string | undefined>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "sha256First",
+      "kind": "function",
+      "text": "export declare function sha256First(input: string, hexChars: number): string;"
+    },
+    {
+      "name": "stripMarkup",
+      "kind": "function",
+      "text": "export declare function stripMarkup(input: string): string;"
     },
     {
       "name": "toWireItem",
