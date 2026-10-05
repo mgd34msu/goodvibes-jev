@@ -240,7 +240,7 @@ export function parseGoodVibesCli(
 
     if (passthrough) {
       if (sawCommand) commandArgs.push(token);
-      else positionals.push(token);
+      if (!sawCommand || command === 'run') positionals.push(token);
       continue;
     }
 

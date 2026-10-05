@@ -1,3 +1,4 @@
+import { runNativeHeadlessCommand } from './native-headless-command.ts';
 /**
  * management-utils.ts, shared CLI utility functions.
  *
@@ -19,12 +20,10 @@ import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { networkInterfaces } from 'node:os';
 import type { ConfigManager, GoodVibesConfig } from '@goodvibes-jev/engine/sdk/platform/config';
-import { bootstrapRuntime } from '../runtime/bootstrap.ts';
-import { refreshMemoryRecallSnapshot } from '../runtime/orchestrator-core-services.ts';
 import { createRuntimeServices } from '../runtime/services.ts';
 import { createRuntimeStore } from '../runtime/store/index.ts';
 import type { RuntimeServices } from '../runtime/services.ts';
-import { RuntimeEventBus, type TurnEvent, createShellPathService, configureRuntimeEventBusDefaults, runtimeEventBusOptionsFrom } from '@/runtime/index.ts';
+import { RuntimeEventBus, createShellPathService, configureRuntimeEventBusDefaults, runtimeEventBusOptionsFrom } from '@/runtime/index.ts';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { resolveRuntimeEndpointBinding } from '@goodvibes-jev/engine/terminal-shell';
 import { applyRuntimeEndpointFlagOverrides } from '@goodvibes-jev/engine/terminal-shell';
@@ -271,92 +270,7 @@ export function readAuthPaths(runtime: CliCommandRuntime) {
 }
 
 export async function runNonInteractiveAgent(runtime: CliCommandRuntime): Promise<number> {
-  const prompt = runtime.cli.flags.prompt ?? runtime.cli.positionals.join(' ').trim();
-  if (!prompt) {
-    console.error('Usage: goodvibes run|exec [prompt]');
-    return 2;
-  }
-
-  const outputFormat = runtime.cli.flags.outputFormat;
-  const ctx = await bootstrapRuntime(process.stdout, {
-    configManager: runtime.configManager,
-    workingDir: runtime.workingDirectory,
-    homeDirectory: runtime.homeDirectory,
-  });
-
-  const events: TurnEvent[] = [];
-  let finalResponse = '';
-  let finalError = '';
-  let finalStopReason = '';
-  let exitCode = 0;
-
-  const done = new Promise<void>((resolve) => {
-    const unsubs = [
-      ctx.runtimeBus.on<Extract<TurnEvent, { type: 'STREAM_DELTA' }>>('STREAM_DELTA', ({ payload }) => {
-        events.push(payload);
-        if (outputFormat === 'stream-json') {
-          process.stdout.write(JSON.stringify({ type: payload.type, content: payload.content, accumulated: payload.accumulated }) + '\n');
-        }
-      }),
-      ctx.runtimeBus.on<Extract<TurnEvent, { type: 'TURN_COMPLETED' }>>('TURN_COMPLETED', ({ payload }) => {
-        events.push(payload);
-        finalResponse = payload.response;
-        finalStopReason = payload.stopReason;
-        for (const unsub of unsubs) unsub();
-        resolve();
-      }),
-      ctx.runtimeBus.on<Extract<TurnEvent, { type: 'TURN_ERROR' }>>('TURN_ERROR', ({ payload }) => {
-        events.push(payload);
-        finalError = payload.error;
-        finalStopReason = payload.stopReason;
-        exitCode = 1;
-        for (const unsub of unsubs) unsub();
-        resolve();
-      }),
-      ctx.runtimeBus.on<Extract<TurnEvent, { type: 'TURN_CANCEL' }>>('TURN_CANCEL', ({ payload }) => {
-        events.push(payload);
-        finalError = payload.reason ?? 'cancelled';
-        finalStopReason = payload.stopReason;
-        exitCode = 130;
-        for (const unsub of unsubs) unsub();
-        resolve();
-      }),
-    ];
-  });
-
-  try {
-    // Async pre-turn refresh of the memory-spine recall snapshot (SDK 1.2.0
-    // full-detach), see the matching comment in main.ts's submitInput.
-    await refreshMemoryRecallSnapshot(ctx.services);
-    await ctx.orchestrator.handleUserInput(prompt);
-    await done;
-    if (outputFormat === 'json') {
-      process.stdout.write(JSON.stringify({
-        ok: exitCode === 0,
-        response: finalResponse,
-        error: finalError || undefined,
-        stopReason: finalStopReason,
-        sessionId: ctx.runtime.sessionId,
-        model: ctx.runtime.model,
-        provider: ctx.runtime.provider,
-        events: events.length,
-      }, null, 2) + '\n');
-    } else if (outputFormat !== 'stream-json') {
-      process.stdout.write((exitCode === 0 ? finalResponse : finalError) + '\n');
-    } else {
-      process.stdout.write(JSON.stringify({
-        type: exitCode === 0 ? 'TURN_COMPLETED' : 'TURN_ERROR',
-        ok: exitCode === 0,
-        response: finalResponse,
-        error: finalError || undefined,
-        stopReason: finalStopReason,
-      }) + '\n');
-    }
-  } finally {
-    const snapshot = ctx.conversation.toJSON() as Parameters<typeof ctx.shutdown>[0];
-    await ctx.shutdown(snapshot);
-  }
-  return exitCode;
+  return runNativeHeadlessCommand(runtime);
 }
 
 /** @deprecated Use ConfigManager directly. Kept for backward compat with management.ts usages. */

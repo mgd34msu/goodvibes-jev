@@ -453,3 +453,15 @@ describe('a bare `-`', () => {
     expect(flags(['--session', '-']).session).toBe('-');
   });
 });
+
+
+describe('headless literal argument boundary', () => {
+  for (const command of ['run', 'exec', 'e']) {
+    test(`${command} includes literal -- arguments in the original prompt`, () => {
+      const value = parse([command, '--output', 'json', '--', '--intake-cancel', '  exact\r\n😀  ']);
+      expect(value.errors).toEqual([]);
+      expect(value.flags.prompt).toBe('--intake-cancel   exact\r\n😀  ');
+      expect(value.commandArgs).toEqual(['--intake-cancel', '  exact\r\n😀  ']);
+    });
+  }
+});
