@@ -25,7 +25,12 @@ const readings = fakePort((name, question, state) => {
   return choiceAnswer(question, 'watchdog_timeout', 0.97);
 });
 let previousPort: ReturnType<typeof installJudgmentPort>;
-beforeEach(() => { previousPort = installJudgmentPort(readings.port); });
+beforeEach(() => {
+  // Construct the graph before installing the fixture reading: startup installs
+  // its own judgment port, which would otherwise replace this synthetic answer.
+  getTestRuntimeServices();
+  previousPort = installJudgmentPort(readings.port);
+});
 afterEach(() => { installJudgmentPort(previousPort); });
 
 describe('registerAgentRuntimeEvents: AGENT_FAILED child-failure envelope enrichment (SDK 1.6.1)', () => {
@@ -54,7 +59,8 @@ describe('registerAgentRuntimeEvents: AGENT_FAILED child-failure envelope enrich
     const { unsubs, agentStatusIntervalRef } = registerAgentRuntimeEvents({
       runtimeBus,
       domainDispatch,
-      getSystemMessageRouter: () => ({ high: () => {}, low: (message: string) => { lowMessages.push(message); resolveDelivery(); } }),
+      contractRunner: { get: () => null, list: () => [] },
+      getSystemMessageRouter: () => ({ contract: () => {}, high: () => {}, low: (message: string) => { lowMessages.push(message); resolveDelivery(); } }),
       requestRender: () => {},
       configManager,
       agentManager,

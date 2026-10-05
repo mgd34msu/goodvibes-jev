@@ -4,6 +4,8 @@ Product-facing release notes for GoodVibes Agent.
 
 ## Unreleased
 
+- Reuse the shared contract lifecycle bridge so explicitly enabled Slack/Discord notifications retain task names on passed, failed and cancelled work. Restricted notifications still omit content; local contract lines and follow-ups use the same canonical labels.
+
 - Added explicit complete-source JSON-file submission with durable principal-bound request identity, crash-safe original-ID lookup/replay, and separate execution controls.
 
 - Distinguish pending/refused admission and cancellation before admission from actual native execution receipts. Preserve explicit recovery and original requested revisions.
