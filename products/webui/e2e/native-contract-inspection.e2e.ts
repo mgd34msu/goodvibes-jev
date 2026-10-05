@@ -114,7 +114,8 @@ for (const fixture of CAPTURED_CONTRACTS) {
         await expect(fact(condition, 'Revision')).toHaveText(entry.decision.until.revision);
         await expect(detail.getByRole('list', { name: 'Pending native records', exact: true }).getByText(entry.decision.decisionId, { exact: true })).toBeVisible();
       }
-      await decision.scrollIntoViewIfNeeded();
+      // Frame the recorded outcome itself rather than centering a tall receipt.
+      await decision.locator(':scope > details > summary').scrollIntoViewIfNeeded();
       await screenshot(page, `${fixture.name}-semantic-decision`);
     }
     if (record.durableAdmission) {
@@ -139,7 +140,25 @@ for (const fixture of CAPTURED_CONTRACTS) {
     }
     if (record.answer) await expect(detail.getByText(record.answer, { exact: true }).last()).toBeVisible();
     for (const unit of record.units) {
-      if (unit.lastOutput) await expect(detail.getByText(unit.lastOutput, { exact: true })).toHaveJSProperty('textContent', unit.lastOutput);
+      if (unit.lastOutput !== undefined) {
+        // The real records can put the same bytes in Unit answer and Last
+        // output. Select the recorded unit by its own facts, then only its
+        // direct Last output disclosure; neither text order nor title is unique.
+        const unitDetails = detail.locator('details').filter({
+          has: page.locator(':scope > .dv-disclosure__body > .dv-facts > .dv-facts__row')
+            .filter({ has: page.getByText('Unit id', { exact: true }) })
+            .filter({ has: page.getByText(unit.id, { exact: true }) }),
+        });
+        await expect(unitDetails).toHaveCount(1);
+        const lastOutput = unitDetails.locator(':scope > .dv-disclosure__body > details').filter({
+          has: page.locator(':scope > summary').filter({ hasText: /^Last output$/ }),
+        });
+        await expect(lastOutput).toHaveCount(1);
+        const outputText = lastOutput.locator(':scope > .dv-disclosure__body > p');
+        await expect(outputText).toHaveCount(1);
+        await expect(outputText).toBeVisible();
+        await expect(outputText).toHaveJSProperty('textContent', unit.lastOutput);
+      }
     }
     await expectInspectionOnly(detail, daemon, ['passed', 'failed', 'cancelled'].includes(record.status));
     await expectNoHorizontalScroll(page);

@@ -89,8 +89,25 @@ test('true acknowledges cancellation and refreshes contract/list/process data wi
     await expect(detail.getByRole('status').filter({ hasText: ACKNOWLEDGED })).toBeVisible();
     await expectRefreshed(daemon, LIVE_CANCELLATION, before);
     await expect(detail.getByRole('button', { name: 'Cancel contract', exact: true })).toHaveCount(0);
-    await expect(detail.getByText(REASON, { exact: true }).first()).toBeVisible();
+    // The same reason is also recorded in the closed Decision history. Read
+    // the authoritative Error fact in Recorded result, not its first text match.
+    const result = detail.getByRole('region', { name: 'Recorded result', exact: true });
+    const error = result.locator('.dv-facts__row').filter({ has: page.getByText('Error', { exact: true }) }).locator('dd');
+    const status = result.locator('.dv-facts__row').filter({ has: page.getByText('Status', { exact: true }) }).locator('dd');
+    await expect(error).toHaveText(REASON);
+    await expect(error).toBeVisible();
+    await expect(status).toHaveText('cancelled');
+    await expect(status).toBeVisible();
     await expectNoHorizontalScroll(page);
+    for (const [scope, label] of [
+      [detail.getByRole('status').filter({ hasText: ACKNOWLEDGED }), 'acknowledgement'],
+      [result, 'recorded-result'],
+    ] as const) {
+      await scope.scrollIntoViewIfNeeded();
+      const path = test.info().outputPath(`contract-cancellation-${label}.png`);
+      await page.screenshot({ path, fullPage: true });
+      await test.info().attach(`Contract cancellation ${label}`, { path, contentType: 'image/png' });
+    }
     await detail.getByRole('button', { name: 'Refresh contract', exact: true }).click();
     await nextFrames(page);
     expectOnlyCancel(daemon, LIVE_CANCELLATION);
