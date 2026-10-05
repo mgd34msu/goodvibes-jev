@@ -164,14 +164,14 @@ describe('readConversationMessageSnapshots – rejection cases', () => {
     // usage present but missing required inputTokens field
     const input = [{ role: 'assistant', content: 'ok', usage: { outputTokens: 5 } }];
     const restored = readConversationMessageSnapshots(input);
-    expect(restored).toEqual(input);
+    expect<unknown>(restored).toEqual(input);
     expect(() => sumConversationUsage(restored)).toThrow(TypeError);
   });
 
   test('wrong-typed usage is retained for strict SDK billing validation', () => {
     const input = [{ role: 'assistant', content: 'ok', usage: { inputTokens: '10', outputTokens: 5 } }];
     const restored = readConversationMessageSnapshots(input);
-    expect(restored).toEqual(input);
+    expect<unknown>(restored).toEqual(input);
     expect(() => sumConversationUsage(restored)).toThrow(TypeError);
   });
 
