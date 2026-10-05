@@ -27,6 +27,8 @@
 
 ### Added
 
+- Public `registerContractRuntimeEvents` reuses canonical contract labels, operator lines, queued follow-ups and cohort completion in custom runtime bridges, without adding domain dispatch or agent timers.
+
 - Composed native durable runner with schema-5 migration, exact source/binding validation, PR56 captured authority in initial/corrective planning and members, and construction-bound native planner/member tools using the shared recorded autonomous runtime.
 
 - Native contract semantic ownership routes planning, evidence, correction and attempt selection through shared recorded Jev decisions and bound continuations, with persistent budgets, real-condition deferral and shared transport lifecycle; native owner-approval fallbacks are disabled.

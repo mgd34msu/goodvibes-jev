@@ -1,3 +1,5 @@
+import { extractNativeHeadlessOptions } from './native-headless-options.ts';
+import { runNativeHeadlessCommand } from './native-headless-command.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { AgentConfigManager, type ConfigManager } from '../config/index.ts';
@@ -83,7 +85,11 @@ export async function prepareShellCliRuntime(
   roots: ShellEntrypointRoots,
   binary = 'goodvibes-agent',
 ): Promise<PreparedShellCliRuntime> {
-  const cli = parseGoodVibesCli(argv, binary);
+  const native = extractNativeHeadlessOptions(argv);
+  const parsed = parseGoodVibesCli(native.argv, binary);
+  const nativeErrors = [...native.errors];
+  if (native.mode !== 'submit' && parsed.command !== 'run') nativeErrors.push('Native intake recovery requires the run or exec command.');
+  const cli = { ...parsed, errors: [...parsed.errors, ...nativeErrors] };
 
   if (cli.errors.length > 0) {
     writeFatalLine(cli.errors.join('\n'));
@@ -134,7 +140,7 @@ export async function prepareShellCliRuntime(
   // there BEFORE the config manager loads, so this process never resolves a
   // daemon-owned key from a stale surface copy. Idempotent; announces once.
   const daemonConfigNotice = ensureDaemonConfigMigrated(bootstrapHomeDirectory);
-  if (daemonConfigNotice) console.log(`[goodvibes] ${daemonConfigNotice}`);
+  if (daemonConfigNotice) (cli.command === 'run' ? console.error : console.log)(`[goodvibes] ${daemonConfigNotice}`);
   // A `daemon.enabled: false` left over from when the key meant "do not embed a
   // daemon in this process" now means "do not look for a daemon at all", which
   // is how a machine ends up unable to reach the platform with no way to say
@@ -145,7 +151,7 @@ export async function prepareShellCliRuntime(
     homeDir: bootstrapHomeDirectory,
     workingDir: bootstrapWorkingDir,
   });
-  if (daemonEnabledNotice) console.log(`[goodvibes] ${daemonEnabledNotice}`);
+  if (daemonEnabledNotice) (cli.command === 'run' ? console.error : console.log)(`[goodvibes] ${daemonEnabledNotice}`);
   const configManager = new AgentConfigManager({
     workingDir: bootstrapWorkingDir,
     homeDir: bootstrapHomeDirectory,
@@ -193,6 +199,10 @@ export async function prepareShellCliRuntime(
   if (endpointOverrideErrors.length > 0) {
     writeFatalLine(endpointOverrideErrors.join('\n'));
     process.exit(2);
+  }
+
+  if (cli.command === 'run') {
+    process.exit(await runNativeHeadlessCommand({ cli, configManager, workingDirectory: bootstrapWorkingDir, homeDirectory: bootstrapHomeDirectory }, native.mode));
   }
 
   if (cli.command === 'status' || cli.command === 'doctor' || (cli.command === 'onboarding' && cli.commandArgs[0] === 'status')) {

@@ -5,6 +5,8 @@ import modelIdentity from '../fixtures/e2e-judgments/model-identity.json';
 import modelTier from '../fixtures/e2e-judgments/model-tier.json';
 import turnQuestions from '../fixtures/e2e-judgments/turn-questions.json';
 import unavailableModelRoutes from '../fixtures/e2e-judgments/unavailable-model-routes.json';
+import cancelledTurnTimings from '../fixtures/e2e-judgments/cancelled-turn-timings.json';
+import cancelledTurnPending from '../fixtures/e2e-judgments/cancelled-turn-pending.json';
 
 const prompts = ['first words in a brand new workspace', 'please answer the e2e marmot question'] as const;
 const stable = (value: unknown): string => JSON.stringify(value, (_key, entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
@@ -28,9 +30,21 @@ function nativeRequest(template: typeof nativeRoute | typeof nativeTurn, prompt:
   return JSON.parse(JSON.stringify(template).split(JSON.stringify(nativePrompt)).join(JSON.stringify(prompt)));
 }
 
+/** Recorded cancellation diagnostics; only the bounded measured duration may vary. */
+function matchesCancelledTurnTiming(body: unknown): boolean {
+  if (!body || typeof body !== 'object' || !('state' in body) || !body.state || typeof body.state !== 'object' || !('durationMs' in body.state)) return false;
+  const durationMs = body.state.durationMs;
+  if (typeof durationMs !== 'number' || !Number.isSafeInteger(durationMs) || durationMs < 0 || durationMs > 30_000) return false;
+  // Full envelope equality retains every recorded model/question/criterion,
+  // phase, outcome and key. Unknown diagnostic contracts still fail closed.
+  return cancelledTurnTimings.some(recorded => stable(body) === stable({ ...recorded, state: { ...recorded.state, durationMs } }));
+}
+
 /** Exact captured synthetic requests, never an approval/classification shortcut. */
-export function e2eJudgmentAnswers(body: unknown): { kind: 'tier' | 'identity' | 'route' | 'turn' | 'native-route' | 'native-turn'; answers: unknown } | undefined {
+export function e2eJudgmentAnswers(body: unknown): { kind: 'tier' | 'identity' | 'route' | 'turn' | 'native-route' | 'native-turn' | 'cancelled-turn-timing' | 'cancelled-turn-pending'; answers: unknown } | undefined {
   const serialized = stable(body);
+  if (matchesCancelledTurnTiming(body)) return { kind: 'cancelled-turn-timing', answers: { slow: { type: 'noul', noul: 0 } } };
+  if (serialized === stable(cancelledTurnPending)) return { kind: 'cancelled-turn-pending', answers: { pending: { type: 'noul', noul: 0 } } };
   if (serialized === stable(modelTier)) return { kind: 'tier', answers: {
     frontier: { type: 'noul', noul: 0 }, small: { type: 'noul', noul: 1 },
   } };
@@ -61,6 +75,8 @@ export function startE2EJudgments() {
   const accepted: string[] = [];
   const rejected: unknown[] = [];
   const unexpected: unknown[] = [];
+  const unavailableDiagnostics: unknown[] = [];
+  let rejectCancellationTimings = false;
   // Captured background registry probes intentionally receive no synthetic
   // classification. They stay unavailable; any new semantic request is a failure.
   const expectedNegative = new Set(unavailableModelRoutes.map(stable));
@@ -74,10 +90,15 @@ export function startE2EJudgments() {
       if (!expectedNegative.has(stable(body))) unexpected.push(body);
       return Response.json({ error: { message: 'Unknown deterministic E2E judgment; rejected' } }, { status: 422 });
     }
+    if (rejectCancellationTimings && reading.kind === 'cancelled-turn-timing') {
+      unavailableDiagnostics.push(body);
+      return Response.json({ error: { message: 'Recorded cancellation timing diagnostic is unavailable' } }, { status: 422 });
+    }
     accepted.push(reading.kind);
     return Response.json({ model: conversationRoute.model, answers: reading.answers, usage: { input_tokens: 10, output_tokens: 3 } });
   } });
-  return { baseURL: `http://127.0.0.1:${server.port}`, accepted, rejected, unexpected,
+  return { baseURL: `http://127.0.0.1:${server.port}`, accepted, rejected, unexpected, unavailableDiagnostics,
+    rejectRecordedCancellationTimings() { rejectCancellationTimings = true; },
     assertNoUnexpected: () => { if (unexpected.length) throw new Error(`E2E encountered ${unexpected.length} unknown judgment request(s): ${JSON.stringify(unexpected)}`); },
     stop: () => { void server.stop(true); },
   };

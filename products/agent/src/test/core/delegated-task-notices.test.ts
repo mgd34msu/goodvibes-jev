@@ -27,8 +27,9 @@ function wired() {
   };
   const { unsubs, agentStatusIntervalRef } = registerAgentRuntimeEvents({
     runtimeBus: bus,
+    contractRunner: { get: () => null, list: () => [] },
     domainDispatch: new Proxy({}, { get: () => () => {} }) as never,
-    getSystemMessageRouter: () => ({ low: (m) => conversation.addSystemMessage(m), high: (m) => conversation.addSystemMessage(m) }),
+    getSystemMessageRouter: () => ({ contract: () => {}, low: (m) => conversation.addSystemMessage(m), high: (m) => conversation.addSystemMessage(m) }),
     requestRender: () => {},
     configManager: { get: () => undefined } as never,
     agentManager: { getStatus: (id: string) => records[id], list: () => [] } as never,

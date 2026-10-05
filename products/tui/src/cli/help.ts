@@ -151,8 +151,8 @@ const COMMAND_HELP: Record<string, CommandHelp> = {
     examples: ['', 'tui ~/work/project', '"review this repo"'],
   },
   run: {
-    usage: ['run [prompt] [--output text|json|stream-json]', 'exec [prompt]'],
-    summary: 'Run a single non-interactive agent turn and write the result to stdout.',
+    usage: ['run [prompt] [--output text|json|stream-json]', 'exec [prompt]', 'run --intake-status|--intake-retry|--intake-resume|--intake-cancel'],
+    summary: 'Capture the exact original prompt through native daemon admission. Status is read-only; recovery reuses the saved input. Use -- before literal prompt tokens.',
     examples: ['run "summarize the current project"', 'run --output json "list risks"', 'exec --output stream-json "fix lint"'],
   },
   onboarding: {
