@@ -71,6 +71,14 @@ for (const scenario of ['allowed', 'revoke-after-eval', 'revoke-after-history'] 
       rule: { id: 'deny-original-repl-private', type: 'path-scope', origin: 'user', effect: 'deny', toolPattern: 'read', pathPatterns: [denied] },
       createdAt: Date.now(), tier: 'path', tool: 'read',
     });
+    // This fixture runs Bun (including its node:fs built-in), never a Node/npm
+    // executable. Keep unused optional Node admission out of its readset using
+    // the real owner rule store, rather than replacing the default tool backend.
+    await runtime.userPermissionRuleStore.add({
+      rule: { id: 'deny-unused-repl-node', type: 'path-scope', origin: 'user', effect: 'deny', toolPattern: 'read', pathPatterns: ['/captured-runtime/bin/node'] },
+      createdAt: Date.now(), tier: 'path', tool: 'read',
+    });
+    expect(await runtime.permissionManager.readAccess('/captured-runtime/bin/node')).toBe('restricted');
     expect(runtime.userPermissionRuleStore.rules().some((rule) => rule.id === 'deny-original-repl-private')).toBe(true);
     expect(await runtime.permissionManager.readAccess(denied)).toBe('restricted');
     expect(await runtime.permissionManager.readAccess(join(root, 'input.txt'))).toBe('allow');
