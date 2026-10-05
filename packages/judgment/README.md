@@ -116,6 +116,12 @@ immediately, including during long provider-directed waits. Custom authority
 sources with no invalidation signal are rechecked before every transmission. Caller cancellation or shutdown ends the pending
 reading without an answer.
 
+The engine's existing endpoint, key-source, model and attempt-timeout settings
+are captured together before asynchronous credential resolution. A settings
+edit applies to the next reading; it cannot send an already acquired credential
+to a newly selected endpoint. Pending retries keep their original configuration
+and model until they answer or their owning lifecycle cancels them.
+
 Failover requires pinned `jev-X.Y.Z` model identifiers, with optional version
 suffixes. A fallback is eligible only when its model equals the logical request's
 model exactly. A different returned version fails closed because the thresholds
