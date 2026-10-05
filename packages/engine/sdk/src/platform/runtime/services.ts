@@ -150,6 +150,8 @@ import {
 } from './memory/index.js';
 
 export interface RuntimeServicesOptions {
+  /** Explicit absolute ordinary-Bun runtime for contained captured evaluation. */
+  readonly capturedBunRuntimeExecutable?: string | undefined;
   readonly runtimeBus: RuntimeEventBus;
   readonly runtimeStore: RuntimeStore;
   readonly configManager: ConfigManager;
@@ -432,6 +434,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // (conversation sink, cancellation source) are easy to omit and silent when
   // omitted.
   const { archetypeLoader, agentMessageBus, agentOrchestrator, agentManager } = createAgentGraph({
+    capturedBunRuntimeExecutable: options.capturedBunRuntimeExecutable,
     runtimeBus: options.runtimeBus,
     configManager,
     providerRegistry,

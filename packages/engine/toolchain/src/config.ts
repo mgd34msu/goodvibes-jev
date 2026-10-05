@@ -43,6 +43,8 @@ export interface BinaryTarget {
   readonly nativeAddonPackage?: string;
   /** Native-addon filename, e.g. `vec0.so` / `vec0.dylib`. */
   readonly nativeAddonFile?: string;
+  /** Stage an ordinary pinned Bun interpreter beside each compiled Linux artifact. */
+  readonly capturedBunRuntime?: '1.3.14';
 }
 
 /** build-binaries parameters. */
@@ -211,6 +213,7 @@ const BinaryTargetSchema = z.object({
   daemonArtifact: z.string().optional(),
   nativeAddonPackage: z.string().optional(),
   nativeAddonFile: z.string().optional(),
+  capturedBunRuntime: z.literal('1.3.14').optional(),
 }).catchall(z.unknown());
 
 const BuildConfigSchema = z.object({

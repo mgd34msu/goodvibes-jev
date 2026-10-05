@@ -203,12 +203,62 @@ All sections are optional. A repo declares only the tools it uses. Import the
 |-------|---------|
 | `packageName` (required) | The repo's primary npm package name. |
 | `sdkPin` | `{ sdkPackage, pinSource: "dependencies"｜"devDependencies", lockfile, overlayMarker, sourceRoots[], enforceExportsMap }`: parameterizes the SDK-pin tri-agreement. The agent bundles the SDK as a `devDependencies` pin; webui sets `enforceExportsMap: true`. |
-| `build` | `{ appEntrypoint, daemonEntrypoint?, outDir, addonOutDir, targets[], prebuild[][] }`. A target carries `{ key, bunTarget, appArtifact, daemonArtifact?, nativeAddonPackage?, nativeAddonFile? }`. Presence of `daemonEntrypoint` + a target's `daemonArtifact` builds the daemon leg. |
+| `build` | `{ appEntrypoint, daemonEntrypoint?, outDir, addonOutDir, targets[], prebuild[][] }`. A target carries `{ key, bunTarget, appArtifact, daemonArtifact?, nativeAddonPackage?, nativeAddonFile?, capturedBunRuntime? }`. Presence of `daemonEntrypoint` + a target's `daemonArtifact` builds the daemon leg. |
 | `coverage` | `{ funcsFloor, linesFloor, command[] }`: the aggregate coverage floor that only rises. |
 | `smoke` | `{ bannerPrefix, forbiddenStrings[], binaryDefault }`: post-build binary smoke. |
 | `releaseCut` | `{ branch, versionFiles[], syncCommands[][], commitPaths[], changelogHeading: "bracket"｜"plain", changelogInsertMarker: "first-separator"｜"top" }`. |
 | `publish` | `{ packageName, defaultRegistry, requiredTarballPaths[], forbiddenTarballPrefixes[], maxTarballBytes }`. |
 | `perJobGreen` | `{ owner, repo, workflow, event, pollIntervalMs, deadlineMs }` (the CLI also accepts `--repo/--sha/--workflow` and `GITHUB_REPOSITORY`/`GITHUB_SHA`). |
+
+### Compiled Linux captured-REPL runtime bundle
+
+The private Jev Agent and TUI Linux x64/arm64 target rows declare
+`capturedBunRuntime: "1.3.14"`. A successful `build-binaries` result includes,
+for each compiled app (and configured daemon leg):
+
+- `<artifact>`: the compiled product
+- `<artifact>.bun`: a separate ordinary Bun interpreter, executable mode 0755
+- `<artifact>.bun.LICENSE.md`: the pinned upstream mixed-license notice,
+  source location, and JavaScriptCore/WebKit relinking instructions
+- `<artifact>.bun.json`: version, target, source, and runtime SHA-256 provenance
+
+The compiler's native ordinary Bun can supply the runtime when its version and
+ELF architecture match. It must evaluate a real `--print` probe from an empty
+working directory with a minimal environment. Otherwise the build resolves the
+explicit official target package, or fetches the exact reviewed 1.3.14 package
+from the npm registry with package scripts disabled. The only admitted package
+sources are `@oven/bun-linux-x64-baseline` and `@oven/bun-linux-aarch64`; archive
+SHA-512, payload SHA-256, package name/version/platform, regular-file archive
+entries, package boundaries, and ELF machine type are checked before staging.
+The compile target and requested runtime target must agree. A staging failure
+makes the entire target unsuccessful. Runtime launch never searches PATH or
+fetches a replacement.
+
+Move the executable and its three companions together. If the executable is
+renamed, apply the same rename prefix to all companions: the runtime is resolved
+as `${process.execPath}.bun`. The current monorepo Agent/TUI CI archives and
+provenance manifests include and verify all companions. The private TUI launcher
+runs the dist artifact without renaming it; the Agent source launcher runs under
+the caller's ordinary Bun. macOS and Windows target rows deliberately do not
+advertise captured-REPL support and do not stage this Linux-only runtime.
+
+This change covers the private workspace build and current monorepo CI artifact
+transport. Legacy separately published product installers, updaters, platform
+npm packages, and release workflows are not a supported sidecar distribution
+path; their executable-only copy/download/rename operations must be migrated
+before making that release claim. No release or deployment is performed by
+this packaging change.
+
+Bun's own code is MIT-licensed, but the ordinary binary statically links
+JavaScriptCore/WebKit under LGPL and includes additional libraries under other
+licenses. The npm package's `license: "MIT"` metadata does not describe the
+whole binary. The retained upstream notice is from
+[Bun 1.3.14](https://github.com/oven-sh/bun/blob/bun-v1.3.14/LICENSE.md), with
+[matching Bun source](https://github.com/oven-sh/bun/tree/bun-v1.3.14) and its
+[patched WebKit source](https://github.com/oven-sh/webkit). Before a public binary
+release, verify and supply the corresponding source/object/relink materials and
+all required third-party license texts for the exact distributed binaries.
+Copying this notice alone does not close those redistribution obligations.
 
 ### Reusable workflows
 

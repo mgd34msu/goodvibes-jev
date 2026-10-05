@@ -17,6 +17,7 @@
  */
 
 import { join } from 'node:path';
+import { resolveProcessCapturedBunRuntimeExecutable } from './captured-bun-runtime.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { AgentMessageBus } from '../agents/message-bus.js';
@@ -26,6 +27,8 @@ import { AgentManager } from '../tools/agent/index.js';
 import type { RuntimeEventBus } from './events/index.js';
 
 export interface AgentGraphOptions {
+  /** Absolute ordinary-Bun declaration; defaults to this build's runtime. */
+  readonly capturedBunRuntimeExecutable?: string | undefined;
   readonly runtimeBus: RuntimeEventBus;
   readonly configManager: ConfigManager;
   readonly providerRegistry: ProviderRegistry;
@@ -44,7 +47,8 @@ export interface AgentGraph {
 export function createAgentGraph(options: AgentGraphOptions): AgentGraph {
   const agentMessageBus = new AgentMessageBus(); agentMessageBus.setRuntimeBus(options.runtimeBus);
   const archetypeLoader = new ArchetypeLoader(join(options.workingDirectory, '.goodvibes', 'agents'));
-  const agentOrchestrator = new AgentOrchestrator({ messageBus: agentMessageBus });
+  const agentOrchestrator = new AgentOrchestrator({ messageBus: agentMessageBus,
+    capturedBunRuntimeExecutable: options.capturedBunRuntimeExecutable ?? resolveProcessCapturedBunRuntimeExecutable() });
   agentOrchestrator.setRuntimeBus(options.runtimeBus);
   const agentManager = new AgentManager({
     archetypeLoader,

@@ -46,6 +46,9 @@ jobs:
           bun products/tui/scripts/ci-artifact.ts verify "$GITHUB_SHA" "$TUI_SOURCE_HEAD"
           tar -czf /tmp/tui-native-linux-x64.tgz \
             products/tui/dist/goodvibes-linux-x64 \
+            products/tui/dist/goodvibes-linux-x64.bun \
+            products/tui/dist/goodvibes-linux-x64.bun.LICENSE.md \
+            products/tui/dist/goodvibes-linux-x64.bun.json \
             products/tui/dist/lib/sqlite-vec-linux-x64/vec0.so \
             products/tui/dist/ci-artifact.json
       - name: Upload TUI native artifact
@@ -155,6 +158,9 @@ jobs:
         run: |
           tar -czf /tmp/workspace-build-output.tgz packages/engine/*/dist packages/judgment/dist \
             products/agent/dist/goodvibes-agent-linux-x64 products/agent/dist/lib \
+            products/agent/dist/goodvibes-agent-linux-x64.bun \
+            products/agent/dist/goodvibes-agent-linux-x64.bun.LICENSE.md \
+            products/agent/dist/goodvibes-agent-linux-x64.bun.json \
             products/agent/dist/ci-artifact.json
       - name: Upload dist artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -428,7 +434,7 @@ jobs:
               bun packages/engine/scripts/test.ts test/exec-interactive.test.ts test/exec-sandbox.test.ts test/exec-containment-proof.test.ts test/captured-exec.test.ts test/captured-exec-modes.test.ts test/captured-exec-file-ops.test.ts test/captured-exec-runtime-input.test.ts
               ;;
             repl)
-              bun packages/engine/scripts/test.ts test/captured-repl.test.ts test/contract/actual-repl-input-authority.test.ts test/contract/actual-repl-run-history.test.ts test/contract/actual-repl-history-cancellation.test.ts
+              bun packages/engine/scripts/test.ts test/captured-repl.test.ts test/captured-repl-compiled.test.ts test/captured-bun-runtime-input.test.ts test/contract/actual-repl-input-authority.test.ts test/contract/actual-repl-run-history.test.ts test/contract/actual-repl-history-cancellation.test.ts
               ;;
             graph-runtime)
               bun packages/engine/scripts/test.ts test/contract/actual-input-authority-graph.test.ts test/contract/actual-edit-write-input-authority.test.ts test/contract/actual-validator-runtime.test.ts

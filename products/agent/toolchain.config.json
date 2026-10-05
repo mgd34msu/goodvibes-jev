@@ -19,6 +19,7 @@
       {
         "key": "linux-x64",
         "bunTarget": "bun-linux-x64",
+        "capturedBunRuntime": "1.3.14",
         "appArtifact": "goodvibes-agent-linux-x64",
         "nativeAddonPackage": "sqlite-vec-linux-x64",
         "nativeAddonFile": "vec0.so"
@@ -26,6 +27,7 @@
       {
         "key": "linux-arm64",
         "bunTarget": "bun-linux-arm64",
+        "capturedBunRuntime": "1.3.14",
         "appArtifact": "goodvibes-agent-linux-arm64",
         "nativeAddonPackage": "sqlite-vec-linux-arm64",
         "nativeAddonFile": "vec0.so"

@@ -1,3 +1,4 @@
+import { projectCapturedExecBunRuntime, type CapturedExecBunRuntimeInput } from './captured-bun-runtime-input.js';
 import { collectCommandNodes } from '../../runtime/permissions/normalization/ast.js';
 import { parseAST } from '../../runtime/permissions/normalization/parser.js';
 import { MAX_INPUT_LENGTH, MAX_TOKEN_COUNT, tokenize } from '../../runtime/permissions/normalization/tokenizer.js';
@@ -28,6 +29,8 @@ import type { ReadAccessFilter } from '../shared/read-access.js';
 import type { ExecCommandInput, ExecCommandResult, ExecFileOp } from './schema.js';
 
 export interface CapturedExecAuthority {
+  readonly bunRuntimeInput?: CapturedExecBunRuntimeInput | undefined;
+  readonly bunRuntimeAdmission?: ((signal?: AbortSignal) => Promise<CapturedExecBunRuntimeInput>) | undefined;
   readonly nodeRuntimeInput?: CapturedExecNodeRuntimeInput | undefined;
   readonly nodeRuntimeAdmission?: ((signal?: AbortSignal) => Promise<CapturedExecNodeRuntimeInput>) | undefined;
   readonly nodeRuntimeUnavailable?: string | undefined;
@@ -72,13 +75,13 @@ function socketFilter(network: 'enabled' | 'disabled' = 'disabled'): Buffer {
   });
   return bytes;
 }
-function runtimeArgv(nodeRuntime = false): string[] {
+function runtimeArgv(nodeRuntime = false, bunRuntime = false): string[] {
   const argv = ['--die-with-parent', '--new-session', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--cap-drop', 'ALL',
     '--ro-bind', '/usr/bin', '/usr/bin', '--ro-bind', '/usr/lib', '/usr/lib',
     '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib'];
   if (existsSync('/usr/lib64')) argv.push('--ro-bind', '/usr/lib64', '/usr/lib64', '--symlink', 'usr/lib64', '/lib64');
   argv.push('--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--dir', '/home/captured');
-  if (process.versions.bun || !nodeRuntime) argv.push('--ro-bind', process.execPath, `/captured-runtime/bin/${process.versions.bun ? 'bun' : 'node'}`);
+  if (!bunRuntime && (process.versions.bun || !nodeRuntime)) argv.push('--ro-bind', process.execPath, `/captured-runtime/bin/${process.versions.bun ? 'bun' : 'node'}`);
   return argv;
 }
 
@@ -102,6 +105,42 @@ export async function probeCapturedExecAvailability(): Promise<CapturedExecAvail
   } catch { /* A fixed public capability diagnosis never includes host output. */ }
   finally { if (dir) await rm(dir, { recursive: true, force: true }); }
   return { available: false, reason: 'unusable-boundary', message: 'The captured exec bubblewrap mount/PID/seccomp boundary could not be established on this host. Host execution is unavailable as a fallback.' };
+}
+/** Validate an admitted interpreter in an empty boundary before project input
+ * can run. A compiled product must never be treated as an ordinary Bun CLI.
+ */
+export async function probeCapturedBunRuntime(executable: string, signal?: AbortSignal): Promise<boolean> {
+  signal?.throwIfAborted();
+  if (!(await probeCapturedExecAvailability()).available) return false;
+  const temporary = await mkdtemp(join(tmpdir(), 'captured-bun-probe-'));
+  let fd: number | undefined;
+  try {
+    const filter = join(temporary, 'sockets.bpf');
+    await writeFile(filter, socketFilter());
+    fd = openSync(filter, 'r');
+    signal?.throwIfAborted();
+    const argv = [...runtimeArgv(false, true), '--ro-bind', executable, '/captured-runtime/bin/bun',
+      '--chdir', '/tmp', '--seccomp', '3', '--', '/captured-runtime/bin/bun', '--no-env-file', '--config=/dev/null',
+      '--print', 'typeof Bun === "object" && typeof Bun.version === "string" ? "GOODVIBES_CAPTURED_ORDINARY_BUN" : "INVALID"'];
+    const child = spawn('/usr/bin/bwrap', argv, { env: {}, stdio: ['ignore', 'pipe', 'ignore', fd] });
+    closeSync(fd); fd = undefined;
+    let output = ''; let stopped = false;
+    const stop = (): void => { stopped = true; child.kill('SIGKILL'); };
+    const timer = setTimeout(stop, 5000);
+    signal?.addEventListener('abort', stop, { once: true });
+    if (signal?.aborted) stop();
+    try {
+      child.stdout!.on('data', (data: Buffer) => { output += data.toString(); if (output.length > 512) stop(); });
+      const code = await new Promise<number | null>((resolveExit) => {
+        child.once('error', () => resolveExit(null)); child.once('close', resolveExit);
+      });
+      signal?.throwIfAborted();
+      return !stopped && code === 0 && output === 'GOODVIBES_CAPTURED_ORDINARY_BUN\n';
+    } finally { clearTimeout(timer); signal?.removeEventListener('abort', stop); }
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+    await rm(temporary, { recursive: true, force: true });
+  }
 }
 function within(root: string, path: string): boolean {
   const rel = relative(root, path);
@@ -258,13 +297,14 @@ export async function runCapturedCommand(
     observer.onFileOperations?.(fileOperations);
     const dependencies = await projectCapturedExecDependencies(binding, temporary, operationSignal, projection);
     const nodeRuntime = await projectCapturedExecNodeRuntime(binding, temporary, operationSignal);
-    checkDependencies = async () => { await dependencies.check(); await nodeRuntime.check(); };
+    const bunRuntime = await projectCapturedExecBunRuntime(binding, temporary, operationSignal);
+    checkDependencies = async () => { await dependencies.check(); await nodeRuntime.check(); await bunRuntime.check(); };
     await check();
     const filterPath = join(temporary, 'sockets.bpf');
     await writeFile(filterPath, socketFilter(network));
     const fd = openSync(filterPath, 'r');
-    const argv = runtimeArgv(Boolean(binding.nodeRuntimeInput || binding.nodeRuntimeAdmission));
-    argv.push(...nodeRuntime.argv);
+    const argv = runtimeArgv(Boolean(binding.nodeRuntimeInput || binding.nodeRuntimeAdmission), Boolean(binding.bunRuntimeInput));
+    argv.push(...nodeRuntime.argv, ...bunRuntime.argv);
     argv.push(contractInputAuthorityMutable(binding.authority) ? '--bind' : '--ro-bind', projection, root,
       '--chdir', cwd, '--seccomp', '3');
     for (const mount of dependencies.mounts) argv.push('--ro-bind', mount.source, mount.target);

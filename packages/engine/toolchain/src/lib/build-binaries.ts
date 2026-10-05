@@ -13,6 +13,7 @@ import type { Exec, Logger } from './effects.js';
 import { realExec, consoleLogger } from './effects.js';
 import type { BinaryTarget, BuildConfig } from '../config.js';
 import { describeMissingRequired, resolveOptionalExternals, type DependencyManifest } from './optional-externals.js';
+import { provideCapturedBunRuntime } from './captured-bun-runtime.js';
 
 /** Resolve which targets to build and whether the daemon leg is forced off/only. */
 export interface TargetSelection {
@@ -73,6 +74,8 @@ export interface RunBuildOptions {
   readonly nativeKey: string;
   /** Copies a resolved native addon into place; returns false if it could not be provided. Injected so the real fs copy stays out of the policy. */
   readonly provideAddon?: (target: BinaryTarget, sameHost: boolean) => boolean;
+  /** Real staging by default; injected only to test build orchestration. */
+  readonly provideBunRuntime?: (target: BinaryTarget, artifacts: readonly string[]) => void;
   /**
    * Manifests whose `optionalDependencies` may be externalised and whose
    * `dependencies` must be present. Omit both this and `isPackageInstalled`
@@ -91,11 +94,17 @@ export function runBuildBinaries(options: RunBuildOptions): BuildOutcome[] {
   const exec = options.exec ?? realExec;
   const logger = options.logger ?? consoleLogger;
   const { config, selection, cwd } = options;
+  const compiler = process.versions.bun ? process.execPath : 'bun';
+  for (const target of selection.targets) {
+    if (target.capturedBunRuntime && process.versions.bun !== target.capturedBunRuntime) {
+      throw new Error(`Build ${target.key} with ordinary Bun ${target.capturedBunRuntime}; the compiler and captured runtime versions must match`);
+    }
+  }
 
   for (const cmd of config.prebuild) {
     const [bin, ...args] = cmd;
     if (!bin) continue;
-    const res = exec(bin, args, { cwd });
+    const res = exec(bin === 'bun' ? compiler : bin, args, { cwd });
     if (res.status !== 0) throw new Error(`prebuild failed: ${cmd.join(' ')}\n${res.stderr}`);
   }
 
@@ -128,24 +137,37 @@ export function runBuildBinaries(options: RunBuildOptions): BuildOutcome[] {
     ];
     let ok = true;
     let detail = '';
+    const artifacts: string[] = [];
 
     if (!selection.daemonOnly) {
       const outfile = `${config.outDir}/${target.appArtifact}`;
       const args = buildCompileArgs(config.appEntrypoint, target.bunTarget, outfile, externals);
-      const res = exec('bun', config.compileDriver ? [config.compileDriver, ...args.slice(1)] : args, { cwd });
+      const res = exec(compiler, config.compileDriver ? [config.compileDriver, ...args.slice(1)] : args, { cwd });
       if (res.status !== 0) { ok = false; detail = `app compile failed (${res.status})`; }
+      else artifacts.push(target.appArtifact);
     }
 
     if (ok && config.daemonEntrypoint && target.daemonArtifact) {
       const outfile = `${config.outDir}/${target.daemonArtifact}`;
       const args = buildCompileArgs(config.daemonEntrypoint, target.bunTarget, outfile, externals);
-      const res = exec('bun', config.compileDriver ? [config.compileDriver, ...args.slice(1)] : args, { cwd });
+      const res = exec(compiler, config.compileDriver ? [config.compileDriver, ...args.slice(1)] : args, { cwd });
       if (res.status !== 0) { ok = false; detail = `daemon compile failed (${res.status})`; }
+      else artifacts.push(target.daemonArtifact);
     }
 
     if (ok && target.nativeAddonPackage && target.nativeAddonFile && options.provideAddon) {
       const provided = options.provideAddon(target, target.key === options.nativeKey);
       if (!provided) { ok = false; detail = `native addon ${target.nativeAddonPackage}/${target.nativeAddonFile} unavailable`; }
+    }
+
+    if (ok && target.capturedBunRuntime) {
+      try {
+        if (options.provideBunRuntime) options.provideBunRuntime(target, artifacts);
+        else provideCapturedBunRuntime({ root: cwd, outDir: config.outDir, target, artifacts });
+      } catch (error) {
+        ok = false;
+        detail = `Bun runtime sidecar unavailable: ${error instanceof Error ? error.message : String(error)}`;
+      }
     }
 
     outcomes.push({ key: target.key, ok, detail: ok ? 'built' : detail });
