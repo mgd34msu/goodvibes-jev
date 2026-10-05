@@ -52,6 +52,8 @@ test('202 is queued, collection is delivered, consumption is completed without r
   expect(fixture.writes).toHaveLength(1);
   expect(fixture.steerRequests).toHaveLength(0);
   await expectNoHorizontalScroll(page);
+  await receipt(page).scrollIntoViewIfNeeded();
+  await expect(receipt(page)).toBeVisible();
   await testInfo.attach('completed follow-up receipt', { body: await page.screenshot(), contentType: 'image/png' });
 });
 
