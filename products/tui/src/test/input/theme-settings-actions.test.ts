@@ -8,28 +8,40 @@
  */
 
 import { afterEach, describe, expect, test } from 'bun:test';
+import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { getBundledTheme, resolveTheme } from '@goodvibes-jev/engine/sdk/platform/presentation';
+import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import type { CommandContext } from '../../input/command-registry.ts';
 import { SelectionModal, type SelectionItem, type SelectionResult } from '../../input/selection-modal.ts';
 import { buildThemePickerItems, openThemePicker } from '../../input/theme-settings-actions.ts';
-import { getActiveThemeName, listThemeChoices, setActiveThemeName } from '../../renderer/theme.ts';
+import { activeTokens, activeThemeMode, getActiveThemeName, listThemeChoices, setActiveThemeMode, setActiveThemeName } from '../../renderer/theme.ts';
 
-afterEach(() => setActiveThemeName('goodvibes'));
+afterEach(() => {
+  setActiveThemeName('goodvibes');
+  setActiveThemeMode('dark');
+});
 
 interface Harness {
   readonly ctx: CommandContext;
   readonly modal: SelectionModal;
-  readonly stored: Map<string, unknown>;
+  readonly configManager: ConfigManager;
+  reload(): ConfigManager;
   repaints: number;
   resolve(result: SelectionResult | null): void;
 }
 
 function harness(configured: unknown): Harness {
   const modal = new SelectionModal();
-  const stored = new Map<string, unknown>([['display.theme', configured]]);
+  const configDir = makeProjectTempDir('theme-picker');
+  const configManager = new ConfigManager({ configDir });
+  configManager.setDynamic('display.theme', configured);
+  configManager.set('display.themeMode', 'light');
+  setActiveThemeMode('light');
   let callback: ((result: SelectionResult | null) => void) | null = null;
   const h: Harness = {
     modal,
-    stored,
+    configManager,
+    reload: () => new ConfigManager({ configDir, readOnly: true }),
     repaints: 0,
     resolve: (result) => {
       modal.close();
@@ -41,10 +53,7 @@ function harness(configured: unknown): Harness {
         modal.open(title, items, opts);
       },
       platform: {
-        configManager: {
-          get: (key: string) => stored.get(key),
-          setDynamic: (key: string, value: unknown) => { stored.set(key, value); },
-        },
+        configManager,
       },
       requestFullRepaint: () => { h.repaints++; },
       renderRequest: () => {},
@@ -83,6 +92,11 @@ describe('openThemePicker', () => {
     expect(h.repaints).toBeGreaterThan(0);
     h.modal.moveDown();
     expect(getActiveThemeName()).toBe('catppuccin');
+    expect(activeTokens()).toEqual(resolveTheme(getBundledTheme('catppuccin')!.json, 'light'));
+    expect(h.configManager.get('display.theme')).toBe('goodvibes');
+    expect(h.reload().get('display.theme')).toBe('goodvibes');
+    expect(activeThemeMode()).toBe('light');
+    expect(h.configManager.get('display.themeMode')).toBe('light');
   });
 
   test('Esc restores the theme that was active when the picker opened', () => {
@@ -94,7 +108,11 @@ describe('openThemePicker', () => {
     expect(getActiveThemeName()).not.toBe('dracula');
     h.resolve(null);
     expect(getActiveThemeName()).toBe('dracula');
-    expect(h.stored.get('display.theme')).toBe('dracula');
+    expect(h.configManager.get('display.theme')).toBe('dracula');
+    expect(h.reload().get('display.theme')).toBe('dracula');
+    expect(activeTokens()).toEqual(resolveTheme(getBundledTheme('dracula')!.json, 'light'));
+    expect(activeThemeMode()).toBe('light');
+    expect(h.reload().get('display.themeMode')).toBe('light');
   });
 
   test('Enter stores the choice in display.theme and keeps it active', () => {
@@ -105,8 +123,22 @@ describe('openThemePicker', () => {
     expect(item.id).toBe('gruvbox');
     expect(getActiveThemeName()).toBe('gruvbox'); // searching previews too
     h.resolve({ item, action: 'select' });
-    expect(h.stored.get('display.theme')).toBe('gruvbox');
+    expect(h.configManager.get('display.theme')).toBe('gruvbox');
+    expect(h.reload().get('display.theme')).toBe('gruvbox');
     expect(getActiveThemeName()).toBe('gruvbox');
+    expect(activeTokens()).toEqual(resolveTheme(getBundledTheme('gruvbox')!.json, 'light'));
+    expect(activeThemeMode()).toBe('light');
+    expect(h.reload().get('display.themeMode')).toBe('light');
+
+    // A second open starts on the committed choice; cancelling its preview
+    // restores that choice without writing the preview to the enum setting.
+    openThemePicker(h.ctx);
+    expect(h.modal.getSelected()?.id).toBe('gruvbox');
+    h.modal.setQuery('nord');
+    expect(getActiveThemeName()).toBe('nord');
+    h.resolve(null);
+    expect(getActiveThemeName()).toBe('gruvbox');
+    expect(h.reload().get('display.theme')).toBe('gruvbox');
   });
 });
 

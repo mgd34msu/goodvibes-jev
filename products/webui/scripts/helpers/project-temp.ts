@@ -45,10 +45,11 @@
  */
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** Repo root, resolved from this file's location (scripts/helpers/..). */
-export const REPO_ROOT = resolve(import.meta.dir, '../..');
+export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 /** In-repo scratch root. Already listed in .gitignore. */
 export const PROJECT_TEMP_ROOT = join(REPO_ROOT, '.test-tmp');
@@ -63,6 +64,7 @@ export const PROJECT_TEMP_ROOT = join(REPO_ROOT, '.test-tmp');
  *                          scripts/generate-*.test.ts
  * - 'webui-check-workflows-' scripts/check-workflows.test.ts
  * - 'webui-sdk-dev-'       scripts/sdk-dev.test.ts
+ * - 'webui-terminal-theme-' e2e/support/terminal-theme-host.ts
  * - 'temp-root-proof-'     scripts/test-temp-root.test.ts, only reaches the real
  *                          tmpdir if the preload redirect it tests has broken
  * - 'pack-bundle-'         scripts/pack-bundle.test.ts
@@ -83,6 +85,7 @@ export const KNOWN_TEMP_PREFIXES = [
   'webui-check-workflows-',
   'webui-sdk-dev-',
   'webui-types-hook-',
+  'webui-terminal-theme-',
   'temp-root-proof-',
   'pack-bundle-',
   'gv-live-smoke-home-',

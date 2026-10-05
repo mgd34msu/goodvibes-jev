@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import { wireShellUiOpeners } from '../../shell/ui-openers.ts';
 import { createTestManagers } from '../helpers/test-managers.ts';
+import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { getBundledTheme, resolveTheme } from '@goodvibes-jev/engine/sdk/platform/presentation';
+import { dirname } from 'node:path';
+import { SettingsModal } from '../../input/settings-modal.ts';
+import { activeTokens, getActiveThemeMode, getActiveThemeName, listThemeChoices, normalizeThemeName, setActiveThemeMode, setActiveThemeName } from '../../renderer/theme.ts';
+import { resetTerminalPaletteForTests } from '../../renderer/terminal-palette.ts';
 
 describe('wireShellUiOpeners', () => {
   let commandContext: Record<string, unknown>;
@@ -32,8 +38,8 @@ describe('wireShellUiOpeners', () => {
       configManager: testManagers.configManager,
       providerRegistry: {} as never,
       runtime: {} as never,
-      featureFlags: {} as never,
-      mcpRegistry: {} as never,
+      featureFlags: { getAll: () => new Map() } as never,
+      mcpRegistry: { listServerSecurity: () => [] } as never,
       subscriptionManager: testManagers.subscriptionManager,
       serviceRegistry: testManagers.serviceRegistry,
       getConfiguredProviderIds: () => [],
@@ -42,6 +48,61 @@ describe('wireShellUiOpeners', () => {
       homeDirectory: process.env['HOME'] ?? process.cwd(),
       render,
     });
+  });
+
+  test('theme enum arrows persist and apply through the real settings opener without changing themeMode', () => {
+    const cm = testManagers.configManager;
+    const modal = new SettingsModal();
+    input.settingsModal = modal;
+    const repaint = mock(() => {});
+    commandContext.clearScreen = repaint;
+    cm.set('display.themeMode', 'light');
+    setActiveThemeName('goodvibes');
+    setActiveThemeMode('light');
+    resetTerminalPaletteForTests();
+    try {
+      (commandContext.openSettingsModal as (target: string) => void)('display.theme');
+      const entry = modal.getSelected()!;
+      expect(entry.setting.key).toBe('display.theme');
+      expect(entry.setting.type).toBe('enum');
+      expect(entry.currentValue).toBe('goodvibes');
+      expect(entry.isDefault).toBe(true);
+      const values = entry.setting.enumValues!;
+      expect(values).toHaveLength(13);
+      expect([...values].sort()).toEqual([...listThemeChoices().map(choice => choice.name), 'vaporwave'].sort());
+
+      // Enter keeps the dedicated live-preview picker; arrows use the enum.
+      modal.activateSelected();
+      expect(modal.pendingSettingsPickerAction).toBe('theme');
+      expect(cm.get('display.theme')).toBe('goodvibes');
+      expect(modal.editingMode).toBe(false);
+
+      let index = values.indexOf('goodvibes');
+      for (const direction of ['right', 'left'] as const) {
+        for (let i = 0; i < values.length; i++) {
+          index = (index + (direction === 'right' ? 1 : values.length - 1)) % values.length;
+          const value = values[index]!;
+          modal.adjustSelected(direction);
+          const active = normalizeThemeName(value);
+          expect(cm.get('display.theme')).toBe(value);
+          expect(modal.getSelected()!.currentValue).toBe(value);
+          expect(getActiveThemeName()).toBe(active);
+          expect(activeTokens()).toEqual(resolveTheme(getBundledTheme(active === 'system' ? 'goodvibes' : active)!.json, 'light'));
+          expect(cm.get('display.themeMode')).toBe('light');
+          expect(getActiveThemeMode()).toBe('light');
+          const reloaded = new ConfigManager({ configDir: dirname(cm.getConfigPath()), readOnly: true });
+          expect(reloaded.get('display.theme')).toBe(value);
+          expect(reloaded.get('display.themeMode')).toBe('light');
+        }
+      }
+      expect(repaint).toHaveBeenCalledTimes(values.length * 2);
+      expect(modal.getSelected()!.isDefault).toBe(true);
+    } finally {
+      modal.close();
+      setActiveThemeName('goodvibes');
+      setActiveThemeMode('dark');
+      resetTerminalPaletteForTests();
+    }
   });
 
   test('openWorkspacePicker opens the Agent workspace home', () => {

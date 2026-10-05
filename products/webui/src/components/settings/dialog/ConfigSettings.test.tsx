@@ -223,25 +223,19 @@ describe('settings config groups: schema-driven structure', () => {
     unmount();
   });
 
-  test('display.theme carries its live value', async () => {
+  test('display.theme uses the generated enum choices and commits a canonical selection', async () => {
     const { el, unmount } = render();
-    const selector = '[data-config-key="display.theme"] input, [data-config-key="display.theme"] .gv-select__trigger';
+    const selector = '[data-config-key="display.theme"] .gv-select__trigger';
     await waitFor(() => Boolean(el.querySelector(selector)));
-    const control = el.querySelector(selector)!;
-    const value = control instanceof window.HTMLInputElement ? control.value : control.textContent;
-    expect(value).toContain('nord');
+    const control = el.querySelector(selector) as HTMLButtonElement;
+    expect(control.textContent).toContain('nord');
     const schema = CONFIG_SCHEMA_ENTRIES.find((entry) => entry.key === 'display.theme')!;
-    if (schema.type === 'enum') {
-      expect(control.tagName).toBe('BUTTON');
-      expect(openSelect(control as HTMLButtonElement)).toEqual([...schema.enumValues ?? []]);
-    } else {
-      expect(schema.type).toBe('string');
-      expect(control.tagName).toBe('INPUT');
-      setInputValue(control as HTMLInputElement, 'goodvibes');
-      commitByBlur(control as HTMLInputElement);
-      await waitFor(() => configSetCalls.length > 0);
-      expect(configSetCalls).toEqual([['display.theme', 'goodvibes']]);
-    }
+    expect(schema.type).toBe('enum');
+    expect(schema.default).toBe('goodvibes');
+    expect(openSelect(control)).toEqual([...schema.enumValues ?? []]);
+    pickOption('goodvibes');
+    await waitFor(() => configSetCalls.length > 0);
+    expect(configSetCalls).toEqual([['display.theme', 'goodvibes']]);
     unmount();
   });
 
@@ -379,7 +373,7 @@ describe('settings config groups: Advanced unschema\'d escape hatch', () => {
       setter?.call(keyInput, 'display.theme');
       keyInput.dispatchEvent(new window.Event('input', { bubbles: true }));
       const taSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
-      taSetter?.call(valueTextarea, '"cyberpunk"');
+      taSetter?.call(valueTextarea, '"dracula"');
       valueTextarea.dispatchEvent(new window.Event('input', { bubbles: true }));
     });
     const form = el.querySelector('.settings-advanced form') as HTMLFormElement;
@@ -387,7 +381,7 @@ describe('settings config groups: Advanced unschema\'d escape hatch', () => {
       form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
     });
     await waitFor(() => configSetCalls.length > 0);
-    expect(configSetCalls).toEqual([['display.theme', 'cyberpunk']]);
+    expect(configSetCalls).toEqual([['display.theme', 'dracula']]);
     unmount();
   });
 });

@@ -8,6 +8,11 @@ This project uses semantic versioning with `vMAJOR.MINOR.PATCH` git tags.
 
 ### Fixed
 
+- General settings now renders the engine-owned terminal palette as a 13-choice
+  selector, with `goodvibes` as the fresh default. Changes persist through the
+  connected host's client-local config store; browser appearance and other
+  terminal installations remain independent.
+
 - Session follow-up and steer receipts now retain the returned input ID and exact
   delivery state. Queued HTTP responses stay queued; session updates and a fallback
   poll reconcile delivery, completion and failure without resending. Session,

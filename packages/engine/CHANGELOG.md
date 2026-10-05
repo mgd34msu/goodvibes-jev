@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- Terminal palette configuration now exposes the supported 13-choice enum and
+  defaults to `goodvibes`. Existing `vaporwave` values retain their neon palette;
+  recognized saved case/whitespace forms remain readable without ingestion
+  rewriting the file. Explicit bulk saves use the resolved canonical name; new
+  writes reject unsupported names. Palette ownership and light/dark
+  mode are unchanged.
+
 - Contract inspection schemas now preserve native source, recorded Jev decisions,
   semantic and transport waits, durable admission, captured input and completion
   report fields returned by the real runner. Generated clients retain receipt

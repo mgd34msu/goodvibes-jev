@@ -145,10 +145,18 @@ authority and `read:work-ledger`/`write:work-ledger` scopes. Inspection receipts
 not grant those capabilities or authorize execution. Historical escalation
 records stay historical; they are not a new semantic approval/reply workflow.
 
-The canonical engine schema still declares `display.theme` as a string and has
-no `display.treeGlyphs` setting. The upstream theme-selection/tree-glyph behavior
-and remaining settings consumers need authoritative schema reconciliation. The
-current session permission-mode verbs expose their fixed mode enums; they do not
+The canonical engine schema now supplies the pinned upstream 13-choice
+`display.theme` enum and `goodvibes` default. General settings consumes generated
+metadata; TUI and Agent retain their live-preview picker and enum cycling.
+Explicit `vaporwave` retains the neon palette. Recognized saved case/whitespace
+forms are adapted in the read view without ingestion rewriting files; explicit
+bulk saves serialize the resolved canonical name, and new writes remain exact. Palette ownership stays client-local, separate from light/dark mode
+and browser appearance. The key description and genuine credential reading are
+unchanged. See the [current source follow-up](../../../docs/audit/webui-acceptance-reconciliation.md#typed-terminal-palette-follow-up)
+for the functional proof boundaries.
+
+There is still no canonical `display.treeGlyphs` setting, and remaining settings
+reconciliation is separate. The current session permission-mode verbs expose their fixed mode enums; they do not
 supply the missing engine-owned gate-preset catalog for the replacement sheet.
 Unknown/null/zero/non-local context renders honestly.
 [THE-90](https://linear.app/the-artificery/issue/THE-90/preserve-unknown-context-windows)/

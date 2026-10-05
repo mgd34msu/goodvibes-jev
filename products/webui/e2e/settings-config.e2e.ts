@@ -323,11 +323,11 @@ test('an admin-scope refusal offers no config rows to edit', async ({ page }) =>
 test('the Advanced editor writes the parsed value through config.set', async ({ page }) => {
   const dialog = await openSection(page, 'all', 'General');
   await dialog.getByPlaceholder('settings.path').fill('display.theme');
-  await dialog.getByPlaceholder('JSON or text').fill('"cyberpunk"');
+  await dialog.getByPlaceholder('JSON or text').fill('"dracula"');
   expect(configWrites()).toHaveLength(0);
   await dialog.getByRole('button', { name: 'Save', exact: true }).click();
   // The JSON input is parsed: the string itself is written, not its quoted source.
-  await expect.poll(configWrites).toEqual([{ key: 'display.theme', value: 'cyberpunk' }]);
+  await expect.poll(configWrites).toEqual([{ key: 'display.theme', value: 'dracula' }]);
 });
 
 test.describe('pricing.modelPrices: the structured per-model price editor', () => {

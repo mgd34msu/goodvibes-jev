@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
@@ -73,12 +73,40 @@ describe('GoodVibes runtime tools', () => {
     const result = await tool.execute({
       mode: 'set',
       key: 'display.theme',
-      value: 'midnight',
+      value: 'catppuccin',
       confirm: true,
     });
 
     expect(result.success).toBe(true);
-    expect(configManager.get('display.theme')).toBe('midnight');
+    expect(configManager.get('display.theme')).toBe('catppuccin');
+  });
+
+  test('goodvibes_settings rejects unknown, non-string and noncanonical new palette values without mutation', async () => {
+    const configManager = makeConfigManager();
+    configManager.set('display.theme', 'nord');
+    const before = readFileSync(configManager.getConfigPath(), 'utf-8');
+    const changes: unknown[] = [];
+    configManager.subscribe('display.theme', (next) => { changes.push(next); });
+    const tool = createGoodVibesSettingsTool({ configManager });
+    for (const value of ['midnight', ' NORD ', 'DRACULA', ' VAPORWAVE ', 12, false, null, [], {}]) {
+      const result = await tool.execute({ mode: 'set', key: 'display.theme', value, confirm: true });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Invalid value for display.theme');
+      expect(configManager.get('display.theme')).toBe('nord');
+      expect(readFileSync(configManager.getConfigPath(), 'utf-8')).toBe(before);
+      expect(changes).toEqual([]);
+    }
+  });
+
+  test('goodvibes_context exposes the exact palette enum and fresh default', async () => {
+    const result = await createGoodVibesContextTool(makeDeps()).execute({ mode: 'config_schema', key: 'display.theme' });
+    expect(result.success).toBe(true);
+    const output = JSON.parse(result.output ?? '{}') as { settings: Array<{ key: string; type: string; default: unknown; enumValues: string[] }> };
+    expect(output.settings).toHaveLength(1);
+    expect(output.settings[0]).toMatchObject({ key: 'display.theme', type: 'enum', default: 'goodvibes', enumValues: [
+      'goodvibes', 'goodvibes-neon', 'catppuccin', 'tokyonight', 'dracula', 'nord', 'gruvbox',
+      'one-dark', 'rosepine', 'solarized', 'github', 'system', 'vaporwave',
+    ] });
   });
 
   test('goodvibes_settings refuses raw credential persistence', async () => {
@@ -123,11 +151,11 @@ describe('what the runtime tools show of a stored value', () => {
 
   test('a value read as not credential material is shown as stored', async () => {
     const configManager = makeConfigManager();
-    configManager.set('display.theme', 'midnight');
+    configManager.set('display.theme', 'catppuccin');
     const result = await createGoodVibesContextTool(makeDeps(configManager)).execute({ mode: 'config_get', key: 'display.theme' });
 
     expect(result.success).toBe(true);
-    expect(result.output).toContain('"value": "midnight"');
+    expect(result.output).toContain('"value": "catppuccin"');
   });
 
   test('a declared credential key is redacted without reading its value, and a secret reference is never read', async () => {
