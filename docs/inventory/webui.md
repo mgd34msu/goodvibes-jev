@@ -8,6 +8,8 @@ PORT carries the exact current upstream shell/components/styles and browser inte
 
 Each target path occurs once in the parseable three-column prefix consumed by `product-workspace-contract.ts`. Unchanged blobs retain their source-backed baseline rationale. Changed existing rows name the target delta first and retain the old rationale explicitly as historical context; old line numbers, removed selectors and former test assertions do not assert current source or require their restoration. New/renamed rows are assessed against dadf577. Dispositions describe required work, **not completed implementation**. Accounting parity does not prove semantic migration, generation, bundle safety, live daemon behavior, visual parity or passing tests.
 
+Current implementation evidence and still-open acceptance dependencies are tracked separately in [webui-acceptance-reconciliation.md](../audit/webui-acceptance-reconciliation.md), at merged main `1941b66e` on 2026-10-05. Its verified browser runs and merged contract/session slices supersede historical missing-proof statements; the source dispositions below remain unchanged requirements, not completion claims. The [autonomous Jev decision contract](../design/autonomous-jev-decisions.md) governs new semantic consumers; historical escalation/owner-pick wording does not authorize a new human-approval workflow.
+
 Files: 666. PORT 597, JEV 62, HOIST 0, DROP 7.
 
 | Area | Files | PORT | JEV | HOIST | DROP |
