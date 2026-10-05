@@ -1,3 +1,4 @@
+import { runNativeHeadlessCommand } from './native-headless-command.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import net from 'node:net';
@@ -6,7 +7,6 @@ import { networkInterfaces } from 'node:os';
 import type { ConfigManager, ConfigKey, GoodVibesConfig } from '../config/index.ts';
 import { CONFIG_SCHEMA } from '../config/index.ts';
 import { formatProviderModel, getModelIdFromProviderModel } from '../config/provider-model.ts';
-import { bootstrapRuntime } from '../runtime/bootstrap.ts';
 import { createRuntimeServices } from '../runtime/services.ts';
 import { createRuntimeStore } from '../runtime/store/index.ts';
 import { readConnectedHostOperatorToken } from '../runtime/connected-host-auth.ts';
@@ -14,15 +14,6 @@ import type { RuntimeServices } from '../runtime/services.ts';
 import { SecretsManager } from '../config/secrets.ts';
 import { RuntimeEventBus, configureRuntimeEventBusDefaults, runtimeEventBusOptionsFrom } from '@/runtime/index.ts';
 import { createShellPathService } from '@/runtime/index.ts';
-import { buildPersistedSessionContext } from '@/runtime/index.ts';
-import type { SessionSnapshot } from '@/runtime/index.ts';
-import { conversationMessagesAsSessionRecords } from '../core/conversation-message-snapshot.ts';
-import { executeRunTurn, writeRunTurnResult } from './run-turn.ts';
-import {
-  createDaemonRepairSessionMemory,
-  describeDaemonRepairForHeadless,
-  diagnoseDaemonRepair,
-} from '../runtime/daemon-repair.ts';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { writeFatalLine } from '../utils/fatal-boot-write.ts';
 import { listProviderRuntimeSnapshots } from '@goodvibes-jev/engine/sdk/platform/providers';
@@ -242,64 +233,7 @@ export function readAuthPaths(runtime: CliCommandRuntime) {
 }
 
 export async function runNonInteractiveAgent(runtime: CliCommandRuntime): Promise<number> {
-  const prompt = runtime.cli.flags.prompt ?? runtime.cli.positionals.join(' ').trim();
-  if (!prompt) {
-    // Descriptor write: this refusal is the last thing that happens before
-    // entrypoint.ts turns the returned code into a process.exit.
-    writeFatalLine(`Usage: ${runtime.cli.binary} run|exec [prompt]`);
-    return 2;
-  }
-
-  const outputFormat = runtime.cli.flags.outputFormat;
-
-  // A machine wedged the way the incident laptop was, daemon service stopped
-  // AND daemon.enabled false, is diagnosed here too, but never prompted on.
-  // Run mode has no person at the keyboard and stdout is a machine-readable
-  // contract, so the diagnosis and the offer this Agent would have made go to
-  // STDERR and the run proceeds exactly as it did before. Staying silent is how
-  // the original incident lasted weeks; interrupting a scripted run to ask a
-  // question nobody is there to answer would be worse.
-  const wedged = diagnoseDaemonRepair({
-    config: runtime.configManager,
-    session: createDaemonRepairSessionMemory(),
-  });
-  if (wedged) {
-    for (const line of describeDaemonRepairForHeadless(wedged)) {
-      process.stderr.write(`${line}\n`);
-    }
-  }
-
-  const ctx = await bootstrapRuntime(process.stdout, {
-    configManager: runtime.configManager,
-    workingDir: runtime.workingDirectory,
-    homeDirectory: runtime.homeDirectory,
-  });
-
-  let exitCode = 0;
-  try {
-    // Where the turn runs is decided inside executeRunTurn, the connected
-    // daemon when routing says so, this process otherwise, and both endings
-    // arrive in one shape, so the output below never learns the difference.
-    const result = await executeRunTurn({
-      ctx,
-      prompt,
-      outputFormat,
-      stdout: (line) => process.stdout.write(`${line}\n`),
-      stderr: (line) => process.stderr.write(`${line}\n`),
-    });
-    exitCode = result.exitCode;
-    writeRunTurnResult(result, { ctx, outputFormat, stdout: (line) => process.stdout.write(`${line}\n`) });
-  } finally {
-    const messages = ctx.conversation.getMessageSnapshot();
-    const snapshot: SessionSnapshot = {
-      messages: conversationMessagesAsSessionRecords(messages),
-      timestamp: Date.now(),
-      title: ctx.conversation.title,
-      ...buildPersistedSessionContext(messages, ctx.conversation.getTitleSource()),
-    };
-    await ctx.shutdown(snapshot);
-  }
-  return exitCode;
+  return runNativeHeadlessCommand(runtime);
 }
 
 async function renderProviders(runtime: CliCommandRuntime): Promise<string> {

@@ -283,7 +283,8 @@ export function parseWithCatalog<TCommand extends string, TField extends string,
     const afterCommandWord = sawCommand && index > found!.index;
 
     if (ddashSeen) {
-      if (afterCommandWord) commandArgs.push(token); else positionals.push(token);
+      if (afterCommandWord) commandArgs.push(token);
+      if (!afterCommandWord || command === 'run') positionals.push(token);
       continue;
     }
     if (token === '--') {

@@ -7,7 +7,7 @@ import { createShellPathService } from '@/runtime/index.ts';
 export function seedBenchmarkCacheFixture(options: {
   readonly homeDirectory: string;
   readonly workingDirectory: string;
-  readonly surfaceRoot: 'agent' | 'goodvibes';
+  readonly surfaceRoot: 'agent' | 'tui' | 'goodvibes';
 }): string {
   const paths = createShellPathService(options);
   const store = new BenchmarkStore({ dir: paths.resolveUserPath(options.surfaceRoot) });

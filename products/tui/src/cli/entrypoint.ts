@@ -1,3 +1,5 @@
+import { extractNativeHeadlessOptions } from './native-headless-options.ts';
+import { runNativeHeadlessCommand } from './native-headless-command.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -65,7 +67,11 @@ export async function prepareShellCliRuntime(
   roots: ShellEntrypointRoots,
   binary = 'goodvibes',
 ): Promise<PreparedShellCliRuntime> {
-  const cli = parseGoodVibesCli(argv, binary);
+  const native = extractNativeHeadlessOptions(argv);
+  const parsed = parseGoodVibesCli(native.argv, binary);
+  const nativeErrors = [...native.errors];
+  if (native.mode !== 'submit' && parsed.command !== 'run') nativeErrors.push('Native intake recovery requires the run or exec command.');
+  const cli = { ...parsed, errors: [...parsed.errors, ...nativeErrors] };
 
   if (cli.errors.length > 0) {
     console.error(cli.errors.join('\n'));
@@ -114,12 +120,12 @@ export async function prepareShellCliRuntime(
   configureActivityLogger(join(bootstrapWorkingDir, '.goodvibes', 'logs'));
   // Only prints the first time the rule is actually appended (not on every
   // launch), see ensureGoodvibesGitignore's return-value doc.
-  if (ensureGoodvibesGitignore(bootstrapWorkingDir)) {
+  if (cli.command !== 'run' && ensureGoodvibesGitignore(bootstrapWorkingDir)) {
     console.log("[goodvibes] added '.goodvibes/' to .gitignore: this directory holds transient TUI state (logs, session cache, exec output), not project source.");
   }
   const daemonConfigMigration = runDaemonConfigMigration(bootstrapHomeDirectory);
   if (daemonConfigMigration?.migrated && (daemonConfigMigration.marker.moved.length + daemonConfigMigration.marker.discarded.length) > 0) {
-    console.log(`[goodvibes] ${describeDaemonConfigMigration(daemonConfigMigration.marker)}`);
+    (cli.command === 'run' ? console.error : console.log)(`[goodvibes] ${describeDaemonConfigMigration(daemonConfigMigration.marker)}`);
   }
   const configManager = new TuiConfigManager({
     workingDir: bootstrapWorkingDir,
@@ -167,6 +173,10 @@ export async function prepareShellCliRuntime(
       console.log(result.output);
       process.exit(result.exitCode);
     }
+  }
+
+  if (cli.command === 'run') {
+    process.exit(await runNativeHeadlessCommand({ cli, configManager, workingDirectory: bootstrapWorkingDir, homeDirectory: bootstrapHomeDirectory }, native.mode));
   }
 
   if (cli.command === 'status' || cli.command === 'doctor' || (cli.command === 'onboarding' && cli.commandArgs[0] === 'status')) {

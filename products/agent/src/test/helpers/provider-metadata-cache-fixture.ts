@@ -9,7 +9,7 @@ export function seedProviderMetadataCacheFixture(options: {
   readonly configManager: ConfigManager;
   readonly homeDirectory: string;
   readonly workingDirectory: string;
-  readonly surfaceRoot?: 'agent' | 'goodvibes';
+  readonly surfaceRoot?: 'agent' | 'tui' | 'goodvibes';
 }): void {
   const benchmarkPath = seedBenchmarkCacheFixture({ ...options, surfaceRoot: options.surfaceRoot ?? 'agent' });
   const root = options.configManager.getControlPlaneConfigDir();
