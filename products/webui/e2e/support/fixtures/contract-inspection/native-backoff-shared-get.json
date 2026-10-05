@@ -1,0 +1,164 @@
+{
+  "id": "ctr-2fb59864",
+  "schemaVersion": 5,
+  "sessionId": "session-1",
+  "origin": "cli",
+  "ask": "Add a CSV parser module and wire it into the convert command.",
+  "ownerAgentId": "agent-e4d497d4",
+  "projectRoot": "/tmp/goodvibes-sdk-testrun-2-1ed65473/contract-runner-ApHYl0",
+  "isolation": "shared",
+  "nativeSource": {
+    "sourceId": "native-work",
+    "sourceRevision": "1",
+    "inputRevision": "input-1",
+    "criteriaId": "native-criteria",
+    "criteriaRevision": "1",
+    "goal": " Deliver the exact parser.\nPreserve Unicode ☃ and trailing space. ",
+    "criteria": [
+      "The parser preserves all documented input forms"
+    ]
+  },
+  "goal": " Deliver the exact parser.\nPreserve Unicode ☃ and trailing space. ",
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "The parser preserves all documented input forms",
+      "quote": "The parser preserves all documented input forms",
+      "origin": "stated",
+      "serves": [],
+      "disposition": "judged",
+      "status": "unread",
+      "readings": []
+    }
+  ],
+  "groups": [],
+  "units": [],
+  "status": "checking-plan",
+  "checks": [],
+  "fixRounds": 0,
+  "escalations": [],
+  "decisions": [
+    {
+      "id": "ctr-2fb59864.d1",
+      "at": 1791199706727,
+      "action": "created",
+      "targetId": "ctr-2fb59864",
+      "reason": "origin cli; shared isolation",
+      "decisionIds": []
+    },
+    {
+      "id": "ctr-2fb59864.d2",
+      "at": 1791199706732,
+      "action": "shaped",
+      "targetId": "ctr-2fb59864",
+      "reason": "forbids delegation no (act); parallel agents no (act); forbids writing no (act); attempts no (act)",
+      "decisionIds": [
+        "01a10bd2-7e6c-7000-9738-b6c85f4d98b8"
+      ]
+    },
+    {
+      "id": "ctr-2fb59864.d3",
+      "at": 1791199706733,
+      "action": "spawned",
+      "targetId": "ctr-2fb59864",
+      "reason": "planner route: test tier",
+      "decisionIds": [],
+      "route": {
+        "model": "provider-a:model-a",
+        "provider": "provider-a",
+        "reason": "test tier"
+      }
+    },
+    {
+      "id": "ctr-2fb59864.d4",
+      "at": 1791199706733,
+      "action": "planned",
+      "targetId": "ctr-2fb59864",
+      "reason": "the planner wrote a plan",
+      "decisionIds": []
+    }
+  ],
+  "usage": {
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadTokens": 0,
+    "cacheWriteTokens": 0,
+    "llmCallCount": 0,
+    "turnCount": 0,
+    "toolCallCount": 0,
+    "costUsd": null,
+    "costState": "unpriced"
+  },
+  "judgmentUsage": {
+    "calls": 3,
+    "inputTokens": 3,
+    "outputTokens": 3
+  },
+  "plannerAgentIds": [
+    "planner-1"
+  ],
+  "createdAt": 1791199706727,
+  "shape": {
+    "forbids_delegation": {
+      "verdict": "no",
+      "probability": 0.03,
+      "outcome": "act"
+    },
+    "requests_parallel_agents": {
+      "verdict": "no",
+      "probability": 0.03,
+      "outcome": "act"
+    },
+    "forbids_writing": {
+      "verdict": "no",
+      "probability": 0.03,
+      "outcome": "act"
+    },
+    "asks_for_attempts": {
+      "verdict": "no",
+      "probability": 0.03,
+      "outcome": "act"
+    },
+    "decisionIds": [
+      "01a10bd2-7e6c-7000-9738-b6c85f4d98b8"
+    ]
+  },
+  "nativeDecisions": {
+    "schemaVersion": 1,
+    "history": [],
+    "pending": {},
+    "spent": {
+      "plan": 1
+    },
+    "plannerOutputs": {
+      "plan": "Here is the plan.\n\n```json\n{\n  \"goal\": \" Deliver the exact parser.\\nPreserve Unicode ☃ and trailing space. \",\n  \"criteria\": [\n    {\n      \"id\": \"c1\",\n      \"text\": \"The parser preserves all documented input forms\",\n      \"quote\": \"The parser preserves all documented input forms\"\n    }\n  ],\n  \"groups\": [\n    {\n      \"id\": \"g1\",\n      \"title\": \"Parser\",\n      \"goal\": \"The parser\",\n      \"kind\": \"work\",\n      \"dependsOn\": [],\n      \"criteria\": [],\n      \"units\": [\n        {\n          \"id\": \"u1\",\n          \"title\": \"CSV parser\",\n          \"goal\": \"Parse CSV\",\n          \"role\": \"implement\",\n          \"brief\": \"Write src/csv.ts.\",\n          \"dependsOn\": [],\n          \"files\": [\n            \"src/csv.ts\"\n          ],\n          \"criteria\": [\n            {\n              \"id\": \"u1.c1\",\n              \"text\": \"parser property 1\",\n              \"serves\": [\n                \"c1\"\n              ]\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}\n```\n"
+    },
+    "attemptChoices": {},
+    "attemptedChoices": {}
+  },
+  "nativeProgress": {
+    "schemaVersion": 1,
+    "state": "deciding",
+    "stage": "plan",
+    "targetId": "ctr-2fb59864"
+  },
+  "nativeWaiting": {
+    "schemaVersion": 1,
+    "requests": [
+      {
+        "logicalRequestId": "73b1aaa3-b911-466f-9240-f61bf88728bd",
+        "attempt": {
+          "attempt": 1,
+          "endpointIndex": 0,
+          "endpointKind": "local",
+          "requestedModel": "jev-1.13.0",
+          "latencyMs": 1.3685229999998683,
+          "outcome": "unavailable",
+          "status": 503
+        },
+        "elapsedMs": 2.70412599999986,
+        "nextDelayMs": 60000
+      }
+    ]
+  }
+}

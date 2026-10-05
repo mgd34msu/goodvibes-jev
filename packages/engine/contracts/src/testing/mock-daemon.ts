@@ -15,7 +15,7 @@
  *
  * Scope: this understands the JSON Schema subset the contract generator emits,
  * object (properties/required), array (items), string (enum), number/integer,
- * boolean, null, and anyOf unions. It is a fixture generator, not a full JSON
+ * boolean, null, literal const values, and anyOf/oneOf unions. It is a fixture generator, not a full JSON
  * Schema materializer; an unrecognized shape yields null rather than throwing,
  * so a new schema keyword degrades to a still-valid (if minimal) sample.
  */
@@ -36,6 +36,14 @@ export function sampleFromSchema(schema: JsonSchema | undefined): unknown {
   if (!schema) return null;
   const record = asRecord(schema);
   if (!record) return null;
+
+  // Version/outcome discriminants in canonical native inspection records may
+  // use const without a redundant type; retain the exact JSON literal.
+  if (Object.hasOwn(record, 'const')) return record['const'];
+
+  // Native decision/admission/report variants are closed discriminated unions.
+  const oneOf = record['oneOf'];
+  if (Array.isArray(oneOf) && oneOf.length > 0) return sampleFromSchema(oneOf[0] as JsonSchema);
 
   // anyOf union: take the first branch that is not a bare `null` type, so the
   // sample carries a representative value rather than degenerating to null.

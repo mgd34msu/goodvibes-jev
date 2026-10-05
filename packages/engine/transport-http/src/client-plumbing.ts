@@ -132,6 +132,11 @@ export function firstJsonSchemaFailure(
     const resolved = resolveLocalSchemaRef(root, schema.$ref);
     return resolved ? firstJsonSchemaFailure(resolved, value, path, root, _depth + 1) : undefined;
   }
+  const excluded = schema.not;
+  if (excluded === true || (excluded !== null && typeof excluded === 'object' && !Array.isArray(excluded)
+    && firstJsonSchemaFailure(excluded as Record<string, unknown>, value, path, root, _depth + 1) === undefined)) {
+    return { path, expected: 'not to match the excluded schema', received: typeOfJsonValue(value) };
+  }
   const allOf = readSchemaList(schema.allOf);
   for (const child of allOf) {
     const failure = firstJsonSchemaFailure(child, value, path, root, _depth + 1);
@@ -167,16 +172,27 @@ export function firstJsonSchemaFailure(
     return { path, expected: `<= ${maximum}`, received: String(value) };
   }
   const minLength = typeof schema.minLength === 'number' ? schema.minLength : undefined;
-  if (typeof value === 'string' && minLength !== undefined && value.length < minLength) {
-    return { path, expected: `length >= ${minLength}`, received: `length ${value.length}` };
-  }
   const maxLength = typeof schema.maxLength === 'number' ? schema.maxLength : undefined;
-  if (typeof value === 'string' && maxLength !== undefined && value.length > maxLength) {
-    return { path, expected: `length <= ${maxLength}`, received: `length ${value.length}` };
+  // JSON Schema lengths count Unicode code points, as the canonical Jev parser
+  // does for summaries, rather than UTF-16 code units.
+  let stringLength = 0;
+  if (typeof value === 'string' && (minLength !== undefined || maxLength !== undefined)) {
+    for (const _character of value) stringLength += 1;
+  }
+  if (typeof value === 'string' && minLength !== undefined && stringLength < minLength) {
+    return { path, expected: `length >= ${minLength}`, received: `length ${stringLength}` };
+  }
+  if (typeof value === 'string' && maxLength !== undefined && stringLength > maxLength) {
+    return { path, expected: `length <= ${maxLength}`, received: `length ${stringLength}` };
   }
   if (typeof value === 'string' && typeof schema.pattern === 'string') {
-    const pattern = compileContractPattern(schema.pattern);
-    if (!contractPatternMatches(pattern, value)) return { path, expected: `pattern ${schema.pattern}`, received: 'non-matching string' };
+    // The canonical nonblank-text pattern has a bounded linear equivalent.
+    // Native goals have no length ceiling; do not send them through the generic
+    // regex input guard or relax that guard for arbitrary expressions.
+    const matches = schema.pattern === '\\S'
+      ? value.trim().length > 0
+      : contractPatternMatches(compileContractPattern(schema.pattern), value);
+    if (!matches) return { path, expected: `pattern ${schema.pattern}`, received: 'non-matching string' };
   }
   if (typeof value === 'string' && typeof schema.format === 'string' && !stringMatchesJsonSchemaFormat(value, schema.format)) {
     return { path, expected: `format ${schema.format}`, received: 'non-matching string' };
@@ -195,6 +211,25 @@ export function firstJsonSchemaFailure(
     if (minItems !== undefined && value.length < minItems) return { path, expected: `items >= ${minItems}`, received: `${value.length} items` };
     const maxItems = typeof schema.maxItems === 'number' ? schema.maxItems : undefined;
     if (maxItems !== undefined && value.length > maxItems) return { path, expected: `items <= ${maxItems}`, received: `${value.length} items` };
+    if (schema.uniqueItems === true) {
+      const seen = new Set<string>();
+      for (const item of value) {
+        let key: string | undefined;
+        try {
+          // JSON object member order is irrelevant; array order and primitive
+          // types remain significant. Wire values are JSON, never live objects.
+          key = JSON.stringify(item, (_key: string, current: unknown) => current !== null
+            && typeof current === 'object' && !Array.isArray(current)
+            ? Object.fromEntries(Object.entries(current).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))
+            : current);
+        } catch {
+          return { path, expected: 'JSON values for unique items', received: 'unserializable value' };
+        }
+        if (key === undefined) return { path, expected: 'JSON values for unique items', received: typeOfJsonValue(item) };
+        if (seen.has(key)) return { path, expected: 'unique items', received: 'duplicate item' };
+        seen.add(key);
+      }
+    }
     return undefined;
   }
   if (typeof value === 'object') {
@@ -213,10 +248,16 @@ export function firstJsonSchemaFailure(
         if (failure) return failure;
       }
     }
-    if (schema.additionalProperties === false && properties && typeof properties === 'object' && !Array.isArray(properties)) {
-      const allowed = new Set(Object.keys(properties as Record<string, unknown>));
-      const extra = Object.keys(objectValue).find((key) => !allowed.has(key));
-      if (extra) return { path: `${path}.${extra}`, expected: 'no additional property', received: 'present' };
+    const additional = schema.additionalProperties;
+    const declared = properties !== null && typeof properties === 'object' && !Array.isArray(properties)
+      ? new Set(Object.keys(properties)) : new Set<string>();
+    for (const key of Object.keys(objectValue)) {
+      if (declared.has(key)) continue;
+      if (additional === false) return { path: `${path}.${key}`, expected: 'no additional property', received: 'present' };
+      if (additional !== null && typeof additional === 'object' && !Array.isArray(additional)) {
+        const failure = firstJsonSchemaFailure(additional as Record<string, unknown>, objectValue[key], `${path}.${key}`, root, _depth + 1);
+        if (failure) return failure;
+      }
     }
   }
   return undefined;

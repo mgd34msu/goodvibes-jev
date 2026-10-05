@@ -417,6 +417,19 @@ honestly.
 
 ## Contract inspection in Work
 
+Native inspection uses the same closed engine-generated contract schema as ordinary
+records. It preserves original native goals and ordered criteria, recorded Jev
+receipts and pending conditions, durable admission, captured inputs and unit reports.
+Semantic progress and all recorded `act`/`revise`/`defer`/`reject` outcomes are shown
+separately from shared-port retry progress. Receipt bindings and provenance are
+read-only records, never current permission or executable continuations.
+
+The fixture corpus in `e2e/support/fixtures/contract-inspection` contains genuine
+serialized get/list responses from the runner, operator service, registered gateway
+and daemon REST route. Product integration tests exercise those bytes through the
+SDK facade, queries and detail; phone/desktop E2E verifies the production UI. The
+fixtures document their scripted-provider boundary and capture provenance.
+
 Work includes read-only contract records under All and Processes without adding a
 new destination. `contracts.list` explicitly requests active records or active and
 terminal records with the existing Show control. Archive remains the fleet archive.

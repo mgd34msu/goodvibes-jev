@@ -23,6 +23,14 @@
   border-bottom: 0;
   padding-bottom: 0;
 }
+.contract-tree__ordered {
+  padding-left: 24px;
+  list-style: decimal;
+}
+.contract-tree__ordered > li::marker {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
 .contract-tree__branch {
   padding-left: 12px;
   border-left: 1px solid var(--line);

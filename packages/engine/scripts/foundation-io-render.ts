@@ -12,7 +12,7 @@
 //
 // Scope: intentionally NOT a general JSON-Schema-to-TS compiler. It implements
 // the constructs actually present in the method-catalog schemas: string/number/
-// boolean/null primitives, sorted string/finite-number enums, arrays, nullable (anyOf [X,
+// boolean/null primitives and literals, sorted string/finite-number enums, arrays, nullable (anyOf [X,
 // {type:'null'}]), general unions, plain objects with required/optional fields,
 // additionalProperties true/false/schema, and the JSON-value family (identity-
 // matched, since those schemas are self-referential and structural recursion
@@ -46,6 +46,26 @@ export function renderType(schema: Record<string, unknown>): string {
   }
   if (schema === (JSON_ARRAY_SCHEMA as unknown as Record<string, unknown>)) {
     return 'readonly JsonValue[]';
+  }
+
+  // Canonical Jev decisions carry literal versions and outcome discriminants
+  // without a redundant `type`. Preserve those rather than widening authority-
+  // bearing receipts to strings or numbers in the generated inspection types.
+  if (Object.hasOwn(schema, 'const')) {
+    const value = schema.const;
+    if (value === null || typeof value === 'string' || typeof value === 'boolean'
+      || (typeof value === 'number' && Number.isFinite(value))) return JSON.stringify(value);
+    throw new Error(`Unsupported const shape: ${JSON.stringify(schema)}`);
+  }
+
+  // Exclusivity is checked on the wire. Its static representation is a union
+  // with the same literal discriminants and base-object conjunction semantics.
+  if (Array.isArray(schema.oneOf)) {
+    if (schema.oneOf.length === 0 || Object.hasOwn(schema, 'anyOf')) {
+      throw new Error(`Unsupported oneOf shape: ${JSON.stringify(schema)}`);
+    }
+    const { oneOf, ...base } = schema;
+    return renderType({ ...base, anyOf: oneOf });
   }
 
   if (Array.isArray((schema as { anyOf?: unknown[] }).anyOf)) {
@@ -105,6 +125,13 @@ export function renderType(schema: Record<string, unknown>): string {
       .map((branch) => renderType({ ...branch, additionalProperties: false }))
       .join(' | ');
     return `${renderType(unionBase)} & (${leanUnion})`;
+  }
+
+  // The canonical continuation kind is a closed string enum with no `type`.
+  // Do not infer a broad primitive for unsupported/empty type-less schemas.
+  if (schema.type === undefined && Array.isArray(schema.enum) && schema.enum.length > 0
+    && schema.enum.every((value): value is string => typeof value === 'string')) {
+    return [...new Set(schema.enum)].sort().map(value => JSON.stringify(value)).join(' | ');
   }
 
   if (schema.type === 'string') {

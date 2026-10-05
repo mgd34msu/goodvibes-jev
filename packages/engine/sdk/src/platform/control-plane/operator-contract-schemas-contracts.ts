@@ -36,8 +36,18 @@ import {
   UNIT_ROLES,
   YES_NO_VERDICTS,
 } from '../../events/contract.js';
+import type { Contract, ContractUnit } from '../contract/types.js';
 import { BOOLEAN_SCHEMA, NUMBER_SCHEMA, STRING_SCHEMA, arraySchema, objectSchema } from './method-catalog-shared.js';
 import { STRING_LIST_SCHEMA, enumSchema, recordSchema } from './operator-contract-schemas-shared.js';
+import {
+  CONTRACT_COMPLETION_REPORT_SCHEMA,
+  CONTRACT_DURABLE_ADMISSION_SCHEMA,
+  CONTRACT_INPUT_SNAPSHOT_SCHEMA,
+  CONTRACT_NATIVE_DECISIONS_SCHEMA,
+  CONTRACT_NATIVE_PROGRESS_SCHEMA,
+  CONTRACT_NATIVE_SOURCE_SCHEMA,
+  CONTRACT_NATIVE_WAITING_SCHEMA,
+} from './operator-contract-schemas-contract-inspection.js';
 
 const OUTCOME_SCHEMA = enumSchema(CONTRACT_OUTCOMES);
 const ISOLATION_INPUT_SCHEMA = enumSchema(['auto', 'worktree', 'shared']);
@@ -183,11 +193,12 @@ const UNIT_PROPERTIES: Record<string, Record<string, unknown>> = {
   usage: USAGE_SCHEMA,
   answer: STRING_SCHEMA,
   lastOutput: STRING_SCHEMA,
+  lastReport: CONTRACT_COMPLETION_REPORT_SCHEMA,
   failureReason: STRING_SCHEMA,
   attemptOf: STRING_SCHEMA,
   attemptIndex: NUMBER_SCHEMA,
   attemptSelection: ATTEMPT_SELECTION_SCHEMA,
-};
+} satisfies Record<Exclude<keyof ContractUnit, 'attemptUnits'>, Record<string, unknown>>;
 const UNIT_REQUIRED = [
   'id', 'groupId', 'title', 'goal', 'brief', 'role', 'dependsOn', 'files', 'attempts', 'criteria', 'status',
   'agentIds', 'checks', 'nudges', 'fixRounds', 'freshAgents', 'transportRetries', 'touchedPaths', 'usage',
@@ -266,6 +277,13 @@ const DRAFT_PLAN_SCHEMA = objectSchema({
 
 /** One contract with its whole tree: what `contracts.get` returns and `contracts.list` lists. */
 export const CONTRACT_VIEW_SCHEMA = objectSchema({
+  nativeSource: CONTRACT_NATIVE_SOURCE_SCHEMA,
+  nativeDecisions: CONTRACT_NATIVE_DECISIONS_SCHEMA,
+  nativeProgress: CONTRACT_NATIVE_PROGRESS_SCHEMA,
+  nativeWaiting: CONTRACT_NATIVE_WAITING_SCHEMA,
+  durableAdmission: CONTRACT_DURABLE_ADMISSION_SCHEMA,
+  durableLaunchState: enumSchema(['prepared', 'launch-claimed']),
+  inputSnapshot: CONTRACT_INPUT_SNAPSHOT_SCHEMA,
   id: STRING_SCHEMA,
   schemaVersion: NUMBER_SCHEMA,
   sessionId: STRING_SCHEMA,
@@ -311,7 +329,7 @@ export const CONTRACT_VIEW_SCHEMA = objectSchema({
   error: STRING_SCHEMA,
   createdAt: NUMBER_SCHEMA,
   completedAt: NUMBER_SCHEMA,
-}, [
+} satisfies Record<keyof Contract, Record<string, unknown>>, [
   'id', 'schemaVersion', 'sessionId', 'origin', 'ask', 'ownerAgentId', 'projectRoot', 'isolation', 'goal', 'criteria',
   'groups', 'units', 'status', 'checks', 'fixRounds', 'escalations', 'decisions', 'usage', 'judgmentUsage',
   'plannerAgentIds', 'createdAt',

@@ -6,6 +6,13 @@ This project uses semantic versioning with `vMAJOR.MINOR.PATCH` git tags.
 
 ## [Unreleased]
 
+### Fixed
+
+- Work can inspect real native, durable and captured-worktree contract responses.
+  Original native goals and ordered criteria, recorded semantic outcomes, separate
+  transport retry progress and durable/input provenance remain read-only.
+  Genuine engine-route fixtures guard strict wire validation and rendering.
+
 ### Added
 
 - Read-only contract inspection in Work: goals, original requests, criteria and

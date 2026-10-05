@@ -3,6 +3,7 @@ import { useId } from 'react';
 import type { MouseEvent, ReactNode } from 'react';
 import type { OperatorMethodOutput } from '@goodvibes-jev/engine/contracts';
 import { CodeFrame, DetailSection, Disclosure, Facts } from '../../components/data-view/DataView';
+import { NativeContractDetails } from './NativeContractDetails';
 import '../../styles/components/contract-tree.css';
 
 export type ContractRecord = OperatorMethodOutput<'contracts.get'>;
@@ -204,6 +205,7 @@ export function ContractTree({ contract }: { contract: ContractRecord }) {
   });
   ungroupedUnits.forEach((unit, i) => indexUnit(unit, `${prefix}-ungrouped-${i}`));
   return <div className="contract-tree">
+    <NativeContractDetails contract={contract} />
     <DetailSection title="Goal">{contract.goal ? <Text>{contract.goal}</Text> : <Empty>No goal recorded.</Empty>}</DetailSection>
     <Disclosure summary="Original ask" defaultOpen>{contract.ask ? <Text>{contract.ask}</Text> : <Empty>No original ask recorded.</Empty>}</Disclosure>
     <Criteria criteria={contract.criteria} index={index} /><Checks checks={contract.checks} scope={prefix} />

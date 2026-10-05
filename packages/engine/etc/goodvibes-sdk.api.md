@@ -12403,6 +12403,377 @@ export interface OperatorMethodOutputMap {
     };
     // (undocumented)
     "contracts.get": {
+        nativeSource?: {
+            sourceId: string;
+            sourceRevision: string;
+            inputRevision: string;
+            criteriaId: string;
+            criteriaRevision: string;
+            goal: string;
+            criteria: readonly string[];
+        };
+        nativeDecisions?: {
+            schemaVersion: 1;
+            history: readonly ({
+                schemaVersion: 1;
+                stage: "attempts" | "evidence" | "fix-plan" | "plan" | "shape" | "stall";
+                targetId: string;
+                decision: {
+                    schemaVersion: 1;
+                    decisionId: string;
+                    binding: {
+                        sourceId: string;
+                        inputRevision: string;
+                        actionId: string;
+                        actionRevision: string;
+                        authorityId: string;
+                        authorityRevision: string;
+                        scopeId: string;
+                        scopeRevision: string;
+                    };
+                    judgmentDecisionIds: readonly string[];
+                    evidence: readonly ({
+                        id: string;
+                        revision: string;
+                    })[];
+                    summary: string;
+                    outcome: "act";
+                } | {
+                    schemaVersion: 1;
+                    decisionId: string;
+                    binding: {
+                        sourceId: string;
+                        inputRevision: string;
+                        actionId: string;
+                        actionRevision: string;
+                        authorityId: string;
+                        authorityRevision: string;
+                        scopeId: string;
+                        scopeRevision: string;
+                    };
+                    judgmentDecisionIds: readonly string[];
+                    evidence: readonly ({
+                        id: string;
+                        revision: string;
+                    })[];
+                    summary: string;
+                    outcome: "revise";
+                    next: {
+                        id: string;
+                        revision: string;
+                        kind: "gather-evidence" | "reconsider" | "revise-action";
+                    };
+                } | {
+                    schemaVersion: 1;
+                    decisionId: string;
+                    binding: {
+                        sourceId: string;
+                        inputRevision: string;
+                        actionId: string;
+                        actionRevision: string;
+                        authorityId: string;
+                        authorityRevision: string;
+                        scopeId: string;
+                        scopeRevision: string;
+                    };
+                    judgmentDecisionIds: readonly string[];
+                    evidence: readonly ({
+                        id: string;
+                        revision: string;
+                    })[];
+                    summary: string;
+                    outcome: "defer";
+                    until: {
+                        id: string;
+                        revision: string;
+                    };
+                } | {
+                    schemaVersion: 1;
+                    decisionId: string;
+                    binding: {
+                        sourceId: string;
+                        inputRevision: string;
+                        actionId: string;
+                        actionRevision: string;
+                        authorityId: string;
+                        authorityRevision: string;
+                        scopeId: string;
+                        scopeRevision: string;
+                    };
+                    judgmentDecisionIds: readonly string[];
+                    evidence: readonly ({
+                        id: string;
+                        revision: string;
+                    })[];
+                    summary: string;
+                    outcome: "reject";
+                };
+                operationRevision: string;
+            })[];
+            pending: ({} & {
+                readonly [key: string]: {
+                    schemaVersion: 1;
+                    stage: "attempts" | "evidence" | "fix-plan" | "plan" | "shape" | "stall";
+                    targetId: string;
+                    decision: {
+                        schemaVersion: 1;
+                        decisionId: string;
+                        binding: {
+                            sourceId: string;
+                            inputRevision: string;
+                            actionId: string;
+                            actionRevision: string;
+                            authorityId: string;
+                            authorityRevision: string;
+                            scopeId: string;
+                            scopeRevision: string;
+                        };
+                        judgmentDecisionIds: readonly string[];
+                        evidence: readonly ({
+                            id: string;
+                            revision: string;
+                        })[];
+                        summary: string;
+                        outcome: "act";
+                    } | {
+                        schemaVersion: 1;
+                        decisionId: string;
+                        binding: {
+                            sourceId: string;
+                            inputRevision: string;
+                            actionId: string;
+                            actionRevision: string;
+                            authorityId: string;
+                            authorityRevision: string;
+                            scopeId: string;
+                            scopeRevision: string;
+                        };
+                        judgmentDecisionIds: readonly string[];
+                        evidence: readonly ({
+                            id: string;
+                            revision: string;
+                        })[];
+                        summary: string;
+                        outcome: "revise";
+                        next: {
+                            id: string;
+                            revision: string;
+                            kind: "gather-evidence" | "reconsider" | "revise-action";
+                        };
+                    } | {
+                        schemaVersion: 1;
+                        decisionId: string;
+                        binding: {
+                            sourceId: string;
+                            inputRevision: string;
+                            actionId: string;
+                            actionRevision: string;
+                            authorityId: string;
+                            authorityRevision: string;
+                            scopeId: string;
+                            scopeRevision: string;
+                        };
+                        judgmentDecisionIds: readonly string[];
+                        evidence: readonly ({
+                            id: string;
+                            revision: string;
+                        })[];
+                        summary: string;
+                        outcome: "defer";
+                        until: {
+                            id: string;
+                            revision: string;
+                        };
+                    } | {
+                        schemaVersion: 1;
+                        decisionId: string;
+                        binding: {
+                            sourceId: string;
+                            inputRevision: string;
+                            actionId: string;
+                            actionRevision: string;
+                            authorityId: string;
+                            authorityRevision: string;
+                            scopeId: string;
+                            scopeRevision: string;
+                        };
+                        judgmentDecisionIds: readonly string[];
+                        evidence: readonly ({
+                            id: string;
+                            revision: string;
+                        })[];
+                        summary: string;
+                        outcome: "reject";
+                    };
+                    operationRevision: string;
+                };
+            });
+            spent: ({} & {
+                readonly [key: string]: number;
+            });
+            plannerOutputs: ({} & {
+                readonly [key: string]: string;
+            });
+            attemptChoices: ({} & {
+                readonly [key: string]: string;
+            });
+            attemptedChoices: ({} & {
+                readonly [key: string]: readonly string[];
+            });
+        };
+        nativeProgress?: {
+            schemaVersion: 1;
+            state: "deciding" | "deferred" | "refused";
+            stage: string;
+            targetId: string;
+            until?: {
+                id: string;
+                revision: string;
+            };
+        };
+        nativeWaiting?: {
+            schemaVersion: 1;
+            requests: readonly ({
+                logicalRequestId: string;
+                attempt: {
+                    attempt: number;
+                    endpointIndex: number;
+                    endpointKind: "hosted" | "local";
+                    requestedModel: string;
+                    latencyMs: number;
+                    outcome: "aborted" | "answered" | "invalid-request" | "invalid-response" | "rejected" | "unavailable" | "unrecorded";
+                    requestId?: string;
+                    status?: number;
+                };
+                elapsedMs: number;
+                nextDelayMs: number;
+            })[];
+        };
+        durableAdmission?: {
+            schemaVersion: 1;
+            key: {
+                workId: string;
+                criteriaId: string;
+                criteriaRevision: string;
+                attemptId: string;
+            };
+            binding: {
+                sourceId: string;
+                inputRevision: string;
+                actionId: string;
+                actionRevision: string;
+                authorityId: string;
+                authorityRevision: string;
+                scopeId: string;
+                scopeRevision: string;
+            };
+            input: {
+                ask: string;
+                sessionId: string;
+                origin: "agent-tool" | "cli" | "external" | "hosted" | "proposal" | "turn";
+                projectRoot: string;
+                nativeSource?: {
+                    sourceId: string;
+                    sourceRevision: string;
+                    inputRevision: string;
+                    criteriaId: string;
+                    criteriaRevision: string;
+                    goal: string;
+                    criteria: readonly string[];
+                };
+                proposedUnits?: readonly ({
+                    task: string;
+                    template?: string;
+                })[];
+                parentAgentId?: string;
+                budget?: {
+                    maxTokens?: number;
+                    maxCostUsd?: number;
+                };
+                isolation?: "auto" | "shared" | "worktree";
+            };
+            contractId: string;
+            ownerAgentId: string;
+            payloadRevision: string;
+        } | {
+            schemaVersion: 2;
+            key: {
+                workId: string;
+                criteriaId: string;
+                criteriaRevision: string;
+                attemptId: string;
+            };
+            binding: {
+                sourceId: string;
+                inputRevision: string;
+                actionId: string;
+                actionRevision: string;
+                authorityId: string;
+                authorityRevision: string;
+                scopeId: string;
+                scopeRevision: string;
+            };
+            input: {
+                ask: string;
+                sessionId: string;
+                origin: "agent-tool" | "cli" | "external" | "hosted" | "proposal" | "turn";
+                projectRoot: string;
+                nativeSource?: {
+                    sourceId: string;
+                    sourceRevision: string;
+                    inputRevision: string;
+                    criteriaId: string;
+                    criteriaRevision: string;
+                    goal: string;
+                    criteria: readonly string[];
+                };
+                proposedUnits?: readonly ({
+                    task: string;
+                    template?: string;
+                })[];
+                parentAgentId?: string;
+                budget?: {
+                    maxTokens?: number;
+                    maxCostUsd?: number;
+                };
+                isolation?: "auto" | "shared" | "worktree";
+            };
+            contractId: string;
+            ownerAgentId: string;
+            payloadRevision: string;
+            execution: {
+                isolation: "shared";
+            } | {
+                isolation: "worktree";
+                branch: string;
+                worktreePath: string;
+                baseBranch: string;
+            };
+        };
+        durableLaunchState?: "launch-claimed" | "prepared";
+        inputSnapshot?: {
+            version: 1;
+            id: string;
+            sourceRoot: string;
+            sourceIdentity: string;
+            gitIdentity: string;
+            ownerHead: string;
+            ownerRef: string;
+            indexFingerprint: string;
+            inputTree: string;
+            inputCommit: string;
+            capturedAt: number;
+            dirty: boolean;
+            exclusions: readonly string[];
+            files: readonly ({
+                path: string;
+                kind: "file" | "missing" | "symlink";
+                mode: "0" | "100644" | "100755" | "120000";
+                oid?: string;
+                digest?: string;
+                identity?: string;
+            })[];
+        };
         id: string;
         schemaVersion: number;
         sessionId: string;
@@ -12703,6 +13074,50 @@ export interface OperatorMethodOutputMap {
             };
             answer?: string;
             lastOutput?: string;
+            lastReport?: {
+                version: 1;
+                summary?: string;
+                filesCreated?: readonly string[];
+                filesModified?: readonly string[];
+                filesDeleted?: readonly string[];
+                archetype: "engineer";
+                gatheredContext?: readonly string[];
+                plannedActions?: readonly string[];
+                appliedChanges?: readonly string[];
+                decisions?: readonly ({
+                    what: string;
+                    why: string;
+                })[];
+                issues?: readonly string[];
+                uncertainties?: readonly string[];
+            } | {
+                version: 1;
+                summary?: string;
+                filesCreated?: readonly string[];
+                filesModified?: readonly string[];
+                filesDeleted?: readonly string[];
+                archetype: "tester";
+                testsWritten?: readonly string[];
+                testsPassed?: number;
+                testsFailed?: number;
+                coverage?: {
+                    lines: number;
+                    branches: number;
+                    functions: number;
+                };
+                failures?: readonly ({
+                    test: string;
+                    error: string;
+                })[];
+            } | {
+                version: 1;
+                summary?: string;
+                filesCreated?: readonly string[];
+                filesModified?: readonly string[];
+                filesDeleted?: readonly string[];
+                archetype: string;
+                result?: string;
+            };
             failureReason?: string;
             attemptOf?: string;
             attemptIndex?: number;
@@ -12849,6 +13264,50 @@ export interface OperatorMethodOutputMap {
                 };
                 answer?: string;
                 lastOutput?: string;
+                lastReport?: {
+                    version: 1;
+                    summary?: string;
+                    filesCreated?: readonly string[];
+                    filesModified?: readonly string[];
+                    filesDeleted?: readonly string[];
+                    archetype: "engineer";
+                    gatheredContext?: readonly string[];
+                    plannedActions?: readonly string[];
+                    appliedChanges?: readonly string[];
+                    decisions?: readonly ({
+                        what: string;
+                        why: string;
+                    })[];
+                    issues?: readonly string[];
+                    uncertainties?: readonly string[];
+                } | {
+                    version: 1;
+                    summary?: string;
+                    filesCreated?: readonly string[];
+                    filesModified?: readonly string[];
+                    filesDeleted?: readonly string[];
+                    archetype: "tester";
+                    testsWritten?: readonly string[];
+                    testsPassed?: number;
+                    testsFailed?: number;
+                    coverage?: {
+                        lines: number;
+                        branches: number;
+                        functions: number;
+                    };
+                    failures?: readonly ({
+                        test: string;
+                        error: string;
+                    })[];
+                } | {
+                    version: 1;
+                    summary?: string;
+                    filesCreated?: readonly string[];
+                    filesModified?: readonly string[];
+                    filesDeleted?: readonly string[];
+                    archetype: string;
+                    result?: string;
+                };
                 failureReason?: string;
                 attemptOf?: string;
                 attemptIndex?: number;
@@ -13014,6 +13473,377 @@ export interface OperatorMethodOutputMap {
     // (undocumented)
     "contracts.list": {
         contracts: readonly ({
+            nativeSource?: {
+                sourceId: string;
+                sourceRevision: string;
+                inputRevision: string;
+                criteriaId: string;
+                criteriaRevision: string;
+                goal: string;
+                criteria: readonly string[];
+            };
+            nativeDecisions?: {
+                schemaVersion: 1;
+                history: readonly ({
+                    schemaVersion: 1;
+                    stage: "attempts" | "evidence" | "fix-plan" | "plan" | "shape" | "stall";
+                    targetId: string;
+                    decision: {
+                        schemaVersion: 1;
+                        decisionId: string;
+                        binding: {
+                            sourceId: string;
+                            inputRevision: string;
+                            actionId: string;
+                            actionRevision: string;
+                            authorityId: string;
+                            authorityRevision: string;
+                            scopeId: string;
+                            scopeRevision: string;
+                        };
+                        judgmentDecisionIds: readonly string[];
+                        evidence: readonly ({
+                            id: string;
+                            revision: string;
+                        })[];
+                        summary: string;
+                        outcome: "act";
+                    } | {
+                        schemaVersion: 1;
+                        decisionId: string;
+                        binding: {
+                            sourceId: string;
+                            inputRevision: string;
+                            actionId: string;
+                            actionRevision: string;
+                            authorityId: string;
+                            authorityRevision: string;
+                            scopeId: string;
+                            scopeRevision: string;
+                        };
+                        judgmentDecisionIds: readonly string[];
+                        evidence: readonly ({
+                            id: string;
+                            revision: string;
+                        })[];
+                        summary: string;
+                        outcome: "revise";
+                        next: {
+                            id: string;
+                            revision: string;
+                            kind: "gather-evidence" | "reconsider" | "revise-action";
+                        };
+                    } | {
+                        schemaVersion: 1;
+                        decisionId: string;
+                        binding: {
+                            sourceId: string;
+                            inputRevision: string;
+                            actionId: string;
+                            actionRevision: string;
+                            authorityId: string;
+                            authorityRevision: string;
+                            scopeId: string;
+                            scopeRevision: string;
+                        };
+                        judgmentDecisionIds: readonly string[];
+                        evidence: readonly ({
+                            id: string;
+                            revision: string;
+                        })[];
+                        summary: string;
+                        outcome: "defer";
+                        until: {
+                            id: string;
+                            revision: string;
+                        };
+                    } | {
+                        schemaVersion: 1;
+                        decisionId: string;
+                        binding: {
+                            sourceId: string;
+                            inputRevision: string;
+                            actionId: string;
+                            actionRevision: string;
+                            authorityId: string;
+                            authorityRevision: string;
+                            scopeId: string;
+                            scopeRevision: string;
+                        };
+                        judgmentDecisionIds: readonly string[];
+                        evidence: readonly ({
+                            id: string;
+                            revision: string;
+                        })[];
+                        summary: string;
+                        outcome: "reject";
+                    };
+                    operationRevision: string;
+                })[];
+                pending: ({} & {
+                    readonly [key: string]: {
+                        schemaVersion: 1;
+                        stage: "attempts" | "evidence" | "fix-plan" | "plan" | "shape" | "stall";
+                        targetId: string;
+                        decision: {
+                            schemaVersion: 1;
+                            decisionId: string;
+                            binding: {
+                                sourceId: string;
+                                inputRevision: string;
+                                actionId: string;
+                                actionRevision: string;
+                                authorityId: string;
+                                authorityRevision: string;
+                                scopeId: string;
+                                scopeRevision: string;
+                            };
+                            judgmentDecisionIds: readonly string[];
+                            evidence: readonly ({
+                                id: string;
+                                revision: string;
+                            })[];
+                            summary: string;
+                            outcome: "act";
+                        } | {
+                            schemaVersion: 1;
+                            decisionId: string;
+                            binding: {
+                                sourceId: string;
+                                inputRevision: string;
+                                actionId: string;
+                                actionRevision: string;
+                                authorityId: string;
+                                authorityRevision: string;
+                                scopeId: string;
+                                scopeRevision: string;
+                            };
+                            judgmentDecisionIds: readonly string[];
+                            evidence: readonly ({
+                                id: string;
+                                revision: string;
+                            })[];
+                            summary: string;
+                            outcome: "revise";
+                            next: {
+                                id: string;
+                                revision: string;
+                                kind: "gather-evidence" | "reconsider" | "revise-action";
+                            };
+                        } | {
+                            schemaVersion: 1;
+                            decisionId: string;
+                            binding: {
+                                sourceId: string;
+                                inputRevision: string;
+                                actionId: string;
+                                actionRevision: string;
+                                authorityId: string;
+                                authorityRevision: string;
+                                scopeId: string;
+                                scopeRevision: string;
+                            };
+                            judgmentDecisionIds: readonly string[];
+                            evidence: readonly ({
+                                id: string;
+                                revision: string;
+                            })[];
+                            summary: string;
+                            outcome: "defer";
+                            until: {
+                                id: string;
+                                revision: string;
+                            };
+                        } | {
+                            schemaVersion: 1;
+                            decisionId: string;
+                            binding: {
+                                sourceId: string;
+                                inputRevision: string;
+                                actionId: string;
+                                actionRevision: string;
+                                authorityId: string;
+                                authorityRevision: string;
+                                scopeId: string;
+                                scopeRevision: string;
+                            };
+                            judgmentDecisionIds: readonly string[];
+                            evidence: readonly ({
+                                id: string;
+                                revision: string;
+                            })[];
+                            summary: string;
+                            outcome: "reject";
+                        };
+                        operationRevision: string;
+                    };
+                });
+                spent: ({} & {
+                    readonly [key: string]: number;
+                });
+                plannerOutputs: ({} & {
+                    readonly [key: string]: string;
+                });
+                attemptChoices: ({} & {
+                    readonly [key: string]: string;
+                });
+                attemptedChoices: ({} & {
+                    readonly [key: string]: readonly string[];
+                });
+            };
+            nativeProgress?: {
+                schemaVersion: 1;
+                state: "deciding" | "deferred" | "refused";
+                stage: string;
+                targetId: string;
+                until?: {
+                    id: string;
+                    revision: string;
+                };
+            };
+            nativeWaiting?: {
+                schemaVersion: 1;
+                requests: readonly ({
+                    logicalRequestId: string;
+                    attempt: {
+                        attempt: number;
+                        endpointIndex: number;
+                        endpointKind: "hosted" | "local";
+                        requestedModel: string;
+                        latencyMs: number;
+                        outcome: "aborted" | "answered" | "invalid-request" | "invalid-response" | "rejected" | "unavailable" | "unrecorded";
+                        requestId?: string;
+                        status?: number;
+                    };
+                    elapsedMs: number;
+                    nextDelayMs: number;
+                })[];
+            };
+            durableAdmission?: {
+                schemaVersion: 1;
+                key: {
+                    workId: string;
+                    criteriaId: string;
+                    criteriaRevision: string;
+                    attemptId: string;
+                };
+                binding: {
+                    sourceId: string;
+                    inputRevision: string;
+                    actionId: string;
+                    actionRevision: string;
+                    authorityId: string;
+                    authorityRevision: string;
+                    scopeId: string;
+                    scopeRevision: string;
+                };
+                input: {
+                    ask: string;
+                    sessionId: string;
+                    origin: "agent-tool" | "cli" | "external" | "hosted" | "proposal" | "turn";
+                    projectRoot: string;
+                    nativeSource?: {
+                        sourceId: string;
+                        sourceRevision: string;
+                        inputRevision: string;
+                        criteriaId: string;
+                        criteriaRevision: string;
+                        goal: string;
+                        criteria: readonly string[];
+                    };
+                    proposedUnits?: readonly ({
+                        task: string;
+                        template?: string;
+                    })[];
+                    parentAgentId?: string;
+                    budget?: {
+                        maxTokens?: number;
+                        maxCostUsd?: number;
+                    };
+                    isolation?: "auto" | "shared" | "worktree";
+                };
+                contractId: string;
+                ownerAgentId: string;
+                payloadRevision: string;
+            } | {
+                schemaVersion: 2;
+                key: {
+                    workId: string;
+                    criteriaId: string;
+                    criteriaRevision: string;
+                    attemptId: string;
+                };
+                binding: {
+                    sourceId: string;
+                    inputRevision: string;
+                    actionId: string;
+                    actionRevision: string;
+                    authorityId: string;
+                    authorityRevision: string;
+                    scopeId: string;
+                    scopeRevision: string;
+                };
+                input: {
+                    ask: string;
+                    sessionId: string;
+                    origin: "agent-tool" | "cli" | "external" | "hosted" | "proposal" | "turn";
+                    projectRoot: string;
+                    nativeSource?: {
+                        sourceId: string;
+                        sourceRevision: string;
+                        inputRevision: string;
+                        criteriaId: string;
+                        criteriaRevision: string;
+                        goal: string;
+                        criteria: readonly string[];
+                    };
+                    proposedUnits?: readonly ({
+                        task: string;
+                        template?: string;
+                    })[];
+                    parentAgentId?: string;
+                    budget?: {
+                        maxTokens?: number;
+                        maxCostUsd?: number;
+                    };
+                    isolation?: "auto" | "shared" | "worktree";
+                };
+                contractId: string;
+                ownerAgentId: string;
+                payloadRevision: string;
+                execution: {
+                    isolation: "shared";
+                } | {
+                    isolation: "worktree";
+                    branch: string;
+                    worktreePath: string;
+                    baseBranch: string;
+                };
+            };
+            durableLaunchState?: "launch-claimed" | "prepared";
+            inputSnapshot?: {
+                version: 1;
+                id: string;
+                sourceRoot: string;
+                sourceIdentity: string;
+                gitIdentity: string;
+                ownerHead: string;
+                ownerRef: string;
+                indexFingerprint: string;
+                inputTree: string;
+                inputCommit: string;
+                capturedAt: number;
+                dirty: boolean;
+                exclusions: readonly string[];
+                files: readonly ({
+                    path: string;
+                    kind: "file" | "missing" | "symlink";
+                    mode: "0" | "100644" | "100755" | "120000";
+                    oid?: string;
+                    digest?: string;
+                    identity?: string;
+                })[];
+            };
             id: string;
             schemaVersion: number;
             sessionId: string;
@@ -13314,6 +14144,50 @@ export interface OperatorMethodOutputMap {
                 };
                 answer?: string;
                 lastOutput?: string;
+                lastReport?: {
+                    version: 1;
+                    summary?: string;
+                    filesCreated?: readonly string[];
+                    filesModified?: readonly string[];
+                    filesDeleted?: readonly string[];
+                    archetype: "engineer";
+                    gatheredContext?: readonly string[];
+                    plannedActions?: readonly string[];
+                    appliedChanges?: readonly string[];
+                    decisions?: readonly ({
+                        what: string;
+                        why: string;
+                    })[];
+                    issues?: readonly string[];
+                    uncertainties?: readonly string[];
+                } | {
+                    version: 1;
+                    summary?: string;
+                    filesCreated?: readonly string[];
+                    filesModified?: readonly string[];
+                    filesDeleted?: readonly string[];
+                    archetype: "tester";
+                    testsWritten?: readonly string[];
+                    testsPassed?: number;
+                    testsFailed?: number;
+                    coverage?: {
+                        lines: number;
+                        branches: number;
+                        functions: number;
+                    };
+                    failures?: readonly ({
+                        test: string;
+                        error: string;
+                    })[];
+                } | {
+                    version: 1;
+                    summary?: string;
+                    filesCreated?: readonly string[];
+                    filesModified?: readonly string[];
+                    filesDeleted?: readonly string[];
+                    archetype: string;
+                    result?: string;
+                };
                 failureReason?: string;
                 attemptOf?: string;
                 attemptIndex?: number;
@@ -13460,6 +14334,50 @@ export interface OperatorMethodOutputMap {
                     };
                     answer?: string;
                     lastOutput?: string;
+                    lastReport?: {
+                        version: 1;
+                        summary?: string;
+                        filesCreated?: readonly string[];
+                        filesModified?: readonly string[];
+                        filesDeleted?: readonly string[];
+                        archetype: "engineer";
+                        gatheredContext?: readonly string[];
+                        plannedActions?: readonly string[];
+                        appliedChanges?: readonly string[];
+                        decisions?: readonly ({
+                            what: string;
+                            why: string;
+                        })[];
+                        issues?: readonly string[];
+                        uncertainties?: readonly string[];
+                    } | {
+                        version: 1;
+                        summary?: string;
+                        filesCreated?: readonly string[];
+                        filesModified?: readonly string[];
+                        filesDeleted?: readonly string[];
+                        archetype: "tester";
+                        testsWritten?: readonly string[];
+                        testsPassed?: number;
+                        testsFailed?: number;
+                        coverage?: {
+                            lines: number;
+                            branches: number;
+                            functions: number;
+                        };
+                        failures?: readonly ({
+                            test: string;
+                            error: string;
+                        })[];
+                    } | {
+                        version: 1;
+                        summary?: string;
+                        filesCreated?: readonly string[];
+                        filesModified?: readonly string[];
+                        filesDeleted?: readonly string[];
+                        archetype: string;
+                        result?: string;
+                    };
                     failureReason?: string;
                     attemptOf?: string;
                     attemptIndex?: number;
@@ -13634,6 +14552,377 @@ export interface OperatorMethodOutputMap {
     // (undocumented)
     "contracts.start": {
         contract: {
+            nativeSource?: {
+                sourceId: string;
+                sourceRevision: string;
+                inputRevision: string;
+                criteriaId: string;
+                criteriaRevision: string;
+                goal: string;
+                criteria: readonly string[];
+            };
+            nativeDecisions?: {
+                schemaVersion: 1;
+                history: readonly ({
+                    schemaVersion: 1;
+                    stage: "attempts" | "evidence" | "fix-plan" | "plan" | "shape" | "stall";
+                    targetId: string;
+                    decision: {
+                        schemaVersion: 1;
+                        decisionId: string;
+                        binding: {
+                            sourceId: string;
+                            inputRevision: string;
+                            actionId: string;
+                            actionRevision: string;
+                            authorityId: string;
+                            authorityRevision: string;
+                            scopeId: string;
+                            scopeRevision: string;
+                        };
+                        judgmentDecisionIds: readonly string[];
+                        evidence: readonly ({
+                            id: string;
+                            revision: string;
+                        })[];
+                        summary: string;
+                        outcome: "act";
+                    } | {
+                        schemaVersion: 1;
+                        decisionId: string;
+                        binding: {
+                            sourceId: string;
+                            inputRevision: string;
+                            actionId: string;
+                            actionRevision: string;
+                            authorityId: string;
+                            authorityRevision: string;
+                            scopeId: string;
+                            scopeRevision: string;
+                        };
+                        judgmentDecisionIds: readonly string[];
+                        evidence: readonly ({
+                            id: string;
+                            revision: string;
+                        })[];
+                        summary: string;
+                        outcome: "revise";
+                        next: {
+                            id: string;
+                            revision: string;
+                            kind: "gather-evidence" | "reconsider" | "revise-action";
+                        };
+                    } | {
+                        schemaVersion: 1;
+                        decisionId: string;
+                        binding: {
+                            sourceId: string;
+                            inputRevision: string;
+                            actionId: string;
+                            actionRevision: string;
+                            authorityId: string;
+                            authorityRevision: string;
+                            scopeId: string;
+                            scopeRevision: string;
+                        };
+                        judgmentDecisionIds: readonly string[];
+                        evidence: readonly ({
+                            id: string;
+                            revision: string;
+                        })[];
+                        summary: string;
+                        outcome: "defer";
+                        until: {
+                            id: string;
+                            revision: string;
+                        };
+                    } | {
+                        schemaVersion: 1;
+                        decisionId: string;
+                        binding: {
+                            sourceId: string;
+                            inputRevision: string;
+                            actionId: string;
+                            actionRevision: string;
+                            authorityId: string;
+                            authorityRevision: string;
+                            scopeId: string;
+                            scopeRevision: string;
+                        };
+                        judgmentDecisionIds: readonly string[];
+                        evidence: readonly ({
+                            id: string;
+                            revision: string;
+                        })[];
+                        summary: string;
+                        outcome: "reject";
+                    };
+                    operationRevision: string;
+                })[];
+                pending: ({} & {
+                    readonly [key: string]: {
+                        schemaVersion: 1;
+                        stage: "attempts" | "evidence" | "fix-plan" | "plan" | "shape" | "stall";
+                        targetId: string;
+                        decision: {
+                            schemaVersion: 1;
+                            decisionId: string;
+                            binding: {
+                                sourceId: string;
+                                inputRevision: string;
+                                actionId: string;
+                                actionRevision: string;
+                                authorityId: string;
+                                authorityRevision: string;
+                                scopeId: string;
+                                scopeRevision: string;
+                            };
+                            judgmentDecisionIds: readonly string[];
+                            evidence: readonly ({
+                                id: string;
+                                revision: string;
+                            })[];
+                            summary: string;
+                            outcome: "act";
+                        } | {
+                            schemaVersion: 1;
+                            decisionId: string;
+                            binding: {
+                                sourceId: string;
+                                inputRevision: string;
+                                actionId: string;
+                                actionRevision: string;
+                                authorityId: string;
+                                authorityRevision: string;
+                                scopeId: string;
+                                scopeRevision: string;
+                            };
+                            judgmentDecisionIds: readonly string[];
+                            evidence: readonly ({
+                                id: string;
+                                revision: string;
+                            })[];
+                            summary: string;
+                            outcome: "revise";
+                            next: {
+                                id: string;
+                                revision: string;
+                                kind: "gather-evidence" | "reconsider" | "revise-action";
+                            };
+                        } | {
+                            schemaVersion: 1;
+                            decisionId: string;
+                            binding: {
+                                sourceId: string;
+                                inputRevision: string;
+                                actionId: string;
+                                actionRevision: string;
+                                authorityId: string;
+                                authorityRevision: string;
+                                scopeId: string;
+                                scopeRevision: string;
+                            };
+                            judgmentDecisionIds: readonly string[];
+                            evidence: readonly ({
+                                id: string;
+                                revision: string;
+                            })[];
+                            summary: string;
+                            outcome: "defer";
+                            until: {
+                                id: string;
+                                revision: string;
+                            };
+                        } | {
+                            schemaVersion: 1;
+                            decisionId: string;
+                            binding: {
+                                sourceId: string;
+                                inputRevision: string;
+                                actionId: string;
+                                actionRevision: string;
+                                authorityId: string;
+                                authorityRevision: string;
+                                scopeId: string;
+                                scopeRevision: string;
+                            };
+                            judgmentDecisionIds: readonly string[];
+                            evidence: readonly ({
+                                id: string;
+                                revision: string;
+                            })[];
+                            summary: string;
+                            outcome: "reject";
+                        };
+                        operationRevision: string;
+                    };
+                });
+                spent: ({} & {
+                    readonly [key: string]: number;
+                });
+                plannerOutputs: ({} & {
+                    readonly [key: string]: string;
+                });
+                attemptChoices: ({} & {
+                    readonly [key: string]: string;
+                });
+                attemptedChoices: ({} & {
+                    readonly [key: string]: readonly string[];
+                });
+            };
+            nativeProgress?: {
+                schemaVersion: 1;
+                state: "deciding" | "deferred" | "refused";
+                stage: string;
+                targetId: string;
+                until?: {
+                    id: string;
+                    revision: string;
+                };
+            };
+            nativeWaiting?: {
+                schemaVersion: 1;
+                requests: readonly ({
+                    logicalRequestId: string;
+                    attempt: {
+                        attempt: number;
+                        endpointIndex: number;
+                        endpointKind: "hosted" | "local";
+                        requestedModel: string;
+                        latencyMs: number;
+                        outcome: "aborted" | "answered" | "invalid-request" | "invalid-response" | "rejected" | "unavailable" | "unrecorded";
+                        requestId?: string;
+                        status?: number;
+                    };
+                    elapsedMs: number;
+                    nextDelayMs: number;
+                })[];
+            };
+            durableAdmission?: {
+                schemaVersion: 1;
+                key: {
+                    workId: string;
+                    criteriaId: string;
+                    criteriaRevision: string;
+                    attemptId: string;
+                };
+                binding: {
+                    sourceId: string;
+                    inputRevision: string;
+                    actionId: string;
+                    actionRevision: string;
+                    authorityId: string;
+                    authorityRevision: string;
+                    scopeId: string;
+                    scopeRevision: string;
+                };
+                input: {
+                    ask: string;
+                    sessionId: string;
+                    origin: "agent-tool" | "cli" | "external" | "hosted" | "proposal" | "turn";
+                    projectRoot: string;
+                    nativeSource?: {
+                        sourceId: string;
+                        sourceRevision: string;
+                        inputRevision: string;
+                        criteriaId: string;
+                        criteriaRevision: string;
+                        goal: string;
+                        criteria: readonly string[];
+                    };
+                    proposedUnits?: readonly ({
+                        task: string;
+                        template?: string;
+                    })[];
+                    parentAgentId?: string;
+                    budget?: {
+                        maxTokens?: number;
+                        maxCostUsd?: number;
+                    };
+                    isolation?: "auto" | "shared" | "worktree";
+                };
+                contractId: string;
+                ownerAgentId: string;
+                payloadRevision: string;
+            } | {
+                schemaVersion: 2;
+                key: {
+                    workId: string;
+                    criteriaId: string;
+                    criteriaRevision: string;
+                    attemptId: string;
+                };
+                binding: {
+                    sourceId: string;
+                    inputRevision: string;
+                    actionId: string;
+                    actionRevision: string;
+                    authorityId: string;
+                    authorityRevision: string;
+                    scopeId: string;
+                    scopeRevision: string;
+                };
+                input: {
+                    ask: string;
+                    sessionId: string;
+                    origin: "agent-tool" | "cli" | "external" | "hosted" | "proposal" | "turn";
+                    projectRoot: string;
+                    nativeSource?: {
+                        sourceId: string;
+                        sourceRevision: string;
+                        inputRevision: string;
+                        criteriaId: string;
+                        criteriaRevision: string;
+                        goal: string;
+                        criteria: readonly string[];
+                    };
+                    proposedUnits?: readonly ({
+                        task: string;
+                        template?: string;
+                    })[];
+                    parentAgentId?: string;
+                    budget?: {
+                        maxTokens?: number;
+                        maxCostUsd?: number;
+                    };
+                    isolation?: "auto" | "shared" | "worktree";
+                };
+                contractId: string;
+                ownerAgentId: string;
+                payloadRevision: string;
+                execution: {
+                    isolation: "shared";
+                } | {
+                    isolation: "worktree";
+                    branch: string;
+                    worktreePath: string;
+                    baseBranch: string;
+                };
+            };
+            durableLaunchState?: "launch-claimed" | "prepared";
+            inputSnapshot?: {
+                version: 1;
+                id: string;
+                sourceRoot: string;
+                sourceIdentity: string;
+                gitIdentity: string;
+                ownerHead: string;
+                ownerRef: string;
+                indexFingerprint: string;
+                inputTree: string;
+                inputCommit: string;
+                capturedAt: number;
+                dirty: boolean;
+                exclusions: readonly string[];
+                files: readonly ({
+                    path: string;
+                    kind: "file" | "missing" | "symlink";
+                    mode: "0" | "100644" | "100755" | "120000";
+                    oid?: string;
+                    digest?: string;
+                    identity?: string;
+                })[];
+            };
             id: string;
             schemaVersion: number;
             sessionId: string;
@@ -13934,6 +15223,50 @@ export interface OperatorMethodOutputMap {
                 };
                 answer?: string;
                 lastOutput?: string;
+                lastReport?: {
+                    version: 1;
+                    summary?: string;
+                    filesCreated?: readonly string[];
+                    filesModified?: readonly string[];
+                    filesDeleted?: readonly string[];
+                    archetype: "engineer";
+                    gatheredContext?: readonly string[];
+                    plannedActions?: readonly string[];
+                    appliedChanges?: readonly string[];
+                    decisions?: readonly ({
+                        what: string;
+                        why: string;
+                    })[];
+                    issues?: readonly string[];
+                    uncertainties?: readonly string[];
+                } | {
+                    version: 1;
+                    summary?: string;
+                    filesCreated?: readonly string[];
+                    filesModified?: readonly string[];
+                    filesDeleted?: readonly string[];
+                    archetype: "tester";
+                    testsWritten?: readonly string[];
+                    testsPassed?: number;
+                    testsFailed?: number;
+                    coverage?: {
+                        lines: number;
+                        branches: number;
+                        functions: number;
+                    };
+                    failures?: readonly ({
+                        test: string;
+                        error: string;
+                    })[];
+                } | {
+                    version: 1;
+                    summary?: string;
+                    filesCreated?: readonly string[];
+                    filesModified?: readonly string[];
+                    filesDeleted?: readonly string[];
+                    archetype: string;
+                    result?: string;
+                };
                 failureReason?: string;
                 attemptOf?: string;
                 attemptIndex?: number;
@@ -14080,6 +15413,50 @@ export interface OperatorMethodOutputMap {
                     };
                     answer?: string;
                     lastOutput?: string;
+                    lastReport?: {
+                        version: 1;
+                        summary?: string;
+                        filesCreated?: readonly string[];
+                        filesModified?: readonly string[];
+                        filesDeleted?: readonly string[];
+                        archetype: "engineer";
+                        gatheredContext?: readonly string[];
+                        plannedActions?: readonly string[];
+                        appliedChanges?: readonly string[];
+                        decisions?: readonly ({
+                            what: string;
+                            why: string;
+                        })[];
+                        issues?: readonly string[];
+                        uncertainties?: readonly string[];
+                    } | {
+                        version: 1;
+                        summary?: string;
+                        filesCreated?: readonly string[];
+                        filesModified?: readonly string[];
+                        filesDeleted?: readonly string[];
+                        archetype: "tester";
+                        testsWritten?: readonly string[];
+                        testsPassed?: number;
+                        testsFailed?: number;
+                        coverage?: {
+                            lines: number;
+                            branches: number;
+                            functions: number;
+                        };
+                        failures?: readonly ({
+                            test: string;
+                            error: string;
+                        })[];
+                    } | {
+                        version: 1;
+                        summary?: string;
+                        filesCreated?: readonly string[];
+                        filesModified?: readonly string[];
+                        filesDeleted?: readonly string[];
+                        archetype: string;
+                        result?: string;
+                    };
                     failureReason?: string;
                     attemptOf?: string;
                     attemptIndex?: number;
