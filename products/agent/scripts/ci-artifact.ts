@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const payloads = ['goodvibes-agent-linux-x64', 'lib/sqlite-vec-linux-x64/vec0.so'] as const;
+const payloads = ['goodvibes-agent-linux-x64', 'goodvibes-agent-linux-x64.bun', 'goodvibes-agent-linux-x64.bun.LICENSE.md', 'goodvibes-agent-linux-x64.bun.json', 'lib/sqlite-vec-linux-x64/vec0.so'] as const;
 interface ArtifactManifest {
   schema: 1;
   revision: string;
@@ -19,13 +19,13 @@ function inspect(root: string, revision: string): ArtifactManifest {
       const full = resolve(root, 'dist', path);
       const stat = lstatSync(full);
       if (!stat.isFile()) throw new Error(`Agent CI artifact is not a regular file: ${path}`);
-      if (path === payloads[0] && (stat.mode & 0o111) === 0) throw new Error('Agent CI binary is not executable');
+      if ((path === payloads[0] || path.endsWith('.bun')) && (stat.mode & 0o111) === 0) throw new Error('Agent CI binary is not executable');
       return { path, sha256: createHash('sha256').update(readFileSync(full)).digest('hex'), mode: stat.mode & 0o777 };
     }),
   };
 }
 
-/** Record only the exact host binary and its native library produced by this build. */
+/** Record only the exact host binary, ordinary Bun sidecar with notices, and native library produced by this build. */
 export function recordAgentCiArtifact(root: string, revision: string): void {
   writeFileSync(resolve(root, 'dist/ci-artifact.json'), `${JSON.stringify(inspect(root, revision), null, 2)}\n`);
 }

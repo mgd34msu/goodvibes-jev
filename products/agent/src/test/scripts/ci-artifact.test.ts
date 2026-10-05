@@ -14,6 +14,9 @@ test('the archive round trip preserves binary, library, provenance and executabl
     mkdirSync(join(source, 'dist/lib/sqlite-vec-linux-x64'), { recursive: true });
     mkdirSync(restored);
     writeFileSync(join(source, 'dist/goodvibes-agent-linux-x64'), 'synthetic compiled artifact', { mode: 0o755 });
+    writeFileSync(join(source, 'dist/goodvibes-agent-linux-x64.bun'), 'synthetic ordinary runtime', { mode: 0o755 });
+    writeFileSync(join(source, 'dist/goodvibes-agent-linux-x64.bun.LICENSE.md'), 'synthetic runtime notices');
+    writeFileSync(join(source, 'dist/goodvibes-agent-linux-x64.bun.json'), 'synthetic runtime provenance');
     writeFileSync(join(source, 'dist/lib/sqlite-vec-linux-x64/vec0.so'), 'synthetic native addon');
     recordAgentCiArtifact(source, revision);
     const archive = join(dir, 'artifact.tgz');
@@ -24,6 +27,11 @@ test('the archive round trip preserves binary, library, provenance and executabl
     chmodSync(join(restored, 'dist/goodvibes-agent-linux-x64'), 0o644);
     expect(() => verifyAgentCiArtifact(restored, revision)).toThrow(/executable/);
     chmodSync(join(restored, 'dist/goodvibes-agent-linux-x64'), 0o755);
+    chmodSync(join(restored, 'dist/goodvibes-agent-linux-x64.bun'), 0o644);
+    expect(() => verifyAgentCiArtifact(restored, revision)).toThrow(/executable/);
+    chmodSync(join(restored, 'dist/goodvibes-agent-linux-x64.bun'), 0o755);
+    writeFileSync(join(restored, 'dist/goodvibes-agent-linux-x64.bun.LICENSE.md'), 'changed notice');
+    expect(() => verifyAgentCiArtifact(restored, revision)).toThrow(/manifest/);
     writeFileSync(join(restored, 'dist/lib/sqlite-vec-linux-x64/vec0.so'), 'changed addon');
     expect(() => verifyAgentCiArtifact(restored, revision)).toThrow(/manifest/);
   } finally { rmSync(dir, { recursive: true, force: true }); }

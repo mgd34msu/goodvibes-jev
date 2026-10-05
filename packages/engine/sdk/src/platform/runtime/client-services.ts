@@ -308,6 +308,8 @@ export type ClientOnlyServiceMember =
 export type ClientRuntimeServicesFromHost = Omit<ClientRuntimeServices, ClientOnlyServiceMember>;
 
 export interface ClientRuntimeServicesOptions {
+  /** Explicit absolute ordinary-Bun runtime for contained captured evaluation. */
+  readonly capturedBunRuntimeExecutable?: string | undefined;
   readonly runtimeBus: RuntimeEventBus;
   readonly runtimeStore: RuntimeStore;
   readonly configManager: ConfigManager;
@@ -457,6 +459,7 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
   });
 
   const agents = createAgentGraph({
+    capturedBunRuntimeExecutable: options.capturedBunRuntimeExecutable,
     runtimeBus: options.runtimeBus,
     configManager,
     providerRegistry: providers.providerRegistry,

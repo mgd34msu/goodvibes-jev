@@ -214,6 +214,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       agentMessageBus, archetypeLoader, agentOrchestrator,
       agentManager, contextAccountingHolder,
     } = createAgentExecutionGraph({
+      capturedBunRuntimeExecutable: options.capturedBunRuntimeExecutable,
       runtimeBus: options.runtimeBus, workingDirectory, configManager, providerRegistry,
       additionalFleetOwnership: () => [...nativeFleetOwnership(), ...acpFleetOwnership()],
     });

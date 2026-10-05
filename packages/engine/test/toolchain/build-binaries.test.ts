@@ -73,7 +73,7 @@ describe('build-binaries run', () => {
       provideAddon: () => true, exec, logger: captureLogger(),
     });
     for (const [index, entrypoint, artifact] of [[1, 'src/main.ts', 'goodvibes-linux-x64'], [2, 'src/daemon/cli.ts', 'goodvibes-daemon-linux-x64']] as const) {
-      expect(calls[index]).toEqual({ executable: 'bun', args: ['scripts/compile driver.ts', ...buildCompileArgs(entrypoint, 'bun-linux-x64', `dist/${artifact}`, ['sqlite-vec-linux-x64']).slice(1)] });
+      expect(calls[index]).toEqual({ executable: process.execPath, args: ['scripts/compile driver.ts', ...buildCompileArgs(entrypoint, 'bun-linux-x64', `dist/${artifact}`, ['sqlite-vec-linux-x64']).slice(1)] });
     }
   });
 

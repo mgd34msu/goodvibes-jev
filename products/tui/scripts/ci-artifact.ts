@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { createReadStream, lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const payloads = ['goodvibes-linux-x64', 'lib/sqlite-vec-linux-x64/vec0.so'] as const;
+const payloads = ['goodvibes-linux-x64', 'goodvibes-linux-x64.bun', 'goodvibes-linux-x64.bun.LICENSE.md', 'goodvibes-linux-x64.bun.json', 'lib/sqlite-vec-linux-x64/vec0.so'] as const;
 export interface TuiArtifactSource {
   sourceCommit: string;
   sourceTree: string;
@@ -20,7 +20,7 @@ async function inspect(root: string, source: TuiArtifactSource) {
     const full = resolve(root, 'dist', path);
     const stat = lstatSync(full);
     if (!stat.isFile()) throw new Error(`TUI CI artifact is not a regular file: ${path}`);
-    if (path === payloads[0] && (stat.mode & 0o111) === 0) throw new Error('TUI CI binary is not executable');
+    if ((path === payloads[0] || path.endsWith('.bun')) && (stat.mode & 0o111) === 0) throw new Error('TUI CI binary is not executable');
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(full)) hash.update(chunk);
     files.push({ path, sha256: hash.digest('hex'), mode: stat.mode & 0o777, size: stat.size });
@@ -28,7 +28,7 @@ async function inspect(root: string, source: TuiArtifactSource) {
   return { schema: 1, sourceCommit: source.sourceCommit, sourceTree: source.sourceTree, headCommit: source.headCommit, target: 'linux-x64', files };
 }
 
-/** Preserve the existing build's host executable and native library, without rebuilding. */
+/** Preserve the existing build's executable, Bun sidecar with notices, and native library, without rebuilding. */
 export async function recordTuiCiArtifact(root: string, source: TuiArtifactSource): Promise<void> {
   writeFileSync(resolve(root, 'dist/ci-artifact.json'), `${JSON.stringify(await inspect(root, source), null, 2)}\n`);
 }

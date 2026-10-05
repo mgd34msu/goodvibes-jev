@@ -10,7 +10,8 @@ import {
 import type { FeatureFlagManager } from '../../runtime/feature-flags/index.js';
 import type { Tool, ToolResult } from '../../types/tools.js';
 import { guardExecCommand } from '../exec/ast-guard.js';
-import { runCapturedCommand, type CapturedExecAuthority } from '../exec/captured-exec.js';
+import { probeCapturedExecAvailability, runCapturedCommand, type CapturedExecAuthority } from '../exec/captured-exec.js';
+import { createCapturedExecBunRuntimeAdmission } from '../exec/captured-bun-runtime-input.js';
 import { REPL_TOOL_SCHEMA } from './schema.js';
 import type { ReplToolInput } from './schema.js';
 
@@ -91,6 +92,7 @@ export function createCapturedReplTool(
   historyOwner: CapturedReplHistory = createCapturedReplHistory(binding.authority, binding.signal),
 ): Tool {
   binding = Object.freeze({ ...binding, dependencyInputs: binding.dependencyInputs ? Object.freeze([...binding.dependencyInputs]) : undefined });
+  const admitRuntime = binding.bunRuntimeAdmission ?? createCapturedExecBunRuntimeAdmission(binding);
   const check = async (callSignal?: AbortSignal): Promise<void> => {
     const signal = binding.signal && callSignal ? AbortSignal.any([binding.signal, callSignal]) : binding.signal ?? callSignal;
     await assertContractInputAuthority(binding.authority, binding.root, signal);
@@ -169,7 +171,24 @@ export function createCapturedReplTool(
         const guard = await guardExecCommand(command, featureFlags, signal);
         await check(signal);
         if (!guard.allowed) return await finish({ success: false, error: guard.denialMessage ?? 'Captured REPL command denied by policy.' });
-        const result = await runCapturedCommand(binding, command, {}, binding.root, TIMEOUT_MS, signal, 'disabled', {});
+        const availability = await probeCapturedExecAvailability();
+        await check(signal);
+        if (!availability.available) return await finish({
+          success: false, error: availability.message,
+          output: JSON.stringify({ runtime, result: '', error: availability.message,
+            isolated: false, stateless: true,
+            workspace_changes_persist: contractInputAuthorityMutable(binding.authority),
+            captured_exec_availability: availability }),
+        });
+        let bunRuntimeInput = binding.bunRuntimeInput;
+        if (!bunRuntimeInput) {
+          try { bunRuntimeInput = await admitRuntime(signal); }
+          catch {
+            await check(signal);
+            return await finish({ success: false, error: 'Captured REPL ordinary Bun runtime is unavailable, changed or access-restricted. Host evaluation is unavailable as a fallback.' });
+          }
+        }
+        const result = await runCapturedCommand({ ...binding, bunRuntimeInput }, command, {}, binding.root, TIMEOUT_MS, signal, 'disabled', {});
         await check(signal);
         const error = result.timed_out ? 'Captured REPL evaluation timed out after 10000ms.' : result.stderr;
         return await finish({

@@ -28,19 +28,22 @@ test('the TUI configuration delegates every supported target to the shared compi
     'bun-linux-x64', 'bun-linux-arm64', 'bun-darwin-x64', 'bun-darwin-arm64', 'bun-windows-x64',
   ]);
   const calls: { executable: string; args: readonly string[] }[] = [];
+  const runtimes: { key: string; artifacts: readonly string[] }[] = [];
   const outcomes = runBuildBinaries({
     cwd: root, config, selection: { targets: config.targets, daemonOnly: false }, nativeKey: 'linux-x64',
     provideAddon: () => true,
+    provideBunRuntime: (target, artifacts) => { runtimes.push({ key: target.key, artifacts }); },
     exec: (executable, args) => { calls.push({ executable, args }); return { status: 0, stdout: '', stderr: '' }; },
     logger: captureLogger(),
   });
   expect(outcomes.every(outcome => outcome.ok)).toBe(true);
   expect(calls.slice(config.prebuild.length)).toEqual(config.targets.map(target => ({
-    executable: 'bun', args: [
+    executable: process.execPath, args: [
       'scripts/compile.ts', config.appEntrypoint, '--compile', `--target=${target.bunTarget}`,
       '--outfile', `${config.outDir}/${target.appArtifact}`, '--external', target.nativeAddonPackage!,
     ],
   })));
+  expect(runtimes).toEqual(config.targets.filter(target => target.capturedBunRuntime).map(target => ({ key: target.key, artifacts: [target.appArtifact] })));
 });
 
 test('the TUI production compile driver preserves installed-owner HTML extraction without dependency mutation', () => {

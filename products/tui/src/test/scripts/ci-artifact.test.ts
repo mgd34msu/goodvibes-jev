@@ -11,6 +11,9 @@ async function fixture(run: (root: string) => Promise<void>) {
   const root = mkdtempSync(join(tmpdir(), 'tui-ci-artifact-'));
   mkdirSync(join(root, 'dist/lib/sqlite-vec-linux-x64'), { recursive: true });
   writeFileSync(join(root, 'dist/goodvibes-linux-x64'), 'synthetic executable\n', { mode: 0o755 });
+  writeFileSync(join(root, 'dist/goodvibes-linux-x64.bun'), 'synthetic ordinary runtime', { mode: 0o755 });
+  writeFileSync(join(root, 'dist/goodvibes-linux-x64.bun.LICENSE.md'), 'synthetic runtime notices', { mode: 0o644 });
+  writeFileSync(join(root, 'dist/goodvibes-linux-x64.bun.json'), 'synthetic runtime provenance', { mode: 0o644 });
   writeFileSync(join(root, 'dist/lib/sqlite-vec-linux-x64/vec0.so'), 'synthetic native library\n', { mode: 0o644 });
   try { await run(root); } finally { rmSync(root, { recursive: true, force: true }); }
 }
@@ -20,7 +23,7 @@ test('a tar round trip preserves the exact source, binary, library and executabl
   const manifest = JSON.parse(readFileSync(join(root, 'dist/ci-artifact.json'), 'utf8'));
   expect(manifest).toMatchObject({ schema: 1, ...source, target: 'linux-x64' });
   expect(manifest.files.map((file: { path: string; mode: number }) => [file.path, file.mode])).toEqual([
-    ['goodvibes-linux-x64', 0o755], ['lib/sqlite-vec-linux-x64/vec0.so', 0o644],
+    ['goodvibes-linux-x64', 0o755], ['goodvibes-linux-x64.bun', 0o755], ['goodvibes-linux-x64.bun.LICENSE.md', 0o644], ['goodvibes-linux-x64.bun.json', 0o644], ['lib/sqlite-vec-linux-x64/vec0.so', 0o644],
   ]);
   const archive = join(root, 'output.tgz');
   execFileSync('tar', ['-czf', archive, '-C', root, 'dist']);
@@ -30,7 +33,7 @@ test('a tar round trip preserves the exact source, binary, library and executabl
   await expect(verifyTuiCiArtifact(restored, source)).resolves.toBeUndefined();
 }));
 
-for (const path of ['goodvibes-linux-x64', 'lib/sqlite-vec-linux-x64/vec0.so']) {
+for (const path of ['goodvibes-linux-x64', 'goodvibes-linux-x64.bun', 'goodvibes-linux-x64.bun.LICENSE.md', 'goodvibes-linux-x64.bun.json', 'lib/sqlite-vec-linux-x64/vec0.so']) {
   test(`rejects changed payload bytes: ${path}`, () => fixture(async root => {
     await recordTuiCiArtifact(root, source);
     writeFileSync(join(root, 'dist', path), 'changed');
@@ -114,6 +117,7 @@ test('CI preserves the existing validation build and mandatorily archives its ex
   expect(record.run).toContain('ci-artifact.ts record "$GITHUB_SHA" "$TUI_SOURCE_HEAD"');
   expect(record.run).toContain('ci-artifact.ts verify "$GITHUB_SHA" "$TUI_SOURCE_HEAD"');
   expect(record.run).toContain('products/tui/dist/goodvibes-linux-x64');
+  for (const suffix of ['.bun', '.bun.LICENSE.md', '.bun.json']) expect(record.run).toContain(`products/tui/dist/goodvibes-linux-x64${suffix}`);
   expect(record.run).toContain('products/tui/dist/lib/sqlite-vec-linux-x64/vec0.so');
   expect(record.env?.TUI_SOURCE_HEAD).toBe('${{ github.event.pull_request.head.sha || github.sha }}');
   expect(record['continue-on-error']).toBeUndefined();
