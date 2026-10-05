@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { isConversationUsageAvailable, isConversationContextAvailable } from './core/conversation-usage.ts';
 import type { NativeConversationIntakeState } from './runtime/native-conversation-intake.ts';
 import { captureNativeConversationInput, type ProductInputContext } from './runtime/native-conversation-input.ts';
 import { routeNativeConversationInput, dispatchNativeConversationTurn } from './runtime/native-conversation-ingress.ts';
@@ -540,7 +541,7 @@ async function main() {
       promptText: promptInfo.visibleLines.join('\n'),
       promptLineCount: promptInfo.visibleLines.length,
       promptCursorPos: promptCursorOffset(promptInfo),
-      usage: { up: orchestrator.usage.input, down: orchestrator.usage.output, cacheRead: orchestrator.usage.cacheRead, cacheWrite: orchestrator.usage.cacheWrite, fleetCostUsd: footerFleetCost(() => ctx.services.processRegistry.query().nodes, runningAgentCount > 0) },
+      usage: { available: isConversationUsageAvailable(orchestrator.usage), up: orchestrator.usage.input, down: orchestrator.usage.output, cacheRead: orchestrator.usage.cacheRead, cacheWrite: orchestrator.usage.cacheWrite, fleetCostUsd: footerFleetCost(() => ctx.services.processRegistry.query().nodes, runningAgentCount > 0) },
       showExitNotice: input.showExitNotice,
       lastCopyTime: input.lastCopyTime,
       model: activeModel.footerModel, // prices the cost; the header names the model
@@ -555,6 +556,7 @@ async function main() {
       compactThreshold: Math.min(1, Math.max(0, (configManager.get('behavior.autoCompactThreshold') as number) / 100)),
       dangerMode: isEffectiveDangerMode(configManager),
       lastInputTokens: orchestrator.lastInputTokens,
+      contextUsageAvailable: isConversationContextAvailable(orchestrator),
       commandArgsHint,
       runningAgentCount, runningProcessCount,
       // Always-visible "sleep disabled" chip, topology-aware: the DAEMON's state in adopted-external mode, the in-process manager otherwise (power-chip-source.ts).
@@ -664,7 +666,8 @@ async function main() {
       model: active.footerModel, provider: active.footerProvider, modelNote: active.divergenceNote,
       permissionMode: configManager.get('permissions.mode') as string, toolCount: toolRegistry.list().length, notifyMode: modeManager.getHITLMode(),
       usage: orchestrator.usage,
-      cost: statusCostText({ up: orchestrator.usage.input, down: orchestrator.usage.output, cacheRead: orchestrator.usage.cacheRead, cacheWrite: orchestrator.usage.cacheWrite, fleetCostUsd: footerFleetCost(() => ctx.services.processRegistry.query().nodes, true) }, active.footerModel),
+      contextUsageAvailable: isConversationContextAvailable(orchestrator),
+      cost: statusCostText({ available: isConversationUsageAvailable(orchestrator.usage), up: orchestrator.usage.input, down: orchestrator.usage.output, cacheRead: orchestrator.usage.cacheRead, cacheWrite: orchestrator.usage.cacheWrite, fleetCostUsd: footerFleetCost(() => ctx.services.processRegistry.query().nodes, true) }, active.footerModel),
       contextTokens: orchestrator.lastInputTokens, contextWindow: providerRegistry.getKnownContextWindowForModel(serving) ?? 0, contextWindowSource: describeContextWindowSource(serving),
       compactFraction: Math.min(1, Math.max(0, (configManager.get('behavior.autoCompactThreshold') as number) / 100)),
       sessionSpine: spine?.sessionSpineActive && spine.sessionSpineStatus && spine.sessionSpineStatus !== 'unknown' ? spine.sessionSpineStatus : undefined,

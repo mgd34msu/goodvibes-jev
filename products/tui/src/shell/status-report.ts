@@ -1,3 +1,4 @@
+import { isConversationUsageAvailable } from '../core/conversation-usage.ts';
 /**
  * status-report.ts, what /status prints.
  *
@@ -26,6 +27,7 @@ export interface StatusReportSource {
   /** Formatted cost ("$0.246", "you $0.25 · fleet $0.47"), null when unpriced. */
   readonly cost: string | null;
   readonly contextTokens: number;
+  readonly contextUsageAvailable?: boolean;
   readonly contextWindow: number;
   /** Where the window came from ('catalog: abacus', 'consensus of 4 providers', 'family default'). */
   readonly contextWindowSource?: string;
@@ -56,14 +58,21 @@ export function formatStatusReport(s: StatusReportSource): string {
   if (s.notifyMode) row('notify', s.notifyMode);
   lines.push('Tokens');
   const total = s.usage.input + s.usage.output + s.usage.cacheRead + s.usage.cacheWrite;
-  row('input', s.usage.input > 0 ? n(s.usage.input) : '—');
-  row('output', n(s.usage.output));
-  row('cache read', n(s.usage.cacheRead));
-  row('cache write', n(s.usage.cacheWrite));
-  row('total', n(total));
-  row('cost', s.cost ?? 'n/a (model not priced)');
+  if (!isConversationUsageAvailable(s.usage)) {
+    row('usage', 'unavailable');
+    row('cost', 'unavailable');
+  } else {
+    row('input', s.usage.input > 0 ? n(s.usage.input) : '—');
+    row('output', n(s.usage.output));
+    row('cache read', n(s.usage.cacheRead));
+    row('cache write', n(s.usage.cacheWrite));
+    row('total', n(total));
+    row('cost', s.cost ?? 'n/a (model not priced)');
+  }
   lines.push('Context');
-  if (s.contextWindow > 0) {
+  if (s.contextUsageAvailable === false) {
+    row('used', 'unavailable');
+  } else if (s.contextWindow > 0) {
     const pct = Math.round(Math.min(1, s.contextTokens / s.contextWindow) * 100);
     row('used', `${s.contextTokens > 0 ? n(s.contextTokens) : '—'} / ${n(s.contextWindow)} (${pct}%)`);
     if (s.contextWindowSource) row('window from', s.contextWindowSource);

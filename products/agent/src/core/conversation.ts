@@ -85,6 +85,12 @@ export class ConversationManager extends SdkConversationManager {
 
   public suppressSplash: boolean = false;
   private noticeSink: NoticeSink | null = null;
+  private usageHydrator: (() => void) | null = null;
+
+  /** The shell's usage restore adapter, shared by every history replacement. */
+  public setUsageHydrator(hydrate: () => void): void {
+    this.usageHydrator = hydrate;
+  }
   public splashOptions: SplashOptions = {};
   private splashOnScreen = false;
   /** Per-unit rendered-line cache: an unchanged turn or message is never redrawn (conversation-line-cache.ts). */
@@ -310,6 +316,7 @@ export class ConversationManager extends SdkConversationManager {
     titleSource?: import('@goodvibes-jev/engine/sdk/platform/core').ConversationTitleSource;
   }): void {
     super.fromJSON(data);
+    this.usageHydrator?.();
     // A restored session's notices go back into the history (not toasted).
     for (const message of data.messages) if (message.role === 'system') this.noticeSink?.(message.content, { restored: true });
     // Output printed over the conversation this one replaces is not about it.

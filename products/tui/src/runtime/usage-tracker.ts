@@ -1,3 +1,4 @@
+import { isConversationUsageAvailable } from '../core/conversation-usage.ts';
 /**
  * usage-tracker.ts, the session's token and cost history.
  *
@@ -168,6 +169,7 @@ export class UsageTracker {
 
   /** Snapshot a completed turn (the delta since the previous one). */
   recordTurn(now: number = Date.now()): void {
+    if (!this.available()) { this.emit(); return; }
     const cu = this.totals();
     this.turnsList.push({
       input: Math.max(0, cu.input - this.prevCumulative.input),
@@ -182,6 +184,7 @@ export class UsageTracker {
   }
 
   private recordCostPoint(): void {
+    if (!this.available()) { this.emit(); return; }
     const total = this.sessionCost().usd;
     this.costPoints.push(Math.max(0, total - this.lastSessionCost));
     this.lastSessionCost = total;
@@ -225,6 +228,10 @@ export class UsageTracker {
   }
 
   // ── Reading ────────────────────────────────────────────────────────────────
+
+  available(): boolean { return isConversationUsageAvailable(this.deps.getUsage()); }
+
+  contextAvailable(): boolean { return this.available() || this.deps.getContextTokens() > 0; }
 
   totals(): UsageTotals {
     const u = this.deps.getUsage();
@@ -281,7 +288,7 @@ export class UsageTracker {
   sessionCost(): UsageCost {
     const u = this.totals();
     const model = this.modelId();
-    const priced = isModelPriced(model);
+    const priced = this.available() && isModelPriced(model);
     return {
       usd: calcSessionCost(u.input, u.output, u.cacheRead, u.cacheWrite, model),
       priced,
@@ -328,7 +335,7 @@ export class UsageTracker {
   }
 
   overBudget(): boolean {
-    return computeBudgetBreach(this.sessionCost().usd, this.budget());
+    return this.available() && computeBudgetBreach(this.sessionCost().usd, this.budget());
   }
 
   /** True when the current model can carry a manual price (prices are keyed provider:model). */

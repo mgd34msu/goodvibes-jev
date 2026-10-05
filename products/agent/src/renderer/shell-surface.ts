@@ -80,7 +80,7 @@ export interface ShellFooterBuildOptions {
   readonly promptFocused?: boolean;
   /** The keyboard is in the conversation work tree: the status line shows its keys. */
   readonly workTreeFocused?: boolean;
-  readonly usage: { up: number; down: number; cacheRead?: number; cacheWrite?: number };
+  readonly usage: { available?: boolean; up: number; down: number; cacheRead?: number; cacheWrite?: number };
   readonly showExitNotice: boolean;
   readonly lastCopyTime: number;
   /** The model the session cost is priced against; not drawn (the header names the model). */
@@ -99,6 +99,7 @@ export interface ShellFooterBuildOptions {
   readonly compactThreshold?: number;
   readonly dangerMode?: boolean;
   readonly lastInputTokens?: number;
+  readonly contextUsageAvailable?: boolean;
   readonly commandArgsHint?: string;
   /** The interaction mode (quiet / balanced / operator), the mode chip's name at rest. */
   readonly hitlMode?: string;
@@ -206,6 +207,7 @@ function fmtCost(usd: number): string {
 
 /** "~$0.246" for a priced model (an estimate, hence the ~); null when the model has no price. */
 export function statusCostText(usage: ShellFooterBuildOptions['usage'], model: string | undefined): string | null {
+  if (usage.available === false) return 'usage unavailable';
   if (!model || !isModelPriced(model)) return null;
   return `~$${fmtCost(calcSessionCost(usage.up, usage.down, usage.cacheRead ?? 0, usage.cacheWrite ?? 0, model))}`;
 }
@@ -314,6 +316,7 @@ export function buildShellFooter(options: ShellFooterBuildOptions): ShellFooterB
     context: options.contextWindow === null || (options.contextWindow !== undefined && options.contextWindow > 0)
       ? {
           usedTokens: options.lastInputTokens ?? 0,
+          available: options.contextUsageAvailable,
           windowTokens: options.contextWindow,
           compactFraction: compactFraction(options.compactThreshold),
         }

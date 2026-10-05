@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { isConversationUsageAvailable, isConversationContextAvailable } from './core/conversation-usage.ts';
 import type { NativeConversationIntakeState } from './runtime/native-conversation-intake.ts';
 import { captureNativeConversationInput, type ProductInputContext } from './runtime/native-conversation-input.ts';
 import { routeNativeConversationInput, dispatchNativeConversationTurn } from './runtime/native-conversation-ingress.ts';
@@ -599,7 +600,7 @@ async function main() {
           .slice(0, promptInfo.visibleCursorLine)
           .reduce((sum: number, line: string) => sum + line.length + 1, 0) + promptInfo.visibleCursorCol
         : undefined,
-      usage: { up: orchestrator.usage.input, down: orchestrator.usage.output },
+      usage: { available: isConversationUsageAvailable(orchestrator.usage), up: orchestrator.usage.input, down: orchestrator.usage.output },
       showExitNotice: input.showExitNotice,
       lastCopyTime: input.lastCopyTime,
       model: runtime.model, // prices the cost; the header names the model
@@ -611,6 +612,7 @@ async function main() {
       dangerMode: readApprovalPostureFromConfig(configManager).automaticApprovals,
       powerNote: describePowerStatus(ctx.services.powerManager.getState()) ?? undefined, // see power-status.ts
       lastInputTokens: orchestrator.lastInputTokens,
+      contextUsageAvailable: isConversationContextAvailable(orchestrator),
       commandArgsHint,
       hitlMode: modeManager.getHITLMode(),
       runningAgentCount,
