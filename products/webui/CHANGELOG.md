@@ -8,6 +8,11 @@ This project uses semantic versioning with `vMAJOR.MINOR.PATCH` git tags.
 
 ### Fixed
 
+- Session follow-up and steer receipts now retain the returned input ID and exact
+  delivery state. Queued HTTP responses stay queued; session updates and a fallback
+  poll reconcile delivery, completion and failure without resending. Session,
+  account and relay changes retire local drafts and stale responses.
+
 - Work can inspect real native, durable and captured-worktree contract responses.
   Original native goals and ordered criteria, recorded semantic outcomes, separate
   transport retry progress and durable/input provenance remain read-only.

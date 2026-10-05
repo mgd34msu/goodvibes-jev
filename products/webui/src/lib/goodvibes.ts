@@ -2370,10 +2370,10 @@ export const sdk = {
       // of these call sites, TypeScript rejects a wrong-shaped `input` here at compile
       // time (see goodvibes.test.ts's "wrong-typed steer input is a compile error" case).
       get: (sessionId: string) => invokeOperator('sessions.get', { sessionId }),
-      steer: (sessionId: string, input: OperatorMethodInput<'sessions.steer'>) =>
-        invokeOperator('sessions.steer', { sessionId, ...input }),
-      followUp: (sessionId: string, input: OperatorMethodInput<'sessions.followUp'>) =>
-        invokeOperator('sessions.followUp', { sessionId, ...input }),
+      steer: (sessionId: string, input: OperatorMethodInput<'sessions.steer'>, signal?: AbortSignal) =>
+        scopedSdk.operator.invoke('sessions.steer', { sessionId, ...input }, { signal }),
+      followUp: (sessionId: string, input: OperatorMethodInput<'sessions.followUp'>, signal?: AbortSignal) =>
+        scopedSdk.operator.invoke('sessions.followUp', { sessionId, ...input }, { signal }),
       create: (input: OperatorMethodInput<'sessions.create'>) => invokeOperator('sessions.create', input),
       close: (sessionId: string) => invokeOperator('sessions.close', { sessionId }),
       reopen: (sessionId: string) => invokeOperator('sessions.reopen', { sessionId }),
@@ -2408,7 +2408,7 @@ export const sdk = {
         list: (sessionId: string) => invokeOperator('sessions.messages.list', { sessionId }),
       },
       inputs: {
-        list: (sessionId: string) => invokeOperator('sessions.inputs.list', { sessionId }),
+        list: (sessionId: string, signal?: AbortSignal) => scopedSdk.operator.invoke('sessions.inputs.list', { sessionId }, { signal }),
         cancel: (sessionId: string, inputId: string) => invokeOperator('sessions.inputs.cancel', { sessionId, inputId }),
       },
       // toolCalls.cancel (SDK 1.8.0's interaction-wins round): stop ONE running tool

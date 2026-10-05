@@ -1,37 +1,17 @@
 /**
- * SteerComposer, the hero flow. Injects a mid-turn steer (sessions.steer) while an
- * agent is bound, or queues a follow-up turn (sessions.followUp) otherwise.
- *
- * Honesty: the composer is fire-and-optimistic, it reflects the dispatched text
- * locally with an explicit delivery state (queued → delivered, or failed) and never
- * blocks on the POST resolving. The queued/delivered/failed labels mirror the wire's
- * input lifecycle (session-input-queued / -delivered / -completed / -failed); the
- * authoritative state is reconciled on the next sessions.get/messages refetch, which
- * the session-update stream triggers.
+ * Dispatch receipts use the daemon's input lifecycle, never HTTP success alone.
+ * The keyed body retires local text/receipts on session or account/relay changes.
  */
 
-import { useState, type KeyboardEvent, type SyntheticEvent } from 'react';
+import { useSyncExternalStore, useState, type KeyboardEvent, type SyntheticEvent } from 'react';
 import { SendHorizontal } from 'lucide-react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { sdk } from '../../lib/goodvibes';
-import { queryKeys } from '../../lib/queries';
+import { getClientLifetime, subscribeClientLifetime, type ClientLifetime } from '../../lib/client-lifetime';
+import { useSessionDispatches, type DispatchMode } from '../../hooks/useSessionDispatches';
 import { shouldSubmitComposerKey } from '../../lib/composer-keys';
-import { formatError, isSessionClosedError } from '../../lib/errors';
 import { Button } from '../../components/ui/Button';
 import { Textarea } from '../../components/ui/Field';
 import { StatusDot } from '../../components/ui/StatusDot';
 import '../../styles/components/steer-composer.css';
-
-export type DispatchMode = 'steer' | 'followUp';
-export type DeliveryState = 'queued' | 'delivered' | 'failed';
-
-export interface LocalDispatch {
-  id: string;
-  mode: DispatchMode;
-  text: string;
-  state: DeliveryState;
-  error?: string;
-}
 
 interface SteerComposerProps {
   sessionId: string;
@@ -42,62 +22,26 @@ interface SteerComposerProps {
   /**
    * True when the live session-update stream is currently paused/reconnecting
    * (threaded down from App). A steer still sends over HTTP while
-   * the stream is down, but the delivered/failed confirmation, which is reconciled
-   * off the stream-driven refetch, may lag. The composer says so rather than looking
-   * silently stuck.
+   * the stream is down. Polling still reconciles input receipts; live updates may lag.
    */
   streamPaused?: boolean;
 }
 
-let dispatchSeq = 0;
+export function SteerComposer(props: SteerComposerProps) {
+  const lifetime = useSyncExternalStore(subscribeClientLifetime, getClientLifetime, getClientLifetime);
+  return <ScopedSteerComposer key={`${lifetime.revision}:${props.sessionId}`} {...props} lifetime={lifetime} />;
+}
 
-export function SteerComposer({ sessionId, canSteer, closed, streamPaused = false }: SteerComposerProps) {
-  const queryClient = useQueryClient();
+function ScopedSteerComposer({ sessionId, canSteer, closed, streamPaused = false, lifetime }: SteerComposerProps & { lifetime: ClientLifetime }) {
   const [text, setText] = useState('');
-  const [dispatches, setDispatches] = useState<LocalDispatch[]>([]);
-
+  const { dispatches, send, refreshFailed, missingReceipt } = useSessionDispatches(lifetime, sessionId, streamPaused);
   const mode: DispatchMode = canSteer ? 'steer' : 'followUp';
-
-  const setState = (id: string, state: DeliveryState, error?: string) => {
-    setDispatches((current) => current.map((d) => (d.id === id ? { ...d, state, error } : d)));
-  };
-
-  const mutation = useMutation({
-    mutationFn: ({ body }: { id: string; body: string }) => (
-      // The daemon steer/follow-up routes read the canonical `body` field only
-      // (readSharedSessionMessageBody → body.body, narrowed at SDK 0.30.0); a
-      // `{ message }` envelope 400s with "Missing shared session steer body".
-      mode === 'steer'
-        ? sdk.operator.sessions.steer(sessionId, { body })
-        : sdk.operator.sessions.followUp(sessionId, { body })
-    ),
-    onSuccess: async (_data, variables) => {
-      setState(variables.id, 'delivered');
-      // Reconcile against the authoritative transcript.
-      await queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
-    },
-    onError: (error, variables) => {
-      if (isSessionClosedError(error)) {
-        // The chrome (status badge, composer enablement) is driven by the sessions
-        // query, not by this local dispatch state, without this invalidation the
-        // session keeps reading as "active" and the user can keep firing 409s.
-        setState(variables.id, 'failed', 'This session is closed. Reopen it to continue.');
-        void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
-        return;
-      }
-      setState(variables.id, 'failed', formatError(error));
-    },
-  });
 
   function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     const body = text.trim();
     if (!body || closed) return;
-    const id = `dispatch-${++dispatchSeq}`;
-    const entry: LocalDispatch = { id, mode, text: body, state: 'queued' };
-    setDispatches((current) => [entry, ...current].slice(0, 20));
-    setText('');
-    mutation.mutate({ id, body });
+    if (send(body, mode)) setText('');
   }
 
   // THE SOFT-KEYBOARD HERO FIX: the steer used to submit ONLY on
@@ -128,7 +72,19 @@ export function SteerComposer({ sessionId, canSteer, closed, streamPaused = fals
       {streamPaused && !closed && (
         <p className="steer-composer__stream-note" role="status">
           Live updates paused: your {mode === 'steer' ? 'steer' : 'follow-up'} will still
-          send; the delivered/failed result may take a moment to appear.
+          send; delivery updates may take a moment to appear.
+        </p>
+      )}
+
+      {refreshFailed && (
+        <p className="steer-composer__stream-note" role="status">
+          Delivery status could not be refreshed. Showing the last confirmed state; checking again automatically.
+        </p>
+      )}
+
+      {missingReceipt && (
+        <p className="steer-composer__stream-note" role="status">
+          Some delivery receipts are missing from the latest input list. Showing their last confirmed states.
         </p>
       )}
 
@@ -171,7 +127,9 @@ export function SteerComposer({ sessionId, canSteer, closed, streamPaused = fals
         <ul className="steer-composer__dispatches" aria-label="Recent dispatches">
           {dispatches.map((dispatch) => (
             <li key={dispatch.id} className={`steer-dispatch steer-dispatch--${dispatch.state}`}>
-              <StatusDot tone={dispatch.state === 'failed' ? 'bad' : dispatch.state === 'delivered' ? 'ok' : 'live'} />
+              <StatusDot tone={dispatch.state === 'failed' || dispatch.state === 'rejected' ? 'bad'
+                : dispatch.state === 'completed' || dispatch.state === 'delivered' ? 'ok'
+                  : dispatch.state === 'cancelled' || dispatch.state === 'unknown' ? 'idle' : 'live'} />
               <span className="steer-dispatch__text">{dispatch.text}</span>
               <span className="steer-dispatch__state">
                 {dispatch.mode === 'steer' ? 'steer' : 'follow-up'} · {dispatch.state}

@@ -11,16 +11,19 @@
  * plain wording, not the raw formatError dump (which may embed a session id).
  */
 
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { beforeEach, afterEach, describe, expect, mock, test } from 'bun:test';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
+import { tokenStore, WEBUI_TOKEN_STORE_KEY } from '../../lib/client-lifetime';
+
 let rejectNextSteerAsClosed = false;
 let rejectNextSteerAsOtherError = false;
 
 mock.module('../../lib/goodvibes', () => ({
+  hasStoredTokenSync: () => Boolean(localStorage.getItem(WEBUI_TOKEN_STORE_KEY)),
   getCurrentAuth: () => Promise.resolve({}),
   invokeMethod: () => Promise.resolve({}),
   sdk: {
@@ -89,7 +92,9 @@ async function typeAndSubmit(container: HTMLElement, value: string) {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-afterEach(() => {
+beforeEach(async () => { await tokenStore.setToken('synthetic-steer-account'); });
+afterEach(async () => {
+  await tokenStore.clearToken();
   rejectNextSteerAsClosed = false;
   rejectNextSteerAsOtherError = false;
 });
