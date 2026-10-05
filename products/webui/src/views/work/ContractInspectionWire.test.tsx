@@ -75,7 +75,7 @@ function renderDetail(id: string) {
 
 function expectReadOnly(el: HTMLElement) {
   expect(Array.from(el.querySelectorAll('button')).map((button) => button.textContent)
-    .filter((text) => /^(approve|reject|reply|resume|amend|revise|cancel|start)\b/i.test(text ?? ''))).toEqual([]);
+    .filter((text) => /^(approve|reject|reply|resume|amend|revise|start)\b/i.test(text ?? ''))).toEqual([]);
   expect(el.querySelector('input,textarea,[contenteditable=true]')).toBeNull();
 }
 

@@ -36,7 +36,7 @@ function expectReadOnly(daemon: ContractDaemon) {
   ) || (request.methodId?.startsWith('contracts.') && !['contracts.get', 'contracts.list'].includes(request.methodId)))).toEqual([]);
 }
 
-test('Work renders the goal, criteria readings, evidence, group/unit checks and escalation history without mutation controls', async ({ page }) => {
+test('Work renders the goal, criteria readings, evidence, group/unit checks and escalation history without unsolicited mutations', async ({ page }) => {
   const daemon = await installContractDaemon(page);
   await page.goto('/?view=work');
   const detail = await openRow(page, WAITING_CONTRACT.goal);
@@ -68,7 +68,8 @@ test('Work renders the goal, criteria readings, evidence, group/unit checks and 
     'Can the phone overflow be accepted for this release?',
   ]) await expect(detail.getByText(text, { exact: false }).last()).toBeVisible();
 
-  await expect(detail.getByRole('button', { name: /^(approve|reject|reply|resume|amend|cancel|start)\b/i })).toHaveCount(0);
+  await expect(detail.getByRole('button', { name: /^(approve|reject|reply|resume|amend|start)\b/i })).toHaveCount(0);
+  await expect(detail.getByRole('button', { name: 'Cancel contract', exact: true })).toBeVisible();
   await expect(detail.getByRole('textbox')).toHaveCount(0);
   await expect.poll(() => daemon.requests.some((request) => request.method === 'GET' && request.path === `/api/contracts/${WAITING_CONTRACT.id}`)).toBe(true);
   await expectNoHorizontalScroll(page);
@@ -118,6 +119,7 @@ test('terminal contracts show their recorded answer, failure and cancellation re
     const detail = await openRow(page, contract.goal);
     if (!result) throw new Error(`Missing terminal result for ${contract.id}.`);
     await expect(detail.getByText(result, { exact: false })).toBeVisible();
+    await expect(detail.getByRole('button', { name: 'Cancel contract', exact: true })).toHaveCount(0);
     if (contract.id === PASSED_CONTRACT.id) {
       await expect(detail.getByText('Inspection did not write a commit.', { exact: false })).toBeVisible();
     }
@@ -207,6 +209,7 @@ test('a detail response for the wrong contract is rejected rather than displayed
   await page.goto('/?view=work&tab=processes');
   const detail = await openRow(page, RUNNING_CONTRACT.goal);
   await expect(detail.getByRole('alert')).toContainText(/could not load this contract/i);
+  await expect(detail.getByRole('button', { name: 'Cancel contract', exact: true })).toHaveCount(0);
   await expect(detail.getByText(WAITING_CONTRACT.ask, { exact: true })).toHaveCount(0);
   await closeContract(page);
   expectReadOnly(daemon);
@@ -240,6 +243,7 @@ for (const [code, message] of [
     daemon.setDetailError(RUNNING_CONTRACT.id, { status: 404, error: 'Synthetic contract read unavailable.', code });
     await detail.getByRole('button', { name: 'Refresh contract', exact: true }).click();
     await expect(detail.getByRole('alert')).toContainText(message);
+    await expect(detail.getByRole('button', { name: 'Cancel contract', exact: true })).toHaveCount(0);
     await expect(detail.getByText(RUNNING_CONTRACT.ask, { exact: true })).toHaveCount(0);
     await expect(detail.getByRole('button', { name: 'Retry contract', exact: true })).toBeVisible();
     await closeContract(page);

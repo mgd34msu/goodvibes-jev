@@ -2255,6 +2255,18 @@ export const sdk = {
         readContractMethod('contracts.list', input, signal),
       get: (contractId: string, signal?: AbortSignal): Promise<ContractRecord> =>
         readContractMethod('contracts.get', { contractId }, signal),
+      cancel: async (contractId: string, signal: AbortSignal): Promise<OperatorMethodOutput<'contracts.cancel'>> => {
+        const route = webuiRouteFor('contracts.cancel');
+        if (route?.method !== 'POST') throw new Error('Contract cancellation is unavailable.');
+        const input: OperatorMethodInput<'contracts.cancel'> = { contractId, reason: 'Cancelled by the user from WebUI.' };
+        const { path, rest } = interpolateRoute(route, input);
+        const result = await requestJson(path, { method: route.method, body: rest, signal });
+        if (typeof result !== 'object' || result === null || !('cancelled' in result)
+          || typeof result.cancelled !== 'boolean' || Object.keys(result).length !== 1) {
+          throw new Error('The daemon returned an unreadable cancellation response.');
+        }
+        return { cancelled: result.cancelled };
+      },
     },
     fleet: {
       snapshot: () => invokeGatewayMethod<'fleet.snapshot', FleetSnapshotResult>('fleet.snapshot', {}),
