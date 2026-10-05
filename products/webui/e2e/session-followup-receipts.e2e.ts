@@ -74,7 +74,7 @@ for (const outcome of ['failed', 'cancelled'] as const) {
   });
 }
 
-test('Shift+Enter and IME keep the draft; plain Enter and the touch target safely send once', async ({ page }) => {
+test('Shift+Enter and IME keep the draft; plain Enter and the send button safely send once', async ({ page }, testInfo) => {
   const fixture = await installFollowUpDaemon(page);
   await openSession(page, fixture);
   const input = page.getByRole('textbox', { name: 'Follow-up message' });
@@ -95,7 +95,11 @@ test('Shift+Enter and IME keep the draft; plain Enter and the touch target safel
   })));
   await expect(input).toHaveValue('First line\nSecond line');
   expect(fixture.writes).toHaveLength(0);
-  await expectTappable(page, '.steer-composer__send');
+  await expect(send).toBeVisible();
+  await expect(send).toBeEnabled();
+  // The shared UI kit applies the 44px target to coarse pointers; desktop uses
+  // the intentionally compact 34px control, as in the existing touch audit.
+  if (testInfo.project.name === 'phone') await expectTappable(page, '.steer-composer__send');
   await input.fill(fixture.capture.input.body);
   await send.click();
   await expect(state(page)).toHaveText('follow-up · queued');
