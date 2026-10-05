@@ -22,7 +22,6 @@ import type { FleetProcessNode } from '../../lib/goodvibes';
 import { queryKeys } from '../../lib/queries';
 import {
   type UnionSessionRecord,
-  unionSessionsFromListResponse,
   kindLabel,
   projectLabel,
   isClosedStatus,
@@ -34,12 +33,13 @@ import {
 } from '../../lib/sessions-union';
 import { companionMessagesFromListResponse } from '../../lib/companion-chat';
 import { firstString } from '../../lib/object';
-import { formatError, isMethodUnavailableError, isSessionNotFoundError, isSessionNotLocalError } from '../../lib/errors';
+import { formatError, isMethodUnavailableError, isSessionNotLocalError } from '../../lib/errors';
 import { permissionModeLabel, type SettablePermissionMode } from '../../lib/permission-mode';
 import { outcomeLabel, type CompactionCheck, type CompactionReceipt } from '../../lib/compaction';
 import { useCompactionReceipts } from '../../hooks/useCompactionReceipts';
 import { PermissionModeSheet } from '../../components/confirm/PermissionModeSheet';
-import { useConfirm } from '../../components/ui/ConfirmDialog';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { useSessionLifecycle } from '../../hooks/useSessionLifecycle';
 import { PriceSourceNote } from '../../components/pricing/PriceSourceNote';
 import { DetailPane, DetailSection, Facts } from '../../components/data-view/DataView';
 import { Button } from '../../components/ui/Button';
@@ -194,8 +194,7 @@ export interface SessionDetailProps {
 }
 
 export function SessionDetail({ record, agents, tab, onTabChange, streamPaused, onOpenItem, onOpenInChat, onClose }: SessionDetailProps) {
-  const queryClient = useQueryClient();
-  const confirm = useConfirm();
+  const lifecycle = useSessionLifecycle(record.id, onClose);
   const closed = isClosedStatus(record.status);
   const reaped = isReapedStatus(record);
   const retention = retentionLabel(record);
@@ -232,61 +231,6 @@ export function SessionDetail({ record, agents, tab, onTabChange, streamPaused, 
     prevStreamPausedRef.current = streamPaused;
   }, [streamPaused, refetchDeleteCapability]);
 
-  const invalidateSessions = () => queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
-  const closeSession = useMutation({
-    mutationFn: (sessionId: string) => sdk.operator.sessions.close(sessionId),
-    onSuccess: invalidateSessions,
-  });
-  const reopenSession = useMutation({
-    mutationFn: (sessionId: string) => sdk.operator.sessions.reopen(sessionId),
-    onSuccess: invalidateSessions,
-  });
-  const deleteSession = useMutation({
-    mutationFn: async (sessionId: string) => {
-      try {
-        await sdk.operator.sessions.close(sessionId);
-      } catch (error) {
-        if (!isSessionNotFoundError(error)) throw error;
-      }
-      try {
-        await sdk.operator.sessions.delete(sessionId);
-      } catch (error) {
-        if (!isSessionNotFoundError(error)) throw error;
-      }
-      const reconciled = await sdk.operator.sessions.list();
-      const stillPresent = unionSessionsFromListResponse(reconciled).some((r) => r.id === sessionId);
-      if (stillPresent) {
-        throw Object.assign(new Error('Delete did not complete, the record still exists'), { code: 'DELETE_INCOMPLETE' });
-      }
-    },
-    onSuccess: async () => {
-      await invalidateSessions();
-      onClose();
-    },
-  });
-  const actionError = closeSession.error ?? reopenSession.error ?? deleteSession.error;
-
-  async function handleClose(): Promise<void> {
-    const ok = await confirm.ask({
-      title: 'Close this session?',
-      target: record.title,
-      description: 'It stays in history and can be reopened.',
-      confirmLabel: 'Close session',
-    });
-    if (ok) closeSession.mutate(record.id);
-  }
-
-  async function handleDelete(): Promise<void> {
-    const ok = await confirm.ask({
-      title: 'Delete this session?',
-      target: record.title,
-      description: 'The session record is removed for good and cannot be reopened.',
-      confirmLabel: 'Delete',
-      tone: 'danger',
-    });
-    if (ok) deleteSession.mutate(record.id);
-  }
-
   const statusWord = reaped ? 'Reaped: reopens on the next activity' : closed ? 'Closed' : sentenceCase(statusLabel(record.status));
   const openInChat = onOpenInChat && CHAT_KINDS.has(record.kind) ? () => onOpenInChat(record.id) : undefined;
 
@@ -296,12 +240,12 @@ export function SessionDetail({ record, agents, tab, onTabChange, streamPaused, 
         <Button size="sm" icon={<ExternalLink aria-hidden="true" />} onClick={openInChat}>Open in chat</Button>
       )}
       {closed ? (
-        <Button size="sm" disabled={reopenSession.isPending} onClick={() => reopenSession.mutate(record.id)}>
-          {reopenSession.isPending ? 'Reopening…' : 'Reopen'}
+        <Button size="sm" disabled={lifecycle.disabled} onClick={() => lifecycle.ask('reopen')}>
+          {lifecycle.phase === 'pending' && lifecycle.action === 'reopen' ? 'Reopening…' : 'Reopen'}
         </Button>
       ) : (
-        <Button size="sm" disabled={closeSession.isPending} onClick={() => void handleClose()} title="Stops the session and keeps its history; it can be reopened">
-          {closeSession.isPending ? 'Closing…' : 'Close session'}
+        <Button size="sm" disabled={lifecycle.disabled} onClick={() => lifecycle.ask('close')} title="Stops the session and keeps its history; it can be reopened">
+          {lifecycle.phase === 'pending' && lifecycle.action === 'close' ? 'Closing…' : 'Close session'}
         </Button>
       )}
       <Menu
@@ -310,8 +254,8 @@ export function SessionDetail({ record, agents, tab, onTabChange, streamPaused, 
         trigger={(props) => <IconButton {...props} label="More session actions" icon={<MoreHorizontal />} />}
       >
         {deleteState === 'available' && (
-          <MenuItem danger onSelect={() => void handleDelete()} disabled={deleteSession.isPending}>
-            {deleteSession.isPending ? 'Deleting…' : 'Delete permanently'}
+          <MenuItem danger onSelect={() => lifecycle.ask('delete')} disabled={lifecycle.disabled}>
+            {lifecycle.phase === 'pending' && lifecycle.action === 'delete' ? 'Deleting…' : 'Delete permanently'}
           </MenuItem>
         )}
         {deleteState === 'unavailable' && (
@@ -347,8 +291,20 @@ export function SessionDetail({ record, agents, tab, onTabChange, streamPaused, 
         />
       )}
     >
-      {confirm.element}
-      {actionError && <p className="dv-notice dv-notice--bad" role="alert">{formatError(actionError)}</p>}
+      <ConfirmDialog
+        open={lifecycle.phase === 'confirming'}
+        title={lifecycle.action === 'delete' ? 'Delete this session?' : 'Close this session?'}
+        target={record.title}
+        description={lifecycle.action === 'delete' ? 'The session record is removed for good and cannot be reopened.' : 'It stays in history and can be reopened.'}
+        confirmLabel={lifecycle.action === 'delete' ? 'Delete' : 'Close session'}
+        tone={lifecycle.action === 'delete' ? 'danger' : 'default'}
+        onConfirm={lifecycle.confirm}
+        onCancel={lifecycle.dismiss}
+      />
+      {lifecycle.notice && <p className="dv-notice dv-notice--bad" role="alert">
+        {lifecycle.notice}{' '}
+        <Button size="sm" variant="ghost" disabled={lifecycle.refreshing} onClick={lifecycle.refresh}>Refresh session state</Button>
+      </p>}
       {record.lastError && <p className="dv-notice dv-notice--bad" role="alert">Last error: {record.lastError}</p>}
 
       {tab === 'transcript' && (

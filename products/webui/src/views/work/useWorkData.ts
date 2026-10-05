@@ -21,6 +21,7 @@ import { hostedSessionsFromListResult, sortHostedSessionsNewestFirst } from '../
 import { sortUnionSessions, unionSessionsFromListResponse } from '../../lib/sessions-union';
 import { useApprovalUpdates } from '../../hooks/useApprovalUpdates';
 import { useContractList } from '../../hooks/useContracts';
+import { readSessionList } from '../../hooks/useSessionLifecycle';
 import type { ClientLifetime } from '../../lib/client-lifetime';
 import type { CiWatch } from './work-items';
 
@@ -69,8 +70,9 @@ export function useWorkData({ contractScope, subscriptionActive, archived, inclu
   });
 
   const sessions = useQuery({
-    queryKey: queryKeys.sessions,
-    queryFn: () => sdk.operator.sessions.list(),
+    queryKey: queryKeys.sessionList(contractScope.revision),
+    queryFn: ({ signal }) => readSessionList(contractScope, signal),
+    gcTime: 0,
   });
 
   const hosted = useQuery({
