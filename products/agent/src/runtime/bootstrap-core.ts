@@ -396,6 +396,7 @@ export async function initializeBootstrapCore(
     requestRender,
     configManager,
     agentManager: services.agentManager,
+    contractRunner: services.contractRunner,
     toolRegistry,
   });
 
