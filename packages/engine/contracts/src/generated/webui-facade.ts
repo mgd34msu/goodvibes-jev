@@ -22906,6 +22906,11 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "contextWindow": 0,
       "contextUsagePct": 0,
       "contextRemainingTokens": 0,
+      "contextWindowSource": "provider_api",
+      "contextWindowOrigin": {
+        "kind": "user_override"
+      },
+      "contextWindowAcceptedFloor": 0,
       "estimated": false
     }
   },

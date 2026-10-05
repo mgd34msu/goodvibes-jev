@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Session context usage now carries the live model's known capacity and typed
+  provenance. Unknown windows, percentages and remaining tokens stay nullable;
+  accepted-input floors remain lower bounds. Hosted control bindings cannot
+  borrow another runtime's context snapshot, and session maintenance/read-model
+  warnings stay unknown-safe across model changes.
+
 - Contract inspection schemas now preserve native source, recorded Jev decisions,
   semantic and transport waits, durable admission, captured input and completion
   report fields returned by the real runner. Generated clients retain receipt

@@ -7,6 +7,7 @@
  */
 import type { ModelDefinition } from '../../../providers/registry.js';
 import type { ProviderRegistry } from '../../../providers/registry.js';
+import { readModelContextWindow } from '../../../providers/context-window-reading.js';
 import type { BenchmarkStore } from '../../../providers/model-benchmarks.js';
 import type { ProviderHealthDomainState, ProviderHealthRecord } from '../../store/domains/provider-health.js';
 import type { ModelDomainState } from '../../store/domains/model.js';
@@ -164,21 +165,6 @@ export function enrichModelEntries(
 
     const fallbackPosition = fallbackPositions.get(model.registryKey);
 
-    // Resolve effective context window and determine display source label.
-    const effectiveContextWindow = providerRegistry.getContextWindowForModel(model);
-    const knownContextWindow = providerRegistry.getKnownContextWindowForModel(model);
-    // A different numeric budget can also be a fallback. Only a known
-    // resolved window may be attributed to OpenRouter; preserve the detailed
-    // origin when the registry's own value is what we are displaying.
-    let contextWindowSource: ModelPickerEntry['contextWindowSource'];
-    if (knownContextWindow !== null && (effectiveContextWindow !== model.contextWindow ||
-        model.contextWindowProvenance === 'fallback' || model.contextWindowProvenance === 'accepted_floor')) {
-      contextWindowSource = 'openrouter';
-    } else if (effectiveContextWindow !== model.contextWindow) {
-      contextWindowSource = 'fallback';
-    } else {
-      contextWindowSource = model.contextWindowProvenance ?? 'registry';
-    }
 
     return {
       modelId: model.id,
@@ -190,12 +176,7 @@ export function enrichModelEntries(
       benchmarkScore,
       capabilities: buildCapabilityFlags(model),
       health,
-      contextWindow: effectiveContextWindow,
-      knownContextWindow,
-      ...(model.contextWindowAcceptedFloor !== undefined ? { contextWindowAcceptedFloor: model.contextWindowAcceptedFloor } : {}),
-      contextWindowSource,
-      ...(contextWindowSource !== 'openrouter' && effectiveContextWindow === model.contextWindow && model.contextWindowOrigin
-        ? { contextWindowOrigin: model.contextWindowOrigin } : {}),
+      ...readModelContextWindow(model, providerRegistry),
       isPinned: pinnedIds.has(model.registryKey),
       isActive: model.registryKey === modelState.registryKey,
       isProviderDegraded,

@@ -15,7 +15,7 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import type { ServerSentEventHandlers } from '@goodvibes-jev/engine/transport-http';
 
 let capturedHandlers: ServerSentEventHandlers | null = null;
@@ -117,16 +117,17 @@ describe('useRealtimeInvalidation', () => {
     unmount();
   });
 
-  test('a `permissions` frame invalidates approvals, the sessions prefix, AND durable rules; `providers` invalidates providers', () => {
+  test('a `permissions` frame invalidates approvals, the sessions prefix, AND durable rules; `providers` also refreshes session context usage', async () => {
     const { invalidate, unmount } = renderHook();
     capturedHandlers?.onEvent?.('gate', {});
     capturedHandlers?.onEvent?.('providers', {});
+    await new Promise((resolve) => setTimeout(resolve, 0));
     // The broad 'sessions' prefix is included (not 'config') because
     // PERMISSION_MODE_CHANGED rides the same 'gate' domain, carries no
     // sessionId, and the session-scoped permission-mode/context-usage queries are
     // prefixed with 'sessions' (queries.ts), see useRealtimeInvalidation.ts's
     // DOMAIN_INVALIDATIONS comment.
-    expect(invalidatedKeys(invalidate)).toEqual([['approvals'], ['sessions'], ['permissions', 'rules'], ['providers']]);
+    expect(invalidatedKeys(invalidate)).toEqual([['approvals'], ['sessions'], ['permissions', 'rules'], ['providers'], ['sessions']]);
     unmount();
   });
 
@@ -214,4 +215,50 @@ describe('useRealtimeInvalidation', () => {
     expect(banner).not.toContain('{');
     handle.unmount();
   });
+});
+
+
+// A provider frame can arrive before the selected session's first GET settles.
+// The pre-change response must not become the cached capacity after that event.
+test('provider change replaces a pending initial usage read and ignores its late known window', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  let finishOld!: (value: { contextWindow: number }) => void;
+  const oldResponse = new Promise<{ contextWindow: number }>(resolve => { finishOld = resolve; });
+  let calls = 0;
+  let permissionCalls = 0;
+  function Harness() {
+    useRealtimeInvalidation(true);
+    const usage = useQuery<{ contextWindow: number | null }>({
+      queryKey: ['sessions', 'selected', 'context-usage'],
+      queryFn: () => ++calls === 1 ? oldResponse : Promise.resolve({ contextWindow: null }),
+    });
+    useQuery({ queryKey: ['sessions', 'selected', 'permission-mode'], queryFn: () => { permissionCalls++; return 'normal'; }, staleTime: Infinity });
+    return React.createElement('span', null, usage.data ? String(usage.data.contextWindow) : 'loading');
+  }
+  try {
+    flushSync(() => root.render(React.createElement(QueryClientProvider, { client }, React.createElement(Harness))));
+    expect(calls).toBe(1);
+    capturedHandlers?.onEvent?.('providers', { type: 'MODEL_CHANGED', registryKey: 'synthetic:unknown', provider: 'synthetic' });
+    const deadline = Date.now() + 2000;
+    while (container.textContent !== 'null') {
+      if (Date.now() > deadline) throw new Error(`Context failed to refresh: ${container.textContent}`);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      flushSync(() => {});
+    }
+    expect(calls).toBe(2);
+    finishOld({ contextWindow: 10000 });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    flushSync(() => {});
+    expect(container.textContent).toBe('null');
+    expect(client.getQueryData<{ contextWindow: number | null }>(['sessions', 'selected', 'context-usage'])).toEqual({ contextWindow: null });
+    expect(permissionCalls).toBe(1);
+  } finally {
+    finishOld({ contextWindow: 10000 });
+    flushSync(() => root.unmount());
+    client.clear();
+    container.remove();
+  }
 });

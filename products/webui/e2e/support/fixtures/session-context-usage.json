@@ -1,0 +1,61 @@
+{
+  "source": "packages/engine/test/session-context-usage-http.test.ts",
+  "sessionId": "s-context-local",
+  "hostedSessionId": "s-context-hosted",
+  "scenarios": {
+    "provider_api": {
+      "method": "GET",
+      "path": "/api/sessions/s-context-local/context-usage",
+      "status": 200,
+      "body": "{\"sessionId\":\"s-context-local\",\"estimatedContextTokens\":40000,\"contextWindow\":100000,\"contextUsagePct\":40,\"contextRemainingTokens\":60000,\"contextWindowSource\":\"provider_api\",\"estimated\":true}"
+    },
+    "configured_cap": {
+      "method": "GET",
+      "path": "/api/sessions/s-context-local/context-usage",
+      "status": 200,
+      "body": "{\"sessionId\":\"s-context-local\",\"estimatedContextTokens\":40000,\"contextWindow\":80000,\"contextUsagePct\":50,\"contextRemainingTokens\":40000,\"contextWindowSource\":\"configured_cap\",\"contextWindowOrigin\":{\"kind\":\"user_override\"},\"estimated\":true}"
+    },
+    "observed_limit": {
+      "method": "GET",
+      "path": "/api/sessions/s-context-local/context-usage",
+      "status": 200,
+      "body": "{\"sessionId\":\"s-context-local\",\"estimatedContextTokens\":40000,\"contextWindow\":90000,\"contextUsagePct\":44,\"contextRemainingTokens\":50000,\"contextWindowSource\":\"observed_limit\",\"estimated\":true}"
+    },
+    "fallback": {
+      "method": "GET",
+      "path": "/api/sessions/s-context-local/context-usage",
+      "status": 200,
+      "body": "{\"sessionId\":\"s-context-local\",\"estimatedContextTokens\":40000,\"contextWindow\":null,\"contextUsagePct\":null,\"contextRemainingTokens\":null,\"contextWindowSource\":\"fallback\",\"contextWindowOrigin\":{\"kind\":\"family_default\"},\"estimated\":true}"
+    },
+    "consensus": {
+      "method": "GET",
+      "path": "/api/sessions/s-context-local/context-usage",
+      "status": 200,
+      "body": "{\"sessionId\":\"s-context-local\",\"estimatedContextTokens\":40000,\"contextWindow\":null,\"contextUsagePct\":null,\"contextRemainingTokens\":null,\"contextWindowSource\":\"catalog\",\"contextWindowOrigin\":{\"kind\":\"consensus\",\"providers\":4,\"agreeing\":3},\"estimated\":true}"
+    },
+    "accepted_floor": {
+      "method": "GET",
+      "path": "/api/sessions/s-context-local/context-usage",
+      "status": 200,
+      "body": "{\"sessionId\":\"s-context-local\",\"estimatedContextTokens\":40000,\"contextWindow\":null,\"contextUsagePct\":null,\"contextRemainingTokens\":null,\"contextWindowSource\":\"accepted_floor\",\"contextWindowAcceptedFloor\":24000,\"estimated\":true}"
+    },
+    "catalog": {
+      "method": "GET",
+      "path": "/api/sessions/s-context-local/context-usage",
+      "status": 200,
+      "body": "{\"sessionId\":\"s-context-local\",\"estimatedContextTokens\":40000,\"contextWindow\":100000,\"contextUsagePct\":40,\"contextRemainingTokens\":60000,\"contextWindowSource\":\"catalog\",\"contextWindowOrigin\":{\"kind\":\"catalog\",\"catalogProviderId\":\"fixture-provider\"},\"estimated\":true}"
+    },
+    "no_model": {
+      "method": "GET",
+      "path": "/api/sessions/s-context-local/context-usage",
+      "status": 200,
+      "body": "{\"sessionId\":\"s-context-local\",\"estimatedContextTokens\":40000,\"contextWindow\":null,\"contextUsagePct\":null,\"contextRemainingTokens\":null,\"estimated\":true}"
+    },
+    "hosted_refusal": {
+      "method": "GET",
+      "path": "/api/sessions/s-context-hosted/context-usage",
+      "status": 404,
+      "body": "{\"error\":\"Context usage is unavailable for session s-context-hosted on this runtime.\",\"code\":\"SESSION_NOT_LOCAL\",\"category\":\"not_found\",\"status\":404}"
+    }
+  }
+}

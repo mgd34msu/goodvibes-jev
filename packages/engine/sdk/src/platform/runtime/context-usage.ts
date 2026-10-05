@@ -6,20 +6,23 @@
  * operator-wire verb (control-plane/routes/session-runtime.ts) can never drift
  * on how a percentage / remaining figure is computed.
  *
- * HONESTY: `usedTokens` is an ESTIMATE (the token estimator's figure), not a
- * measured provider prompt-token count. Callers that surface these values must
+ * HONESTY: `usedTokens` is the runtime's current ESTIMATE, not a guaranteed
+ * fresh preflight count. Callers that surface these values must
  * label them as estimates, this helper only does the arithmetic.
  */
 export interface ContextUsageDerived {
-  /** Context usage as a 0–100 percentage (0 when the window is unknown). */
-  readonly contextUsagePct: number;
-  /** Tokens remaining before the window is full (0 when unknown/exhausted). */
-  readonly contextRemainingTokens: number;
+  /** Context usage as a 0–100 percentage, or null when capacity is unknown. */
+  readonly contextUsagePct: number | null;
+  /** Tokens remaining before the window is full, or null when capacity is unknown. */
+  readonly contextRemainingTokens: number | null;
 }
 
-export function deriveContextUsage(usedTokens: number, window: number): ContextUsageDerived {
+export function deriveContextUsage(usedTokens: number, window: number | null): ContextUsageDerived {
+  if (window === null || !Number.isFinite(window) || window <= 0) {
+    return { contextUsagePct: null, contextRemainingTokens: null };
+  }
   return {
-    contextUsagePct: window > 0 ? Math.min(100, Math.round((usedTokens / window) * 100)) : 0,
-    contextRemainingTokens: window > 0 ? Math.max(0, window - usedTokens) : 0,
+    contextUsagePct: Math.min(100, Math.round((usedTokens / window) * 100)),
+    contextRemainingTokens: Math.max(0, window - usedTokens),
   };
 }

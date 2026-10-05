@@ -22,9 +22,9 @@ import type { TurnCancellationResult } from '../../core/turn-cancellation.js';
  * PRESET_CHANGED event, so surfaces stay in sync without this verb
  * emitting its own event.
  *
- * HONESTY (context usage): the token figure is the estimator's
- * (estimatedContextTokens), NOT a measured provider prompt-token count; the
- * field name and the `estimated: true` flag keep that explicit. The percentage
+ * HONESTY (context usage): estimatedContextTokens is the runtime's current
+ * estimate, not a guaranteed fresh preflight count. The field name and the
+ * `estimated: true` flag keep that limitation explicit. The percentage
  * and remaining tokens derive from that estimate via the one shared
  * runtime/context-usage.ts helper the in-process read model also uses.
  */
@@ -32,6 +32,9 @@ import type { GatewayMethodCatalog } from '../method-catalog.js';
 import type { GatewayMethodHandler } from '../method-catalog-shared.js';
 import type { PermissionMode } from '../../config/schema-types.js';
 import { deriveContextUsage } from '../../runtime/context-usage.js';
+import { readCurrentContextWindow } from '../../providers/context-window-reading.js';
+import type { ContextWindowOrigin, ContextWindowProvenance } from '../../providers/registry-types.js';
+import type { ProviderRegistry } from '../../providers/registry.js';
 import { GatewayVerbError } from './gateway-verb-error.js';
 import { readInvocationParams } from './invocation-params.js';
 
@@ -83,9 +86,14 @@ export function toConfigPermissionMode(mode: string): PermissionMode {
 /** The measured/estimated context usage of a single session's live runtime. */
 export interface SessionContextUsage {
   readonly estimatedContextTokens: number;
-  readonly contextWindow: number;
-  readonly contextUsagePct: number;
-  readonly contextRemainingTokens: number;
+  /** A source-supported ceiling or configured cap; null when capacity is unknown. */
+  readonly contextWindow: number | null;
+  readonly contextUsagePct: number | null;
+  readonly contextRemainingTokens: number | null;
+  readonly contextWindowSource?: ContextWindowProvenance | 'openrouter' | 'registry' | undefined;
+  readonly contextWindowOrigin?: ContextWindowOrigin | undefined;
+  /** Largest accepted input, not a ceiling. */
+  readonly contextWindowAcceptedFloor?: number | undefined;
 }
 
 /**
@@ -160,7 +168,7 @@ export interface SessionRuntimeControls {
   isLocalSession(sessionId: string): boolean;
   getPermissionMode(): PermissionMode;
   setPermissionMode(mode: PermissionMode): void;
-  getContextUsage(): SessionContextUsage;
+  getContextUsage(sessionId: string): SessionContextUsage;
   /**
    * The live-turn controls for this session id.
    *
@@ -309,14 +317,11 @@ export function createSessionQueuedMessageDeleteHandler(controls: SessionRuntime
 export function createSessionContextUsageGetHandler(controls: SessionRuntimeControls): GatewayMethodHandler {
   return (invocation) => {
     const sessionId = requireLocalSessionId(controls, readInvocationParams(invocation));
-    const usage = controls.getContextUsage();
+    const usage = controls.getContextUsage(sessionId);
     return {
       sessionId,
-      estimatedContextTokens: usage.estimatedContextTokens,
-      contextWindow: usage.contextWindow,
-      contextUsagePct: usage.contextUsagePct,
-      contextRemainingTokens: usage.contextRemainingTokens,
-      // The token figure is the estimator's, never a measured provider count.
+      ...usage,
+      // The stored token estimate is not a fresh preflight measurement.
       estimated: true,
     };
   };
@@ -337,7 +342,6 @@ export interface SessionRuntimeStateReader {
   getState(): {
     readonly session: { readonly id: string };
     readonly conversation: { readonly estimatedContextTokens: number };
-    readonly model: { readonly tokenLimits: { readonly contextWindow: number } };
   };
 }
 
@@ -350,6 +354,7 @@ export interface SessionRuntimeStateReader {
 export function createSessionRuntimeControls(deps: {
   readonly config: PermissionModeConfig;
   readonly store: SessionRuntimeStateReader;
+  readonly providerRegistry?: Pick<ProviderRegistry, 'getCurrentModel' | 'getContextWindowForModel' | 'getKnownContextWindowForModel'> | undefined;
   /** Live-turn controls holder an interactive consumer binds; absent = no live-turn verbs. */
   readonly liveTurnHolder?: SessionLiveTurnControlsHolder | undefined;
 }): SessionRuntimeControls {
@@ -373,16 +378,27 @@ export function createSessionRuntimeControls(deps: {
     setPermissionMode(mode: PermissionMode): void {
       deps.config.set('permissions.mode', mode);
     },
-    getContextUsage(): SessionContextUsage {
+    getContextUsage(sessionId: string): SessionContextUsage {
       const state = deps.store.getState();
+      // Hosted live-turn bindings do not provide per-session usage/model data.
+      // Do not answer for those sessions with this single runtime store.
+      if (sessionId !== LOCAL_RUNTIME_ALIAS && (!state.session.id || sessionId !== state.session.id)) {
+        throw new GatewayVerbError(`Context usage is unavailable for session ${sessionId} on this runtime.`, 'SESSION_NOT_LOCAL', 404);
+      }
       const usedTokens = state.conversation.estimatedContextTokens;
-      const window = state.model.tokenLimits.contextWindow;
+      const reading = readCurrentContextWindow(deps.providerRegistry);
+      const window = reading?.knownContextWindow ?? null;
       const derived = deriveContextUsage(usedTokens, window);
       return {
         estimatedContextTokens: usedTokens,
         contextWindow: window,
         contextUsagePct: derived.contextUsagePct,
         contextRemainingTokens: derived.contextRemainingTokens,
+        ...(reading ? {
+          contextWindowSource: reading.contextWindowSource,
+          ...(reading.contextWindowOrigin ? { contextWindowOrigin: reading.contextWindowOrigin } : {}),
+          ...(reading.contextWindowAcceptedFloor !== undefined ? { contextWindowAcceptedFloor: reading.contextWindowAcceptedFloor } : {}),
+        } : {}),
       };
     },
   };
