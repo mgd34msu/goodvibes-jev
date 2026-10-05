@@ -15,6 +15,7 @@
  * `cancelAllAgentRuns`. `dispose` releases the runner and its store.
  */
 import { join } from 'node:path';
+import { resolveProcessCapturedBunRuntimeExecutable } from './captured-bun-runtime.js';
 import { AgentMessageBus, AgentOrchestrator, ArchetypeLoader } from '../agents/index.js';
 import type { ContractRunner } from '../contract/runner.js';
 import { AgentManager, ContextAccountingHolder } from '../tools/index.js';
@@ -33,6 +34,8 @@ export interface AgentExecutionGraph {
 }
 
 export interface AgentExecutionGraphOptions {
+  /** Absolute ordinary-Bun declaration; otherwise use this build's declared runtime. */
+  readonly capturedBunRuntimeExecutable?: string | undefined;
   readonly runtimeBus: RuntimeEventBus;
   readonly workingDirectory: string;
   readonly configManager: ConfigManager;
@@ -64,6 +67,7 @@ export function createAgentExecutionGraph(options: AgentExecutionGraphOptions): 
   const archetypeLoader = new ArchetypeLoader(join(options.workingDirectory, '.goodvibes', 'agents'));
   const agentOrchestrator = new AgentOrchestrator({
     messageBus: agentMessageBus,
+    capturedBunRuntimeExecutable: options.capturedBunRuntimeExecutable ?? resolveProcessCapturedBunRuntimeExecutable(),
   });
   agentOrchestrator.setRuntimeBus(options.runtimeBus);
   const agentManager = new AgentManager({

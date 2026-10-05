@@ -2,6 +2,7 @@ import { admitCapturedRegistryContext, type CapturedRegistryContext } from '../t
 import { join } from 'node:path';
 import { getContractActionSource, getContractActionPort, type ContractActionPort } from '../tools/agent/contract-binding.js';
 import { createCapturedExecNodeRuntimeAdmission } from '../tools/exec/captured-exec-runtime-input.js';
+import { createCapturedExecBunRuntimeAdmission } from '../tools/exec/captured-bun-runtime-input.js';
 import {
   admitCapturedExecDependency,
   type CapturedExecDependencyInput,
@@ -239,15 +240,19 @@ export class AgentOrchestrator {
   private cancellationSource: AgentCancellationSource | null = null;
   private readonly channelRegistry: ChannelPluginRegistry | null;
   private readonly messageBus: import('./message-bus.js').AgentMessageBus;
+  private readonly capturedBunRuntimeExecutable: string | undefined;
 
   constructor(
     config: {
       channelRegistry?: ChannelPluginRegistry | null | undefined;
       messageBus: import('./message-bus.js').AgentMessageBus;
+      /** Absolute ordinary-Bun declaration from the host composition. */
+      capturedBunRuntimeExecutable?: string | undefined;
     } = {
       messageBus: new AgentMessageBus(),
     },
   ) {
+    this.capturedBunRuntimeExecutable = config.capturedBunRuntimeExecutable;
     this.channelRegistry = config.channelRegistry ?? null;
     this.messageBus = config.messageBus;
   }
@@ -426,6 +431,7 @@ export class AgentOrchestrator {
     capturedRegistry?: CapturedRegistryContext,
     capturedProcessManager?: import('../tools/shared/process-manager.js').ProcessManager,
     nodeRuntimeAdmission?: import('../tools/exec/captured-exec.js').CapturedExecAuthority['nodeRuntimeAdmission'],
+    bunRuntimeAdmission?: import('../tools/exec/captured-exec.js').CapturedExecAuthority['bunRuntimeAdmission'],
   ): ToolRegistry {
     const channelVersion = this.channelRegistry?.getVersion() ?? -1;
     if (this.fullRegistryChannelVersion !== channelVersion) {
@@ -484,6 +490,7 @@ export class AgentOrchestrator {
                 signal,
                 dependencyInputs,
                 nodeRuntimeAdmission,
+                bunRuntimeAdmission,
               },
               capturedRegistry,
               diagnosticsProvider: null,
@@ -749,6 +756,10 @@ export class AgentOrchestrator {
           authority, root: cwd, readAccessFilter: ownerReadAccess, signal,
         })
       : undefined;
+    const bunRuntimeAdmission = authority && needsCapturedExec
+      ? createCapturedExecBunRuntimeAdmission({ authority, root: cwd, readAccessFilter: ownerReadAccess, signal },
+          this.capturedBunRuntimeExecutable === undefined ? undefined : { bunExecutable: this.capturedBunRuntimeExecutable })
+      : undefined;
     if (authority) await assertContractInputAuthority(authority, cwd, signal);
     const capturedRegistry =
       authority && needsCapturedRegistry
@@ -855,6 +866,7 @@ export class AgentOrchestrator {
           capturedRegistry,
           processManager,
           nodeRuntimeAdmission,
+          bunRuntimeAdmission,
         ),
       buildScopedRegistry: (allowedNames, fullRegistry, captureAuthority) =>
         this.buildScopedRegistry(allowedNames, fullRegistry, captureAuthority),
