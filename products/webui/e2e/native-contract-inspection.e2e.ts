@@ -19,8 +19,9 @@ function fact(scope: Locator, label: string) {
   return scope.locator('.dv-facts__row').filter({ has: scope.page().getByText(label, { exact: true }) }).locator('dd');
 }
 
-async function expectReadOnly(detail: Locator, daemon: CapturedDaemon) {
-  await expect(detail.getByRole('button', { name: /^(approve|reject|reply|resume|amend|revise|cancel|start)\b/i })).toHaveCount(0);
+async function expectInspectionOnly(detail: Locator, daemon: CapturedDaemon, terminal: boolean) {
+  await expect(detail.getByRole('button', { name: /^(approve|reject|reply|resume|amend|revise|start)\b/i })).toHaveCount(0);
+  await expect(detail.getByRole('button', { name: 'Cancel contract', exact: true })).toHaveCount(terminal ? 0 : 1);
   await expect(detail.getByRole('textbox')).toHaveCount(0);
   expect(daemon.requests.filter((request) => (
     request.path.startsWith('/api/contracts') && request.method !== 'GET'
@@ -159,7 +160,7 @@ for (const fixture of CAPTURED_CONTRACTS) {
         await expect(outputText).toHaveJSProperty('textContent', unit.lastOutput);
       }
     }
-    await expectReadOnly(detail, daemon);
+    await expectInspectionOnly(detail, daemon, ['passed', 'failed', 'cancelled'].includes(record.status));
     await expectNoHorizontalScroll(page);
     const tree = detail.locator('.contract-tree');
     expect(await tree.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
@@ -177,12 +178,13 @@ for (const fixture of CAPTURED_CONTRACTS) {
       await detail.getByRole('button', { name: 'Refresh contract', exact: true }).click();
       await expect(detail.getByRole('alert'), malformed.name).toContainText('unreadable contract record');
       await expect(tree, malformed.name).toHaveCount(0);
+      await expect(detail.getByRole('button', { name: 'Cancel contract', exact: true })).toHaveCount(0);
       daemon.restore();
       await detail.getByRole('button', { name: 'Retry contract', exact: true }).click();
       await expect(tree).toBeVisible();
       await expect(detail.getByRole('alert')).toHaveCount(0);
     }
-    await expectReadOnly(detail, daemon);
+    await expectInspectionOnly(detail, daemon, ['passed', 'failed', 'cancelled'].includes(record.status));
     await expectNoHorizontalScroll(page);
     if (test.info().project.name === 'phone') await page.getByRole('button', { name: 'All work', exact: true }).click();
     else await detail.getByRole('button', { name: 'Close contract', exact: true }).click();

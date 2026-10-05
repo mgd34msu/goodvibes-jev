@@ -15,6 +15,12 @@ This project uses semantic versioning with `vMAJOR.MINOR.PATCH` git tags.
 
 ### Added
 
+- Work contract details can explicitly request cancellation with a partial-files
+  warning. Intents are single-flight and tied to the selected account and detail.
+  Ambiguous responses never replay a mutation; retry requires refreshed state and
+  a new confirmation. Acknowledgement does not claim child cleanup is complete,
+  and a retained contract without a live runner can report no cancellation.
+
 - Read-only contract inspection in Work: goals, original requests, criteria and
   recorded readings, group/unit/attempt trees, check evidence, escalation history
   and terminal results. Existing process controls remain reachable.

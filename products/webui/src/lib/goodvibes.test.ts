@@ -959,3 +959,38 @@ describe('read-only contract inspection facade', () => {
     await expect(sdk.operator.contracts.list({}, abort.signal)).rejects.toThrow();
   });
 });
+
+describe('explicit contract cancellation facade', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = originalFetch; });
+  test('generated POST binding encodes the target and forwards the cancellation signal once', async () => {
+    const requests: { url: URL; init?: RequestInit }[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: new URL(String(input)), init }); return Response.json({ cancelled: false });
+    }) as typeof fetch;
+    const abort = new AbortController();
+    expect(await sdk.operator.contracts.cancel('contract:a/b', abort.signal)).toEqual({ cancelled: false });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url.pathname).toBe(WEBUI_METHOD_ROUTES['contracts.cancel'].path.replace('{contractId}', encodeURIComponent('contract:a/b')));
+    expect(requests[0].init?.method).toBe('POST'); expect(requests[0].init?.signal).toBe(abort.signal);
+    expect(JSON.parse(String(requests[0].init?.body))).toEqual({ reason: 'Cancelled by the user from WebUI.' });
+  });
+  test('interrupted confirmation does not reach fetch and late acknowledgement is rejected', async () => {
+    let calls = 0; const abort = new AbortController(); abort.abort();
+    globalThis.fetch = (async () => { calls++; return Response.json({ cancelled: true }); }) as unknown as typeof fetch;
+    await expect(sdk.operator.contracts.cancel('cancelled-before-send', abort.signal)).rejects.toThrow(); expect(calls).toBe(0);
+    const late = new AbortController();
+    globalThis.fetch = (async () => { calls++; late.abort(); return Response.json({ cancelled: true }); }) as unknown as typeof fetch;
+    await expect(sdk.operator.contracts.cancel('late', late.signal)).rejects.toThrow(); expect(calls).toBe(1);
+  });
+  test('malformed acknowledgement and service failure are never replayed', async () => {
+    for (const body of [{}, { cancelled: 'true' }, { cancelled: true, cleanupComplete: true }]) {
+      let calls = 0;
+      globalThis.fetch = (async () => { calls++; return Response.json(body); }) as unknown as typeof fetch;
+      await expect(sdk.operator.contracts.cancel('malformed', new AbortController().signal)).rejects.toThrow('unreadable cancellation response'); expect(calls).toBe(1);
+    }
+    let calls = 0;
+    globalThis.fetch = (async () => { calls++; return Response.json({ error: 'lost response' }, { status: 503 }); }) as unknown as typeof fetch;
+    await expect(sdk.operator.contracts.cancel('ambiguous', new AbortController().signal)).rejects.toThrow(); expect(calls).toBe(1);
+  });
+});
