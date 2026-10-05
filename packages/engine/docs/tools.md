@@ -37,10 +37,31 @@ For how tool-call arguments are parsed, validated, and dropped when malformed, s
 | `packet` | Manage context packets | create, list, show, revise, publish |
 | `query` | Ask and answer structured questions | ask, list, show, answer, close |
 | `remote` | Manage distributed runners | create-pool, pools, assign, unassign, contracts, artifacts, review, import-artifact |
-| `repl` | Evaluate code in an isolated REPL | eval, history |
+| `repl` | Evaluate bounded code when an isolating backend is available | eval, history |
 | `control` | Inspect host control data | commands, panels, subscriptions, sandbox presets |
 | `channel` | Use channel-owned runtime tools | surface-specific tool bridge |
 | `web_search` | Run provider-backed web search | query, safe-search, evidence fetching |
+
+## Captured REPL evaluation
+
+Captured contract/Agent views support one-shot JavaScript and TypeScript eval
+through the existing Linux bubblewrap projection backend and trusted Bun runtime.
+The normal tool admission and exec safety reading still apply. The backend checks
+the live original-owner and captured-view authority before projection reads,
+execution and result delivery. A supplied workspace path cannot change that binding.
+
+Each call starts a fresh process. JSON bindings become named globals, and the
+printed completion value and console output are returned in `result`. Variables
+do not survive the call. Authorized file changes persist only in mutable member
+views; immutable views remain unchanged. Results report `stateless`, `isolated`
+and `workspace_changes_persist`. Network access and the ambient host environment
+are unavailable. Evaluation has a 10-second execution limit and a 64 KiB command
+limit, in addition to the captured executor's output and workspace limits.
+
+Captured history, Python, SQL and GraphQL remain explicitly unavailable. This is
+not shared-VM or persistent-session support. Ordinary live-tree REPL behavior is
+unchanged: its local backend does not isolate code, so eval refuses and history
+continues to list attempts. Neither path falls back to host evaluation.
 
 ## Registration requirements
 

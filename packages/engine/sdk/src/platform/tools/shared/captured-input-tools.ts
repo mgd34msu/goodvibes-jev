@@ -8,6 +8,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { lstatSync, realpathSync } from 'node:fs';
 import { isCapturedExecTool } from '../exec/runtime.js';
+import { isCapturedReplTool } from '../repl/captured.js';
 import type { Tool } from '../../types/tools.js';
 import type { ReadAccessFilter } from './read-access.js';
 import {
@@ -169,6 +170,11 @@ export function capturedInputTool(
                 if (!isCapturedExecTool(tool, authority))
                   throw new UnsupportedCapturedWorkflow(
                     'captured exec requires its construction-owned execution backend',
+                  );
+              } else if (name === 'repl') {
+                if (!isCapturedReplTool(tool, authority))
+                  throw new UnsupportedCapturedWorkflow(
+                    'captured REPL requires its construction-owned execution backend',
                   );
               } else if (name === 'edit') {
                 if (!contractInputAuthorityMutable(authority))
