@@ -1,0 +1,352 @@
+{
+  "contracts": [
+    {
+      "id": "ctr-57415cdd",
+      "durableAdmission": {
+        "binding": {
+          "actionId": "start-native-contract",
+          "actionRevision": "1",
+          "authorityId": "host",
+          "authorityRevision": "1",
+          "inputRevision": "input-1",
+          "scopeId": "project",
+          "scopeRevision": "1",
+          "sourceId": "native-work"
+        },
+        "input": {
+          "ask": "Parser display request",
+          "isolation": "worktree",
+          "nativeSource": {
+            "sourceId": "native-work",
+            "sourceRevision": "1",
+            "inputRevision": "input-1",
+            "criteriaId": "native-criteria",
+            "criteriaRevision": "1",
+            "goal": " Deliver the exact parser.\nPreserve Unicode ☃ and trailing space. ",
+            "criteria": [
+              "The parser preserves all documented input forms"
+            ]
+          },
+          "origin": "turn",
+          "projectRoot": "/tmp/goodvibes-sdk-testrun-2-1ed65473/contract-runner-cuyh9d",
+          "sessionId": "inspection-schema"
+        },
+        "key": {
+          "attemptId": "attempt-1",
+          "criteriaId": "native-criteria",
+          "criteriaRevision": "1",
+          "workId": "native-work"
+        },
+        "schemaVersion": 2,
+        "contractId": "ctr-57415cdd",
+        "ownerAgentId": "agent-2ba82d20",
+        "payloadRevision": "049f671005082a83063a1b1fc63ba4883244dd2c3310157382c5c47c416d7d6a",
+        "execution": {
+          "isolation": "worktree",
+          "branch": "contract/57415cdd",
+          "worktreePath": "/tmp/goodvibes-sdk-testrun-2-1ed65473/contract-runner-cuyh9d/.goodvibes/.worktrees/contract/57415cdd",
+          "baseBranch": "main"
+        }
+      },
+      "durableLaunchState": "launch-claimed",
+      "schemaVersion": 5,
+      "sessionId": "inspection-schema",
+      "origin": "turn",
+      "ask": "Parser display request",
+      "ownerAgentId": "agent-2ba82d20",
+      "projectRoot": "/tmp/goodvibes-sdk-testrun-2-1ed65473/contract-runner-cuyh9d",
+      "isolation": "worktree",
+      "branch": "contract/57415cdd",
+      "worktreePath": "/tmp/goodvibes-sdk-testrun-2-1ed65473/contract-runner-cuyh9d/.goodvibes/.worktrees/contract/57415cdd",
+      "baseBranch": "main",
+      "nativeSource": {
+        "sourceId": "native-work",
+        "sourceRevision": "1",
+        "inputRevision": "input-1",
+        "criteriaId": "native-criteria",
+        "criteriaRevision": "1",
+        "goal": " Deliver the exact parser.\nPreserve Unicode ☃ and trailing space. ",
+        "criteria": [
+          "The parser preserves all documented input forms"
+        ]
+      },
+      "goal": " Deliver the exact parser.\nPreserve Unicode ☃ and trailing space. ",
+      "criteria": [
+        {
+          "id": "c1",
+          "text": "The parser preserves all documented input forms",
+          "quote": "The parser preserves all documented input forms",
+          "origin": "stated",
+          "serves": [],
+          "disposition": "judged",
+          "status": "unread",
+          "readings": []
+        }
+      ],
+      "groups": [],
+      "units": [],
+      "status": "checking-plan",
+      "checks": [],
+      "fixRounds": 0,
+      "escalations": [],
+      "decisions": [
+        {
+          "id": "ctr-57415cdd.d1",
+          "at": 1791199706504,
+          "action": "created",
+          "targetId": "ctr-57415cdd",
+          "reason": "origin turn; worktree isolation",
+          "decisionIds": []
+        },
+        {
+          "id": "ctr-57415cdd.d2",
+          "at": 1791199706595,
+          "action": "created",
+          "targetId": "ctr-57415cdd",
+          "reason": "admitted local input generation cklecatm-qmar-ossm-aktq-tqqeqbosdtrl; captured 2 paths",
+          "decisionIds": []
+        },
+        {
+          "id": "ctr-57415cdd.d3",
+          "at": 1791199706602,
+          "action": "shaped",
+          "targetId": "ctr-57415cdd",
+          "reason": "forbids delegation no (act); parallel agents no (act); forbids writing no (act); attempts no (act)",
+          "decisionIds": [
+            "01a10bd2-7dea-7000-992c-0dea71dbabde"
+          ]
+        },
+        {
+          "id": "ctr-57415cdd.d4",
+          "at": 1791199706627,
+          "action": "spawned",
+          "targetId": "ctr-57415cdd",
+          "reason": "planner route: test tier",
+          "decisionIds": [],
+          "route": {
+            "model": "provider-a:model-a",
+            "provider": "provider-a",
+            "reason": "test tier"
+          }
+        },
+        {
+          "id": "ctr-57415cdd.d5",
+          "at": 1791199706657,
+          "action": "planned",
+          "targetId": "ctr-57415cdd",
+          "reason": "the planner wrote a plan",
+          "decisionIds": []
+        }
+      ],
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "llmCallCount": 0,
+        "turnCount": 0,
+        "toolCallCount": 0,
+        "costUsd": null,
+        "costState": "unpriced"
+      },
+      "judgmentUsage": {
+        "calls": 4,
+        "inputTokens": 4,
+        "outputTokens": 4
+      },
+      "plannerAgentIds": [
+        "planner-1"
+      ],
+      "createdAt": 1791199706503,
+      "inputSnapshot": {
+        "version": 1,
+        "id": "cklecatm-qmar-ossm-aktq-tqqeqbosdtrl",
+        "sourceRoot": "/tmp/goodvibes-sdk-testrun-2-1ed65473/contract-runner-cuyh9d",
+        "sourceIdentity": "39:8804",
+        "gitIdentity": "39:8805|/tmp/goodvibes-sdk-testrun-2-1ed65473/contract-runner-cuyh9d/.git|39:8805|/tmp/goodvibes-sdk-testrun-2-1ed65473/contract-runner-cuyh9d/.git|39:8805",
+        "ownerHead": "be6f726d27dcfe3655b0bd41a3e004d961d4849e",
+        "ownerRef": "main",
+        "indexFingerprint": "2083d4500dbbd99a37d66b58095065327c097368f5931fd75076615981c2aa52",
+        "inputTree": "55fc8d39402f75515cfd1434f4359ed2674adfde",
+        "inputCommit": "be6f726d27dcfe3655b0bd41a3e004d961d4849e",
+        "capturedAt": 1791199706538,
+        "dirty": false,
+        "exclusions": [
+          ".git",
+          ".goodvibes",
+          ".ssh",
+          ".aws",
+          ".gnupg"
+        ],
+        "files": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": "100644",
+            "digest": "e4a272249eca7bdbf186302b4e77ce774fa9138be2ae2156cb1d8a181477a68c",
+            "identity": "39:8839:33188:12:1791199706490530840:1791199706490530840",
+            "oid": "a9c7ab03f5b153761afe8f261c91f79fb981e338"
+          },
+          {
+            "path": "README.md",
+            "kind": "file",
+            "mode": "100644",
+            "digest": "bc70e26f40b8816eb177813dda1f5f529a27a4641d45aa19cae2348a8c6a5fe9",
+            "identity": "39:8840:33188:7:1791199706490530840:1791199706490530840",
+            "oid": "fc72a5c1094e203eefcd1c710f060957ebbbaac4"
+          }
+        ]
+      },
+      "shape": {
+        "forbids_delegation": {
+          "verdict": "no",
+          "probability": 0.03,
+          "outcome": "act"
+        },
+        "requests_parallel_agents": {
+          "verdict": "no",
+          "probability": 0.03,
+          "outcome": "act"
+        },
+        "forbids_writing": {
+          "verdict": "no",
+          "probability": 0.03,
+          "outcome": "act"
+        },
+        "asks_for_attempts": {
+          "verdict": "no",
+          "probability": 0.03,
+          "outcome": "act"
+        },
+        "decisionIds": [
+          "01a10bd2-7dea-7000-992c-0dea71dbabde"
+        ]
+      },
+      "nativeDecisions": {
+        "schemaVersion": 1,
+        "history": [
+          {
+            "schemaVersion": 1,
+            "stage": "plan",
+            "targetId": "ctr-57415cdd",
+            "operationRevision": "533ccca02ca220f72e93388941e5d3cef62eceeb86108241dd0ae4e0c7d42dee",
+            "decision": {
+              "schemaVersion": 1,
+              "decisionId": "b2e9527d-67ce-4e93-9a00-7a8047f23ba5",
+              "binding": {
+                "sourceId": "native-work",
+                "inputRevision": "input-1",
+                "actionId": "ctr-57415cdd:plan:ctr-57415cdd",
+                "actionRevision": "3fe81052e7cf8f8304f7e65a0d8fecef6493f3e93d84aef50d7b257681e53d1b",
+                "authorityId": "host",
+                "authorityRevision": "1",
+                "scopeId": "project",
+                "scopeRevision": "1"
+              },
+              "judgmentDecisionIds": [
+                "01a10bd2-7dea-7000-992c-0dea71dbabde",
+                "01a10bd2-7e24-7000-8cc1-56a04ef95946",
+                "01a10bd2-7e24-7001-bf9d-7a50a481416c",
+                "01a10bd2-7e3a-7000-ad44-5c85f9bf084c"
+              ],
+              "evidence": [
+                {
+                  "id": "native-source",
+                  "revision": "9653c61e44890489e1da6fb2fcf65da3c4542faf7bea2f53eb97442992c4ace4"
+                },
+                {
+                  "id": "operation-evidence",
+                  "revision": "d7c7999fa86fd414de1cfa3eda18748ca85a0e981afed0961b2d18aa0f7f4ba6"
+                },
+                {
+                  "id": "native-criteria",
+                  "revision": "1"
+                },
+                {
+                  "id": "source-revision",
+                  "revision": "1"
+                }
+              ],
+              "summary": "Jev selected defer for the bound action.",
+              "outcome": "defer",
+              "until": {
+                "id": "evidence-ready",
+                "revision": "1"
+              }
+            }
+          }
+        ],
+        "pending": {
+          "plan:ctr-57415cdd": {
+            "schemaVersion": 1,
+            "stage": "plan",
+            "targetId": "ctr-57415cdd",
+            "operationRevision": "533ccca02ca220f72e93388941e5d3cef62eceeb86108241dd0ae4e0c7d42dee",
+            "decision": {
+              "schemaVersion": 1,
+              "decisionId": "b2e9527d-67ce-4e93-9a00-7a8047f23ba5",
+              "binding": {
+                "sourceId": "native-work",
+                "inputRevision": "input-1",
+                "actionId": "ctr-57415cdd:plan:ctr-57415cdd",
+                "actionRevision": "3fe81052e7cf8f8304f7e65a0d8fecef6493f3e93d84aef50d7b257681e53d1b",
+                "authorityId": "host",
+                "authorityRevision": "1",
+                "scopeId": "project",
+                "scopeRevision": "1"
+              },
+              "judgmentDecisionIds": [
+                "01a10bd2-7dea-7000-992c-0dea71dbabde",
+                "01a10bd2-7e24-7000-8cc1-56a04ef95946",
+                "01a10bd2-7e24-7001-bf9d-7a50a481416c",
+                "01a10bd2-7e3a-7000-ad44-5c85f9bf084c"
+              ],
+              "evidence": [
+                {
+                  "id": "native-source",
+                  "revision": "9653c61e44890489e1da6fb2fcf65da3c4542faf7bea2f53eb97442992c4ace4"
+                },
+                {
+                  "id": "operation-evidence",
+                  "revision": "d7c7999fa86fd414de1cfa3eda18748ca85a0e981afed0961b2d18aa0f7f4ba6"
+                },
+                {
+                  "id": "native-criteria",
+                  "revision": "1"
+                },
+                {
+                  "id": "source-revision",
+                  "revision": "1"
+                }
+              ],
+              "summary": "Jev selected defer for the bound action.",
+              "outcome": "defer",
+              "until": {
+                "id": "evidence-ready",
+                "revision": "1"
+              }
+            }
+          }
+        },
+        "spent": {
+          "plan": 1
+        },
+        "plannerOutputs": {
+          "plan": "Here is the plan.\n\n```json\n{\n  \"goal\": \" Deliver the exact parser.\\nPreserve Unicode ☃ and trailing space. \",\n  \"criteria\": [\n    {\n      \"id\": \"c1\",\n      \"text\": \"The parser preserves all documented input forms\",\n      \"quote\": \"The parser preserves all documented input forms\"\n    }\n  ],\n  \"groups\": [\n    {\n      \"id\": \"g1\",\n      \"title\": \"Parser\",\n      \"goal\": \"The parser\",\n      \"kind\": \"work\",\n      \"dependsOn\": [],\n      \"criteria\": [],\n      \"units\": [\n        {\n          \"id\": \"u1\",\n          \"title\": \"CSV parser\",\n          \"goal\": \"Parse CSV\",\n          \"role\": \"implement\",\n          \"brief\": \"Write src/csv.ts.\",\n          \"dependsOn\": [],\n          \"files\": [\n            \"src/csv.ts\"\n          ],\n          \"criteria\": [\n            {\n              \"id\": \"u1.c1\",\n              \"text\": \"parser property 1\",\n              \"serves\": [\n                \"c1\"\n              ]\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}\n```\n"
+        },
+        "attemptChoices": {},
+        "attemptedChoices": {}
+      },
+      "nativeProgress": {
+        "schemaVersion": 1,
+        "state": "deferred",
+        "stage": "plan",
+        "targetId": "ctr-57415cdd",
+        "until": {
+          "id": "evidence-ready",
+          "revision": "1"
+        }
+      }
+    }
+  ]
+}

@@ -1,6 +1,2431 @@
 {
   "type": "object",
   "properties": {
+    "nativeSource": {
+      "type": "object",
+      "properties": {
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[!-~][ -~]{0,255}$"
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[!-~][ -~]{0,255}$"
+        },
+        "inputRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[!-~][ -~]{0,255}$"
+        },
+        "criteriaId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[!-~][ -~]{0,255}$"
+        },
+        "criteriaRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[!-~][ -~]{0,255}$"
+        },
+        "goal": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "criteria": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "sourceId",
+        "sourceRevision",
+        "inputRevision",
+        "criteriaId",
+        "criteriaRevision",
+        "goal",
+        "criteria"
+      ],
+      "additionalProperties": false
+    },
+    "nativeDecisions": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "const": 1
+              },
+              "stage": {
+                "type": "string",
+                "enum": [
+                  "shape",
+                  "plan",
+                  "evidence",
+                  "stall",
+                  "fix-plan",
+                  "attempts"
+                ]
+              },
+              "targetId": {
+                "type": "string"
+              },
+              "decision": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "title": "JevDecision",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "schemaVersion",
+                      "decisionId",
+                      "binding",
+                      "judgmentDecisionIds",
+                      "evidence",
+                      "summary",
+                      "outcome"
+                    ],
+                    "properties": {
+                      "schemaVersion": {
+                        "const": 1
+                      },
+                      "decisionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "not": {
+                          "pattern": "[^!-~]"
+                        }
+                      },
+                      "binding": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "sourceId",
+                          "inputRevision",
+                          "actionId",
+                          "actionRevision",
+                          "authorityId",
+                          "authorityRevision",
+                          "scopeId",
+                          "scopeRevision"
+                        ],
+                        "properties": {
+                          "sourceId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "inputRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          }
+                        }
+                      },
+                      "judgmentDecisionIds": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "not": {
+                            "pattern": "[^!-~]"
+                          }
+                        }
+                      },
+                      "evidence": {
+                        "type": "array",
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "id",
+                            "revision"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            },
+                            "revision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            }
+                          }
+                        },
+                        "minItems": 1
+                      },
+                      "summary": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                        "pattern": "\\S"
+                      },
+                      "outcome": {
+                        "const": "act"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "schemaVersion",
+                      "decisionId",
+                      "binding",
+                      "judgmentDecisionIds",
+                      "evidence",
+                      "summary",
+                      "outcome",
+                      "next"
+                    ],
+                    "properties": {
+                      "schemaVersion": {
+                        "const": 1
+                      },
+                      "decisionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "not": {
+                          "pattern": "[^!-~]"
+                        }
+                      },
+                      "binding": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "sourceId",
+                          "inputRevision",
+                          "actionId",
+                          "actionRevision",
+                          "authorityId",
+                          "authorityRevision",
+                          "scopeId",
+                          "scopeRevision"
+                        ],
+                        "properties": {
+                          "sourceId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "inputRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          }
+                        }
+                      },
+                      "judgmentDecisionIds": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "not": {
+                            "pattern": "[^!-~]"
+                          }
+                        }
+                      },
+                      "evidence": {
+                        "type": "array",
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "id",
+                            "revision"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            },
+                            "revision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "summary": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                        "pattern": "\\S"
+                      },
+                      "outcome": {
+                        "const": "revise"
+                      },
+                      "next": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "id",
+                          "revision",
+                          "kind"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "revision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "kind": {
+                            "enum": [
+                              "reconsider",
+                              "gather-evidence",
+                              "revise-action"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "schemaVersion",
+                      "decisionId",
+                      "binding",
+                      "judgmentDecisionIds",
+                      "evidence",
+                      "summary",
+                      "outcome",
+                      "until"
+                    ],
+                    "properties": {
+                      "schemaVersion": {
+                        "const": 1
+                      },
+                      "decisionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "not": {
+                          "pattern": "[^!-~]"
+                        }
+                      },
+                      "binding": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "sourceId",
+                          "inputRevision",
+                          "actionId",
+                          "actionRevision",
+                          "authorityId",
+                          "authorityRevision",
+                          "scopeId",
+                          "scopeRevision"
+                        ],
+                        "properties": {
+                          "sourceId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "inputRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          }
+                        }
+                      },
+                      "judgmentDecisionIds": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "not": {
+                            "pattern": "[^!-~]"
+                          }
+                        }
+                      },
+                      "evidence": {
+                        "type": "array",
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "id",
+                            "revision"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            },
+                            "revision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "summary": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                        "pattern": "\\S"
+                      },
+                      "outcome": {
+                        "const": "defer"
+                      },
+                      "until": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "id",
+                          "revision"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "revision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "schemaVersion",
+                      "decisionId",
+                      "binding",
+                      "judgmentDecisionIds",
+                      "evidence",
+                      "summary",
+                      "outcome"
+                    ],
+                    "properties": {
+                      "schemaVersion": {
+                        "const": 1
+                      },
+                      "decisionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "not": {
+                          "pattern": "[^!-~]"
+                        }
+                      },
+                      "binding": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "sourceId",
+                          "inputRevision",
+                          "actionId",
+                          "actionRevision",
+                          "authorityId",
+                          "authorityRevision",
+                          "scopeId",
+                          "scopeRevision"
+                        ],
+                        "properties": {
+                          "sourceId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "inputRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          }
+                        }
+                      },
+                      "judgmentDecisionIds": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "not": {
+                            "pattern": "[^!-~]"
+                          }
+                        }
+                      },
+                      "evidence": {
+                        "type": "array",
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "id",
+                            "revision"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            },
+                            "revision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "summary": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                        "pattern": "\\S"
+                      },
+                      "outcome": {
+                        "const": "reject"
+                      }
+                    }
+                  }
+                ]
+              },
+              "operationRevision": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "stage",
+              "targetId",
+              "decision",
+              "operationRevision"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "pending": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "const": 1
+              },
+              "stage": {
+                "type": "string",
+                "enum": [
+                  "shape",
+                  "plan",
+                  "evidence",
+                  "stall",
+                  "fix-plan",
+                  "attempts"
+                ]
+              },
+              "targetId": {
+                "type": "string"
+              },
+              "decision": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "title": "JevDecision",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "schemaVersion",
+                      "decisionId",
+                      "binding",
+                      "judgmentDecisionIds",
+                      "evidence",
+                      "summary",
+                      "outcome"
+                    ],
+                    "properties": {
+                      "schemaVersion": {
+                        "const": 1
+                      },
+                      "decisionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "not": {
+                          "pattern": "[^!-~]"
+                        }
+                      },
+                      "binding": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "sourceId",
+                          "inputRevision",
+                          "actionId",
+                          "actionRevision",
+                          "authorityId",
+                          "authorityRevision",
+                          "scopeId",
+                          "scopeRevision"
+                        ],
+                        "properties": {
+                          "sourceId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "inputRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          }
+                        }
+                      },
+                      "judgmentDecisionIds": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "not": {
+                            "pattern": "[^!-~]"
+                          }
+                        }
+                      },
+                      "evidence": {
+                        "type": "array",
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "id",
+                            "revision"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            },
+                            "revision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            }
+                          }
+                        },
+                        "minItems": 1
+                      },
+                      "summary": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                        "pattern": "\\S"
+                      },
+                      "outcome": {
+                        "const": "act"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "schemaVersion",
+                      "decisionId",
+                      "binding",
+                      "judgmentDecisionIds",
+                      "evidence",
+                      "summary",
+                      "outcome",
+                      "next"
+                    ],
+                    "properties": {
+                      "schemaVersion": {
+                        "const": 1
+                      },
+                      "decisionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "not": {
+                          "pattern": "[^!-~]"
+                        }
+                      },
+                      "binding": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "sourceId",
+                          "inputRevision",
+                          "actionId",
+                          "actionRevision",
+                          "authorityId",
+                          "authorityRevision",
+                          "scopeId",
+                          "scopeRevision"
+                        ],
+                        "properties": {
+                          "sourceId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "inputRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          }
+                        }
+                      },
+                      "judgmentDecisionIds": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "not": {
+                            "pattern": "[^!-~]"
+                          }
+                        }
+                      },
+                      "evidence": {
+                        "type": "array",
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "id",
+                            "revision"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            },
+                            "revision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "summary": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                        "pattern": "\\S"
+                      },
+                      "outcome": {
+                        "const": "revise"
+                      },
+                      "next": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "id",
+                          "revision",
+                          "kind"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "revision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "kind": {
+                            "enum": [
+                              "reconsider",
+                              "gather-evidence",
+                              "revise-action"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "schemaVersion",
+                      "decisionId",
+                      "binding",
+                      "judgmentDecisionIds",
+                      "evidence",
+                      "summary",
+                      "outcome",
+                      "until"
+                    ],
+                    "properties": {
+                      "schemaVersion": {
+                        "const": 1
+                      },
+                      "decisionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "not": {
+                          "pattern": "[^!-~]"
+                        }
+                      },
+                      "binding": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "sourceId",
+                          "inputRevision",
+                          "actionId",
+                          "actionRevision",
+                          "authorityId",
+                          "authorityRevision",
+                          "scopeId",
+                          "scopeRevision"
+                        ],
+                        "properties": {
+                          "sourceId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "inputRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          }
+                        }
+                      },
+                      "judgmentDecisionIds": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "not": {
+                            "pattern": "[^!-~]"
+                          }
+                        }
+                      },
+                      "evidence": {
+                        "type": "array",
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "id",
+                            "revision"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            },
+                            "revision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "summary": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                        "pattern": "\\S"
+                      },
+                      "outcome": {
+                        "const": "defer"
+                      },
+                      "until": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "id",
+                          "revision"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "revision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "schemaVersion",
+                      "decisionId",
+                      "binding",
+                      "judgmentDecisionIds",
+                      "evidence",
+                      "summary",
+                      "outcome"
+                    ],
+                    "properties": {
+                      "schemaVersion": {
+                        "const": 1
+                      },
+                      "decisionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "not": {
+                          "pattern": "[^!-~]"
+                        }
+                      },
+                      "binding": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "sourceId",
+                          "inputRevision",
+                          "actionId",
+                          "actionRevision",
+                          "authorityId",
+                          "authorityRevision",
+                          "scopeId",
+                          "scopeRevision"
+                        ],
+                        "properties": {
+                          "sourceId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "inputRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "actionRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          },
+                          "scopeRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "not": {
+                              "pattern": "[^!-~]"
+                            }
+                          }
+                        }
+                      },
+                      "judgmentDecisionIds": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "not": {
+                            "pattern": "[^!-~]"
+                          }
+                        }
+                      },
+                      "evidence": {
+                        "type": "array",
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "id",
+                            "revision"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            },
+                            "revision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "not": {
+                                "pattern": "[^!-~]"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "summary": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                        "pattern": "\\S"
+                      },
+                      "outcome": {
+                        "const": "reject"
+                      }
+                    }
+                  }
+                ]
+              },
+              "operationRevision": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "stage",
+              "targetId",
+              "decision",
+              "operationRevision"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "spent": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "plannerOutputs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "attemptChoices": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "attemptedChoices": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "history",
+        "pending",
+        "spent",
+        "plannerOutputs",
+        "attemptChoices",
+        "attemptedChoices"
+      ],
+      "additionalProperties": false
+    },
+    "nativeProgress": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "deciding",
+            "deferred",
+            "refused"
+          ]
+        },
+        "stage": {
+          "type": "string"
+        },
+        "targetId": {
+          "type": "string"
+        },
+        "until": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[!-~][ -~]{0,255}$"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[!-~][ -~]{0,255}$"
+            }
+          },
+          "required": [
+            "id",
+            "revision"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "state",
+        "stage",
+        "targetId"
+      ],
+      "additionalProperties": false
+    },
+    "nativeWaiting": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "requests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "logicalRequestId": {
+                "type": "string"
+              },
+              "attempt": {
+                "type": "object",
+                "properties": {
+                  "attempt": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "endpointIndex": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "endpointKind": {
+                    "type": "string",
+                    "enum": [
+                      "hosted",
+                      "local"
+                    ]
+                  },
+                  "requestedModel": {
+                    "type": "string"
+                  },
+                  "latencyMs": {
+                    "type": "number"
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "answered",
+                      "invalid-request",
+                      "rejected",
+                      "unavailable",
+                      "aborted",
+                      "invalid-response",
+                      "unrecorded"
+                    ]
+                  },
+                  "requestId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "attempt",
+                  "endpointIndex",
+                  "endpointKind",
+                  "requestedModel",
+                  "latencyMs",
+                  "outcome"
+                ],
+                "additionalProperties": false
+              },
+              "elapsedMs": {
+                "type": "number"
+              },
+              "nextDelayMs": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "logicalRequestId",
+              "attempt",
+              "elapsedMs",
+              "nextDelayMs"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requests"
+      ],
+      "additionalProperties": false
+    },
+    "durableAdmission": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "const": 1
+            },
+            "key": {
+              "type": "object",
+              "properties": {
+                "workId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "criteriaId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "criteriaRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "attemptId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                }
+              },
+              "required": [
+                "workId",
+                "criteriaId",
+                "criteriaRevision",
+                "attemptId"
+              ],
+              "additionalProperties": false
+            },
+            "binding": {
+              "type": "object",
+              "properties": {
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "inputRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "actionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "actionRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "authorityId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "authorityRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "scopeId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "scopeRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                }
+              },
+              "required": [
+                "sourceId",
+                "inputRevision",
+                "actionId",
+                "actionRevision",
+                "authorityId",
+                "authorityRevision",
+                "scopeId",
+                "scopeRevision"
+              ],
+              "additionalProperties": false
+            },
+            "input": {
+              "type": "object",
+              "properties": {
+                "ask": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "origin": {
+                  "type": "string",
+                  "enum": [
+                    "turn",
+                    "agent-tool",
+                    "cli",
+                    "hosted",
+                    "external",
+                    "proposal"
+                  ]
+                },
+                "projectRoot": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "nativeSource": {
+                  "type": "object",
+                  "properties": {
+                    "sourceId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^[!-~][ -~]{0,255}$"
+                    },
+                    "sourceRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^[!-~][ -~]{0,255}$"
+                    },
+                    "inputRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^[!-~][ -~]{0,255}$"
+                    },
+                    "criteriaId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^[!-~][ -~]{0,255}$"
+                    },
+                    "criteriaRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^[!-~][ -~]{0,255}$"
+                    },
+                    "goal": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "\\S"
+                    },
+                    "criteria": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "\\S"
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "sourceId",
+                    "sourceRevision",
+                    "inputRevision",
+                    "criteriaId",
+                    "criteriaRevision",
+                    "goal",
+                    "criteria"
+                  ],
+                  "additionalProperties": false
+                },
+                "proposedUnits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "task": {
+                        "type": "string"
+                      },
+                      "template": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "task"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "parentAgentId": {
+                  "type": "string"
+                },
+                "budget": {
+                  "type": "object",
+                  "properties": {
+                    "maxTokens": {
+                      "type": "number"
+                    },
+                    "maxCostUsd": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "isolation": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "worktree",
+                    "shared"
+                  ]
+                }
+              },
+              "required": [
+                "ask",
+                "sessionId",
+                "origin",
+                "projectRoot"
+              ],
+              "additionalProperties": false
+            },
+            "contractId": {
+              "type": "string"
+            },
+            "ownerAgentId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "payloadRevision": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "key",
+            "binding",
+            "input",
+            "contractId",
+            "ownerAgentId",
+            "payloadRevision"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "const": 2
+            },
+            "key": {
+              "type": "object",
+              "properties": {
+                "workId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "criteriaId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "criteriaRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "attemptId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                }
+              },
+              "required": [
+                "workId",
+                "criteriaId",
+                "criteriaRevision",
+                "attemptId"
+              ],
+              "additionalProperties": false
+            },
+            "binding": {
+              "type": "object",
+              "properties": {
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "inputRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "actionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "actionRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "authorityId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "authorityRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "scopeId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                },
+                "scopeRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[!-~][ -~]{0,255}$"
+                }
+              },
+              "required": [
+                "sourceId",
+                "inputRevision",
+                "actionId",
+                "actionRevision",
+                "authorityId",
+                "authorityRevision",
+                "scopeId",
+                "scopeRevision"
+              ],
+              "additionalProperties": false
+            },
+            "input": {
+              "type": "object",
+              "properties": {
+                "ask": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "origin": {
+                  "type": "string",
+                  "enum": [
+                    "turn",
+                    "agent-tool",
+                    "cli",
+                    "hosted",
+                    "external",
+                    "proposal"
+                  ]
+                },
+                "projectRoot": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "nativeSource": {
+                  "type": "object",
+                  "properties": {
+                    "sourceId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^[!-~][ -~]{0,255}$"
+                    },
+                    "sourceRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^[!-~][ -~]{0,255}$"
+                    },
+                    "inputRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^[!-~][ -~]{0,255}$"
+                    },
+                    "criteriaId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^[!-~][ -~]{0,255}$"
+                    },
+                    "criteriaRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^[!-~][ -~]{0,255}$"
+                    },
+                    "goal": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "\\S"
+                    },
+                    "criteria": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "\\S"
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "sourceId",
+                    "sourceRevision",
+                    "inputRevision",
+                    "criteriaId",
+                    "criteriaRevision",
+                    "goal",
+                    "criteria"
+                  ],
+                  "additionalProperties": false
+                },
+                "proposedUnits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "task": {
+                        "type": "string"
+                      },
+                      "template": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "task"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "parentAgentId": {
+                  "type": "string"
+                },
+                "budget": {
+                  "type": "object",
+                  "properties": {
+                    "maxTokens": {
+                      "type": "number"
+                    },
+                    "maxCostUsd": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "isolation": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "worktree",
+                    "shared"
+                  ]
+                }
+              },
+              "required": [
+                "ask",
+                "sessionId",
+                "origin",
+                "projectRoot"
+              ],
+              "additionalProperties": false
+            },
+            "contractId": {
+              "type": "string"
+            },
+            "ownerAgentId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "payloadRevision": {
+              "type": "string"
+            },
+            "execution": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "isolation": {
+                      "const": "shared"
+                    }
+                  },
+                  "required": [
+                    "isolation"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "isolation": {
+                      "const": "worktree"
+                    },
+                    "branch": {
+                      "type": "string"
+                    },
+                    "worktreePath": {
+                      "type": "string"
+                    },
+                    "baseBranch": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "isolation",
+                    "branch",
+                    "worktreePath",
+                    "baseBranch"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "key",
+            "binding",
+            "input",
+            "contractId",
+            "ownerAgentId",
+            "payloadRevision",
+            "execution"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "durableLaunchState": {
+      "type": "string",
+      "enum": [
+        "prepared",
+        "launch-claimed"
+      ]
+    },
+    "inputSnapshot": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "sourceRoot": {
+          "type": "string"
+        },
+        "sourceIdentity": {
+          "type": "string"
+        },
+        "gitIdentity": {
+          "type": "string"
+        },
+        "ownerHead": {
+          "type": "string"
+        },
+        "ownerRef": {
+          "type": "string"
+        },
+        "indexFingerprint": {
+          "type": "string"
+        },
+        "inputTree": {
+          "type": "string"
+        },
+        "inputCommit": {
+          "type": "string"
+        },
+        "capturedAt": {
+          "type": "number"
+        },
+        "dirty": {
+          "type": "boolean"
+        },
+        "exclusions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "file",
+                  "symlink",
+                  "missing"
+                ]
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "100644",
+                  "100755",
+                  "120000",
+                  "0"
+                ]
+              },
+              "oid": {
+                "type": "string"
+              },
+              "digest": {
+                "type": "string"
+              },
+              "identity": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "kind",
+              "mode"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "version",
+        "id",
+        "sourceRoot",
+        "sourceIdentity",
+        "gitIdentity",
+        "ownerHead",
+        "ownerRef",
+        "indexFingerprint",
+        "inputTree",
+        "inputCommit",
+        "capturedAt",
+        "dirty",
+        "exclusions",
+        "files"
+      ],
+      "additionalProperties": false
+    },
     "id": {
       "type": "string"
     },
@@ -1698,6 +4123,230 @@
           "lastOutput": {
             "type": "string"
           },
+          "lastReport": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "const": 1
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "filesCreated": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "filesModified": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "filesDeleted": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "archetype": {
+                    "const": "engineer"
+                  },
+                  "gatheredContext": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "plannedActions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "appliedChanges": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "decisions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "what": {
+                          "type": "string"
+                        },
+                        "why": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "what",
+                        "why"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "issues": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "uncertainties": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "version",
+                  "archetype"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "const": 1
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "filesCreated": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "filesModified": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "filesDeleted": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "archetype": {
+                    "const": "tester"
+                  },
+                  "testsWritten": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "testsPassed": {
+                    "type": "number"
+                  },
+                  "testsFailed": {
+                    "type": "number"
+                  },
+                  "coverage": {
+                    "type": "object",
+                    "properties": {
+                      "lines": {
+                        "type": "number"
+                      },
+                      "branches": {
+                        "type": "number"
+                      },
+                      "functions": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "lines",
+                      "branches",
+                      "functions"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "failures": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "test": {
+                          "type": "string"
+                        },
+                        "error": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "test",
+                        "error"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "version",
+                  "archetype"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "const": 1
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "filesCreated": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "filesModified": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "filesDeleted": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "archetype": {
+                    "type": "string",
+                    "not": {
+                      "enum": [
+                        "engineer",
+                        "tester"
+                      ]
+                    }
+                  },
+                  "result": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "version",
+                  "archetype"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
           "failureReason": {
             "type": "string"
           },
@@ -2510,6 +5159,230 @@
                 },
                 "lastOutput": {
                   "type": "string"
+                },
+                "lastReport": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "const": 1
+                        },
+                        "summary": {
+                          "type": "string"
+                        },
+                        "filesCreated": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "filesModified": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "filesDeleted": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "archetype": {
+                          "const": "engineer"
+                        },
+                        "gatheredContext": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "plannedActions": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "appliedChanges": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "decisions": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "what": {
+                                "type": "string"
+                              },
+                              "why": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "what",
+                              "why"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "issues": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "uncertainties": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "archetype"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "const": 1
+                        },
+                        "summary": {
+                          "type": "string"
+                        },
+                        "filesCreated": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "filesModified": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "filesDeleted": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "archetype": {
+                          "const": "tester"
+                        },
+                        "testsWritten": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "testsPassed": {
+                          "type": "number"
+                        },
+                        "testsFailed": {
+                          "type": "number"
+                        },
+                        "coverage": {
+                          "type": "object",
+                          "properties": {
+                            "lines": {
+                              "type": "number"
+                            },
+                            "branches": {
+                              "type": "number"
+                            },
+                            "functions": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "lines",
+                            "branches",
+                            "functions"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "failures": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "test": {
+                                "type": "string"
+                              },
+                              "error": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "test",
+                              "error"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "archetype"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "const": 1
+                        },
+                        "summary": {
+                          "type": "string"
+                        },
+                        "filesCreated": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "filesModified": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "filesDeleted": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "archetype": {
+                          "type": "string",
+                          "not": {
+                            "enum": [
+                              "engineer",
+                              "tester"
+                            ]
+                          }
+                        },
+                        "result": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "archetype"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
                 },
                 "failureReason": {
                   "type": "string"

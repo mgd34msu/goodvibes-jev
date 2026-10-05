@@ -7705,6 +7705,167 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "contractId": "sample"
     },
     "output": {
+      "nativeSource": {
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "inputRevision": "sample",
+        "criteriaId": "sample",
+        "criteriaRevision": "sample",
+        "goal": "sample",
+        "criteria": [
+          "sample"
+        ]
+      },
+      "nativeDecisions": {
+        "schemaVersion": 1,
+        "history": [
+          {
+            "schemaVersion": 1,
+            "stage": "shape",
+            "targetId": "sample",
+            "decision": {
+              "schemaVersion": 1,
+              "decisionId": "sample",
+              "binding": {
+                "sourceId": "sample",
+                "inputRevision": "sample",
+                "actionId": "sample",
+                "actionRevision": "sample",
+                "authorityId": "sample",
+                "authorityRevision": "sample",
+                "scopeId": "sample",
+                "scopeRevision": "sample"
+              },
+              "judgmentDecisionIds": [
+                "sample"
+              ],
+              "evidence": [
+                {
+                  "id": "sample",
+                  "revision": "sample"
+                }
+              ],
+              "summary": "sample",
+              "outcome": "act"
+            },
+            "operationRevision": "sample"
+          }
+        ],
+        "pending": {},
+        "spent": {},
+        "plannerOutputs": {},
+        "attemptChoices": {},
+        "attemptedChoices": {}
+      },
+      "nativeProgress": {
+        "schemaVersion": 1,
+        "state": "deciding",
+        "stage": "sample",
+        "targetId": "sample",
+        "until": {
+          "id": "sample",
+          "revision": "sample"
+        }
+      },
+      "nativeWaiting": {
+        "schemaVersion": 1,
+        "requests": [
+          {
+            "logicalRequestId": "sample",
+            "attempt": {
+              "attempt": 0,
+              "endpointIndex": 0,
+              "endpointKind": "hosted",
+              "requestedModel": "sample",
+              "latencyMs": 0,
+              "outcome": "answered",
+              "requestId": "sample",
+              "status": 0
+            },
+            "elapsedMs": 0,
+            "nextDelayMs": 0
+          }
+        ]
+      },
+      "durableAdmission": {
+        "schemaVersion": 1,
+        "key": {
+          "workId": "sample",
+          "criteriaId": "sample",
+          "criteriaRevision": "sample",
+          "attemptId": "sample"
+        },
+        "binding": {
+          "sourceId": "sample",
+          "inputRevision": "sample",
+          "actionId": "sample",
+          "actionRevision": "sample",
+          "authorityId": "sample",
+          "authorityRevision": "sample",
+          "scopeId": "sample",
+          "scopeRevision": "sample"
+        },
+        "input": {
+          "ask": "sample",
+          "sessionId": "sample",
+          "origin": "turn",
+          "projectRoot": "sample",
+          "nativeSource": {
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "inputRevision": "sample",
+            "criteriaId": "sample",
+            "criteriaRevision": "sample",
+            "goal": "sample",
+            "criteria": [
+              "sample"
+            ]
+          },
+          "proposedUnits": [
+            {
+              "task": "sample",
+              "template": "sample"
+            }
+          ],
+          "parentAgentId": "sample",
+          "budget": {
+            "maxTokens": 0,
+            "maxCostUsd": 0
+          },
+          "isolation": "auto"
+        },
+        "contractId": "sample",
+        "ownerAgentId": "sample",
+        "payloadRevision": "sample"
+      },
+      "durableLaunchState": "prepared",
+      "inputSnapshot": {
+        "version": 1,
+        "id": "sample",
+        "sourceRoot": "sample",
+        "sourceIdentity": "sample",
+        "gitIdentity": "sample",
+        "ownerHead": "sample",
+        "ownerRef": "sample",
+        "indexFingerprint": "sample",
+        "inputTree": "sample",
+        "inputCommit": "sample",
+        "capturedAt": 0,
+        "dirty": false,
+        "exclusions": [
+          "sample"
+        ],
+        "files": [
+          {
+            "path": "sample",
+            "kind": "file",
+            "mode": "100644",
+            "oid": "sample",
+            "digest": "sample",
+            "identity": "sample"
+          }
+        ]
+      },
       "id": "sample",
       "schemaVersion": 0,
       "sessionId": "sample",
@@ -8072,6 +8233,41 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           },
           "answer": "sample",
           "lastOutput": "sample",
+          "lastReport": {
+            "version": 1,
+            "summary": "sample",
+            "filesCreated": [
+              "sample"
+            ],
+            "filesModified": [
+              "sample"
+            ],
+            "filesDeleted": [
+              "sample"
+            ],
+            "archetype": "engineer",
+            "gatheredContext": [
+              "sample"
+            ],
+            "plannedActions": [
+              "sample"
+            ],
+            "appliedChanges": [
+              "sample"
+            ],
+            "decisions": [
+              {
+                "what": "sample",
+                "why": "sample"
+              }
+            ],
+            "issues": [
+              "sample"
+            ],
+            "uncertainties": [
+              "sample"
+            ]
+          },
           "failureReason": "sample",
           "attemptOf": "sample",
           "attemptIndex": 0,
@@ -8253,6 +8449,41 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
               },
               "answer": "sample",
               "lastOutput": "sample",
+              "lastReport": {
+                "version": 1,
+                "summary": "sample",
+                "filesCreated": [
+                  "sample"
+                ],
+                "filesModified": [
+                  "sample"
+                ],
+                "filesDeleted": [
+                  "sample"
+                ],
+                "archetype": "engineer",
+                "gatheredContext": [
+                  "sample"
+                ],
+                "plannedActions": [
+                  "sample"
+                ],
+                "appliedChanges": [
+                  "sample"
+                ],
+                "decisions": [
+                  {
+                    "what": "sample",
+                    "why": "sample"
+                  }
+                ],
+                "issues": [
+                  "sample"
+                ],
+                "uncertainties": [
+                  "sample"
+                ]
+              },
               "failureReason": "sample",
               "attemptOf": "sample",
               "attemptIndex": 0,
@@ -8456,6 +8687,167 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
     "output": {
       "contracts": [
         {
+          "nativeSource": {
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "inputRevision": "sample",
+            "criteriaId": "sample",
+            "criteriaRevision": "sample",
+            "goal": "sample",
+            "criteria": [
+              "sample"
+            ]
+          },
+          "nativeDecisions": {
+            "schemaVersion": 1,
+            "history": [
+              {
+                "schemaVersion": 1,
+                "stage": "shape",
+                "targetId": "sample",
+                "decision": {
+                  "schemaVersion": 1,
+                  "decisionId": "sample",
+                  "binding": {
+                    "sourceId": "sample",
+                    "inputRevision": "sample",
+                    "actionId": "sample",
+                    "actionRevision": "sample",
+                    "authorityId": "sample",
+                    "authorityRevision": "sample",
+                    "scopeId": "sample",
+                    "scopeRevision": "sample"
+                  },
+                  "judgmentDecisionIds": [
+                    "sample"
+                  ],
+                  "evidence": [
+                    {
+                      "id": "sample",
+                      "revision": "sample"
+                    }
+                  ],
+                  "summary": "sample",
+                  "outcome": "act"
+                },
+                "operationRevision": "sample"
+              }
+            ],
+            "pending": {},
+            "spent": {},
+            "plannerOutputs": {},
+            "attemptChoices": {},
+            "attemptedChoices": {}
+          },
+          "nativeProgress": {
+            "schemaVersion": 1,
+            "state": "deciding",
+            "stage": "sample",
+            "targetId": "sample",
+            "until": {
+              "id": "sample",
+              "revision": "sample"
+            }
+          },
+          "nativeWaiting": {
+            "schemaVersion": 1,
+            "requests": [
+              {
+                "logicalRequestId": "sample",
+                "attempt": {
+                  "attempt": 0,
+                  "endpointIndex": 0,
+                  "endpointKind": "hosted",
+                  "requestedModel": "sample",
+                  "latencyMs": 0,
+                  "outcome": "answered",
+                  "requestId": "sample",
+                  "status": 0
+                },
+                "elapsedMs": 0,
+                "nextDelayMs": 0
+              }
+            ]
+          },
+          "durableAdmission": {
+            "schemaVersion": 1,
+            "key": {
+              "workId": "sample",
+              "criteriaId": "sample",
+              "criteriaRevision": "sample",
+              "attemptId": "sample"
+            },
+            "binding": {
+              "sourceId": "sample",
+              "inputRevision": "sample",
+              "actionId": "sample",
+              "actionRevision": "sample",
+              "authorityId": "sample",
+              "authorityRevision": "sample",
+              "scopeId": "sample",
+              "scopeRevision": "sample"
+            },
+            "input": {
+              "ask": "sample",
+              "sessionId": "sample",
+              "origin": "turn",
+              "projectRoot": "sample",
+              "nativeSource": {
+                "sourceId": "sample",
+                "sourceRevision": "sample",
+                "inputRevision": "sample",
+                "criteriaId": "sample",
+                "criteriaRevision": "sample",
+                "goal": "sample",
+                "criteria": [
+                  "sample"
+                ]
+              },
+              "proposedUnits": [
+                {
+                  "task": "sample",
+                  "template": "sample"
+                }
+              ],
+              "parentAgentId": "sample",
+              "budget": {
+                "maxTokens": 0,
+                "maxCostUsd": 0
+              },
+              "isolation": "auto"
+            },
+            "contractId": "sample",
+            "ownerAgentId": "sample",
+            "payloadRevision": "sample"
+          },
+          "durableLaunchState": "prepared",
+          "inputSnapshot": {
+            "version": 1,
+            "id": "sample",
+            "sourceRoot": "sample",
+            "sourceIdentity": "sample",
+            "gitIdentity": "sample",
+            "ownerHead": "sample",
+            "ownerRef": "sample",
+            "indexFingerprint": "sample",
+            "inputTree": "sample",
+            "inputCommit": "sample",
+            "capturedAt": 0,
+            "dirty": false,
+            "exclusions": [
+              "sample"
+            ],
+            "files": [
+              {
+                "path": "sample",
+                "kind": "file",
+                "mode": "100644",
+                "oid": "sample",
+                "digest": "sample",
+                "identity": "sample"
+              }
+            ]
+          },
           "id": "sample",
           "schemaVersion": 0,
           "sessionId": "sample",
@@ -8823,6 +9215,41 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
               },
               "answer": "sample",
               "lastOutput": "sample",
+              "lastReport": {
+                "version": 1,
+                "summary": "sample",
+                "filesCreated": [
+                  "sample"
+                ],
+                "filesModified": [
+                  "sample"
+                ],
+                "filesDeleted": [
+                  "sample"
+                ],
+                "archetype": "engineer",
+                "gatheredContext": [
+                  "sample"
+                ],
+                "plannedActions": [
+                  "sample"
+                ],
+                "appliedChanges": [
+                  "sample"
+                ],
+                "decisions": [
+                  {
+                    "what": "sample",
+                    "why": "sample"
+                  }
+                ],
+                "issues": [
+                  "sample"
+                ],
+                "uncertainties": [
+                  "sample"
+                ]
+              },
               "failureReason": "sample",
               "attemptOf": "sample",
               "attemptIndex": 0,
@@ -9004,6 +9431,41 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                   },
                   "answer": "sample",
                   "lastOutput": "sample",
+                  "lastReport": {
+                    "version": 1,
+                    "summary": "sample",
+                    "filesCreated": [
+                      "sample"
+                    ],
+                    "filesModified": [
+                      "sample"
+                    ],
+                    "filesDeleted": [
+                      "sample"
+                    ],
+                    "archetype": "engineer",
+                    "gatheredContext": [
+                      "sample"
+                    ],
+                    "plannedActions": [
+                      "sample"
+                    ],
+                    "appliedChanges": [
+                      "sample"
+                    ],
+                    "decisions": [
+                      {
+                        "what": "sample",
+                        "why": "sample"
+                      }
+                    ],
+                    "issues": [
+                      "sample"
+                    ],
+                    "uncertainties": [
+                      "sample"
+                    ]
+                  },
                   "failureReason": "sample",
                   "attemptOf": "sample",
                   "attemptIndex": 0,
@@ -9224,6 +9686,167 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
     },
     "output": {
       "contract": {
+        "nativeSource": {
+          "sourceId": "sample",
+          "sourceRevision": "sample",
+          "inputRevision": "sample",
+          "criteriaId": "sample",
+          "criteriaRevision": "sample",
+          "goal": "sample",
+          "criteria": [
+            "sample"
+          ]
+        },
+        "nativeDecisions": {
+          "schemaVersion": 1,
+          "history": [
+            {
+              "schemaVersion": 1,
+              "stage": "shape",
+              "targetId": "sample",
+              "decision": {
+                "schemaVersion": 1,
+                "decisionId": "sample",
+                "binding": {
+                  "sourceId": "sample",
+                  "inputRevision": "sample",
+                  "actionId": "sample",
+                  "actionRevision": "sample",
+                  "authorityId": "sample",
+                  "authorityRevision": "sample",
+                  "scopeId": "sample",
+                  "scopeRevision": "sample"
+                },
+                "judgmentDecisionIds": [
+                  "sample"
+                ],
+                "evidence": [
+                  {
+                    "id": "sample",
+                    "revision": "sample"
+                  }
+                ],
+                "summary": "sample",
+                "outcome": "act"
+              },
+              "operationRevision": "sample"
+            }
+          ],
+          "pending": {},
+          "spent": {},
+          "plannerOutputs": {},
+          "attemptChoices": {},
+          "attemptedChoices": {}
+        },
+        "nativeProgress": {
+          "schemaVersion": 1,
+          "state": "deciding",
+          "stage": "sample",
+          "targetId": "sample",
+          "until": {
+            "id": "sample",
+            "revision": "sample"
+          }
+        },
+        "nativeWaiting": {
+          "schemaVersion": 1,
+          "requests": [
+            {
+              "logicalRequestId": "sample",
+              "attempt": {
+                "attempt": 0,
+                "endpointIndex": 0,
+                "endpointKind": "hosted",
+                "requestedModel": "sample",
+                "latencyMs": 0,
+                "outcome": "answered",
+                "requestId": "sample",
+                "status": 0
+              },
+              "elapsedMs": 0,
+              "nextDelayMs": 0
+            }
+          ]
+        },
+        "durableAdmission": {
+          "schemaVersion": 1,
+          "key": {
+            "workId": "sample",
+            "criteriaId": "sample",
+            "criteriaRevision": "sample",
+            "attemptId": "sample"
+          },
+          "binding": {
+            "sourceId": "sample",
+            "inputRevision": "sample",
+            "actionId": "sample",
+            "actionRevision": "sample",
+            "authorityId": "sample",
+            "authorityRevision": "sample",
+            "scopeId": "sample",
+            "scopeRevision": "sample"
+          },
+          "input": {
+            "ask": "sample",
+            "sessionId": "sample",
+            "origin": "turn",
+            "projectRoot": "sample",
+            "nativeSource": {
+              "sourceId": "sample",
+              "sourceRevision": "sample",
+              "inputRevision": "sample",
+              "criteriaId": "sample",
+              "criteriaRevision": "sample",
+              "goal": "sample",
+              "criteria": [
+                "sample"
+              ]
+            },
+            "proposedUnits": [
+              {
+                "task": "sample",
+                "template": "sample"
+              }
+            ],
+            "parentAgentId": "sample",
+            "budget": {
+              "maxTokens": 0,
+              "maxCostUsd": 0
+            },
+            "isolation": "auto"
+          },
+          "contractId": "sample",
+          "ownerAgentId": "sample",
+          "payloadRevision": "sample"
+        },
+        "durableLaunchState": "prepared",
+        "inputSnapshot": {
+          "version": 1,
+          "id": "sample",
+          "sourceRoot": "sample",
+          "sourceIdentity": "sample",
+          "gitIdentity": "sample",
+          "ownerHead": "sample",
+          "ownerRef": "sample",
+          "indexFingerprint": "sample",
+          "inputTree": "sample",
+          "inputCommit": "sample",
+          "capturedAt": 0,
+          "dirty": false,
+          "exclusions": [
+            "sample"
+          ],
+          "files": [
+            {
+              "path": "sample",
+              "kind": "file",
+              "mode": "100644",
+              "oid": "sample",
+              "digest": "sample",
+              "identity": "sample"
+            }
+          ]
+        },
         "id": "sample",
         "schemaVersion": 0,
         "sessionId": "sample",
@@ -9591,6 +10214,41 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
             },
             "answer": "sample",
             "lastOutput": "sample",
+            "lastReport": {
+              "version": 1,
+              "summary": "sample",
+              "filesCreated": [
+                "sample"
+              ],
+              "filesModified": [
+                "sample"
+              ],
+              "filesDeleted": [
+                "sample"
+              ],
+              "archetype": "engineer",
+              "gatheredContext": [
+                "sample"
+              ],
+              "plannedActions": [
+                "sample"
+              ],
+              "appliedChanges": [
+                "sample"
+              ],
+              "decisions": [
+                {
+                  "what": "sample",
+                  "why": "sample"
+                }
+              ],
+              "issues": [
+                "sample"
+              ],
+              "uncertainties": [
+                "sample"
+              ]
+            },
             "failureReason": "sample",
             "attemptOf": "sample",
             "attemptIndex": 0,
@@ -9772,6 +10430,41 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                 },
                 "answer": "sample",
                 "lastOutput": "sample",
+                "lastReport": {
+                  "version": 1,
+                  "summary": "sample",
+                  "filesCreated": [
+                    "sample"
+                  ],
+                  "filesModified": [
+                    "sample"
+                  ],
+                  "filesDeleted": [
+                    "sample"
+                  ],
+                  "archetype": "engineer",
+                  "gatheredContext": [
+                    "sample"
+                  ],
+                  "plannedActions": [
+                    "sample"
+                  ],
+                  "appliedChanges": [
+                    "sample"
+                  ],
+                  "decisions": [
+                    {
+                      "what": "sample",
+                      "why": "sample"
+                    }
+                  ],
+                  "issues": [
+                    "sample"
+                  ],
+                  "uncertainties": [
+                    "sample"
+                  ]
+                },
                 "failureReason": "sample",
                 "attemptOf": "sample",
                 "attemptIndex": 0,

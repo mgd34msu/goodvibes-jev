@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Contract inspection schemas now preserve native source, recorded Jev decisions,
+  semantic and transport waits, durable admission, captured input and completion
+  report fields returned by the real runner. Generated clients retain receipt
+  discriminants, and response validation enforces canonical dictionary, exclusion,
+  uniqueness and Unicode-length constraints.
+
 - Classify the exact native project-discovery and durable recovery wire operations without reviving retired automation pause/resume aliases or granting their verbs to other methods.
 
 - Register shared autonomous disposition and refusal questions with calibration fixtures, while preserving dynamic host choices, caller-site attribution, authority checks and recorded decision lineage.

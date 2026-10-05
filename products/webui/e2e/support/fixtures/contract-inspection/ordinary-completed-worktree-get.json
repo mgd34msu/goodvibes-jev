@@ -1,0 +1,440 @@
+{
+  "id": "ctr-04f8691c",
+  "schemaVersion": 5,
+  "sessionId": "session-1",
+  "origin": "cli",
+  "ask": "Add a CSV parser module and wire it into the convert command.",
+  "ownerAgentId": "agent-0f147930",
+  "projectRoot": "/tmp/goodvibes-sdk-testrun-2-1ed65473/contract-runner-9fTk6X",
+  "isolation": "worktree",
+  "branch": "contract/04f8691c",
+  "worktreePath": "/tmp/goodvibes-sdk-testrun-2-1ed65473/contract-runner-9fTk6X/.goodvibes/.worktrees/contract/04f8691c",
+  "baseBranch": "main",
+  "goal": "A CSV parser",
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "A CSV parser module exists",
+      "origin": "stated",
+      "quote": "Add a CSV parser module",
+      "serves": [],
+      "disposition": "judged",
+      "status": "met",
+      "readings": [
+        {
+          "checkId": "ctr-04f8691c.k1",
+          "at": 1791199706302,
+          "probabilityUnmet": 0.03,
+          "verdict": "met",
+          "outcome": "act"
+        }
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "id": "g1",
+      "title": "Parser",
+      "goal": "The parser",
+      "kind": "work",
+      "dependsOn": [],
+      "criteria": [],
+      "unitIds": [
+        "u1"
+      ],
+      "status": "passed",
+      "checks": [],
+      "fixRounds": 0,
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 10,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "llmCallCount": 1,
+        "turnCount": 1,
+        "toolCallCount": 2,
+        "costUsd": 0.00011,
+        "costState": "priced",
+        "costSource": "catalog",
+        "pricingAsOf": "2026-09-01"
+      },
+      "baseline": {
+        "head": "1b11f98b13a2c9e5ca063508ed3cb7152b9bf378",
+        "dirty": {}
+      }
+    }
+  ],
+  "units": [
+    {
+      "id": "u1",
+      "groupId": "g1",
+      "title": "CSV parser",
+      "goal": "Parse CSV",
+      "brief": "Write src/csv.ts.",
+      "role": "implement",
+      "dependsOn": [],
+      "files": [
+        "src/csv.ts"
+      ],
+      "attempts": 1,
+      "criteria": [
+        {
+          "id": "u1.c1",
+          "text": "parser property 1",
+          "origin": "derived",
+          "serves": [
+            "c1"
+          ],
+          "disposition": "judged",
+          "status": "met",
+          "readings": [
+            {
+              "checkId": "u1.k1",
+              "at": 1791199706211,
+              "probabilityUnmet": 0.03,
+              "verdict": "met",
+              "outcome": "act"
+            }
+          ]
+        }
+      ],
+      "status": "passed",
+      "agentIds": [
+        "agent-cddbbc03"
+      ],
+      "checks": [
+        {
+          "id": "u1.k1",
+          "at": 1791199706211,
+          "trigger": "completion",
+          "claims": {
+            "kind": "files_verified",
+            "summary": "1/1 claimed paths found on disk; changed since baseline: 1 path; kind: files_verified"
+          },
+          "gates": [],
+          "goal": {
+            "probabilityUnmet": 0.03,
+            "verdict": "met",
+            "outcome": "act"
+          },
+          "quality": {
+            "placeholder": {
+              "verdict": "no",
+              "outcome": "act"
+            },
+            "tests_weakened": {
+              "verdict": "no",
+              "outcome": "act"
+            },
+            "breaks_existing": {
+              "verdict": "no",
+              "outcome": "act"
+            },
+            "out_of_scope": {
+              "verdict": "no",
+              "outcome": "act"
+            },
+            "hidden_failure": {
+              "verdict": "no",
+              "outcome": "act"
+            },
+            "unsupported_claims": {
+              "verdict": "no",
+              "outcome": "act"
+            }
+          },
+          "result": "pass",
+          "problems": [],
+          "qualityProblems": [],
+          "decisionIds": [],
+          "evidenceDigest": "6509af22ab15c7ec68886fa20964c9cb2d4ffe3ab87c06590e3f34b3b2d1b638"
+        }
+      ],
+      "nudges": [],
+      "fixRounds": 0,
+      "freshAgents": 0,
+      "transportRetries": 0,
+      "touchedPaths": [
+        "src/csv.ts"
+      ],
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 10,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "llmCallCount": 1,
+        "turnCount": 1,
+        "toolCallCount": 2,
+        "costUsd": 0.00011,
+        "costState": "priced",
+        "costSource": "catalog",
+        "pricingAsOf": "2026-09-01"
+      },
+      "route": {
+        "model": "provider-a:model-a",
+        "provider": "provider-a",
+        "reason": "test tier"
+      },
+      "activeAgentId": "agent-cddbbc03",
+      "baseline": {
+        "head": "1b11f98b13a2c9e5ca063508ed3cb7152b9bf378",
+        "dirty": {}
+      },
+      "lastOutput": "Parser complete.\n```json\n{\"version\":1,\"archetype\":\"engineer\",\"summary\":\"Implemented the CSV parser\",\"gatheredContext\":[\"Read the parser requirements\"],\"plannedActions\":[\"Add the parser\"],\"appliedChanges\":[\"Added src/csv.ts\"],\"filesCreated\":[\"src/csv.ts\"],\"filesModified\":[],\"filesDeleted\":[],\"decisions\":[{\"what\":\"Preserve every input form\",\"why\":\"Required by the parser contract\"}],\"issues\":[],\"uncertainties\":[]}\n```",
+      "lastReport": {
+        "version": 1,
+        "archetype": "engineer",
+        "summary": "Implemented the CSV parser",
+        "gatheredContext": [
+          "Read the parser requirements"
+        ],
+        "plannedActions": [
+          "Add the parser"
+        ],
+        "appliedChanges": [
+          "Added src/csv.ts"
+        ],
+        "filesCreated": [
+          "src/csv.ts"
+        ],
+        "filesModified": [],
+        "filesDeleted": [],
+        "decisions": [
+          {
+            "what": "Preserve every input form",
+            "why": "Required by the parser contract"
+          }
+        ],
+        "issues": [],
+        "uncertainties": []
+      },
+      "answer": "Parser complete.\n```json\n{\"version\":1,\"archetype\":\"engineer\",\"summary\":\"Implemented the CSV parser\",\"gatheredContext\":[\"Read the parser requirements\"],\"plannedActions\":[\"Add the parser\"],\"appliedChanges\":[\"Added src/csv.ts\"],\"filesCreated\":[\"src/csv.ts\"],\"filesModified\":[],\"filesDeleted\":[],\"decisions\":[{\"what\":\"Preserve every input form\",\"why\":\"Required by the parser contract\"}],\"issues\":[],\"uncertainties\":[]}\n```"
+    }
+  ],
+  "status": "passed",
+  "checks": [
+    {
+      "id": "ctr-04f8691c.k1",
+      "at": 1791199706302,
+      "trigger": "completion",
+      "gates": [],
+      "goal": {
+        "probabilityUnmet": 0.03,
+        "verdict": "met",
+        "outcome": "act"
+      },
+      "quality": {},
+      "result": "pass",
+      "problems": [],
+      "qualityProblems": [],
+      "decisionIds": [],
+      "evidenceDigest": "4ac74d919a2e0d5301a5371fccac20b736e2d9fae41831e7e4a2fd577e53d5a7"
+    }
+  ],
+  "fixRounds": 0,
+  "escalations": [],
+  "decisions": [
+    {
+      "id": "ctr-04f8691c.d1",
+      "at": 1791199705943,
+      "action": "created",
+      "targetId": "ctr-04f8691c",
+      "reason": "origin cli; worktree isolation",
+      "decisionIds": []
+    },
+    {
+      "id": "ctr-04f8691c.d2",
+      "at": 1791199706072,
+      "action": "created",
+      "targetId": "ctr-04f8691c",
+      "reason": "admitted local input generation pantmpkm-btrd-omko-tpnb-odnqecsalraq; captured 2 paths",
+      "decisionIds": []
+    },
+    {
+      "id": "ctr-04f8691c.d3",
+      "at": 1791199706074,
+      "action": "shaped",
+      "targetId": "ctr-04f8691c",
+      "reason": "forbids delegation no (act); parallel agents no (act); forbids writing no (act); attempts no (act)",
+      "decisionIds": []
+    },
+    {
+      "id": "ctr-04f8691c.d4",
+      "at": 1791199706104,
+      "action": "spawned",
+      "targetId": "ctr-04f8691c",
+      "reason": "planner route: test tier",
+      "decisionIds": [],
+      "route": {
+        "model": "provider-a:model-a",
+        "provider": "provider-a",
+        "reason": "test tier"
+      }
+    },
+    {
+      "id": "ctr-04f8691c.d5",
+      "at": 1791199706133,
+      "action": "planned",
+      "targetId": "ctr-04f8691c",
+      "reason": "the planner wrote a plan",
+      "decisionIds": []
+    },
+    {
+      "id": "ctr-04f8691c.d6",
+      "at": 1791199706148,
+      "action": "plan-accepted",
+      "targetId": "ctr-04f8691c",
+      "reason": "every plan check passed; 1 unit in 1 group",
+      "decisionIds": []
+    },
+    {
+      "id": "ctr-04f8691c.d7",
+      "at": 1791199706199,
+      "action": "spawned",
+      "targetId": "u1",
+      "reason": "agent agent-cddbbc03 (unit): test tier",
+      "decisionIds": [],
+      "route": {
+        "model": "provider-a:model-a",
+        "provider": "provider-a",
+        "reason": "test tier"
+      }
+    },
+    {
+      "id": "ctr-04f8691c.d8",
+      "at": 1791199706213,
+      "action": "checked",
+      "targetId": "u1",
+      "reason": "check u1.k1 (completion): pass",
+      "decisionIds": []
+    },
+    {
+      "id": "ctr-04f8691c.d9",
+      "at": 1791199706293,
+      "action": "group-passed",
+      "targetId": "g1",
+      "reason": "every unit of g1 passed",
+      "decisionIds": []
+    },
+    {
+      "id": "ctr-04f8691c.d10",
+      "at": 1791199706303,
+      "action": "checked",
+      "targetId": "ctr-04f8691c",
+      "reason": "check ctr-04f8691c.k1 (completion): pass",
+      "decisionIds": []
+    },
+    {
+      "id": "ctr-04f8691c.d11",
+      "at": 1791199706470,
+      "action": "committed",
+      "targetId": "ctr-04f8691c",
+      "reason": "committed d353f2be",
+      "decisionIds": []
+    },
+    {
+      "id": "ctr-04f8691c.d12",
+      "at": 1791199706470,
+      "action": "passed",
+      "targetId": "ctr-04f8691c",
+      "reason": "Contract ctr-04f8691c passed (1 of 1 criterion met, 0 corrections); committed d353f2be",
+      "decisionIds": []
+    }
+  ],
+  "usage": {
+    "inputTokens": 100,
+    "outputTokens": 10,
+    "cacheReadTokens": 0,
+    "cacheWriteTokens": 0,
+    "llmCallCount": 1,
+    "turnCount": 1,
+    "toolCallCount": 2,
+    "costUsd": 0.00011,
+    "costState": "priced",
+    "costSource": "catalog",
+    "pricingAsOf": "2026-09-01"
+  },
+  "judgmentUsage": {
+    "calls": 8,
+    "inputTokens": 8,
+    "outputTokens": 8
+  },
+  "plannerAgentIds": [
+    "planner-1"
+  ],
+  "createdAt": 1791199705943,
+  "inputSnapshot": {
+    "version": 1,
+    "id": "pantmpkm-btrd-omko-tpnb-odnqecsalraq",
+    "sourceRoot": "/tmp/goodvibes-sdk-testrun-2-1ed65473/contract-runner-9fTk6X",
+    "sourceIdentity": "39:8586",
+    "gitIdentity": "39:8587|/tmp/goodvibes-sdk-testrun-2-1ed65473/contract-runner-9fTk6X/.git|39:8587|/tmp/goodvibes-sdk-testrun-2-1ed65473/contract-runner-9fTk6X/.git|39:8587",
+    "ownerHead": "1b11f98b13a2c9e5ca063508ed3cb7152b9bf378",
+    "ownerRef": "main",
+    "indexFingerprint": "2083d4500dbbd99a37d66b58095065327c097368f5931fd75076615981c2aa52",
+    "inputTree": "55fc8d39402f75515cfd1434f4359ed2674adfde",
+    "inputCommit": "1b11f98b13a2c9e5ca063508ed3cb7152b9bf378",
+    "capturedAt": 1791199705982,
+    "dirty": false,
+    "exclusions": [
+      ".git",
+      ".goodvibes",
+      ".ssh",
+      ".aws",
+      ".gnupg"
+    ],
+    "files": [
+      {
+        "path": ".gitignore",
+        "kind": "file",
+        "mode": "100644",
+        "digest": "e4a272249eca7bdbf186302b4e77ce774fa9138be2ae2156cb1d8a181477a68c",
+        "identity": "39:8621:33188:12:1791199705928173925:1791199705928173925",
+        "oid": "a9c7ab03f5b153761afe8f261c91f79fb981e338"
+      },
+      {
+        "path": "README.md",
+        "kind": "file",
+        "mode": "100644",
+        "digest": "bc70e26f40b8816eb177813dda1f5f529a27a4641d45aa19cae2348a8c6a5fe9",
+        "identity": "39:8622:33188:7:1791199705928173925:1791199705928173925",
+        "oid": "fc72a5c1094e203eefcd1c710f060957ebbbaac4"
+      }
+    ]
+  },
+  "shape": {
+    "forbids_delegation": {
+      "verdict": "no",
+      "probability": 0.03,
+      "outcome": "act"
+    },
+    "requests_parallel_agents": {
+      "verdict": "no",
+      "probability": 0.03,
+      "outcome": "act"
+    },
+    "forbids_writing": {
+      "verdict": "no",
+      "probability": 0.03,
+      "outcome": "act"
+    },
+    "asks_for_attempts": {
+      "verdict": "no",
+      "probability": 0.03,
+      "outcome": "act"
+    },
+    "decisionIds": []
+  },
+  "baseline": {
+    "head": "1b11f98b13a2c9e5ca063508ed3cb7152b9bf378",
+    "dirty": {}
+  },
+  "commit": {
+    "status": "committed",
+    "hash": "d353f2be7775341a421dcc6a059b0abc38eb8002",
+    "note": "committed d353f2be"
+  },
+  "answer": "Implemented the CSV parser",
+  "statusLine": "Contract ctr-04f8691c passed (1 of 1 criterion met, 0 corrections); committed d353f2be",
+  "completedAt": 1791199706470
+}
