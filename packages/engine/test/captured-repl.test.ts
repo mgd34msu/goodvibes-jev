@@ -10,7 +10,7 @@ import type { Contract } from '../sdk/src/platform/contract/types.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import { SandboxSessionRegistry } from '../sdk/src/platform/runtime/sandbox/session-registry.js';
 import { probeCapturedExecAvailability, type CapturedExecAuthority } from '../sdk/src/platform/tools/exec/captured-exec.js';
-import { createCapturedReplTool, isCapturedReplTool } from '../sdk/src/platform/tools/repl/captured.js';
+import { createCapturedReplHistory, createCapturedReplTool, disposeCapturedReplHistory, isCapturedReplTool } from '../sdk/src/platform/tools/repl/captured.js';
 import { createReplTool } from '../sdk/src/platform/tools/repl/index.js';
 import { capturedInputTool } from '../sdk/src/platform/tools/shared/captured-input-tools.js';
 import { useToolReadings } from './_helpers/tool-readings.js';
@@ -41,8 +41,9 @@ async function fixture(filter: (path: string) => boolean | Promise<boolean> = ()
     mutable ? { mutable: true, branch: `input/${inputSnapshot.id}` } : {});
   const readAccessFilter = async (path: string): Promise<boolean> => filter(path);
   const binding: CapturedExecAuthority = { authority, root, readAccessFilter };
-  const raw = createCapturedReplTool(binding);
-  return { owner, root, contract, binding, raw, tool: capturedInputTool(raw, authority, root, readAccessFilter, undefined) };
+  const historyOwner = createCapturedReplHistory(authority);
+  const raw = createCapturedReplTool(binding, undefined, historyOwner);
+  return { owner, root, contract, binding, historyOwner, raw, tool: capturedInputTool(raw, authority, root, readAccessFilter, undefined) };
 }
 
 for (const runtime of ['javascript', 'typescript'] as const) {
@@ -170,7 +171,7 @@ test('construction binding rejects forged/copied/ordinary tools and foreign auth
   expect((await ordinary.execute({ mode: 'history', workspaceRoot: f.root })).success).toBe(false);
 });
 
-test('unsupported runtimes/history and oversized code do not start evaluation or read history', async () => {
+test('unsupported runtimes and oversized code do not start evaluation or import host history', async () => {
   const f = await fixture();
   mkdirSync(join(f.root, '.goodvibes', 'agent'), { recursive: true });
   const history = join(f.root, '.goodvibes', 'agent', 'repl-history.json');
@@ -178,13 +179,166 @@ test('unsupported runtimes/history and oversized code do not start evaluation or
   const spawn = spyOn(childProcess, 'spawn');
   const read = spyOn(fs, 'readFile');
   try {
-    for (const args of [{ mode: 'history' }, ...['python', 'sql', 'graphql'].map(runtime => ({ mode: 'eval', runtime, expression: '42' })), { mode: 'eval', expression: 'x'.repeat(70_000) }]) {
+    expect(JSON.parse((await f.tool.execute({ mode: 'history' })).output!)).toEqual({ count: 0, history: [] });
+    for (const args of [...['python', 'sql', 'graphql'].map(runtime => ({ mode: 'eval', runtime, expression: '42' })), { mode: 'eval', expression: 'x'.repeat(70_000) }]) {
       const result = await f.tool.execute(args);
       expect(result.success).toBe(false); expect(JSON.stringify(result)).not.toContain('UNRELATED_HISTORY_BYTES');
     }
+    const result = await f.tool.execute({ mode: 'history' });
+    expect(result.success).toBe(true);
+    const entries = JSON.parse(result.output!).history;
+    expect(entries.map((entry: { runtime: string }) => entry.runtime)).toEqual(['python', 'sql', 'graphql']);
+    expect(entries.every((entry: { error: string }) => entry.error.includes('only stateless JavaScript and TypeScript'))).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('UNRELATED_HISTORY_BYTES');
     expect(spawn).not.toHaveBeenCalled();
     expect(read.mock.calls.some(args => String(args[0]) === history)).toBe(false);
   } finally { spawn.mockRestore(); read.mockRestore(); }
+});
+
+test.skipIf(!availability.available)('history retains actual success, error and refusal metadata across registry reconstruction', async () => {
+  const f = await fixture(path => !path.endsWith('private.ts'));
+  const expression = 'import { value } from "./allowed.ts"; value';
+  expect((await f.tool.execute({ mode: 'eval', runtime: 'typescript', expression })).success).toBe(true);
+  expect((await f.tool.execute({ mode: 'eval', expression: 'throw new Error("ACTUAL_EVAL_FAILURE")' })).success).toBe(false);
+  expect((await f.tool.execute({ mode: 'eval', expression: '"REFUSED_REPL_ACTION"' })).success).toBe(false);
+  const rebuilt = createCapturedReplTool(f.binding, undefined, f.historyOwner);
+  const spawn = spyOn(childProcess, 'spawn');
+  try {
+    const result = await rebuilt.execute({ mode: 'history', workspaceRoot: f.owner, sessionId: 'borrowed' });
+    expect(result.success).toBe(true);
+    const history = JSON.parse(result.output!);
+    expect(history.count).toBe(3);
+    expect(history.history[0]).toMatchObject({ runtime: 'typescript', expression, result: 'CAPTURED_ALLOWED\n', backend: 'linux-bwrap-projection' });
+    expect(history.history[1].error).toContain('ACTUAL_EVAL_FAILURE');
+    expect(history.history[2].error).toContain('Command denied');
+    expect(history.history.every((entry: { ts: number; sessionId: string }) => entry.ts > 0 && entry.sessionId.startsWith('captured_repl_'))).toBe(true);
+    expect(new Set(history.history.map((entry: { sessionId: string }) => entry.sessionId)).size).toBe(3);
+    expect(JSON.stringify(history)).not.toContain('DENIED_REPL_BYTES');
+    expect(spawn).not.toHaveBeenCalled();
+    history.history[0].result = 'CALLER_MUTATION';
+    expect((await rebuilt.execute({ mode: 'history' })).output).not.toContain('CALLER_MUTATION');
+  } finally { spawn.mockRestore(); }
+});
+
+test('same-root authorities and resumed bindings cannot select a previous journal', async () => {
+  const f = await fixture();
+  await f.raw.execute({ mode: 'eval', runtime: 'python', expression: 'FIRST_AUTHORITY_ATTEMPT' });
+  const newRun = createCapturedReplTool(f.binding);
+  expect(JSON.parse((await newRun.execute({ mode: 'history' })).output!)).toEqual({ count: 0, history: [] });
+  const forged = createCapturedReplTool(f.binding, undefined, { kind: 'captured-repl-history' });
+  expect((await forged.execute({ mode: 'history' })).success).toBe(false);
+  const authority = await createContractInputAuthority(f.contract, f.root, { mutable: true, branch: `input/${f.contract.inputSnapshot!.id}` });
+  const other = createCapturedReplTool({ ...f.binding, authority });
+  const mismatched = createCapturedReplTool({ ...f.binding, authority }, undefined, f.historyOwner);
+  expect((await mismatched.execute({ mode: 'history' })).success).toBe(false);
+  expect(JSON.parse((await other.execute({ mode: 'history' })).output!)).toEqual({ count: 0, history: [] });
+  await other.execute({ mode: 'eval', runtime: 'sql', expression: 'SECOND_AUTHORITY_ATTEMPT' });
+  expect((await f.raw.execute({ mode: 'history' })).output).not.toContain('SECOND_AUTHORITY_ATTEMPT');
+  expect((await other.execute({ mode: 'history' })).output).not.toContain('FIRST_AUTHORITY_ATTEMPT');
+  revokeContractInputAuthority(f.binding.authority);
+  expect(await f.raw.execute({ mode: 'history' })).toMatchObject({ success: false });
+  const rebound = await createContractInputAuthority(f.contract, f.root, { mutable: true, branch: `input/${f.contract.inputSnapshot!.id}` });
+  expect(JSON.parse((await createCapturedReplTool({ ...f.binding, authority: rebound }).execute({ mode: 'history' })).output!)).toEqual({ count: 0, history: [] });
+});
+
+test('an attempt cancelled after backend completion is not replayed from history', async () => {
+  const f = await fixture();
+  const controller = new AbortController();
+  await f.raw.execute({ mode: 'eval', runtime: 'python', expression: 'CANCELLED_BEFORE_DELIVERY' }, { signal: controller.signal });
+  controller.abort();
+  expect(JSON.parse((await f.raw.execute({ mode: 'history' })).output!)).toEqual({ count: 0, history: [] });
+  await f.raw.execute({ mode: 'eval', runtime: 'sql', expression: 'NEXT_LIVE_ATTEMPT' });
+  const history = JSON.parse((await f.raw.execute({ mode: 'history' })).output!);
+  expect(history.count).toBe(1); expect(history.history[0].expression).toBe('NEXT_LIVE_ATTEMPT');
+});
+
+test('disposed run history cannot be replayed or reused for new evaluation', async () => {
+  const f = await fixture();
+  await f.raw.execute({ mode: 'eval', runtime: 'python', expression: 'PREVIOUS_RUN_ATTEMPT' });
+  disposeCapturedReplHistory(f.historyOwner);
+  expect((await f.raw.execute({ mode: 'history' })).success).toBe(false);
+  const spawn = spyOn(childProcess, 'spawn');
+  try {
+    expect((await f.raw.execute({ mode: 'eval', expression: '"LATE_EVALUATION"' })).success).toBe(false);
+    expect(spawn).not.toHaveBeenCalled();
+  } finally { spawn.mockRestore(); }
+});
+
+for (const change of ['original-permission', 'copy-permission', 'authority', 'cancel-await', 'revoke-await'] as const) {
+  test.skipIf(!availability.available)(`cached history is withheld after ${change}`, async () => {
+    let deny = ''; let interrupt = false;
+    const controller = new AbortController();
+    const f = await fixture(async path => {
+      if (interrupt) {
+        await Promise.resolve();
+        if (change === 'cancel-await') controller.abort();
+        if (change === 'revoke-await') revokeContractInputAuthority(f.binding.authority);
+      }
+      return path !== deny;
+    });
+    expect((await f.raw.execute({ mode: 'eval', expression: 'require("node:fs").readFileSync("allowed.ts", "utf8")' })).success).toBe(true);
+    if (change === 'original-permission') deny = join(f.owner, 'allowed.ts');
+    if (change === 'copy-permission') deny = join(f.root, 'allowed.ts');
+    if (change === 'authority') revokeContractInputAuthority(f.binding.authority);
+    interrupt = true;
+    const spawn = spyOn(childProcess, 'spawn');
+    try {
+      const history = await f.raw.execute({ mode: 'history' }, { signal: controller.signal });
+      expect(history.success).toBe(false); expect(history.output).toBeUndefined();
+      expect(JSON.stringify(history)).not.toContain('CAPTURED_ALLOWED');
+      expect(spawn).not.toHaveBeenCalled();
+      if (change === 'cancel-await') expect(history.cancelled).toBe(true);
+    } finally { spawn.mockRestore(); }
+  });
+}
+
+test.skipIf(!availability.available)('registry recreation cannot replace the retained original permission filter or lifecycle', async () => {
+  let allowed = true;
+  const f = await fixture(() => allowed);
+  const lifecycle = new AbortController();
+  const historyOwner = createCapturedReplHistory(f.binding.authority, lifecycle.signal);
+  const first = createCapturedReplTool({ ...f.binding, signal: lifecycle.signal }, undefined, historyOwner);
+  expect((await first.execute({ mode: 'eval', expression: '"FILTER_BOUND_HISTORY"' })).success).toBe(true);
+  const broader = createCapturedReplTool({ ...f.binding, readAccessFilter: async () => true }, undefined, historyOwner);
+  allowed = false;
+  expect(await broader.execute({ mode: 'history' })).toMatchObject({ success: false });
+  allowed = true;
+  expect((await broader.execute({ mode: 'history' })).output).toContain('FILTER_BOUND_HISTORY');
+  lifecycle.abort();
+  expect(await broader.execute({ mode: 'history' })).toMatchObject({ success: false });
+});
+
+test('history retention bounds entry count and encoded bytes with visible omissions', async () => {
+  const f = await fixture();
+  for (let i = 0; i < 102; i++)
+    expect((await f.raw.execute({ mode: 'eval', runtime: 'python', expression: `REFUSED_${i}` })).success).toBe(false);
+  let result = JSON.parse((await f.raw.execute({ mode: 'history' })).output!);
+  expect(result.count).toBe(100); expect(result.omitted).toBe(2);
+  expect(result.history[0].expression).toBe('REFUSED_2');
+  for (let i = 0; i < 40; i++)
+    await f.raw.execute({ mode: 'eval', runtime: 'sql', expression: `${i}:` + 'x'.repeat(60_000) });
+  result = JSON.parse((await f.raw.execute({ mode: 'history' })).output!);
+  expect(result.count).toBeGreaterThan(0); expect(result.count).toBeLessThan(40);
+  expect(result.omitted).toBe(142 - result.count);
+  expect(result.history.at(-1).expression).toStartWith('39:');
+  expect(result.history.reduce((total: number, entry: unknown) => total + Buffer.byteLength(JSON.stringify(entry)), 0)).toBeLessThanOrEqual(2 * 1024 * 1024);
+}, 30_000);
+
+test.skipIf(!availability.available)('an individually oversized encoded result is explicitly omitted from history', async () => {
+  const f = await fixture();
+  const result = await f.raw.execute({ mode: 'eval', expression: '"\\u0000".repeat(400_000)' });
+  expect(result.success).toBe(true);
+  expect(JSON.parse(result.output!).result.length).toBe(400_001);
+  expect(JSON.parse((await f.raw.execute({ mode: 'history' })).output!)).toEqual({ count: 0, history: [], omitted: 1 });
+});
+
+test('concurrent authorized refusals retain every completed attempt without lost entries', async () => {
+  const f = await fixture();
+  await Promise.all(Array.from({ length: 10 }, (_, index) =>
+    f.raw.execute({ mode: 'eval', runtime: 'python', expression: `CONCURRENT_${index}` })));
+  const history = JSON.parse((await f.raw.execute({ mode: 'history' })).output!);
+  expect(history.count).toBe(10);
+  expect(new Set(history.history.map((entry: { expression: string }) => entry.expression))).toEqual(new Set(Array.from({ length: 10 }, (_, index) => `CONCURRENT_${index}`)));
 });
 
 for (const interruption of ['abort', 'revoke', 'permission'] as const) {
@@ -208,6 +362,8 @@ for (const interruption of ['abort', 'revoke', 'permission'] as const) {
       expect(JSON.stringify(result)).not.toContain('EARLY_REPL_OUTPUT');
       expect(JSON.stringify(result)).not.toContain('LATE_REPL_OUTPUT');
       expect(existsSync(join(f.root, 'late.txt'))).toBe(false);
+      if (interruption === 'abort')
+        expect(JSON.parse((await f.raw.execute({ mode: 'history' })).output!)).toEqual({ count: 0, history: [] });
     } finally { tap.mockRestore(); }
   });
 }
@@ -240,6 +396,10 @@ test.skipIf(!availability.available)('the execution deadline withholds partial o
   expect(result.success).toBe(false); expect(result.error).toContain('timed out');
   expect(JSON.stringify(result)).not.toContain('PARTIAL_TIMEOUT_OUTPUT');
   expect(existsSync(join(f.root, 'late-timeout.txt'))).toBe(false);
+  const history = JSON.parse((await f.raw.execute({ mode: 'history' })).output!);
+  expect(history.count).toBe(1);
+  expect(history.history[0].error).toContain('timed out');
+  expect(history.history[0].result).toBeUndefined();
   expect((await f.tool.execute({ mode: 'eval', expression: '42' })).success).toBe(true);
 }, 30_000);
 

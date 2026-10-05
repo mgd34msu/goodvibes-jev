@@ -1,6 +1,7 @@
 /** Real temporary-Git contract -> AgentManager -> AgentOrchestrator -> default REPL registry. */
 import { expect, spyOn, test } from 'bun:test';
 import * as asyncFs from 'node:fs/promises';
+import * as childProcess from 'node:child_process';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -25,7 +26,7 @@ const availability = await probeCapturedExecAvailability();
 if (process.env.GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT === '1' && !availability.available)
   throw new Error('required captured REPL integration execution backend is unavailable');
 
-for (const scenario of ['allowed', 'revoke-after-eval'] as const) {
+for (const scenario of ['allowed', 'revoke-after-eval', 'revoke-after-history'] as const) {
   test.skipIf(!availability.available)(`actual default contract REPL honors captured input authority (${scenario})`, async () => {
     const root = makeRepo();
     const denied = join(root, 'private.mjs');
@@ -44,6 +45,10 @@ for (const scenario of ['allowed', 'revoke-after-eval'] as const) {
     const archetypeDirectory = join(root, '.goodvibes', 'agents');
     mkdirSync(archetypeDirectory, { recursive: true });
     writeFileSync(join(archetypeDirectory, 'engineer.md'), '---\nname: engineer\ndescription: REPL integration engineer\ntools: [read, write, edit, find, exec, analyze, inspect, fetch, registry, repl]\n---\nImplement the assigned unit.\n');
+    const hostHistory = JSON.stringify([{ ts: 1, runtime: 'javascript', expression: 'HOST_REPL_HISTORY_EXPRESSION', result: 'HOST_REPL_HISTORY_BYTE_MARKER' }]);
+    const ownerHistoryPath = join(root, '.goodvibes', 'agent', 'repl-history.json');
+    mkdirSync(join(root, '.goodvibes', 'agent'), { recursive: true });
+    writeFileSync(ownerHistoryPath, hostHistory);
     const config = new ConfigManager({ surfaceRoot: 'agent', configDir: join(root, '.goodvibes', 'cfg'), workingDir: root, homeDir: root });
     config.set('permissions.engine', 'policy-engine');
     config.set('permissions.mode', 'prompt');
@@ -72,15 +77,23 @@ for (const scenario of ['allowed', 'revoke-after-eval'] as const) {
 
     const requests: { planner: boolean; text: string; messages: ProviderMessage[] }[] = [];
     const executed: { name: string; success: boolean }[] = [];
+    const replExecutions: { mode: unknown; success: boolean; evalProcesses: number }[] = [];
+    const memberHistoryAfterRepl: string[] = [];
     const opened: string[] = [];
     const read = asyncFs.readFile;
     const tap = spyOn(asyncFs, 'readFile').mockImplementation(((...args: Parameters<typeof read>) => {
       opened.push(String(args[0]));
       return read(...args);
     }) as typeof read);
+    const writes = spyOn(asyncFs, 'writeFile');
+    const processes = spyOn(childProcess, 'spawn');
+    const evalProcessCount = (): number => processes.mock.calls.filter(([command, args]) =>
+      command === '/usr/bin/bwrap' && Array.isArray(args) && args.some((argument) =>
+        argument.includes('--print') && argument.includes('fs.readFileSync("input.txt", "utf8").trim()'))).length;
     let plannerCalls = 0;
     let memberCalls = 0;
     let revoked = false;
+    let memberHistoryPath: string | undefined;
     const steps = [
       { name: 'repl', arguments: {
         mode: 'eval', runtime: 'typescript', bindings: { label: 'PROVIDER_BINDING', increment: 2 },
@@ -94,6 +107,7 @@ for (const scenario of ['allowed', 'revoke-after-eval'] as const) {
           'JSON.stringify({ captured: fs.readFileSync("input.txt", "utf8").trim(), imported: module.value, total, binding: label, denied })',
         ].join('\n'),
       } },
+      { name: 'repl', arguments: { mode: 'history' } },
       { name: 'write', arguments: { files: [{ path: 'src/csv.ts', mode: 'overwrite', content: 'export const parse = () => [];\n' }] } },
     ];
     const provider: LLMProvider = {
@@ -113,6 +127,11 @@ for (const scenario of ['allowed', 'revoke-after-eval'] as const) {
           writeFileSync(join(root, 'input.txt'), 'LATE_OWNER_REPL_INPUT\n');
           writeFileSync(join(root, 'allowed.mjs'), 'export const value = "LATE_OWNER_REPL_MODULE";\n');
           writeFileSync(join(root, 'allowed.ts'), 'export const value: number = 900;\n');
+          const member = runtime.agentManager.list().find((record) => record.contractRole === 'unit');
+          if (!member?.workingDirectory) throw new Error('actual REPL member is missing its working directory');
+          memberHistoryPath = join(member.workingDirectory, '.goodvibes', 'agent', 'repl-history.json');
+          mkdirSync(join(member.workingDirectory, '.goodvibes', 'agent'), { recursive: true });
+          writeFileSync(memberHistoryPath, hostHistory);
         }
         const step = steps[turn - 1];
         return {
@@ -152,9 +171,17 @@ for (const scenario of ['allowed', 'revoke-after-eval'] as const) {
     runtime.agentOrchestrator.setDependencies({
       ...runtime, configManager: config, workingDirectory: root, surfaceRoot: 'agent', workflowServices: runtime.workflow,
       contractRunner: runner, contractHooks: runner.hooks(),
-      toolExecutionObserver(name, _args, success) {
+      toolExecutionObserver(name, args, success) {
         executed.push({ name, success });
-        if (scenario === 'revoke-after-eval' && name === 'repl' && success && !revoked) {
+        if (name === 'repl') {
+          replExecutions.push({ mode: args.mode, success, evalProcesses: evalProcessCount() });
+          // Successful settlement removes this member worktree. Observe its
+          // unrelated host history while the actual tool lifecycle still owns it.
+          if (memberHistoryPath) memberHistoryAfterRepl.push(readFileSync(memberHistoryPath, 'utf8'));
+        }
+        const shouldRevoke = scenario === 'revoke-after-eval' && args.mode === 'eval' ||
+          scenario === 'revoke-after-history' && args.mode === 'history' && replExecutions.some((entry) => entry.mode === 'eval');
+        if (shouldRevoke && name === 'repl' && success && !revoked) {
           const member = runtime.agentManager.list().find((record) => record.contractRole === 'unit');
           const authority = member && getContractInputAuthority(member);
           if (!authority) throw new Error('actual REPL member is missing its input authority');
@@ -184,22 +211,34 @@ for (const scenario of ['allowed', 'revoke-after-eval'] as const) {
       expect(opened).toContain(join(member!.workingDirectory!, 'allowed.mjs'));
       expect(opened).toContain(join(member!.workingDirectory!, 'allowed.ts'));
       expect(opened.some((path) => path.endsWith('/private.mjs'))).toBe(false);
+      expect(opened.some((path) => path.endsWith('/repl-history.json'))).toBe(false);
+      expect(writes.mock.calls.some(([path]) => String(path).endsWith('/repl-history.json'))).toBe(false);
+      expect(evalProcessCount()).toBe(1);
+      expect(replExecutions).toEqual([
+        { mode: 'eval', success: true, evalProcesses: 1 },
+        ...(scenario === 'revoke-after-eval' ? [] : [{ mode: 'history', success: true, evalProcesses: 1 }]),
+      ]);
       for (const request of requests) {
         expect(request.text).not.toContain('PRIVATE_REPL_BYTE_MARKER');
         expect(request.text).not.toContain('LATE_OWNER_REPL_INPUT');
         expect(request.text).not.toContain('LATE_OWNER_REPL_MODULE');
+        expect(request.text).not.toContain('HOST_REPL_HISTORY_BYTE_MARKER');
+        expect(request.text).not.toContain('HOST_REPL_HISTORY_EXPRESSION');
       }
       const memberRequests = requests.filter((request) => !request.planner);
-      if (scenario === 'revoke-after-eval') {
+      const replMessage = (turn: number, call: number) => memberRequests[turn - 1]?.messages.find((message) =>
+        message.role === 'tool' && message.name === 'repl' && message.callId === `repl-step-${call}`);
+      if (scenario !== 'allowed') {
         expect(revoked).toBe(true);
-        expect(memberCalls).toBe(1);
+        expect(memberCalls).toBe(scenario === 'revoke-after-eval' ? 1 : 2);
         expect(result.status).not.toBe('passed');
-        expect(memberRequests.flatMap((request) => request.messages).some((message) => message.role === 'tool' && message.name === 'repl')).toBe(false);
-      } else {
-        expect(result.status, result.error).toBe('passed');
-        expect(memberCalls).toBe(3);
-        expect(executed).toEqual([{ name: 'repl', success: true }, { name: 'write', success: true }]);
-        const message = memberRequests[1]?.messages.find((entry) => entry.role === 'tool' && entry.name === 'repl');
+        const withheldCall = scenario === 'revoke-after-eval' ? 1 : 2;
+        expect(memberRequests.flatMap((request) => request.messages).some((message) =>
+          message.role === 'tool' && message.callId === `repl-step-${withheldCall}`)).toBe(false);
+        expect(executed.some((entry) => entry.name === 'write')).toBe(false);
+      }
+      if (scenario !== 'revoke-after-eval') {
+        const message = replMessage(2, 1);
         expect(message).toBeDefined();
         const output = JSON.parse(typeof message?.content === 'string' ? message.content : '') as { runtime: string; result: string; isolated: boolean; stateless: boolean; error?: string };
         expect(output.runtime).toBe('typescript');
@@ -211,11 +250,37 @@ for (const scenario of ['allowed', 'revoke-after-eval'] as const) {
           captured: 'DIRTY_CAPTURED_REPL_INPUT', imported: 'DIRTY_CAPTURED_REPL_MODULE',
           total: 42, binding: 'PROVIDER_BINDING', denied: ['DENIED_READ', 'DENIED_READ', 'DENIED_IMPORT'],
         });
+        if (scenario === 'allowed') {
+          expect(result.status, result.error).toBe('passed');
+          expect(memberCalls).toBe(4);
+          expect(executed).toEqual([
+            { name: 'repl', success: true }, { name: 'repl', success: true },
+            { name: 'write', success: true },
+          ]);
+          const historyMessage = replMessage(3, 2);
+          expect(historyMessage).toBeDefined();
+          const history = JSON.parse(typeof historyMessage?.content === 'string' ? historyMessage.content : '');
+          expect(Object.keys(history).sort()).toEqual(['count', 'history']);
+          expect(history.count).toBe(1);
+          expect(history.history).toHaveLength(1);
+          expect(history.history[0]).toEqual({
+            ts: expect.any(Number), runtime: 'typescript', expression: steps[0]!.arguments.expression,
+            sessionId: expect.any(String), backend: 'linux-bwrap-projection', launchSummary: expect.any(String), result: output.result,
+          });
+          expect(history.history[0].ts).toBeGreaterThan(0);
+          expect(history.history[0].sessionId.length).toBeGreaterThan(0);
+          expect(history.history[0].launchSummary.length).toBeGreaterThan(0);
+        }
       }
       expect(readFileSync(join(root, 'input.txt'), 'utf8')).toBe('LATE_OWNER_REPL_INPUT\n');
       expect(readFileSync(denied, 'utf8')).toContain('PRIVATE_REPL_BYTE_MARKER');
+      expect(readFileSync(ownerHistoryPath, 'utf8')).toBe(hostHistory);
+      expect(memberHistoryPath).toBeDefined();
+      expect(memberHistoryAfterRepl).toEqual(replExecutions.map(() => hostHistory));
     } finally {
       tap.mockRestore();
+      writes.mockRestore();
+      processes.mockRestore();
       if (id) runner.cancel(id, 'fixture cleanup');
       runner.dispose();
       if (id) await runner.join(id);

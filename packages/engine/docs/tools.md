@@ -58,10 +58,27 @@ and `workspace_changes_persist`. Network access and the ambient host environment
 are unavailable. Evaluation has a 10-second execution limit and a 64 KiB command
 limit, in addition to the captured executor's output and workspace limits.
 
-Captured history, Python, SQL and GraphQL remain explicitly unavailable. This is
-not shared-VM or persistent-session support. Ordinary live-tree REPL behavior is
-unchanged: its local backend does not isolate code, so eval refuses and history
-continues to list attempts. Neither path falls back to host evaluation.
+Captured `history` returns `{ count, history }` for the exact construction-owned
+run and authority in the current process. Entries retain the runtime, expression,
+timestamp, per-attempt session ID, actual backend metadata and result/error.
+Authorized runtime/safety refusals are recorded, but malformed/oversized input
+and cancelled or revoked attempts are not. Timed-out attempts retain the timeout
+error without partial output. History never opens or updates the ordinary host
+history file and does not store bindings. Recreated registries can retain the
+same run's history; new runs (including wake/steer) and resumed/rebound authorities start empty,
+even at the same path. Each history read revalidates current owner/view authority
+and the original bindings' cumulative source-read provenance before disclosure.
+
+Retention is limited to 100 entries and 2 MiB of encoded entries per run.
+Oldest entries are evicted, and an individual entry above that byte limit is
+omitted rather than truncated. When entries have been omitted, the response also
+reports `omitted`; `count` is the number retained. This is in-process history,
+not durable history or shared interpreter state.
+
+Python, SQL and GraphQL evaluation remain explicitly unavailable. Ordinary
+live-tree REPL behavior is unchanged: its local backend does not isolate code,
+so eval refuses and history continues to list attempts. Neither path falls back
+to host evaluation.
 
 ## Registration requirements
 
