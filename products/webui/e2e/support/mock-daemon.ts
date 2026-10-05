@@ -1384,6 +1384,10 @@ export async function installMockDaemon(page: Page, options: MockDaemonOptions =
       return json(route, { error: 'This pairing token has been revoked.', code: 'UNAUTHENTICATED' }, 401);
     }
 
+    // Existing Work proofs do not seed contracts. Keep their absence an honest
+    // empty list; contract inspection specs layer a stateful fixture over this.
+    if (method === 'GET' && path === '/api/contracts') return json(route, { contracts: [] });
+
     // Streams: an EventSource/fetch stream (text/event-stream).
     if (accept.includes('text/event-stream') || path.includes('/events')) {
       // Fleet subscription emit: the FIRST request for the multiplexed stream that

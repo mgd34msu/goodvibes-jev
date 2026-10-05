@@ -23,6 +23,9 @@ import type {
   RuntimeEventDomain,
 } from '@goodvibes-jev/engine/contracts';
 import type {
+  ContractsListInput,
+  ContractsListResult,
+  ContractRecord,
   CheckpointsCreateInput,
   CheckpointsCreateResult,
   CheckpointsDiffInput,
@@ -87,6 +90,9 @@ import type {
 // './goodvibes' unchanged, the byte-compatible facade covers types, not just the `sdk`
 // object. Definitions live in contract-bridge-types.ts (the pin-bump swap seam).
 export type {
+  ContractsListInput,
+  ContractsListResult,
+  ContractRecord,
   CheckpointsCreateInput,
   CheckpointsCreateResult,
   CheckpointsDiffInput,
@@ -641,6 +647,18 @@ async function invokeGatewayMethod<TMethodId extends OperatorMethodId, TOutput =
     method: 'POST',
     body: { body: body ?? {} },
   });
+}
+
+/** Read-only, cancellable contract requests use the generated REST binding. */
+async function readContractMethod<M extends 'contracts.list' | 'contracts.get'>(
+  methodId: M,
+  input: OperatorMethodInput<M>,
+  signal?: AbortSignal,
+): Promise<OperatorMethodOutput<M>> {
+  const route = webuiRouteFor(methodId);
+  if (route?.method !== 'GET') throw new Error('Contract inspection is unavailable.');
+  const { path, rest } = interpolateRoute(route, input);
+  return requestJson(path, { method: route.method, query: rest, signal });
 }
 
 // ─── Approvals (approvals.*, per-hunk selection) ─────────────────────
@@ -2232,6 +2250,12 @@ export const sdk = {
     // fleet.*/checkpoints.*/sessions.search, generic-invoke-only (see
     // invokeGatewayMethod above); I/O shapes are the contract-bridge-types.ts bridge
     // (real ids, generic generated I/O today, see that module's header for the swap).
+    contracts: {
+      list: (input: ContractsListInput = {}, signal?: AbortSignal): Promise<ContractsListResult> =>
+        readContractMethod('contracts.list', input, signal),
+      get: (contractId: string, signal?: AbortSignal): Promise<ContractRecord> =>
+        readContractMethod('contracts.get', { contractId }, signal),
+    },
     fleet: {
       snapshot: () => invokeGatewayMethod<'fleet.snapshot', FleetSnapshotResult>('fleet.snapshot', {}),
       list: (input?: FleetListInput) => invokeGatewayMethod<'fleet.list', FleetListResult>('fleet.list', input ?? {}),
@@ -2669,7 +2693,7 @@ export async function runBrowserJudgment(
   signal: AbortSignal,
 ): Promise<OperatorMethodOutput<'judgment.battery.run'>> {
   const route = webuiRouteFor('judgment.battery.run');
-  if (!route || route.method !== 'POST') throw new Error('Command judgment is unavailable.');
+  if (route?.method !== 'POST') throw new Error('Command judgment is unavailable.');
   return requestJson(route.path, { method: route.method, body: input, signal });
 }
 

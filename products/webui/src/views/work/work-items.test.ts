@@ -4,7 +4,7 @@
  * de-duplication, and the one-line summary.
  */
 import { describe, expect, test } from 'bun:test';
-import type { ApprovalRecord, FleetAttemptGroup, FleetProcessNode, HostedSessionRecord, RuntimeTaskSummary } from '../../lib/goodvibes';
+import type { ContractRecord, ApprovalRecord, FleetAttemptGroup, FleetProcessNode, HostedSessionRecord, RuntimeTaskSummary } from '../../lib/goodvibes';
 import type { UnionSessionRecord } from '../../lib/sessions-union';
 import { buildWorkItems, groupWorkItems, knownCost, whenLabel, workSummary, type CiWatch, type WorkSources } from './work-items';
 
@@ -131,5 +131,44 @@ describe('honest values', () => {
     const withExternal = workSummary(buildWorkItems({ ...EMPTY, nodes: [node({ id: 'live' }), node({ id: 'ext', kind: 'observed-external' })] }));
     expect(withExternal).not.toBe(runningOnly);
     expect(withExternal.startsWith(runningOnly)).toBe(true);
+  });
+});
+
+
+describe('contract rows', () => {
+  function contract(id: string, status: ContractRecord['status']): ContractRecord {
+    return {
+      id, status, schemaVersion: 1, sessionId: 's', origin: 'external', ask: 'Original ask', goal: `Goal ${id}`,
+      ownerAgentId: 'owner', projectRoot: '/project', isolation: 'shared', criteria: [], groups: [], units: [],
+      checks: [], escalations: [], decisions: [], fixRounds: 0, plannerAgentIds: [], createdAt: 1000,
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
+        llmCallCount: 0, turnCount: 0, toolCallCount: 0, costUsd: null, costState: 'unpriced' },
+      judgmentUsage: { calls: 0, inputTokens: 0, outputTokens: 0 },
+    };
+  }
+  test('recorded lifecycle determines active and terminal groups without creating an approval action', () => {
+    const items = buildWorkItems({ ...EMPTY, contracts: [contract('live', 'awaiting-owner'), contract('done', 'passed'), contract('failed', 'failed'), contract('stopped', 'cancelled')] });
+    expect(items.find((item) => item.id === 'live')).toMatchObject({ type: 'contract', kind: 'processes', group: 'running', status: 'Awaiting-owner' });
+    expect(items.filter((item) => item.group === 'finished')).toHaveLength(3);
+    expect(groupWorkItems(items, 'processes').running).toHaveLength(1);
+    expect(groupWorkItems(items, 'sessions').running).toHaveLength(0);
+  });
+  test('the real fleet contract root is replaced once while child controls remain available', () => {
+    const items = buildWorkItems({ ...EMPTY, contracts: [contract('c1', 'running')], nodes: [
+      node({ id: 'contract:c1', kind: 'contract' }), node({ id: 'group:c1:g1', kind: 'contract-group', parentId: 'contract:c1' }),
+    ] });
+    expect(items.filter((item) => item.type === 'contract')).toHaveLength(1);
+    expect(items.map((item) => item.key)).toEqual(['contract:c1', 'fleet:group:c1:g1']);
+    expect(items[1].depth).toBe(1);
+  });
+  test('a deduplicated active root preserves the fleet’s authoritative attention signal', () => {
+    const items = buildWorkItems({ ...EMPTY, contracts: [contract('c1', 'awaiting-owner')], nodes: [
+      node({ id: 'contract:c1', kind: 'contract', needsAttention: { reason: 'input', detail: 'Recorded open question' } }),
+    ] });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ key: 'contract:c1', group: 'needs', tone: 'warn', attentionReason: 'input' });
+  });
+  test('archive never invents archived contract records', () => {
+    expect(buildWorkItems({ ...EMPTY, contracts: [contract('done', 'passed')], archived: true })).toEqual([]);
   });
 });

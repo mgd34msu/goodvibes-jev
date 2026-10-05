@@ -17,6 +17,7 @@
  */
 import type { StatusTone } from '../../components/ui/StatusDot';
 import type {
+  ContractRecord,
   ApprovalRecord,
   FleetAttemptGroup,
   FleetProcessNode,
@@ -58,7 +59,7 @@ export type CiWatch = OperatorMethodOutput<'ci.watches.list'>['watches'][number]
 /** The segmented filter's kinds. `all` shows every kind. */
 export type WorkKind = 'sessions' | 'agents' | 'processes';
 
-export type WorkItemType = 'approval' | 'attempt-group' | 'fleet' | 'session' | 'hosted' | 'task' | 'ci-watch';
+export type WorkItemType = 'approval' | 'attempt-group' | 'fleet' | 'session' | 'hosted' | 'task' | 'ci-watch' | 'contract';
 
 export type WorkGroup = 'needs' | 'running' | 'finished';
 
@@ -88,6 +89,7 @@ export interface WorkItem {
 }
 
 export interface WorkSources {
+  readonly contracts?: readonly ContractRecord[];
   readonly approvals: readonly ApprovalRecord[];
   readonly nodes: readonly FleetProcessNode[];
   readonly attemptGroups: readonly FleetAttemptGroup[];
@@ -390,6 +392,24 @@ export function visibleFleetNodes(
   });
 }
 
+/** Fixed wire lifecycle projection only; this does not judge contract progress. */
+function contractItem(contract: ContractRecord): WorkItem {
+  const terminal = contract.status === 'passed' || contract.status === 'failed' || contract.status === 'cancelled';
+  return {
+    key: `contract:${contract.id}`,
+    type: 'contract',
+    id: contract.id,
+    kind: 'processes',
+    group: terminal ? 'finished' : 'running',
+    title: contract.goal || contract.ask || contract.id,
+    meta: `Contract · ${contract.groups.length} groups · ${contract.units.length} units`,
+    status: sentenceCase(contract.status),
+    tone: contract.status === 'passed' ? 'ok' : contract.status === 'failed' ? 'bad' : terminal ? 'idle' : 'live',
+    depth: 0,
+    sortAt: contract.createdAt,
+  };
+}
+
 /** Every row, in display order within each group. */
 export function buildWorkItems(sources: WorkSources): WorkItem[] {
   const pendingApprovalSessions = new Set(
@@ -397,7 +417,20 @@ export function buildWorkItems(sources: WorkSources): WorkItem[] {
       .flatMap((a) => (!isTerminalApprovalStatus(a.status) && a.sessionId ? [a.sessionId] : [])),
   );
   const nodes = sources.archived ? [...sources.nodes] : visibleFleetNodes(sources.nodes, sources.attemptGroups);
-  const fleetRows = buildFleetRows(nodes).map(({ node, depth }) => fleetItem(node, depth, pendingApprovalSessions));
+  const contractRows = new Map((sources.contracts ?? []).map((contract) => [`contract:${contract.id}`, contractItem(contract)]));
+  const representedContracts = new Set<string>();
+  const fleetRows = buildFleetRows(nodes).map(({ node, depth }) => {
+    // The engine's contract adapter names roots contract:<id>. Replace just
+    // that summary row, retaining the existing fleet children and controls.
+    const contract = node.kind === 'contract' ? contractRows.get(node.id) : undefined;
+    if (contract && !sources.archived) {
+      representedContracts.add(node.id);
+      const fleet = fleetItem(node, depth, pendingApprovalSessions);
+      return { ...contract, depth, ...(contract.group !== 'finished' && fleet.group === 'needs'
+        ? { group: fleet.group, tone: fleet.tone, attentionReason: fleet.attentionReason } : {}) };
+    }
+    return fleetItem(node, depth, pendingApprovalSessions);
+  });
   if (sources.archived) return fleetRows.map((item) => ({ ...item, group: 'finished' as const }));
 
   const approvals = [...sources.approvals].map(approvalItem).sort((a, b) => b.sortAt - a.sortAt);
@@ -409,7 +442,8 @@ export function buildWorkItems(sources: WorkSources): WorkItem[] {
 
   // Fleet rows keep their tree order (parents before children); the other
   // sources follow, newest first.
-  return [...approvals, ...attempts, ...fleetRows, ...hosted, ...sessions, ...tasks, ...ci];
+  const contracts = [...contractRows.entries()].filter(([id]) => !representedContracts.has(id)).map(([, item]) => item).sort((a, b) => b.sortAt - a.sortAt);
+  return [...contracts, ...approvals, ...attempts, ...fleetRows, ...hosted, ...sessions, ...tasks, ...ci];
 }
 
 export interface WorkGroups {

@@ -923,3 +923,39 @@ describe('hostedSessionDetachBeacon: the pagehide/visibilitychange keepalive det
     expect(() => hostedSessionDetachBeacon('hosted-1', 'client-1')).not.toThrow();
   });
 });
+
+describe('read-only contract inspection facade', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  test('list and get use generated GET routes, preserve filters, and encode the id', async () => {
+    const requests: { url: URL; method: string; signal?: AbortSignal | null }[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: new URL(String(input)), method: init?.method ?? 'GET', signal: init?.signal });
+      return Response.json({ contracts: [] });
+    }) as typeof fetch;
+    const abort = new AbortController();
+    await sdk.operator.contracts.list({ includeTerminal: true, sessionId: 'session:a/b' }, abort.signal);
+    await sdk.operator.contracts.get('contract:a/b', abort.signal);
+    expect(requests.map((r) => r.method)).toEqual(['GET', 'GET']);
+    expect(requests[0].url.pathname).toBe(WEBUI_METHOD_ROUTES['contracts.list'].path);
+    expect(requests[0].url.searchParams.get('includeTerminal')).toBe('true');
+    expect(requests[0].url.searchParams.get('sessionId')).toBe('session:a/b');
+    expect(requests[1].url.pathname).toBe(WEBUI_METHOD_ROUTES['contracts.get'].path.replace('{contractId}', encodeURIComponent('contract:a/b')));
+    expect(requests.every((r) => r.signal === abort.signal)).toBe(true);
+  });
+
+  test('an already-cancelled read never calls fetch', async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => { calls++; return Response.json({ contracts: [] }); }) as unknown as typeof fetch;
+    const abort = new AbortController(); abort.abort();
+    await expect(sdk.operator.contracts.list({}, abort.signal)).rejects.toThrow();
+    expect(calls).toBe(0);
+  });
+
+  test('a response completed after cancellation is not accepted', async () => {
+    const abort = new AbortController();
+    globalThis.fetch = (async () => { abort.abort(); return Response.json({ contracts: [] }); }) as unknown as typeof fetch;
+    await expect(sdk.operator.contracts.list({}, abort.signal)).rejects.toThrow();
+  });
+});

@@ -12,6 +12,11 @@ export const queryKeys = {
   // permission-mode reader (lib/permission-mode.ts) invalidates/dedupes against
   // the SAME cache entry rather than a second, silently-diverging one.
   config: ['config'] as const,
+  // Revision is local, contains no credentials, and changes on token/relay identity
+  // replacement and expiry. The prefix lets contract events refresh every view.
+  contracts: ['contracts'] as const,
+  contractList: (revision: number, includeTerminal: boolean) => ['contracts', revision, 'list', includeTerminal] as const,
+  contractDetail: (revision: number, id: string) => ['contracts', revision, 'detail', id] as const,
   tasks: ['tasks'] as const,
   approvals: ['approvals'] as const,
   // Durable approval rules (permissions.rules.list), remembered decisions at a

@@ -4,6 +4,17 @@ All notable changes to GoodVibes WebUI will be documented in this file.
 
 This project uses semantic versioning with `vMAJOR.MINOR.PATCH` git tags.
 
+## [Unreleased]
+
+### Added
+
+- Read-only contract inspection in Work: goals, original requests, criteria and
+  recorded readings, group/unit/attempt trees, check evidence, escalation history
+  and terminal results. Existing process controls remain reachable.
+- Contract caches follow authentication lifetime, cancel late responses and
+  refresh from the contracts event domain, including events during initial load.
+  Generated engine schemas reject malformed evidence before rendering.
+
 ## [2.0.0] - 2026-10-01
 
 ### Changes

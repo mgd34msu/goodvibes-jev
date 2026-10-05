@@ -414,3 +414,30 @@ honestly.
 - Do not create a second durable config or knowledge store in WebUI.
 - Do not silently move the dev server to another port.
 - Do not use storage-only message APIs as chat send fallbacks.
+
+## Contract inspection in Work
+
+Work includes read-only contract records under All and Processes without adding a
+new destination. `contracts.list` explicitly requests active records or active and
+terminal records with the existing Show control. Archive remains the fleet archive.
+When the fleet contains the same `contract:<id>` root, its summary row is replaced
+once, retaining its authoritative attention state. Its children keep their existing
+process controls; Process details and Contract evidence link the root’s two views.
+
+The detail reads `contracts.get` independently of the list, retaining a selected
+contract when it finishes and leaves the active list. It renders the daemon's goal,
+original ask, criteria and every recorded reading, group/unit/attempt tree, checks,
+evidence digests and gate outputs, escalation history, and terminal result. Empty
+fields remain explicit; failed refreshes hide previous evidence. Inspection never
+judges a criterion or starts an approval, reply, cancel or other mutation.
+
+Both method I/O aliases and route bindings come from the engine's generated public
+contract. A build-checked snapshot of the public contract tree schema validates
+nested responses before rendering without bundling the entire method catalog.
+The local client-lifetime revision scopes all contract query keys; token,
+expiry or relay-identity changes cancel pending reads, clear previous scoped data
+and reset Work selection. Query cancellation also covers changing or closing the
+detail. Late results must pass a fresh lifetime check before adoption. No contract
+response is persisted. The existing multiplexed stream includes `contracts` and
+invalidates its list/detail prefix; a 60-second safety poll (15 seconds while paused)
+keeps the view recoverable after missed events.

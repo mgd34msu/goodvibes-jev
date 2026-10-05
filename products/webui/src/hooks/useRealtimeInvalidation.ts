@@ -18,7 +18,8 @@
  * straight from a frame, matching useSessionRealtime.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import { getClientLifetime, subscribeClientLifetime } from '../lib/client-lifetime';
 import { useQueryClient } from '@tanstack/react-query';
 import type { RuntimeEventDomain } from '@goodvibes-jev/engine/contracts';
 import { sdk, DEFAULT_SSE_RECONNECT } from '../lib/goodvibes';
@@ -34,6 +35,7 @@ import { RELAY_OVERFLOW_EVENT, noteRelayOverflow, readDroppedCount } from '../li
  */
 const DOMAIN_INVALIDATIONS: Record<string, readonly (readonly unknown[])[]> = {
   tasks: [queryKeys.tasks],
+  contracts: [queryKeys.contracts],
   // gate: approvals AND queryKeys.sessions, the SDK's PERMISSION_MODE_CHANGED
   // event (events/gate.ts) rides this same domain (no dedicated wire event of
   // its own) and carries no sessionId, so we can't target the one session-scoped
@@ -90,12 +92,21 @@ const REALTIME_PAUSED_MESSAGE =
 
 export function useRealtimeInvalidation(enabled: boolean) {
   const queryClient = useQueryClient();
+  const lifetime = useSyncExternalStore(subscribeClientLifetime, getClientLifetime, getClientLifetime);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!enabled) return undefined;
     let disposed = false;
     let close: (() => void) | null = null;
+    const invalidate = (key: readonly unknown[]) => {
+      if (key[0] !== 'contracts') { void queryClient.invalidateQueries({ queryKey: key }); return; }
+      // An initial query without data otherwise absorbs invalidation while in
+      // flight. A contract event must supersede that pre-event snapshot too.
+      void queryClient.cancelQueries({ queryKey: key }).then(() => {
+        if (!disposed && getClientLifetime() === lifetime) void queryClient.invalidateQueries({ queryKey: key });
+      });
+    };
 
     sdk.streams
       .open(
@@ -106,21 +117,21 @@ export function useRealtimeInvalidation(enabled: boolean) {
             setError(null);
           },
           onEvent: (eventName: string, payload: unknown) => {
-            if (disposed) return;
+            if (disposed || getClientLifetime() !== lifetime) return;
             if (eventName === RELAY_OVERFLOW_EVENT) {
               // The relay tunnel dropped multiplexed invalidation frames. Record the honest
               // notice and revalidate every domain we track, a full refetch is the correct
               // recovery since these frames only ever trigger invalidations.
               noteRelayOverflow(readDroppedCount(payload));
               for (const keys of Object.values(DOMAIN_INVALIDATIONS)) {
-                for (const key of keys) void queryClient.invalidateQueries({ queryKey: key });
+                for (const key of keys) invalidate(key);
               }
               return;
             }
             const keys = DOMAIN_INVALIDATIONS[eventName];
             if (!keys) return;
             for (const key of keys) {
-              void queryClient.invalidateQueries({ queryKey: key });
+              invalidate(key);
             }
           },
           // NEVER surface `err.message` here, on a pre-auth open it IS the raw 401
@@ -152,7 +163,7 @@ export function useRealtimeInvalidation(enabled: boolean) {
       disposed = true;
       if (close) close();
     };
-  }, [enabled, queryClient]);
+  }, [enabled, queryClient, lifetime]);
 
   return error;
 }

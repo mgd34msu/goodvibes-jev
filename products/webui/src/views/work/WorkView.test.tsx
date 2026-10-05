@@ -89,6 +89,7 @@ mock.module('../../lib/goodvibes', () => ({
   getCurrentAuth: () => Promise.resolve({}),
   invokeMethod: () => Promise.resolve({}),
   hostedSessionDetachBeacon: () => {},
+  hasStoredTokenSync: () => false,
   sdk: {
     streams: { open: () => Promise.resolve(() => {}) },
     operator: {

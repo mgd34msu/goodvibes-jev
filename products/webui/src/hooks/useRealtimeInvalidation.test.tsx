@@ -96,9 +96,17 @@ describe('useRealtimeInvalidation', () => {
     expect(openCalls.length).toBe(1);
     expect(openCalls[0]).toContain('/api/control-plane/events');
     // Every invalidated domain rides the single stream.
-    for (const domain of ['tasks', 'gate', 'providers', 'knowledge', 'control-plane', 'fleet']) {
+    for (const domain of ['tasks', 'gate', 'providers', 'knowledge', 'control-plane', 'fleet', 'contracts']) {
       expect(openCalls[0]).toContain(domain);
     }
+    unmount();
+  });
+
+  test('a contracts frame invalidates the scoped list and detail prefix', async () => {
+    const { invalidate, unmount } = renderHook();
+    capturedHandlers?.onEvent?.('contracts', { type: 'CONTRACT_PASSED', contractId: 'a' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(invalidatedKeys(invalidate)).toEqual([['contracts']]);
     unmount();
   });
 
