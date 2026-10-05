@@ -1,7 +1,7 @@
 import { checkCapturedInputsInBatches } from './captured-exec-validation.js';
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 /** Trusted runtime declarations are separate from model arguments and project dependencies. */
-import { accessSync, constants, lstatSync, realpathSync } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, realpathSync } from 'node:fs';
 import { access, chmod, lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { assertContractInputAuthority, contractInputAuthorityRoot, registerContractInputReadAssertion } from '../../contract/input-authority.js';
@@ -33,7 +33,7 @@ async function executable(name: string, path: string): Promise<string> {
   throw new Error(`Captured validators require an installed ${name} executable on the trusted runtime PATH.`);
 }
 
-/** Fixed validators can defer unused runtime bytes without selecting commands by text.
+/** Captured commands and validators can defer runtime bytes until execution.
  * PATH resolution and executable identities are pinned synchronously at construction.
  * A failed/cancelled first admission is terminal; this is not another retry loop.
  */
@@ -169,14 +169,43 @@ export async function admitCapturedExecNodeRuntime(
   return token;
 }
 
+/** Replace only the existing OS command aliases, never mount another runtime tree. */
+function blockedSystemRuntimeAliases(refusal: string): string[] {
+  const argv: string[] = [];
+  const targets = new Set<string>();
+  for (const name of ['node', 'nodejs', 'npm', 'npx']) {
+    const alias = `/usr/bin/${name}`;
+    if (!existsSync(alias)) continue;
+    const target = realpathSync(alias);
+    if (!['/usr/bin', '/usr/lib', '/usr/lib64'].some((root) => within(root, target)) || targets.has(target)) continue;
+    targets.add(target);
+    argv.push('--ro-bind', refusal, target);
+  }
+  return argv;
+}
+
 export async function projectCapturedExecNodeRuntime(binding: CapturedExecAuthority, temporary: string, signal?: AbortSignal): Promise<{
   argv: string[]; check: (signal?: AbortSignal) => Promise<void>;
 }> {
-  if (!binding.nodeRuntimeInput) return { argv: [], check: async () => {} };
+  if (!binding.nodeRuntimeInput && !binding.nodeRuntimeAdmission) return { argv: [], check: async () => {} };
+  signal = binding.signal && signal ? AbortSignal.any([binding.signal, signal]) : binding.signal ?? signal;
+  signal?.throwIfAborted();
+  // Only the admitted /captured-runtime aliases carry runtime authority. Never
+  // fall through to a different Node/npm installation in the OS substrate.
+  const refusal = join(temporary, 'node-runtime-unavailable');
+  await writeFile(refusal, '#!/bin/sh\nprintf "%s\\n" "Captured Node/npm runtime is unavailable or access-restricted." >&2\nexit 126\n', { mode: 0o755 });
+  signal?.throwIfAborted();
+  await chmod(refusal, 0o755);
+  signal?.throwIfAborted();
+  if (!binding.nodeRuntimeInput) {
+    return { check: async () => {}, argv: [
+      ...['node', 'npm', 'npx'].flatMap((name) => ['--ro-bind', refusal, `/captured-runtime/bin/${name}`]),
+      ...blockedSystemRuntimeAliases(refusal),
+    ] };
+  }
   const state = states.get(binding.nodeRuntimeInput);
   if (!state || state.binding.authority !== binding.authority || state.binding.root !== binding.root || state.binding.readAccessFilter !== binding.readAccessFilter)
     throw new Error('Node runtime has no matching construction-owned admission');
-  signal = binding.signal && signal ? AbortSignal.any([binding.signal, signal]) : binding.signal ?? signal;
   await state.check(signal);
   const staged = join(temporary, 'node-runtime');
   for (const file of state.files) {
@@ -192,5 +221,6 @@ export async function projectCapturedExecNodeRuntime(binding: CapturedExecAuthor
   return { check: () => state.check(signal), argv: ['--ro-bind', staged, TARGET,
     '--symlink', `${TARGET}/bin/node`, '/captured-runtime/bin/node',
     '--symlink', `${TARGET}/lib/node_modules/npm/bin/npm-cli.js`, '/captured-runtime/bin/npm',
-    '--symlink', `${TARGET}/lib/node_modules/npm/bin/npx-cli.js`, '/captured-runtime/bin/npx'] };
+    '--symlink', `${TARGET}/lib/node_modules/npm/bin/npx-cli.js`, '/captured-runtime/bin/npx',
+    ...blockedSystemRuntimeAliases(refusal)] };
 }
