@@ -1,5 +1,7 @@
 import type { GateEvent } from '@goodvibes-jev/engine/sdk/events';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import type { ContractRunner } from '@goodvibes-jev/engine/sdk/platform/contract';
+import { registerContractRuntimeEvents, type HostRuntimeMessageRouter } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
 import type { ConversationFollowUpItem } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { AgentManager, ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
@@ -13,10 +15,7 @@ import type { createDomainDispatch } from './store/index.ts';
 
 const AGENT_STATUS_INTERVAL_MS = 30_000;
 
-export interface AgentRuntimeMessageRouter {
-  low(message: string): void;
-  high(message: string): void;
-}
+export type AgentRuntimeMessageRouter = HostRuntimeMessageRouter;
 
 export interface AgentRuntimeEventBridgeOptions {
   readonly runtimeBus: RuntimeEventBus;
@@ -26,6 +25,7 @@ export interface AgentRuntimeEventBridgeOptions {
   readonly requestRender: () => void;
   readonly configManager: ConfigManager;
   readonly agentManager: AgentManager;
+  readonly contractRunner: Pick<ContractRunner, 'get' | 'list'>;
   readonly toolRegistry: Pick<ToolRegistry, 'execute'>;
 }
 
@@ -101,6 +101,7 @@ export function registerAgentRuntimeEvents(options: AgentRuntimeEventBridgeOptio
     queueConversationFollowUp,
     requestRender,
     agentManager,
+    contractRunner,
     toolRegistry,
   } = options;
   const unsubs: Array<() => void> = [];
@@ -156,6 +157,13 @@ export function registerAgentRuntimeEvents(options: AgentRuntimeEventBridgeOptio
     });
     requestRender();
   }));
+  // Reuse the host's canonical contract labels and lifecycle presentation.
+  // This helper owns neither domain state forwarding nor agent status timers.
+  unsubs.push(...registerContractRuntimeEvents({
+    runtimeBus, getSystemMessageRouter, queueConversationFollowUp,
+    requestRender, agentManager, contractRunner,
+  }));
+
   unsubs.push(runtimeBus.on<Extract<AgentEvent, { type: 'AGENT_STREAM_DELTA' }>>('AGENT_STREAM_DELTA', () => {
     requestRender();
   }));
