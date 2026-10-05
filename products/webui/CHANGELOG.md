@@ -13,6 +13,12 @@ This project uses semantic versioning with `vMAJOR.MINOR.PATCH` git tags.
   poll reconcile delivery, completion and failure without resending. Session,
   account and relay changes retire local drafts and stale responses.
 
+- Session close, reopen and permanent delete retain the originating account and
+  selected-detail lifetime. Interrupted requests never continue under another
+  account or dismiss a newer selection. Unknown outcomes remain locked across
+  detail reopen until an explicit read-only refresh; mutations are never replayed
+  automatically. Deletion checks the target when the capped session list omits it.
+
 - Work can inspect real native, durable and captured-worktree contract responses.
   Original native goals and ordered criteria, recorded semantic outcomes, separate
   transport retry progress and durable/input provenance remain read-only.

@@ -24,6 +24,7 @@ export const queryKeys = {
   // rule, a deletion makes matching asks prompt again.
   permissionRules: ['permissions', 'rules'] as const,
   sessions: ['sessions'] as const,
+  sessionList: (revision: number) => ['sessions', 'list', revision] as const,
   // fleet.*/checkpoints.* (SDK 0.39.0-dev). Neither verb family emits a wire
   // event yet (pinned by the SDK's own fleet/checkpoints search test suite,
   // "none of these verbs declares a wire event"), so these are NOT wired into
