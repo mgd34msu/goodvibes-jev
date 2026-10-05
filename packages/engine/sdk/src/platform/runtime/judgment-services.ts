@@ -34,10 +34,9 @@ function settingsModel(source: JudgmentSettingsSource): string {
   return text(source.config.get('judgment.model')) || text(source.env['TYPESAFE_DEFAULT_MODEL']) || PINNED_MODEL;
 }
 
-async function settingsKey(source: JudgmentSettingsSource): Promise<string | undefined> {
-  const keySource = source.config.get('judgment.keySource') as JudgmentKeySource;
-  if (keySource !== 'secret') return source.env[JUDGMENT_KEY_NAME];
-  const stored = (await source.secrets.get(JUDGMENT_KEY_NAME))?.trim();
+async function settingsKey(secrets: JudgmentSettingsSource['secrets'], keySource: JudgmentKeySource, envKey: string | undefined): Promise<string | undefined> {
+  if (keySource !== 'secret') return envKey;
+  const stored = (await secrets.get(JUDGMENT_KEY_NAME))?.trim();
   if (!stored) {
     throw new JudgmentError('invalid-request', `judgment.keySource is secret and the secret store holds no ${JUDGMENT_KEY_NAME}; the judgment port has no key`);
   }
@@ -50,14 +49,19 @@ async function settingsKey(source: JudgmentSettingsSource): Promise<string | und
  * and judgment.model standing in for their environment variables when set.
  */
 export async function judgmentConfigFromSettings(source: JudgmentSettingsSource): Promise<JudgmentConfig> {
+  // Capture the destination and its credential source together before a secret
+  // lookup can yield or invoke borrowed code. Hot reload applies to the next
+  // reading, never to only part of a reading already acquiring its key.
   const env = {
-    ...source.env,
-    [JUDGMENT_KEY_NAME]: await settingsKey(source),
+    TYPESAFE_API_KEY: source.env[JUDGMENT_KEY_NAME],
     TYPESAFE_BASE_URL: text(source.config.get('judgment.endpoint')) || source.env['TYPESAFE_BASE_URL'],
   };
+  const model = settingsModel(source);
   const timeoutMs = source.config.get('judgment.timeoutMs');
+  const keySource = source.config.get('judgment.keySource') as JudgmentKeySource;
+  env.TYPESAFE_API_KEY = await settingsKey(source.secrets, keySource, env.TYPESAFE_API_KEY);
   return judgmentConfigFromEnv(env, {
-    model: settingsModel(source),
+    model,
     ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
   });
 }
@@ -82,9 +86,12 @@ async function activeSettings(source: JudgmentSettingsSource, signal?: AbortSign
 
 /**
  * A port over the live settings. Each call reads the settings, so a changed
- * endpoint, key or model applies on the next judgment with no restart; the
- * System One client is rebuilt only when they change. A missing key fails the
- * call (and the decision log records the failure); nothing decides without Jev.
+ * endpoint, key or model applies on the next judgment with no restart. Each
+ * reading keeps the settings captured before its key lookup and throughout
+ * the shared transport's retries; an edit never redirects an in-flight key or
+ * payload to a new endpoint. The System One client is rebuilt only when the
+ * config changes. A missing key fails the call (and the decision log records
+ * the failure); nothing decides without Jev.
  */
 export function createSettingsJudgmentPort(source: JudgmentSettingsSource): JudgmentPort {
   let current: { config: JudgmentConfig; port: JudgmentPort } | undefined;
