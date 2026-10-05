@@ -1,3 +1,4 @@
+import { extractNativeHeadlessOptions } from './native-headless-options.ts';
 import { parseGoodVibesCli } from './parser.ts';
 import { renderCompletion } from './completion.ts';
 import { renderGoodVibesCommandHelp, renderGoodVibesHelp, renderGoodVibesVersion } from './help.ts';
@@ -6,7 +7,9 @@ export type MetadataCliResult = { readonly stdout?: string; readonly stderr?: st
 
 /** Preserve the normal CLI parser and help precedence without runtime setup. */
 export function metadataCliResult(argv: readonly string[], binary = 'goodvibes-agent'): MetadataCliResult | null {
-  const cli = parseGoodVibesCli(argv, binary);
+  const native = extractNativeHeadlessOptions(argv);
+  const parsed = parseGoodVibesCli(native.argv, binary);
+  const cli = { ...parsed, errors: [...parsed.errors, ...native.errors, ...(native.mode !== 'submit' && parsed.command !== 'run' ? ['Native intake recovery requires the run or exec command.'] : [])] };
   if (cli.errors.length > 0) return { stderr: `${cli.errors.join('\n')}\n\n${renderGoodVibesHelp(binary)}`, exitCode: 2 };
   if (cli.flags.help || cli.command === 'help') {
     const topic = cli.command === 'help' ? cli.commandArgs[0] : cli.rawCommand ?? undefined;

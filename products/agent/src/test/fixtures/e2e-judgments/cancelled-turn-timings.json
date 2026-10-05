@@ -1,0 +1,78 @@
+[
+  {
+    "state": {
+      "domain": "turn",
+      "phase": "SUBMITTED",
+      "durationMs": 6,
+      "succeeded": true
+    },
+    "questions": {
+      "slow": {
+        "type": "noul",
+        "instructions": "In a failed `domain` of an AI coding assistant (a turn is one model request with its tool calls; a task is a background job), the phase `phase` took `durationMs` milliseconds and `succeeded` says whether it completed. Phases: SUBMITTED is queueing the request, PREFLIGHT is local checks before the model call, STREAM is the model generating its reply, STREAM_COMPLETE is finishing the stream, TOOL_BATCH is running the tools the model asked for, POST_TOOL_BATCH and POST_HOOKS are local bookkeeping and hooks after tools, CREATED is registering a task, RUNNING is a background task doing its work, which commonly takes minutes. Did this phase take unusually long for what that phase does?",
+        "criteria": {
+          "true": "The time is well beyond what this kind of phase normally needs, such as local checks, queueing or bookkeeping taking seconds, or a model stream or tool batch running for many minutes.",
+          "false": "The time is ordinary for this kind of phase, such as a model stream or a tool batch running for several seconds, or local checks finishing in milliseconds."
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "domain": "turn",
+      "phase": "PREFLIGHT",
+      "durationMs": 4,
+      "succeeded": true
+    },
+    "questions": {
+      "slow": {
+        "type": "noul",
+        "instructions": "In a failed `domain` of an AI coding assistant (a turn is one model request with its tool calls; a task is a background job), the phase `phase` took `durationMs` milliseconds and `succeeded` says whether it completed. Phases: SUBMITTED is queueing the request, PREFLIGHT is local checks before the model call, STREAM is the model generating its reply, STREAM_COMPLETE is finishing the stream, TOOL_BATCH is running the tools the model asked for, POST_TOOL_BATCH and POST_HOOKS are local bookkeeping and hooks after tools, CREATED is registering a task, RUNNING is a background task doing its work, which commonly takes minutes. Did this phase take unusually long for what that phase does?",
+        "criteria": {
+          "true": "The time is well beyond what this kind of phase normally needs, such as local checks, queueing or bookkeeping taking seconds, or a model stream or tool batch running for many minutes.",
+          "false": "The time is ordinary for this kind of phase, such as a model stream or a tool batch running for several seconds, or local checks finishing in milliseconds."
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "domain": "turn",
+      "phase": "STREAM",
+      "durationMs": 55,
+      "succeeded": true
+    },
+    "questions": {
+      "slow": {
+        "type": "noul",
+        "instructions": "In a failed `domain` of an AI coding assistant (a turn is one model request with its tool calls; a task is a background job), the phase `phase` took `durationMs` milliseconds and `succeeded` says whether it completed. Phases: SUBMITTED is queueing the request, PREFLIGHT is local checks before the model call, STREAM is the model generating its reply, STREAM_COMPLETE is finishing the stream, TOOL_BATCH is running the tools the model asked for, POST_TOOL_BATCH and POST_HOOKS are local bookkeeping and hooks after tools, CREATED is registering a task, RUNNING is a background task doing its work, which commonly takes minutes. Did this phase take unusually long for what that phase does?",
+        "criteria": {
+          "true": "The time is well beyond what this kind of phase normally needs, such as local checks, queueing or bookkeeping taking seconds, or a model stream or tool batch running for many minutes.",
+          "false": "The time is ordinary for this kind of phase, such as a model stream or a tool batch running for several seconds, or local checks finishing in milliseconds."
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  },
+  {
+    "state": {
+      "domain": "turn",
+      "phase": "STREAM_COMPLETE",
+      "durationMs": 1,
+      "succeeded": false
+    },
+    "questions": {
+      "slow": {
+        "type": "noul",
+        "instructions": "In a failed `domain` of an AI coding assistant (a turn is one model request with its tool calls; a task is a background job), the phase `phase` took `durationMs` milliseconds and `succeeded` says whether it completed. Phases: SUBMITTED is queueing the request, PREFLIGHT is local checks before the model call, STREAM is the model generating its reply, STREAM_COMPLETE is finishing the stream, TOOL_BATCH is running the tools the model asked for, POST_TOOL_BATCH and POST_HOOKS are local bookkeeping and hooks after tools, CREATED is registering a task, RUNNING is a background task doing its work, which commonly takes minutes. Did this phase take unusually long for what that phase does?",
+        "criteria": {
+          "true": "The time is well beyond what this kind of phase normally needs, such as local checks, queueing or bookkeeping taking seconds, or a model stream or tool batch running for many minutes.",
+          "false": "The time is ordinary for this kind of phase, such as a model stream or a tool batch running for several seconds, or local checks finishing in milliseconds."
+        }
+      }
+    },
+    "model": "jev-1.13.0"
+  }
+]
