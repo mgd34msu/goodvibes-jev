@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { GOODVIBES_CLI_CATALOG } from '../../../../../packages/engine/terminal-shell/src/cli-command-catalog.ts';
+import { GOODVIBES_CLI_CATALOG, parseGoodVibesCli } from '@goodvibes-jev/engine/terminal-shell';
 import { extractNativeHeadlessOptions } from '../../cli/native-headless-options.ts';
-import { parseGoodVibesCli } from '../../../../../packages/engine/terminal-shell/src/cli-parser.ts';
 
 const recoveryOptions = [
   ['--intake-status', 'status'],

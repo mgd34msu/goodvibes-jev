@@ -5,8 +5,8 @@ import type { NativeConversationIntakeCaptureRequest } from '@goodvibes-jev/engi
 import type { NativeIntakeJournalRecord } from '../../runtime/native-conversation-intake-journal.ts';
 import { isolatedEnv, makeHome, removeHome, startStubModel, type E2EHome } from '../e2e/harness.ts';
 import { startE2ENativeHost } from '../e2e/native-host-fixture.ts';
-import { TuiConfigManager } from '../../../../tui/src/config/host-settings.ts';
-import { seedProviderMetadataCacheFixture as seedTuiMetadata } from '../../../../tui/src/test/helpers/provider-metadata-cache-fixture.ts';
+import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { seedProviderMetadataCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
 
 export type HeadlessProduct = 'agent' | 'tui';
 export const HEADLESS_PROMPT = 'please answer the e2e marmot question';
@@ -91,8 +91,8 @@ export async function makeHeadlessFixture(product: HeadlessProduct, reply = HEAD
     mkdirSync(tuiRoot, { recursive: true });
     cpSync(join(home.home, '.goodvibes/agent/providers'), join(tuiRoot, 'providers'), { recursive: true });
     cpSync(join(home.home, '.goodvibes/agent/settings.json'), join(tuiRoot, 'settings.json'));
-    const tuiConfig = new TuiConfigManager({ homeDir: home.home, workingDir: home.workspace, surfaceRoot: 'tui' });
-    seedTuiMetadata({ configManager: tuiConfig, homeDirectory: home.home, workingDirectory: home.workspace });
+    const tuiConfig = new ConfigManager({ homeDir: home.home, workingDir: home.workspace, surfaceRoot: 'tui' });
+    seedProviderMetadataCacheFixture({ configManager: tuiConfig, homeDirectory: home.home, workingDirectory: home.workspace, surfaceRoot: 'tui' });
     host = await startE2ENativeHost(home);
     door = nativeDoor(host.daemon.baseUrl);
     const pairedToken = host.env.GOODVIBES_CONNECTED_HOST_TOKEN;

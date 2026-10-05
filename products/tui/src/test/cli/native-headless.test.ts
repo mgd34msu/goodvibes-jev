@@ -62,7 +62,7 @@ function fixture() {
 }
 
 
-describe('agent invocation ownership', () => {
+describe('tui invocation ownership', () => {
   function setup() {
     const f = fixture(); const controller = new AbortController(); let turns = 0;
     const options = { mode: 'submit' as const, prompt: original.text, signal: controller.signal, select: f.select,
