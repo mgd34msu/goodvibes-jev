@@ -256,12 +256,15 @@ describe('runtime substrate gate', () => {
   test('repeated all-failed tool turns trip the circuit breaker with typed terminal evidence', async () => {
     configManager.set('display.stream', false);
     const { orchestrator, store, registry, collector } = buildHarness();
+    // Random UUID digits can resemble card material and trip the unchanged privacy guard.
+    // This fixture exercises repeated tool failure, so use short, distinct call IDs.
+    let callSequence = 0;
     const provider: LLMProvider = {
       name: 'mock',
       models: ['mock-model'],
       chat: mock(async (): Promise<ChatResponse> => ({
         content: '',
-        toolCalls: [{ id: `call-${crypto.randomUUID()}`, name: 'missing_tool', arguments: {} }],
+        toolCalls: [{ id: `call-fixture-${++callSequence}`, name: 'missing_tool', arguments: {} }],
         usage: { inputTokens: 5, outputTokens: 1 },
         stopReason: 'tool_call',
       })),
