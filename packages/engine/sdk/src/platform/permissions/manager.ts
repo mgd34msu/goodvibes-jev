@@ -60,9 +60,10 @@ export type {
  * to be exactly that, so `PermissionConfigReader` declared a dependency on
  * every config domain in the product while its two consumers (both in this
  * file) read `getSnapshot().permissions`. A stand-in reader had to produce all
- * fifty-odd domains to satisfy it. Narrowing costs the real implementation
- * nothing: `createPermissionConfigReader` still hands back the full snapshot,
- * which remains assignable.
+ * fifty-odd domains to satisfy it. The real implementation avoids those
+ * unrelated reads: `createPermissionConfigReader` uses the manager-owned
+ * permission frame when available, with a full-snapshot fallback for readers
+ * that only implement the legacy configuration interface.
  */
 type PermissionConfigSnapshot = Readonly<Pick<ReturnType<typeof getConfigSnapshot>, 'permissions'>>;
 
@@ -98,10 +99,16 @@ function readDecisionOtlpConfig(configManager: Pick<ConfigManager, 'get'>): Deci
 export function createPermissionConfigReader(
   configManager: Pick<ConfigManager, 'get' | 'getRaw' | 'getWorkingDirectory'> & Partial<Pick<ConfigManager, 'getAutonomousPermissionSnapshot'>>,
 ): PermissionConfigReader {
+  // Bind the construction-owned accessor, not its result. Every check still
+  // copies current permission state; unrelated configuration domains need not
+  // be cloned for each original-owner/runtime path in a captured read sweep.
+  const permissionSnapshot = configManager.getAutonomousPermissionSnapshot?.bind(configManager);
   return {
-    ...(configManager.getAutonomousPermissionSnapshot ? { getAutonomousSnapshot: () => configManager.getAutonomousPermissionSnapshot!() } : {}),
+    ...(permissionSnapshot ? { getAutonomousSnapshot: permissionSnapshot } : {}),
     isAutoApproveEnabled: () => isAutoApproveEnabled(configManager),
-    getSnapshot: () => getConfigSnapshot(configManager),
+    getSnapshot: permissionSnapshot
+      ? () => ({ permissions: permissionSnapshot().permissions })
+      : () => getConfigSnapshot(configManager),
     getWorkingDirectory: () => configManager.getWorkingDirectory(),
     // Read per decision, not captured: switching export on is a live change.
     getDecisionOtlpConfig: () => readDecisionOtlpConfig(configManager),
