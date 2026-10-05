@@ -48,6 +48,8 @@ export const queryKeys = {
   // query, the single invalidation the raw session-update stream fires.
   sessionDetail: (sessionId: string) => ['sessions', sessionId] as const,
   sessionMessages: (sessionId: string) => ['sessions', sessionId, 'messages'] as const,
+  // Input receipts follow the same event invalidation, isolated by account/relay lifetime.
+  sessionInputs: (revision: number, sessionId: string) => ['sessions', sessionId, 'inputs', revision] as const,
   // sessions.permissionMode.get / sessions.contextUsage.get (SDK 1.6.1), same
   // 'sessions'-prefixed convention as sessionDetail/sessionMessages above, so
   // useRealtimeInvalidation's broad `queryKeys.sessions` invalidation (fired on every

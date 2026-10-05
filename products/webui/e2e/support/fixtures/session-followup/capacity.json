@@ -1,0 +1,37 @@
+{
+  "source": "packages/engine/test/session-followup-receipts-http.test.ts",
+  "post": {
+    "methodId": "sessions.followUp",
+    "method": "POST",
+    "path": "/api/sessions/s-capacity/follow-up",
+    "requestBody": {
+      "body": "Queue a cleanup pass for later"
+    },
+    "status": 429,
+    "body": "{\"error\":\"Daemon agent capacity exceeded\",\"code\":\"CAPACITY_EXCEEDED\"}"
+  },
+  "queued": {
+    "methodId": "sessions.inputs.list",
+    "method": "GET",
+    "path": "/api/sessions/s-capacity/inputs",
+    "status": 200,
+    "body": "{\"session\":{\"id\":\"s-capacity\",\"kind\":\"tui\",\"project\":\"unknown\",\"title\":\"Session s-capacity\",\"status\":\"active\",\"createdAt\":1791214254166,\"updatedAt\":1791214254170,\"lastMessageAt\":1791214254170,\"lastActivityAt\":1791214254170,\"messageCount\":1,\"pendingInputCount\":1,\"routeIds\":[],\"surfaceKinds\":[\"web\"],\"participants\":[{\"surfaceKind\":\"web\",\"surfaceId\":\"surface:web\",\"lastSeenAt\":1791214254169}],\"metadata\":{}},\"inputs\":[{\"id\":\"sin-283c4742\",\"sessionId\":\"s-capacity\",\"intent\":\"follow-up\",\"state\":\"queued\",\"correlationId\":\"session-input:sin-283c4742\",\"causationId\":\"smsg-0587b573\",\"body\":\"Queue a cleanup pass for later\",\"createdAt\":1791214254170,\"updatedAt\":1791214254170,\"surfaceKind\":\"web\",\"surfaceId\":\"surface:web\",\"metadata\":{}}]}"
+  },
+  "second": {
+    "methodId": "sessions.followUp",
+    "method": "POST",
+    "path": "/api/sessions/s-capacity/follow-up",
+    "requestBody": {
+      "body": "Second follow-up after capacity returns"
+    },
+    "status": 202,
+    "body": "{\"session\":{\"id\":\"s-capacity\",\"kind\":\"tui\",\"project\":\"unknown\",\"title\":\"Session s-capacity\",\"status\":\"active\",\"createdAt\":1791214254166,\"updatedAt\":1791214254177,\"lastMessageAt\":1791214254176,\"lastActivityAt\":1791214254177,\"messageCount\":2,\"pendingInputCount\":2,\"routeIds\":[],\"surfaceKinds\":[\"web\"],\"participants\":[{\"surfaceKind\":\"web\",\"surfaceId\":\"surface:web\",\"lastSeenAt\":1791214254175}],\"activeAgentId\":\"agent-capacity-recovered\",\"lastAgentId\":\"agent-capacity-recovered\",\"metadata\":{}},\"message\":{\"id\":\"smsg-95679c0f\",\"sessionId\":\"s-capacity\",\"role\":\"user\",\"body\":\"Second follow-up after capacity returns\",\"createdAt\":1791214254176,\"surfaceKind\":\"web\",\"surfaceId\":\"surface:web\",\"metadata\":{\"sessionIntent\":\"follow-up\"}},\"input\":{\"id\":\"sin-8cf9b43c\",\"sessionId\":\"s-capacity\",\"intent\":\"follow-up\",\"state\":\"spawned\",\"correlationId\":\"session-input:sin-8cf9b43c\",\"causationId\":\"smsg-95679c0f\",\"body\":\"Second follow-up after capacity returns\",\"createdAt\":1791214254177,\"updatedAt\":1791214254177,\"surfaceKind\":\"web\",\"surfaceId\":\"surface:web\",\"metadata\":{},\"activeAgentId\":\"agent-capacity-recovered\"},\"mode\":\"spawn\",\"agentId\":\"agent-capacity-recovered\"}"
+  },
+  "afterSpawn": {
+    "methodId": "sessions.inputs.list",
+    "method": "GET",
+    "path": "/api/sessions/s-capacity/inputs",
+    "status": 200,
+    "body": "{\"session\":{\"id\":\"s-capacity\",\"kind\":\"tui\",\"project\":\"unknown\",\"title\":\"Session s-capacity\",\"status\":\"active\",\"createdAt\":1791214254166,\"updatedAt\":1791214254177,\"lastMessageAt\":1791214254176,\"lastActivityAt\":1791214254177,\"messageCount\":2,\"pendingInputCount\":2,\"routeIds\":[],\"surfaceKinds\":[\"web\"],\"participants\":[{\"surfaceKind\":\"web\",\"surfaceId\":\"surface:web\",\"lastSeenAt\":1791214254175}],\"activeAgentId\":\"agent-capacity-recovered\",\"lastAgentId\":\"agent-capacity-recovered\",\"metadata\":{}},\"inputs\":[{\"id\":\"sin-283c4742\",\"sessionId\":\"s-capacity\",\"intent\":\"follow-up\",\"state\":\"spawned\",\"correlationId\":\"session-input:sin-283c4742\",\"causationId\":\"smsg-0587b573\",\"body\":\"Queue a cleanup pass for later\",\"createdAt\":1791214254170,\"updatedAt\":1791214254177,\"surfaceKind\":\"web\",\"surfaceId\":\"surface:web\",\"metadata\":{},\"activeAgentId\":\"agent-capacity-recovered\"},{\"id\":\"sin-8cf9b43c\",\"sessionId\":\"s-capacity\",\"intent\":\"follow-up\",\"state\":\"queued\",\"correlationId\":\"session-input:sin-8cf9b43c\",\"causationId\":\"smsg-95679c0f\",\"body\":\"Second follow-up after capacity returns\",\"createdAt\":1791214254177,\"updatedAt\":1791214254177,\"surfaceKind\":\"web\",\"surfaceId\":\"surface:web\",\"metadata\":{}}]}"
+  }
+}
