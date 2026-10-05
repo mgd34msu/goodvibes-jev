@@ -127,6 +127,7 @@ async function composePayments(input: {
   input.configure?.(settings);
   const config: PaymentsConfigReader = { get: (key: string) => settings.get(key) };
   const storePath = join(input.root, 'payments-cards.json');
+  let nextCardId = 0;
   const catalog = new GatewayMethodCatalog();
   const seam: BrowserCheckoutSeam = {
     cardFieldGuard: new CardMaterialRedactor(),
@@ -136,6 +137,10 @@ async function composePayments(input: {
   const registration = registerPaymentsMethods(catalog, {
     cards: new DaemonCardStore({
       filePath: storePath,
+      // Keep public metadata from randomly containing the three-digit CVV.
+      // The raw-response leak assertions below still inspect every byte.
+      generateId: () => `card-fixture-${++nextCardId}`,
+      now: () => new Date('2026-01-02T03:04:05.000Z'),
       secrets: memorySecrets(input.secrets),
       cvvHandling: () => (settings.get('payments.cvvHandling') === 'prompt' ? 'prompt' : 'stored'),
     }),
