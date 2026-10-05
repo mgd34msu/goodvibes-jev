@@ -13,6 +13,7 @@ import {
   type ContractInputSnapshot,
 } from './input-snapshot.js';
 import type { ReadAccessFilter } from '../tools/shared/read-access.js';
+import { executePolicyCheck } from '../gate/execute-policy-check.js';
 
 /** Only tokens minted in this module are accepted; serialization cannot create one. */
 export interface ContractInputAuthority {
@@ -259,7 +260,8 @@ export async function authorizeContractInputPath(
     throw new Error('path is outside authorized captured input');
   const original = await checkedPath(state.admission.receipt.sourceRoot, rel);
   await checkedPath(state.root, rel);
-  if (!(await filter(original)) || !(await filter(path))) throw new Error('captured input path is access-restricted');
+  if (!(await executePolicyCheck(() => filter(original), signal)) ||
+      !(await executePolicyCheck(() => filter(path), signal))) throw new Error('captured input path is access-restricted');
   // Recheck both roots and paths after permission callbacks can yield/revoke.
   await assertContractInputAuthority(token, undefined, signal);
   await checkedPath(state.admission.receipt.sourceRoot, rel);
@@ -285,7 +287,7 @@ export async function assertContractInputReadAccess(
   for (const path of stateOf(token).reads) await authorizeContractInputPath(token, path, filter, signal);
   for (const assertion of [...stateOf(token).readAssertions]) {
     signal?.throwIfAborted();
-    await assertion();
+    await executePolicyCheck(assertion, signal);
     stateOf(token);
   }
   signal?.throwIfAborted();
