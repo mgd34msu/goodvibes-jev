@@ -21,7 +21,8 @@ describe('registerAgentRuntimeEvents: compaction receipt routing (SDK 1.6.1)', (
     const { unsubs, agentStatusIntervalRef } = registerAgentRuntimeEvents({
       runtimeBus,
       domainDispatch,
-      getSystemMessageRouter: () => ({
+      contractRunner: { get: () => null, list: () => [] },
+      getSystemMessageRouter: () => ({ contract: () => {},
         high: (message: string) => { highMessages.push(message); },
         low: (message: string) => { lowMessages.push(message); },
       }),

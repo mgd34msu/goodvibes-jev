@@ -16,9 +16,10 @@ export {
   synchronizeConfiguredServices,
 } from './bootstrap-helpers.js';
 export type { RuntimeModelSelectionState } from './bootstrap-helpers.js';
-export { registerBootstrapRuntimeEvents, registerHostRuntimeEvents, runtimeEventKey, runtimeEventOfNotice } from './bootstrap-runtime-events.js';
+export { registerBootstrapRuntimeEvents, registerHostRuntimeEvents, registerContractRuntimeEvents, runtimeEventKey, runtimeEventOfNotice } from './bootstrap-runtime-events.js';
 export type {
   BootstrapRuntimeEventBridgeOptions,
+  ContractRuntimeEventBridgeOptions,
   HostRuntimeEventBridgeOptions,
   HostRuntimeMessageRouter,
   RuntimeEventNotice,

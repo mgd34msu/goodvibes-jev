@@ -55,7 +55,8 @@ describe('registerAgentRuntimeEvents: AGENT_FAILED typed turn-budget outcome (SD
     const { unsubs, agentStatusIntervalRef } = registerAgentRuntimeEvents({
       runtimeBus,
       domainDispatch,
-      getSystemMessageRouter: () => ({ high: () => {}, low: (message: string) => { lowMessages.push(message); } }),
+      contractRunner: { get: () => null, list: () => [] },
+      getSystemMessageRouter: () => ({ contract: () => {}, high: () => {}, low: (message: string) => { lowMessages.push(message); } }),
       requestRender: () => {},
       configManager,
       agentManager,
@@ -98,7 +99,8 @@ describe('registerAgentRuntimeEvents: AGENT_FAILED typed turn-budget outcome (SD
     const { unsubs, agentStatusIntervalRef } = registerAgentRuntimeEvents({
       runtimeBus,
       domainDispatch,
-      getSystemMessageRouter: () => ({ high: () => {}, low: (message: string) => { lowMessages.push(message); } }),
+      contractRunner: { get: () => null, list: () => [] },
+      getSystemMessageRouter: () => ({ contract: () => {}, high: () => {}, low: (message: string) => { lowMessages.push(message); } }),
       requestRender: () => {},
       configManager,
       agentManager,
@@ -133,7 +135,8 @@ describe('registerAgentRuntimeEvents: AGENT_FAILED typed turn-budget outcome (SD
     const { unsubs, agentStatusIntervalRef } = registerAgentRuntimeEvents({
       runtimeBus,
       domainDispatch,
-      getSystemMessageRouter: () => ({ high: () => {}, low: (message: string) => { lowMessages.push(message); } }),
+      contractRunner: { get: () => null, list: () => [] },
+      getSystemMessageRouter: () => ({ contract: () => {}, high: () => {}, low: (message: string) => { lowMessages.push(message); } }),
       requestRender: () => {},
       configManager,
       agentManager,

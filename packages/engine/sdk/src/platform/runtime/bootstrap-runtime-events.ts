@@ -161,45 +161,15 @@ function checkCohortCompletion(
   queueConversationFollowUp?.(buildCohortFollowUp(agentManager, record.cohort));
 }
 
-export function registerHostRuntimeEvents(
-  options: HostRuntimeEventBridgeOptions,
-): { unsubs: Array<() => void>; agentStatusIntervalRef: { value: ReturnType<typeof setInterval> | null } } {
-  const {
-    runtimeBus,
-    domainDispatch,
-    getSystemMessageRouter,
-    queueConversationFollowUp,
-    requestRender,
-    agentManager,
-    contractRunner,
-  } = options;
+/** Contract lifecycle presentation without general state dispatch or agent timers. */
+export type ContractRuntimeEventBridgeOptions = Pick<HostRuntimeEventBridgeOptions,
+  'runtimeBus' | 'getSystemMessageRouter' | 'queueConversationFollowUp' |
+  'requestRender' | 'agentManager' | 'contractRunner'>;
+
+/** Share canonical contract labels, operator lines, follow-ups and cohort handling. */
+export function registerContractRuntimeEvents(options: ContractRuntimeEventBridgeOptions): Array<() => void> {
+  const { runtimeBus, getSystemMessageRouter, queueConversationFollowUp, requestRender, agentManager, contractRunner } = options;
   const unsubs: Array<() => void> = [];
-
-  unsubs.push(runtimeBus.onDomain('turn', (env) => {
-    domainDispatch.dispatchTurnEvent(env.payload);
-  }));
-  unsubs.push(runtimeBus.onDomain('agents', (env) => {
-    domainDispatch.dispatchAgentEvent(env.payload);
-  }));
-  unsubs.push(runtimeBus.onDomain('contracts', (env) => {
-    domainDispatch.dispatchContractEvent(env.payload);
-  }));
-  unsubs.push(runtimeBus.onDomain('communication', (env) => {
-    domainDispatch.dispatchCommunicationEvent(env.payload);
-  }));
-  unsubs.push(runtimeBus.onDomain('compaction', (env) => {
-    domainDispatch.dispatchCompactionEvent(env.payload);
-  }));
-  unsubs.push(runtimeBus.onDomain('transport', (env) => {
-    domainDispatch.dispatchTransportEvent(env.payload);
-  }));
-
-  unsubs.push(runtimeBus.on<Extract<ProviderEvent, { type: 'MODEL_FALLBACK' }>>('MODEL_FALLBACK', ({ payload }) => {
-    withRouter(getSystemMessageRouter, (router) => {
-      router.high(`[Model] ${payload.from} exhausted across all providers. Automatically falling back to ${payload.to} via ${payload.provider}.`);
-    });
-    requestRender();
-  }));
 
   const onContract = <T extends ContractEvent['type']>(type: T, handler: (payload: Extract<ContractEvent, { type: T }>) => void): void => {
     // The bus delivers only events of `type`, so the payload is that member of the union.
@@ -300,6 +270,54 @@ export function registerHostRuntimeEvents(
     finishWorkstreamLabel(payload.contractId);
     checkContractCohorts(payload.contractId);
   });
+
+  return unsubs;
+}
+
+export function registerHostRuntimeEvents(
+  options: HostRuntimeEventBridgeOptions,
+): { unsubs: Array<() => void>; agentStatusIntervalRef: { value: ReturnType<typeof setInterval> | null } } {
+  const {
+    runtimeBus,
+    domainDispatch,
+    getSystemMessageRouter,
+    queueConversationFollowUp,
+    requestRender,
+    agentManager,
+    contractRunner,
+  } = options;
+  const unsubs: Array<() => void> = [];
+
+  unsubs.push(runtimeBus.onDomain('turn', (env) => {
+    domainDispatch.dispatchTurnEvent(env.payload);
+  }));
+  unsubs.push(runtimeBus.onDomain('agents', (env) => {
+    domainDispatch.dispatchAgentEvent(env.payload);
+  }));
+  unsubs.push(runtimeBus.onDomain('contracts', (env) => {
+    domainDispatch.dispatchContractEvent(env.payload);
+  }));
+  unsubs.push(runtimeBus.onDomain('communication', (env) => {
+    domainDispatch.dispatchCommunicationEvent(env.payload);
+  }));
+  unsubs.push(runtimeBus.onDomain('compaction', (env) => {
+    domainDispatch.dispatchCompactionEvent(env.payload);
+  }));
+  unsubs.push(runtimeBus.onDomain('transport', (env) => {
+    domainDispatch.dispatchTransportEvent(env.payload);
+  }));
+
+  unsubs.push(runtimeBus.on<Extract<ProviderEvent, { type: 'MODEL_FALLBACK' }>>('MODEL_FALLBACK', ({ payload }) => {
+    withRouter(getSystemMessageRouter, (router) => {
+      router.high(`[Model] ${payload.from} exhausted across all providers. Automatically falling back to ${payload.to} via ${payload.provider}.`);
+    });
+    requestRender();
+  }));
+
+  unsubs.push(...registerContractRuntimeEvents({
+    runtimeBus, getSystemMessageRouter, queueConversationFollowUp,
+    requestRender, agentManager, contractRunner,
+  }));
 
   unsubs.push(runtimeBus.on<Extract<AgentEvent, { type: 'AGENT_STREAM_DELTA' }>>('AGENT_STREAM_DELTA', () => {
     requestRender();
