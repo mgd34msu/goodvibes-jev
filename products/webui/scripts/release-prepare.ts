@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 export const GENERATORS = [
+  'scripts/generate-contract-inspection-schema.ts',
   'scripts/generate-config-schema.ts',
   'scripts/generate-config-ownership.ts',
   'scripts/generate-presentation-tokens.ts',

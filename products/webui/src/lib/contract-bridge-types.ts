@@ -24,6 +24,8 @@ import type { OperatorMethodInput, OperatorMethodOutput } from '@goodvibes-jev/e
 
 /** Method ids this module provides a contract-typed bridge for (see file header). */
 export const BRIDGE_TYPED_METHOD_IDS = [
+  'contracts.list',
+  'contracts.get',
   'fleet.snapshot',
   'fleet.list',
   'fleet.archive',
@@ -207,3 +209,8 @@ export type SessionsHostedDetachInput = OperatorMethodInput<'sessions.hosted.det
 export type SessionsHostedDetachResult = OperatorMethodOutput<'sessions.hosted.detach'>;
 export type SessionsHostedKillInput = OperatorMethodInput<'sessions.hosted.kill'>;
 export type SessionsHostedKillResult = OperatorMethodOutput<'sessions.hosted.kill'>;
+
+// Read-only contract runner inspection, directly from the generated method maps.
+export type ContractsListInput = OperatorMethodInput<'contracts.list'>;
+export type ContractsListResult = OperatorMethodOutput<'contracts.list'>;
+export type ContractRecord = OperatorMethodOutput<'contracts.get'>;

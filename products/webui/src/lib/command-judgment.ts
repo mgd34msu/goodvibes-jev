@@ -31,7 +31,7 @@ const unavailable = (reason: Extract<CommandSearchResult, { status: 'unavailable
 /** Validate the actual wire contract and bind every reading to this request's opaque index. */
 export function readCommandRankResponse(request: PaletteRequest, raw: unknown): PaletteResponse | undefined {
   const result = object(raw);
-  if (!result || result.protocolVersion !== 1 || result.batteryVersion !== 1 || result.requestId !== request.requestId
+  if (result?.protocolVersion !== 1 || result.batteryVersion !== 1 || result.requestId !== request.requestId
     || result.battery !== request.battery || (result.status !== 'settled' && result.status !== 'held')) return undefined;
   const settled = result.status === 'settled';
   if (!keys(result, ['protocolVersion', 'batteryVersion', 'requestId', 'battery', 'status', settled ? 'value' : 'reason', 'readings', 'outcome', 'evidence'])) return undefined;

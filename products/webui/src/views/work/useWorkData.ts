@@ -20,12 +20,15 @@ import { sortApprovalsNewestFirst } from '../../lib/approvals';
 import { hostedSessionsFromListResult, sortHostedSessionsNewestFirst } from '../../lib/hosted-sessions';
 import { sortUnionSessions, unionSessionsFromListResponse } from '../../lib/sessions-union';
 import { useApprovalUpdates } from '../../hooks/useApprovalUpdates';
+import { useContractList } from '../../hooks/useContracts';
+import type { ClientLifetime } from '../../lib/client-lifetime';
 import type { CiWatch } from './work-items';
 
 const FLEET_FALLBACK_POLL_MS = 15_000;
 const FLEET_SAFETY_POLL_MS = 60_000;
 
 export interface WorkDataOptions {
+  contractScope: ClientLifetime;
   subscriptionActive: boolean;
   /** Read the fleet archive instead of hiding finished work. */
   archived: boolean;
@@ -35,8 +38,10 @@ export interface WorkDataOptions {
   hostedStreamConnected: boolean;
 }
 
-export function useWorkData({ subscriptionActive, archived, includeFinished, hostedStreamConnected }: WorkDataOptions) {
+export function useWorkData({ contractScope, subscriptionActive, archived, includeFinished, hostedStreamConnected }: WorkDataOptions) {
   const pollInterval = subscriptionActive ? FLEET_SAFETY_POLL_MS : FLEET_FALLBACK_POLL_MS;
+
+  const contracts = useContractList(contractScope, includeFinished, !archived, subscriptionActive);
 
   const snapshot = useQuery({
     queryKey: queryKeys.fleet,
@@ -87,6 +92,7 @@ export function useWorkData({ subscriptionActive, archived, includeFinished, hos
     retry: false,
   });
 
+  const contractRecords = useMemo(() => archived || contracts.isError ? [] : contracts.data?.contracts ?? [], [archived, contracts.isError, contracts.data]);
   const attemptGroups: readonly FleetAttemptGroup[] = useMemo(
     () => (attempts.isError ? [] : attempts.data?.groups ?? []),
     [attempts.data, attempts.isError],
@@ -113,7 +119,8 @@ export function useWorkData({ subscriptionActive, archived, includeFinished, hos
     { label: 'hosted sessions', query: hosted },
     { label: 'tasks', query: tasks },
     { label: 'CI watches', query: ciWatches },
-  ].filter(({ query }) => query.isError && !isMethodUnavailableError(query.error));
+    ...(!archived ? [{ label: 'contracts', query: contracts }] : []),
+  ].filter(({ label, query }) => query.isError && (label === 'contracts' || !isMethodUnavailableError(query.error)));
 
   // A hosted list answer without a `sessions` array (an unmodeled verb, an older
   // daemon) is "could not be read", never an empty list.
@@ -123,6 +130,8 @@ export function useWorkData({ subscriptionActive, archived, includeFinished, hos
   const firstLoad = (archived ? archivedList.isPending : snapshot.isPending) && approvals.isPending;
 
   return {
+    contracts,
+    contractRecords,
     snapshot,
     archivedList,
     approvals,

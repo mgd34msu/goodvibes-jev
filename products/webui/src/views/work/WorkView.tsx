@@ -52,6 +52,9 @@ import { CheckpointsPanel } from './CheckpointsPanel';
 import { CiWatchDetail } from './CiWatchDetail';
 import { HostedSessionDetail, useHostedAttachment } from './HostedSessionDetail';
 import { NewWorkMenu } from './NewWorkMenu';
+import { useContractScope } from '../../hooks/useContracts';
+import type { ClientLifetime } from '../../lib/client-lifetime';
+import { ContractDetail } from './ContractDetail';
 import { ProcessDetail } from './ProcessDetail';
 import { SessionDetail, type SessionTab } from './SessionDetail';
 import { TaskDetail } from './TaskDetail';
@@ -107,7 +110,14 @@ function ItemRow({ item, selected, onSelect }: { item: WorkItem; selected: boole
   );
 }
 
-export function WorkView({ tab, onTabChange, subscriptionActive = true, streamPaused = false, onOpenSession }: WorkViewProps) {
+export function WorkView(props: WorkViewProps) {
+  const contractScope = useContractScope();
+  // Reset selection and drafts synchronously on identity change. A remembered
+  // contract id must never be replayed against a newly signed-in account.
+  return <WorkViewContent key={contractScope.revision} {...props} contractScope={contractScope} />;
+}
+
+function WorkViewContent({ contractScope, tab, onTabChange, subscriptionActive = true, streamPaused = false, onOpenSession }: WorkViewProps & { contractScope: ClientLifetime }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const phone = useMediaQuery(PHONE_QUERY);
@@ -130,6 +140,7 @@ export function WorkView({ tab, onTabChange, subscriptionActive = true, streamPa
   const selectedHostedId = selectedKey.startsWith('hosted:') ? selectedKey.slice('hosted:'.length) : null;
   const [hostedStreamConnected, setHostedStreamConnected] = useState(false);
   const data = useWorkData({
+    contractScope,
     subscriptionActive,
     archived: scope === 'archived',
     includeFinished: scope !== 'active',
@@ -147,6 +158,7 @@ export function WorkView({ tab, onTabChange, subscriptionActive = true, streamPa
   const approvalActions = useApprovalActions();
 
   const items = useMemo(() => buildWorkItems({
+    contracts: data.contractRecords,
     approvals: scope === 'archived' ? [] : data.approvalRecords,
     nodes: data.nodes,
     attemptGroups: scope === 'archived' ? [] : data.attemptGroups,
@@ -155,7 +167,7 @@ export function WorkView({ tab, onTabChange, subscriptionActive = true, streamPa
     tasks: scope === 'archived' ? [] : data.taskRecords,
     ciWatches: scope === 'archived' ? [] : data.watchRecords,
     archived: scope === 'archived',
-  }), [scope, data.approvalRecords, data.nodes, data.attemptGroups, data.sessionRecords, data.hostedRecords, data.taskRecords, data.watchRecords]);
+  }), [scope, data.contractRecords, data.approvalRecords, data.nodes, data.attemptGroups, data.sessionRecords, data.hostedRecords, data.taskRecords, data.watchRecords]);
   const groups = useMemo(() => groupWorkItems(items, kind, query), [items, kind, query]);
   const selectedItem = useMemo(() => items.find((item) => item.key === selectedKey) ?? null, [items, selectedKey]);
 
@@ -201,6 +213,7 @@ export function WorkView({ tab, onTabChange, subscriptionActive = true, streamPa
 
   const refreshAll = () => {
     void Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.contracts }),
       data.snapshot.refetch(),
       data.approvals.refetch(),
       data.sessions.refetch(),
@@ -223,6 +236,10 @@ export function WorkView({ tab, onTabChange, subscriptionActive = true, streamPa
     const [type, ...rest] = selectedKey.split(':');
     const id = rest.join(':');
     switch (type) {
+      case 'contract':
+        return <ContractDetail key={id} id={id} lifetime={contractScope} live={subscriptionActive} onClose={closeDetail}
+          onOpenProcess={data.liveNodes.some((node) => node.kind === 'contract' && node.id === `contract:${id}`)
+            ? () => openItem(`fleet:contract:${id}`) : undefined} />;
       case 'approval': {
         const record = data.approvalRecords.find((a) => a.id === id);
         return record ? <ApprovalDetail key={record.id} record={record} actions={approvalActions} onClose={closeDetail} onOpenSession={onOpenSession} /> : null;
@@ -238,6 +255,7 @@ export function WorkView({ tab, onTabChange, subscriptionActive = true, streamPa
             onOpenItem={openItem}
             onClose={closeDetail}
             onGone={closeDetail}
+            onOpenContract={node.kind === 'contract' && node.id.startsWith('contract:') ? () => openItem(node.id) : undefined}
           />
         ) : null;
       }
@@ -280,7 +298,7 @@ export function WorkView({ tab, onTabChange, subscriptionActive = true, streamPa
 
   const pendingApprovals = data.approvalRecords.filter((a) => a.status === 'pending' || a.status === 'claimed');
   const showFinished = scope !== 'active';
-  const nothingAtAll = !data.firstLoad && groups.needs.length === 0 && groups.running.length === 0
+  const nothingAtAll = !data.firstLoad && (scope === 'archived' || !data.contracts.isFetching) && data.failures.length === 0 && groups.needs.length === 0 && groups.running.length === 0
     && (!showFinished || groups.finished.length === 0);
 
   const list = (
@@ -303,6 +321,7 @@ export function WorkView({ tab, onTabChange, subscriptionActive = true, streamPa
         </p>
       )}
 
+      {!data.firstLoad && scope !== 'archived' && data.contracts.isPending && data.contracts.isFetching && <SkeletonRows count={2} label="Loading contracts" />}
       {data.firstLoad && <SkeletonRows count={6} label="Loading work" />}
 
       {!data.firstLoad && groups.needs.length > 0 && (
@@ -400,7 +419,7 @@ export function WorkView({ tab, onTabChange, subscriptionActive = true, streamPa
             <Select<ShowScope>
               aria-label="Show"
               value={scope}
-              onChange={(next) => { setScope(next); if (selectedKey.startsWith('fleet:')) setSelectedKey(''); }}
+              onChange={(next) => { setScope(next); if (selectedKey.startsWith('fleet:') || selectedKey.startsWith('contract:')) setSelectedKey(''); }}
               placement="bottom-end"
               options={[
                 { value: 'active', label: 'Active' },

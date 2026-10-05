@@ -5,8 +5,11 @@ import { loadSchemaSnapshot, renderTs as renderSchema, TS_OUT_PATH as schemaPath
 import { loadOwnershipSnapshot, renderTs as renderOwnership, TS_OUT_PATH as ownershipPath } from './generate-config-ownership';
 import { loadContractSnapshot, renderTs as renderPresentation, renderCss, TS_OUT_PATH as presentationPath, CSS_OUT_PATH } from './generate-presentation-tokens';
 
+import { CONTRACT_SCHEMA_PATH, renderContractInspectionSchema } from './generate-contract-inspection-schema';
+
 const presentation = loadContractSnapshot();
 const artifacts = [
+  [CONTRACT_SCHEMA_PATH, renderContractInspectionSchema()],
   [schemaPath, renderSchema(await loadSchemaSnapshot())],
   [ownershipPath, renderOwnership(loadOwnershipSnapshot())],
   [presentationPath, renderPresentation(presentation)],
@@ -18,4 +21,4 @@ if (stale.length) {
   console.error('Run bun run release:prepare from products/webui and review the generated changes.');
   process.exit(1);
 }
-console.log('WebUI configuration, ownership, and presentation snapshots match the workspace engine.');
+console.log('WebUI configuration, ownership, presentation and contract inspection snapshots match the workspace engine.');

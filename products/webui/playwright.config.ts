@@ -81,7 +81,9 @@ const selectedProjects = process.argv.flatMap((argument, index) =>
   argument.startsWith('--project=') ? [argument.slice('--project='.length)]
     : argument === '--project' && process.argv[index + 1] ? [process.argv[index + 1]] : []);
 const lanRequired = selectedProjects.length === 0 || selectedProjects.includes('lan-origin') || selectedProjects.includes('*');
-if (lanRequired && !LAN_ORIGIN_HOST) {
+// Playwright reloads this config in workers without the original CLI project
+// flags. Admission belongs to the coordinator; workers inherit its selection.
+if (lanRequired && !LAN_ORIGIN_HOST && process.env.TEST_WORKER_INDEX === undefined) {
   throw new Error('LAN-origin proof unsupported: no readable private-network interface is available. Select --project=phone --project=desktop for independent loopback proofs; required LAN coverage cannot pass here.');
 }
 

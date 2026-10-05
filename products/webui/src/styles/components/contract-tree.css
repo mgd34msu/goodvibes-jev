@@ -1,0 +1,108 @@
+/* Recorded contract evidence, on top of the shared Work / data-view design. */
+.contract-tree {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.contract-tree__list {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.contract-tree__list > li {
+  min-width: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.contract-tree__list > li:first-child {
+  padding-top: 0;
+}
+.contract-tree__list > li:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.contract-tree__branch {
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+}
+.contract-tree .dv-disclosure__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.contract-tree .dv-disclosure__summary {
+  width: 100%;
+  min-height: 32px;
+  overflow-wrap: anywhere;
+}
+.contract-tree .dv-disclosure__summary::before {
+  flex-shrink: 0;
+}
+.contract-tree__summary {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  text-align: left;
+}
+.contract-tree__status {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+.contract-tree__text,
+.contract-tree__quote,
+.contract-tree__empty {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: var(--leading-ui);
+}
+.contract-tree__text {
+  color: var(--text);
+}
+.contract-tree__empty,
+.contract-tree__missing {
+  color: var(--text-3);
+}
+.contract-tree__quote {
+  padding-left: 12px;
+  border-left: 2px solid var(--line-strong);
+  color: var(--text-2);
+}
+.contract-tree__ids {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+.contract-tree .dv-facts__row {
+  align-items: start;
+}
+.contract-tree .dv-facts__row dd {
+  white-space: pre-wrap;
+}
+.contract-tree .dv-code__body {
+  max-height: 320px;
+  overflow: auto;
+}
+@media (max-width: 600px) {
+  .contract-tree__branch {
+    padding-left: 8px;
+  }
+  .contract-tree .dv-disclosure__summary {
+    min-height: 44px;
+  }
+  .contract-tree .dv-facts__row {
+    flex-wrap: wrap;
+    gap: 2px 10px;
+  }
+  .contract-tree .dv-facts__row dd {
+    max-width: 100%;
+  }
+}

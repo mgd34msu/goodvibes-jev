@@ -53,6 +53,8 @@ export interface ProcessDetailProps {
   onClose: () => void;
   /** The node left the list (archived, restored). */
   onGone: () => void;
+  /** Read the canonical contract tree while retaining this process control surface. */
+  onOpenContract?: () => void;
 }
 
 function ObservedSteer({ node, observed }: { node: FleetProcessNode; observed: NonNullable<FleetProcessNode['observed']> }) {
@@ -116,7 +118,7 @@ function ObservedSteer({ node, observed }: { node: FleetProcessNode; observed: N
   );
 }
 
-export function ProcessDetail({ node, archived, approvals, onOpenItem, onClose, onGone }: ProcessDetailProps) {
+export function ProcessDetail({ node, archived, approvals, onOpenItem, onClose, onGone, onOpenContract }: ProcessDetailProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const confirm = useConfirm();
@@ -286,6 +288,8 @@ export function ProcessDetail({ node, archived, approvals, onOpenItem, onClose, 
           { label: 'Agent', value: node.sessionRef?.agentId ?? '' },
         ]}
       />
+
+      {onOpenContract && <Button variant="ghost" onClick={onOpenContract}>Contract evidence</Button>}
 
       {node.usage && (
         <DetailSection title="Usage">
