@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node
 import { join, resolve } from 'node:path';
 import type { NativeConversationIntakeCaptureRequest } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client';
 import type { NativeIntakeJournalRecord } from '../../runtime/native-conversation-intake-journal.ts';
-import { isolatedEnv, makeHome, removeHome, startStubModel, type E2EHome } from '../e2e/harness.ts';
+import { isolatedEnv, lastUserText, makeHome, removeHome, startStubModel, type E2EHome } from '../e2e/harness.ts';
 import { startE2ENativeHost } from '../e2e/native-host-fixture.ts';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { seedProviderMetadataCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
@@ -78,7 +78,16 @@ function command(product: HeadlessProduct): string[] {
 }
 
 export async function makeHeadlessFixture(product: HeadlessProduct, reply = HEADLESS_REPLY) {
-  const model = startStubModel(() => ({ text: reply }));
+  let heldModel: Promise<void> | undefined;
+  let releaseModel = () => {};
+  let modelEntered = () => {};
+  const model = startStubModel(async request => {
+    if (heldModel && lastUserText(request) === HEADLESS_PROMPT) {
+      modelEntered();
+      await heldModel;
+    }
+    return { text: reply };
+  });
   let home: E2EHome | undefined;
   let host: Awaited<ReturnType<typeof startE2ENativeHost>> | undefined;
   let door: ReturnType<typeof nativeDoor> | undefined;
@@ -120,15 +129,21 @@ export async function makeHeadlessFixture(product: HeadlessProduct, reply = HEAD
           if (timedOut) throw new Error(`${product} real entrypoint exceeded 30s.\nstdout: ${stdout}\nstderr: ${stderr}`);
           return { stdout, stderr, code };
         }).finally(() => { clearTimeout(timer); children.delete(child); });
-      return { output, interrupt: () => child.kill('SIGINT') };
+      return { output, interrupt: (signal: 'SIGINT' | 'SIGTERM' = 'SIGINT') => child.kill(signal) };
     };
     return {
       product, home, host, door, model, pairedToken, journalPath, start,
+      holdAdmittedModelRequest() {
+        heldModel = new Promise<void>(resolveHeld => { releaseModel = resolveHeld; });
+        const entered = new Promise<void>(resolveEntered => { modelEntered = resolveEntered; });
+        return { entered, release: () => { heldModel = undefined; releaseModel(); } };
+      },
       run: (args: readonly string[], token?: string) => start(args, token).output,
       journal: (): { readonly version: 1; readonly records: readonly NativeIntakeJournalRecord[] } => JSON.parse(readFileSync(journalPath, 'utf8')),
       captures: () => door!.requests.filter(request => request.path === `${intakePrefix}capture`).map(request => request.body as NativeConversationIntakeCaptureRequest),
       intakeCalls: (since = 0) => door!.requests.slice(since).filter(request => request.path.startsWith(intakePrefix)).map(request => request.path.slice(intakePrefix.length)),
       async close() {
+        heldModel = undefined; releaseModel();
         for (const child of children) child.kill('SIGKILL');
         await Promise.all([...children].map(child => child.exited));
         await door!.stop();
@@ -136,6 +151,7 @@ export async function makeHeadlessFixture(product: HeadlessProduct, reply = HEAD
       },
     };
   } catch (error) {
+    heldModel = undefined; releaseModel();
     await door?.stop();
     try { await host?.stop(); } finally { model.stop(); if (home) removeHome(home); }
     throw error;

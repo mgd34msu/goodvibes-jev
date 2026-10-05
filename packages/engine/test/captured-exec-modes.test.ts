@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { createExecTool } from '../sdk/src/platform/tools/exec/runtime.js';
 import { ProcessManager } from '../sdk/src/platform/tools/shared/process-manager.js';
 import { OverflowHandler } from '../sdk/src/platform/tools/shared/overflow.js';
+import { createCapturedExecNodeRuntimeAdmission } from '../sdk/src/platform/tools/exec/captured-exec-runtime-input.js';
 import { probeCapturedExecAvailability } from '../sdk/src/platform/tools/exec/captured-exec.js';
 import { detectPtyAvailability, probePtyHost } from '../sdk/src/platform/tools/exec/interactive.js';
 import { captureContractInput, contractInputPath, materializeContractInput } from '../sdk/src/platform/contract/input-snapshot.js';
@@ -25,7 +26,7 @@ const roots: string[] = [];
 const managers: ProcessManager[] = [];
 afterEach(async () => { for (const manager of managers.splice(0)) await manager.close(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function git(root: string, ...args: string[]) { const result = spawnSync('git', ['-C', root, ...args]); if (result.status) throw new Error(result.stderr.toString()); }
-async function fixture() {
+async function fixture(nodeRuntime = false) {
   const owner = mkdtempSync(join(tmpdir(), 'captured-modes-')); roots.push(owner);
   git(owner, 'init', '-q'); git(owner, 'config', 'user.name', 'Fixture'); git(owner, 'config', 'user.email', 'fixture@example.invalid');
   writeFileSync(join(owner, 'source.txt'), 'captured source'); git(owner, 'add', '.'); git(owner, 'commit', '-qm', 'fixture');
@@ -34,13 +35,38 @@ async function fixture() {
   await materializeContractInput(inputSnapshot, root);
   const authority = await createContractInputAuthority({ projectRoot: owner, inputSnapshot } as Contract, root, { mutable: true, branch: `input/${inputSnapshot.id}` });
   const manager = new ProcessManager(); managers.push(manager);
-  const binding = { authority, root, readAccessFilter: async () => true };
+  const base = { authority, root, readAccessFilter: async () => true };
+  const binding = { ...base, nodeRuntimeAdmission: nodeRuntime ? createCapturedExecNodeRuntimeAdmission(base) : undefined };
   const tool = createExecTool(manager, { capturedInput: binding, defaultWorkingDirectory: root, overflowHandler: new OverflowHandler({ baseDir: root }),
     interaction: { availability: detectPtyAvailability(probePtyHost()), quietWindowMs: 30, requestPromptAnswer: async () => ({ answered: true, text: 'synthetic-answer' }) } });
   return { owner, root, authority, manager, tool, binding };
 }
 const output = (result: { output?: string | undefined }) => JSON.parse(result.output ?? '{}') as { stdout?: string; success?: boolean; process_id?: string; pty?: boolean; prompts_answered?: number };
 async function waitUntil(predicate: () => boolean | Promise<boolean>) { const deadline = Date.now() + 5000; while (!await predicate()) { if (Date.now() > deadline) throw new Error('fixture did not settle'); await new Promise((r) => setTimeout(r, 20)); } }
+
+for (const mode of ['background', 'interactive'] as const)
+  test.skipIf(!supported)(`captured ${mode} commands consume the shared direct Node admission`, async () => {
+    const f = await fixture(true);
+    const result = await f.tool.execute({ commands: [{
+      cmd: `node -e 'console.log("DIRECT_NODE_MODE"); require("node:fs").writeFileSync("node-mode.txt", "${mode}")'`,
+      [mode]: true,
+      timeout_ms: 10000,
+    }] });
+    expect(result.success, result.output ?? result.error).toBe(true);
+    if (mode === 'background') {
+      const id = output(result).process_id!;
+      expect(id).toBeString();
+      await waitUntil(() => f.manager.getStatus(id)?.done === true);
+      const completed = await f.tool.execute({ commands: [{ cmd: `bg_output ${id}` }] });
+      expect(completed.success, completed.output ?? completed.error).toBe(true);
+      expect(output(completed).stdout).toContain('DIRECT_NODE_MODE');
+    } else {
+      expect(output(result).pty).toBe(true);
+      expect(output(result).stdout).toContain('DIRECT_NODE_MODE');
+    }
+    expect(readFileSync(join(f.root, 'node-mode.txt'), 'utf8')).toBe(mode);
+    expect(existsSync(join(f.owner, 'node-mode.txt'))).toBe(false);
+  });
 
 test.skipIf(!supported)('captured background job has live scoped output, commits on completion, and never uses host spawn', async () => {
   const f = await fixture();

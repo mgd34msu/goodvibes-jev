@@ -192,6 +192,32 @@ for (const product of ['agent', 'tui'] as const) describe(`${product} real nativ
     expect(readEnvelope(status).native.result?.kind).toBe('captured');
   }, 30000);
 
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) test(`${signal} during an admitted model request still writes a final result when diagnostics are unavailable`, async () => {
+    const f = await fixture(product);
+    // A rejected optional diagnostic keeps the original failure path observable
+    // without admitting unknown questions or hiding a fixture rejection.
+    f.home.judgments.rejectRecordedCancellationTimings();
+    const gate = f.holdAdmittedModelRequest();
+    const child = f.start(['run', HEADLESS_PROMPT, ...json]);
+    try {
+      await Promise.race([gate.entered, child.output.then(output => { throw new Error(`Run exited before its admitted model request: ${output.stdout} ${output.stderr}`); })]);
+      expect(f.intakeCalls()).toContain('admit');
+      expect(f.model.requests).toHaveLength(1);
+      expect(f.journal().records[0]?.dispatch).toBeDefined();
+      child.interrupt(signal);
+      const output = await child.output;
+      expect(output.code, `${signal}: ${Buffer.byteLength(output.stdout)} stdout bytes; ${output.stderr.slice(-1000)}`).toBe(130);
+      expect(output.stdout.length, `${signal} must not terminate before final JSON`).toBeGreaterThan(0);
+      const final = readEnvelope(output);
+      expect(final.ok).toBe(false);
+      expect(final.native.result?.kind).toBe('turn');
+      expect(output.stdout).not.toContain('turnPermit');
+      expect(output.stdout).not.toContain(f.pairedToken);
+      expect(f.intakeCalls()).not.toContain('cancel');
+      expect(f.home.judgments.unavailableDiagnostics.length).toBeGreaterThan(0);
+    } finally { gate.release(); }
+  }, 60000);
+
   test('a shared token or revoked paired principal cannot capture or fall back to an ordinary model', async () => {
     const f = await fixture(product);
     const shared = await f.run(['run', HEADLESS_PROMPT, ...json], f.host.daemon.token);

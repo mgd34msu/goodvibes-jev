@@ -144,7 +144,7 @@ export function lastUserText(request: ModelRequest): string {
  * decides every reply from the request; it answers the stream shape the
  * request asked for.
  */
-export function startStubModel(answer: (request: ModelRequest, index: number) => ModelReply): StubModel {
+export function startStubModel(answer: (request: ModelRequest, index: number) => ModelReply | Promise<ModelReply>): StubModel {
   const requests: ModelRequest[] = [];
   let callId = 0;
   const server = Bun.serve({
@@ -160,7 +160,7 @@ export function startStubModel(answer: (request: ModelRequest, index: number) =>
       const request: ModelRequest = { messages: body.messages ?? [], stream: body.stream === true, tools: body.tools ?? [] };
       const index = requests.length;
       requests.push(request);
-      const reply = answer(request, index);
+      const reply = await answer(request, index);
       const created = Math.floor(Date.now() / 1000);
       const toolCalls = 'toolCalls' in reply
         ? reply.toolCalls.map((call, i) => ({

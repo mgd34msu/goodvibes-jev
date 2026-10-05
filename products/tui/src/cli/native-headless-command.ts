@@ -27,7 +27,9 @@ export async function runNativeHeadlessCommand(runtime: {
   };
   const controller = new AbortController();
   const interrupt = () => controller.abort();
-  process.once('SIGINT', interrupt); process.once('SIGTERM', interrupt);
+  // Retain ownership through cleanup and final output. One-shot runtime cleanup
+  // handlers may re-raise a signal if our listener has already removed itself.
+  process.on('SIGINT', interrupt); process.on('SIGTERM', interrupt);
   try {
     const result = await executeNativeHeadless({ mode, prompt, resolveHost, signal: controller.signal,
       async runTurn(state, signal) {
