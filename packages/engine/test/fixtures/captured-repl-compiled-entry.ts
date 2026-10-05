@@ -59,8 +59,10 @@ environment = 'null'
   // Synthetic semantic decision only; process, mount, filesystem, seccomp and
   // compiled-runtime behavior below are the real production implementations.
   installJudgmentPort(fakePort(() => noulAnswer(0.03)).port);
-  const binding = { authority, root, readAccessFilter: async (path: string) => !path.endsWith('/private.ts') };
-  const bunRuntimeAdmission = createCapturedExecBunRuntimeAdmission(binding, { bunExecutable: resolveProcessCapturedBunRuntimeExecutable() });
+  const runtimeExecutable = resolveProcessCapturedBunRuntimeExecutable();
+  let denyRuntime = false;
+  const binding = { authority, root, readAccessFilter: async (path: string) => !path.endsWith('/private.ts') && !(denyRuntime && path === runtimeExecutable) };
+  const bunRuntimeAdmission = createCapturedExecBunRuntimeAdmission(binding, { bunExecutable: runtimeExecutable });
   const tool = createCapturedReplTool({ ...binding, bunRuntimeAdmission });
   const results = [];
   for (const runtime of ['javascript', 'typescript']) {
@@ -81,11 +83,14 @@ environment = 'null'
     });
     results.push({ runtime, result });
   }
+  const history = await tool.execute({ mode: 'history' });
+  denyRuntime = true;
+  const deniedHistory = await tool.execute({ mode: 'history' });
   let compiledRuntimeRejected = false;
   try { await createCapturedExecBunRuntimeAdmission(binding, { bunExecutable: process.execPath })(); }
   catch { compiledRuntimeRejected = true; }
   process.stdout.write(JSON.stringify({
-    execPath: process.execPath, runtimeExecutable: resolveProcessCapturedBunRuntimeExecutable(), compiledRuntimeRejected, argv: process.argv, parentMode: process.env.BUN_BE_BUN ?? null, results,
+    execPath: process.execPath, runtimeExecutable: resolveProcessCapturedBunRuntimeExecutable(), compiledRuntimeRejected, argv: process.argv, parentMode: process.env.BUN_BE_BUN ?? null, results, history, deniedHistory,
     memberOutput: existsSync(join(root, 'generated.txt')) ? readFileSync(join(root, 'generated.txt'), 'utf8') : null,
     ownerOutput: existsSync(join(owner, 'generated.txt')),
   }) + '\n');

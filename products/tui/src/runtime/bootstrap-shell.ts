@@ -3,7 +3,8 @@ import { registerTuiLegacyImportCommands } from '../input/commands/legacy-work-l
 import { join } from 'node:path';
 import { readBudgetAlertUsd, BUDGET_ALERT_USD_DEFAULT } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { refreshMemoryRecallSnapshot } from './orchestrator-core-services.ts';
-import { sumConversationUsage, type ConversationManager } from '../core/conversation';
+import type { ConversationManager } from '../core/conversation';
+import { hydrateConversationUsage } from '../core/conversation-usage.ts';
 import type { Orchestrator } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { RuntimeEventBus } from '@/runtime/index.ts';
@@ -104,10 +105,11 @@ export function createBootstrapShell(options: BootstrapShellOptions): BootstrapS
   // (SDK gap, Orchestrator.usage is never persisted/reseeded). Recompute it
   // from the replayed history so the footer doesn't show Input: 0 post-resume.
   const hydrateSessionUsage = (): void => {
-    const { usage, lastInputTokens } = sumConversationUsage(conversation.getMessageSnapshot());
-    orchestrator.usage = usage;
-    orchestrator.lastInputTokens = lastInputTokens;
+    hydrateConversationUsage(conversation, orchestrator);
   };
+  // Picker/import/rewind paths also replace history through fromJSON. The
+  // canonical resume callback still runs after any later journal replay.
+  conversation.setUsageHydrator(hydrateSessionUsage);
   // Built before resumeSession below so its providerApi.selectModel is
   // available for the resume handler's model-reselection step (matches
   // session-workflow.ts's /session resume, see core/session-resume-core.ts).

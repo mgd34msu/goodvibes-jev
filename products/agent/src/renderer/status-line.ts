@@ -97,6 +97,7 @@ export interface StatusBackgroundState {
 }
 
 export interface StatusContextState {
+  readonly available?: boolean;
   /** Tokens in the last request (0 while unknown). */
   readonly usedTokens: number;
   /**
@@ -175,6 +176,7 @@ interface ContextBarForm {
 
 /** Width of the context bar piece in a given form. */
 function contextBarWidth(state: StatusContextState, form: ContextBarForm): number {
+  if (state.available === false) return getDisplayWidth('context unavailable');
   if (state.windowTokens === null) {
     // Unknown window: the word and the label only ("context 29.9k / unknown").
     return (form.word ? getDisplayWidth('context') + 1 : 0) + getDisplayWidth(contextUsageLabel(state.usedTokens, null));
@@ -193,6 +195,7 @@ const BARE_CONTEXT_FORM: ContextBarForm = { cells: CONTEXT_BAR_MIN_CELLS, word: 
  * bare form does not fit.
  */
 function fitContextForm(state: StatusContextState, room: number): ContextBarForm | null {
+  if (state.available === false) return room >= getDisplayWidth('context unavailable') ? BARE_CONTEXT_FORM : null;
   const full: ContextBarForm = { cells: CONTEXT_BAR_CELLS, word: true, label: true };
   if (state.windowTokens === null) {
     // No bar to narrow: the word goes first, then the whole piece.
@@ -223,6 +226,7 @@ function fitContextForm(state: StatusContextState, room: number): ContextBarForm
 function drawContextBar(line: Line, x: number, state: StatusContextState, form: ContextBarForm): number {
   const cells = form.cells;
   const t = activeTokens();
+  if (state.available === false) return putText(line, x, line.length, { text: 'context unavailable', fg: t.textMuted });
   if (state.windowTokens === null) {
     const cx = form.word ? putText(line, x, line.length, { text: 'context', fg: t.textMuted }) + 1 : x;
     return putText(line, cx, line.length, { text: contextUsageLabel(state.usedTokens, null), fg: t.textMuted });

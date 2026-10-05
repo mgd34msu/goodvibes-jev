@@ -391,7 +391,11 @@ jobs:
   # with unprivileged namespaces; never disable AppArmor, change sysctls, or
   # run the fixtures as root to make a failing host look supported.
   exec-containment-proof:
-    name: Exec containment proof (live bubblewrap)
+    name: Exec containment proof (live bubblewrap, ${{ matrix.lane }})
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [tools, repl, graph-runtime]
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     needs: [build]
@@ -422,7 +426,21 @@ jobs:
       - name: Require actual sandbox fixture execution
         env:
           GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT: "1"
-        run: bun packages/engine/scripts/test.ts test/exec-interactive.test.ts test/exec-sandbox.test.ts test/exec-containment-proof.test.ts test/captured-exec.test.ts test/captured-exec-modes.test.ts test/captured-exec-file-ops.test.ts test/captured-exec-runtime-input.test.ts test/captured-repl.test.ts test/captured-repl-compiled.test.ts test/captured-bun-runtime-input.test.ts test/contract/actual-repl-input-authority.test.ts test/contract/actual-input-authority-graph.test.ts test/contract/actual-edit-write-input-authority.test.ts test/contract/actual-validator-runtime.test.ts
+        # Keep every fixture mandatory without making one serial lane spend
+        # its whole ten-minute job budget on the real contract/runtime cases.
+        run: |
+          case "${{ matrix.lane }}" in
+            tools)
+              bun packages/engine/scripts/test.ts test/exec-interactive.test.ts test/exec-sandbox.test.ts test/exec-containment-proof.test.ts test/captured-exec.test.ts test/captured-exec-modes.test.ts test/captured-exec-file-ops.test.ts test/captured-exec-runtime-input.test.ts
+              ;;
+            repl)
+              bun packages/engine/scripts/test.ts test/captured-repl.test.ts test/captured-repl-compiled.test.ts test/captured-bun-runtime-input.test.ts test/contract/actual-repl-input-authority.test.ts test/contract/actual-repl-run-history.test.ts test/contract/actual-repl-history-cancellation.test.ts
+              ;;
+            graph-runtime)
+              bun packages/engine/scripts/test.ts test/contract/actual-input-authority-graph.test.ts test/contract/actual-edit-write-input-authority.test.ts test/contract/actual-validator-runtime.test.ts
+              ;;
+            *) exit 1 ;;
+          esac
 
   # ---------------------------------------------------------------------------
   # Consumer jobs that share the build artifact. Each tests the exact same

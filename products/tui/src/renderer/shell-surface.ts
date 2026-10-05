@@ -80,7 +80,7 @@ export interface ShellFooterBuildOptions {
   readonly promptLineCount: number;
   readonly promptCursorPos?: number;
   readonly promptFocused?: boolean;
-  readonly usage: { up: number; down: number; cacheRead?: number; cacheWrite?: number; fleetCostUsd?: number | null };
+  readonly usage: { available?: boolean; up: number; down: number; cacheRead?: number; cacheWrite?: number; fleetCostUsd?: number | null };
   readonly showExitNotice: boolean;
   readonly lastCopyTime: number;
   /** The model the session cost is priced against; not drawn (the header names the model). */
@@ -97,6 +97,7 @@ export interface ShellFooterBuildOptions {
   readonly compactThreshold?: number;
   readonly dangerMode?: boolean;
   readonly lastInputTokens?: number;
+  readonly contextUsageAvailable?: boolean;
   readonly commandArgsHint?: string;
   readonly runningAgentCount: number;
   readonly runningProcessCount: number;
@@ -236,6 +237,7 @@ function fmtCost(usd: number): string {
 
 /** "~$0.246", or "you ~$0.25 · fleet ~$0.47" once delegated agents have cost something (estimates, hence the ~). */
 export function statusCostText(usage: ShellFooterBuildOptions['usage'], model: string | undefined): string | null {
+  if (usage.available === false) return 'usage unavailable';
   const inp = usage.up;
   const out = usage.down;
   const main = model && isModelPriced(model)
@@ -341,6 +343,7 @@ export function buildShellFooter(options: ShellFooterBuildOptions): ShellFooterB
     context: options.contextWindow === null || (options.contextWindow !== undefined && options.contextWindow > 0)
       ? {
           usedTokens: options.lastInputTokens ?? 0,
+          available: options.contextUsageAvailable,
           windowTokens: options.contextWindow,
           compactFraction: options.compactThreshold && options.compactThreshold > 0 ? options.compactThreshold : 0.85,
         }

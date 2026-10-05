@@ -1,3 +1,4 @@
+import { isConversationUsageAvailable } from './conversation-usage.ts';
 /**
  * budget-breach-notifier, fires an unfocused-user alert the moment session
  * cost crosses the configured budget threshold (behavior.budgetAlertUsd).
@@ -70,7 +71,7 @@ export function createBudgetBreachNotifier(deps: BudgetBreachNotifierDeps): Budg
 
   return {
     check(usage, sessionModel, budgetThresholdUsd) {
-      if (!Number.isFinite(budgetThresholdUsd)) return false;
+      if (!isConversationUsageAvailable(usage) || !Number.isFinite(budgetThresholdUsd)) return false;
       if (budgetThresholdUsd !== lastThreshold) {
         // Threshold raised, lowered, or cleared since the last check, re-arm
         // the latch so a breach against the new threshold can fire again.

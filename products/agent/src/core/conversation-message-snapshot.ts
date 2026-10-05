@@ -38,13 +38,9 @@ function readContent(value: unknown): string | ContentPart[] | null {
 }
 
 function readTokenUsage(value: unknown): TokenUsage | undefined {
-  if (!isRecord(value) || typeof value.inputTokens !== 'number' || typeof value.outputTokens !== 'number') return undefined;
-  return {
-    inputTokens: value.inputTokens,
-    outputTokens: value.outputTokens,
-    ...(typeof value.cacheReadTokens === 'number' ? { cacheReadTokens: value.cacheReadTokens } : {}),
-    ...(typeof value.cacheWriteTokens === 'number' ? { cacheWriteTokens: value.cacheWriteTokens } : {}),
-  };
+  // Preserve untrusted usage verbatim for the SDK fold's strict validation.
+  // Dropping malformed fields would turn unknown billing into known zero.
+  return value as TokenUsage;
 }
 
 function readToolCalls(value: unknown): ToolCall[] | null {
@@ -84,7 +80,6 @@ function readConversationMessageSnapshot(value: unknown): ConversationMessageSna
     const reasoningSummary = hasOwn(value, 'reasoningSummary') ? readString(value.reasoningSummary) : undefined;
     if (hasOwn(value, 'reasoningSummary') && reasoningSummary === undefined) return null;
     const usage = hasOwn(value, 'usage') ? readTokenUsage(value.usage) : undefined;
-    if (hasOwn(value, 'usage') && usage === undefined) return null;
     const model = hasOwn(value, 'model') ? readString(value.model) : undefined;
     if (hasOwn(value, 'model') && model === undefined) return null;
     const provider = hasOwn(value, 'provider') ? readString(value.provider) : undefined;
@@ -95,7 +90,8 @@ function readConversationMessageSnapshot(value: unknown): ConversationMessageSna
       ...(toolCalls !== undefined ? { toolCalls } : {}),
       ...(reasoningContent !== undefined ? { reasoningContent } : {}),
       ...(reasoningSummary !== undefined ? { reasoningSummary } : {}),
-      ...(usage !== undefined ? { usage } : {}),
+      ...(hasOwn(value, 'usage') ? { usage } : {}),
+      ...(value.followUp === true ? { followUp: true as const } : {}),
       ...(model !== undefined ? { model } : {}),
       ...(provider !== undefined ? { provider } : {}),
     };

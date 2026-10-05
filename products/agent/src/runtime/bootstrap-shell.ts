@@ -13,7 +13,7 @@ import { registerBuiltinCommands } from '../input/commands.ts';
 import { InputHistory } from '../input/input-history.ts';
 import type { PermissionRequestHandler } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { ActivityFeed } from '../core/activity-feed.ts';
-import { sumConversationUsage } from '../core/conversation-usage.ts';
+import { hydrateConversationUsage } from '../core/conversation-usage.ts';
 import { createSystemMessageRouter, type SystemMessageRouter } from '../core/system-message-router.ts';
 import { getConfigSnapshot } from '../config/index.ts';
 import { createBootstrapCommandContext } from './bootstrap-command-context.ts';
@@ -120,6 +120,11 @@ export function createBootstrapShell(options: BootstrapShellOptions): BootstrapS
     taskManager,
     completeModelSelectionSideEffect,
   } = options;
+
+  const hydrateSessionUsage = (): void => hydrateConversationUsage(conversation, orchestrator);
+  // All Agent restore paths (resume, picker, recovery and rewind) replace
+  // history through fromJSON. Bind once so no path can leave stale counters.
+  conversation.setUsageHydrator(hydrateSessionUsage);
 
   const activityFeed = new ActivityFeed();
 
@@ -252,11 +257,7 @@ export function createBootstrapShell(options: BootstrapShellOptions): BootstrapS
     restoreTurnAnchors,
     surface: services.surface,
     // Token counters and context occupancy come from the transcript (/clear empties it).
-    hydrateSessionUsage: () => {
-      const { usage, lastInputTokens } = sumConversationUsage(conversation.getMessageSnapshot());
-      orchestrator.usage = usage;
-      orchestrator.lastInputTokens = lastInputTokens;
-    },
+    hydrateSessionUsage,
   });
   commandContextRef = commandContext;
 

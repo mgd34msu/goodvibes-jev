@@ -59,6 +59,16 @@ test.skipIf(!availability.available)('restored compiled product evaluates captur
         compiledInBody: 'COMPILED_PROGRAM_OK\n', nestedInterpreter: '{"answer":42,"config":"PROJECT_CONFIG_OK","order":["first","second"]}\n',
       });
     }
+    expect(proof.history.success).toBe(true);
+    const history = JSON.parse(proof.history.output);
+    expect(history.count).toBe(2);
+    for (const [index, entry] of history.history.entries()) {
+      expect(entry.runtime).toBe(proof.results[index].runtime);
+      expect(entry.result).toBe(JSON.parse(proof.results[index].result.output).result);
+    }
+    expect(proof.deniedHistory.success).toBe(false);
+    expect(proof.deniedHistory.error).toContain('Output withheld');
+    expect(JSON.stringify(proof.deniedHistory)).not.toContain('CAPTURED_ALLOWED');
     expect(proof.memberOutput).toBe('MEMBER_GENERATED');
     expect(proof.ownerOutput).toBe(false);
   } finally { rmSync(dir, { recursive: true, force: true }); }

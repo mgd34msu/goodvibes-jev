@@ -1,3 +1,4 @@
+import { isConversationUsageAvailable } from '../core/conversation-usage.ts';
 /**
  * context-accounting-source.ts
  *
@@ -86,16 +87,19 @@ export function bindOrchestratorContextAccounting(
     scope,
     sessionId,
     getTurnInjections: () => orchestrator.getTurnInjections(),
-    getTokenState: () => ({
-      measured: {
-        input: orchestrator.usage.input,
-        output: orchestrator.usage.output,
-        cacheRead: orchestrator.usage.cacheRead,
-        cacheWrite: orchestrator.usage.cacheWrite,
-      },
-      lastInputTokens: orchestrator.lastInputTokens,
-      contextWindow: getContextWindow(),
-    }),
+    getTokenState: () => {
+      if (!isConversationUsageAvailable(orchestrator.usage)) throw new TypeError('Session usage unavailable: saved token usage is invalid.');
+      return {
+        measured: {
+          input: orchestrator.usage.input,
+          output: orchestrator.usage.output,
+          cacheRead: orchestrator.usage.cacheRead,
+          cacheWrite: orchestrator.usage.cacheWrite,
+        },
+        lastInputTokens: orchestrator.lastInputTokens,
+        contextWindow: getContextWindow(),
+      };
+    },
     getCompactionState: () => {
       const compactionState = runtimeStore.getState().session.compactionState;
       return {
