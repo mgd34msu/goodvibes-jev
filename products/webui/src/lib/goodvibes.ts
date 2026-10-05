@@ -5,7 +5,7 @@ import {
 } from '@goodvibes-jev/engine/sdk/browser/knowledge';
 import type { BrowserKnowledgeMethodId } from '@goodvibes-jev/engine/sdk/browser/knowledge';
 import { WEBUI_METHOD_ROUTES } from '@goodvibes-jev/engine/contracts/generated/webui-facade';
-import { tokenStore, WEBUI_TOKEN_STORE_KEY } from './client-lifetime';
+import { getClientLifetime, isClientLifetimeCurrent, tokenStore, WEBUI_TOKEN_STORE_KEY } from './client-lifetime';
 export { tokenStore, WEBUI_TOKEN_STORE_KEY } from './client-lifetime';
 import { isRuntimeEventDomain } from '@goodvibes-jev/engine/contracts';
 import { routedFetch } from './relay-connection';
@@ -304,14 +304,19 @@ async function authHeaders(): Promise<Record<string, string>> {
 }
 
 async function requestJson<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
-  options.signal?.throwIfAborted();
+  const lifetime = options.signal ? getClientLifetime() : undefined;
+  const check = () => {
+    options.signal?.throwIfAborted();
+    if (lifetime && !isClientLifetimeCurrent(lifetime)) throw new DOMException('Request identity changed', 'AbortError');
+  };
+  check();
   const method = options.method ?? 'GET';
   const headers: HeadersInit = {
     ...(options.authenticated === false ? {} : await authHeaders()),
     ...(method === 'GET' || options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
   };
   const url = buildUrl(path, options.query);
-  options.signal?.throwIfAborted();
+  check();
   // routedFetch (not the bare global fetch) so REST-routed methods traverse the relay when
   // the active route is relay, otherwise a mutating call (permission respond, session
   // control) would hit an unreachable direct URL over relay and never reach the daemon's
@@ -323,13 +328,14 @@ async function requestJson<T = unknown>(path: string, options: RequestOptions = 
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(method === 'GET' || options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
   });
+  check();
   // Every response, success or failure, is a chance to learn the daemon's current
   // client-build floor (see client-compatibility.ts), recorded here rather than only
   // on one dedicated probe, since this is the one HTTP helper nearly every operator
   // call passes through.
   recordObservedClientCompatibilityFloor(readClientCompatibilityFloor(response.headers));
   const body = await readJson(response);
-  options.signal?.throwIfAborted();
+  check();
   if (!response.ok) {
     throw Object.assign(new Error(`${method} ${path} failed: ${response.status} ${response.statusText}`.trim()), {
       status: response.status,
@@ -483,9 +489,9 @@ export function webuiRouteFor(methodId: string): RouteDefinition | undefined {
 async function invokeOperator<
   TMethodId extends OperatorMethodId,
   TOutput = OperatorMethodOutput<TMethodId>,
->(methodId: TMethodId, input?: OperatorMethodInput<TMethodId>): Promise<TOutput>;
-async function invokeOperator(methodId: string, input?: unknown): Promise<unknown>;
-async function invokeOperator(methodId: string, input?: unknown): Promise<unknown> {
+>(methodId: TMethodId, input?: OperatorMethodInput<TMethodId>, signal?: AbortSignal): Promise<TOutput>;
+async function invokeOperator(methodId: string, input?: unknown, signal?: AbortSignal): Promise<unknown>;
+async function invokeOperator(methodId: string, input?: unknown, signal?: AbortSignal): Promise<unknown> {
   const route = EXTRA_METHOD_ROUTES[methodId];
   if (!route) {
     // The one unavoidable escape hatch: every methodId that reaches this branch (no
@@ -496,12 +502,13 @@ async function invokeOperator(methodId: string, input?: unknown): Promise<unknow
     return scopedSdk.operator.invoke(
       methodId as BrowserKnowledgeMethodId,
       input as OperatorMethodInput<BrowserKnowledgeMethodId>,
+      { signal },
     );
   }
   const { path, rest } = interpolateRoute(route, input);
-  if (route.method === 'GET') return requestJson(path, { method: route.method, query: rest });
-  if (route.method === 'DELETE' && !Object.keys(rest).length) return requestJson(path, { method: route.method });
-  return requestJson(path, { method: route.method, body: rest });
+  if (route.method === 'GET') return requestJson(path, { method: route.method, query: rest, signal });
+  if (route.method === 'DELETE' && !Object.keys(rest).length) return requestJson(path, { method: route.method, signal });
+  return requestJson(path, { method: route.method, body: rest, signal });
 }
 
 // ---------------------------------------------------------------------------
@@ -2360,7 +2367,7 @@ export const sdk = {
       apply: (input: RewindApplyInput) => invokeGatewayMethod<'rewind.apply', RewindApplyResult>('rewind.apply', input),
     },
     sessions: {
-      list: () => invokeOperator('sessions.list', {}),
+      list: (signal?: AbortSignal) => invokeOperator('sessions.list', {}, signal),
       // get/steer/followUp/create/messages.*/inputs.* are native in the 0.38 browser SDK
       // (SHARED_BROWSER_ROUTES), they resolve WITHOUT an EXTRA_METHOD_ROUTES row,
       // through invokeOperator's scopedSdk.operator.invoke fall-through. Routing them
@@ -2369,14 +2376,14 @@ export const sdk = {
       // REAL generated OperatorMethodInput/Output types with no `as never` cast at any
       // of these call sites, TypeScript rejects a wrong-shaped `input` here at compile
       // time (see goodvibes.test.ts's "wrong-typed steer input is a compile error" case).
-      get: (sessionId: string) => invokeOperator('sessions.get', { sessionId }),
+      get: (sessionId: string, signal?: AbortSignal) => invokeOperator('sessions.get', { sessionId }, signal),
       steer: (sessionId: string, input: OperatorMethodInput<'sessions.steer'>, signal?: AbortSignal) =>
         scopedSdk.operator.invoke('sessions.steer', { sessionId, ...input }, { signal }),
       followUp: (sessionId: string, input: OperatorMethodInput<'sessions.followUp'>, signal?: AbortSignal) =>
         scopedSdk.operator.invoke('sessions.followUp', { sessionId, ...input }, { signal }),
       create: (input: OperatorMethodInput<'sessions.create'>) => invokeOperator('sessions.create', input),
-      close: (sessionId: string) => invokeOperator('sessions.close', { sessionId }),
-      reopen: (sessionId: string) => invokeOperator('sessions.reopen', { sessionId }),
+      close: (sessionId: string, signal?: AbortSignal) => invokeOperator('sessions.close', { sessionId }, signal),
+      reopen: (sessionId: string, signal?: AbortSignal) => invokeOperator('sessions.reopen', { sessionId }, signal),
       // delete (delete-means-delete): NOT in the installed 0.38 OperatorMethodId
       // union (unlike close/reopen above), see the EXTRA_METHOD_ROUTES header comment.
       // Untyped call site, like models.*, SessionDeleteResult is this module's own
@@ -2396,7 +2403,7 @@ export const sdk = {
       // with toEqual rather than reading the field, so nothing forces the property to
       // exist, a later `if (result.deleted)` would then fail to compile. Retire the cast
       // when the generated output gains `deleted`, not before.
-      delete: (sessionId: string) => invokeOperator('sessions.delete', { sessionId }) as Promise<SessionDeleteResult>,
+      delete: (sessionId: string, signal?: AbortSignal) => invokeOperator('sessions.delete', { sessionId }, signal) as Promise<SessionDeleteResult>,
       // sessions.search (typed-client scaffold, first consumer of the search facade):
       // in the OperatorMethodId union but routeless (no browser/EXTRA_METHOD_ROUTES
       // entry), generic-invoke-only, typed via the contract-bridge-types.ts bridge
