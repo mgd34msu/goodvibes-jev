@@ -26,8 +26,9 @@ const availability = await probeCapturedExecAvailability();
 if (process.env.GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT === '1' && !availability.available)
   throw new Error('required captured REPL integration execution backend is unavailable');
 
-for (const scenario of ['allowed', 'revoke-after-eval', 'revoke-after-history'] as const) {
+for (const scenario of ['allowed', 'allowed-node-runtime', 'revoke-after-eval', 'revoke-after-history'] as const) {
   test.skipIf(!availability.available)(`actual default contract REPL honors captured input authority (${scenario})`, async () => {
+    const successful = scenario === 'allowed' || scenario === 'allowed-node-runtime';
     const root = makeRepo();
     const denied = join(root, 'private.mjs');
     writeFileSync(join(root, 'input.txt'), 'COMMITTED_REPL_INPUT\n');
@@ -71,14 +72,17 @@ for (const scenario of ['allowed', 'revoke-after-eval', 'revoke-after-history'] 
       rule: { id: 'deny-original-repl-private', type: 'path-scope', origin: 'user', effect: 'deny', toolPattern: 'read', pathPatterns: [denied] },
       createdAt: Date.now(), tier: 'path', tool: 'read',
     });
-    // This fixture runs Bun (including its node:fs built-in), never a Node/npm
-    // executable. Keep unused optional Node admission out of its readset using
-    // the real owner rule store, rather than replacing the default tool backend.
-    await runtime.userPermissionRuleStore.add({
-      rule: { id: 'deny-unused-repl-node', type: 'path-scope', origin: 'user', effect: 'deny', toolPattern: 'read', pathPatterns: ['/captured-runtime/bin/node'] },
-      createdAt: Date.now(), tier: 'path', tool: 'read',
-    });
-    expect(await runtime.permissionManager.readAccess('/captured-runtime/bin/node')).toBe('restricted');
+    // Keep the original Bun-only controls lightweight; the additional positive
+    // control leaves Node/npm authorized and actually invokes both runtimes.
+    if (scenario !== 'allowed-node-runtime') {
+      await runtime.userPermissionRuleStore.add({
+        rule: { id: 'deny-unused-repl-node', type: 'path-scope', origin: 'user', effect: 'deny', toolPattern: 'read', pathPatterns: ['/captured-runtime/bin/node'] },
+        createdAt: Date.now(), tier: 'path', tool: 'read',
+      });
+      expect(await runtime.permissionManager.readAccess('/captured-runtime/bin/node')).toBe('restricted');
+    } else {
+      expect(await runtime.permissionManager.readAccess('/captured-runtime/bin/node')).toBe('allow');
+    }
     expect(runtime.userPermissionRuleStore.rules().some((rule) => rule.id === 'deny-original-repl-private')).toBe(true);
     expect(await runtime.permissionManager.readAccess(denied)).toBe('restricted');
     expect(await runtime.permissionManager.readAccess(join(root, 'input.txt'))).toBe('allow');
@@ -112,6 +116,16 @@ for (const scenario of ['allowed', 'revoke-after-eval', 'revoke-after-history'] 
           'const denied: string[] = [];',
           `for (const path of ["./private.mjs", ${JSON.stringify(denied)}]) { try { denied.push(fs.readFileSync(path, "utf8")); } catch { denied.push("DENIED_READ"); } }`,
           'try { denied.push((await import("./private.mjs")).secret); } catch { denied.push("DENIED_IMPORT"); }',
+          ...(scenario === 'allowed-node-runtime' ? [
+            'const child = await import("node:child_process");',
+            // File-backed stdio keeps this proof inside the existing no-socket
+            // boundary; Bun implements piped synchronous stdio with socketpair.
+            'for (const name of ["node", "npm", "npx"]) {',
+            '  const out = fs.openSync("/tmp/runtime-version", "w"); let version;',
+            '  try { version = child.spawnSync(name, ["--version"], { stdio: ["ignore", out, "ignore"] }); } finally { fs.closeSync(out); }',
+            '  if (version.status !== 0 || !fs.readFileSync("/tmp/runtime-version", "utf8").trim()) throw new Error("Authorized runtime unavailable: " + name);',
+            '}',
+          ] : []),
           'JSON.stringify({ captured: fs.readFileSync("input.txt", "utf8").trim(), imported: module.value, total, binding: label, denied })',
         ].join('\n'),
       } },
@@ -236,7 +250,7 @@ for (const scenario of ['allowed', 'revoke-after-eval', 'revoke-after-history'] 
       const memberRequests = requests.filter((request) => !request.planner);
       const replMessage = (turn: number, call: number) => memberRequests[turn - 1]?.messages.find((message) =>
         message.role === 'tool' && message.name === 'repl' && message.callId === `repl-step-${call}`);
-      if (scenario !== 'allowed') {
+      if (!successful) {
         expect(revoked).toBe(true);
         expect(memberCalls).toBe(scenario === 'revoke-after-eval' ? 1 : 2);
         expect(result.status).not.toBe('passed');
@@ -258,7 +272,7 @@ for (const scenario of ['allowed', 'revoke-after-eval', 'revoke-after-history'] 
           captured: 'DIRTY_CAPTURED_REPL_INPUT', imported: 'DIRTY_CAPTURED_REPL_MODULE',
           total: 42, binding: 'PROVIDER_BINDING', denied: ['DENIED_READ', 'DENIED_READ', 'DENIED_IMPORT'],
         });
-        if (scenario === 'allowed') {
+        if (successful) {
           expect(result.status, result.error).toBe('passed');
           expect(memberCalls).toBe(4);
           expect(executed).toEqual([
