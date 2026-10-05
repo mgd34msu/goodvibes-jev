@@ -17,7 +17,9 @@ import { emitCompactionReceipt } from '../sdk/src/platform/runtime/emitters/comp
 import { createCoreReadModels } from '../sdk/src/platform/runtime/ui-read-models-core.js';
 import type { ProviderRegistry } from '../sdk/src/platform/providers/registry.js';
 import type { ProviderMessage } from '../sdk/src/platform/providers/interface.js';
-import type { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
+import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
+import { emitModelChanged } from '../sdk/src/platform/runtime/emitters/providers.js';
+import { createRuntimeStore } from '../sdk/src/platform/runtime/store/index.js';
 import type { RuntimeServices } from '../sdk/src/platform/runtime/services.js';
 
 /**
@@ -38,9 +40,14 @@ function makeCapturingBus(sink: Array<{ channel: string; payload: unknown }>): R
  * that createCoreReadModels reads. `state` is the runtime state getState()
  * returns; the read model derives the session snapshot from it.
  */
-function makeReadModelServices(state: unknown): RuntimeServices {
+function makeReadModelServices(state: unknown, knownWindow?: number): RuntimeServices {
   return {
     runtimeStore: { getState: () => state, subscribe: () => () => {} },
+    ...(knownWindow !== undefined ? { providerRegistry: {
+      getCurrentModel: () => ({ contextWindow: knownWindow, contextWindowProvenance: 'provider_api' }),
+      getContextWindowForModel: () => knownWindow,
+      getKnownContextWindowForModel: () => knownWindow,
+    } } : {}),
     runtimeBus: { on: () => () => {} },
   } as unknown as RuntimeServices;
 }
@@ -168,21 +175,65 @@ describe('context-usage readable', () => {
       model: { tokenLimits: { contextWindow: 100_000 } },
       permissions: { awaitingDecision: false, denialCount: 0 },
     };
-    const snap = createCoreReadModels(makeReadModelServices(state)).session.getSnapshot();
+    const snap = createCoreReadModels(makeReadModelServices(state, 100_000)).session.getSnapshot();
     expect(snap.contextUsagePct).toBe(40);
     expect(snap.contextRemainingTokens).toBe(60_000);
     expect(snap.estimatedContextTokens).toBe(40_000);
   });
 
-  test('usage readable is safe when the context window is unknown (0)', () => {
+  test('usage readable remains unknown without registry knowledge despite a positive budget', () => {
     const state = {
       session: {},
       conversation: { totalTurns: 0, messageCount: 0, estimatedContextTokens: 1234, turnState: 'idle', stream: {} },
-      model: { tokenLimits: { contextWindow: 0 } },
+      model: { tokenLimits: { contextWindow: 200_000 } },
       permissions: { awaitingDecision: false, denialCount: 0 },
     };
     const snap = createCoreReadModels(makeReadModelServices(state)).session.getSnapshot();
-    expect(snap.contextUsagePct).toBe(0);
-    expect(snap.contextRemainingTokens).toBe(0);
+    expect(snap.contextWindow).toBeNull();
+    expect(snap.contextUsagePct).toBeNull();
+    expect(snap.contextRemainingTokens).toBeNull();
+    expect(snap.contextWarningActive).toBe(false);
   });
+});
+
+
+test('unknown windows never trigger context warnings; a live known ceiling does', () => {
+  const state = {
+    session: {},
+    conversation: { totalTurns: 1, messageCount: 2, estimatedContextTokens: 190_000, turnState: 'idle', stream: {} },
+    model: { tokenLimits: { contextWindow: 200_000 } },
+    permissions: { awaitingDecision: false, denialCount: 0 },
+  };
+  expect(createCoreReadModels(makeReadModelServices(state)).session.getSnapshot().contextWarningActive).toBe(false);
+  const known = createCoreReadModels(makeReadModelServices(state, 200_000)).session.getSnapshot();
+  expect(known.contextWarningActive).toBe(true);
+  expect(known.contextUsagePct).toBe(95);
+});
+
+
+test('session subscribers replace known capacity after a provider model event without a store mutation', async () => {
+  const store = createRuntimeStore();
+  store.setState(state => ({ conversation: { ...state.conversation, estimatedContextTokens: 190_000 } }));
+  const runtimeBus = new RuntimeEventBus();
+  let window: number | null = 200_000;
+  const services = { runtimeStore: store, runtimeBus, providerRegistry: {
+    getCurrentModel: () => ({ contextWindow: window ?? 200_000, contextWindowProvenance: window === null ? 'fallback' : 'provider_api' }),
+    getContextWindowForModel: () => window ?? 200_000,
+    getKnownContextWindowForModel: () => window,
+  } } as unknown as RuntimeServices;
+  const session = createCoreReadModels(services).session;
+  const observations = [session.getSnapshot()];
+  const off = session.subscribe(() => observations.push(session.getSnapshot()));
+  const stateBefore = store.getState();
+  window = null;
+  emitModelChanged(runtimeBus, { sessionId: 'system', source: 'provider-registry', traceId: 'fixture' }, { registryKey: 'fixture:unknown', provider: 'fixture' });
+  await Promise.resolve();
+  expect(store.getState()).toBe(stateBefore);
+  expect(observations.map(snapshot => snapshot.contextWindow)).toEqual([200_000, null]);
+  expect(observations.at(-1)).toMatchObject({ contextUsagePct: null, contextWarningActive: false });
+  off();
+  window = 100_000;
+  emitModelChanged(runtimeBus, { sessionId: 'system', source: 'provider-registry', traceId: 'fixture-2' }, { registryKey: 'fixture:known', provider: 'fixture' });
+  await Promise.resolve();
+  expect(observations).toHaveLength(2);
 });

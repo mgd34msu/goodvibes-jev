@@ -20296,6 +20296,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "contextWindow": 0,
       "contextUsagePct": 0,
       "contextRemainingTokens": 0,
+      "contextWindowSource": "provider_api",
+      "contextWindowOrigin": {
+        "kind": "user_override"
+      },
+      "contextWindowAcceptedFloor": 0,
       "estimated": false
     }
   },

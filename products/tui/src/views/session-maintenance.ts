@@ -27,7 +27,7 @@ export interface ViewSessionMaintenanceInput {
   /** ConfigManager used to read behavior.autoCompactThreshold and related keys. */
   readonly configManager: Pick<ConfigManager, 'get'>;
   readonly currentTokens: number;
-  readonly contextWindow: number;
+  readonly contextWindow: number | null;
   readonly messageCount?: number;
   readonly sessionMemoryCount?: number;
   readonly session?: ViewSessionMaintenanceSession | null;
@@ -39,8 +39,8 @@ export interface ViewSessionMaintenanceStatus {
   readonly reasons: readonly string[];
   readonly nextSteps: readonly string[];
   readonly guidanceMode: ViewGuidanceMode;
-  readonly usagePct: number;
-  readonly remainingTokens: number;
+  readonly usagePct: number | null;
+  readonly remainingTokens: number | null;
   /**
    * Compact threshold as a percent integer.
    * SDK schema range is [10, 100]; default is 80.

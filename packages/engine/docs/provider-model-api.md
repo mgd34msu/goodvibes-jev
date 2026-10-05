@@ -339,6 +339,26 @@ family estimate, or `FALLBACK_CONTEXT_WINDOW` (`128000`) before a family reading
 settles. `readFallbackContextWindow(provider, modelId, site)` requests that
 reading. Neither API turns a family estimate into an observed capacity.
 
+The session `sessions.contextUsage.get` operator method and its REST route
+`GET /api/sessions/{sessionId}/context-usage` expose the known capacity as
+`contextWindow: number | null`. `contextUsagePct` and `contextRemainingTokens`
+are also null when that capacity is unknown. Optional `contextWindowSource`,
+`contextWindowOrigin` and `contextWindowAcceptedFloor` preserve the same typed
+reading as the picker; the accepted floor is never a percentage denominator.
+A missing registry or unresolvable current model stays unknown even if the
+runtime store has a positive budgeting default. Each read resolves the live
+model again, so a model change can make a previously known window unknown.
+The shared UI session read model and WebUI invalidate on existing provider/model
+events; WebUI also refetches after a compaction check. Cap/floor mutations do not
+currently emit a dedicated provider event, so this does not promise immediate
+refresh for every metadata mutation without another invalidation or read.
+
+This endpoint answers only for the actual runtime store session or its `runtime`
+alias. A hosted session's live-turn binding alone does not provide its usage or
+model snapshot and receives `404 SESSION_NOT_LOCAL`. Token usage remains marked
+`estimated`: it is the runtime's current estimate, not a fresh preflight count
+or a guarantee of session-correlated accounting across multiple hosted loops.
+
 Automatic preflight, post-turn and independent session compaction skip unknown
 windows; a provider's explicit context-full warning still permits recovery.
 Small-window keep-last-N compaction does nothing when all messages are already

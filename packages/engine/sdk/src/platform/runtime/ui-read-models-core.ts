@@ -3,9 +3,10 @@ import type { RuntimeTask } from './store/domains/tasks.js';
 import type { RuntimeAgent } from './store/domains/agents.js';
 import type { SessionDomainState } from './store/domains/session.js';
 import type { TurnState } from './store/domains/conversation.js';
-import { createStoreBackedReadModel, listProviderIds, projectRecords, projectValues } from './ui-read-model-helpers.js';
+import { combineSubscriptions, createStoreBackedReadModel, listProviderIds, projectRecords, projectValues } from './ui-read-model-helpers.js';
 import type { UiReadModel } from './ui-read-models-base.js';
 import { deriveContextUsage } from './context-usage.js';
+import { readCurrentContextWindow } from '../providers/context-window-reading.js';
 
 /** Fraction of the model context window at which the context-warning flag activates. */
 const CONTEXT_WARNING_THRESHOLD = 0.85;
@@ -19,11 +20,11 @@ export interface UiSessionSnapshot {
   readonly totalTurns: number;
   readonly messageCount: number;
   readonly estimatedContextTokens: number;
-  readonly contextWindow: number;
-  /** Context usage as a 0–100 percentage (0 when the window is unknown). Cheap readable for a live context chip. */
-  readonly contextUsagePct: number;
-  /** Tokens remaining before the context window is full (0 when unknown/exhausted). */
-  readonly contextRemainingTokens: number;
+  readonly contextWindow: number | null;
+  /** Context usage as a 0–100 percentage (null when the window is unknown). Cheap readable for a live context chip. */
+  readonly contextUsagePct: number | null;
+  /** Tokens remaining before the context window is full (null when unknown). */
+  readonly contextRemainingTokens: number | null;
   readonly turnState: TurnState;
   readonly streamToolPreview?: string | undefined;
   readonly contextWarningActive: boolean;
@@ -65,28 +66,35 @@ export function createCoreReadModels(
         return runtimeServices.runtimeBus.on('PROVIDERS_CHANGED', listener);
       },
     },
-    session: createStoreBackedReadModel(runtimeServices, () => {
-      const state = runtimeStore.getState();
-      const usedTokens = state.conversation.estimatedContextTokens;
-      const window = state.model.tokenLimits.contextWindow;
-      const usage = deriveContextUsage(usedTokens, window);
-      return {
-        session: state.session,
-        totalTurns: state.conversation.totalTurns,
-        messageCount: state.conversation.messageCount,
-        estimatedContextTokens: usedTokens,
-        contextWindow: window,
-        contextUsagePct: usage.contextUsagePct,
-        contextRemainingTokens: usage.contextRemainingTokens,
-        turnState: state.conversation.turnState,
-        streamToolPreview: state.conversation.stream.partialToolPreview,
-        contextWarningActive:
-          state.model.tokenLimits.contextWindow > 0 &&
-          state.conversation.estimatedContextTokens >= state.model.tokenLimits.contextWindow * CONTEXT_WARNING_THRESHOLD,
-        pendingApproval: state.permissions.awaitingDecision,
-        denialCount: state.permissions.denialCount,
-      };
-    }),
+    session: {
+      getSnapshot() {
+        const state = runtimeStore.getState();
+        const usedTokens = state.conversation.estimatedContextTokens;
+        const window = readCurrentContextWindow(runtimeServices.providerRegistry)?.knownContextWindow ?? null;
+        const usage = deriveContextUsage(usedTokens, window);
+        return {
+          session: state.session,
+          totalTurns: state.conversation.totalTurns,
+          messageCount: state.conversation.messageCount,
+          estimatedContextTokens: usedTokens,
+          contextWindow: window,
+          contextUsagePct: usage.contextUsagePct,
+          contextRemainingTokens: usage.contextRemainingTokens,
+          turnState: state.conversation.turnState,
+          streamToolPreview: state.conversation.stream.partialToolPreview,
+          contextWarningActive:
+            window !== null && usedTokens >= window * CONTEXT_WARNING_THRESHOLD,
+          pendingApproval: state.permissions.awaitingDecision,
+          denialCount: state.permissions.denialCount,
+        };
+      },
+      subscribe(listener) {
+        return combineSubscriptions(
+          runtimeStore.subscribe(listener),
+          runtimeServices.runtimeBus.onDomain('providers', listener),
+        );
+      },
+    },
     agents: createStoreBackedReadModel(runtimeServices, () => {
       const state = runtimeStore.getState().agents;
       const active = projectRecords(state.activeAgentIds, state.agents);

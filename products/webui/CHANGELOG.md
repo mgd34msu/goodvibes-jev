@@ -8,6 +8,11 @@ This project uses semantic versioning with `vMAJOR.MINOR.PATCH` git tags.
 
 ### Fixed
 
+- Session context shows the engine's known ceiling, source and accepted-input
+  lower bound without promoting fallback or consensus estimates into capacity.
+  Model changes supersede stale context reads; unsupported hosted scopes remain
+  unavailable instead of showing another runtime's usage.
+
 - Session follow-up and steer receipts now retain the returned input ID and exact
   delivery state. Queued HTTP responses stay queued; session updates and a fallback
   poll reconcile delivery, completion and failure without resending. Session,
