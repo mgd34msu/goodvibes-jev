@@ -142,7 +142,7 @@ test('a contracts-domain SSE frame refetches the selected detail and list from a
   expect(daemon.requests.filter((request) => request.path === '/api/contracts').length).toBeGreaterThan(initialLists);
   expect(daemon.requests.filter((request) => request.path === `/api/contracts/${RUNNING_CONTRACT.id}`).length).toBeGreaterThan(initialDetails);
   await closeContract(page);
-  await expect(page.getByRole('region', { name: 'Finished', exact: true }).getByText(RUNNING_CONTRACT.goal, { exact: true })).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Finished', exact: true }).getByText(RUNNING_CONTRACT.goal, { exact: true })).toBeVisible();
   expectReadOnly(daemon);
 });
 
@@ -222,7 +222,7 @@ test('contract detail failure can retry and Close or Back does not reopen it', a
   await detail.getByRole('button', { name: 'Retry contract', exact: true }).click();
   await expect(detail.getByText(RUNNING_CONTRACT.ask, { exact: true })).toBeVisible();
   await closeContract(page);
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByRole('region', { name: 'Work', exact: true }).getByRole('button', { name: 'Refresh', exact: true }).click();
   await nextFrames(page);
   await expect(detailPane(page)).toHaveCount(0);
   expectReadOnly(daemon);
