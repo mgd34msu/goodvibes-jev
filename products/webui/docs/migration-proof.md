@@ -161,9 +161,15 @@ supply the missing engine-owned gate-preset catalog for the replacement sheet.
 Unknown/null/zero/non-local context renders honestly.
 [THE-90](https://linear.app/the-artificery/issue/THE-90/preserve-unknown-context-windows)/
 [PR #46](https://github.com/mgd34msu/goodvibes-jev/pull/46) already implemented
-provider known-window/provenance semantics. Their propagation through the session
-wire and WebUI callers remains missing; it is separate from THE-70's browser
-judgment registry/issuer work.
+provider known-window/provenance semantics. Merged
+[PR #127](https://github.com/mgd34msu/goodvibes-jev/pull/127) now propagates the known
+ceiling, typed source/origin and accepted-input lower bound through the session
+wire and WebUI callers, preserving nullable unknown capacity and retiring stale
+model reads. This remains separate from THE-70's browser judgment registry/issuer
+work. Usage remains an estimated runtime snapshot, with no guaranteed multi-loop
+session accounting or dedicated realtime event for every cap/floor change; the
+[provider API](../../../packages/engine/docs/provider-model-api.md) records these
+boundaries.
 
 Complete source mappings, remaining semantic/parity work and final integrated
 acceptance remain open. The current CI browser matrix passed; genuine connected

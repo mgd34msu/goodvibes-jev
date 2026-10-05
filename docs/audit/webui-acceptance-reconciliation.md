@@ -126,10 +126,16 @@ the browser replays prove a real connected deployment, user account or provider.
    [THE-90](https://linear.app/the-artificery/issue/THE-90/preserve-unknown-context-windows)/
    [PR #46](https://github.com/mgd34msu/goodvibes-jev/pull/46) already implemented
    provider known-window/provenance semantics, separating known ceilings from
-   budget estimates and preserving accepted-input floors. Propagation through the
-   session wire and WebUI callers is still missing; the context response has no
-   provenance fields. This engine/wire consumer dependency is separate from
-   THE-70's browser judgment registry/issuer lane. The current source supplies the
+   budget estimates and preserving accepted-input floors. Merged
+   [PR #127](https://github.com/mgd34msu/goodvibes-jev/pull/127) now propagates the
+   known ceiling, typed source/origin and accepted-input lower bound through
+   session responses and WebUI callers. Unknown capacity remains nullable and
+   stale model reads are retired. This engine/wire integration is separate from
+   THE-70's browser judgment registry/issuer lane. Usage is still a stored runtime
+   estimate, not a fresh count or guaranteed multi-loop session accounting.
+   Cap/floor metadata changes have no dedicated realtime event, so refresh still
+   needs another invalidation or read; see the [provider API boundaries](../../packages/engine/docs/provider-model-api.md).
+   The current source supplies the
    documented `display.theme` enum/default in the bounded follow-up below;
    `display.treeGlyphs` still has no canonical schema entry. The session permission-mode verbs still expose fixed
    mode enums, not the engine-owned gate-preset catalog needed by the replacement

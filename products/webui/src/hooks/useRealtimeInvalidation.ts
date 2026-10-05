@@ -47,7 +47,10 @@ const DOMAIN_INVALIDATIONS: Record<string, readonly (readonly unknown[])[]> = {
   // permission mode off config.get() since SessionsView moved to the session-scoped
   // sessions.permissionMode.get/set verbs (lib/permission-mode.ts).
   gate: [queryKeys.approvals, queryKeys.sessions, queryKeys.permissionRules],
-  providers: [queryKeys.providers],
+  // Model changes and provider metadata updates can replace a known context
+  // window with an unknown one. Re-read the mounted session usage from the same
+  // stream; a provider frame is only an invalidation, never a capacity claim.
+  providers: [queryKeys.providers, queryKeys.sessions],
   knowledge: [queryKeys.knowledgeStatus, queryKeys.knowledgeSources, queryKeys.knowledgeRefinement],
   'control-plane': [queryKeys.control],
   // fleet: the SDK now emits per-node lifecycle deltas (FLEET_NODE_STARTED /
@@ -99,7 +102,17 @@ export function useRealtimeInvalidation(enabled: boolean) {
     if (!enabled) return undefined;
     let disposed = false;
     let close: (() => void) | null = null;
-    const invalidate = (key: readonly unknown[]) => {
+    const invalidate = (key: readonly unknown[], domain?: string) => {
+      if (domain === 'providers' && key[0] === 'sessions') {
+        // Cancel the context read even if it has no cached data yet. Otherwise a
+        // model-change event during the first request only marks it stale and
+        // its pre-change capacity can win. Other session queries are untouched.
+        const filter = { queryKey: key, predicate: (query: { queryKey: readonly unknown[] }) => query.queryKey[2] === 'context-usage' };
+        void queryClient.cancelQueries(filter).then(() => {
+          if (!disposed && getClientLifetime() === lifetime) void queryClient.invalidateQueries(filter);
+        });
+        return;
+      }
       if (key[0] !== 'contracts') { void queryClient.invalidateQueries({ queryKey: key }); return; }
       // An initial query without data otherwise absorbs invalidation while in
       // flight. A contract event must supersede that pre-event snapshot too.
@@ -123,15 +136,15 @@ export function useRealtimeInvalidation(enabled: boolean) {
               // notice and revalidate every domain we track, a full refetch is the correct
               // recovery since these frames only ever trigger invalidations.
               noteRelayOverflow(readDroppedCount(payload));
-              for (const keys of Object.values(DOMAIN_INVALIDATIONS)) {
-                for (const key of keys) invalidate(key);
+              for (const [domain, keys] of Object.entries(DOMAIN_INVALIDATIONS)) {
+                for (const key of keys) invalidate(key, domain);
               }
               return;
             }
+            if (!Object.hasOwn(DOMAIN_INVALIDATIONS, eventName)) return;
             const keys = DOMAIN_INVALIDATIONS[eventName];
-            if (!keys) return;
             for (const key of keys) {
-              invalidate(key);
+              invalidate(key, eventName);
             }
           },
           // NEVER surface `err.message` here, on a pre-auth open it IS the raw 401

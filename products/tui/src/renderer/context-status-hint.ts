@@ -46,7 +46,7 @@ interface ContextStatusHintOptions {
   /** Whether auto-compaction is active (threshold > 0 in config). */
   readonly autoCompactEnabled: boolean;
   /** Current usage percent 0–100. */
-  readonly usagePct: number;
+  readonly usagePct: number | null;
   /** Tokens actually counted so far this session (orchestrator.lastInputTokens). */
   readonly currentTokens: number;
   /** The resolved context window the usage percent was computed against. */
@@ -60,7 +60,7 @@ interface ContextStatusHintOptions {
 function hasRealContextNumbers(
   options: Pick<ContextStatusHintOptions, 'currentTokens' | 'contextWindow' | 'usagePct'>,
 ): boolean {
-  if (options.currentTokens <= 0 || options.usagePct <= 0) return false;
+  if (options.currentTokens <= 0 || options.usagePct === null || options.usagePct <= 0) return false;
   if (options.contextWindow <= 0 || options.contextWindow === DEFAULT_CONTEXT_WINDOW) return false;
   return true;
 }
@@ -106,7 +106,7 @@ export function resolveContextStatusHint(input: {
   readonly evaluate: (args: { readonly currentTokens: number; readonly contextWindow: number }) => {
     readonly level: ViewSessionMaintenanceLevel;
     readonly autoCompactEnabled: boolean;
-    readonly usagePct: number;
+    readonly usagePct: number | null;
   };
   readonly currentTokens: number;
   readonly contextWindow: number;

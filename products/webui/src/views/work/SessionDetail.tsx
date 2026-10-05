@@ -20,6 +20,7 @@ import { ExternalLink, MoreHorizontal } from 'lucide-react';
 import { sdk } from '../../lib/goodvibes';
 import type { FleetProcessNode } from '../../lib/goodvibes';
 import { queryKeys } from '../../lib/queries';
+import { formatSessionContextUsage } from '../../lib/session-context-usage';
 import {
   type UnionSessionRecord,
   kindLabel,
@@ -131,17 +132,7 @@ function useContextUsage(sessionId: string, check: CompactionCheck | null): stri
   }, [check, refetch]);
   if (usage.isError && isSessionNotLocalError(usage.error)) return 'Unavailable here';
   if (!usage.data) return '';
-  const { estimatedContextTokens, contextWindow, contextUsagePct } = usage.data;
-  // Older peers declare numbers; newer peers can report an unknown window.
-  // Never invent a capacity or derive a percentage from an absent window.
-  const tokens = Number.isFinite(estimatedContextTokens) ? estimatedContextTokens.toLocaleString() : 'Unknown';
-  if (typeof contextWindow !== 'number' || !Number.isFinite(contextWindow) || contextWindow <= 0) {
-    return `${tokens} tokens estimated; context window unknown`;
-  }
-  const percentage = typeof contextUsagePct === 'number' && Number.isFinite(contextUsagePct)
-    ? `~${contextUsagePct}% `
-    : '';
-  return `${percentage}(${tokens} of ${contextWindow.toLocaleString()} tokens, estimated)`;
+  return formatSessionContextUsage(usage.data);
 }
 
 /** The session's cost over the last 24 hours, only when something was priced. */

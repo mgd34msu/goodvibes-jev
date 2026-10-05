@@ -54,6 +54,8 @@ for (const [index, appearance] of THEMES.entries()) {
       await expect(current).toHaveCount(1);
       await expect(current).toHaveJSProperty('textContent', currentTheme);
       expect(host.requests.filter(request => request.method === 'POST')).toEqual([]);
+      await expectNoHorizontalScroll(page);
+      await test.info().attach(`${test.info().project.name}-${appearance}-terminal-theme-options`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
       await page.getByRole('listbox').getByRole('option', { name: 'dracula', exact: true }).click();
       await expect(select).toHaveText('dracula');
       await expect(select).toBeEnabled();

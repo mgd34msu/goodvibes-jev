@@ -110902,7 +110902,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       {
         "id": "sessions.contextUsage.get",
         "title": "Get Session Context Usage",
-        "description": "Return the live context-window usage for a session: estimatedContextTokens (the token ESTIMATOR's figure, not a measured provider count), the model contextWindow, and the derived contextUsagePct and contextRemainingTokens. `estimated` is always true, marking the token figure as an estimate rather than a fact. Only the daemon's live local runtime session is resolvable; any other session id is a 404 SESSION_NOT_LOCAL.",
+        "description": "Return the live context-window usage for a session: estimatedContextTokens (the runtime's current estimate, not a fresh preflight count), a source-supported contextWindow or configured cap, and the derived contextUsagePct and contextRemainingTokens (all three null when capacity is unknown). Typed source, origin and accepted-input floor metadata remain separate from the known ceiling. `estimated` is always true, marking the token figure as an estimate rather than a fact. Only the daemon's live local runtime session is resolvable; any other session id is a 404 SESSION_NOT_LOCAL.",
         "category": "sessions",
         "source": "builtin",
         "access": "authenticated",
@@ -110939,12 +110939,125 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
               "type": "number"
             },
             "contextWindow": {
-              "type": "number"
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "contextUsagePct": {
-              "type": "number"
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "contextRemainingTokens": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "contextWindowSource": {
+              "type": "string",
+              "enum": [
+                "provider_api",
+                "configured_cap",
+                "observed_limit",
+                "accepted_floor",
+                "catalog",
+                "fallback",
+                "openrouter",
+                "registry"
+              ]
+            },
+            "contextWindowOrigin": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "user_override"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "provider_file"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "catalog"
+                    },
+                    "catalogProviderId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "catalogProviderId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "consensus"
+                    },
+                    "providers": {
+                      "type": "number"
+                    },
+                    "agreeing": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "providers",
+                    "agreeing"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "family_default"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "contextWindowAcceptedFloor": {
               "type": "number"
             },
             "estimated": {

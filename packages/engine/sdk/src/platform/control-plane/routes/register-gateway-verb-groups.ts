@@ -596,6 +596,7 @@ export function registerGatewayVerbGroups(catalog: GatewayMethodCatalog, deps: G
     createSessionRuntimeControls({
       config: deps.configManager,
       store: deps.runtimeStore,
+      providerRegistry: deps.providerRegistry,
       liveTurnHolder: deps.sessionLiveTurnControls,
     }),
   );

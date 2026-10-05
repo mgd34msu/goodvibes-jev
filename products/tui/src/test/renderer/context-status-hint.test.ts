@@ -150,3 +150,9 @@ describe('boot state: a pressure claim must be backed by real numbers', () => {
     expect(bootHint('compacting')).toContain('Compacting');
   });
 });
+
+
+test('nullable maintenance usage cannot turn an unknown window into a pressure hint', () => {
+  expect(resolveContextStatusHint({ currentTokens: 190_000, contextWindow: 200_000,
+    evaluate: () => ({ level: 'suggest-compact', autoCompactEnabled: true, usagePct: null }) })).toBeNull();
+});

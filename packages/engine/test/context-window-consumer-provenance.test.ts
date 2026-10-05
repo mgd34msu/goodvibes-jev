@@ -5,6 +5,8 @@ import { CompactionManager } from '../sdk/src/platform/runtime/compaction/manage
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { createFeatureFlagManager } from '../sdk/src/platform/runtime/feature-flags/manager.js';
 import { createSessionCompactionManager } from '../sdk/src/platform/core/compaction-lifecycle-route.js';
+import { readModelContextWindow } from '../sdk/src/platform/providers/context-window-reading.js';
+import { createSessionRuntimeControls } from '../sdk/src/platform/control-plane/routes/session-runtime.js';
 import { ModelLimitsService } from '../sdk/src/platform/providers/model-limits.js';
 import type { ModelDefinition } from '../sdk/src/platform/providers/registry-types.js';
 import type { ProviderMessage } from '../sdk/src/platform/providers/interface.js';
@@ -123,5 +125,34 @@ describe('independent session compaction respects unknown ceilings', () => {
     expect(JSON.stringify(repaired)).not.toContain('maxTokens');
     expect(commit.messages).toBe(messages);
     manager.dispose();
+  });
+});
+
+
+describe('picker and session context use the same projection', () => {
+  test.each(['provider_api', 'configured_cap', 'observed_limit', 'catalog', 'fallback', 'accepted_floor'] as const)('%s metadata agrees while budget remains separate', source => {
+    const definition: ModelDefinition = { ...model, contextWindowProvenance: source, contextWindowAcceptedFloor: 4000 };
+    const entry = picker(definition);
+    const controls = createSessionRuntimeControls({ config: { get: () => 'prompt', set: () => {} },
+      store: { getState: () => ({ session: { id: 'local' }, conversation: { estimatedContextTokens: 2000 } }) },
+      providerRegistry: { getCurrentModel: () => definition,
+        getContextWindowForModel: current => limits.getContextWindowForModel(current),
+        getKnownContextWindowForModel: current => limits.getKnownContextWindowForModel(current) } });
+    const usage = controls.getContextUsage('local');
+    expect(usage.contextWindow).toBe(entry.knownContextWindow);
+    expect(usage.contextWindowSource).toBe(entry.contextWindowSource);
+    expect(usage.contextWindowOrigin).toEqual(entry.contextWindowOrigin);
+    expect(usage.contextWindowAcceptedFloor).toBe(entry.contextWindowAcceptedFloor);
+  });
+
+  test('effective OpenRouter resolution does not retain a contradictory source origin', () => {
+    const definition: ModelDefinition = { ...model, contextWindowProvenance: 'fallback', contextWindowOrigin: { kind: 'provider_file' } };
+    const registry = { getContextWindowForModel: () => 100_000, getKnownContextWindowForModel: () => 100_000 };
+    const reading = readModelContextWindow(definition, registry);
+    const entry = enrichModelEntries([definition], createInitialProviderHealthState(), createInitialModelState(), new Set(),
+      { getBenchmarks: () => undefined }, { ...registry, getSyntheticModelInfoFromCatalog: () => null }, () => undefined)[0]!;
+    expect(reading).toEqual({ contextWindow: 100_000, knownContextWindow: 100_000, contextWindowSource: 'openrouter' });
+    expect(entry.contextWindowSource).toBe(reading.contextWindowSource);
+    expect(entry.contextWindowOrigin).toBeUndefined();
   });
 });

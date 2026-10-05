@@ -27,7 +27,7 @@
 |            Judgment            4      reasoning summaries, token speed, and tool previews.                             |
 |            Subscriptions       1                                                                                       |
 |            Helper              3      collapseThreshold                                               30               |
-|            Tools               9      theme                                                    vaporwave               |
+|            Tools               9      theme                                                    goodvibes               |
 |            TTS                 5      themeMode                                                     auto               |
 |            Local Voice        34      showThinking                                                 false               |
 |            Model Pricing       1      showReasoningSummary                                         false               |

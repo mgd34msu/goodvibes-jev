@@ -26183,9 +26183,25 @@ export interface OperatorMethodOutputMap {
     "sessions.contextUsage.get": {
         sessionId: string;
         estimatedContextTokens: number;
-        contextWindow: number;
-        contextUsagePct: number;
-        contextRemainingTokens: number;
+        contextWindow: null | number;
+        contextUsagePct: null | number;
+        contextRemainingTokens: null | number;
+        contextWindowSource?: "accepted_floor" | "catalog" | "configured_cap" | "fallback" | "observed_limit" | "openrouter" | "provider_api" | "registry";
+        contextWindowOrigin?: {
+            kind: "user_override";
+        } | {
+            kind: "provider_file";
+        } | {
+            kind: "catalog";
+            catalogProviderId: string;
+        } | {
+            kind: "consensus";
+            providers: number;
+            agreeing: number;
+        } | {
+            kind: "family_default";
+        };
+        contextWindowAcceptedFloor?: number;
         estimated: boolean;
     };
     // (undocumented)

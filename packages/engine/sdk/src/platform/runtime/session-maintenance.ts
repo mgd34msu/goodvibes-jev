@@ -1,3 +1,4 @@
+import { deriveContextUsage } from './context-usage.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { SessionDomainState } from './store/domains/session.js';
 
@@ -13,8 +14,8 @@ export type SessionMaintenanceLevel =
 export interface SessionMaintenanceStatus {
   readonly level: SessionMaintenanceLevel;
   readonly guidanceMode: GuidanceMode;
-  readonly usagePct: number;
-  readonly remainingTokens: number;
+  readonly usagePct: number | null;
+  readonly remainingTokens: number | null;
   readonly thresholdPct: number;
   readonly autoCompactEnabled: boolean;
   readonly compactRecommended: boolean;
@@ -29,7 +30,7 @@ export interface SessionMaintenanceStatus {
 export interface SessionMaintenanceInput {
   readonly configManager: Pick<ConfigManager, 'get'>;
   readonly currentTokens: number;
-  readonly contextWindow: number;
+  readonly contextWindow: number | null;
   readonly messageCount?: number | undefined;
   readonly sessionMemoryCount?: number | undefined;
   readonly session?: Partial<SessionDomainState> | undefined;
@@ -67,9 +68,7 @@ export function evaluateSessionMaintenance(input: SessionMaintenanceInput): Sess
     : Math.max(0, Number(input.configManager.get('behavior.autoCompactThreshold') ?? 0));
   const autoCompactEnabled = thresholdPct > 0;
   const currentTokens = Math.max(0, input.currentTokens);
-  const contextWindow = Math.max(0, input.contextWindow);
-  const usagePct = contextWindow > 0 ? Math.min(100, Math.round((currentTokens / contextWindow) * 100)) : 0;
-  const remainingTokens = Math.max(0, contextWindow - currentTokens);
+  const { contextUsagePct: usagePct, contextRemainingTokens: remainingTokens } = deriveContextUsage(currentTokens, input.contextWindow);
   const sessionMemoryCount = Math.max(0, input.sessionMemoryCount ?? 0);
   const compactionCount = Math.max(0, input.session?.lineage?.filter((entry) => entry.branchReason === 'compaction').length ?? 0);
   const lastCompactedAt = input.session?.lastCompactedAt;
@@ -80,7 +79,7 @@ export function evaluateSessionMaintenance(input: SessionMaintenanceInput): Sess
       ? messageCount - (input.session?.compactionMessageCount ?? 0) >= 12
       : messageCount >= 24;
 
-  if (contextWindow <= 0) {
+  if (usagePct === null || remainingTokens === null) {
     return {
       level: 'unknown',
       guidanceMode,
