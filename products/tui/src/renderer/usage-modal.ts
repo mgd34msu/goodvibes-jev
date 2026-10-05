@@ -82,6 +82,10 @@ function drawContext(f: ModalFrame, view: UsageModalView, y: number): number {
   const used = view.tracker.contextTokens();
   const window = view.tracker.contextWindow();
   canvas.put(l, y, 'Context', { fg: t.accent, bold: true });
+  if (!view.tracker.contextAvailable()) {
+    canvas.right(r, y, 'unavailable', { fg: t.textMuted });
+    return y + 2;
+  }
   const pct = window > 0 ? Math.min(100, Math.round((used / window) * 100)) : 0;
   const right = window > 0 ? `${formatTokenCount(used)} of ${formatTokenCount(window)} · ${pct}%` : 'context window unknown';
   if (getDisplayWidth(right) < r - l - 9) canvas.right(r, y, right, { fg: t.textMuted });
@@ -119,6 +123,9 @@ function drawSessionTable(f: ModalFrame, view: UsageModalView, x: number, xr: nu
   const cost = view.tracker.sessionCost();
   if (y > maxY) return y;
   canvas.put(x, y, 'Session', { fg: t.accent, bold: true });
+  if (!view.tracker.available()) {
+    return drawTextBlock(canvas, x, y + 1, xr - x + 1, [{ text: 'Usage and cost unavailable: saved token usage is invalid.', style: { fg: t.textMuted } }], maxY);
+  }
   let yy = y + 1;
   const rows: Array<[string, string, boolean, string?]> = [
     ['Input', formatTokenCount(u.input), false],
@@ -155,7 +162,7 @@ function drawFleetSplit(f: ModalFrame, view: UsageModalView, x: number, xr: numb
   const you = view.tracker.sessionCost();
   const fleet = view.tracker.fleetCost();
   f.canvas.put(x, y, 'Fleet', { fg: t.accent, bold: true });
-  const text = `you ${you.priced ? formatUsd(you.usd) : 'price unknown'} · agents ${fleet === null ? 'none priced' : formatUsd(fleet)}`;
+  const text = `you ${!view.tracker.available() ? 'unavailable' : you.priced ? formatUsd(you.usd) : 'price unknown'} · agents ${fleet === null ? 'none priced' : formatUsd(fleet)}`;
   return drawTextBlock(f.canvas, x, y + 1, xr - x + 1, [{ text, style: { fg: t.textMuted } }], maxY);
 }
 
@@ -164,6 +171,7 @@ function drawTurnBars(f: ModalFrame, view: UsageModalView, x: number, xr: number
   const t = activeTokens();
   const { canvas } = f;
   const turns = view.tracker.turns();
+  if (!view.tracker.available()) return drawTextBlock(canvas, x, y, xr - x + 1, [{ text: 'Turn usage unavailable.', style: { fg: t.textMuted } }], maxY);
   canvas.put(x, y, 'Per turn', { fg: t.accent, bold: true });
   if (turns.length === 0) {
     return drawTextBlock(canvas, x, y + 2, xr - x + 1, [{ text: 'Token bars appear here after the first completed turn.', style: { fg: t.textMuted } }], maxY);
@@ -250,6 +258,10 @@ function turnRows(view: UsageModalView, width: number): KitRow[] {
 
 function drawTurns(f: ModalFrame, view: UsageModalView, y: number): void {
   const t = activeTokens();
+  if (!view.tracker.available()) {
+    drawTextBlock(f.canvas, f.l, y, f.r - f.l + 1, [{ text: 'Turn usage unavailable: saved token usage is invalid.', style: { fg: t.textMuted } }], f.bottom);
+    return;
+  }
   const turns = view.tracker.turns();
   if (turns.length === 0) {
     drawTextBlock(f.canvas, f.l, y, f.r - f.l + 1, [{ text: 'No turns recorded yet. Each completed turn adds a row with its input, output and cache tokens.', style: { fg: t.textMuted } }], f.bottom);
@@ -273,7 +285,7 @@ function drawAgents(f: ModalFrame, view: UsageModalView, y: number): void {
   const planCost = agents.reduce((sum, a) => sum + a.cost, 0) + session.usd;
   const running = agents.filter((a) => a.status === 'running').length;
   const failed = agents.filter((a) => a.status === 'failed').length;
-  const parts = [`plan total ${session.priced ? formatUsd(planCost) : 'price unknown'}`, `${agents.length} agent${agents.length === 1 ? '' : 's'}`];
+  const parts = [`plan total ${!view.tracker.available() ? 'unavailable' : session.priced ? formatUsd(planCost) : 'price unknown'}`, `${agents.length} agent${agents.length === 1 ? '' : 's'}`];
   if (running > 0) parts.push(`${running} running`);
   if (failed > 0) parts.push(`${failed} failed`);
   const yy = drawTextBlock(f.canvas, f.l, y, f.r - f.l + 1, [{ text: parts.join(' · '), style: { fg: t.textMuted } }], f.bottom);

@@ -1,3 +1,4 @@
+import { isConversationUsageAvailable } from '../core/conversation-usage.ts';
 import type { Orchestrator } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { SessionLineageTracker } from '@goodvibes-jev/engine/sdk/platform/core';
@@ -82,6 +83,7 @@ export function createContextAccountingSource(deps: ContextAccountingSourceDeps)
     sessionId: deps.sessionId,
     getTurnInjections: () => deps.orchestrator.getTurnInjections(),
     getTokenState: () => {
+      if (!isConversationUsageAvailable(deps.orchestrator.usage)) throw new TypeError('Session usage unavailable: saved token usage is invalid.');
       const currentModel = deps.providerRegistry.getCurrentModel();
       // null when nothing states the window (a guess, or disproven by a larger accepted request).
       const contextWindow = deps.providerRegistry.getKnownContextWindowForModel(currentModel);

@@ -3,6 +3,7 @@ import {
   readConversationMessageSnapshots,
   conversationMessagesAsSessionRecords,
 } from '../../core/conversation-message-snapshot.ts';
+import { sumConversationUsage } from '../../core/conversation-usage.ts';
 
 // ---------------------------------------------------------------------------
 // Valid round-trip: each role
@@ -159,19 +160,19 @@ describe('readConversationMessageSnapshots – rejection cases', () => {
     );
   });
 
-  test('assistant with present-but-wrong-typed usage (missing inputTokens) is rejected', () => {
+  test('malformed usage retains the transcript but is rejected by the SDK usage fold', () => {
     // usage present but missing required inputTokens field
     const input = [{ role: 'assistant', content: 'ok', usage: { outputTokens: 5 } }];
-    expect(() => readConversationMessageSnapshots(input)).toThrow(
-      /Invalid saved conversation message at index 0/,
-    );
+    const restored = readConversationMessageSnapshots(input);
+    expect(restored).toEqual(input);
+    expect(() => sumConversationUsage(restored)).toThrow(TypeError);
   });
 
-  test('assistant with present-but-wrong-typed usage (non-number) is rejected', () => {
+  test('wrong-typed usage is retained for strict SDK billing validation', () => {
     const input = [{ role: 'assistant', content: 'ok', usage: { inputTokens: '10', outputTokens: 5 } }];
-    expect(() => readConversationMessageSnapshots(input)).toThrow(
-      /Invalid saved conversation message at index 0/,
-    );
+    const restored = readConversationMessageSnapshots(input);
+    expect(restored).toEqual(input);
+    expect(() => sumConversationUsage(restored)).toThrow(TypeError);
   });
 
   test('assistant with toolCalls entry missing id is rejected', () => {

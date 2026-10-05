@@ -5,6 +5,7 @@
  * safety states that also stay visible on the composer.
  */
 import { describe, expect, test } from 'bun:test';
+import { hydrateConversationUsage } from '../../core/conversation-usage.ts';
 import { formatStatusReport, type StatusReportSource } from '../../shell/status-report.ts';
 
 function report(overrides: Partial<StatusReportSource> = {}): string {
@@ -32,6 +33,16 @@ function report(overrides: Partial<StatusReportSource> = {}): string {
 }
 
 describe('/status report', () => {
+  test('malformed restored billing and context show unavailable without false numbers', () => {
+    const orchestrator = { usage: { input: 9000, output: 8000, cacheRead: 0, cacheWrite: 0 }, lastInputTokens: 9000 };
+    hydrateConversationUsage({ getMessageSnapshot: () => [{ role: 'assistant', content: 'kept', usage: null }] as never }, orchestrator);
+    const text = report({ usage: orchestrator.usage, contextTokens: orchestrator.lastInputTokens, contextUsageAvailable: false });
+    expect(text).toMatch(/usage +unavailable/);
+    expect(text).toMatch(/cost +unavailable/);
+    expect(text).toMatch(/used +unavailable/);
+    expect(text).not.toMatch(/input +0|output +0|0%|~\$/);
+  });
+
   test('token totals, cost and context use', () => {
     const text = report();
     expect(text).toMatch(/input +53\.0k/);
