@@ -321,6 +321,7 @@ export function registerAllTools(
     readAccessFilter?: import('./shared/read-access.js').ReadAccessFilter | undefined;
     capturedReadAccess?: import('./shared/read-access.js').ReadAccessFilter | undefined;
     capturedExec?: import('./exec/captured-exec.js').CapturedExecAuthority | undefined;
+    capturedReplHistory?: import('./repl/captured.js').CapturedReplHistory | undefined;
     capturedRegistry?: import('./registry-tool/captured-source.js').CapturedRegistryContext | undefined;
     /**
      * Settable holder for the context_accounting tool's session source. The tool
@@ -655,7 +656,7 @@ export function registerAllTools(
   }
   registerTool(
     deps.capturedExec
-      ? createCapturedReplTool(deps.capturedExec, deps.featureFlags)
+      ? createCapturedReplTool(deps.capturedExec, deps.featureFlags, deps.capturedReplHistory)
       : createReplTool(deps.configManager, deps.sandboxSessionRegistry, {
           surfaceRoot: deps.surfaceRoot,
         }),

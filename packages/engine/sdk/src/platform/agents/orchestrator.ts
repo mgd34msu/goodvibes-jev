@@ -17,6 +17,7 @@ import {
 } from '../contract/input-authority.js';
 import { capturedInputTool, capturedInputReadFilter } from '../tools/shared/captured-input-tools.js';
 import { randomUUID } from 'node:crypto';
+import { createCapturedReplHistory, disposeCapturedReplHistory, type CapturedReplHistory } from '../tools/repl/captured.js';
 import { ToolRegistry } from '../tools/registry.js';
 import type { Tool } from '../types/tools.js';
 import type { ConfigManager } from '../config/manager.js';
@@ -426,6 +427,7 @@ export class AgentOrchestrator {
     capturedRegistry?: CapturedRegistryContext,
     capturedProcessManager?: import('../tools/shared/process-manager.js').ProcessManager,
     nodeRuntimeAdmission?: import('../tools/exec/captured-exec.js').CapturedExecAuthority['nodeRuntimeAdmission'],
+    capturedReplHistory?: CapturedReplHistory,
   ): ToolRegistry {
     const channelVersion = this.channelRegistry?.getVersion() ?? -1;
     if (this.fullRegistryChannelVersion !== channelVersion) {
@@ -486,6 +488,7 @@ export class AgentOrchestrator {
                 nodeRuntimeAdmission,
               },
               capturedRegistry,
+              capturedReplHistory,
               diagnosticsProvider: null,
             }
           : {}),
@@ -721,6 +724,9 @@ export class AgentOrchestrator {
   ): Promise<AgentOrchestratorRunContext> {
     const cwd = workingDirectory ?? this.toolDeps?.workingDirectory ?? '';
     const delivered = new Set<string>();
+    // Wake/steer can reuse one captured authority for another actual run.
+    // Only registry rebuilds inside this invocation retain the same journal.
+    const capturedReplHistory = authority ? createCapturedReplHistory(authority, signal) : undefined;
     const originalPermissionManager = this.toolDeps?.permissionManager;
     if (autonomousSource && (!originalPermissionManager?.admitAutonomous || !originalPermissionManager.autonomousPreparation))
       throw new Error('Native contract member requires the shared autonomous permission owner');
@@ -836,8 +842,11 @@ export class AgentOrchestrator {
             },
           }
         : contractHooks,
-      ...(authority && processManager
-        ? { beforeRunSettlement: () => processManager.stopOwnedBoundaries(authority) }
+      ...(authority && capturedReplHistory
+        ? { beforeRunSettlement: async () => {
+            disposeCapturedReplHistory(capturedReplHistory);
+            await processManager?.stopOwnedBoundaries(authority);
+          } }
         : {}),
       archetypeLoader: this.toolDeps?.archetypeLoader,
       providerOptimizer: this.toolDeps?.providerOptimizer,
@@ -855,6 +864,7 @@ export class AgentOrchestrator {
           capturedRegistry,
           processManager,
           nodeRuntimeAdmission,
+          capturedReplHistory,
         ),
       buildScopedRegistry: (allowedNames, fullRegistry, captureAuthority) =>
         this.buildScopedRegistry(allowedNames, fullRegistry, captureAuthority),
