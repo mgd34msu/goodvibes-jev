@@ -7033,6 +7033,7 @@ export interface OperatorMethodInputMap {
         initialPrompt?: string;
         detachPolicy?: "kill" | "survive";
         clientId?: string;
+        originSurface?: string;
     };
     // (undocumented)
     "sessions.hosted.detach": {
@@ -26488,7 +26489,7 @@ export interface OperatorMethodOutputMap {
     "sessions.hosted.attach": {
         session: {
             id: string;
-            nativeConversation?: boolean;
+            nativeConversation?: true;
             workspaceRoot: string;
             title: string;
             status: "idle" | "running" | "terminated";
@@ -26505,6 +26506,7 @@ export interface OperatorMethodOutputMap {
             terminatedAt?: number;
             terminatedReason?: string;
             restoredFromDisk: boolean;
+            originSurface?: string;
             contractIds: readonly string[];
         };
         history: readonly ({
@@ -26517,7 +26519,7 @@ export interface OperatorMethodOutputMap {
     "sessions.hosted.create": {
         session: {
             id: string;
-            nativeConversation?: boolean;
+            nativeConversation?: true;
             workspaceRoot: string;
             title: string;
             status: "idle" | "running" | "terminated";
@@ -26534,6 +26536,7 @@ export interface OperatorMethodOutputMap {
             terminatedAt?: number;
             terminatedReason?: string;
             restoredFromDisk: boolean;
+            originSurface?: string;
             contractIds: readonly string[];
         };
     };
@@ -26541,7 +26544,7 @@ export interface OperatorMethodOutputMap {
     "sessions.hosted.detach": {
         session: {
             id: string;
-            nativeConversation?: boolean;
+            nativeConversation?: true;
             workspaceRoot: string;
             title: string;
             status: "idle" | "running" | "terminated";
@@ -26558,6 +26561,7 @@ export interface OperatorMethodOutputMap {
             terminatedAt?: number;
             terminatedReason?: string;
             restoredFromDisk: boolean;
+            originSurface?: string;
             contractIds: readonly string[];
         };
     };
@@ -26565,7 +26569,7 @@ export interface OperatorMethodOutputMap {
     "sessions.hosted.kill": {
         session: {
             id: string;
-            nativeConversation?: boolean;
+            nativeConversation?: true;
             workspaceRoot: string;
             title: string;
             status: "idle" | "running" | "terminated";
@@ -26582,6 +26586,7 @@ export interface OperatorMethodOutputMap {
             terminatedAt?: number;
             terminatedReason?: string;
             restoredFromDisk: boolean;
+            originSurface?: string;
             contractIds: readonly string[];
         };
     };
@@ -26589,7 +26594,7 @@ export interface OperatorMethodOutputMap {
     "sessions.hosted.list": {
         sessions: readonly ({
             id: string;
-            nativeConversation?: boolean;
+            nativeConversation?: true;
             workspaceRoot: string;
             title: string;
             status: "idle" | "running" | "terminated";
@@ -26606,6 +26611,7 @@ export interface OperatorMethodOutputMap {
             terminatedAt?: number;
             terminatedReason?: string;
             restoredFromDisk: boolean;
+            originSurface?: string;
             contractIds: readonly string[];
         })[];
     };
