@@ -106,7 +106,12 @@ the browser replays prove a real connected deployment, user account or provider.
    Sources: [THE-70](https://linear.app/the-artificery/issue/THE-70/integrate-authenticated-webui-judgments),
    [palette caller](../../products/webui/src/lib/command-judgment.ts),
    [optional runtime capability](../../packages/engine/sdk/src/platform/runtime/services.ts).
-3. **Native host/source-bearing ingress.** The existing `contracts.start` input
+3. **Native host/source-bearing ingress.** The bounded
+   [WebUI original-source admission](../design/webui-native-intake.md) surface now
+   journals exact text and invokes capture/admission in one Submit, with paired
+   authority checks and explicit inspect/recovery/cancellation. It renders real
+   admission receipts without claiming execution or dispatching native turns.
+   Native execution and hosted continuation remain open. The existing `contracts.start` input
    carries `ask`, session, workspace and isolation, but no native source. A native
    runner rejects a source-less start. Source-bearing native task
    ingress and host-owned continuation/execution integration require current

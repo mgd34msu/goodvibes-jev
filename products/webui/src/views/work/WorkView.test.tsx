@@ -83,6 +83,7 @@ const HOSTED = [
 ];
 
 mock.module('../../lib/goodvibes', () => ({
+  GOODVIBES_BASE_URL: 'http://localhost',
   DEFAULT_SSE_RECONNECT: { enabled: true, baseDelayMs: 1, maxDelayMs: 2, backoffFactor: 2, maxAttempts: 3 },
   WEBUI_SURFACE_ID: 'goodvibes-webui',
   WEBUI_SURFACE_KIND: 'webui',
