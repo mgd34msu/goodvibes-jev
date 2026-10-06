@@ -184,7 +184,9 @@ export function primarySetupRepairDecision(item: SetupPlanItem): SetupRepairDeci
       return setupRepairDecisionFromHandoff(
         handoff,
         handoff.requiresConfirmation ? 'confirmed-repair-available' : 'inspect-first',
-        item.authPosture?.operatorToken.usable
+        item.authPosture?.operatorToken.path === 'Agent host-bound pairing store' && !item.authPosture.operatorToken.usable
+          ? 'Host-bound pairing needs read-only review; shared-token provisioning cannot resolve an unknown or unsafe pairing store.'
+          : item.authPosture?.operatorToken.usable
           ? 'Connected-host token is usable; verify protected daemon route readiness before relying on automation.'
           : 'Connected-host token is missing or unusable; token provisioning is the narrow confirmed repair.',
       );

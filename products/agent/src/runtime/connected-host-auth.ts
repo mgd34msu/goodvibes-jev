@@ -1,3 +1,4 @@
+import { readAgentHostPairing } from './connected-host-pairing-store.ts';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,7 +20,7 @@ export function connectedHostOperatorTokenPath(homeDirectory: string): string {
   return join(homeDirectory, '.goodvibes', 'daemon', 'operator-tokens.json');
 }
 
-export function readConnectedHostOperatorToken(homeDirectory: string): ConnectedHostOperatorToken {
+export function readConnectedHostOperatorToken(homeDirectory: string, hostUrl?: string): ConnectedHostOperatorToken {
   const connectedHostEnvToken = process.env.GOODVIBES_CONNECTED_HOST_TOKEN?.trim();
   if (connectedHostEnvToken) {
     return {
@@ -35,6 +36,12 @@ export function readConnectedHostOperatorToken(homeDirectory: string): Connected
       present: true,
       token: legacyEnvToken,
     };
+  }
+  if (hostUrl !== undefined) {
+    const pairing = readAgentHostPairing(homeDirectory, hostUrl);
+    if (pairing.status === 'paired') return { path: 'Agent host-bound pairing store', present: true, token: pairing.token };
+    if (pairing.status === 'unknown') return { path: 'Agent host-bound pairing store', present: true, token: null, error: 'A prior pairing outcome is unknown; no credential fallback or remint is allowed.' };
+    if (pairing.status === 'unavailable') return { path: 'Agent host-bound pairing store', present: true, token: null, error: 'The Agent host-bound pairing store could not be read safely.' };
   }
   const path = connectedHostOperatorTokenPath(homeDirectory);
   if (!existsSync(path)) return { path, present: false, token: null };

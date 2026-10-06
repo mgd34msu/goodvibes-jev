@@ -87,6 +87,12 @@ export function setupHandoffsForItem(item: SetupPlanItem): readonly SetupHandoff
     case 'connected-host-auth': {
       const authPosture = item.authPosture;
       const tokenUsable = authPosture?.operatorToken.usable === true;
+      if (!tokenUsable && authPosture?.operatorToken.path === 'Agent host-bound pairing store') return [setupHandoff({
+        id: 'inspect-agent-pairing', label: 'Inspect Agent pairing', kind: 'diagnostic', effect: 'read-only',
+        userRoute: '/setup pair', modelRoute: 'agent_harness mode:"run_command" command:"/setup pair"',
+        nextStep: 'Review the prior host-bound attempt or unsafe store before any credential action.',
+        safety: 'Preview only; never remints, revokes or rewrites shared-token storage.',
+      })];
       return [
         tokenUsable
           ? setupHandoff({
