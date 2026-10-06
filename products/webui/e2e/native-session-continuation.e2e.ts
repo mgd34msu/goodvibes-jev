@@ -55,10 +55,14 @@ async function screenshot(page: Page, name: string, includeOriginal = false) {
   const detail = detailPane(page);
   if (includeOriginal) {
     const original = detail.locator("pre.native-intake__source");
-    await original.scrollIntoViewIfNeeded();
-    await expect(original).toBeInViewport({ ratio: 1 });
+    await original.evaluate((element) =>
+      element.scrollIntoView({ block: "center", inline: "nearest" })
+    );
+    // Chromium rounds a 66px source block to 65.5px at a scroll boundary.
+    // Allow that subpixel crop tolerance; exact text and receipt facts stay strict.
+    await expect(original).toBeInViewport({ ratio: 0.99 });
     await expectNoHorizontalScroll(page);
-    await test.info().attach(`${name}: exact original source`, {
+    await test.info().attach(`${name}: exact original source crop`, {
       body: await original.screenshot(),
       contentType: "image/png",
     });
