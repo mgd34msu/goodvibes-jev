@@ -87,7 +87,7 @@ describe('emitting contract events', () => {
 
     expect(received.map((envelope) => envelope.type)).toEqual([...CONTRACT_EVENT_TYPES]);
     for (const envelope of received) {
-      expect(envelope.payload).toEqual(SAMPLES[envelope.type as ContractEventType]);
+      expect(envelope.payload).toEqual({ ...SAMPLES[envelope.type as ContractEventType], occurrenceId: expect.any(String) });
       expect(validateKnownEvent(envelope.payload).valid).toBe(true);
       expect(envelope.sessionId).toBe('s1');
       expect(envelope.source).toBe(CONTRACT_EVENT_SOURCE);
@@ -129,4 +129,12 @@ describe('the contracts domain', () => {
       expect(type.startsWith('WORKFLOW_') || type.startsWith('ORCHESTRATION_')).toBe(false);
     }
   });
+});
+
+
+test('contract wire provenance is optional but a supplied id must be a string', () => {
+  for (const event of ALL_CONTRACT_EVENTS) {
+    expect(validateKnownEvent({ ...event, occurrenceId: 'declared-occurrence' }).valid).toBe(true);
+    expect(validateKnownEvent({ ...event, occurrenceId: 12 }).violations).toContain('occurrenceId must be a string');
+  }
 });

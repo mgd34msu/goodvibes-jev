@@ -11,6 +11,7 @@ export function validateAgentSpawning(v: unknown): ContractResult {
 
 export function validateAgentCompleted(v: unknown): ContractResult {
   return validateEventFields('AGENT_COMPLETED', v, [
+    { key: 'occurrenceId', kind: 'string', optional: true },
     { key: 'agentId', kind: 'string' },
     { key: 'durationMs', kind: 'number' },
   ]);
@@ -18,6 +19,7 @@ export function validateAgentCompleted(v: unknown): ContractResult {
 
 export function validateAgentFailed(v: unknown): ContractResult {
   return validateEventFields('AGENT_FAILED', v, [
+    { key: 'occurrenceId', kind: 'string', optional: true },
     { key: 'agentId', kind: 'string' },
     { key: 'error', kind: 'string' },
   ]);

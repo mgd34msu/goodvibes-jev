@@ -263,10 +263,10 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
   let disposed = false;
 
   function emit(contract: Contract, event: ContractEvent): void {
-    emitContractEvent(deps.runtimeBus, contract.sessionId, event);
+    const occurrence = emitContractEvent(deps.runtimeBus, contract.sessionId, event);
     for (const listener of listeners) {
       try {
-        listener(event);
+        listener(occurrence);
       } catch {
         // A listener cannot break the runner; the store and surfaces log their own faults.
       }

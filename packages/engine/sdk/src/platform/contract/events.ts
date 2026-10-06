@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 /**
  * Emitting contract events (docs/design/contract-runner.md section 8.1). Every
  * event goes out on the `contracts` runtime domain through its typed emitter
@@ -80,10 +81,13 @@ const EMITTERS: { readonly [T in ContractEventType]: Emitter<T> } = {
 };
 
 /** Emits one contract event on the `contracts` domain with its contract's context. */
-export function emitContractEvent(bus: RuntimeEventBus, sessionId: string, event: ContractEvent): void {
-  const { type, ...data } = event;
+export function emitContractEvent(bus: RuntimeEventBus, sessionId: string, event: ContractEvent): ContractEvent {
+  // A source occurrence is new even when an imported snapshot reuses its entity id.
+  const occurrence = { ...event, occurrenceId: randomUUID() };
+  const { type, ...data } = occurrence;
   // The table is keyed by type, so the emitter found is the one for this
   // event's payload; the union cannot express that pairing, hence the widening.
   const emitter = EMITTERS[type] as (bus: RuntimeEventBus, ctx: EmitterContext, data: unknown) => void;
   emitter(bus, contractEmitterContext(sessionId, event.contractId), data);
+  return occurrence;
 }

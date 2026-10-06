@@ -268,7 +268,7 @@ export interface ContractUnitRouteSummary {
   readonly reason: string;
 }
 
-export type ContractEvent =
+export type ContractEvent = (
   | { type: 'CONTRACT_CREATED'; contractId: string; sessionId: string; origin: ContractOrigin; ask: string; ownerAgentId: string }
   | { type: 'CONTRACT_STATUS_CHANGED'; contractId: string; from: ContractStatus; to: ContractStatus }
   | {
@@ -393,7 +393,11 @@ export type ContractEvent =
       depth: number;
       activeAgents: number;
       reason: string;
-    };
+    }
+) & {
+  /** Identity minted once by the producer, retained by notice and replay deliveries. */
+  readonly occurrenceId?: string | undefined;
+};
 
 export type ContractEventType = ContractEvent['type'];
 

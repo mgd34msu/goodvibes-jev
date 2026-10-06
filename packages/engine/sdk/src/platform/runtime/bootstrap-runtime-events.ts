@@ -1,3 +1,5 @@
+import type { RuntimeEventProvenance } from '../../events/occurrence.js';
+export type { RuntimeEventProvenance } from '../../events/occurrence.js';
 import type { ConversationFollowUpItem } from '../core/conversation-follow-ups.js';
 import type { AgentEvent, ProviderEvent, RuntimeEventBus } from './events/index.js';
 import type { ContractEvent } from '../../events/contract.js';
@@ -9,10 +11,10 @@ import { finishWorkstreamLabel, rememberWorkstreamLabel, workstreamLabel } from 
 const AGENT_STATUS_INTERVAL_MS = 30_000;
 
 export interface HostRuntimeMessageRouter {
-  low(message: string): void;
+  low(message: string, runtimeEvent?: RuntimeEventProvenance): void;
   high(message: string): void;
   /** Contract lifecycle lines for the operator feed (`ui.contractMessages` decides where they show). */
-  contract(message: string): void;
+  contract(message: string, priority?: 'high' | 'low', runtimeEvent?: RuntimeEventProvenance): void;
 }
 
 export interface HostRuntimeEventBridgeOptions {
@@ -28,7 +30,7 @@ export interface HostRuntimeEventBridgeOptions {
 /** The runtime event restated by one of this module's operator-feed lines. */
 export interface RuntimeEventNotice {
   readonly type: string;
-  /** Present only with complete shared occurrence identity; current producer lines do not carry one. */
+  /** Present only when the producer supplied shared occurrence provenance beside the line. */
   readonly key?: string | undefined;
   readonly title: string;
   readonly level: 'info' | 'warning';
@@ -41,7 +43,7 @@ export interface RuntimeEventNotice {
  * prose. Contract ids are kept whole, exactly as the producer prints them.
  * Entity ids are not event identities: an agent can wake, and an older
  * contract snapshot can be imported and resumed under the same id. Current
- * lines therefore stay keyless rather than coalescing distinct outcomes.
+ * lines without declared provenance stay keyless rather than coalescing distinct outcomes.
  */
 const RUNTIME_EVENT_NOTICE_LINES: ReadonlyArray<{
   readonly pattern: RegExp;
@@ -72,30 +74,27 @@ const RUNTIME_EVENT_NOTICE_LINES: ReadonlyArray<{
 ];
 
 /** Read a declared operator-feed line, or return undefined for an unrelated line. */
-export function runtimeEventOfNotice(text: string): RuntimeEventNotice | undefined {
+export function runtimeEventOfNotice(text: string, runtimeEvent?: RuntimeEventProvenance): RuntimeEventNotice | undefined {
   const line = text.trim();
   for (const entry of RUNTIME_EVENT_NOTICE_LINES) {
     if (!entry.pattern.test(line)) continue;
     const detail = line.replace(/^\[[^\]\n]+\]\s*/, '').replace(/^[\u2713\u2717]\s*/, '');
-    return { type: entry.type, title: entry.title, level: entry.level, detail };
+    return { type: entry.type, title: entry.title, level: entry.level, detail, key: runtimeEventKey(entry.type, runtimeEvent) };
   }
   return undefined;
 }
 
 /**
- * A cross-path deduplication key requires an occurrence identity shared by the
- * bus payload and its operator line. The current vocabulary carries only
- * entity ids, which are reused by agent wakes and contract import/resume.
- * No safe key can be derived, so this API returns undefined for those events.
- * Hosts must retain keyless notices: both the bus and line may be displayed,
- * but a genuine later outcome must not be discarded as an earlier replay.
+ * Only producer-declared occurrence provenance can identify duplicate delivery.
+ * Older payloads and text-only notices stay keyless. A new wake or imported
+ * contract resume mints a new id even when its entity, text and usage repeat.
  */
 export function runtimeEventKey(type: string, payload: unknown): string | undefined {
-  // Keep the public signature; neither input contains the missing shared
-  // occurrence identity. Do not substitute an id, timestamp or prose hash.
-  void type;
-  void payload;
-  return undefined;
+  if (!RUNTIME_EVENT_NOTICE_LINES.some((entry) => entry.type === type)) return undefined;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !('type' in payload) || payload.type !== type
+    || !('occurrenceId' in payload) || typeof payload.occurrenceId !== 'string'
+    || payload.occurrenceId.trim().length === 0) return undefined;
+  return JSON.stringify([type, payload.occurrenceId]);
 }
 
 function withRouter(
@@ -178,8 +177,8 @@ export function registerContractRuntimeEvents(options: ContractRuntimeEventBridg
       requestRender();
     }));
   };
-  const contractLine = (message: string): void => {
-    withRouter(getSystemMessageRouter, (router) => router.contract(`[Contract] ${message}`));
+  const contractLine = (message: string, runtimeEvent: RuntimeEventProvenance): void => {
+    withRouter(getSystemMessageRouter, (router) => router.contract(`[Contract] ${message}`, 'high', runtimeEvent));
   };
   /** The cohort check for a contract that ended: any cohort one of its unit agents belongs to. */
   const checkContractCohorts = (contractId: string): void => {
@@ -196,11 +195,11 @@ export function registerContractRuntimeEvents(options: ContractRuntimeEventBridg
     // TUI-only run never goes through a channel. Remembering twice is a no-op.
     rememberWorkstreamLabel(payload.contractId, payload.ask);
     // Operator feed: the id belongs here, where it is used for correlation.
-    contractLine(`${payload.contractId} started: ${payload.ask}`);
+    contractLine(`${payload.contractId} started: ${payload.ask}`, payload);
   });
 
   onContract('CONTRACT_STATUS_CHANGED', (payload) => {
-    contractLine(`${payload.contractId} ${payload.from} -> ${payload.to}`);
+    contractLine(`${payload.contractId} ${payload.from} -> ${payload.to}`, payload);
   });
 
   onContract('CONTRACT_CHECKED', (payload) => {
@@ -208,38 +207,38 @@ export function registerContractRuntimeEvents(options: ContractRuntimeEventBridg
     if (payload.result === 'recorded') return;
     const met = payload.criteria.filter((criterion) => criterion.verdict === 'met').length;
     const icon = payload.result === 'pass' ? '\u2713' : '\u2717';
-    contractLine(`${icon} Check ${payload.checkId} of ${payload.scope} ${payload.targetId}: ${met}/${payload.criteria.length} criteria met, ${payload.result}`);
+    contractLine(`${icon} Check ${payload.checkId} of ${payload.scope} ${payload.targetId}: ${met}/${payload.criteria.length} criteria met, ${payload.result}`, payload);
   });
 
   onContract('CONTRACT_NUDGED', (payload) => {
     const criteria = payload.criterionIds.length > 0 ? ` on ${payload.criterionIds.join(', ')}` : '';
-    contractLine(`Nudged unit ${payload.unitId} (${payload.kinds.join(', ')})${criteria}`);
+    contractLine(`Nudged unit ${payload.unitId} (${payload.kinds.join(', ')})${criteria}`, payload);
   });
 
   onContract('CONTRACT_CRITERION_REGRESSED', (payload) => {
-    contractLine(`Criterion ${payload.criterionId} of unit ${payload.unitId} regressed (met at ${payload.metAtCheckId})`);
+    contractLine(`Criterion ${payload.criterionId} of unit ${payload.unitId} regressed (met at ${payload.metAtCheckId})`, payload);
   });
 
   onContract('CONTRACT_STALLED', (payload) => {
-    contractLine(`${payload.scope} ${payload.targetId} stalled, routed to ${payload.route}: ${payload.reason}`);
+    contractLine(`${payload.scope} ${payload.targetId} stalled, routed to ${payload.route}: ${payload.reason}`, payload);
   });
 
   onContract('CONTRACT_ESCALATED', (payload) => {
-    contractLine(`${payload.contractId} needs the owner: ${payload.question}`);
+    contractLine(`${payload.contractId} needs the owner: ${payload.question}`, payload);
   });
 
   onContract('CONTRACT_GATE_RESULT', (payload) => {
     const icon = payload.passed ? '\u2713' : '\u2717';
-    contractLine(`  ${icon} Gate: ${payload.gate} ${payload.skipped ? 'skipped' : payload.passed ? 'passed' : 'FAILED'}`);
+    contractLine(`  ${icon} Gate: ${payload.gate} ${payload.skipped ? 'skipped' : payload.passed ? 'passed' : 'FAILED'}`, payload);
   });
 
   onContract('CONTRACT_COMMITTED', (payload) => {
     const hash = payload.hash ? ` (${payload.hash.slice(0, 7)})` : '';
-    contractLine(`Commit ${payload.status} for ${payload.contractId}${hash}: ${payload.note}`);
+    contractLine(`Commit ${payload.status} for ${payload.contractId}${hash}: ${payload.note}`, payload);
   });
 
   onContract('CONTRACT_PASSED', (payload) => {
-    contractLine(`\u2713 ${payload.contractId} PASSED: ${payload.criteriaMet} of ${payload.criteriaJudged} criteria met, ${payload.nudges} corrections`);
+    contractLine(`\u2713 ${payload.contractId} PASSED: ${payload.criteriaMet} of ${payload.criteriaJudged} criteria met, ${payload.nudges} corrections`, payload);
     // A conversation follow-up is read by the person, not the operator, so it
     // is named in plain words. The `key` keeps the id: it is a dedupe key
     // nobody reads. See channels/workstream-labels.ts.
@@ -252,7 +251,7 @@ export function registerContractRuntimeEvents(options: ContractRuntimeEventBridg
   });
 
   onContract('CONTRACT_FAILED', (payload) => {
-    contractLine(`\u2717 ${payload.contractId} FAILED: ${payload.reason.slice(0, 80)}`);
+    contractLine(`\u2717 ${payload.contractId} FAILED: ${payload.reason}`, payload);
     queueConversationFollowUp?.({
       key: `contract:${payload.contractId}:failed`,
       summary: `${workstreamLabel(payload.contractId)} could not be finished: ${payload.reason.slice(0, 120)}`,
@@ -262,7 +261,7 @@ export function registerContractRuntimeEvents(options: ContractRuntimeEventBridg
   });
 
   onContract('CONTRACT_CANCELLED', (payload) => {
-    contractLine(`${payload.contractId} cancelled: ${payload.reason.slice(0, 80)} (${payload.filesModified} files modified)`);
+    contractLine(`${payload.contractId} cancelled: ${payload.reason} (${payload.filesModified} files modified)`, payload);
     queueConversationFollowUp?.({
       key: `contract:${payload.contractId}:cancelled`,
       summary: `${workstreamLabel(payload.contractId)} was cancelled: ${payload.reason.slice(0, 120)}`,
@@ -332,7 +331,7 @@ export function registerHostRuntimeEvents(
       const durationSeconds = record.completedAt !== undefined ? Math.round((record.completedAt - record.startedAt) / 1000) : 0;
       const taskSnippet = record.task.length > 50 ? `${record.task.slice(0, 50)}\u2026` : record.task;
       withRouter(getSystemMessageRouter, (router) => {
-        router.low(`[Agents] \u2713 ${record.template} ${payload.agentId.slice(-8)}: "${taskSnippet}" \u2014 completed in ${durationSeconds}s (${record.toolCallCount} tool calls)`);
+        router.low(`[Agents] \u2713 ${record.template} ${payload.agentId.slice(-8)}: "${taskSnippet}" \u2014 completed in ${durationSeconds}s (${record.toolCallCount} tool calls)`, payload);
       });
       queueConversationFollowUp?.({
         key: `agent:${payload.agentId}:completed`,
@@ -349,7 +348,7 @@ export function registerHostRuntimeEvents(
       const durationSeconds = record.completedAt !== undefined ? Math.round((record.completedAt - record.startedAt) / 1000) : 0;
       const taskSnippet = record.task.length > 50 ? `${record.task.slice(0, 50)}\u2026` : record.task;
       withRouter(getSystemMessageRouter, (router) => {
-        router.low(`[Agents] \u2717 ${record.template} ${payload.agentId.slice(-8)}: "${taskSnippet}" \u2014 failed in ${durationSeconds}s: ${payload.error.slice(0, 80)}`);
+        router.low(`[Agents] \u2717 ${record.template} ${payload.agentId.slice(-8)}: "${taskSnippet}" \u2014 failed in ${durationSeconds}s: ${payload.error}`, payload);
       });
       queueConversationFollowUp?.({
         key: `agent:${payload.agentId}:failed`,

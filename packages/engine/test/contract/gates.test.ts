@@ -8,6 +8,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RuntimeEventBus } from '../../sdk/src/platform/runtime/events/index.js';
+import type { ContractEvent } from '../../sdk/src/events/index.js';
 import type { ContractConfigReader } from '../../sdk/src/platform/contract/config.js';
 import {
   executeGateCommand,
@@ -116,7 +117,7 @@ describe('runContractGates', () => {
   test('runs enabled gates in order, records skips as passes, and emits a result event for each', async () => {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts: {} }));
     const bus = new RuntimeEventBus();
-    const events: unknown[] = [];
+    const events: ContractEvent[] = [];
     const off = bus.onDomain('contracts', (envelope) => {
       events.push(envelope.payload);
     });
@@ -146,10 +147,12 @@ describe('runContractGates', () => {
     expect(results[0]!.output).toBe('Skipped: no test script in package.json');
     expect(seen).toEqual(['test', 'custom', 'broken']);
     expect(events).toEqual([
-      { type: 'CONTRACT_GATE_RESULT', contractId: 'ctr-0a1b2c3d', targetId: 'u1', gate: 'test', passed: true, skipped: true, durationMs: 0 },
+      { type: 'CONTRACT_GATE_RESULT', contractId: 'ctr-0a1b2c3d', targetId: 'u1', gate: 'test', passed: true, skipped: true, durationMs: 0, occurrenceId: expect.any(String) },
       expect.objectContaining({ type: 'CONTRACT_GATE_RESULT', gate: 'custom', passed: true, skipped: false }),
       expect.objectContaining({ type: 'CONTRACT_GATE_RESULT', gate: 'broken', passed: false, skipped: false }),
     ]);
+    expect(events.every((event) => typeof event.occurrenceId === 'string' && event.occurrenceId.trim().length > 0)).toBe(true);
+    expect(new Set(events.map((event) => event.occurrenceId)).size).toBe(3);
     expect(failedGates(results).map((result) => result.gate)).toEqual(['broken']);
   });
 
