@@ -187,7 +187,7 @@ export async function openNativeIntake(
         operation?: AbortSignal
       ) {
         // Validate before allocating identities. Deliberate identical inputs still get new IDs.
-        nativeConversationIntakeCaptureRequestSchema.parse({
+        const original = nativeConversationIntakeCaptureRequestSchema.parse({
           requestId: "validation",
           inputId: "validation",
           ...source,
@@ -198,7 +198,8 @@ export async function openNativeIntake(
           command: nativeConversationIntakeCaptureRequestSchema.parse({
             requestId: newId(),
             inputId: newId(),
-            ...source,
+            text: original.text,
+            unsupportedSources: original.unsupportedSources,
           }),
           createdAt: Date.now(),
         };

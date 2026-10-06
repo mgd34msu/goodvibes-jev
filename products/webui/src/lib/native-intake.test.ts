@@ -203,6 +203,18 @@ test("a deliberate identical request receives new IDs without text normalization
   expect(h.rows.map((row) => row.command.text)).toEqual([original, original]);
 });
 
+test("submission snapshots the original source before asynchronous authorization", async () => {
+  const h = harness();
+  const session = await h.open();
+  const source = { text: original, unsupportedSources: [{ kind: "file" as const, label: "Original reference" }] };
+  const pending = session.submit(source, () => undefined);
+  source.text = "Changed after submission";
+  source.unsupportedSources[0]!.label = "Changed reference";
+  await pending;
+  expect(h.rows[0]?.command.text).toBe(original);
+  expect(h.rows[0]?.command.unsupportedSources).toEqual([{ kind: "file", label: "Original reference" }]);
+});
+
 test("journal failure prevents every capture/admission request", async () => {
   const h = harness();
   const session = await h.open();
