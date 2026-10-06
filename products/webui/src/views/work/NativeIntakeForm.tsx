@@ -329,19 +329,23 @@ export function NativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
                 Cancel intake
               </Button>
             )}
-            {(terminal || result?.kind === "not-found") && (
-              <Button
-                disabled={Boolean(busy)}
-                onClick={() => {
-                  setSelected(undefined);
-                  setResult(undefined);
-                  setError(undefined);
-                }}
-              >
-                New request
-              </Button>
-            )}
+            <Button
+              disabled={Boolean(busy)}
+              onClick={() => {
+                setSelected(undefined);
+                setResult(undefined);
+                setError(undefined);
+              }}
+            >
+              New request
+            </Button>
           </div>
+          {!terminal && (
+            <p className="dv-muted">
+              A separate new request keeps this original saved. It does not cancel any daemon intake
+              for this original.
+            </p>
+          )}
         </>
       )}
       {records.length > 0 && (

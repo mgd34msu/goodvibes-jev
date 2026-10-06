@@ -333,3 +333,55 @@ test("replacing the paired identity hides the old source and ignores its late ad
   expect(daemon.writes.map((request) => request.operation)).toEqual(["capture", "admit"]);
   expect((await originals(page))[0]?.command).toEqual(daemon.capture.input);
 });
+
+test("a stale original does not prevent a separately identified request under the same current owner", async ({
+  page,
+}) => {
+  const daemon = await installNativeIntakeDaemon(page, "work");
+  await page.goto("/?view=work");
+  let dialog = await open(page);
+  await dialog
+    .getByRole("textbox", { name: "Original request", exact: true })
+    .fill(daemon.capture.input.text);
+  await dialog.getByRole("button", { name: "Submit", exact: true }).click();
+  await expect(
+    dialog.getByRole("heading", { name: "Admission receipt", exact: true })
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  // Explicit browser failure injection; the real daemon test proves a workspace
+  // registration can stale this capture without changing owner/project identity.
+  await page.route("**/api/work-ledger/intake/get", (route) =>
+    route.fulfill({
+      status: 409,
+      json: { error: { code: "NATIVE_INTAKE_STALE", message: "Native conversation intake stale" } },
+    })
+  );
+  dialog = await open(page);
+  await expect(dialog.getByRole("alert")).toBeVisible();
+  await expect(
+    dialog.getByText("It does not cancel any daemon intake", { exact: false })
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "New request", exact: true }).click();
+  let fresh: unknown;
+  await page.route("**/api/work-ledger/intake/capture", async (route) => {
+    fresh = route.request().postDataJSON();
+    await route.fulfill({
+      status: 503,
+      json: { error: "Owned fixture stops after inspecting the fresh request" },
+    });
+  });
+  await dialog
+    .getByRole("textbox", { name: "Original request", exact: true })
+    .fill("Fresh source for the current workspace scope");
+  await dialog.getByRole("button", { name: "Submit", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toBeVisible();
+  expect(fresh).toMatchObject({
+    text: "Fresh source for the current workspace scope",
+    unsupportedSources: [],
+  });
+  const stored = await originals(page);
+  expect(stored).toHaveLength(2);
+  expect(new Set(stored.map((record) => record.command.inputId)).size).toBe(2);
+  expect(new Set(stored.map((record) => record.command.requestId)).size).toBe(2);
+  expect(stored.some((record) => record.command.text === daemon.capture.input.text)).toBe(true);
+});

@@ -46,6 +46,23 @@ async function begin(f: Awaited<ReturnType<typeof createNativeIntakeHttpFixture>
   return { input, auth, project, lookupBefore, capture, getCaptured, transition };
 }
 
+test('a new workspace scope can stale an original while allowing fresh capture by the same paired owner', async () => {
+  const f = await createNativeIntakeHttpFixture();
+  try {
+    const base = await begin(f, source('before-scope-change'));
+    const another = join(f.daemon.workingDirectory, 'another-workspace');
+    mkdirSync(another);
+    await f.scopes.add(another);
+    const stale = await f.wire('workLedger.intake.get', { inputId: base.input.inputId });
+    expect(stale.status).toBe(409);
+    expect(stale.body).toContain('NATIVE_INTAKE_STALE');
+    const fresh = await f.wire('workLedger.intake.capture', source('after-scope-change'));
+    expect(result(fresh).kind).toBe('captured');
+    expect(f.requests).toHaveLength(0);
+    expect(f.fake.requests).toHaveLength(0);
+  } finally { await f.stop(); }
+}, 30_000);
+
 test('native HTTP auth requires current paired ownership and both declared ledger scopes', async () => {
   const f = await createNativeIntakeHttpFixture();
   try {

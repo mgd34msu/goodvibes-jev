@@ -75,7 +75,7 @@ export async function createNativeIntakeHttpFixture(options: {
     return { methodId, method: route.method, path: route.path, status: response.status,
       ...(body === undefined ? {} : { requestBody: body }), body: await response.text() };
   }
-  return { daemon, paired, fake, requests, wire,
+  return { daemon, paired, fake, requests, wire, scopes,
     async stop() { try { await daemon.stop(); } finally { read.mockRestore(); restoreDiscovery(); } },
   };
 }

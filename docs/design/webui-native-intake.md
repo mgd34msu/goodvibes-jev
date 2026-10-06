@@ -43,9 +43,12 @@ Opening, reopening and Inspect only read the daemon's capture. A lost capture or
 admission acknowledgement remains unknown until that lookup answers. Retry
 submission first inspects, and only replays the immutable capture if not found,
 or invokes admission if captured. It never re-admits processing or terminal
-inputs. After a not-found lookup, New request also permits a deliberately new
-input while keeping the original in Saved requests; it makes no claim that a
-remote capture was cancelled. Resume is offered only for `processing` with `recovery: required`, and
+inputs. While idle, New request permits a deliberately separate input while
+keeping the original in Saved requests, even if that original is stale or its
+remote outcome remains unknown. The UI explicitly says this does not cancel
+remote intake. In particular, a legitimate host workspace-scope revision change
+can stale an older capture while permitting a fresh capture by the same paired
+owner. Resume is offered only for `processing` with `recovery: required`, and
 rechecks that state before using the returned source revision. No background
 poll, retry loop or implicit recovery rerolls unchanged semantic evidence.
 
