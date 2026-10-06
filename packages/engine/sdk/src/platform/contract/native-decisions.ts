@@ -6,7 +6,7 @@ import { decideAutonomous, type AutonomousDecision } from '../gate/autonomous-de
 import { autonomousSourceEvidence } from '../permissions/autonomous.js';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { assertNativeContractSource, nativeContractSourceForAdmission } from './native-source.js';
-import { assertDurableCheckpoint } from './durable-admission.js';
+import { assertDurableCheckpoint, criteriaSetIdForWork } from './durable-admission.js';
 import { isTerminalContractStatus, type Contract, type ContractView, type ContractRouteSelector } from './types.js';
 
 export type NativeContractStage = 'shape' | 'plan' | 'evidence' | 'stall' | 'fix-plan' | 'attempts';
@@ -198,6 +198,26 @@ function nativeSemanticPort(contract: Contract, owner: NativeContractServices, s
   return nativeContractPort(contract, owner, metered, signal);
 }
 
+/**
+ * The durable owner binds its namespaced criteria identity to the exact work.
+ * Only that proven identity uses the shared evaluator's canonical SHA encoding;
+ * arbitrary source/reference strings still cross the unmodified privacy guard.
+ * The original namespaced ID remains in the source and durable admission.
+ */
+function nativeCriteriaEvidence(contract: Contract): JevVersionRef {
+  const source = contract.nativeSource!;
+  const admission = contract.durableAdmission;
+  if (admission !== undefined) {
+    assertDurableCheckpoint(contract, admission);
+    const canonicalId = criteriaSetIdForWork(admission.key.workId);
+    if (source.criteriaId === canonicalId && admission.key.criteriaId === canonicalId
+      && source.criteriaRevision === admission.key.criteriaRevision) {
+      return { id: canonicalId.slice('criteria:'.length), revision: source.criteriaRevision };
+    }
+  }
+  return { id: source.criteriaId, revision: source.criteriaRevision };
+}
+
 /** Reconstructs current bindings after a real external change. No stored receipt is replayed on resume. */
 export async function decideNativeContract(contract: Contract, services: NativeContractServices | undefined, input: NativeContractDecisionInput): Promise<NativeContractDecision> {
   const owner = ownedServices(services);
@@ -249,7 +269,7 @@ export async function decideNativeContract(contract: Contract, services: NativeC
       site: `contract.native.${input.stage}`, instructions: INSTRUCTIONS, actionDescription: input.action, binding,
       state: { source: autonomousSourceEvidence(source), evidence, externalConditions: capturedConditions.map(condition => ({ description: condition.description })) } as unknown as EntryType,
       evidence: [{ id: 'native-source', revision: hashState(source as unknown as EntryType) }, { id: 'operation-evidence', revision: hashState(evidence) },
-        { id: contract.nativeSource!.criteriaId, revision: contract.nativeSource!.criteriaRevision }, { id: 'source-revision', revision: contract.nativeSource!.sourceRevision }],
+        nativeCriteriaEvidence(contract), { id: 'source-revision', revision: contract.nativeSource!.sourceRevision }],
       supportingDecisionIds: input.decisionIds,
       continuations: input.continuations.map(continuation => ({ ref: { id: continuation.id, kind: continuation.kind, revision: actionRevision }, description: continuation.description, input: continuation.input ?? null })),
       conditions: capturedConditions, allowAct: input.allowAct, assertCurrent: active, signal: input.signal,

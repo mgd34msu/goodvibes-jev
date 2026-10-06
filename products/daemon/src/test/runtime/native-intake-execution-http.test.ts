@@ -1,5 +1,6 @@
 /** Real DaemonServer source2 admission -> native graph HTTP proof and unchanged browser replay captures. */
 import { expect, spyOn, test } from 'bun:test';
+import * as ledger from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -85,6 +86,37 @@ async function waitStatus(f: Fixture, identity: NativeWorkExecutionRequest, pred
   }
 }
 const unitRequests = (f: Fixture) => f.requests.filter(request => request.systemPrompt?.includes('Execute this existing native work unit yourself'));
+
+test('generated criteria digest with a card-shaped digit span executes through the real native daemon graph', async () => {
+  const workId = 'work-a73a83d8-d064-4be3-8217-012ebfe72275';
+  const criteriaId = 'criteria:d6b72d9f28026994604091a0bbac8dfa87467c68300f6960922429de420bbdfb';
+  const create = ledger.createWorkLedger;
+  // Control only the host's generated work identity; all storage, source,
+  // authority, admission, decision, runner and HTTP paths remain production code.
+  const generated = spyOn(ledger, 'createWorkLedger').mockImplementation(options => create({ ...options,
+    clock: { ...options.clock, newId: kind => kind === 'work' ? workId : options.clock.newId(kind) },
+  }));
+  let f: Fixture | undefined;
+  try {
+    f = await createNativeIntakeExecutionHttpFixture();
+    const base = await admitted(f, 'criteria-reference');
+    expect(base.identity.workId).toBe(workId);
+    execution(await f.wire('workLedger.execution.start', base.identity));
+    const terminal = await waitStatus(f, base.identity, value => value.kind === 'execution'
+      && value.progress?.status === 'passed' && value.settlement?.state === 'published');
+    expect(execution(terminal)).toMatchObject({ kind: 'execution', progress: { status: 'passed' }, settlement: { state: 'published' } });
+    expect(unitRequests(f)).toHaveLength(1);
+    const contract = f.contracts()[0]!;
+    expect(contract.nativeSource!.criteriaId).toBe(criteriaId);
+    expect(contract.durableAdmission!.key).toMatchObject({ workId, criteriaId });
+    const plans = contract.nativeDecisions!.history.filter(record => record.stage === 'plan');
+    expect(plans).toHaveLength(1);
+    expect(plans[0]!.decision.outcome).toBe('act');
+    expect(plans[0]!.decision.evidence).toContainEqual({ id: criteriaId.slice('criteria:'.length), revision: '1' });
+    expect(plans[0]!.decision.judgmentDecisionIds.length).toBeGreaterThan(0);
+    expect(f.judgmentRequests.some(request => request.context?.site === 'contract.native.plan')).toBe(true);
+  } finally { try { await f?.stop(); } finally { generated.mockRestore(); } }
+}, 30_000);
 
 test('source2 work executes once in the production native graph and reconciles lost start and settlement responses', async () => {
   const entered = intakeBarrier(), release = intakeBarrier();
