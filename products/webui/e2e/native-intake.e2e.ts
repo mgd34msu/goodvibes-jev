@@ -110,11 +110,24 @@ test("one Submit durably preserves exact text then lets Jev admit work, without 
     )
   ).toEqual([]);
   await expectNoHorizontalScroll(page);
-  const screenshot = test.info().outputPath("native-admission-receipt.png");
+  const screenshot = test.info().outputPath("native-source-admission.png");
   await page.screenshot({ path: screenshot, fullPage: true });
   await test
     .info()
-    .attach("Native admission receipt", { path: screenshot, contentType: "image/png" });
+    .attach("Native original source and admission", { path: screenshot, contentType: "image/png" });
+  const receipt = dialog
+    .locator(".dv-section")
+    .filter({ has: page.getByRole("heading", { name: "Admission receipt", exact: true }) });
+  await receipt.scrollIntoViewIfNeeded();
+  await expect(receipt).toBeInViewport();
+  const receiptScreenshot = test.info().outputPath("native-admission-receipt.png");
+  await page.screenshot({ path: receiptScreenshot, fullPage: true });
+  await test
+    .info()
+    .attach("Native admission receipt details", {
+      path: receiptScreenshot,
+      contentType: "image/png",
+    });
 });
 
 test("lost capture acknowledgement survives reload; reopening only inspects and retry keeps the original IDs", async ({
