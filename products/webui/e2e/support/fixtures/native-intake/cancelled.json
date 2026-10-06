@@ -1,0 +1,114 @@
+{
+  "source": "owned-synthetic-provider; real authenticated DaemonServer HTTP",
+  "name": "cancelled",
+  "input": {
+    "requestId": "webui-native-cancelled-request",
+    "inputId": "webui-native-cancelled-input",
+    "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+    "unsupportedSources": []
+  },
+  "auth": {
+    "methodId": "control.auth.current",
+    "method": "GET",
+    "path": "/api/control-plane/auth",
+    "status": 200,
+    "body": "{\"authenticated\":true,\"authMode\":\"session\",\"tokenPresent\":true,\"authorizationHeaderPresent\":true,\"sessionCookiePresent\":false,\"principalId\":\"pairing:pair-66769cdd-ee91-412f-8c12-141ba91a1464\",\"principalKind\":\"token\",\"admin\":true,\"scopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:work-ledger\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"roles\":[]}"
+  },
+  "project": {
+    "methodId": "workLedger.project",
+    "method": "GET",
+    "path": "/api/work-ledger/project",
+    "status": 200,
+    "body": "{\"projectId\":\"workspace-3935c5a9d9\"}"
+  },
+  "lookupBefore": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-cancelled-input"
+    },
+    "body": "{\"kind\":\"not-found\"}"
+  },
+  "capture": {
+    "methodId": "workLedger.intake.capture",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/capture",
+    "status": 200,
+    "requestBody": {
+      "requestId": "webui-native-cancelled-request",
+      "inputId": "webui-native-cancelled-input",
+      "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+      "unsupportedSources": []
+    },
+    "body": "{\"kind\":\"captured\",\"projectId\":\"workspace-3935c5a9d9\",\"requestId\":\"webui-native-cancelled-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-cancelled-input\",\"sourceId\":\"30a1fc8c29551f56cab6b87c2718520348ba48d06f47f374df7cfa5a37e77862\",\"sourceRevision\":\"ed715df4ec2302de9ba9d8ff4983f6828c5a61bcf08bd27efda739ffed73a83b\",\"sessionId\":\"native-work:workspace-3935c5a9d9\"}}"
+  },
+  "getCaptured": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-cancelled-input"
+    },
+    "body": "{\"kind\":\"captured\",\"projectId\":\"workspace-3935c5a9d9\",\"requestId\":\"webui-native-cancelled-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-cancelled-input\",\"sourceId\":\"30a1fc8c29551f56cab6b87c2718520348ba48d06f47f374df7cfa5a37e77862\",\"sourceRevision\":\"ed715df4ec2302de9ba9d8ff4983f6828c5a61bcf08bd27efda739ffed73a83b\",\"sessionId\":\"native-work:workspace-3935c5a9d9\"}}"
+  },
+  "transition": {
+    "inputId": "webui-native-cancelled-input",
+    "sourceRevision": "ed715df4ec2302de9ba9d8ff4983f6828c5a61bcf08bd27efda739ffed73a83b"
+  },
+  "pending": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-cancelled-input"
+    },
+    "body": "{\"kind\":\"processing\",\"projectId\":\"workspace-3935c5a9d9\",\"requestId\":\"webui-native-cancelled-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-cancelled-input\",\"sourceId\":\"30a1fc8c29551f56cab6b87c2718520348ba48d06f47f374df7cfa5a37e77862\",\"sourceRevision\":\"ed715df4ec2302de9ba9d8ff4983f6828c5a61bcf08bd27efda739ffed73a83b\",\"sessionId\":\"native-work:workspace-3935c5a9d9\"},\"stage\":\"extracting\",\"recovery\":\"pending\"}"
+  },
+  "admit": {
+    "methodId": "workLedger.intake.admit",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/admit",
+    "status": 503,
+    "requestBody": {
+      "inputId": "webui-native-cancelled-input",
+      "sourceRevision": "ed715df4ec2302de9ba9d8ff4983f6828c5a61bcf08bd27efda739ffed73a83b"
+    },
+    "body": "{\"error\":\"Native conversation intake is unavailable; retain the original input identity\",\"hint\":\"The provider is temporarily unavailable. Retry shortly or switch providers if the issue persists.\",\"code\":\"NATIVE_INTAKE_UNAVAILABLE\",\"category\":\"service\",\"status\":503}"
+  },
+  "get": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-cancelled-input"
+    },
+    "body": "{\"kind\":\"cancelled\",\"projectId\":\"workspace-3935c5a9d9\",\"requestId\":\"webui-native-cancelled-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-cancelled-input\",\"sourceId\":\"30a1fc8c29551f56cab6b87c2718520348ba48d06f47f374df7cfa5a37e77862\",\"sourceRevision\":\"ed715df4ec2302de9ba9d8ff4983f6828c5a61bcf08bd27efda739ffed73a83b\",\"sessionId\":\"native-work:workspace-3935c5a9d9\"}}"
+  },
+  "resume": {
+    "methodId": "workLedger.intake.resume",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/resume",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-cancelled-input",
+      "sourceRevision": "ed715df4ec2302de9ba9d8ff4983f6828c5a61bcf08bd27efda739ffed73a83b"
+    },
+    "body": "{\"kind\":\"cancelled\",\"projectId\":\"workspace-3935c5a9d9\",\"requestId\":\"webui-native-cancelled-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-cancelled-input\",\"sourceId\":\"30a1fc8c29551f56cab6b87c2718520348ba48d06f47f374df7cfa5a37e77862\",\"sourceRevision\":\"ed715df4ec2302de9ba9d8ff4983f6828c5a61bcf08bd27efda739ffed73a83b\",\"sessionId\":\"native-work:workspace-3935c5a9d9\"}}"
+  },
+  "cancel": {
+    "methodId": "workLedger.intake.cancel",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/cancel",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-cancelled-input",
+      "sourceRevision": "ed715df4ec2302de9ba9d8ff4983f6828c5a61bcf08bd27efda739ffed73a83b"
+    },
+    "body": "{\"kind\":\"cancelled\",\"projectId\":\"workspace-3935c5a9d9\",\"requestId\":\"webui-native-cancelled-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-cancelled-input\",\"sourceId\":\"30a1fc8c29551f56cab6b87c2718520348ba48d06f47f374df7cfa5a37e77862\",\"sourceRevision\":\"ed715df4ec2302de9ba9d8ff4983f6828c5a61bcf08bd27efda739ffed73a83b\",\"sessionId\":\"native-work:workspace-3935c5a9d9\"}}"
+  }
+}

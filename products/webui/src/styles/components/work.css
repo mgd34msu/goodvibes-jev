@@ -422,3 +422,8 @@
   font-size: var(--text-meta);
   overflow-wrap: anywhere;
 }
+/* Exact source text wraps without losing whitespace or overflowing narrow dialogs. */
+.native-intake__source { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.native-intake__saved { list-style: none; padding: 0; display: grid; gap: 8px; }
+.native-intake__saved .gv-button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.native-intake .work-form__actions { flex-wrap: wrap; }
