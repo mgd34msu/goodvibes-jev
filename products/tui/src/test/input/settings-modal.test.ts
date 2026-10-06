@@ -28,7 +28,7 @@ function makeTmpDir(): string {
 }
 
 /** Select a real inline string field, independent of category/schema ordering.
- * display.theme is also a string but intentionally opens its dedicated picker.
+ * display.theme is an enum with a dedicated picker, not an inline text field.
  */
 function selectPlainStringSetting(modal: SettingsModal): boolean {
   modal.categoryIndex = SETTINGS_CATEGORIES.indexOf('provider');

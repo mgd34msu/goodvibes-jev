@@ -145,17 +145,31 @@ authority and `read:work-ledger`/`write:work-ledger` scopes. Inspection receipts
 not grant those capabilities or authorize execution. Historical escalation
 records stay historical; they are not a new semantic approval/reply workflow.
 
-The canonical engine schema still declares `display.theme` as a string and has
-no `display.treeGlyphs` setting. The upstream theme-selection/tree-glyph behavior
-and remaining settings consumers need authoritative schema reconciliation. The
-current session permission-mode verbs expose their fixed mode enums; they do not
+The canonical engine schema now supplies the pinned upstream 13-choice
+`display.theme` enum and `goodvibes` default. General settings consumes generated
+metadata; TUI and Agent retain their live-preview picker and enum cycling.
+Explicit `vaporwave` retains the neon palette. Recognized saved case/whitespace
+forms are adapted in the read view without ingestion rewriting files; explicit
+bulk saves serialize the resolved canonical name, and new writes remain exact. Palette ownership stays client-local, separate from light/dark mode
+and browser appearance. The key description and genuine credential reading are
+unchanged. See the [current source follow-up](../../../docs/audit/webui-acceptance-reconciliation.md#typed-terminal-palette-follow-up)
+for the functional proof boundaries.
+
+There is still no canonical `display.treeGlyphs` setting, and remaining settings
+reconciliation is separate. The current session permission-mode verbs expose their fixed mode enums; they do not
 supply the missing engine-owned gate-preset catalog for the replacement sheet.
 Unknown/null/zero/non-local context renders honestly.
 [THE-90](https://linear.app/the-artificery/issue/THE-90/preserve-unknown-context-windows)/
 [PR #46](https://github.com/mgd34msu/goodvibes-jev/pull/46) already implemented
-provider known-window/provenance semantics. Their propagation through the session
-wire and WebUI callers remains missing; it is separate from THE-70's browser
-judgment registry/issuer work.
+provider known-window/provenance semantics. Merged
+[PR #127](https://github.com/mgd34msu/goodvibes-jev/pull/127) now propagates the known
+ceiling, typed source/origin and accepted-input lower bound through the session
+wire and WebUI callers, preserving nullable unknown capacity and retiring stale
+model reads. This remains separate from THE-70's browser judgment registry/issuer
+work. Usage remains an estimated runtime snapshot, with no guaranteed multi-loop
+session accounting or dedicated realtime event for every cap/floor change; the
+[provider API](../../../packages/engine/docs/provider-model-api.md) records these
+boundaries.
 
 Complete source mappings, remaining semantic/parity work and final integrated
 acceptance remain open. The current CI browser matrix passed; genuine connected

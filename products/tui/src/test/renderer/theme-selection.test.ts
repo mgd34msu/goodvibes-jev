@@ -14,7 +14,10 @@ import {
   getBundledTheme,
   resolveTheme as resolveThemeFile,
 } from '@goodvibes-jev/engine/sdk/platform/presentation';
-import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import type { Line } from '@goodvibes-jev/engine/sdk/platform/types';
 import {
   activeTokens,
@@ -26,6 +29,7 @@ import {
   setActiveThemeMode,
   setActiveThemeName,
 } from '../../renderer/theme.ts';
+import { installBackgroundThemeProbe } from '../../renderer/terminal-bg-probe.ts';
 import { resolveConfiguredThemeName } from '../../renderer/theme-mode-config.ts';
 import {
   emptyTerminalPalette,
@@ -54,10 +58,48 @@ function config(value: unknown): Pick<ConfigManager, 'get'> {
   return { get: ((_key: string) => value) as unknown as ConfigManager['get'] };
 }
 
+/** Use each host's real startup seam, with an isolated persisted config. */
+function startWithConfig(configManager: ConfigManager): void {
+  installBackgroundThemeProbe({
+    configManager,
+    isTTY: false,
+    writeQuery: () => { throw new Error('Headless startup must not query the terminal'); },
+    requestRepaint: () => {},
+  });
+}
+
 describe('theme names', () => {
-  test('a fresh session renders with the goodvibes theme', () => {
+  test('a fresh ConfigManager applies goodvibes before the first paint', () => {
+    const manager = new ConfigManager({ configDir: makeProjectTempDir('theme-default'), readOnly: true });
+    // Start away from the default so a missing startup apply cannot pass.
+    setActiveThemeName('dracula');
+    setActiveThemeMode('light');
+    startWithConfig(manager);
+    expect(manager.get('display.theme')).toBe('goodvibes');
+    expect(manager.get('display.themeMode')).toBe('auto');
     expect(getActiveThemeName()).toBe('goodvibes');
     expect(activeTokens()).toEqual(bundledTokens('goodvibes', 'dark'));
+  });
+
+  test.each([
+    ['vaporwave', 'vaporwave', 'goodvibes-neon'],
+    ['goodvibes-neon', 'goodvibes-neon', 'goodvibes-neon'],
+    [' \tVAPORWAVE\n', 'vaporwave', 'goodvibes-neon'],
+    ['  Nord  ', 'nord', 'nord'],
+    ['  SYSTEM  ', 'system', 'system'],
+  ])('saved %j survives typed ingestion and reaches the startup palette', (saved, stored, active) => {
+    const configDir = makeProjectTempDir('theme-saved-name');
+    const path = join(configDir, 'settings.json');
+    const contents = JSON.stringify({ display: { theme: saved, themeMode: 'light' } });
+    writeFileSync(path, contents);
+    const manager = new ConfigManager({ configDir, readOnly: true });
+    startWithConfig(manager);
+    expect(manager.get('display.theme')).toBe(stored);
+    expect(manager.get('display.themeMode')).toBe('light');
+    expect(manager.getIngestionQuarantine()).toHaveLength(0);
+    expect(getActiveThemeName()).toBe(active);
+    expect(activeTokens()).toEqual(bundledTokens(active === 'system' ? 'goodvibes' : active, 'light'));
+    expect(readFileSync(path, 'utf8')).toBe(contents);
   });
 
   test('normalizeThemeName maps vaporwave to goodvibes-neon and unknowns to the default', () => {

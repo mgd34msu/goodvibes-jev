@@ -42,7 +42,7 @@ for reference.
 | `display.stream` | `true` | Stream responses token by token |
 | `display.lineNumbers` | `off` | Line-number mode: `off`, `code`, or `all` |
 | `display.collapseThreshold` | `30` | Lines before a block auto-collapses |
-| `display.theme` | `vaporwave` | Color palette name |
+| `display.theme` | `goodvibes` | Terminal palette: `goodvibes`, `goodvibes-neon`, `catppuccin`, `tokyonight`, `dracula`, `nord`, `gruvbox`, `one-dark`, `rosepine`, `solarized`, `github`, `system`, or the retained `vaporwave` alias for `goodvibes-neon` |
 | `display.themeMode` | `auto` | Light/dark appearance: `auto` probes the terminal background once at startup, `dark`/`light` force a fixed appearance. Independent of `display.theme` |
 | `display.showThinking` | `false` | Show model thinking traces |
 | `display.showTokenSpeed` | `false` | Show tokens/sec in status bar |

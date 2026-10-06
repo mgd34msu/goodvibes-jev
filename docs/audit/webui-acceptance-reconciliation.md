@@ -126,15 +126,20 @@ the browser replays prove a real connected deployment, user account or provider.
    [THE-90](https://linear.app/the-artificery/issue/THE-90/preserve-unknown-context-windows)/
    [PR #46](https://github.com/mgd34msu/goodvibes-jev/pull/46) already implemented
    provider known-window/provenance semantics, separating known ceilings from
-   budget estimates and preserving accepted-input floors. Propagation through the
-   session wire and WebUI callers is still missing; the context response has no
-   provenance fields. This engine/wire consumer dependency is separate from
-   THE-70's browser judgment registry/issuer lane. `display.theme` remains a string
-   and `display.treeGlyphs` has no
-   canonical schema entry. The session permission-mode verbs still expose fixed
+   budget estimates and preserving accepted-input floors. Merged
+   [PR #127](https://github.com/mgd34msu/goodvibes-jev/pull/127) now propagates the
+   known ceiling, typed source/origin and accepted-input lower bound through
+   session responses and WebUI callers. Unknown capacity remains nullable and
+   stale model reads are retired. This engine/wire integration is separate from
+   THE-70's browser judgment registry/issuer lane. Usage is still a stored runtime
+   estimate, not a fresh count or guaranteed multi-loop session accounting.
+   Cap/floor metadata changes have no dedicated realtime event, so refresh still
+   needs another invalidation or read; see the [provider API boundaries](../../packages/engine/docs/provider-model-api.md).
+   The current source supplies the
+   documented `display.theme` enum/default in the bounded follow-up below;
+   `display.treeGlyphs` still has no canonical schema entry. The session permission-mode verbs still expose fixed
    mode enums, not the engine-owned gate-preset catalog needed by the replacement
-   sheet. Do not invent provenance, a theme enum, glyph config or a local preset
-   policy; preserve deterministic current behavior while those contracts are
+   sheet. Do not invent provenance, glyph config or a local preset policy; preserve deterministic current behavior while those contracts are
    supplied and integrated.
    Sources: [completed SDK context integration](sdk-nullable-context-windows.md),
    [session renderer](../../products/webui/src/views/work/SessionDetail.tsx),
@@ -150,6 +155,35 @@ the browser replays prove a real connected deployment, user account or provider.
    [THE-35](https://linear.app/the-artificery/issue/THE-35/run-live-judgment-calibration-and-classification-proofs),
    [product validation runbook](../../products/webui/docs/testing-and-validation.md).
 
-Only merged code at the stated baseline is credited. Separate unpublished local
-candidates are not shipped evidence. No production implementation, workflow,
-release control, inventory requirement or test gate is changed by this ledger.
+## Typed terminal palette follow-up
+
+Current source adopts the exact 13 palette choices and `goodvibes` default from
+[pinned SDK `17eae838`](https://github.com/mgd34msu/goodvibes-sdk/blob/17eae838461a6529135fe2cad41332d2dc46cb27/packages/sdk/src/platform/config/schema-domain-core.ts).
+The existing palette-purpose description and genuine credential-key reading are
+unchanged. The public value type stays `string`; runtime writes use the enum.
+
+General settings uses the regenerated engine metadata. Functional tests cover
+real config dispatcher/handler/ConfigManager persistence, rejected writes,
+external reload and browser-appearance independence. TUI and Agent tests exercise
+canonical palette application, live preview/cancel/save and left/right enum
+cycling, including the `vaporwave` alias. Fresh/unset/reset values use `goodvibes`;
+recognized saved case/whitespace forms are normalized in the read view without
+rewriting files during ingestion. Key-specific unrelated writes retain the saved
+spelling; an explicit bulk save serializes the resolved canonical name. Unknown
+values retain ordinary quarantine.
+The setting remains client-local and separate from `display.themeMode`.
+
+Phone/desktop cases are authored for the production WebUI against a disk-backed
+config route fixture. Authorization, error categorization readings and unrelated
+app routes are synthetic; validation and config persistence are real. This does
+not establish genuine deployed-daemon acceptance. Browser execution and visual
+proof must be established by the candidate's CI evidence; the historical merged
+matrix above does not validate this follow-up.
+
+Sources: [engine behavior tests](../../packages/engine/test/config-terminal-theme.test.ts),
+[real route fixture](../../products/webui/e2e/support/terminal-theme-host.ts),
+[phone/desktop cases](../../products/webui/e2e/terminal-theme-config.e2e.ts).
+
+The merged counts above are credited only to their stated baseline. Separate
+unpublished local candidates are not shipped evidence. The inventory requirements
+and test gates are unchanged; no new release control is introduced.

@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- Terminal palette configuration now exposes the supported 13-choice enum and
+  defaults to `goodvibes`. Existing `vaporwave` values retain their neon palette;
+  recognized saved case/whitespace forms remain readable without ingestion
+  rewriting the file. Explicit bulk saves use the resolved canonical name; new
+  writes reject unsupported names. Palette ownership and light/dark
+  mode are unchanged.
+
 - Session context usage now carries the live model's known capacity and typed
   provenance. Unknown windows, percentages and remaining tokens stay nullable;
   accepted-input floors remain lower bounds. Hosted control bindings cannot

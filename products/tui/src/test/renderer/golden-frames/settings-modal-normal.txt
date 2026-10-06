@@ -21,7 +21,7 @@
 |           Subscriptions    1                                                                       |
 |           Judgment         4      lineNumbers                                      off             |
 |           Helper           3      collapseThreshold                                 30             |
-|           Tools            9      theme                                      vaporwave             |
+|           Tools            9      theme                                      goodvibes             |
 |           TTS              6      themeMode                                       auto             |
 |                    45 more ↓                                                                       |
 |                                                                                                    |

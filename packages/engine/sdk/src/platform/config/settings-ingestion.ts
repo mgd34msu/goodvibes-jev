@@ -297,6 +297,27 @@ function screenSectionShapes(
   walk(DEFAULT_CONFIG as unknown as Record<string, unknown>, '');
 }
 
+/**
+ * Both terminal hosts have always trimmed and lowercased recognized saved
+ * palette names. Preserve that read compatibility before the enum screen,
+ * without relaxing new writes or mapping an unknown name to a valid choice.
+ *
+ * This is only a load adapter, after file-writing migrations have run. It
+ * never persists its view: loading and unrelated key-specific writes keep the
+ * stored palette spelling. Explicit save()/saveProject() instead serialize
+ * resolved config, so they may persist the canonical spelling or omit a value
+ * equal to the default. Other settings, even other enums, are not adapted.
+ */
+function adaptStoredTerminalTheme(raw: Record<string, unknown>): Record<string, unknown> {
+  const display = raw.display;
+  if (!isPlainObject(display) || typeof display.theme !== 'string') return raw;
+  const name = display.theme.trim().toLowerCase();
+  if (name === display.theme) return raw;
+  const choices = CONFIG_SCHEMA.find((setting) => setting.key === 'display.theme')?.enumValues;
+  if (!choices?.includes(name)) return raw;
+  return { ...raw, display: { ...display, theme: name } };
+}
+
 /** Known keys whose stored value fails the schema entry that defines them. */
 function screenSchemaValues(
   raw: Record<string, unknown>,
@@ -397,6 +418,7 @@ export function screenSettingsForIngestion(
 ): SettingsIngestionResult {
   const notices: SettingsIngestionNotice[] = [];
   const unknownKeys: UnknownSettingKey[] = [];
+  raw = adaptStoredTerminalTheme(raw);
   screenSectionShapes(raw, file, notices);
   screenSchemaValues(raw, file, notices);
   screenSecretReferences(raw, file, notices);

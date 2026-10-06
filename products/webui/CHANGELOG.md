@@ -8,6 +8,11 @@ This project uses semantic versioning with `vMAJOR.MINOR.PATCH` git tags.
 
 ### Fixed
 
+- General settings now renders the engine-owned terminal palette as a 13-choice
+  selector, with `goodvibes` as the fresh default. Changes persist through the
+  connected host's client-local config store; browser appearance and other
+  terminal installations remain independent.
+
 - Session context shows the engine's known ceiling, source and accepted-input
   lower bound without promoting fallback or consensus estimates into capacity.
   Model changes supersede stale context reads; unsupported hosted scopes remain
