@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { makeOwnedTempDir } from '../helpers/owned-temp.js';
-import { prepareDaemonCli } from '../../../scripts/prepare-cli.js';
 import { runDaemonCli } from '../../cli/run.js';
 import { createDaemonCliConfiguration } from '../../cli/configuration.js';
 import { parseDaemonCli } from '../../cli/parser.js';
@@ -52,22 +51,16 @@ async function oneShot(args: string[], root?: string) {
 }
 
 test('emitted package entry retains the Bun shebang and canonical bin path', () => {
-  if (process.platform !== 'win32') {
-    // A fresh compiler output has no executable bits. Test the real finisher
-    // against an owned copy without changing an artifact another task may read.
-    const fresh = join(makeOwnedTempDir('daemon-cli-first-emission'), 'entrypoint.js');
-    writeFileSync(fresh, readFileSync(entrypoint), { mode: 0o644 });
-    prepareDaemonCli(fresh);
-    expect(statSync(fresh).mode & 0o111).toBe(0o111);
-  }
   const manifest = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as { bin: Record<string, string> };
-  expect(manifest.bin['goodvibes-daemon']).toBe('./dist/cli/entrypoint.js');
+  expect(manifest.bin['goodvibes-daemon']).toBe('./bin/goodvibes-daemon');
+  const launcher = fileURLToPath(new URL('../../../bin/goodvibes-daemon', import.meta.url));
+  if (process.platform !== 'win32') expect(statSync(launcher).mode & 0o111).toBe(0o111);
   expect(readFileSync(entrypoint, 'utf8').startsWith('#!/usr/bin/env bun\n')).toBe(true);
   const lock = Bun.JSONC.parse(readFileSync(new URL('../../../../../bun.lock', import.meta.url), 'utf8')) as { workspaces: Record<string, { bin?: Record<string, string> }> };
   expect(lock.workspaces['products/daemon']?.bin).toEqual(manifest.bin);
   for (const consumer of ['agent', 'tui']) {
     const bin = fileURLToPath(new URL(`../../../../${consumer}/node_modules/.bin/goodvibes-daemon`, import.meta.url));
-    expect(realpathSync(bin)).toBe(realpathSync(entrypoint));
+    expect(realpathSync(bin)).toBe(realpathSync(launcher));
     if (process.platform !== 'win32') {
       const root = makeOwnedTempDir('daemon-cli-bin-link');
       const invoked = spawnSync(bin, ['--version'], { timeout: 10_000, encoding: 'utf8',
@@ -234,4 +227,29 @@ test('cluster clipboard output is emitted byte-for-byte without a second escape'
       stdout: (line) => { lines.push(line); }, stderr() { throw new Error('No refusal expected'); } })).toBe(0);
     expect(lines).toEqual([rawOutput]);
   } finally { command.mockRestore(); }
+});
+
+test('fresh frozen workspace install links the launcher before compiled output exists', () => {
+  const root = makeOwnedTempDir('daemon-cli-frozen-order');
+  const daemon = join(root, 'packages', 'daemon');
+  const consumer = join(root, 'packages', 'consumer');
+  mkdirSync(join(daemon, 'bin'), { recursive: true }); mkdirSync(consumer, { recursive: true });
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'cli-link-fixture', private: true, workspaces: ['packages/*'] }));
+  writeFileSync(join(daemon, 'package.json'), JSON.stringify({ name: '@fixture/daemon', version: '1.0.0', bin: { 'fixture-daemon': 'bin/goodvibes-daemon' } }));
+  writeFileSync(join(consumer, 'package.json'), JSON.stringify({ name: '@fixture/consumer', version: '1.0.0', dependencies: { '@fixture/daemon': 'workspace:*' } }));
+  const launcher = join(daemon, 'bin', 'goodvibes-daemon');
+  writeFileSync(launcher, readFileSync(new URL('../../../bin/goodvibes-daemon', import.meta.url)), { mode: 0o755 });
+  const env = { ...process.env, HOME: root, BUN_INSTALL_CACHE_DIR: join(root, 'cache') };
+  for (const flag of ['--lockfile-only', '--frozen-lockfile']) {
+    const install = spawnSync(process.execPath, ['install', flag, '--ignore-scripts'], { cwd: root, env, timeout: 15_000, encoding: 'utf8' });
+    expect({ code: install.status, error: install.error?.message }).toEqual({ code: 0, error: undefined });
+  }
+  const link = join(consumer, 'node_modules', '.bin', 'fixture-daemon');
+  expect(realpathSync(link)).toBe(launcher);
+  expect(existsSync(join(daemon, 'dist'))).toBe(false);
+  // Only link/emission order is under test here; actual runtime proof is above.
+  mkdirSync(join(daemon, 'dist', 'cli'), { recursive: true });
+  writeFileSync(join(daemon, 'dist', 'cli', 'entrypoint.js'), 'console.log("compiled-fixture-reached");\n', { mode: 0o644 });
+  const invoked = spawnSync(process.execPath, [link], { cwd: root, env, timeout: 10_000, encoding: 'utf8' });
+  expect(invoked.status).toBe(0); expect(invoked.stdout.trim()).toBe('compiled-fixture-reached');
 });

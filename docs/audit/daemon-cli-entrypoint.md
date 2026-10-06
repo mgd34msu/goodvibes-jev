@@ -13,7 +13,8 @@ is PORT. The following bounded adaptation is deliberately not a completed
 migration mapping for that whole file:
 
 - `products/daemon/src/cli/entrypoint.ts` is the side-effectful Bun process entry,
-  declared as package bin `goodvibes-daemon`; `cli/index.ts` remains import-inert.
+  imported by the checked-in package bin `bin/goodvibes-daemon`; `cli/index.ts`
+  remains import-inert.
 - `cli/run.ts` adapts command/help/error dispatch and awaits the already-ported
   asynchronous config adapter. Existing one-shot adapters keep their own actual
   HTTP/WebSocket, service, receipt and settings behavior. No second runtime is
@@ -87,6 +88,8 @@ The Bun lock's daemon workspace bin metadata now matches the package manifest.
 Frozen installation links the binary in the actual Agent and TUI consumer
 workspaces; the root is not a daemon dependency consumer. The emitted CLI tests
 assert the manifest, lock, shebang and resolved consumer links, and execute
-those actual bin links. The build finisher sets executable mode after emission;
-a fresh tsc output cannot rely on installation having already chmodded it. Tarball smoke
+those actual bin links. A checked-in executable launcher exists before dist is
+built: Bun does not create bin links for a missing dist target during a fresh
+frozen install. A disposable dependency-free workspace proves frozen install
+before emission, then invokes that same launcher against its emitted fixture. Tarball smoke
 checks use the existing built workspace dependencies, not a registry release.

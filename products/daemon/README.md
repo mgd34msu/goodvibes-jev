@@ -1,7 +1,9 @@
 # Daemon command executable and explicit host (partial migration)
 
 This private workspace preserves the pinned daemon's 20-command vocabulary and
-now emits the canonical `goodvibes-daemon` Bun executable. It dispatches the
+now builds the canonical `goodvibes-daemon` Bun command. Its checked-in
+executable launcher imports the emitted CLI, so frozen installation can create
+consumer links before build. It dispatches the
 existing config, status/update, sessions, pairing, cluster, WebUI, wake-model,
 completion, help and version adapters. Its service inspection, stop and removal
 commands retain the existing guarded service adapters.

@@ -22,7 +22,7 @@
     }
   },
   "scripts": {
-    "build": "bunx tsc -p tsconfig.build.json && bun scripts/prepare-cli.ts",
+    "build": "bunx tsc -p tsconfig.build.json",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
     "test": "bun run build && bun ../../packages/engine/scripts/test.ts --cwd ../../products/daemon src/test",
     "start": "bun dist/cli/entrypoint.js"
@@ -34,9 +34,10 @@
     "@goodvibes-jev/judgment": "workspace:*"
   },
   "bin": {
-    "goodvibes-daemon": "./dist/cli/entrypoint.js"
+    "goodvibes-daemon": "./bin/goodvibes-daemon"
   },
   "files": [
+    "bin",
     "dist",
     "src",
     "README.md",
