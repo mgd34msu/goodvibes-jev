@@ -67,7 +67,10 @@ test("an absent journaled input can be left saved while composing a deliberate n
   await dialog.getByRole("button", { name: "Submit", exact: true }).click();
   await expect(dialog.getByRole("alert").first()).toBeVisible();
   await dialog.getByRole("button", { name: "Inspect", exact: true }).click();
-  await expect(dialog.getByRole("status")).toContainText("latest lookup found no capture");
+  // Source lookup can finish while the independent execution inspection is still busy.
+  await expect(
+    dialog.getByRole("status").filter({ hasText: "latest lookup found no capture" })
+  ).toContainText("latest lookup found no capture");
   await dialog.getByRole("button", { name: "New request", exact: true }).click();
   const field = dialog.getByRole("textbox", { name: "Original request", exact: true });
   await expect(field).toBeEnabled();
@@ -202,13 +205,13 @@ test("cancellation during a provider wait uses the real source identity and a la
   await dialog.getByRole("button", { name: "Submit", exact: true }).click();
   await expect.poll(() => daemon.pendingCount).toBe(1);
   await dialog.getByRole("button", { name: "Cancel intake", exact: true }).click();
-  await expect(dialog.getByRole("status")).toContainText(
-    "Intake was cancelled before work admission"
-  );
+  await expect(
+    dialog.getByRole("status").filter({ hasText: "Intake was cancelled before work admission" })
+  ).toContainText("Intake was cancelled before work admission");
   await daemon.release("admit");
-  await expect(dialog.getByRole("status")).toContainText(
-    "Intake was cancelled before work admission"
-  );
+  await expect(
+    dialog.getByRole("status").filter({ hasText: "Intake was cancelled before work admission" })
+  ).toContainText("Intake was cancelled before work admission");
   expect(daemon.writes.map((request) => request.operation)).toEqual(["capture", "admit", "cancel"]);
   expect(daemon.writes.at(-1)?.body).toEqual(daemon.capture.transition);
 });
@@ -242,12 +245,14 @@ for (const name of ["turn", "blocked", "refused"] as const)
     }
     await dialog.getByRole("button", { name: "Submit", exact: true }).click();
     await expect(dialog.getByRole("button", { name: "New request", exact: true })).toBeEnabled();
-    await expect(dialog.getByRole("status")).toContainText(
+    const disposition =
       name === "turn"
         ? "no model turn was dispatched"
         : name === "blocked"
           ? "blocked"
-          : "Jev refused"
+          : "Jev refused";
+    await expect(dialog.getByRole("status").filter({ hasText: disposition })).toContainText(
+      disposition
     );
     expect((await originals(page))[0]?.command).toEqual(daemon.capture.input);
     await expect(
