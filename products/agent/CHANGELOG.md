@@ -4,6 +4,11 @@ Product-facing release notes for GoodVibes Agent.
 
 ## Unreleased
 
+- Route remote owner conversation through durable original-source native intake
+  and identity-only hosted delivery. Preserve daemon-owned continuation context,
+  exact recovery and Stop targets, and fail closed on unknown outcomes without
+  body-only or local fallback. Show native diagnostics directly in the transcript.
+
 - Add explicit shared legacy import submission, Jev reconsideration and exact-request recovery. Durable command identity precedes dispatch; live paired authority and workspace generations fence native admission. Historical completion remains reported and unverified, with legacy source records retained.
 
 - Add owner-only interactive `/setup pair --apply` with shell-owned exact confirmation and cancellation across preview, migration and verification. Model and nested routes cannot apply; interrupted outcomes preserve existing recovery state without reminting.

@@ -118,6 +118,10 @@ const EXACT_METHOD_EXEMPTIONS: Readonly<Record<string, string>> = Object.freeze(
   'workLedger.intake.capture': 'native-conversation-source-capture',
   'workLedger.intake.admit': 'native-conversation-semantic-admission',
   'workLedger.intake.resume': 'native-conversation-durable-recovery',
+  // The route selects the Agent settings owner on the server and durably
+  // binds that surface to one admitted source. It is not a generic start alias
+  // or a caller-supplied surface selector; lookalike namespaces stay refused.
+  'workLedger.turn.startAgent': 'native-conversation-agent-delivery',
 });
 
 /**

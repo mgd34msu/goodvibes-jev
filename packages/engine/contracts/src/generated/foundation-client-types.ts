@@ -540,6 +540,7 @@ export interface OperatorMethodInputMap {
   "workLedger.turn.cancel": { projectId: string; inputId: string; sourceRevision: string; };
   "workLedger.turn.session": { sessionId: string; };
   "workLedger.turn.start": { projectId: string; inputId: string; sourceRevision: string; };
+  "workLedger.turn.startAgent": { projectId: string; inputId: string; sourceRevision: string; };
   "workLedger.turn.status": { projectId: string; inputId: string; sourceRevision: string; };
   "workspaces.registrations.add": { root: string; label?: string; origin?: string; checkpointEligible?: boolean; };
   "workspaces.registrations.list": {  };
@@ -1077,6 +1078,7 @@ export interface OperatorMethodOutputMap {
   "workLedger.turn.cancel": { projectId: string; requestId: string; inputId: string; sourceRevision: string; state: "cancelled" | "cancelling" | "completed" | "preparing" | "queued" | "recovery-required" | "running"; sessionId: null | string; brokerInputId: null | string; correlationId: null | string; } | { kind: "not-found"; };
   "workLedger.turn.session": { kind: "legacy"; } | { kind: "native"; projectId: string; sessionId: string; busy: boolean; };
   "workLedger.turn.start": { projectId: string; requestId: string; inputId: string; sourceRevision: string; state: "cancelled" | "cancelling" | "completed" | "preparing" | "queued" | "recovery-required" | "running"; sessionId: null | string; brokerInputId: null | string; correlationId: null | string; } | { kind: "not-found"; };
+  "workLedger.turn.startAgent": { projectId: string; requestId: string; inputId: string; sourceRevision: string; state: "cancelled" | "cancelling" | "completed" | "preparing" | "queued" | "recovery-required" | "running"; sessionId: null | string; brokerInputId: null | string; correlationId: null | string; } | { kind: "not-found"; };
   "workLedger.turn.status": { projectId: string; requestId: string; inputId: string; sourceRevision: string; state: "cancelled" | "cancelling" | "completed" | "preparing" | "queued" | "recovery-required" | "running"; sessionId: null | string; brokerInputId: null | string; correlationId: null | string; } | { kind: "not-found"; };
   "workspaces.registrations.add": { workspace: { root: string; registeredAt: string; label?: string; origin?: string; checkpointEligible?: boolean; }; alreadyRegistered: boolean; };
   "workspaces.registrations.list": { workspaces: readonly ({ root: string; registeredAt: string; label?: string; origin?: string; checkpointEligible?: boolean; })[]; declines: readonly ({ root: string; declinedAt: string; })[]; };

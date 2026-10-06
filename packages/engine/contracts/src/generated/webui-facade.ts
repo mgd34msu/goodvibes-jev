@@ -10,7 +10,7 @@ import type { OperatorMethodId } from './operator-method-ids.js';
  * call sites) hand-written on top of these generated primitives.
  *
  * Contract product version: 2.0.23
- * Methods: 534 total, 462 REST-routed, 72 ws-only invoke.
+ * Methods: 535 total, 463 REST-routed, 72 ws-only invoke.
  */
 
 export type WebuiHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -1860,6 +1860,10 @@ export const WEBUI_METHOD_ROUTES: Readonly<Record<string, WebuiRouteDefinition>>
     "method": "POST",
     "path": "/api/work-ledger/turn/start"
   },
+  "workLedger.turn.startAgent": {
+    "method": "POST",
+    "path": "/api/work-ledger/turn/startAgent"
+  },
   "workLedger.turn.status": {
     "method": "POST",
     "path": "/api/work-ledger/turn/status"
@@ -2494,6 +2498,7 @@ export const WEBUI_METHOD_DISPOSITION: Readonly<Record<string, WebuiMethodDispos
   "workLedger.turn.cancel": "rest",
   "workLedger.turn.session": "rest",
   "workLedger.turn.start": "rest",
+  "workLedger.turn.startAgent": "rest",
   "workLedger.turn.status": "rest",
   "workspaces.registrations.add": "rest",
   "workspaces.registrations.list": "rest",
@@ -26259,6 +26264,23 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
     }
   },
   "workLedger.turn.start": {
+    "input": {
+      "projectId": "sample",
+      "inputId": "sample",
+      "sourceRevision": "sample"
+    },
+    "output": {
+      "projectId": "sample",
+      "requestId": "sample",
+      "inputId": "sample",
+      "sourceRevision": "sample",
+      "state": "preparing",
+      "sessionId": "sample",
+      "brokerInputId": "sample",
+      "correlationId": "sample"
+    }
+  },
+  "workLedger.turn.startAgent": {
     "input": {
       "projectId": "sample",
       "inputId": "sample",

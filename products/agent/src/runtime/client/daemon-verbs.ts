@@ -66,6 +66,8 @@ export interface AgentDaemonVerbCallerOptions {
 interface ResolvedConnection {
   readonly baseUrl: string;
   readonly token: string;
+  readonly selectionIdentity: string;
+  readonly expectedPrincipalId?: string;
 }
 
 /**
@@ -108,7 +110,8 @@ function resolveConnection(options: AgentDaemonVerbCallerOptions): ResolvedConne
   if (!token.token) {
     return { reason: token.error ?? connectedHostTokenRequiredMessage(token.path) };
   }
-  return { baseUrl, token: token.token };
+  return { baseUrl, token: token.token, selectionIdentity: token.selectionIdentity,
+    ...(token.expectedPrincipalId === undefined ? {} : { expectedPrincipalId: token.expectedPrincipalId }) };
 }
 
 /**
@@ -126,7 +129,7 @@ function resolveConnection(options: AgentDaemonVerbCallerOptions): ResolvedConne
  */
 export function resolveConnectedHostConnection(
   options: AgentDaemonVerbCallerOptions,
-): { readonly baseUrl: string; readonly token: string } | { readonly reason: string } {
+): ResolvedConnection | { readonly reason: string } {
   return resolveConnection(options);
 }
 

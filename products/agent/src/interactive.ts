@@ -365,11 +365,15 @@ async function main() {
   // Where a turn runs, see shell/remote-conversation-wiring.ts.
   const remoteConversation = installRemoteConversationRouting(ctx, {
     render: () => render(),
-    notify: (message) => systemMessageRouter.high(message),
+    notify: (message) => systemMessageRouter.userAction(message),
   });
   unsubs.push(() => remoteConversation.dispose());
 
   const dispatchNativeTurn = async (state: NativeConversationIntakeState, spokenOutput = false): Promise<void> => {
+    if (state.hostedTurn && commandContext.nativeConversationIntake) {
+      await remoteConversation.observeNative(state, commandContext.nativeConversationIntake);
+      return;
+    }
     if (!state.turnReady || !state.turnPermit || state.result?.kind !== 'turn') return;
     const inputOptions = { ...(spokenOutput ? createSpokenTurnInputOptions() : {}), nativeConversationTurnPermit: state.turnPermit };
     if (spokenOutput) spokenTurns.submitNextTurn(state.result.text);
@@ -420,14 +424,14 @@ async function main() {
     if (processedText || content) {
       void (async () => {
         const outgoing = shellPassthrough.consumeContext(processedText);
-        // Routed to the daemon, or run here with the reason already stated.
-        if (await remoteConversation.routeOrExplain(outgoing, Boolean(content?.length))) return;
         const unsupportedSources = [...original.unsupportedSources];
         if (outgoing !== processedText) unsupportedSources.push({ kind: 'context', label: 'shell-context' });
         if (processedText !== text) unsupportedSources.push({ kind: 'context', label: 'composer-derived-text' });
         if (content?.some(part => part.type !== 'text')) unsupportedSources.push({ kind: 'image', label: 'attached-content' });
+        const source = { text: original.text, unsupportedSources };
+        if (await remoteConversation.routeNativeOrExplain(source, commandContext.nativeConversationIntake)) return;
         await routeNativeConversationInput({ intake: commandContext.nativeConversationIntake,
-          source: { text: original.text, unsupportedSources },
+          source,
           notify: message => { systemMessageRouter.userAction(message); render(); },
           dispatch: state => dispatchNativeTurn(state, options.spokenOutput),
         });

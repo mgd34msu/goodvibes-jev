@@ -19,7 +19,7 @@ import type { NativePairedSnapshot } from '../sdk/src/platform/security/http-aut
 const revision = { work: 1, criteria: 1, attempt: 1 };
 const cases: ReadonlyArray<readonly [string, Record<string, unknown>, string]> = [
   ['workLedger.turn.session', { sessionId: 'session' }, 'NATIVE_TURN_UNAVAILABLE'],
-  ...['start', 'status', 'cancel'].map(operation => [
+  ...['start', 'startAgent', 'status', 'cancel'].map(operation => [
     `workLedger.turn.${operation}`, { projectId: 'project', inputId: 'input', sourceRevision: 'revision' }, 'NATIVE_TURN_UNAVAILABLE',
   ] as const),
   ['workLedger.intake.capture', { requestId: 'request', inputId: 'input', text: 'Exact source', unsupportedSources: [] }, 'NATIVE_INTAKE_UNAVAILABLE'],
@@ -51,7 +51,7 @@ function fixture() {
   });
   registerNativeWorkExecutionGatewayMethods(catalog, { projectId: 'project', acquire: () => reached('execution-host') });
   registerNativeHostedTurnGatewayMethods(catalog, {
-    start: () => reached('workLedger.turn.start'), status: () => reached('workLedger.turn.status'),
+    start: () => reached('workLedger.turn.start'), startAgent: () => reached('workLedger.turn.startAgent'), status: () => reached('workLedger.turn.status'),
     cancel: () => reached('workLedger.turn.cancel'), close: async () => {},
     session: () => reached('workLedger.turn.session'),
     continuation: { capture: () => reached('continuation.capture'), assertCurrent() { throw new Error('Unused continuation owner'); } },
@@ -102,7 +102,25 @@ describe('native gateway required-field conformance under paired authority', () 
     const { catalog } = fixture();
     const registered = catalog.list().filter(descriptor => catalog.hasHandler(descriptor.id)).map(descriptor => descriptor.id).sort();
     expect(registered).toEqual(cases.map(([id]) => id).sort());
-    expect(registered).toHaveLength(15);
+    expect(registered).toHaveLength(16);
+  });
+
+  for (const operation of ['start', 'startAgent'] as const) test(`${operation} selects only its server entry point and rejects body or query surface overrides`, async () => {
+    const f = fixture(), id = `workLedger.turn.${operation}`;
+    const body = { projectId: 'project', inputId: 'input', sourceRevision: 'revision' };
+    for (const field of ['originSurface', 'surface']) {
+      await expect(f.catalog.invoke(id, f.invocation({ ...body, [field]: 'agent' }))).rejects.toMatchObject({ status: 400, code: 'INVALID_ARGUMENT' });
+      await expect(f.catalog.invoke(id, { ...f.invocation(body), query: { [field]: 'agent' } })).rejects.toMatchObject({ status: 400, code: 'INVALID_ARGUMENT' });
+    }
+    expect(f.calls).toEqual([]);
+    const original = f.invocation(body);
+    const invocation = { ...original, context: Object.assign(Object.create({ originSurface: operation === 'start' ? 'agent' : 'webui' }), original.context) };
+    await expect(f.catalog.invoke(id, invocation)).rejects.toMatchObject({ status: 503, code: 'NATIVE_TURN_UNAVAILABLE' });
+    expect(f.calls).toEqual([id]);
+    f.calls.length = 0;
+    await expect(f.catalog.invoke(id, { ...invocation, context: { ...invocation.context, principalId: 'other-paired-owner' } })).rejects.toMatchObject({ status: 403 });
+    await expect(f.catalog.invoke(id, { ...invocation, context: { ...invocation.context, scopes: ['read:work-ledger', 'write:work-ledger'] } })).rejects.toMatchObject({ status: 403 });
+    expect(f.calls).toEqual([]);
   });
 
   for (const [id, sample, unavailableCode] of cases) {

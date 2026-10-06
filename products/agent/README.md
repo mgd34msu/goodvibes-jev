@@ -37,13 +37,20 @@ No control asks for owner approval or automatically retries/resumes execution.
 
 ## Ordinary conversation and first-start prerequisites
 
-Ordinary text now passes through the selected daemon's original-source intake
-before the local model receives it. This requires an already paired operator,
-`read:work-ledger` and `write:work-ledger`, a registered host workspace, and Jev.
-A durable source-bound turn permit preserves the exact input and prevents a
-second legacy classification or source-less work start. An unavailable host or
-missing authority produces a visible diagnostic; there is no offline legacy
-conversation fallback.
+Ordinary owner text passes through the selected daemon's original-source intake
+before any model receives it. With hosted routing enabled, conversational
+results use identity-only native hosted delivery and later inputs retain the
+same daemon-owned conversation. This requires an already paired operator,
+`read:work-ledger`, `write:work-ledger` and `write:sessions`, a registered host
+workspace, and Jev. Turning hosted routing off selects the local native permit
+path. Neither path uses a second legacy classification or source-less work
+start. Missing authority, unsupported attachments or an unknown dispatch
+produce a visible diagnostic; there is no legacy conversation fallback.
+
+The exact original and delivery mode survive restart. `/work intake-status`
+inspects and reopens observation; `intake-retry`, `intake-resume` and
+`intake-cancel` recover or cancel that same original. A lost reply never creates
+fresh IDs or switches delivery modes. [Remote-owner contract](../../docs/design/agent-native-remote-conversation.md).
 
 Pairing remains explicit setup. The existing `pairing.tokens.migrate` operator
 method accepts `{ "name": "Agent" }` from an authenticated existing shared-token

@@ -23492,6 +23492,24 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "correlationId": "sample"
     }
   },
+  "workLedger.turn.startAgent": {
+    "methodId": "workLedger.turn.startAgent",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/turn/startAgent"
+    },
+    "status": 200,
+    "body": {
+      "projectId": "sample",
+      "requestId": "sample",
+      "inputId": "sample",
+      "sourceRevision": "sample",
+      "state": "preparing",
+      "sessionId": "sample",
+      "brokerInputId": "sample",
+      "correlationId": "sample"
+    }
+  },
   "workLedger.turn.status": {
     "methodId": "workLedger.turn.status",
     "http": {

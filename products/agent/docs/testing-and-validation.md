@@ -22,6 +22,12 @@ dependency owners and leave installed files untouched. The compiled HTML regress
 runs the real lazy loader and extractor from an isolated directory, asserting the
 DOM extraction path and parsed metadata; only its semantic judgment port is synthetic.
 
+The compiled native remote-owner suite uses Bun's real PTY, a hosted-enabled
+owned daemon and separate synthetic local/remote model endpoints. It verifies
+original-source admission, identity-only dispatch, retained conversation context
+and recovery after a lost dispatch reply. The older first-turn fixtures explicitly
+select local native delivery; a failed hosted route is never their fallback.
+
 The standalone upstream commands and release workflows below remain historical
 recovery documentation; the current workspace manifests and root CI define active gates.
 
