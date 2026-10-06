@@ -3,7 +3,7 @@
   "version": "1.28.25",
   "private": true,
   "type": "module",
-  "description": "Partial daemon migration: CLI and configuration contracts; full runtime composition is pending.",
+  "description": "Partial daemon command executable and explicitly composed, owned runtime host.",
   "license": "MIT",
   "engines": {
     "bun": "1.3.14",
@@ -24,12 +24,22 @@
   "scripts": {
     "build": "bunx tsc -p tsconfig.build.json",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
-    "test": "bun ../../packages/engine/scripts/test.ts --cwd ../../products/daemon src/test"
+    "test": "bun run build && bun ../../packages/engine/scripts/test.ts --cwd ../../products/daemon src/test",
+    "start": "bun dist/cli/entrypoint.js"
   },
   "dependencies": {
     "@goodvibes-jev/engine": "workspace:*"
   },
   "devDependencies": {
     "@goodvibes-jev/judgment": "workspace:*"
-  }
+  },
+  "bin": {
+    "goodvibes-daemon": "./dist/cli/entrypoint.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "migration.json"
+  ]
 }

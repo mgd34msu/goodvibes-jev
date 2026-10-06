@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Wire the private daemon command executable and explicit-inbox serving launcher to the existing command adapters and signal-owned runtime host. Default inbox and native release packaging remain incomplete.
+
 - Install the authenticated WebUI command/error judgment runtime using the configured Jev route, actual host chat sources, bounded canonical error references, and revocation-safe dispatch, hashing, recording and attachment ownership.
 - Add explicit shared legacy import submission, Jev reconsideration and exact-request recovery. Durable command identity precedes dispatch; live paired authority and workspace generations fence native admission. Historical completion remains reported and unverified, with legacy source records retained.
 

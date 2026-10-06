@@ -1,37 +1,48 @@
-# Daemon contracts (partial migration)
+# Daemon command executable and explicit host (partial migration)
 
-This workspace contains the pinned daemon's real command vocabulary, parser,
-help, shell completion, version helpers and daemon configuration adapters. It preserves the 20-command target
-contract and delegates argument parsing to the shared engine terminal shell.
+This private workspace preserves the pinned daemon's 20-command vocabulary and
+now emits the canonical `goodvibes-daemon` Bun executable. It dispatches the
+existing config, status/update, sessions, pairing, cluster, WebUI, wake-model,
+completion, help and version adapters. Its service inspection, stop and removal
+commands retain the existing guarded service adapters.
 
-It is not a bootable daemon yet. There is no daemon binary entry or substitute
-handler. Runtime composition, original catalog/provider integration tests and
-remaining migration evidence are still required. The repository's strict
-`migration:complete` gate must continue to reject this partial workspace.
+Default `serve` is still unavailable: built-in inbox composition is unfinished.
+A bare invocation fails before acquiring runtime resources or changing files.
+`send` also refuses explicitly. Service install/start/restart/migrate requires a
+launcher that supplies both real inbox composition and its installed executable
+path, so this package cannot install an unbootable default service.
 
 From this directory:
 
-- `bun run build` emits the actual CLI modules and declarations to `dist/`
+- `bun run build` emits JavaScript and declarations into `dist/`
+- `bun run start -- --help` invokes `dist/cli/entrypoint.js`
+- `bun dist/cli/entrypoint.js config get controlPlane.port --json`
 - `bun run typecheck` checks source and tests
-- `bun run test` runs the original CLI assertions through the guarded runner
+- `bun run test` rebuilds and runs the guarded suites, including the emitted CLI
 
-The `@goodvibes-jev/daemon/cli` export exposes the CLI contracts for composition.
-Configuration adapters remain internal product modules and consume the public
-engine config contract. They retain the historical `tui` storage root and
-daemon-owned config migration; tests use only dummy values in isolated stores.
-The package is private during migration. Its initial version preserves the
-pinned daemon package version, not a newly published release.
+The `@goodvibes-jev/daemon/cli` export provides the parser/catalog and an inert
+`runDaemonCli(argv, options)` dispatcher. An embedding launcher may supply
+`options.runtime.inboxFactory` and explicitly select external-agent observation,
+host power and wake-model provisioning through the same runtime object. Serving
+then constructs the real `createDaemonHost` and runs its signal/deadline owner;
+shutdown awaits admitted work and complete owned-resource drainage. There is no
+empty production inbox, dynamic composition-module loader or detached server.
+The caller remains responsible for complete provider membership and trusted
+preview mapping. No fixture factory is installed in the executable.
 
-Source: `mgd34msu/goodvibes-daemon` at
-`443e5ee4d6cda0d36d57e2886398d0836074a4a9`. Exact migrated paths are recorded in
-`migration.json`; the full source inventory remains authoritative.
+`GOODVIBES_HOME` relocates the state-tree home. `--daemon-home` or
+`GOODVIBES_DAEMON_HOME` relocates only the daemon identity/settings tier;
+`--working-dir` selects the workspace. CLI flags do not mutate the embedding
+process environment or cwd. Serve's model, endpoint, config and feature flags
+are runtime-only and never saved as settings.
 
-The initial runtime adapters now compose credential/identity services and mail
-dependencies and register every declared disposal owner. They do not start the
-full runtime. Hosts must await the disposal scope's `close()` before transferring
-ownership; `dispose()` only starts that cleanup for legacy callers.
+This is a Bun script package, not a published native/self-contained daemon
+release. The package keeps its historical version and remains private. Source
+and emitted modules are included because the existing Bun export condition uses
+source. Use the supported Bun 1.3.14 runtime and built engine workspace.
 
-Cluster adapters now wire the real group and coordinator with one signed
-transport. Callers must await startup and shutdown, including return admission;
-optional clock/transport seams permit deterministic tests without joining a LAN.
-The actual inbox registration and complete server composition are still pending.
+See `docs/audit/daemon-cli-entrypoint.md` in the repository for exact caller
+mapping, tests and outstanding parity. The strict `migration:complete` gate must
+continue to reject this partial workspace. The original source is
+`mgd34msu/goodvibes-daemon` at `443e5ee4d6cda0d36d57e2886398d0836074a4a9`,
+reconciled through `254699bf5d834cdca41436211ada1ae32bf89258`.
