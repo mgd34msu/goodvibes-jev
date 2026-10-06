@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- WebUI native conversation admission now reaches the real hosted turn through
+  identity-only paired routes, canonical broker inputs, genuine process-local
+  permits and strict durable dispatch claims. Lost responses and process
+  interruptions preserve no-replay fences; status and cancellation remain tied
+  to the original source, with no additional approval gate or legacy fallback.
+
 - Patch Git command/environment guards and transitive compression/source-map
   denial-of-service advisories. Git stays optional; checkpoint repositories
   retain their isolated routing and discovery ceiling without unsafe escapes.

@@ -69,13 +69,13 @@ approval, legacy task or model-turn fallback.
 
 ## Boundaries still open
 
-The original admission slice is now connected to the explicit durable native
-execution owner/control integration. Admission still does not itself claim an
-execution receipt or pass a serialized turn result into ordinary chat. Hosted
-conversation delivery still needs canonical broker input identity, currently
-authenticated native authority, a nonserialized admission capability and durable
-dispatch reconciliation. Existing `contracts.start/reply` and `tasks.create` are
-not substituted for these dependencies.
+Original admission now connects to both the explicit durable native execution
+owner and [native hosted conversation delivery](webui-native-hosted-turn.md).
+Hosted delivery retains canonical broker input identity, current paired native
+authority, a genuine process-local admission permit and strict durable dispatch
+reconciliation. Existing ordinary hosted create/steer/follow-up ingress remains
+a separate migration; `contracts.start/reply`, ordinary chat and `tasks.create`
+are never substituted for native delivery.
 
 ## Proof
 

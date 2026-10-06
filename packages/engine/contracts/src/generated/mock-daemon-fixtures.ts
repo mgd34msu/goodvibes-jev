@@ -23383,6 +23383,60 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       }
     }
   },
+  "workLedger.turn.cancel": {
+    "methodId": "workLedger.turn.cancel",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/turn/cancel"
+    },
+    "status": 200,
+    "body": {
+      "projectId": "sample",
+      "requestId": "sample",
+      "inputId": "sample",
+      "sourceRevision": "sample",
+      "state": "preparing",
+      "sessionId": "sample",
+      "brokerInputId": "sample",
+      "correlationId": "sample"
+    }
+  },
+  "workLedger.turn.start": {
+    "methodId": "workLedger.turn.start",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/turn/start"
+    },
+    "status": 200,
+    "body": {
+      "projectId": "sample",
+      "requestId": "sample",
+      "inputId": "sample",
+      "sourceRevision": "sample",
+      "state": "preparing",
+      "sessionId": "sample",
+      "brokerInputId": "sample",
+      "correlationId": "sample"
+    }
+  },
+  "workLedger.turn.status": {
+    "methodId": "workLedger.turn.status",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/turn/status"
+    },
+    "status": 200,
+    "body": {
+      "projectId": "sample",
+      "requestId": "sample",
+      "inputId": "sample",
+      "sourceRevision": "sample",
+      "state": "preparing",
+      "sessionId": "sample",
+      "brokerInputId": "sample",
+      "correlationId": "sample"
+    }
+  },
   "workspaces.registrations.add": {
     "methodId": "workspaces.registrations.add",
     "http": {

@@ -3,13 +3,13 @@ import { expect, test, type Page } from "@playwright/test";
 import { expectNoHorizontalScroll } from "./support/app";
 import { installNativeIntakeDaemon as installIntakeCapture } from "./support/native-intake-fixture";
 
-/** Intake-only recordings cannot claim execution. Explicitly remove its authority. */
+/** Intake-only recordings cannot claim execution or hosted delivery. Remove both authorities. */
 async function installNativeIntakeDaemon(...args: Parameters<typeof installIntakeCapture>) {
   const daemon = await installIntakeCapture(...args);
   const auth = JSON.parse(daemon.capture.auth.body) as { scopes: string[] };
   daemon.setAuthResponse({
     ...auth,
-    scopes: auth.scopes.filter((scope) => scope !== "write:fleet"),
+    scopes: auth.scopes.filter((scope) => scope !== "write:fleet" && scope !== "write:sessions"),
   });
   return daemon;
 }
@@ -120,7 +120,7 @@ test("one Submit durably preserves exact text and admission when execution autho
     daemon.requests.filter(
       (request) =>
         request.method !== "GET" &&
-        /^\/api\/(?:contracts|tasks|sessions|work-ledger\/execution)/.test(request.path)
+        /^\/api\/(?:contracts|tasks|sessions|work-ledger\/(?:execution|turn))/.test(request.path)
     )
   ).toEqual([]);
   await expectNoHorizontalScroll(page);
@@ -247,7 +247,7 @@ for (const name of ["turn", "blocked", "refused"] as const)
     await expect(dialog.getByRole("button", { name: "New request", exact: true })).toBeEnabled();
     const disposition =
       name === "turn"
-        ? "no model turn was dispatched"
+        ? "Hosted conversation delivery is reported separately below"
         : name === "blocked"
           ? "blocked"
           : "Jev refused";
@@ -267,7 +267,7 @@ for (const name of ["turn", "blocked", "refused"] as const)
       daemon.requests.filter(
         (request) =>
           request.method !== "GET" &&
-          /^\/api\/(?:contracts|tasks|sessions|work-ledger\/execution)/.test(request.path)
+          /^\/api\/(?:contracts|tasks|sessions|work-ledger\/(?:execution|turn))/.test(request.path)
       )
     ).toEqual([]);
   });

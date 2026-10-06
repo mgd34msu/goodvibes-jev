@@ -1,3 +1,4 @@
+import { readNativeConversationTurnPermit, revalidateNativeConversationTurnPermit, type NativeConversationTurnPermit } from '../workflow/work-ledger/native-intake-client.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { sessionsActive } from '../runtime/metrics.js';
@@ -42,6 +43,7 @@ import {
   sortSessions,
 } from './session-broker-state.js';
 import {
+  recordSharedSessionInput,
   applySurfaceInputDelivery,
   claimNextQueuedSessionInput,
   filterSessionInputsSince,
@@ -717,6 +719,50 @@ export class SharedSessionBroker {
       input,
       allowSpawnFallback,
     );
+  }
+
+  /** Host-private native reservation. Never queues into the legacy retry/spawn path. */
+  async reserveNativeTurnInput(sessionId: string, permit: NativeConversationTurnPermit): Promise<SharedSessionInputRecord> {
+    const source = readNativeConversationTurnPermit(permit);
+    await revalidateNativeConversationTurnPermit(permit);
+    await this.start();
+    const session = this.sessions.get(sessionId);
+    if (!session || session.kind !== 'hosted' || session.status !== 'active') throw new Error('Native hosted session is unavailable');
+    const entry = recordSharedSessionInput(this.sessionInputStore(), {
+      sessionId, intent: 'submit', maxPersistedInputs: 500,
+      message: { sessionId, surfaceKind: 'service', surfaceId: 'daemon:native-conversation', body: source.text,
+        metadata: { nativeConversation: { projectId: source.projectId, requestId: source.requestId, sourceRef: { ...source.sourceRef } } } },
+    });
+    const reserved = updateSharedSessionInput(this.sessionInputStore(), sessionId, entry.id, value => ({ ...value, state: 'delivered' }))!;
+    // The exact canonical id and body must be durable before any native turn.
+    const snapshot = createSessionBrokerSnapshot({ sessions: this.sessions, messages: this.messages, inputs: this.inputs }, MAX_PERSISTED_MESSAGES);
+    try { await this.writes.run(() => this.store.persist(snapshot, { durable: true })); }
+    catch (error) {
+      // No caller received this reservation, so no turn can have started. A
+      // monotonic failed observation clears local busy ownership without ever
+      // rolling back possibly published reservation bytes or granting replay.
+      updateSharedSessionInput(this.sessionInputStore(), sessionId, reserved.id, value => ({ ...value, state: 'failed', error: 'Native reservation durability failed' }));
+      const failed = createSessionBrokerSnapshot({ sessions: this.sessions, messages: this.messages, inputs: this.inputs }, MAX_PERSISTED_MESSAGES);
+      await this.writes.run(() => this.store.persist(failed, { durable: true })).catch(() => {});
+      throw error;
+    }
+    return structuredClone(reserved);
+  }
+
+  /** Settle only the exact native reservation after its actual owned lifetime drains. */
+  async settleNativeTurnInput(sessionId: string, inputId: string, permit: NativeConversationTurnPermit,
+    state: 'completed' | 'cancelled' | 'failed'): Promise<SharedSessionInputRecord> {
+    if (!['completed', 'cancelled', 'failed'].includes(state)) throw new Error('Invalid native broker terminal state');
+    const source = readNativeConversationTurnPermit(permit);
+    const current = this.inputs.get(sessionId)?.find(item => item.id === inputId);
+    if (!current || current.body !== source.text || current.correlationId !== `session-input:${inputId}`
+      || JSON.stringify(current.metadata['nativeConversation']) !== JSON.stringify({ projectId: source.projectId, requestId: source.requestId, sourceRef: source.sourceRef })
+      || (current.state !== 'delivered' && current.state !== state)) throw new Error('Native hosted broker settlement mismatch');
+    const updated = updateSharedSessionInput(this.sessionInputStore(), sessionId, inputId, item => ({ ...item, state, updatedAt: Date.now() }))!;
+    const snapshot = createSessionBrokerSnapshot({ sessions: this.sessions, messages: this.messages, inputs: this.inputs }, MAX_PERSISTED_MESSAGES);
+    await this.writes.run(() => this.store.persist(snapshot, { durable: true }));
+    this.publishInputLifecycleEvent(`session-input-${state}`, updated);
+    return structuredClone(updated);
   }
 
   /** Collection read for a live surface (see the module helper `filterSessionInputsSince`). */

@@ -11,23 +11,31 @@ import type { NativeIntakeBrowserRecord } from "../../lib/native-intake-journal"
 import { formatError } from "../../lib/errors";
 import type { NativeExecutionObservation } from "../../lib/native-execution";
 import { NativeExecutionStatus } from "./NativeExecutionStatus";
+import { NativeTurnStatus } from "./NativeTurnStatus";
+import type { NativeTurnObservation } from "../../lib/native-turn";
 import { Button } from "../../components/ui/Button";
 import { Field, Input, Textarea } from "../../components/ui/Field";
 import { Select } from "../../components/ui/Select";
 import { Facts, DetailSection } from "../../components/data-view/DataView";
 
-/** One deliberate source submission continues admitted work into native execution. */
-export function NativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
-  return <ScopedNativeIntakeForm key={lifetime.revision} lifetime={lifetime} />;
+/** One original submission continues into native work or hosted conversation delivery. */
+interface NativeIntakeFormProps {
+  lifetime: ClientLifetime;
+  onOpenSession?: (sessionId: string) => void;
+}
+export function NativeIntakeForm(props: NativeIntakeFormProps) {
+  return <ScopedNativeIntakeForm key={props.lifetime.revision} {...props} />;
 }
 
 /** Never carry source, receipts or controls across a selected connection change. */
-function ScopedNativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
+function ScopedNativeIntakeForm({ lifetime, onOpenSession }: NativeIntakeFormProps) {
   const [text, setText] = useState("");
   const [sources, setSources] = useState<NativeConversationIntakeUnsupportedSource[]>([]);
   const [records, setRecords] = useState<NativeIntakeBrowserRecord[]>([]);
   const [selected, setSelected] = useState<NativeIntakeBrowserRecord>();
   const [result, setResult] = useState<NativeIntakeResult>();
+  const [turn, setTurn] = useState<NativeTurnObservation>();
+  const [turnError, setTurnError] = useState<string>();
   const [busy, setBusy] = useState<string>("Connecting");
   const [error, setError] = useState<string>();
   const [execution, setExecution] = useState<NativeExecutionObservation>();
@@ -72,6 +80,14 @@ function ScopedNativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
               },
               (cause: unknown) => {
                 if (current()) setError(formatError(cause));
+              }
+            ),
+            connected.turn.inspect(latest, read.signal).then(
+              (found) => {
+                if (current()) setTurn(found);
+              },
+              (cause: unknown) => {
+                if (current()) setTurnError(formatError(cause));
               }
             ),
             connected.execution.inspect(latest, read.signal).then(
@@ -158,6 +174,25 @@ function ScopedNativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
         );
     }
   };
+  const observeTurn = async (
+    connected: NativeIntakeSession,
+    record: NativeIntakeBrowserRecord,
+    method: "inspect" | "request" | "cancel",
+    signal: AbortSignal,
+    current: () => boolean
+  ) => {
+    if (!current()) return;
+    setTurnError(undefined);
+    try {
+      const found = await connected.turn[method](record, signal);
+      if (current()) setTurn(found);
+    } catch (cause) {
+      if (current())
+        setTurnError(
+          `${formatError(cause)} Conversation delivery is unconfirmed. Inspect conversation to read the host's current state. No automatic retry was sent.`
+        );
+    }
+  };
   const continueWork = async (
     connected: NativeIntakeSession,
     record: NativeIntakeBrowserRecord,
@@ -171,12 +206,17 @@ function ScopedNativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
     if (found.kind === "work") {
       setBusy("Requesting execution");
       await observeExecution(connected, record, "request", signal, current);
+    } else if (found.kind === "turn") {
+      setBusy("Requesting conversation");
+      await observeTurn(connected, record, "request", signal, current);
     }
   };
   const inspect = (record: NativeIntakeBrowserRecord) => {
     if (busyRef.current) return;
     if (record.command.inputId !== selected?.command.inputId) {
       setResult(undefined);
+      setTurn(undefined);
+      setTurnError(undefined);
       setExecution(undefined);
       setExecutionError(undefined);
     }
@@ -194,6 +234,7 @@ function ScopedNativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
           }
         ),
         observeExecution(connected, record, "inspect", signal, current),
+        observeTurn(connected, record, "inspect", signal, current),
       ]);
     });
   };
@@ -215,6 +256,8 @@ function ScopedNativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
           if (!current()) return;
           setSelected(record);
           setResult(undefined);
+          setTurn(undefined);
+          setTurnError(undefined);
           setExecution(undefined);
           setExecutionError(undefined);
           setRecords((saved) => [...saved, record]);
@@ -241,6 +284,19 @@ function ScopedNativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
       method === "cancel"
     );
   };
+  const turnAction = (method: "inspect" | "request" | "cancel") => {
+    if (!selected) return;
+    const labels = {
+      inspect: "Inspecting conversation",
+      request: "Continuing conversation request",
+      cancel: "Cancelling conversation",
+    };
+    void run(
+      labels[method],
+      (connected, signal, current) => observeTurn(connected, selected, method, signal, current),
+      method === "cancel"
+    );
+  };
   const newRequest = () => {
     // Detach only. The saved immutable input and host execution are untouched.
     ++generation.current;
@@ -251,6 +307,8 @@ function ScopedNativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
     setBusy("");
     setSelected(undefined);
     setResult(undefined);
+    setTurn(undefined);
+    setTurnError(undefined);
     setExecution(undefined);
     setExecutionError(undefined);
     setError(undefined);
@@ -258,14 +316,18 @@ function ScopedNativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
   const terminal =
     result !== undefined &&
     ["work", "turn", "blocked", "refused", "cancelled"].includes(result.kind);
+  const hasTurnTarget = turn !== undefined && turn.kind !== "not-requested";
+  const showTurn = result?.kind === "turn" || hasTurnTarget || Boolean(turnError);
   const hasExecutionTarget = execution !== undefined && execution.kind !== "not-requested";
   const showExecution = result?.kind === "work" || hasExecutionTarget || Boolean(executionError);
   const canCancel = Boolean(
     selected &&
     !terminal &&
     !hasExecutionTarget &&
+    !hasTurnTarget &&
     busy !== "Cancelling" &&
     busy !== "Cancelling execution" &&
+    busy !== "Cancelling conversation" &&
     busy !== "Connecting"
   );
 
@@ -273,12 +335,12 @@ function ScopedNativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
     <div className="work-form native-intake">
       <p>
         Submit complete original text for Jev to assess. If Jev admits work, Submit automatically
-        requests native execution for that same work and attempt. Native conversation turns are not
-        connected to this screen.
+        requests native execution for that same work and attempt. If Jev routes a conversation turn,
+        Submit automatically requests hosted delivery of that exact original input.
       </p>
       <p className="dv-muted">
         Original text and source markers are saved in this browser before sending. Closing this view
-        does not cancel daemon intake or execution.
+        does not cancel daemon intake, execution or hosted conversation delivery.
       </p>
       {error && <p role="alert">{error}</p>}
       {busy && <p role="status">{busy}…</p>}
@@ -466,6 +528,8 @@ function ScopedNativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
                       // cancellation must never become a new execution request.
                       if (found.kind === "work")
                         await observeExecution(connected, selected, "inspect", signal, current);
+                      else if (found.kind === "turn")
+                        await observeTurn(connected, selected, "inspect", signal, current);
                     },
                     true
                   )
@@ -485,6 +549,23 @@ function ScopedNativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
               onRequest={() => executionAction("request")}
               onResume={() => executionAction("resume")}
               onCancel={() => executionAction("cancel")}
+            />
+          )}
+          {showTurn && (
+            <NativeTurnStatus
+              observation={turn}
+              error={turnError}
+              busy={busy}
+              onInspect={() => turnAction("inspect")}
+              onRequest={() => turnAction("request")}
+              onCancel={() => turnAction("cancel")}
+              onOpenSession={
+                onOpenSession
+                  ? (sessionId) => {
+                      if (isClientLifetimeCurrent(lifetime)) onOpenSession(sessionId);
+                    }
+                  : undefined
+              }
             />
           )}
           {!terminal && (

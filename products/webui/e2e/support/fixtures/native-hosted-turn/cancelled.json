@@ -1,0 +1,114 @@
+{
+  "source": "owned loopback model; real paired DaemonServer cancellation-before-dispatch",
+  "input": {
+    "requestId": "native-hosted-cancel-request",
+    "inputId": "native-hosted-cancel-input",
+    "text": "  Explain café é 🌻\nKeep this original text.\nKeep this original text.  ",
+    "unsupportedSources": []
+  },
+  "identity": {
+    "projectId": "workspace-be6980390c",
+    "inputId": "native-hosted-cancel-input",
+    "sourceRevision": "04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9"
+  },
+  "auth": {
+    "methodId": "control.auth.current",
+    "method": "GET",
+    "path": "/api/control-plane/auth",
+    "status": 200,
+    "body": "{\"authenticated\":true,\"authMode\":\"session\",\"tokenPresent\":true,\"authorizationHeaderPresent\":true,\"sessionCookiePresent\":false,\"principalId\":\"pairing:pair-ee7a57b7-4a65-4f8e-a4eb-6c09e5792c7d\",\"principalKind\":\"token\",\"admin\":true,\"scopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:work-ledger\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"roles\":[]}"
+  },
+  "project": {
+    "methodId": "workLedger.project",
+    "method": "GET",
+    "path": "/api/work-ledger/project",
+    "status": 200,
+    "body": "{\"projectId\":\"workspace-be6980390c\"}"
+  },
+  "capture": {
+    "methodId": "workLedger.intake.capture",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/capture",
+    "status": 200,
+    "requestBody": {
+      "requestId": "native-hosted-cancel-request",
+      "inputId": "native-hosted-cancel-input",
+      "text": "  Explain café é 🌻\nKeep this original text.\nKeep this original text.  ",
+      "unsupportedSources": []
+    },
+    "body": "{\"kind\":\"captured\",\"projectId\":\"workspace-be6980390c\",\"requestId\":\"native-hosted-cancel-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"native-hosted-cancel-input\",\"sourceId\":\"3c26e5746ed0d41cd247def255db0030714556d65c57c80571f695538010b9aa\",\"sourceRevision\":\"04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9\",\"sessionId\":\"native-work:workspace-be6980390c\"}}"
+  },
+  "admit": {
+    "methodId": "workLedger.intake.admit",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/admit",
+    "status": 200,
+    "requestBody": {
+      "inputId": "native-hosted-cancel-input",
+      "sourceRevision": "04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9"
+    },
+    "body": "{\"kind\":\"turn\",\"projectId\":\"workspace-be6980390c\",\"requestId\":\"native-hosted-cancel-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"native-hosted-cancel-input\",\"sourceId\":\"3c26e5746ed0d41cd247def255db0030714556d65c57c80571f695538010b9aa\",\"sourceRevision\":\"04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9\",\"sessionId\":\"native-work:workspace-be6980390c\"},\"route\":\"converse\",\"text\":\"  Explain café é 🌻\\nKeep this original text.\\nKeep this original text.  \"}"
+  },
+  "get": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "native-hosted-cancel-input"
+    },
+    "body": "{\"kind\":\"turn\",\"projectId\":\"workspace-be6980390c\",\"requestId\":\"native-hosted-cancel-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"native-hosted-cancel-input\",\"sourceId\":\"3c26e5746ed0d41cd247def255db0030714556d65c57c80571f695538010b9aa\",\"sourceRevision\":\"04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9\",\"sessionId\":\"native-work:workspace-be6980390c\"},\"route\":\"converse\",\"text\":\"  Explain café é 🌻\\nKeep this original text.\\nKeep this original text.  \"}"
+  },
+  "absent": {
+    "methodId": "workLedger.turn.status",
+    "method": "POST",
+    "path": "/api/work-ledger/turn/status",
+    "requestBody": {
+      "projectId": "workspace-be6980390c",
+      "inputId": "native-hosted-cancel-input",
+      "sourceRevision": "04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9"
+    },
+    "requestJson": "{\"projectId\":\"workspace-be6980390c\",\"inputId\":\"native-hosted-cancel-input\",\"sourceRevision\":\"04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9\"}",
+    "status": 200,
+    "body": "{\"kind\":\"not-found\"}"
+  },
+  "cancel": {
+    "methodId": "workLedger.turn.cancel",
+    "method": "POST",
+    "path": "/api/work-ledger/turn/cancel",
+    "requestBody": {
+      "projectId": "workspace-be6980390c",
+      "inputId": "native-hosted-cancel-input",
+      "sourceRevision": "04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9"
+    },
+    "requestJson": "{\"projectId\":\"workspace-be6980390c\",\"inputId\":\"native-hosted-cancel-input\",\"sourceRevision\":\"04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9\"}",
+    "status": 200,
+    "body": "{\"projectId\":\"workspace-be6980390c\",\"requestId\":\"native-hosted-cancel-request\",\"inputId\":\"native-hosted-cancel-input\",\"sourceRevision\":\"04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9\",\"state\":\"cancelled\",\"sessionId\":null,\"brokerInputId\":null,\"correlationId\":null}"
+  },
+  "status": {
+    "methodId": "workLedger.turn.status",
+    "method": "POST",
+    "path": "/api/work-ledger/turn/status",
+    "requestBody": {
+      "projectId": "workspace-be6980390c",
+      "inputId": "native-hosted-cancel-input",
+      "sourceRevision": "04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9"
+    },
+    "requestJson": "{\"projectId\":\"workspace-be6980390c\",\"inputId\":\"native-hosted-cancel-input\",\"sourceRevision\":\"04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9\"}",
+    "status": 200,
+    "body": "{\"projectId\":\"workspace-be6980390c\",\"requestId\":\"native-hosted-cancel-request\",\"inputId\":\"native-hosted-cancel-input\",\"sourceRevision\":\"04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9\",\"state\":\"cancelled\",\"sessionId\":null,\"brokerInputId\":null,\"correlationId\":null}"
+  },
+  "start": {
+    "methodId": "workLedger.turn.start",
+    "method": "POST",
+    "path": "/api/work-ledger/turn/start",
+    "requestBody": {
+      "projectId": "workspace-be6980390c",
+      "inputId": "native-hosted-cancel-input",
+      "sourceRevision": "04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9"
+    },
+    "requestJson": "{\"projectId\":\"workspace-be6980390c\",\"inputId\":\"native-hosted-cancel-input\",\"sourceRevision\":\"04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9\"}",
+    "status": 200,
+    "body": "{\"projectId\":\"workspace-be6980390c\",\"requestId\":\"native-hosted-cancel-request\",\"inputId\":\"native-hosted-cancel-input\",\"sourceRevision\":\"04fda3318299f9b46d0f3c244f71bf0e9fad19efc259b1535b3022a687c959a9\",\"state\":\"cancelled\",\"sessionId\":null,\"brokerInputId\":null,\"correlationId\":null}"
+  }
+}

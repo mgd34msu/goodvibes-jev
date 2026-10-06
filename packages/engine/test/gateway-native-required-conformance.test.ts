@@ -1,7 +1,8 @@
+import { registerNativeHostedTurnGatewayMethods } from '../sdk/src/platform/control-plane/routes/native-hosted-turn.js';
 /**
  * Authenticated counterpart to gateway-verb-required-conformance.test.ts.
  * The generic probe uses a user principal and cannot reach native validation:
- * all three native families require live paired-token authority first. Here
+ * all four native families require live paired-token authority first. Here
  * every registered native handler must reach its host using ONLY descriptor-
  * required input, and every required field must be rejected when omitted.
  * Host-entry sentinels prevent a 403/503 before validation from passing green.
@@ -17,6 +18,9 @@ import type { NativePairedSnapshot } from '../sdk/src/platform/security/http-aut
 
 const revision = { work: 1, criteria: 1, attempt: 1 };
 const cases: ReadonlyArray<readonly [string, Record<string, unknown>, string]> = [
+  ...['start', 'status', 'cancel'].map(operation => [
+    `workLedger.turn.${operation}`, { projectId: 'project', inputId: 'input', sourceRevision: 'revision' }, 'NATIVE_TURN_UNAVAILABLE',
+  ] as const),
   ['workLedger.intake.capture', { requestId: 'request', inputId: 'input', text: 'Exact source', unsupportedSources: [] }, 'NATIVE_INTAKE_UNAVAILABLE'],
   ['workLedger.intake.get', { inputId: 'input' }, 'NATIVE_INTAKE_UNAVAILABLE'],
   ...['admit', 'resume', 'cancel'].map(operation => [
@@ -45,7 +49,11 @@ function fixture() {
     submit: () => reached('workLedger.submit'), get: () => reached('workLedger.submission.get'),
   });
   registerNativeWorkExecutionGatewayMethods(catalog, { projectId: 'project', acquire: () => reached('execution-host') });
-  const scopes = ['read:work-ledger', 'write:work-ledger', 'write:fleet'];
+  registerNativeHostedTurnGatewayMethods(catalog, {
+    start: () => reached('workLedger.turn.start'), status: () => reached('workLedger.turn.status'),
+    cancel: () => reached('workLedger.turn.cancel'), close: async () => {},
+  });
+  const scopes = ['read:work-ledger', 'write:work-ledger', 'write:fleet', 'write:sessions'];
   const current: NativePairedSnapshot = { kind: 'pairing-token', tokenId: 'probe-token', principalId: 'pairing:probe-token',
     authorityId: 'pairing:probe-token', authorityRevision: 'probe-token', scopes };
   const invocation = (body: unknown): GatewayMethodInvocation => ({
@@ -91,7 +99,7 @@ describe('native gateway required-field conformance under paired authority', () 
     const { catalog } = fixture();
     const registered = catalog.list().filter(descriptor => catalog.hasHandler(descriptor.id)).map(descriptor => descriptor.id).sort();
     expect(registered).toEqual(cases.map(([id]) => id).sort());
-    expect(registered).toHaveLength(11);
+    expect(registered).toHaveLength(14);
   });
 
   for (const [id, sample, unavailableCode] of cases) {

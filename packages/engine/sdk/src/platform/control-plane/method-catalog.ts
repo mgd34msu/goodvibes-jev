@@ -1,3 +1,4 @@
+import { builtinGatewayNativeHostedTurnMethodDescriptors } from './method-catalog-native-hosted-turn.js';
 import { builtinGatewayNativeConversationIntakeMethodDescriptors } from './method-catalog-native-intake.js';
 import { builtinGatewayNativeWorkSubmissionMethodDescriptors } from './method-catalog-native-work-submission.js';
 import { builtinGatewayWorkLedgerMethodDescriptors } from './method-catalog-work-ledger.js';
@@ -139,6 +140,7 @@ const BUILTIN_GATEWAY_METHODS: readonly GatewayMethodDescriptor[] = [
   ...builtinGatewayNativeWorkExecutionMethodDescriptors,
   ...builtinGatewayNativeWorkSubmissionMethodDescriptors,
   ...builtinGatewayNativeConversationIntakeMethodDescriptors,
+  ...builtinGatewayNativeHostedTurnMethodDescriptors,
   ...builtinGatewayControlMethodDescriptors,
   ...builtinBrowserJudgmentMethodDescriptors,
   ...builtinGatewayChannelMethodDescriptors,
