@@ -16,6 +16,7 @@ import {
   type NativeHostedTurnRequest,
 } from "@goodvibes-jev/engine/sdk/platform/hosted-sessions/native-turn-client";
 import { installMockDaemon } from "./mock-daemon";
+import type { FleetSnapshotResult } from "../../src/lib/goodvibes";
 
 export type ContinuationCase =
   | "second"
@@ -172,6 +173,45 @@ export function loadNativeContinuationCapture(): ContinuationCapture {
   return capture;
 }
 
+/** Synthetic navigation only; the referenced native session identities are genuine. */
+export function nativeContinuationFleetSnapshot(capture = loadNativeContinuationCapture()) {
+  const otherAttachment = capture.other.attachment;
+  if (!otherAttachment) throw new Error("Missing genuine alternate native session attachment");
+  const nodes = [
+    {
+      id: "recorded-native-process",
+      label: "Recorded native fleet continuation",
+      sessionId: capture.sessionId,
+    },
+    {
+      id: "other-recorded-native-process",
+      label: "Other recorded native fleet session",
+      sessionId: String(otherAttachment.session.id),
+    },
+  ].map(({ id, label, sessionId }) => ({
+    id,
+    label,
+    kind: "agent" as const,
+    state: "thinking" as const,
+    elapsedMs: 0,
+    costState: "unpriced" as const,
+    capabilities: {
+      interruptible: false,
+      killable: false,
+      pausable: false,
+      resumable: false,
+      steerable: true,
+    },
+    sessionRef: { sessionId },
+  }));
+  return {
+    capturedAt: 1000,
+    truncated: false,
+    totalCount: nodes.length,
+    nodes,
+  } satisfies FleetSnapshotResult;
+}
+
 /** Only navigation labels and unrelated shell state are synthetic. */
 export async function installNativeContinuationDaemon(
   page: Page,
@@ -193,6 +233,7 @@ export async function installNativeContinuationDaemon(
   const otherSessionId = String(otherAttachment.session.id);
   const title = "Recorded native continuation";
   const otherTitle = "Other recorded native session";
+  const fleet = nativeContinuationFleetSnapshot(capture);
   const daemon = await installMockDaemon(page, {
     approvals: [],
     hostedSessions: [
@@ -206,6 +247,12 @@ export async function installNativeContinuationDaemon(
   });
   await page.route(/\/api\/sessions(?:\?|$)/, (route) =>
     route.fulfill({ json: { sessions: [], totals: { sessions: 0, active: 0, closed: 0 } } })
+  );
+  await page.route("**/api/control-plane/methods/fleet.snapshot/invoke", (route) =>
+    route.fulfill({ json: fleet })
+  );
+  await page.route("**/api/control-plane/methods/fleet.list/invoke", (route) =>
+    route.fulfill({ json: { items: fleet.nodes, hasMore: false, capturedAt: fleet.capturedAt } })
   );
   const nativeRequests: {
     operation: ContinuationOperation;
@@ -307,6 +354,8 @@ export async function installNativeContinuationDaemon(
     capture,
     title,
     otherTitle,
+    fleetTitle: fleet.nodes[0].label,
+    otherFleetTitle: fleet.nodes[1].label,
     otherSessionId,
     nativeRequests,
     get writes() {

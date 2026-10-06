@@ -32,12 +32,19 @@ test.describe('process actions', () => {
     const detail = await openRow(page, FLEET_AGENT_NODE.label);
     const input = detail.getByRole('textbox', { name: 'Steer message' });
     await expect(input).toBeVisible();
+    await expect(detail.getByRole('textbox', { name: 'Original request', exact: true })).toHaveCount(0);
+    const discoveryIndex = daemon.requests.findIndex((request) => request.method === 'POST' && request.path === '/api/work-ledger/turn/session');
+    expect(discoveryIndex).toBeGreaterThanOrEqual(0);
+    expect(daemon.requests[discoveryIndex].body).toEqual({ sessionId: FLEET_AGENT_NODE.sessionRef.sessionId });
     await input.fill('Keep going, prioritize the flaky test');
     await input.press('Enter');
     await expect.poll(() => daemon.steerRequests.length, { timeout: 10_000 }).toBeGreaterThan(0);
     const sent = daemon.steerRequests.at(-1) as { sessionId: string; body: Record<string, unknown> };
     expect(sent.sessionId).toBe(FLEET_AGENT_NODE.sessionRef.sessionId);
     expect(sent.body).toMatchObject({ surfaceKind: 'webui', surfaceId: 'goodvibes-webui' });
+    const steerIndex = daemon.requests.findIndex((request) => request.methodId === 'sessions.steer'
+      || request.path === `/api/sessions/${encodeURIComponent(String(FLEET_AGENT_NODE.sessionRef.sessionId))}/steer`);
+    expect(steerIndex).toBeGreaterThan(discoveryIndex);
   });
 
   test('detach calls sessions.detach with this surface id, not the process', async ({ page }) => {

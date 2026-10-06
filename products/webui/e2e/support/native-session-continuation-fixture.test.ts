@@ -1,9 +1,34 @@
 import { describe, expect, test } from "bun:test";
+import { firstJsonSchemaFailure } from "@goodvibes-jev/engine/transport-http";
+import operatorContract from "@goodvibes-jev/engine/contracts/operator-contract.json" with { type: "json" };
 import { nativeHostedTurnLookupSchema } from "@goodvibes-jev/engine/sdk/platform/hosted-sessions/native-turn-client";
 import { nativeConversationIntakeLookupResultSchema } from "@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client";
-import { loadNativeContinuationCapture } from "./native-session-continuation-fixture";
+import {
+  loadNativeContinuationCapture,
+  nativeContinuationFleetSnapshot,
+} from "./native-session-continuation-fixture";
 
 describe("native continuation genuine HTTP recordings", () => {
+  test("Fleet navigation exposes the exact recorded native sessions through schema-valid steerable nodes", () => {
+    const capture = loadNativeContinuationCapture();
+    const snapshot = nativeContinuationFleetSnapshot(capture);
+    const method = operatorContract.operator.methods.find((entry) => entry.id === "fleet.snapshot");
+    if (!method) throw new Error("Missing fleet.snapshot contract");
+    expect(firstJsonSchemaFailure(method.outputSchema, snapshot)).toBeUndefined();
+    expect(snapshot.nodes.map((node) => node.sessionRef?.sessionId)).toEqual([
+      capture.sessionId,
+      String(capture.other.attachment!.session.id),
+    ]);
+    expect(
+      snapshot.nodes.every((node) => node.kind === "agent" && node.capabilities.steerable)
+    ).toBe(true);
+    expect(JSON.parse(capture.discovery.body).sessionId).toBe(
+      snapshot.nodes[0]!.sessionRef!.sessionId
+    );
+    expect(JSON.parse(capture.other.discovery!.body).sessionId).toBe(
+      snapshot.nodes[1]!.sessionRef!.sessionId
+    );
+  });
   test("all routes and response bytes validate the generated operator contract and SDK", () => {
     const capture = loadNativeContinuationCapture();
     expect(JSON.stringify(capture)).not.toContain("Bearer ");

@@ -1,7 +1,7 @@
 # Native continuation of an owned hosted session
 
-The conversation composer first asks `workLedger.turn.session` for the host's
-session kind. Only an explicit `legacy` result selects the existing steer and
+The conversation composer and steerable Fleet process actions first ask
+`workLedger.turn.session` for the host's session kind. Only an explicit `legacy` result selects the existing steer and
 follow-up composer. A native result opens the native intake workflow scoped to
 that session and paired project. Unavailable discovery, changed connections and
 unsupported authority never fall back to body-only legacy ingress.
@@ -81,9 +81,20 @@ reads only. A deliberate new request allocates new IDs even for identical text.
 A lost acknowledgement retains its original identity for inspection. Closed
 sessions expose inspection/cancellation while refusing new submission.
 
-This slice migrates the WebUI conversation composer for existing native-owned
-hosted sessions. Agent remote creation, inbound-derived authority, other ordinary
-hosted ingress and broader planning retirement are separate migrations. The
+The WebUI conversation composer and steerable Fleet process actions share one
+session-classification boundary and native intake form for existing native-owned
+hosted sessions. Their saved originals use the same session-scoped journal, so
+moving between these surfaces only inspects previously retained input. Fleet's
+legacy compact steer and browser detach retain their existing behavior; native
+receipts do not use the legacy “Steer sent” toast.
+
+Per-hunk Session Changes comments remain a separate migration. Their current
+legacy formatter trims the comment and prefixes a browser-selected, bounded diff
+excerpt. That formatter is not an original-source or host-owned context boundary;
+reusing it for native admission would misrepresent the source. A source-aware
+hunk-context capture contract is required before migrating that action.
+
+Agent remote creation, inbound-derived authority, other ordinary hosted ingress and broader planning retirement are separate migrations. The
 recorded loopback/Chromium proofs establish orchestration and recovery behavior;
 they do not claim live-provider semantic calibration or independent settlement
 security acceptance.
