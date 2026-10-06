@@ -317,7 +317,9 @@ function ScopedNativeIntakeForm({ lifetime, onOpenSession }: NativeIntakeFormPro
     result !== undefined &&
     ["work", "turn", "blocked", "refused", "cancelled"].includes(result.kind);
   const hasTurnTarget = turn !== undefined && turn.kind !== "not-requested";
-  const showTurn = result?.kind === "turn" || hasTurnTarget || Boolean(turnError);
+  // A failed source lookup cannot establish that a hosted conversation exists.
+  // Keep that error with intake until a real turn disposition/target owns it.
+  const showTurn = result?.kind === "turn" || hasTurnTarget;
   const hasExecutionTarget = execution !== undefined && execution.kind !== "not-requested";
   const showExecution = result?.kind === "work" || hasExecutionTarget || Boolean(executionError);
   const canCancel = Boolean(

@@ -421,6 +421,7 @@ describe("Native intake to execution lifecycle", () => {
   test("a durable execution target stays inspectable and cancellable after intake lookup fails", async () => {
     connected.list.mockResolvedValue([record]);
     connected.inspect.mockRejectedValue(new Error("Original intake scope is stale."));
+    connected.turn.inspect.mockRejectedValue(new Error("Original intake scope is stale."));
     connected.execution.inspect.mockResolvedValue(running);
     const { el, button, click } = await render();
     await settle(
@@ -429,6 +430,10 @@ describe("Native intake to execution lifecycle", () => {
         button("Inspect execution")?.disabled === false
     );
     expect(el.textContent).toContain("Original intake scope is stale");
+    expect(el.querySelectorAll('[role="alert"]')).toHaveLength(1);
+    expect(el.textContent).not.toContain("Hosted conversation");
+    expect(button("Continue conversation request")).toBeUndefined();
+    expect(button("Cancel conversation")).toBeUndefined();
     expect(button("Cancel execution")).toBeDefined();
     click("Inspect execution");
     await settle(() => connected.execution.inspect.mock.calls.length === 2);
