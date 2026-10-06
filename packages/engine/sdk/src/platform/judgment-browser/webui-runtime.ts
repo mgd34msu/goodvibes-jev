@@ -12,6 +12,7 @@ import { createWebuiCommandRankAdapter, webuiDaemonRefusalAdapter } from './batt
 import { WEBUI_BUILTIN_COMMANDS, WEBUI_COMMAND_CATALOG_VERSION } from './batteries/webui-command-catalog.js';
 import { readStructuredDaemonRefusal, snapshotWebuiCommandRank, snapshotWebuiDaemonRefusal } from './batteries/webui-readers.js';
 import type { ResolvedCommandCandidate } from './batteries/webui-types.js';
+import { granted } from './guards.js';
 
 const PALETTE = 'webui.palette.command-rank';
 const ERRORS = 'webui.errors.daemon-refusal';
@@ -154,7 +155,7 @@ export function createWebuiBrowserJudgment(options: WebuiBrowserJudgmentOptions)
     authorize(input) {
       const binding = bindings.get(input.sourceBinding);
       return !!binding && binding.principalId === input.principal.principalId && binding.principalKind === input.principal.principalKind && binding.battery === input.battery
-        && options.authorize({ ...input, sources: binding.sources }) === true;
+        && granted(options.authorize({ ...input, sources: binding.sources }));
     },
   });
 }

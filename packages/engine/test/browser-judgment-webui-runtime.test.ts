@@ -29,7 +29,7 @@ test('cancellation in the adapter handoff gap releases all owned palette referen
     expect(routes).toBe(1);
   } finally { await service.close(); }
 });
-function fixture(options: { probability?: number; beforeAnswer?: () => Promise<void> } = {}) {
+function fixture(options: { probability?: number; beforeAnswer?: () => Promise<void>; authorize?: () => boolean } = {}) {
   const log = new SqliteDecisionLog(':memory:'); const calls: unknown[] = [];
   let actor = owner; let allowed = true;
   let session = { id: 'fixture-chat', title: 'Synthetic plans', createdAt: 1, updatedAt: 2 };
@@ -44,7 +44,7 @@ function fixture(options: { probability?: number; beforeAnswer?: () => Promise<v
   const source = { getSession: (id: string) => id === session.id ? session : null };
   const service = createWebuiBrowserJudgment({ methods,
     currentRoute: () => ({ revision: 'owned-route', kind: 'local', port: withDecisionLog(inner, log), assertCurrent() {} }),
-    authorize: (input) => allowed && input.sources.includes(input.battery === 'webui.palette.command-rank' ? 'palette-query' : 'daemon-error'),
+    authorize: (input) => options.authorize ? options.authorize() : allowed && input.sources.includes(input.battery === 'webui.palette.command-rank' ? 'palette-query' : 'daemon-error'),
   });
   const release = service.bindChatSessions(source);
   return { service, log, calls, methods, release, setActor: (value: AuthenticatedPrincipal) => { actor = value; },
@@ -105,6 +105,15 @@ test('uncertain genuine readings never yield a ranked business value', async () 
   const f = fixture({ probability: 0.5 });
   try { const result = await f.run(); expect(result).toMatchObject({ status: 'held', reason: 'uncertain' }); expect('value' in result).toBe(false); }
   finally { await f.close(); }
+});
+
+test('a rejected asynchronous source-policy hook is consumed and cannot grant access or retain state', async () => {
+  const f = fixture({ authorize: () => Promise.reject(new Error('synthetic-private-policy-failure')) as never });
+  try {
+    await expect(f.run()).rejects.toMatchObject({ code: 'JUDGMENT_PERMISSION_HELD' });
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(f.calls).toHaveLength(0); expect(f.log.query()).toEqual([]);
+  } finally { await f.close(); }
 });
 
 test.each(['query', 'title', 'oversize-title'] as const)('complete protected or oversized %s is held before reference retention or calls', async (kind) => {
