@@ -3,7 +3,7 @@ import {
   applyRuntimeConfigOverrides, applyRuntimeConfigValue, applyRuntimeEndpointFlagOverrides,
   applyRuntimeFeatureFlagOverrides, resolveRuntimeEndpointBinding,
 } from '@goodvibes-jev/engine/terminal-shell';
-import { formatProviderModel, getModelIdFromProviderModel, getProviderIdFromModel } from '@goodvibes-jev/engine/sdk/platform/providers';
+import { getModelIdFromProviderModel, getProviderIdFromModel } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { createRuntimeStore } from '@goodvibes-jev/engine/sdk/platform/runtime/store';
 import { RuntimeEventBus, runtimeEventBusOptionsFrom } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
 import { createDaemonHost } from '../runtime/daemon-host.js';
@@ -23,9 +23,16 @@ export function prepareDaemonCliServe(config: DaemonCliConfiguration['config'], 
   if (errors.length) return errors;
   if (flags.provider !== undefined || flags.model !== undefined) {
     const current = config.get('provider.model');
-    applyRuntimeConfigValue(config, 'provider.model', formatProviderModel(
-      flags.provider ?? getProviderIdFromModel(current), getModelIdFromProviderModel(flags.model ?? current),
-    ));
+    const provider = (flags.provider ?? getProviderIdFromModel(current)).trim();
+    const supplied = flags.model?.trim();
+    // The daemon catalog accepts provider:model and provider/model. Strip only
+    // that first provider qualifier, retaining nested model namespaces/colons.
+    const qualified = supplied !== undefined && !supplied.includes(':') ? supplied.replace('/', ':') : supplied;
+    const model = qualified === undefined ? getModelIdFromProviderModel(current) : getModelIdFromProviderModel(qualified);
+    if (!provider || supplied === '' || !model) return ['Provider and model identifiers must be nonempty'];
+    // formatProviderModel intentionally preserves qualified input, which would
+    // override the CLI's explicit-provider-wins rule when a model contains ':'.
+    applyRuntimeConfigValue(config, 'provider.model', `${provider}:${model}`);
   }
   errors.push(...applyRuntimeEndpointFlagOverrides(config, 'controlPlane', flags));
   if (!resolveRuntimeEndpointBinding(config, 'controlPlane').recognized) errors.push('Unrecognized control-plane host mode');

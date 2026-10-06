@@ -171,16 +171,19 @@ test('custom daemon identity receives the legacy migration and does not seed the
   expect(existsSync(join(root, 'home', '.goodvibes', 'daemon', 'settings.json'))).toBe(false);
 });
 
-for (const flags of [
-  ['--provider', 'openai', '--model', 'anthropic:fixture-model'],
-  ['--model', 'anthropic:fixture-model', '--provider', 'openai'],
-]) {
-  test(`explicit provider reaches runtime config for ${flags.join(' ')}`, () => {
+for (const [flags, expected] of [
+  [['--provider', 'openai', '--model', 'anthropic:fixture-model'], 'openai:fixture-model'],
+  [['--model', 'anthropic:fixture-model', '--provider', 'openai'], 'openai:fixture-model'],
+  [['--model', 'openai/fixture-model'], 'openai:fixture-model'],
+  [['--provider', 'openai', '--model', 'anthropic/fixture-model'], 'openai:fixture-model'],
+  [['--model', 'openrouter:namespace/model:revision'], 'openrouter:namespace/model:revision'],
+] as const) {
+  test(`model identity reaches runtime config for ${flags.join(' ')}`, () => {
     const root = makeOwnedTempDir('daemon-cli-provider');
     const parsed = parseDaemonCli(['serve', ...flags]);
     const { config } = createDaemonCliConfiguration(parsed.flags, { HOME: root }, root);
     expect(prepareDaemonCliServe(config, parsed.flags)).toEqual([]);
-    expect(config.get('provider.model')).toBe('openai:fixture-model');
+    expect(config.get('provider.model')).toBe(expected);
   });
 }
 
