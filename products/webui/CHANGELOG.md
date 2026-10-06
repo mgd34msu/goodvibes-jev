@@ -8,6 +8,11 @@ This project uses semantic versioning with `vMAJOR.MINOR.PATCH` git tags.
 
 ### Fixed
 
+- Fleet actions for native-owned sessions now share the conversation composer's
+  source-bound continuation workflow. Only authoritative legacy classification
+  enables compact legacy steering. Exact originals, saved-input recovery and
+  honest native queue, cancellation and execution receipts use the existing owners.
+
 - Native requests now automatically hand admitted work to the existing paired
   native execution owner. Exact targets are durably retained before dispatch;
   status-only reopening, explicit interrupted recovery, cancellation and separate
