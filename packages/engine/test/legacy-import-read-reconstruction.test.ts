@@ -17,12 +17,14 @@ function setup() {
     createClient: () => ({ currentAuth: async () => auth, dispose() {}, invoke: async (method, input) => { calls.push(method); if (method === 'knowledge.sources.list') return pages(input); if (method === 'workLedger.prepareLegacyImport') return prepared; throw new Error('Unexpected mutation'); } }) });
   return { open, calls, auth: () => auth, setAuth: (next: typeof auth) => { auth = next; }, setPages: (next: typeof pages) => { pages = next; } };
 }
-test('read-only existing credentials enumerate all pages and expose no mutation method', async () => {
+test('read-only existing credentials enumerate all pages but cannot submit imports', async () => {
   const f = setup(); const session = await f.open();
   try {
     expect(await session.status()).toBeNull(); expect((await session.prepare()).kind).toBe('prepared');
     expect(f.calls).toEqual(['knowledge.sources.list', 'knowledge.sources.list', 'workLedger.prepareLegacyImport']);
-    expect(session).not.toHaveProperty('confirm'); expect(session).not.toHaveProperty('submit');
+    expect(session).not.toHaveProperty('confirm');
+    await expect(session.submit()).rejects.toThrow('write:work-ledger-import');
+    expect(f.calls).toEqual(['knowledge.sources.list', 'knowledge.sources.list', 'workLedger.prepareLegacyImport']);
   } finally { session.dispose(); }
 });
 test('revocation and incomplete pagination cannot expose a prepared source manifest', async () => {

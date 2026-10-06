@@ -4,6 +4,8 @@ Product-facing release notes for GoodVibes Agent.
 
 ## Unreleased
 
+- Add explicit shared legacy import submission, Jev reconsideration and exact-request recovery. Durable command identity precedes dispatch; live paired authority and workspace generations fence native admission. Historical completion remains reported and unverified, with legacy source records retained.
+
 - Add owner-only interactive `/setup pair --apply` with shell-owned exact confirmation and cancellation across preview, migration and verification. Model and nested routes cannot apply; interrupted outcomes preserve existing recovery state without reminting.
 
 - Handle real-terminal Ctrl-C and EOF throughout setup pairing, report interrupted previews consistently, and qualify the compiled binary against an owned daemon for confirmation, cancellation, restart and unknown-outcome recovery without reminting.

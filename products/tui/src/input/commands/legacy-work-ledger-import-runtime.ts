@@ -12,7 +12,7 @@ export function registerTuiLegacyImportCommands(registry: CommandRegistry, _daem
   if (!selected.available) throw new Error(selected.reason);
   const workspace = realpathSync(paths.workingDirectory);
   const { journalPath } = resolveLegacyImportJournalLocation({ workspace, projectId, stateDirectory: paths.resolveUserPath() });
-  // Keep the read-only engine session bound to the private store generation as
+  // Keep the engine import session bound to the private store generation as
   // well as endpoint/token/workspace, including replacement with the same token.
   return openLegacyImportOperator({ projectId, journalPath,
     createClient(host) {
@@ -23,8 +23,8 @@ export function registerTuiLegacyImportCommands(registry: CommandRegistry, _daem
         const credential = resolveNativeHostCredential({ configManager: context.platform.configManager, homeDirectory: paths.homeDirectory });
         return credential.available && credential.identity === selected.identity && realpathSync(paths.workingDirectory) === workspace;
       } }) });
-      return { currentAuth: () => client.control.auth.current({}, { signal: AbortSignal.timeout(10_000) }),
-        invoke: (method, input) => client.invoke(method, input, { signal: AbortSignal.timeout(30_000) }), dispose: () => { disposed = true; client.dispose(); } };
+      return { currentAuth: signal => client.control.auth.current({}, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000) }),
+        invoke: (method, input, signal) => client.invoke(method, input, { signal }), dispose: () => { disposed = true; client.dispose(); } };
     },
     resolve: () => {
       const current = requireShellPaths(context);

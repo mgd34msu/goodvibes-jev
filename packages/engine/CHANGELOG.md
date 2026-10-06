@@ -5,6 +5,7 @@
 ### Fixed
 
 - Install the authenticated WebUI command/error judgment runtime using the configured Jev route, actual host chat sources, bounded canonical error references, and revocation-safe dispatch, hashing, recording and attachment ownership.
+- Add explicit shared legacy import submission, Jev reconsideration and exact-request recovery. Durable command identity precedes dispatch; live paired authority and workspace generations fence native admission. Historical completion remains reported and unverified, with legacy source records retained.
 
 - Native Session Changes comments now preserve exact originals separately from
   host-verified complete selected hunks and checkpoint provenance, with live

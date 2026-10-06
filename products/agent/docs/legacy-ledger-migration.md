@@ -1,10 +1,46 @@
-# Legacy ledger preparation and replay (THE-105)
+# Native legacy import and recovery (THE-105)
 
-This product slice consumes the canonical engine legacy-import preparation API.
-It does not discover a local database, submit an import, run a verifier, replace
-pending editor contents, delete legacy records, or retire the planning interview.
-The selected authenticated daemon and its existing KnowledgeStore remain the
-only authority. A prepared manifest is not an import receipt.
+Agent and TUI share the same explicit `/work-import` command and durable journal.
+The selected authenticated daemon and its existing KnowledgeStore remain the only
+work authority. Import migrates historical data; it neither launches a work
+attempt nor verifies an old completion. Legacy records and the planning interview
+are retained while the wider native replacement is qualified.
+
+## Command workflow
+
+- `/work-import preview <project-id>` reads complete persisted source preparation.
+- `/work-import submit <project-id>` prepares and durably saves one immutable
+  command before sending it to the native host's recorded Jev admission owner.
+  Repeating submit returns existing state and does not dispatch again.
+- `/work-import status <project-id>` reads the protected local journal. It never
+  contacts an import mutation or resumes work.
+- `/work-import reconsider <project-id> <request-id>` explicitly asks for a fresh
+  host reading of a pending unchanged command. Prior decisions remain provenance.
+- `/work-import recover <project-id> <request-id>` retransmits an unknown command
+  unchanged. The host checks exact durable receipts before source freshness or
+  Jev; accepted replay neither reimports records nor starts work.
+- `/work-import cancel <project-id> <request-id>` cancels only a known pending
+  command. A dispatched unknown request stays unknown; this is not host rollback.
+- `/work-import restart <project-id> <request-id>` captures a new command only
+  after that exact selected request is definitively rejected or locally cancelled.
+  The prior command is archived. Unresolved or accepted requests cannot be replaced.
+
+Agent and TUI use their own exact-host private pairing stores. Unbound
+environment and daemon-global tokens are not fallback import credentials.
+Reads require current admin, `read:work-ledger` and `read:knowledge`. New import
+and recovery additionally require `write:work-ledger-import`, the selected
+host's real persisted paired authority generation, and a registered workspace
+scope. Shared tokens and user-session credentials cannot become paired authority.
+No command creates a credential, changes scopes, or treats `confirm`, historical
+approval, or model-supplied actor data as a grant. Both model and keyboard callers
+use the same host gate without a semantic human-approval loop.
+
+The host uses the existing shared judgment retry owner. While waiting, the
+command reports a pending operation. Session disposal aborts its owned transport;
+interrupted dispatched operations remain unknown for explicit recovery. Host
+shutdown, cancellation before admission, source changes, scope changes and
+credential revocation fence publication. Same-request transport recovery uses
+existing ledger idempotency, never a product retry loop or a new request ID.
 
 ## Inputs and source fidelity
 
@@ -68,14 +104,23 @@ are neutralized, and long source records remain scrollable.
 - Product history tests use actual Agent and TUI models/renderers, including TUI
   keyboard navigation, narrow-width scrolling, close, and subscription cleanup.
 
-A user-facing import submission/recovery flow still needs shared autonomous Jev
-admission bound to the authenticated host prepare/execute contract and the complete
-bounded command, stable request identity across indeterminate outcomes,
-same-request receipt reconciliation,
-closed/revoked/conflicting-state handling, and real product recovery tests. No
-planning-interview retirement is authorized by these preparation/history tests.
-Semantic reconciliation and submission decisions must follow the shared Jev
-contract without a human approval or escalation loop. Authentication, grant
-revocation and cancellation remain deterministic host boundaries.
-Full engine integration, independent review, exact-head CI and compiled startup
-qualification are required before this can be called a completed migration.
+For Jev input only, host-generated digest metadata and store-envelope epoch
+timestamps use lossless grouped representations so protocol metadata cannot be
+misread as payment-card data. Original source metadata and entity fragments still
+cross the unchanged privacy boundary; committed manifest bytes are unchanged.
+
+The autonomous host binds the complete manifest, real store and project, exact
+request, paired authority generation and workspace registration generation. A
+fresh recorded `act` is checked again inside the native ledger transaction.
+Non-act decisions do not import anything. A stored or parsed decision never
+authorizes a later action; reconsideration makes a fresh recorded reading.
+
+Focused tests exercise actual Agent harness and TUI keyboard/registry routes,
+synthetic owned HTTP hosts, SQLite journal reopen, lost acknowledgement and exact
+replay, repeated submit, stale request selection, source/revision conflicts,
+revocation during shared retry, closed service, and interrupted transports.
+Compiled command fixtures exercise the real command/SDK/journal composition in
+new processes; they are not a claim that all main-screen planning replacement is
+finished. Independent review, exact-head CI, product tests and compiled startup
+qualification remain release gates. The active planning interview is retired
+only after the broader replacement and recovery behavior is proven.

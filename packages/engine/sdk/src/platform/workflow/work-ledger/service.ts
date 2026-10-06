@@ -446,6 +446,23 @@ export function createWorkLedger(options: {
         return event?.type === 'submit_native' ? event as WorkLedgerSubmission : null;
       });
     },
+    lookupLegacyImport(input, actor) {
+      return admit(async () => {
+        if (closed) throw new WorkLedgerAccessError('closed', 'Work ledger is closed');
+        requireIdentity(actor);
+        const parsed = workLedgerCommandSchema.safeParse(input);
+        if (!parsed.success || parsed.data.type !== 'import_legacy') return rejected('invalid_command', 'Invalid legacy import command.', null);
+        const command = parsed.data;
+        const state = await readAuthoritativeState();
+        if (closed) throw new WorkLedgerAccessError('closed', 'Work ledger is closed');
+        const trusted = requireIdentity(actor);
+        const receipt = state.receipts.find(item => item.actorId === trusted.actorId && item.requestId === command.requestId);
+        if (!receipt) return null;
+        return receipt.signature === JSON.stringify({ role: trusted.role, command })
+          ? { kind: 'accepted', replayed: true, event: receipt.event }
+          : rejected('request_conflict', 'requestId was already used for a different command or role.', state.revision);
+      });
+    },
     subscribe(actor, listener) {
       if (closed) throw new WorkLedgerAccessError('closed', 'Work ledger is closed');
       requireIdentity(actor);
@@ -530,6 +547,11 @@ export function createWorkLedger(options: {
           next = result.kind === 'accepted' && !result.replayed ? readWorkLedgerState(state, projectId) : null;
         } catch {
           return { next: null, value: rejected('host_error', 'Host clock, identity generation or transition validation failed before commit.', initialRevision) };
+        }
+        if (next && command.type === 'import_legacy' && executeOptions?.assertImportAdmission) {
+          try { executeOptions.assertImportAdmission(); } catch {
+            return { next: null, value: rejected('forbidden', 'Native import admission is no longer current.', initialRevision) };
+          }
         }
         // Trusted clocks/ID factories can reenter authority/abort synchronously.
         // This final guard must follow every callback and precede publication.

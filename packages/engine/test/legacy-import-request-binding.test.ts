@@ -104,3 +104,14 @@ test('a stale client after process restart cannot mutate a replacement', async (
   try { expect(reopened.read(f.binding)).toMatchObject({ state: 'pending', command: f.second, attempts: 0, result: null }); }
   finally { reopened.close(); }
 });
+
+test('a stale dispatch snapshot cannot race recovery or replacement even with the same command', () => {
+  const f = setup(); const first = new LegacyImportJournal(f.path); const second = new LegacyImportJournal(f.path);
+  try {
+    const pending = first.reserve(f.binding, () => f.first);
+    const dispatched = second.dispatch(f.binding, f.first, pending);
+    expect(() => first.dispatch(f.binding, f.first, pending)).toThrow('dispatch state changed');
+    expect(first.read(f.binding)).toMatchObject({ state: 'unknown', attempts: 1 });
+    expect(second.dispatch(f.binding, f.first, dispatched)).toMatchObject({ state: 'unknown', attempts: 2 });
+  } finally { first.close(); second.close(); }
+});

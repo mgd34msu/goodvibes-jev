@@ -1,3 +1,7 @@
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { PairingTokenManager } from '../sdk/src/platform/pairing/pairing-token-store.js';
+import { WorkspaceRegistrationStore } from '../sdk/src/platform/workspace/registration/store.js';
 import { afterEach, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,8 +18,8 @@ import { acquireCrossProcessLock } from '../sdk/src/platform/workspace/checkpoin
 import { createOperatorWorkLedgerReadClient } from '../sdk/src/platform/workflow/work-ledger/operator-read-client.js';
 import type { OperatorRemoteClient } from '../operator-sdk/src/client-core.js';
 import type { LegacyMigrationPreparation } from '../sdk/src/platform/workflow/work-ledger/legacy-import.js';
-const roots: string[] = []; const stores: KnowledgeStore[] = [];
-afterEach(async () => { await Promise.all(stores.splice(0).map(store => store.close())); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+const roots: string[] = []; const stores: KnowledgeStore[] = []; const cleanups: (() => Promise<void>)[] = [];
+afterEach(async () => { for (const close of cleanups.splice(0)) await close(); await Promise.all(stores.splice(0).map(store => store.close())); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 async function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'import-http-')); roots.push(root); const file = join(root, 'knowledge.sqlite');
   const store = new KnowledgeStore({ dbPath: file }); stores.push(store);
@@ -26,15 +30,20 @@ async function fixture() {
   const storage = await store.openWorkLedgerStorage('project');
   const core = createWorkLedger({ projectId: 'project', importHostId: 'host', storage, clock: { now: () => 10, newId: kind => `${kind}-fixture` } });
   const catalog = new GatewayMethodCatalog();
-  registerWorkLedgerImportGatewayMethods(catalog, { hostId: 'host', projectId: 'project', ...core, readSource: id => store.getSourceSnapshot({ id }) });
+  const scopes = new WorkspaceRegistrationStore({ path: join(root, 'registrations.json'), homeDir: join(root, 'home'), daemonStateDir: join(root, 'daemon') });
+  await scopes.add(root);
+  const log = new SqliteDecisionLog(join(root, 'decisions.sqlite')); const fake = fakePort((_name, question) => choiceAnswer(question, 'act', 0.99));
+  const native = registerWorkLedgerImportGatewayMethods(catalog, { hostId: 'host', projectId: 'project', projectRoot: root, storeId: file, scopes, port: withDecisionLog(fake.port, log), decisionLog: log, ...core, readSource: id => store.getSourceSnapshot({ id }) });
+  cleanups.push(async () => { await native.close(); await core.service.close(); log[Symbol.dispose](); });
   const reader = createLocalWorkLedgerReadBinding({ available: true, projectId: 'project', actorId: 'reader', allowLegacyProvenance: true, ...core });
   if (!reader.available) throw new Error('Fixture reader missing'); registerWorkLedgerGatewayMethods(catalog, reader.client);
-  let revoked = false; let roles = ['admin'];
-  const helper = new DaemonControlPlaneHelper({ gatewayMethods: catalog, authToken: () => revoked ? null : 'owner-token',
+  let roles = ['admin'];
+  const tokens = new PairingTokenManager(join(root, 'pairing.json')); const paired = tokens.mint({ name: 'Synthetic import owner' });
+  const helper = new DaemonControlPlaneHelper({ gatewayMethods: catalog, authToken: () => 'shared-token', pairingTokens: tokens,
     userAuth: { validateSession: (token: string) => token === 'reader-token' ? { username: 'reader' } : token === 'session-token' ? { username: 'operator' } : null,
       getUser: (username: string) => ({ username, roles: username === 'reader' ? [] : roles }) },
   } as unknown as DaemonControlPlaneContext);
-  async function request(path: string, body?: unknown, token = 'owner-token', signal?: AbortSignal) {
+  async function request(path: string, body?: unknown, token = paired.token, signal?: AbortSignal) {
     const req = new Request(`http://127.0.0.1${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), ...(signal ? { signal } : {}) });
     return (await dispatchGatewayRestRoutes(req, { async invokeGatewayRestVerb({ req, methodId }) {
       const principal = helper.describeAuthenticatedPrincipal(token);
@@ -49,7 +58,7 @@ async function fixture() {
     if (result.kind !== 'prepared') throw new Error(JSON.stringify(result));
     return { type: 'import_legacy', requestId: 'request', expectedRevision: result.manifest.expectedLedgerRevision, manifest: result.manifest };
   }
-  return { file, store, catalog, helper, request, prepared, revoke() { revoked = true; }, downgrade() { roles = []; } };
+  return { file, store, catalog, helper, request, prepared, paired, log, fake, revoke() { tokens.revoke(paired.id); }, downgrade() { roles = []; } };
 }
 test('import descriptors require exactly the fields accepted by authenticated real-host handlers', async () => {
   const host = await fixture();
@@ -83,8 +92,8 @@ test('authenticated HTTP preparation/import/replay and bounded existing read tra
   expect(await (await host.request('/api/work-ledger/history?projectId=project&afterSequence=0')).json()).toMatchObject({ cursor: 1, events: [{ type: 'import_legacy', manifest: request.manifest }] });
   expect(await (await host.request('/api/work-ledger/snapshot?projectId=project')).json()).toMatchObject({ revision: 1, works: [{ work: { id: 'legacy' }, verification: { state: 'unverified' }, attempt: null }] });
   expect(host.store.getSourceSnapshot({ id: 'source' })).toEqual(before);
-  const denied = await host.helper.invokeGatewayMethodCall({ authToken: 'owner-token', methodId: 'workLedger.history', query: { projectId: 'project', afterSequence: 0 },
-    context: { admin: true, principalId: 'shared-token', principalKind: 'token', scopes: ['read:work-ledger'] } });
+  const denied = await host.helper.invokeGatewayMethodCall({ authToken: host.paired.token, methodId: 'workLedger.history', query: { projectId: 'project', afterSequence: 0 },
+    context: { admin: true, principalId: host.helper.describeAuthenticatedPrincipal(host.paired.token)!.principalId, principalKind: 'token', scopes: ['read:work-ledger'] } });
   expect(denied.status).toBe(200);
   expect(denied.body).toMatchObject({ cursor: 1, events: [{ type: 'import_legacy', manifest: null, provenance: 'requires_read_knowledge' }] });
   expect(JSON.stringify(denied.body)).not.toContain('PRIVATE_SOURCE_PAYLOAD_DO_NOT_DISCLOSE');
@@ -92,25 +101,25 @@ test('authenticated HTTP preparation/import/replay and bounded existing read tra
   expect(JSON.stringify(denied.body)).not.toContain('signature');
   expect(JSON.stringify(denied.body)).not.toContain('receipts');
   expect(JSON.stringify(denied.body)).not.toContain('goodvibes-project-planning');
-  const snapshotOnly = await host.helper.invokeGatewayMethodCall({ authToken: 'owner-token', methodId: 'workLedger.snapshot', query: { projectId: 'project' },
-    context: { admin: true, principalId: 'shared-token', principalKind: 'token', scopes: ['read:work-ledger'] } });
+  const snapshotOnly = await host.helper.invokeGatewayMethodCall({ authToken: host.paired.token, methodId: 'workLedger.snapshot', query: { projectId: 'project' },
+    context: { admin: true, principalId: host.helper.describeAuthenticatedPrincipal(host.paired.token)!.principalId, principalKind: 'token', scopes: ['read:work-ledger'] } });
   expect(JSON.stringify(snapshotOnly.body)).not.toContain('PRIVATE_SOURCE_PAYLOAD_DO_NOT_DISCLOSE');
   expect(snapshotOnly.status).toBe(200); expect(JSON.stringify(snapshotOnly.body)).not.toContain('executionApproved');
 });
 test('read-only scoped admin can prepare but protected provenance still requires read knowledge', async () => {
   const host = await fixture(); const body = { projectId: 'project', sourceIds: ['source'] };
-  const context = { admin: true, principalId: 'shared-token', principalKind: 'token' as const, scopes: ['read:work-ledger', 'read:knowledge'] };
-  const prepared = await host.helper.invokeGatewayMethodCall({ authToken: 'owner-token', methodId: 'workLedger.prepareLegacyImport', body, context });
+  const context = { admin: true, principalId: host.helper.describeAuthenticatedPrincipal(host.paired.token)!.principalId, principalKind: 'token' as const, scopes: ['read:work-ledger', 'read:knowledge'] };
+  const prepared = await host.helper.invokeGatewayMethodCall({ authToken: host.paired.token, methodId: 'workLedger.prepareLegacyImport', body, context });
   expect(prepared.status).toBe(200); expect(prepared.body).toMatchObject({ kind: 'prepared' });
-  const denied = await host.helper.invokeGatewayMethodCall({ authToken: 'owner-token', methodId: 'workLedger.prepareLegacyImport', body, context: { ...context, scopes: ['read:work-ledger'] } });
+  const denied = await host.helper.invokeGatewayMethodCall({ authToken: host.paired.token, methodId: 'workLedger.prepareLegacyImport', body, context: { ...context, scopes: ['read:work-ledger'] } });
   expect(denied.status).toBe(403); expect(JSON.stringify(denied.body)).not.toContain('PRIVATE_SOURCE_PAYLOAD_DO_NOT_DISCLOSE');
 });
 test('read token, non-owner, scope attenuation, forged payload authority and stale auth refuse before writes', async () => {
   const host = await fixture(); const request = await host.prepared(); const bytes = readFileSync(host.file);
   expect((await host.request('/api/work-ledger/legacy-import', request, 'reader-token')).status).toBe(403);
   expect((await host.request('/api/work-ledger/legacy-import', { ...request, actorId: 'owner', role: 'coordinator' })).status).toBe(400);
-  expect((await host.helper.invokeGatewayMethodCall({ authToken: 'owner-token', methodId: 'workLedger.importLegacy', body: request,
-    context: { admin: true, principalId: 'shared-token', principalKind: 'token', scopes: ['read:work-ledger'] } })).status).toBe(403);
+  expect((await host.helper.invokeGatewayMethodCall({ authToken: host.paired.token, methodId: 'workLedger.importLegacy', body: request,
+    context: { admin: true, principalId: host.helper.describeAuthenticatedPrincipal(host.paired.token)!.principalId, principalKind: 'token', scopes: ['read:work-ledger'] } })).status).toBe(403);
   await expect(host.catalog.invoke('workLedger.importLegacy', { body: request, context: { admin: true, scopes: ['write:work-ledger-import'] } })).rejects.toMatchObject({ status: 403 });
   await expect(host.catalog.invoke('workLedger.importLegacy', { body: request, context: { admin: true, principalId: 'trusted-shaped', scopes: ['write:work-ledger-import', 'read:knowledge'] } })).rejects.toMatchObject({ status: 403 });
   const cached = host.helper.describeAuthenticatedPrincipal('session-token')!; host.downgrade();
@@ -121,30 +130,30 @@ test('read token, non-owner, scope attenuation, forged payload authority and sta
 test('HTTP request cancellation and token revocation while storage waits prevent admission', async () => {
   const host = await fixture(); const request = await host.prepared(); const bytes = readFileSync(host.file);
   const release = await acquireCrossProcessLock(`${host.file}.knowledge-lock`, { strictOwnership: true });
-  const controller = new AbortController(); const waiting = host.request('/api/work-ledger/legacy-import', request, 'owner-token', controller.signal);
+  const controller = new AbortController(); const waiting = host.request('/api/work-ledger/legacy-import', request, host.paired.token, controller.signal);
   controller.abort(); await release();
   expect(await (await waiting).json()).toMatchObject({ kind: 'rejected', code: 'cancelled' });
   const release2 = await acquireCrossProcessLock(`${host.file}.knowledge-lock`, { strictOwnership: true });
   // Start at the authenticated catalog handler to prove live revocation AFTER entry.
   const entered = host.catalog.get('workLedger.importLegacy')!; expect(entered.metadata?.requiresFreshOperatorAuth).toBe(true);
-  const pending = host.helper.invokeGatewayMethodCall({ authToken: 'owner-token', methodId: 'workLedger.importLegacy', body: request,
-    context: host.helper.describeAuthenticatedPrincipal('owner-token')! });
+  const pending = host.helper.invokeGatewayMethodCall({ authToken: host.paired.token, methodId: 'workLedger.importLegacy', body: request,
+    context: host.helper.describeAuthenticatedPrincipal(host.paired.token)! });
   host.revoke(); await release2();
-  expect((await pending).body).toMatchObject({ kind: 'rejected', code: 'forbidden' });
+  expect((await pending).status).toBe(403);
   expect(readFileSync(host.file)).toEqual(bytes);
 });
 
 test('same-token same-cursor projection changes notify clients and fence previously authorized late history', async () => {
   const host = await fixture(); const command = await host.prepared(); await host.request('/api/work-ledger/legacy-import', command);
-  const principal = host.helper.describeAuthenticatedPrincipal('owner-token')!;
+  const principal = host.helper.describeAuthenticatedPrincipal(host.paired.token)!;
   let knowledge = true;
   host.helper.describeAuthenticatedPrincipal = () => ({ ...principal, scopes: knowledge ? ['read:knowledge', 'read:work-ledger'] : ['read:work-ledger'] });
   let release!: () => void; let enter!: () => void; let hold = true;
   const entered = new Promise<void>(resolve => { enter = resolve; });
   const gate = new Promise<void>(resolve => { release = resolve; });
   const remote: Pick<OperatorRemoteClient, 'invoke'> = { async invoke<T>(methodId: string, input?: Record<string, unknown>) {
-    const result = await host.helper.invokeGatewayMethodCall({ authToken: 'owner-token', methodId, query: input,
-      context: host.helper.describeAuthenticatedPrincipal('owner-token')! });
+    const result = await host.helper.invokeGatewayMethodCall({ authToken: host.paired.token, methodId, query: input,
+      context: host.helper.describeAuthenticatedPrincipal(host.paired.token)! });
     if (!result.ok) throw new Error('Fixture read denied');
     if (methodId === 'workLedger.history' && hold) { enter(); await gate; }
     return result.body as T;
@@ -169,13 +178,13 @@ test('same-token same-cursor projection changes notify clients and fence previou
 
 test('a later-observed restriction wins even when its request began before a newer available snapshot', async () => {
   const host = await fixture(); const command = await host.prepared(); await host.request('/api/work-ledger/legacy-import', command);
-  const principal = host.helper.describeAuthenticatedPrincipal('owner-token')!; let knowledge = true;
+  const principal = host.helper.describeAuthenticatedPrincipal(host.paired.token)!; let knowledge = true;
   host.helper.describeAuthenticatedPrincipal = () => ({ ...principal, scopes: knowledge ? ['read:knowledge', 'read:work-ledger'] : ['read:work-ledger'] });
   let release!: () => void; let enter!: () => void;
   const entered = new Promise<void>(resolve => { enter = resolve; }); const gate = new Promise<void>(resolve => { release = resolve; });
   const remote: Pick<OperatorRemoteClient, 'invoke'> = { async invoke<T>(methodId: string, input?: Record<string, unknown>) {
     if (methodId === 'workLedger.history') { enter(); await gate; }
-    const result = await host.helper.invokeGatewayMethodCall({ authToken: 'owner-token', methodId, query: input, context: host.helper.describeAuthenticatedPrincipal('owner-token')! });
+    const result = await host.helper.invokeGatewayMethodCall({ authToken: host.paired.token, methodId, query: input, context: host.helper.describeAuthenticatedPrincipal(host.paired.token)! });
     if (!result.ok) throw new Error('Fixture read denied'); return result.body as T;
   } };
   const reader = createOperatorWorkLedgerReadClient(remote, 'project', { pollIntervalMs: 100 });
@@ -185,4 +194,17 @@ test('a later-observed restriction wins even when its request began before a new
     await reader.readSnapshot(); knowledge = false; release(); await old;
     expect(observed.at(-1)).toBe('requires_read_knowledge');
   } finally { release(); stop(); reader.dispose(); }
+});
+
+test('legacy writes require paired generation and dedicated import scope, never fleet scope or a shared owner token', async () => {
+  const host = await fixture(); const command = await host.prepared(); const bytes = readFileSync(host.file);
+  expect((await host.request('/api/work-ledger/legacy-import', command, 'shared-token')).status).toBe(403);
+  expect((await host.request('/api/work-ledger/legacy-import', command, 'session-token')).status).toBe(403);
+  const principal = host.helper.describeAuthenticatedPrincipal(host.paired.token)!;
+  const denied = await host.helper.invokeGatewayMethodCall({ authToken: host.paired.token, methodId: 'workLedger.importLegacy', body: command,
+    context: { ...principal, scopes: ['write:fleet', 'read:knowledge'] } });
+  expect(denied.status).toBe(403); expect(host.fake.requests).toHaveLength(0); expect(readFileSync(host.file)).toEqual(bytes);
+  const allowed = await host.helper.invokeGatewayMethodCall({ authToken: host.paired.token, methodId: 'workLedger.importLegacy', body: command,
+    context: { ...principal, scopes: ['write:work-ledger-import', 'read:knowledge'] } });
+  expect(allowed.body).toMatchObject({ kind: 'accepted', replayed: false });
 });

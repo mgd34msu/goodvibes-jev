@@ -365,11 +365,6 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       try { workLedgerReader.dispose(); } finally { await Promise.all([nativeClosing, workLedgerOwner.close()]); }
     };
     registerWorkLedgerGatewayMethods(gatewayMethods, workLedgerReader);
-    registerWorkLedgerImportGatewayMethods(gatewayMethods, {
-      hostId: workLedgerOwner.importHostId, projectId: projectPlanningProjectId,
-      service: workLedgerOwner.service, authority: workLedgerOwner.authority,
-      readSource: id => knowledgeStore.getSourceSnapshot({ id }),
-    });
     const voiceProviders = new VoiceProviderRegistry();
     ensureBuiltinVoiceProviders(voiceProviders, { readConfig: (key) => configManager.get(key as Parameters<typeof configManager.get>[0]) });
     const voiceService = new VoiceService(voiceProviders);
@@ -687,6 +682,13 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     const nativeScopes = new WorkspaceRegistrationStore({ path: sharedWorkspaceRegisterPath(shellPaths),
       fallbackReadPath: legacyWorkspaceRegisterPath(shellPaths), homeDir: homeDirectory,
       daemonStateDir: shellPaths.resolveUserPath() });
+    const nativeImport = registerWorkLedgerImportGatewayMethods(gatewayMethods, {
+      hostId: workLedgerOwner.importHostId, projectId: projectPlanningProjectId, projectRoot: workingDirectory,
+      storeId: knowledgeStore.storagePath, service: workLedgerOwner.service, authority: workLedgerOwner.authority,
+      readSource: id => knowledgeStore.getSourceSnapshot({ id }), scopes: nativeScopes,
+      port: judgment.port, decisionLog: judgment.decisionLog,
+    });
+    disposalScope.ownUntilRegistered('native legacy import', nativeImport.close);
     const nativeSubmission = createNativeWorkSubmissionHost({ projectRoot: workingDirectory, projectId: projectPlanningProjectId,
       sessionId: `native-work:${projectPlanningProjectId}`, service: workLedgerOwner.service, authority: workLedgerOwner.authority, scopes: nativeScopes });
     disposalScope.ownUntilRegistered('native work submission', nativeSubmission.close);
@@ -721,7 +723,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       additionalFleetOwnership: () => agentManager.fleetOwnership(),
     });
     nativeFleetOwnership = nativeWork.fleetOwnership;
-    fenceNativeWork = async () => { await Promise.all([nativeSubmission.close(), nativeIntake.close(), nativeWork.close()]); };
+    fenceNativeWork = async () => { await Promise.all([nativeImport.close(), nativeSubmission.close(), nativeIntake.close(), nativeWork.close()]); };
     disposalScope.ownUntilRegistered('native work execution', nativeWork.close);
     registerNativeWorkExecutionGatewayMethods(gatewayMethods, { projectId: projectPlanningProjectId, acquire: nativeWork.acquire });
 
@@ -877,6 +879,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     };
     registerDaemonRuntimeBasePollers(disposalScope.registry, { ...services, contractRunner: contracts }, { stopConfigWatch });
     // Native turns borrow these owners, so they drain before shared pollers.
+    disposalScope.registry.add('native legacy import', nativeImport.close);
     disposalScope.registry.add('native work submission', nativeSubmission.close);
     disposalScope.registry.add('native conversation intake', nativeIntake.close);
     disposalScope.registry.add('native hosted conversation binding', removeHostedOwner);
