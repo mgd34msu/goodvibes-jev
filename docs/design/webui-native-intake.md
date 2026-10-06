@@ -5,6 +5,9 @@ Work → New → Native request uses the existing authenticated
 captures the original text and immediately invokes Jev admission. There is no
 separate human Admit/Approve gate, browser semantic classifier, browser model
 client or outage fallback. The shared Jev transport retains retry ownership.
+For admitted work, the same request now automatically continues through the
+[native execution handoff](webui-native-execution.md), which retains the canonical
+target durably and uses the existing paired execution owner.
 
 ## Source and identity
 
@@ -59,15 +62,16 @@ requests. A late pre-cancellation response cannot replace the newer UI outcome.
 If publication already won, the real work receipt remains visible. Cancellation
 does not cancel an already admitted execution.
 
-`work` renders the immutable admission receipt and exact criteria. `turn`,
+`work` renders the immutable admission receipt and exact criteria, followed by
+separate native execution status and controls. `turn`,
 `blocked`, `refused` and `cancelled` remain genuine recorded dispositions with no
 approval, legacy task or model-turn fallback.
 
 ## Boundaries still open
 
-This slice stops at admission. It does not invoke native execution, claim an
-execution receipt, or pass a serialized turn result into ordinary chat. Native
-execution needs the explicit durable execution owner/control integration; hosted
+The original admission slice is now connected to the explicit durable native
+execution owner/control integration. Admission still does not itself claim an
+execution receipt or pass a serialized turn result into ordinary chat. Hosted
 conversation delivery still needs canonical broker input identity, currently
 authenticated native authority, a nonserialized admission capability and durable
 dispatch reconciliation. Existing `contracts.start/reply` and `tasks.create` are

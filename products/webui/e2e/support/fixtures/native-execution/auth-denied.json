@@ -1,0 +1,791 @@
+{
+  "source": "owned-synthetic-provider; real paired DaemonServer intake and native execution graph HTTP",
+  "name": "auth-denied",
+  "input": {
+    "requestId": "webui-native-execution-auth-request",
+    "inputId": "webui-native-execution-auth-input",
+    "text": "  Answer this request yourself without delegation. 🌻\nSay native execution is complete.\nSay native execution is complete.  ",
+    "unsupportedSources": []
+  },
+  "auth": {
+    "methodId": "control.auth.current",
+    "method": "GET",
+    "path": "/api/control-plane/auth",
+    "status": 200,
+    "body": "{\"authenticated\":true,\"authMode\":\"session\",\"tokenPresent\":true,\"authorizationHeaderPresent\":true,\"sessionCookiePresent\":false,\"principalId\":\"pairing:pair-3c6146a3-e7eb-4ece-92bf-7b75f2d2c417\",\"principalKind\":\"token\",\"admin\":true,\"scopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:work-ledger\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"roles\":[]}"
+  },
+  "project": {
+    "methodId": "workLedger.project",
+    "method": "GET",
+    "path": "/api/work-ledger/project",
+    "status": 200,
+    "body": "{\"projectId\":\"workspace-3791bd5b0f\"}"
+  },
+  "lookupBefore": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-execution-auth-input"
+    },
+    "requestJson": "{\"inputId\":\"webui-native-execution-auth-input\"}",
+    "body": "{\"kind\":\"not-found\"}"
+  },
+  "capture": {
+    "methodId": "workLedger.intake.capture",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/capture",
+    "status": 200,
+    "requestBody": {
+      "requestId": "webui-native-execution-auth-request",
+      "inputId": "webui-native-execution-auth-input",
+      "text": "  Answer this request yourself without delegation. 🌻\nSay native execution is complete.\nSay native execution is complete.  ",
+      "unsupportedSources": []
+    },
+    "requestJson": "{\"requestId\":\"webui-native-execution-auth-request\",\"inputId\":\"webui-native-execution-auth-input\",\"text\":\"  Answer this request yourself without delegation. 🌻\\nSay native execution is complete.\\nSay native execution is complete.  \",\"unsupportedSources\":[]}",
+    "body": "{\"kind\":\"captured\",\"projectId\":\"workspace-3791bd5b0f\",\"requestId\":\"webui-native-execution-auth-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-execution-auth-input\",\"sourceId\":\"a52ab79322b1a223aa8f1bc3ef3e70ca8fc0f9cb803ed31a341fbb7d4d31165b\",\"sourceRevision\":\"069c5d1a3bf15ffac8e76299b014294ea7ffb745de446c981c40444ef19d0f34\",\"sessionId\":\"native-work:workspace-3791bd5b0f\"}}"
+  },
+  "getCaptured": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-execution-auth-input"
+    },
+    "requestJson": "{\"inputId\":\"webui-native-execution-auth-input\"}",
+    "body": "{\"kind\":\"captured\",\"projectId\":\"workspace-3791bd5b0f\",\"requestId\":\"webui-native-execution-auth-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-execution-auth-input\",\"sourceId\":\"a52ab79322b1a223aa8f1bc3ef3e70ca8fc0f9cb803ed31a341fbb7d4d31165b\",\"sourceRevision\":\"069c5d1a3bf15ffac8e76299b014294ea7ffb745de446c981c40444ef19d0f34\",\"sessionId\":\"native-work:workspace-3791bd5b0f\"}}"
+  },
+  "transition": {
+    "inputId": "webui-native-execution-auth-input",
+    "sourceRevision": "069c5d1a3bf15ffac8e76299b014294ea7ffb745de446c981c40444ef19d0f34"
+  },
+  "admit": {
+    "methodId": "workLedger.intake.admit",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/admit",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-execution-auth-input",
+      "sourceRevision": "069c5d1a3bf15ffac8e76299b014294ea7ffb745de446c981c40444ef19d0f34"
+    },
+    "requestJson": "{\"inputId\":\"webui-native-execution-auth-input\",\"sourceRevision\":\"069c5d1a3bf15ffac8e76299b014294ea7ffb745de446c981c40444ef19d0f34\"}",
+    "body": "{\"kind\":\"work\",\"projectId\":\"workspace-3791bd5b0f\",\"requestId\":\"webui-native-execution-auth-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-execution-auth-input\",\"sourceId\":\"a52ab79322b1a223aa8f1bc3ef3e70ca8fc0f9cb803ed31a341fbb7d4d31165b\",\"sourceRevision\":\"069c5d1a3bf15ffac8e76299b014294ea7ffb745de446c981c40444ef19d0f34\",\"sessionId\":\"native-work:workspace-3791bd5b0f\"},\"receipt\":{\"projectId\":\"workspace-3791bd5b0f\",\"requestId\":\"webui-native-execution-auth-request\",\"inputId\":\"webui-native-execution-auth-input\",\"ledgerRevision\":1,\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"source\":{\"version\":2,\"sourceId\":\"a52ab79322b1a223aa8f1bc3ef3e70ca8fc0f9cb803ed31a341fbb7d4d31165b\",\"sourceRevision\":\"069c5d1a3bf15ffac8e76299b014294ea7ffb745de446c981c40444ef19d0f34\",\"sessionId\":\"native-work:workspace-3791bd5b0f\",\"offsetEncoding\":\"utf16\",\"proposalRevision\":\"ad693b5b6b5402023157a5ee48cb7c364bf43b2a0e6372a04969b2678c638d6c\",\"spans\":[{\"partId\":\"input\",\"start\":0,\"end\":123}],\"admissionDecisionId\":\"3b525300-93cd-42f1-9382-6639242e68ab\",\"judgmentDecisionIds\":[\"01a11000-1f08-7000-96dc-9b27fd6f82b1\",\"01a11000-1f4c-7000-b280-027f880bc57e\",\"01a11000-1f52-7000-b3bc-00439f8820c3\",\"01a11000-1f5f-7000-8cca-419eba671d15\"]},\"goal\":\"  Answer this request yourself without delegation. 🌻\\nSay native execution is complete.\\nSay native execution is complete.  \",\"criteria\":[\"  Answer this request yourself without delegation. 🌻\\nSay native execution is complete.\\nSay native execution is complete.  \"]}}"
+  },
+  "get": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-execution-auth-input"
+    },
+    "requestJson": "{\"inputId\":\"webui-native-execution-auth-input\"}",
+    "body": "{\"kind\":\"work\",\"projectId\":\"workspace-3791bd5b0f\",\"requestId\":\"webui-native-execution-auth-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-execution-auth-input\",\"sourceId\":\"a52ab79322b1a223aa8f1bc3ef3e70ca8fc0f9cb803ed31a341fbb7d4d31165b\",\"sourceRevision\":\"069c5d1a3bf15ffac8e76299b014294ea7ffb745de446c981c40444ef19d0f34\",\"sessionId\":\"native-work:workspace-3791bd5b0f\"},\"receipt\":{\"projectId\":\"workspace-3791bd5b0f\",\"requestId\":\"webui-native-execution-auth-request\",\"inputId\":\"webui-native-execution-auth-input\",\"ledgerRevision\":1,\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"source\":{\"version\":2,\"sourceId\":\"a52ab79322b1a223aa8f1bc3ef3e70ca8fc0f9cb803ed31a341fbb7d4d31165b\",\"sourceRevision\":\"069c5d1a3bf15ffac8e76299b014294ea7ffb745de446c981c40444ef19d0f34\",\"sessionId\":\"native-work:workspace-3791bd5b0f\",\"offsetEncoding\":\"utf16\",\"proposalRevision\":\"ad693b5b6b5402023157a5ee48cb7c364bf43b2a0e6372a04969b2678c638d6c\",\"spans\":[{\"partId\":\"input\",\"start\":0,\"end\":123}],\"admissionDecisionId\":\"3b525300-93cd-42f1-9382-6639242e68ab\",\"judgmentDecisionIds\":[\"01a11000-1f08-7000-96dc-9b27fd6f82b1\",\"01a11000-1f4c-7000-b280-027f880bc57e\",\"01a11000-1f52-7000-b3bc-00439f8820c3\",\"01a11000-1f5f-7000-8cca-419eba671d15\"]},\"goal\":\"  Answer this request yourself without delegation. 🌻\\nSay native execution is complete.\\nSay native execution is complete.  \",\"criteria\":[\"  Answer this request yourself without delegation. 🌻\\nSay native execution is complete.\\nSay native execution is complete.  \"]}}"
+  },
+  "identity": {
+    "projectId": "workspace-3791bd5b0f",
+    "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+    "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+    "expectedRevision": {
+      "work": 1,
+      "criteria": 1,
+      "attempt": 1
+    }
+  },
+  "notStarted": {
+    "methodId": "workLedger.execution.status",
+    "method": "POST",
+    "path": "/api/work-ledger/execution/status",
+    "status": 404,
+    "requestBody": {
+      "projectId": "workspace-3791bd5b0f",
+      "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+      "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+      "expectedRevision": {
+        "work": 1,
+        "criteria": 1,
+        "attempt": 1
+      }
+    },
+    "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+    "body": "{\"error\":\"Native work execution not-found\",\"code\":\"NATIVE_EXECUTION_NOT_FOUND\",\"category\":\"not_found\",\"status\":404}"
+  },
+  "prevented": {
+    "methodId": "workLedger.execution.cancel",
+    "method": "POST",
+    "path": "/api/work-ledger/execution/cancel",
+    "status": 200,
+    "requestBody": {
+      "projectId": "workspace-3791bd5b0f",
+      "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+      "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+      "expectedRevision": {
+        "work": 1,
+        "criteria": 1,
+        "attempt": 1
+      }
+    },
+    "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+    "body": "{\"kind\":\"prevented-before-admission\",\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentAttempt\":true,\"stale\":false,\"state\":\"cancelled\",\"recovery\":\"cancelled\"}"
+  },
+  "denied": [
+    {
+      "methodId": "workLedger.execution.start",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start",
+      "status": 403,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Native execution requires a persisted paired-token owner; shared tokens and user sessions are unsupported\",\"hint\":\"Possible causes include missing model access, account permissions, safety/policy restrictions, or provider routing to a service that does not expose this model.\",\"code\":\"NATIVE_EXECUTION_UNSUPPORTED_AUTHORITY\",\"category\":\"authorization\",\"status\":403}"
+    },
+    {
+      "methodId": "workLedger.execution.start",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start",
+      "status": 409,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Native work execution stale\",\"code\":\"NATIVE_EXECUTION_STALE\",\"category\":\"unknown\",\"status\":409}"
+    },
+    {
+      "methodId": "workLedger.execution.start",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start",
+      "status": 403,
+      "requestBody": {
+        "projectId": "foreign-project",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"foreign-project\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Selected host does not own this project\",\"hint\":\"Possible causes include missing model access, account permissions, safety/policy restrictions, or provider routing to a service that does not expose this model.\",\"code\":\"WORK_LEDGER_PROJECT_MISMATCH\",\"category\":\"authorization\",\"status\":403}"
+    },
+    {
+      "methodId": "workLedger.execution.status",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/status",
+      "status": 403,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Native execution requires a persisted paired-token owner; shared tokens and user sessions are unsupported\",\"hint\":\"Possible causes include missing model access, account permissions, safety/policy restrictions, or provider routing to a service that does not expose this model.\",\"code\":\"NATIVE_EXECUTION_UNSUPPORTED_AUTHORITY\",\"category\":\"authorization\",\"status\":403}"
+    },
+    {
+      "methodId": "workLedger.execution.status",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/status",
+      "status": 404,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Native work execution not-found\",\"code\":\"NATIVE_EXECUTION_NOT_FOUND\",\"category\":\"not_found\",\"status\":404}"
+    },
+    {
+      "methodId": "workLedger.execution.status",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/status",
+      "status": 403,
+      "requestBody": {
+        "projectId": "foreign-project",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"foreign-project\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Selected host does not own this project\",\"hint\":\"Possible causes include missing model access, account permissions, safety/policy restrictions, or provider routing to a service that does not expose this model.\",\"code\":\"WORK_LEDGER_PROJECT_MISMATCH\",\"category\":\"authorization\",\"status\":403}"
+    },
+    {
+      "methodId": "workLedger.execution.cancel",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/cancel",
+      "status": 403,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Native execution requires a persisted paired-token owner; shared tokens and user sessions are unsupported\",\"hint\":\"Possible causes include missing model access, account permissions, safety/policy restrictions, or provider routing to a service that does not expose this model.\",\"code\":\"NATIVE_EXECUTION_UNSUPPORTED_AUTHORITY\",\"category\":\"authorization\",\"status\":403}"
+    },
+    {
+      "methodId": "workLedger.execution.cancel",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/cancel",
+      "status": 409,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Native work execution stale\",\"code\":\"NATIVE_EXECUTION_STALE\",\"category\":\"unknown\",\"status\":409}"
+    },
+    {
+      "methodId": "workLedger.execution.cancel",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/cancel",
+      "status": 403,
+      "requestBody": {
+        "projectId": "foreign-project",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"foreign-project\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Selected host does not own this project\",\"hint\":\"Possible causes include missing model access, account permissions, safety/policy restrictions, or provider routing to a service that does not expose this model.\",\"code\":\"WORK_LEDGER_PROJECT_MISMATCH\",\"category\":\"authorization\",\"status\":403}"
+    },
+    {
+      "methodId": "workLedger.execution.resume",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/resume",
+      "status": 403,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Native execution requires a persisted paired-token owner; shared tokens and user sessions are unsupported\",\"hint\":\"Possible causes include missing model access, account permissions, safety/policy restrictions, or provider routing to a service that does not expose this model.\",\"code\":\"NATIVE_EXECUTION_UNSUPPORTED_AUTHORITY\",\"category\":\"authorization\",\"status\":403}"
+    },
+    {
+      "methodId": "workLedger.execution.resume",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/resume",
+      "status": 404,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Native work execution not-found\",\"code\":\"NATIVE_EXECUTION_NOT_FOUND\",\"category\":\"not_found\",\"status\":404}"
+    },
+    {
+      "methodId": "workLedger.execution.resume",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/resume",
+      "status": 403,
+      "requestBody": {
+        "projectId": "foreign-project",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"foreign-project\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Selected host does not own this project\",\"hint\":\"Possible causes include missing model access, account permissions, safety/policy restrictions, or provider routing to a service that does not expose this model.\",\"code\":\"WORK_LEDGER_PROJECT_MISMATCH\",\"category\":\"authorization\",\"status\":403}"
+    },
+    {
+      "methodId": "workLedger.execution.start",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start",
+      "status": 409,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Native work execution stale\",\"code\":\"NATIVE_EXECUTION_STALE\",\"category\":\"unknown\",\"status\":409}"
+    },
+    {
+      "methodId": "workLedger.execution.status",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/status",
+      "status": 409,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Native work execution stale\",\"code\":\"NATIVE_EXECUTION_STALE\",\"category\":\"unknown\",\"status\":409}"
+    },
+    {
+      "methodId": "workLedger.execution.cancel",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/cancel",
+      "status": 409,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Native work execution stale\",\"code\":\"NATIVE_EXECUTION_STALE\",\"category\":\"unknown\",\"status\":409}"
+    },
+    {
+      "methodId": "workLedger.execution.resume",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/resume",
+      "status": 409,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Native work execution stale\",\"code\":\"NATIVE_EXECUTION_STALE\",\"category\":\"unknown\",\"status\":409}"
+    },
+    {
+      "methodId": "workLedger.execution.start",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start",
+      "status": 403,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Missing required scope for workLedger.execution.start: read:work-ledger\",\"requiredScopes\":[\"read:work-ledger\",\"write:fleet\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"read:work-ledger\"]}"
+    },
+    {
+      "methodId": "workLedger.execution.status",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/status",
+      "status": 403,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Missing required scope for workLedger.execution.status: read:work-ledger\",\"requiredScopes\":[\"read:work-ledger\",\"write:fleet\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"read:work-ledger\"]}"
+    },
+    {
+      "methodId": "workLedger.execution.cancel",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/cancel",
+      "status": 403,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Missing required scope for workLedger.execution.cancel: read:work-ledger\",\"requiredScopes\":[\"read:work-ledger\",\"write:fleet\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"read:work-ledger\"]}"
+    },
+    {
+      "methodId": "workLedger.execution.resume",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/resume",
+      "status": 403,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Missing required scope for workLedger.execution.resume: read:work-ledger\",\"requiredScopes\":[\"read:work-ledger\",\"write:fleet\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"read:work-ledger\"]}"
+    },
+    {
+      "methodId": "workLedger.execution.start",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start",
+      "status": 403,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Missing required scope for workLedger.execution.start: write:fleet\",\"requiredScopes\":[\"read:work-ledger\",\"write:fleet\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:work-ledger\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"write:fleet\"]}"
+    },
+    {
+      "methodId": "workLedger.execution.status",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/status",
+      "status": 403,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Missing required scope for workLedger.execution.status: write:fleet\",\"requiredScopes\":[\"read:work-ledger\",\"write:fleet\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:work-ledger\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"write:fleet\"]}"
+    },
+    {
+      "methodId": "workLedger.execution.cancel",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/cancel",
+      "status": 403,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Missing required scope for workLedger.execution.cancel: write:fleet\",\"requiredScopes\":[\"read:work-ledger\",\"write:fleet\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:work-ledger\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"write:fleet\"]}"
+    },
+    {
+      "methodId": "workLedger.execution.resume",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/resume",
+      "status": 403,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Missing required scope for workLedger.execution.resume: write:fleet\",\"requiredScopes\":[\"read:work-ledger\",\"write:fleet\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:work-ledger\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"write:fleet\"]}"
+    },
+    {
+      "methodId": "workLedger.execution.start",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start",
+      "status": 400,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        },
+        "goal": "injected"
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"goal\":\"injected\"}",
+      "body": "{\"error\":\"Invalid native execution identity\",\"code\":\"INVALID_ARGUMENT\",\"category\":\"bad_request\",\"status\":400}"
+    },
+    {
+      "methodId": "workLedger.execution.start",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start",
+      "status": 400,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        },
+        "criteria": "injected"
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"criteria\":\"injected\"}",
+      "body": "{\"error\":\"Invalid native execution identity\",\"code\":\"INVALID_ARGUMENT\",\"category\":\"bad_request\",\"status\":400}"
+    },
+    {
+      "methodId": "workLedger.execution.start",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start",
+      "status": 400,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        },
+        "source": "injected"
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"source\":\"injected\"}",
+      "body": "{\"error\":\"Invalid native execution identity\",\"code\":\"INVALID_ARGUMENT\",\"category\":\"bad_request\",\"status\":400}"
+    },
+    {
+      "methodId": "workLedger.execution.start",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start",
+      "status": 400,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        },
+        "sourceId": "injected"
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"sourceId\":\"injected\"}",
+      "body": "{\"error\":\"Invalid native execution identity\",\"code\":\"INVALID_ARGUMENT\",\"category\":\"bad_request\",\"status\":400}"
+    },
+    {
+      "methodId": "workLedger.execution.start",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start",
+      "status": 400,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        },
+        "actorId": "injected"
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"actorId\":\"injected\"}",
+      "body": "{\"error\":\"Invalid native execution identity\",\"code\":\"INVALID_ARGUMENT\",\"category\":\"bad_request\",\"status\":400}"
+    },
+    {
+      "methodId": "workLedger.execution.start",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start",
+      "status": 400,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        },
+        "sessionId": "injected"
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"sessionId\":\"injected\"}",
+      "body": "{\"error\":\"Invalid native execution identity\",\"code\":\"INVALID_ARGUMENT\",\"category\":\"bad_request\",\"status\":400}"
+    },
+    {
+      "methodId": "workLedger.execution.start",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start",
+      "status": 400,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        },
+        "decisionId": "injected"
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"decisionId\":\"injected\"}",
+      "body": "{\"error\":\"Invalid native execution identity\",\"code\":\"INVALID_ARGUMENT\",\"category\":\"bad_request\",\"status\":400}"
+    },
+    {
+      "methodId": "workLedger.execution.start",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start",
+      "status": 400,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        },
+        "receipt": "injected"
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"receipt\":\"injected\"}",
+      "body": "{\"error\":\"Invalid native execution identity\",\"code\":\"INVALID_ARGUMENT\",\"category\":\"bad_request\",\"status\":400}"
+    },
+    {
+      "methodId": "workLedger.execution.start",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/start",
+      "status": 401,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Authentication required\",\"hint\":\"Authenticate with the operator shared token or an authenticated user session before calling daemon APIs.\",\"code\":\"AUTH_REQUIRED\",\"category\":\"authentication\",\"source\":\"runtime\",\"recoverable\":false,\"status\":401}"
+    },
+    {
+      "methodId": "workLedger.execution.status",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/status",
+      "status": 401,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Authentication required\",\"hint\":\"Authenticate with the operator shared token or an authenticated user session before calling daemon APIs.\",\"code\":\"AUTH_REQUIRED\",\"category\":\"authentication\",\"source\":\"runtime\",\"recoverable\":false,\"status\":401}"
+    },
+    {
+      "methodId": "workLedger.execution.cancel",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/cancel",
+      "status": 401,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Authentication required\",\"hint\":\"Authenticate with the operator shared token or an authenticated user session before calling daemon APIs.\",\"code\":\"AUTH_REQUIRED\",\"category\":\"authentication\",\"source\":\"runtime\",\"recoverable\":false,\"status\":401}"
+    },
+    {
+      "methodId": "workLedger.execution.resume",
+      "method": "POST",
+      "path": "/api/work-ledger/execution/resume",
+      "status": 401,
+      "requestBody": {
+        "projectId": "workspace-3791bd5b0f",
+        "workId": "work-70dd523d-180d-4da9-8acf-86e4e58cb550",
+        "attemptId": "attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48",
+        "expectedRevision": {
+          "work": 1,
+          "criteria": 1,
+          "attempt": 1
+        }
+      },
+      "requestJson": "{\"projectId\":\"workspace-3791bd5b0f\",\"workId\":\"work-70dd523d-180d-4da9-8acf-86e4e58cb550\",\"attemptId\":\"attempt-6c4d38ea-b57e-40f7-ba44-b6af435a2d48\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+      "body": "{\"error\":\"Authentication required\",\"hint\":\"Authenticate with the operator shared token or an authenticated user session before calling daemon APIs.\",\"code\":\"AUTH_REQUIRED\",\"category\":\"authentication\",\"source\":\"runtime\",\"recoverable\":false,\"status\":401}"
+    }
+  ]
+}
