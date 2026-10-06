@@ -21,13 +21,13 @@
  */
 
 import type { Notification } from '@/runtime/index.ts';
-import { runtimeEventOfNotice } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
+import { runtimeEventOfNotice, type RuntimeEventProvenance } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
 import { shellChainNoticeOf } from './wrfc-notice-titles.ts';
 import type { NotificationFeed } from '../views/notifications-feed.ts';
 import { classifySystemMessage } from '../renderer/system-message.ts';
 
 /** Receives every system notice added to (or restored into) the conversation. */
-export type NoticeSink = (content: string, options: { readonly restored: boolean }) => void;
+export type NoticeSink = (content: string, options: { readonly restored: boolean; readonly runtimeEvent?: RuntimeEventProvenance | undefined }) => void;
 
 /** The pieces of a notice as the history and the toast show them. */
 export interface NoticeParts {
@@ -58,6 +58,7 @@ export interface NoticeOptions {
   /** Restored from a saved session: kept in history, not toasted. */
   readonly restored?: boolean;
   readonly now?: () => number;
+  readonly runtimeEvent?: RuntimeEventProvenance | undefined;
 }
 
 /** Keep one system notice in the history; the feed's toast bridge toasts it unless restored. */
@@ -65,7 +66,7 @@ export function publishNotice(feed: NotificationFeed, text: string, options: Not
   if (text.trim().length === 0) return;
   const restored = options.restored === true;
   const parts = noticeParts(text);
-  const sdkEvent = runtimeEventOfNotice(text);
+  const sdkEvent = runtimeEventOfNotice(text, options.runtimeEvent);
   const event = sdkEvent ?? shellChainNoticeOf(text);
   if (event) {
     feed.recordNotice({ domain: parts.domain, level: event.level, title: event.title, body: event.detail, timestamp: (options.now ?? Date.now)(), restored, eventKey: sdkEvent?.key });

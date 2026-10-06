@@ -16,6 +16,11 @@ Product-facing release notes for GoodVibes Agent.
 
 - Added explicit native work start, status, cancellation and recovery controls through the authenticated daemon client. Native project discovery no longer depends on legacy planning.
 - Kept original criteria and verification separate from execution progress, and fenced pending requests on host, token, workspace and view replacement. Closing the view does not cancel server execution.
+- Keep one notification-history entry for each declared runtime occurrence
+  across live delivery and saved-session replay, without repeating restored
+  toasts. Distinct identical outcomes and legacy notices remain separate.
+  Large collapsed groups rotate within a bounded history, and folded failure
+  notices keep their complete diagnostic text.
 
 ## 2.1.0 - 2026-09-30
 

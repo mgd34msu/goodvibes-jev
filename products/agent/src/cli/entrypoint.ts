@@ -1,5 +1,5 @@
 import { readConnectedHostReadiness } from '../runtime/connected-host-readiness.ts';
-import { readAgentHostPairing } from '../runtime/connected-host-pairing-store.ts';
+import { canonicalizePairingHost, readAgentHostPairing } from '../runtime/connected-host-pairing-store.ts';
 import { resolveConnectedHostBaseUrl } from '../config/connected-host-dial.ts';
 import { extractNativeHeadlessOptions } from './native-headless-options.ts';
 import { runNativeHeadlessCommand } from './native-headless-command.ts';
@@ -210,7 +210,7 @@ export async function prepareShellCliRuntime(
 
   if (cli.command === 'onboarding' && cli.commandArgs[0] === 'status') {
     const shellPaths = createShellPathService({ workingDirectory: bootstrapWorkingDir, homeDirectory: bootstrapHomeDirectory });
-    const selectedHost = resolveConnectedHostBaseUrl(configManager);
+    const selectedHost = canonicalizePairingHost(resolveConnectedHostBaseUrl(configManager)) ?? '(invalid endpoint)';
     const nativeReadiness = await readConnectedHostReadiness({ configManager, homeDirectory: bootstrapHomeDirectory });
     const pairingStatus = readAgentHostPairing(bootstrapHomeDirectory, selectedHost).status;
     writeExitingStdoutLine(renderOnboardingCliStatus({ configManager, workingDirectory: bootstrapWorkingDir, homeDirectory: bootstrapHomeDirectory,

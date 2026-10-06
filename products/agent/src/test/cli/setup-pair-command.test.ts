@@ -80,6 +80,15 @@ describe('standalone setup pair confirmation boundary', () => {
     expect(f.migrations()).toBe(1); expect(out).not.toContain('gvp_');
   }));
 
+  test('setup status never echoes credential-like text embedded in an invalid host', async () => withFixture(async f => {
+    const child = Bun.spawn([process.execPath, 'src/main.ts', '--working-dir', f.homeDirectory, '--config', 'controlPlane.host=synthetic-secret@example.com', 'setup', 'status', '--json'], {
+      cwd: process.cwd(), env: { ...process.env, HOME: f.homeDirectory, GOODVIBES_AGENT_HOME: f.homeDirectory }, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
+    });
+    const [out, error, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    expect(exit).toBe(0); expect(error).toBe(''); expect(out).not.toContain('synthetic-secret');
+    expect(JSON.parse(out).selectedHost).toBe('(invalid endpoint)'); expect(f.migrations()).toBe(0);
+  }));
+
   test('interactive slash command remains preview-only even with apply/yes arguments', async () => withFixture(async f => {
     const registry = new CommandRegistry(); registerOnboardingRuntimeCommands(registry); const printed: string[] = [];
     const context = { platform: { configManager: f.configManager }, workspace: { shellPaths: { homeDirectory: f.homeDirectory } }, print: (text: string) => printed.push(text) } as unknown as CommandContext;

@@ -9,7 +9,7 @@ import { runAgentTask, type AgentOrchestratorRunContext } from '../sdk/src/platf
 import { ToolRegistry } from '../sdk/src/platform/tools/registry.js';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { emitAgentCompleted, emitAgentFailed, emitAgentRunning } from '../sdk/src/platform/runtime/emitters/agents.js';
-import { registerHostRuntimeEvents, runtimeEventKey, runtimeEventOfNotice } from '../sdk/src/platform/runtime/bootstrap-runtime-events.js';
+import { registerHostRuntimeEvents, runtimeEventKey, runtimeEventOfNotice, type RuntimeEventProvenance } from '../sdk/src/platform/runtime/bootstrap-runtime-events.js';
 import type { AgentEvent } from '../sdk/src/events/agents.js';
 import type { LLMProvider } from '../sdk/src/platform/providers/interface.js';
 import type { ModelDefinition } from '../sdk/src/platform/providers/registry-types.js';
@@ -29,6 +29,7 @@ function wakingAgent(outcome: 'failed' | 'completed') {
   const messageBus = new AgentMessageBus();
   const events: TerminalAgentEvent[] = [];
   const lines: string[] = [];
+  const provenance: Array<RuntimeEventProvenance | undefined> = [];
   const runs: Promise<void>[] = [];
   let calls = 0;
   const provider: LLMProvider = { name: 'fake', models: ['fake'], chat: async () => {
@@ -60,7 +61,7 @@ function wakingAgent(outcome: 'failed' | 'completed') {
     configManager: { get: () => null } as unknown as Pick<ConfigManager, 'get'>, messageBus,
     archetypeLoader: { loadArchetype: () => null },
     executor: { runAgent: (record: AgentRecord) => {
-      const run = runAgentTask(context(runs.length + 1), record);
+      const run = runAgentTask(context(1), record);
       runs.push(run);
       return run;
     } },
@@ -71,10 +72,10 @@ function wakingAgent(outcome: 'failed' | 'completed') {
   });
   const bridge = registerHostRuntimeEvents({
     runtimeBus: bus, domainDispatch: new Proxy({}, { get: () => () => {} }) as never,
-    getSystemMessageRouter: () => ({ low: (text) => lines.push(text), high: (text) => lines.push(text), contract: (text) => lines.push(text) }),
+    getSystemMessageRouter: () => ({ low: (text, event) => { lines.push(text); provenance.push(event); }, high: (text) => lines.push(text), contract: (text) => lines.push(text) }),
     requestRender: () => {}, agentManager: manager, contractRunner: { get: () => null, list: () => [] },
   });
-  return { manager, runs, events, lines, get calls() { return calls; }, stop() {
+  return { manager, runs, events, lines, provenance, get calls() { return calls; }, stop() {
     stopEvents();
     for (const unsub of bridge.unsubs) unsub();
     if (bridge.agentStatusIntervalRef.value) clearInterval(bridge.agentStatusIntervalRef.value);
@@ -108,15 +109,19 @@ for (const outcome of ['failed', 'completed'] as const) {
         await waitFor(() => h.events.length === 2 && h.lines.length === 2);
         expect(record.status).toBe(outcome);
         expect(h.runs).toHaveLength(2);
-        expect(h.calls).toBe(outcome === 'failed' ? 3 : 2);
+        expect(h.calls).toBe(2);
         expect(h.events.map((event) => event.agentId)).toEqual([record.id, record.id]);
-        const notices = h.lines.map((line) => runtimeEventOfNotice(line)!);
+        const notices = h.lines.map((line, index) => runtimeEventOfNotice(line, h.provenance[index])!);
         expect(notices.map((notice) => notice.type)).toEqual(h.events.map((event) => event.type));
-        // Before the fix both histories retain only one actual run.
+        // Real wakes mint distinct occurrence ids even when entity and output repeat.
         expect(retained(h.events, (event) => runtimeEventKey(event.type, event))).toHaveLength(2);
         expect(retained(notices, (notice) => notice.key)).toHaveLength(2);
-        expect(notices.every((notice) => notice.key === undefined)).toBe(true);
-        expect(h.events.every((event) => runtimeEventKey(event.type, event) === undefined)).toBe(true);
+        expect(notices.map((notice) => notice.key)).toEqual(h.events.map((event) => runtimeEventKey(event.type, event)));
+        expect(new Set(notices.map((notice) => notice.key)).size).toBe(2);
+        expect(notices.every((notice) => notice.key !== undefined)).toBe(true);
+        expect(new Set(notices.map((notice) => notice.detail)).size).toBe(1);
+        const deliveries = [...h.events.map((event) => runtimeEventKey(event.type, event)), ...notices.map((notice) => notice.key)];
+        expect(new Set(deliveries).size).toBe(2);
       } finally { h.stop(); }
     });
   });

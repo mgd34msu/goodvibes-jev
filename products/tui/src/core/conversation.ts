@@ -1,3 +1,4 @@
+import type { RuntimeEventProvenance } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
 import { readTreeGlyphSet, TREE_GLYPHS_CONFIG_KEY } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { InfiniteBuffer } from '@goodvibes-jev/engine/terminal-shell';
 import { createEmptyLine, type Line, type Cell } from '@goodvibes-jev/engine/sdk/platform/types';
@@ -218,16 +219,16 @@ export class ConversationManager extends SdkConversationManager {
     this.markDirty();
   }
 
-  public override addSystemMessage(content: string): void {
+  public override addSystemMessage(content: string, runtimeEvent?: RuntimeEventProvenance): void {
     // Clear any stale kind entry at the index this message will occupy.
     // undo() splices the tail of this.messages, freeing indices that ARE reused
     // by subsequent adds. Without this delete, a recycled index could carry a
     // stale kind (e.g. 'operational') and silently mis-classify the new message.
     const nextIndex = this.getMessageSnapshot().length;
     this.messageKindRegistry.delete(nextIndex);
-    super.addSystemMessage(content);
+    super.addSystemMessage(content, runtimeEvent);
     this.markDirty();
-    this.noticeSink?.(content, { restored: false });
+    this.noticeSink?.(content, { restored: false, runtimeEvent });
   }
 
   /** Where system notices go (core/notices.ts); the transcript draws none. Absent in bare test conversations. */
@@ -240,12 +241,12 @@ export class ConversationManager extends SdkConversationManager {
    * in messageKindRegistry. Like every system message it is a notice: the
    * notice sink shows it, the transcript does not.
    */
-  public addTypedSystemMessage(content: string, kind: SystemMessageKind): void {
+  public addTypedSystemMessage(content: string, kind: SystemMessageKind, runtimeEvent?: RuntimeEventProvenance): void {
     const nextIndex = this.getMessageSnapshot().length;
     this.messageKindRegistry.set(nextIndex, kind);
-    super.addSystemMessage(content);
+    super.addSystemMessage(content, runtimeEvent);
     this.markDirty();
-    this.noticeSink?.(content, { restored: false });
+    this.noticeSink?.(content, { restored: false, runtimeEvent });
   }
 
   public override undo(): boolean {
@@ -417,7 +418,7 @@ export class ConversationManager extends SdkConversationManager {
     super.fromJSON(data);
     this.usageHydrator?.();
     // A restored session's notices go back into the history (not toasted).
-    for (const message of data.messages) if (message.role === 'system') this.noticeSink?.(message.content, { restored: true });
+    for (const message of data.messages) if (message.role === 'system') this.noticeSink?.(message.content, { restored: true, runtimeEvent: message.runtimeEvent });
     // Output printed over the conversation this one replaces is not about it.
     this.displayOnly.drop();
     this.history.clear();
