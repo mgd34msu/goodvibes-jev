@@ -19,6 +19,29 @@ import {
 import type { NativeExecutionBrowserRecord } from "../../src/lib/native-execution-journal";
 import type { NativeIntakeBrowserRecord } from "../../src/lib/native-intake-journal";
 import { installMockDaemon } from "./mock-daemon";
+import type { RecordedRequest } from "./requests";
+
+/**
+ * Generic invoke uses POST for reads too. Classify those by canonical required
+ * scopes, and fail closed for unknown or unclassified legacy methods. Direct
+ * legacy HTTP mutations remain forbidden, including tasks.create at /task.
+ */
+export function isLegacyExecutionMutation(
+  request: Pick<RecordedRequest, "method" | "path" | "methodId">
+): boolean {
+  if (
+    request.method !== "GET" &&
+    /^\/(?:api\/(?:contracts|tasks|sessions)(?:\/|$)|task(?:\/|$))/.test(request.path)
+  )
+    return true;
+  if (!request.methodId || !/^(?:contracts|tasks|sessions)\./.test(request.methodId)) return false;
+  const method = operatorContract.operator.methods.find((entry) => entry.id === request.methodId);
+  return (
+    !method ||
+    method.scopes.length === 0 ||
+    !method.scopes.every((scope) => scope.startsWith("read:"))
+  );
+}
 
 export type NativeExecutionCaptureName =
   | "running"

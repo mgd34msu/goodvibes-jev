@@ -4,6 +4,7 @@ import { nativeWorkExecutionSnapshotSchema } from "@goodvibes-jev/engine/sdk/pla
 import { expectNoHorizontalScroll } from "./support/app";
 import {
   installNativeExecutionDaemon,
+  isLegacyExecutionMutation,
   nativeBrowserRecords,
 } from "./support/native-execution-fixture";
 
@@ -34,14 +35,7 @@ async function receipt(dialog: Locator, daemon: Daemon, wire = daemon.capture.st
   await expect(section).toContainText(snapshot.receipt.ownerAgentId);
 }
 function expectNoLegacyWrites(daemon: Daemon) {
-  expect(
-    daemon.requests.filter(
-      (request) =>
-        request.method !== "GET" &&
-        (/^\/api\/(?:contracts|tasks|sessions)(?:\/|$)/.test(request.path) ||
-          /^(?:contracts|tasks|sessions)\./.test(request.methodId ?? ""))
-    )
-  ).toEqual([]);
+  expect(daemon.requests.filter(isLegacyExecutionMutation)).toEqual([]);
 }
 
 /** Hold the real transaction-completion notification, not a fake IndexedDB implementation. */
