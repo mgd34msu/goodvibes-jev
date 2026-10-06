@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Wire the private daemon command executable and explicit-inbox serving launcher to the existing command adapters and signal-owned runtime host. Default inbox and native release packaging remain incomplete.
 - Home Graph answer scoping now reads object/integration identity and result
   relevance through shared typed judgments instead of object/type point guesses.
   Preserve bounded retrieval, keep unknown literal confidence at zero, and bind

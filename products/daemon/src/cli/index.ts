@@ -19,3 +19,5 @@ export * from './command-catalog.ts';
 export * from './parser.ts';
 export * from './help.ts';
 export * from './completion.ts';
+export { runDaemonCli, type DaemonCliOptions } from './run.js';
+export type { DaemonCliRuntime } from './serve.js';

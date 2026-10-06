@@ -121,6 +121,9 @@
     "products/daemon": {
       "name": "@goodvibes-jev/daemon",
       "version": "1.28.25",
+      "bin": {
+        "goodvibes-daemon": "./bin/goodvibes-daemon",
+      },
       "dependencies": {
         "@goodvibes-jev/engine": "workspace:*",
       },
