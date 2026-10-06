@@ -46,3 +46,13 @@ export type {
   ImapSocket as IntakeImapSocket, ImapConnector as IntakeImapConnector,
 } from './providers/imap-client.js';
 export { resolveRouteId as resolveIntakeRouteId } from './providers/route-util.js';
+
+export { inboxTriage, TRIAGE_MODEL } from './triage/battery.js';
+export { labelToTag } from './triage/evidence.js';
+export { scoreInboxTriage } from './triage/scorer.js';
+export { SqliteTriageStore } from './triage/store.js';
+export { runInboxTriage, readTriageMetadataBatch, enrichItemsWithTriage } from './triage/pipeline.js';
+export type {
+  TriageInput, TriageLabel, TriageBinding, TriageEvidence, TriageReceipt,
+  TriageStoredRecord, TriageStore, RunInboxTriageOptions,
+} from './triage/types.js';

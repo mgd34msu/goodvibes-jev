@@ -16,6 +16,9 @@ the upstream dependency range has not yet moved but a compatible fixed package i
 available. Current non-vendored overrides are declared in the root
 `package.json`:
 
+- `compression@1.8.2` closes `GHSA-vc2v-76pw-4v95` (native stream memory leak
+  on premature response close). Verdaccio 6.5.2 pins vulnerable 1.8.1 exactly;
+  remove the override when its declared dependency requires the patched release.
 - `fast-xml-parser@5.7.1` for the AWS XML builder path
 - `ajv@8.18.0` for Verdaccio and documentation tooling paths
 - `lodash@4.18.1` for Verdaccio storage paths (bumped from `4.17.21` to escape an audit advisory; see root `package.json` overrides)
@@ -27,6 +30,21 @@ available. Current non-vendored overrides are declared in the root
 - `ws@8.21.0` to close `GHSA-96hv-2xvq-fx4p` (memory-exhaustion DoS from tiny fragments)
 - `undici@^7.29.0` to close `GHSA-vmh5-mc38-953g`, `GHSA-vxpw-j846-p89q`, and `GHSA-hm92-r4w5-c3mj` (TLS bypass, WebSocket DoS, SOCKS5 routing); also a direct dependency at the same version, not only a transitive override
 - `tar@^7.5.16`, `brace-expansion@^5.0.9`, `sharp@^0.35.0`, `js-yaml@^4.3.1`, and `ip-address@^10.4.0`, later additions to the same override table for transitive advisory remediation; `brace-expansion` and `ip-address` are also direct dependencies at the same pinned version. See the `overridesRationale` field in the root `package.json` for the per-package justification on file; a package listed here without a corresponding `overridesRationale` entry is pinned as a precaution and does not yet have a recorded rationale.
+
+The engine's optional `simple-git` is pinned to 4.0.2, which requires the patched
+`@simple-git/argv-parser@2.0.1`. This closes `GHSA-x6jw-m9v5-85vh`,
+`GHSA-g4wm-2vf7-vfgr`, `GHSA-858h-whjf-mvg5`, and `GHSA-v5rq-49vh-5v5c`;
+4.0.1 alone still pins the vulnerable argument parser. The v4 migration preserves
+the host's `GIT_CEILING_DIRECTORIES` discovery boundary, with `GIT_DIR` and
+`GIT_WORK_TREE` allowed only for the checkpoint runner's own routing. Other
+inherited Git variables and unsafe editor/config variables are excluded from its
+explicit environment. No new unsafe-operation escape hatch is enabled.
+
+The source-workspace lock resolves `source-map-js@1.2.2` for jsdom/css-tree and
+Vite/PostCSS, closing `GHSA-68fv-2mgg-jv7q`. Their existing ranges accept the fix,
+so this is a targeted lock refresh without an additional override. Regression
+tests exercise both actual consumer paths and reject excessive indexed-map
+offsets before allocating a flattened map.
 
 The published SDK keeps Bash LSP bundled as a first-class feature. The
 `bash-language-server@5.6.0 -> editorconfig@2.0.1 -> minimatch@10.0.1` chain is
