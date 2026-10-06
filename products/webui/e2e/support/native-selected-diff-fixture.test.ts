@@ -7,6 +7,7 @@ import {
   loadSelectedDiffCapture,
   recordedUnifiedDiff,
   selectedDiffPreview,
+  selectedDiffDeliveryPhaseAfterMutation,
   validateSelectedDiffCapture,
 } from "./native-selected-diff-fixture";
 
@@ -115,6 +116,20 @@ describe("genuine native selected-hunk HTTP recordings", () => {
     });
     expect(JSON.parse(capture.cancel.cancel!.body)).toMatchObject({ kind: "cancelled" });
     expect(capture.stale.capture.status).toBeGreaterThanOrEqual(400);
+  });
+  test("reopening after cancellation selects the actual status read wire, never its mutation acknowledgement", () => {
+    const scenario = loadSelectedDiffCapture().queuedCancel;
+    const phase = selectedDiffDeliveryPhaseAfterMutation(scenario, "cancel");
+    expect(phase).toBe("status");
+    const wire = scenario[phase];
+    expect(wire).toBe(scenario.status);
+    expect(wire).not.toBe(scenario.cancel);
+    expect(wire?.methodId).toBe("workLedger.turn.status");
+    expect(JSON.parse(wire!.body)).toMatchObject({
+      state: "cancelled",
+      inputId: scenario.command.inputId,
+    });
+    expect(wire?.body).toBe(scenario.cancel?.body);
   });
   test("fixture validation rejects tampered source text, revision, response and route", () => {
     const capture = loadSelectedDiffCapture();

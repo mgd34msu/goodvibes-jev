@@ -30,7 +30,7 @@ interface SessionHunkCommentProps extends HunkCommentSheetProps {
 }
 
 function CommentDialog({ onClose, children }: { onClose: () => void; children: ReactNode }) {
-  return <Dialog open title="Comment on this change" className="hunk-sheet" onClose={onClose}
+  return <Dialog open title="Comment on this change" className="hunk-sheet hunk-sheet--native" onClose={onClose}
     footer={<Button variant="secondary" onClick={onClose}>Close</Button>}>{children}</Dialog>;
 }
 
@@ -74,7 +74,7 @@ function NativeHunkComment({ binding, selection, filePath, hunk, capturedLabel, 
   return <CommentDialog onClose={onCancel}>
     <div className="hunk-sheet__context"><span className="hunk-sheet__path">{filePath}</span></div>
     <p className="hunk-sheet__captured">{capturedLabel}</p>
-    <p>The host verifies this selected change and saves its complete hunk separately from your exact original comment and completed conversation. Jev decides whether the comment needs work or a conversation reply.</p>
+    <p>The host verifies and captures this complete change separately from your exact comment and completed conversation.</p>
     {error?.selection === selection ? <p role="alert">Selected change unavailable: {error.message} Nothing was sent.</p> : prepared?.selection === selection ? <>
       <pre className="hunk-sheet__excerpt" aria-label="Selected change">{prepared.preview}</pre>
       <NativeIntakeForm lifetime={binding.lifetime} continuationSessionId={binding.sessionId}

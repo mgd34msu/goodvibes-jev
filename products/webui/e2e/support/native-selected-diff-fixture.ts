@@ -228,6 +228,15 @@ export function loadSelectedDiffCapture(): SelectedDiffCapture {
   return capture;
 }
 
+type DeliveryPhase = "absent" | "start" | "status";
+/** Mutation acknowledgement and later status reads are distinct recorded routes. */
+export function selectedDiffDeliveryPhaseAfterMutation(
+  scenario: RecordedDiffCase,
+  operation: "start" | "cancel"
+): DeliveryPhase {
+  return operation === "start" && scenario.cancel ? "start" : "status";
+}
+
 /** Only navigation rows and unrelated shell state are synthetic. */
 export async function installSelectedDiffDaemon(
   page: Page,
@@ -318,7 +327,7 @@ export async function installSelectedDiffDaemon(
   let held = options.hold;
   let discoveryFailure = options.discoveryFailure === true;
   let changedSessionDiff = false;
-  const phase = new Map<DiffCaseName, "absent" | "start" | "status" | "cancel">();
+  const phase = new Map<DiffCaseName, DeliveryPhase>();
   const intakeCancelled = new Set<DiffCaseName>();
   const nativeRequests: {
     methodId: string;
@@ -416,11 +425,11 @@ export async function installSelectedDiffDaemon(
         wire = scenario[phase.get(name) ?? "absent"] as DiffWire | undefined;
       if (operation === "start") {
         wire = scenario.start;
-        phase.set(name, scenario.cancel ? "start" : "status");
+        phase.set(name, selectedDiffDeliveryPhaseAfterMutation(scenario, "start"));
       }
       if (operation === "cancel") {
         wire = scenario.cancel;
-        phase.set(name, "cancel");
+        phase.set(name, selectedDiffDeliveryPhaseAfterMutation(scenario, "cancel"));
       }
     }
     if (

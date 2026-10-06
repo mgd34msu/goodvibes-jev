@@ -127,9 +127,31 @@ test("session hunk keeps exact original separate from the complete >40-line sour
   await expect(preview).toHaveText(source);
   expect(await preview.textContent()).toBe(source);
   await preview.scrollIntoViewIfNeeded();
+  await expect
+    .poll(async () => (await preview.boundingBox())?.height ?? 0)
+    .toBeGreaterThanOrEqual(120);
   await preview.evaluate((element) => {
     element.scrollTop = element.scrollHeight;
   });
+  await expect
+    .poll(() =>
+      preview.evaluate((element) => {
+        const text = element.firstChild;
+        if (!(text instanceof Text)) return false;
+        let end = text.length;
+        while (end > 0 && /[\r\n]/.test(text.data[end - 1])) end--;
+        const start = text.data.lastIndexOf("\n", end - 1) + 1;
+        const range = document.createRange();
+        range.setStart(text, start);
+        range.setEnd(text, end);
+        const line = range.getBoundingClientRect();
+        const viewport = element.getBoundingClientRect();
+        return (
+          line.height > 0 && line.top >= viewport.top - 1 && line.bottom <= viewport.bottom + 1
+        );
+      })
+    )
+    .toBe(true);
   await test.info().attach("Complete selected source beyond the former excerpt boundary", {
     body: await preview.screenshot(),
     contentType: "image/png",
@@ -541,6 +563,10 @@ test("connection identity changing during delivery invalidates the sheet without
   const dialog = await openComment(page);
   await submit(dialog, fixture);
   await expect.poll(() => fixture.pendingCount).toBe(1);
+  const retained = await nativeBrowserRecords(page);
+  expect(retained.originals.map((record) => record.command)).toEqual([
+    fixture.capture.session.command,
+  ]);
   fixture.setDiscoveryFailure(true);
   await page.evaluate(() => {
     localStorage.setItem("goodvibes.webui.token", "other-paired-proof-token");
@@ -548,14 +574,15 @@ test("connection identity changing during delivery invalidates the sheet without
       new StorageEvent("storage", { key: "goodvibes.webui.token", storageArea: localStorage })
     );
   });
+  // The production WorkView keys its whole content to the connection lifetime.
+  // Its remount removes selection and the sheet before the held result arrives.
+  await expect(dialog).toHaveCount(0);
+  await expect(detailPane(page)).toHaveCount(0);
   await fixture.release();
-  await expect(dialog.getByRole("alert")).toContainText(
-    "The selected connection or session changed."
-  );
-  await expect(conversation(dialog)).toHaveCount(0);
-  await expect(dialog.getByRole("textbox", { name: "Original comment", exact: true })).toHaveCount(
-    0
-  );
+  await nextFrames(page);
+  await expect(commentDialog(page)).toHaveCount(0);
+  await expect(detailPane(page)).toHaveCount(0);
+  expect(await nativeBrowserRecords(page)).toEqual(retained);
   expect(fixture.writes.map((request) => request.operation)).toEqual(["capture", "admit", "start"]);
   expect(fixture.failures).toEqual([]);
   expect(fixture.requests.filter(isLegacyExecutionMutation)).toEqual([]);
