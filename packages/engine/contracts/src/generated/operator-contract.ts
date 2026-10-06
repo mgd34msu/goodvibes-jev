@@ -112466,9 +112466,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "nativeConversation": {
                   "type": "boolean",
-                  "enum": [
-                    true
-                  ]
+                  "const": true
                 },
                 "workspaceRoot": {
                   "type": "string"
@@ -112540,6 +112538,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "originSurface": {
+                  "type": "string"
                 },
                 "contractIds": {
                   "type": "array",
@@ -112643,6 +112644,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
             },
             "clientId": {
               "type": "string"
+            },
+            "originSurface": {
+              "type": "string"
             }
           },
           "required": [
@@ -112661,9 +112665,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "nativeConversation": {
                   "type": "boolean",
-                  "enum": [
-                    true
-                  ]
+                  "const": true
                 },
                 "workspaceRoot": {
                   "type": "string"
@@ -112735,6 +112737,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "originSurface": {
+                  "type": "string"
                 },
                 "contractIds": {
                   "type": "array",
@@ -112811,9 +112816,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "nativeConversation": {
                   "type": "boolean",
-                  "enum": [
-                    true
-                  ]
+                  "const": true
                 },
                 "workspaceRoot": {
                   "type": "string"
@@ -112885,6 +112888,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "originSurface": {
+                  "type": "string"
                 },
                 "contractIds": {
                   "type": "array",
@@ -112958,9 +112964,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "nativeConversation": {
                   "type": "boolean",
-                  "enum": [
-                    true
-                  ]
+                  "const": true
                 },
                 "workspaceRoot": {
                   "type": "string"
@@ -113033,6 +113037,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "restoredFromDisk": {
                   "type": "boolean"
                 },
+                "originSurface": {
+                  "type": "string"
+                },
                 "contractIds": {
                   "type": "array",
                   "items": {
@@ -113100,9 +113107,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   },
                   "nativeConversation": {
                     "type": "boolean",
-                    "enum": [
-                      true
-                    ]
+                    "const": true
                   },
                   "workspaceRoot": {
                     "type": "string"
@@ -113174,6 +113179,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   },
                   "restoredFromDisk": {
                     "type": "boolean"
+                  },
+                  "originSurface": {
+                    "type": "string"
                   },
                   "contractIds": {
                     "type": "array",
@@ -143456,9 +143464,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "nativeConversation": {
                   "type": "boolean",
-                  "enum": [
-                    true
-                  ]
+                  "const": true
                 },
                 "workspaceRoot": {
                   "type": "string"
@@ -143530,6 +143536,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "originSurface": {
+                  "type": "string"
                 },
                 "contractIds": {
                   "type": "array",

@@ -112464,9 +112464,7 @@
                 },
                 "nativeConversation": {
                   "type": "boolean",
-                  "enum": [
-                    true
-                  ]
+                  "const": true
                 },
                 "workspaceRoot": {
                   "type": "string"
@@ -112538,6 +112536,9 @@
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "originSurface": {
+                  "type": "string"
                 },
                 "contractIds": {
                   "type": "array",
@@ -112641,6 +112642,9 @@
             },
             "clientId": {
               "type": "string"
+            },
+            "originSurface": {
+              "type": "string"
             }
           },
           "required": [
@@ -112659,9 +112663,7 @@
                 },
                 "nativeConversation": {
                   "type": "boolean",
-                  "enum": [
-                    true
-                  ]
+                  "const": true
                 },
                 "workspaceRoot": {
                   "type": "string"
@@ -112733,6 +112735,9 @@
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "originSurface": {
+                  "type": "string"
                 },
                 "contractIds": {
                   "type": "array",
@@ -112809,9 +112814,7 @@
                 },
                 "nativeConversation": {
                   "type": "boolean",
-                  "enum": [
-                    true
-                  ]
+                  "const": true
                 },
                 "workspaceRoot": {
                   "type": "string"
@@ -112883,6 +112886,9 @@
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "originSurface": {
+                  "type": "string"
                 },
                 "contractIds": {
                   "type": "array",
@@ -112956,9 +112962,7 @@
                 },
                 "nativeConversation": {
                   "type": "boolean",
-                  "enum": [
-                    true
-                  ]
+                  "const": true
                 },
                 "workspaceRoot": {
                   "type": "string"
@@ -113031,6 +113035,9 @@
                 "restoredFromDisk": {
                   "type": "boolean"
                 },
+                "originSurface": {
+                  "type": "string"
+                },
                 "contractIds": {
                   "type": "array",
                   "items": {
@@ -113098,9 +113105,7 @@
                   },
                   "nativeConversation": {
                     "type": "boolean",
-                    "enum": [
-                      true
-                    ]
+                    "const": true
                   },
                   "workspaceRoot": {
                     "type": "string"
@@ -113172,6 +113177,9 @@
                   },
                   "restoredFromDisk": {
                     "type": "boolean"
+                  },
+                  "originSurface": {
+                    "type": "string"
                   },
                   "contractIds": {
                     "type": "array",
@@ -143454,9 +143462,7 @@
                 },
                 "nativeConversation": {
                   "type": "boolean",
-                  "enum": [
-                    true
-                  ]
+                  "const": true
                 },
                 "workspaceRoot": {
                   "type": "string"
@@ -143528,6 +143534,9 @@
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "originSurface": {
+                  "type": "string"
                 },
                 "contractIds": {
                   "type": "array",
