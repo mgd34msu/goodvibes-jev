@@ -46,6 +46,11 @@
 
 ### Added
 
+- Host-only typed inbox triage core with explicitly injected batched spam/urgency
+  judgment, provenance-bound immutable evidence, and atomic SQLite history/latest
+  receipts. Held or unavailable attempts suppress current labels; dry-run is
+  write-free. Provider wiring and tagging remain explicit composition work.
+
 - Public `registerContractRuntimeEvents` reuses canonical contract labels, operator lines, queued follow-ups and cohort completion in custom runtime bridges, without adding domain dispatch or agent timers.
 
 - Composed native durable runner with schema-5 migration, exact source/binding validation, PR56 captured authority in initial/corrective planning and members, and construction-bound native planner/member tools using the shared recorded autonomous runtime.

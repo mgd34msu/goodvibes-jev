@@ -94,3 +94,6 @@ registry.register(credentialValue);
 registry.register(apiRoutes);
 registry.register(outputKeep);
 registry.register(healAcceptance);
+
+import { inboxTriage } from '../intake/triage/battery.js';
+registry.register(inboxTriage);
