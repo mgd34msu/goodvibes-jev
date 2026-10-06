@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Patch Git command/environment guards and transitive compression/source-map
+  denial-of-service advisories. Git stays optional; checkpoint repositories
+  retain their isolated routing and discovery ceiling without unsafe escapes.
+
 - Terminal palette configuration now exposes the supported 13-choice enum and
   defaults to `goodvibes`. Existing `vaporwave` values retain their neon palette;
   recognized saved case/whitespace forms remain readable without ingestion
@@ -45,6 +49,11 @@
   and stop subsequent stale steps without claiming earlier writes rolled back.
 
 ### Added
+
+- Host-only typed inbox triage core with explicitly injected batched spam/urgency
+  judgment, provenance-bound immutable evidence, and atomic SQLite history/latest
+  receipts. Held or unavailable attempts suppress current labels; dry-run is
+  write-free. Provider wiring and tagging remain explicit composition work.
 
 - Public `registerContractRuntimeEvents` reuses canonical contract labels, operator lines, queued follow-ups and cohort completion in custom runtime bridges, without adding domain dispatch or agent timers.
 

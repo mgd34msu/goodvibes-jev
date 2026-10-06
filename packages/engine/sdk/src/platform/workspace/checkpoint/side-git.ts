@@ -56,6 +56,7 @@ const FALLBACK_IDENTITY = { name: 'GoodVibes Checkpoints', email: 'checkpoints@g
  */
 const UNSAFE_GIT_ENV_KEYS = new Set([
   'editor',
+  'visual',
   'git_editor',
   'git_sequence_editor',
   'git_askpass',
@@ -64,6 +65,7 @@ const UNSAFE_GIT_ENV_KEYS = new Set([
   'git_config_global',
   'git_config_system',
   'git_config_count',
+  'git_config_parameters',
   'git_exec_path',
   'git_external_diff',
   'git_pager',
@@ -75,11 +77,13 @@ const UNSAFE_GIT_ENV_KEYS = new Set([
   'prefix',
 ]);
 
-/** Copy `env`, dropping keys (case-insensitively) that simple-git's vulnerability scanner blocks by default. */
+/** Keep ordinary environment and the host's discovery boundary; v4 guards every other GIT_* key. */
 function sanitizeGitEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const sanitized: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(env)) {
-    if (UNSAFE_GIT_ENV_KEYS.has(key.toLowerCase())) continue;
+    const normalized = key.toLowerCase().trim();
+    if (UNSAFE_GIT_ENV_KEYS.has(normalized)) continue;
+    if (normalized.startsWith('git_') && normalized !== 'git_ceiling_directories') continue;
     sanitized[key] = value;
   }
   return sanitized;
@@ -162,7 +166,12 @@ export class SideGitRunner {
    * checkpoint git failure.
    */
   private git(): Promise<SimpleGit> {
-    this.gitClient ??= createSimpleGit({ baseDir: this.workspaceRoot })
+    this.gitClient ??= createSimpleGit({
+      baseDir: this.workspaceRoot,
+      // Only our constructor-owned routing pair reaches the side repository.
+      // The central loader separately preserves the host's discovery ceiling.
+      allowEnvironment: ['GIT_DIR', 'GIT_WORK_TREE'],
+    })
       .then((git) => git.env(this.gitEnv));
     return this.gitClient;
   }

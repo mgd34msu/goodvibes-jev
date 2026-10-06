@@ -29,7 +29,14 @@ export async function createSimpleGit(
 ): Promise<SimpleGit> {
   const loaded = await loadOptionalDependency('simple-git', () => import('simple-git'));
   if (!loaded.available) throw new Error(loaded.reason);
-  return loaded.module.simpleGit(options);
+  const config = typeof options === 'string' ? { baseDir: options } : options;
+  return loaded.module.simpleGit({
+    ...config,
+    // v4 strips every ambient GIT_* key. Keep the host's discovery boundary
+    // so a scratch/non-repository directory cannot resolve to a parent repo.
+    // Repository routing is only allowed explicitly by the side-repo caller.
+    allowEnvironment: ['GIT_CEILING_DIRECTORIES', ...(config?.allowEnvironment ?? [])],
+  });
 }
 
 /** Whether git integration can run in this installation, and why not. */
