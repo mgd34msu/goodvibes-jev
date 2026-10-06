@@ -14,6 +14,7 @@ function fixture(options: { probability?: number; authorized?: boolean; state?: 
   transport?: JudgmentPort;
   beforeAttempt?: () => void;
   onRetry?: () => void;
+  onResult?: (port: JudgmentPort, decisionId: string) => void;
   useReference?: boolean;
   beforeAnswer?: (signal: AbortSignal | undefined) => Promise<void> } = {}) {
   const log = new SqliteDecisionLog(':memory:');
@@ -42,6 +43,7 @@ function fixture(options: { probability?: number; authorized?: boolean; state?: 
         ...(options.beforeAttempt === undefined ? {} : { beforeAttempt: options.beforeAttempt }),
         ...(options.onRetry === undefined ? {} : { onRetry: options.onRetry }) })));
       if (!result) throw new Error('missing fixture result');
+      options.onResult?.(active, result.decisionId!);
       return Object.fromEntries(names.map((name) => [name, readYesNo(result.answers[name] as never, STAKES_BANDS.medium.yesNo)])) as Record<typeof names[number], YesNoReading>;
     },
     project: (readings) => Object.values(readings).some((r) => r.outcome !== 'act')
@@ -61,6 +63,35 @@ function fixture(options: { probability?: number; authorized?: boolean; state?: 
 }
 
 describe('browser judgment service (synthetic port only)', () => {
+  test('recorders reject foreign decision IDs and callbacks retained after the run closes', async () => {
+    let retained: JudgmentPort | undefined; let decisionId = '';
+    const f = fixture({ onResult(port, id) {
+      retained = port; decisionId = id;
+      expect(() => port.recorder!.recordAction('foreign-decision', 'ready')).toThrow();
+      port.recorder!.recordAction(id, 'fixture-current');
+    } });
+    try {
+      await f.service.execute(body(), owner, new AbortController().signal, () => owner);
+      expect(f.log.query()[0]).toMatchObject({ notes: [{ kind: 'action', action: 'fixture-current' }] });
+      expect(() => retained!.recorder!.recordAction(decisionId, 'late')).toThrow();
+      expect(() => retained!.recorder!.recordReadings(decisionId, { late: true })).toThrow();
+      expect(f.log.query()[0]).toMatchObject({ notes: [{ kind: 'action', action: 'fixture-current' }] });
+    } finally { await f.service.close(); f.log[Symbol.dispose](); }
+  });
+
+  test('source revocation after an authorized answer prevents subsequent reading/action attachments', async () => {
+    let current = true;
+    const f = fixture({ authorize: () => current, onResult(port, id) {
+      current = false;
+      expect(() => port.recorder!.recordReadings(id, { fixture: 'revoked' })).toThrow();
+      expect(() => port.recorder!.recordAction(id, 'revoked')).toThrow();
+    } });
+    try {
+      await expect(f.service.execute(body(), owner, new AbortController().signal, () => owner)).rejects.toMatchObject({ code: 'JUDGMENT_PERMISSION_HELD' });
+      expect(f.log.query()).toHaveLength(1); // The already-authorized answer is not retroactively erased.
+      expect(f.log.query()[0]).toMatchObject({ notes: [] });
+    } finally { await f.service.close(); f.log[Symbol.dispose](); }
+  });
   test('does not impose the former 30-second availability deadline', async () => {
     const original = globalThis.setTimeout;
     const scheduled: (() => void)[] = [];
@@ -119,7 +150,7 @@ describe('browser judgment service (synthetic port only)', () => {
         .rejects.toMatchObject({ code });
       await f.service.close();
       expect(attempts).toBe(1); expect(f.calls()).toBe(1);
-      expect(f.log.query()).toMatchObject([{ status: 'failed', error: { kind: 'aborted' } }]);
+      expect(f.log.query()).toEqual([]); // Revoked browser sources cannot acquire even a failure hash.
     } finally { await f.service.close(); f.log[Symbol.dispose](); }
   });
 
@@ -139,7 +170,7 @@ describe('browser judgment service (synthetic port only)', () => {
       await f.service.close();
       expect(attempts).toBe(kind === 'synchronous' ? 1 : 0);
       expect(guarded).toBe(kind === 'synchronous' ? 2 : 1);
-      expect(f.log.query()).toMatchObject([{ status: 'failed', error: { kind: 'aborted' } }]);
+      expect(f.log.query()).toEqual([]); // Revoked browser sources cannot acquire even a failure hash.
     } finally { await f.service.close(); f.log[Symbol.dispose](); }
   });
 
@@ -180,7 +211,7 @@ describe('browser judgment service (synthetic port only)', () => {
       const fresh = f.references.issue({ ...source, expiresAt: Date.now() + 60_000 });
       expect(await f.service.execute(body(fresh), owner, new AbortController().signal, () => owner)).toMatchObject({ status: 'settled' });
       expect(attempts).toBe(5);
-      expect(f.log.query({ status: 'failed' })).toHaveLength(4);
+      expect(f.log.query({ status: 'failed' })).toHaveLength(0);
     } finally { timer.mockRestore(); await f.service.close(); f.log[Symbol.dispose](); }
   });
 
@@ -226,7 +257,7 @@ describe('browser judgment service (synthetic port only)', () => {
     const abort = new AbortController(); const pending = f.service.execute(body(), owner, abort.signal, () => (owner));
     await started; abort.abort();
     await expect(pending).rejects.toMatchObject({ code: 'JUDGMENT_ABORTED' });
-    await f.service.close(); expect(f.log.query({ status: 'failed' })).toHaveLength(1); f.log[Symbol.dispose]();
+    await f.service.close(); expect(f.log.query({ status: 'failed' })).toHaveLength(0); f.log[Symbol.dispose]();
     await expect(f.service.execute(body(), owner, abort.signal, () => (owner))).rejects.toMatchObject({ code: 'JUDGMENT_SHUTTING_DOWN' });
   });
   test('per-principal admission is bounded and cancelled requests drain', async () => {
@@ -252,7 +283,7 @@ describe('browser judgment service (synthetic port only)', () => {
     }) });
     const pending = f.service.execute(body(), owner, new AbortController().signal, () => (owner)).catch((e: unknown) => e);
     await started; expect(f.calls()).toBe(4); await f.service.close(); await pending;
-    expect(f.calls()).toBe(4); expect(f.log.query({ status: 'failed' })).toHaveLength(4); f.log[Symbol.dispose]();
+    expect(f.calls()).toBe(4); expect(f.log.query({ status: 'failed' })).toHaveLength(0); f.log[Symbol.dispose]();
   });
   test('global provider cap stays eight across sixteen admitted principals', async () => {
     let count = 0; let entered!: () => void;

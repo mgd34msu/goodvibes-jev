@@ -78,6 +78,7 @@ import type { GenericWebhookAdapterContext, SurfaceAdapterContext } from '../../
 import type { PlatformServiceManager } from '../service-manager.js';
 import type { JsonRecord } from '../helpers.js';
 import { jsonErrorResponse } from './error-response.js';
+import { attachBrowserJudgmentError, browserJudgmentErrorMethod } from './browser-judgment-error.js';
 import { AppError } from '../../types/errors.js';
 import { VERSION } from '../../version.js';
 import type { CompanionChatManager } from '../../companion/companion-chat-manager.js';
@@ -265,7 +266,16 @@ export class DaemonHttpRouter {
         // token-authenticates its own API calls; reserved API paths return null
         // here (API precedence) and flow to the normal auth-gated dispatch below.
         const asset = serving.serveBundle ? await serveWebuiBundle(req, serving) : null;
-        const response = asset ?? await this.dispatchAuthedRequest(req);
+        const currentPrincipal = () => {
+          const token = this.context.extractAuthToken(req);
+          return token ? this.context.describeAuthenticatedPrincipal(token) : null;
+        };
+        const principal = currentPrincipal();
+        const method = this.context.browserJudgment?.issueErrorReference ? browserJudgmentErrorMethod(req, this.context.gatewayMethods) : undefined;
+        const original = asset ?? await this.dispatchAuthedRequest(req);
+        const response = asset ? original : await attachBrowserJudgmentError(req, original, {
+          service: this.context.browserJudgment, methods: this.context.gatewayMethods, method, principal, currentPrincipal,
+        });
         return serving.cors.enabled ? applyCorsHeaders(req, response, serving) : response;
       },
     );

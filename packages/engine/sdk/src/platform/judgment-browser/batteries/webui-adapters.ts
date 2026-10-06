@@ -133,13 +133,22 @@ export function createWebuiCommandRankAdapter(sources: WebuiPaletteSources): Bro
     async resolve(input, context) {
       checkAbort(context.signal);
       const resolved = await sources.resolve(input, context);
-      checkAbort(context.signal);
-      requireSynchronousAssertion(() => resolved.assertCurrent(), 'JUDGMENT_REFERENCE_HELD');
-      const state = preflight(() => snapshotWebuiCommandRank(resolved.state));
-      if (state.registryVersion !== input.registryVersion || state.candidates.length !== input.candidates.length
-        || (input.query.kind === 'inline' && state.query !== input.query.text)) return referenceHeld();
-      return { state, sourceBinding: resolved.sourceBinding, assertCurrent: () => resolved.assertCurrent(),
-        ...(resolved.signal === undefined ? {} : { signal: resolved.signal }) };
+      try {
+        checkAbort(context.signal);
+        requireSynchronousAssertion(() => resolved.assertCurrent(), 'JUDGMENT_REFERENCE_HELD');
+        const state = preflight(() => snapshotWebuiCommandRank(resolved.state));
+        if (state.registryVersion !== input.registryVersion || state.candidates.length !== input.candidates.length
+          || (input.query.kind === 'inline' && state.query !== input.query.text)) return referenceHeld();
+        return { state, sourceBinding: resolved.sourceBinding, assertCurrent: () => resolved.assertCurrent(),
+          ...(resolved.dispose === undefined ? {} : { dispose: () => resolved.dispose!() }),
+          ...(resolved.signal === undefined ? {} : { signal: resolved.signal }) };
+      } catch (error) {
+        // Until this return transfers ownership, the adapter owns cleanup.
+        // Cancellation in the await gap must not retain a private query or
+        // consume one of the host's bounded reference slots for five minutes.
+        resolved.dispose?.();
+        throw error;
+      }
     },
     async run(port, raw, { signal }) {
       checkAbort(signal);

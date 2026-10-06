@@ -1,0 +1,85 @@
+import { endpointKind, HOSTED_BASE_URL, validEndpointURL } from '@goodvibes-jev/judgment';
+import { BrowserJudgmentError } from '@goodvibes-jev/engine/daemon-sdk';
+import type { ConfigManager, SecretsManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import type { GatewayMethodCatalog } from '@goodvibes-jev/engine/sdk/platform/control-plane';
+import { createWebuiBrowserJudgment, type BrowserJudgmentRoute } from '@goodvibes-jev/engine/sdk/platform/judgment-browser';
+import type { JudgmentServices } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
+
+const KEYS = ['judgment.endpoint', 'judgment.keySource', 'judgment.model', 'judgment.timeoutMs'] as const;
+const ENV_KEYS = ['TYPESAFE_BASE_URL', 'TYPESAFE_DEFAULT_MODEL', 'TYPESAFE_API_KEY'] as const;
+const text = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
+
+/**
+ * The daemon's configured Jev service owns these three fixed WebUI purposes:
+ * ranking an operator's palette query against registered commands/host chat
+ * titles, and interpreting an authenticated canonical daemon failure. This is
+ * the same settings-owned route and metadata-only decision log used by the
+ * engine. Read scopes and browser text never grant an arbitrary destination,
+ * prompt, source category, or retention store.
+ */
+export function composeBrowserJudgment(input: {
+  readonly judgment: JudgmentServices;
+  readonly config: ConfigManager;
+  readonly secrets: Pick<SecretsManager, 'onDidChange'>;
+  readonly methods: GatewayMethodCatalog;
+  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly disposal: { add(label: string, dispose: () => void | Promise<void>): void };
+}) {
+  let lifetime = new AbortController();
+  let revision = crypto.randomUUID();
+  let closed = false;
+  let observed: readonly unknown[] | undefined;
+  const revoke = () => {
+    lifetime.abort(new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD'));
+    lifetime = new AbortController(); revision = crypto.randomUUID();
+    observed = undefined;
+  };
+  const subscriptions = KEYS.map((key) => input.config.subscribe(key, revoke));
+  subscriptions.push(input.secrets.onDidChange((key) => { if (key === 'TYPESAFE_API_KEY') revoke(); }));
+  const snapshot = () => {
+    const current = [...KEYS.map((key) => input.config.get(key)), ...ENV_KEYS.map((key) => input.env[key])];
+    // Environment writes have no subscription. Observe them at both admission
+    // and every current-authority check, retiring old work without poisoning
+    // the next request's configured generation.
+    if (observed && current.some((value, index) => value !== observed![index])) revoke();
+    observed = current;
+    return current;
+  };
+  const currentRoute = (): BrowserJudgmentRoute | undefined => {
+    if (closed) return undefined;
+    // Values stay in this operation-local closure, never in route IDs/logs.
+    const configuration = snapshot();
+    const endpoint = text(configuration[0]) || text(configuration[KEYS.length]) || HOSTED_BASE_URL;
+    if (!validEndpointURL(endpoint)) return undefined;
+    const capturedRevision = revision;
+    const capturedLifetime = lifetime;
+    return {
+      revision: capturedRevision, kind: endpointKind(endpoint), port: input.judgment.port, signal: capturedLifetime.signal,
+      assertCurrent() {
+        snapshot();
+        if (closed || capturedLifetime.signal.aborted || revision !== capturedRevision
+          || observed!.some((value, index) => value !== configuration[index])) {
+          capturedLifetime.abort(new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD'));
+          throw new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD');
+        }
+      },
+    };
+  };
+  const service = createWebuiBrowserJudgment({ methods: input.methods, currentRoute,
+    authorize({ battery, sources, route }) {
+      if (closed || route.revision !== revision || !sources.length) return false;
+      // Explicit source/purpose allowlist. Reference ownership is independently
+      // proved by the source owner before this product policy is consulted.
+      return battery === 'webui.palette.command-rank'
+        ? sources.every((source) => source === 'palette-query' || source === 'chat-title') && sources.includes('palette-query')
+        : battery === 'webui.errors.daemon-refusal' && sources.length === 1 && sources[0] === 'daemon-error';
+    },
+  });
+  input.disposal.add('browser judgment transport', async () => {
+    closed = true;
+    for (const unsubscribe of subscriptions) unsubscribe();
+    lifetime.abort(new BrowserJudgmentError('JUDGMENT_SHUTTING_DOWN'));
+    await service.close();
+  });
+  return service;
+}

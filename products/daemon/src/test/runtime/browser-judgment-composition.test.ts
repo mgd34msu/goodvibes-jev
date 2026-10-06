@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { noul, SqliteDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
+import { noul, SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { AuthenticatedPrincipal } from '@goodvibes-jev/engine/daemon-sdk';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -15,6 +15,9 @@ import { RuntimeEventBus } from '../../runtime/index.js';
 import { createRuntimeServices, type RuntimeServices, type RuntimeServicesOptions } from '../../runtime/services.js';
 import { trackIntervals } from '../helpers/intervals.js';
 import { makeOwnedTempDir } from '../helpers/owned-temp.js';
+import { composeBrowserJudgment } from '../../runtime/browser-judgment-composition.js';
+import { GatewayMethodCatalog } from '@goodvibes-jev/engine/sdk/platform/control-plane';
+import { WEBUI_COMMAND_CATALOG_VERSION } from '@goodvibes-jev/engine/sdk/platform/judgment-browser/catalogs';
 
 const BATTERY = 'webui.errors.daemon-refusal' as const;
 const MARKER = 'synthetic-browser-composition-marker';
@@ -22,6 +25,36 @@ const principal: AuthenticatedPrincipal = {
   principalId: 'synthetic-browser-owner', principalKind: 'user', admin: true, scopes: ['write:judgment'],
 };
 const questions = { session_not_found: noul('Does this fixture name a missing session?') };
+
+test.each(['TYPESAFE_BASE_URL', 'TYPESAFE_API_KEY', 'TYPESAFE_DEFAULT_MODEL'] as const)('fresh browser calls recover after observed %s environment changes', async (key) => {
+  const entered = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();
+  using log = new SqliteDecisionLog(':memory:');
+  let calls = 0;
+  const env = { TYPESAFE_BASE_URL: 'http://127.0.0.1:9876', TYPESAFE_API_KEY: 'synthetic-first-key', TYPESAFE_DEFAULT_MODEL: 'jev-1.13.0' };
+  const inner: JudgmentPort = { model: 'jev-1.13.0', async ask(input) {
+    calls++; entered.resolve(); await release.promise;
+    return { requestedModel: 'jev-1.13.0', model: 'jev-1.13.0', requestId: undefined, usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1,
+      answers: Object.fromEntries(Object.keys(input.questions).map((name) => [name, { type: 'noul', noul: 0.99 }])) as never };
+  } };
+  const cleanup: (() => void | Promise<void>)[] = [];
+  const service = composeBrowserJudgment({ judgment: { port: withDecisionLog(inner, log), decisionLog: log }, env,
+    methods: new GatewayMethodCatalog(), config: configuration().configManager, secrets: { onDidChange: () => () => {} },
+    disposal: { add(_label, dispose) { cleanup.push(dispose); } },
+  });
+  const input = () => ({ protocolVersion: 1, requestId: crypto.randomUUID(), battery: 'webui.palette.command-rank', batteryVersion: 1,
+    input: { query: { kind: 'inline', text: 'Synthetic query' }, registryVersion: WEBUI_COMMAND_CATALOG_VERSION,
+      candidates: [{ kind: 'builtin', commandId: 'nav.chat' }] } });
+  try {
+    const pending = service.execute(input(), principal, new AbortController().signal, () => principal);
+    await entered.promise;
+    env[key] = key === 'TYPESAFE_BASE_URL' ? 'http://127.0.0.1:9877' : key === 'TYPESAFE_DEFAULT_MODEL' ? 'jev-1.14.0' : 'synthetic-second-key';
+    release.resolve();
+    await expect(pending).rejects.toMatchObject({ code: 'JUDGMENT_PERMISSION_HELD' });
+    expect(log.query()).toEqual([]);
+    expect(await service.execute(input(), principal, new AbortController().signal, () => principal)).toMatchObject({ status: 'settled' });
+    expect(calls).toBe(2); expect(log.query()).toHaveLength(1);
+  } finally { release.resolve(); for (const dispose of cleanup.reverse()) await dispose(); }
+});
 
 function deferred() {
   let resolve!: () => void;
@@ -76,13 +109,13 @@ function browserCapability(judgment: JudgmentServices, observeSignal: (signal: A
   return { service, request, references, errorRef };
 }
 
-test('the actual product graph leaves browser judgment absent without explicit installation', async () => {
+test('the actual product graph installs the closed browser registry without a provider credential', async () => {
   const discovery = spyOn(ProviderRegistry.prototype, 'refreshLiveModelDiscovery').mockResolvedValue([]);
   const intervals = trackIntervals();
   let services: RuntimeServices | undefined;
   try {
     services = await createRuntimeServices(configuration());
-    expect(services.browserJudgment).toBeUndefined();
+    expect(services.browserJudgment).toBeDefined();
     expect(services.judgment.port.recorder).toBeDefined();
     await services.close();
     expect(intervals.remaining()).toEqual([]);
@@ -162,20 +195,18 @@ test('the product injects its recorded port and aborts/drains accepted browser c
     // completion cannot restart work or write to a closed decision log.
     await closing;
     expect(closed).toBe(true);
-    expect(events).toEqual(['browser closing', 'call aborted', 'call aborted', 'failure recorded', 'failure recorded', 'browser drained', 'log disposed']);
+    expect(events).toEqual(['browser closing', 'call aborted', 'call aborted', 'browser drained', 'log disposed']);
     expect(logDisposeCalls).toBe(1);
     for (const release of releases) release.resolve();
     await Bun.sleep(5); expect(logDisposeCalls).toBe(1);
     expect(() => services!.judgment.decisionLog.query()).toThrow();
     expect(intervals.remaining()).toEqual([]);
-    // Reopen the actual product store after shutdown to prove the accepted calls
-    // were durably recorded before its owned connection closed.
+    // Reopen the actual product store: revoked browser snapshots must not
+    // acquire source-bearing failure rows while the log drains and closes.
     const persisted = new SqliteDecisionLog(join(input.workingDir, '.goodvibes', GOODVIBES_DAEMON_SURFACE_ROOT, 'decisions.sqlite'));
     try {
       const entries = persisted.query({ battery: BATTERY });
-      expect(entries).toHaveLength(2);
-      for (const entry of entries) expect(entry).toMatchObject({ status: 'failed', error: { kind: 'aborted' },
-        context: { battery: BATTERY, batteryVersion: 1, site: 'browser.judgment' } });
+      expect(entries).toHaveLength(0);
       expect(JSON.stringify(entries)).not.toContain(MARKER);
     } finally { persisted[Symbol.dispose](); }
     await services.close(); expect(browserCloseCalls).toBe(1); expect(logDisposeCalls).toBe(1);

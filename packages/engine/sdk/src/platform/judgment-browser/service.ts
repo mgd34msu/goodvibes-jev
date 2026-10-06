@@ -3,6 +3,7 @@ import type { JudgmentPort, JudgmentResult, Questions } from '@goodvibes-jev/jud
 import {
   BrowserJudgmentError, BROWSER_JUDGMENT_LIMITS as LIMIT, parseBrowserJudgmentRequest, captureBrowserJudgmentJson, missingScopes,
   type AuthenticatedPrincipal, type BrowserJudgmentRequest,
+  type BrowserJudgmentErrorSource, type BrowserJudgmentChatSessions,
 } from '@goodvibes-jev/engine/daemon-sdk';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { BrowserJudgmentReferences } from './references.js';
@@ -19,6 +20,9 @@ export interface BrowserJudgmentServiceOptions {
   readonly currentRoute: () => BrowserJudgmentRoute | undefined;
   /** Server policy only. Read access/reference possession never implies outbound clearance. */
   readonly authorize: (input: BrowserJudgmentAuthorization) => boolean;
+  /** The trusted runtime owner issues bounded snapshots from canonical failures. */
+  readonly issueErrorReference?: (input: BrowserJudgmentErrorSource) => string | undefined;
+  readonly bindChatSessions?: (source: BrowserJudgmentChatSessions) => () => void;
 }
 type Evidence = Pick<JudgmentResult<Questions>, 'decisionId' | 'model' | 'requestedModel' | 'usage' | 'latencyMs'>;
 
@@ -41,6 +45,16 @@ export class BrowserJudgmentService {
   #close: Promise<void> | undefined;
   readonly #providerCalls = new BrowserJudgmentCallLimit(8, LIMIT.totalRuns * 4);
   constructor(private readonly options: BrowserJudgmentServiceOptions) {}
+
+  issueErrorReference(input: BrowserJudgmentErrorSource): string | undefined {
+    if (this.#closing) return undefined;
+    return this.options.issueErrorReference?.(input);
+  }
+
+  bindChatSessions(source: BrowserJudgmentChatSessions): () => void {
+    if (this.#closing) throw new BrowserJudgmentError('JUDGMENT_SHUTTING_DOWN');
+    return this.options.bindChatSessions?.(source) ?? (() => {});
+  }
 
   async execute(raw: unknown, principal: AuthenticatedPrincipal, signal: AbortSignal, currentPrincipal: () => AuthenticatedPrincipal): Promise<object> {
     if (this.#closing) throw new BrowserJudgmentError('JUDGMENT_SHUTTING_DOWN');
@@ -75,7 +89,7 @@ export class BrowserJudgmentService {
     const authenticate = (): AuthenticatedPrincipal => {
       checkAbort();
       const actor = currentPrincipal();
-      if (!actor || 'then' in actor || actor.principalId !== principal.principalId
+      if (!actor || 'then' in actor || actor.principalId !== principal.principalId || actor.principalKind !== principal.principalKind
         || (actor.admin !== true && (!Array.isArray(actor.scopes) || missingScopes(actor.scopes, ['write:judgment']).length > 0))) {
         consumeRejectedHook(actor); throw new BrowserJudgmentError('JUDGMENT_AUTH_REQUIRED');
       }
@@ -83,6 +97,8 @@ export class BrowserJudgmentService {
     };
     const resolved = await battery.resolve(request.input, { principal: authenticate(), currentPrincipal: authenticate, signal, references: this.options.references });
     const referenceSignal = resolved.signal;
+    let routeSignal: AbortSignal | undefined;
+    const routeRevoked = () => abort.abort(new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD'));
     const revoked = () => abort.abort(new BrowserJudgmentError('JUDGMENT_REFERENCE_HELD'));
     referenceSignal?.addEventListener('abort', revoked, { once: true });
     if (referenceSignal?.aborted) revoked();
@@ -93,6 +109,9 @@ export class BrowserJudgmentService {
       catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
       const route = this.options.currentRoute();
       if (!route || 'then' in route) { consumeRejectedHook(route); throw new BrowserJudgmentError('JUDGMENT_UNAVAILABLE'); }
+      routeSignal = route.signal;
+      routeSignal?.addEventListener('abort', routeRevoked, { once: true });
+      if (routeSignal?.aborted) routeRevoked();
       const authorized = () => {
         const actor = authenticate();
         requireSynchronousAssertion(() => resolved.assertCurrent(), 'JUDGMENT_REFERENCE_HELD');
@@ -103,14 +122,26 @@ export class BrowserJudgmentService {
       authorized();
       if (!route.port.recorder) throw new BrowserJudgmentError('JUDGMENT_UNRECORDED');
       const evidence: Evidence[] = [];
-      let calls = 0; let pending = 0; let open = true;
+      let calls = 0; let pending = 0; let open = true; let accepting = true;
       const perRun = new BrowserJudgmentCallLimit(4, battery.maxCalls);
       const ownedCalls = new Set<Promise<unknown>>();
       const port: JudgmentPort = {
         model: route.port.model,
-        recorder: route.port.recorder,
+        recorder: {
+          recordReadings: (id, readings) => {
+            if (!open || !evidence.some((entry) => entry.decisionId === id)) throw new BrowserJudgmentError('JUDGMENT_UNRECORDED');
+            const snapshot = captureBrowserJudgmentJson(readings) as typeof readings;
+            authorized();
+            route.port.recorder!.recordReadings(id, snapshot);
+          },
+          recordAction: (id, action) => {
+            if (!open || !evidence.some((entry) => entry.decisionId === id)) throw new BrowserJudgmentError('JUDGMENT_UNRECORDED');
+            authorized();
+            route.port.recorder!.recordAction(id, action);
+          },
+        },
         ask: (questionRequest) => {
-          if (!open) return Promise.reject(new BrowserJudgmentError('JUDGMENT_ABORTED'));
+          if (!open || !accepting) return Promise.reject(new BrowserJudgmentError('JUDGMENT_ABORTED'));
           if (++calls > battery.maxCalls) return Promise.reject(new BrowserJudgmentError('JUDGMENT_INPUT_TOO_LARGE'));
           pending++;
           const work = perRun.run(signal, () => this.#providerCalls.run(signal, async () => {
@@ -124,6 +155,13 @@ export class BrowserJudgmentService {
             catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
             const result = await route.port.ask({ ...questionRequest, state: safeState as typeof questionRequest.state, signal,
               context: { battery: request.battery, batteryVersion: 1, site: 'browser.judgment' },
+              // Retention is an independent boundary from transmission. In
+              // particular a revoked source must not acquire a failure row
+              // when an asynchronous key lookup subsequently rejects.
+              assertLogCurrent: () => {
+                try { authorized(); }
+                catch (error) { abort.abort(normalizedError(error, signal)); throw error; }
+              },
               beforeAttempt: () => {
                 // Availability retries may outlive references, authentication, or
                 // route grants. Recheck after backoff, before every transmission.
@@ -150,12 +188,14 @@ export class BrowserJudgmentService {
         if (pending) throw new BrowserJudgmentError('JUDGMENT_INVALID_RESPONSE');
       } catch (error) {
         abort.abort(normalizedError(error, signal)); throw error;
-      } finally { open = false; await Promise.allSettled([...ownedCalls]); } // Drain siblings before closing the log.
+      } finally { accepting = false; await Promise.allSettled([...ownedCalls]); } // Drain siblings before closing the log.
       authorized();
       if (!evidence.length) throw new BrowserJudgmentError('JUDGMENT_UNRECORDED');
       let projected: BrowserJudgmentProjection<unknown>;
       try { projected = captureBrowserJudgmentJson(battery.project(result)) as BrowserJudgmentProjection<unknown>; }
       catch { throw new BrowserJudgmentError('JUDGMENT_INVALID_RESPONSE'); }
+      finally { open = false; }
+      authorized();
       validateBrowserJudgmentProjection(request, projected, state);
       const outcomes = Object.values(projected.readings).map((reading) => reading.outcome);
       if (projected.status === 'held' && projected.compoundOutcome !== undefined) outcomes.push(projected.compoundOutcome);
@@ -169,7 +209,11 @@ export class BrowserJudgmentService {
       const response = { protocolVersion: 1, requestId: request.requestId, battery: request.battery, batteryVersion: 1, ...wireProjection, outcome, evidence };
       if (new TextEncoder().encode(JSON.stringify(response)).byteLength > LIMIT.bodyBytes) throw new BrowserJudgmentError('JUDGMENT_INVALID_RESPONSE');
       return response;
-    } finally { referenceSignal?.removeEventListener('abort', revoked); }
+    } finally {
+      referenceSignal?.removeEventListener('abort', revoked);
+      routeSignal?.removeEventListener('abort', routeRevoked);
+      resolved.dispose?.();
+    }
   }
 
   close(): Promise<void> {

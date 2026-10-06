@@ -17,6 +17,7 @@ import { attachWsOnlyGatewayVerbHandlers } from '@goodvibes-jev/engine/terminal-
 import { createRuntimeAcquisitionScope } from './acquisition.js';
 import { composeMailDeps } from './mail-composition.js';
 import { composeCredentialServices } from './credential-composition.js';
+import { composeBrowserJudgment } from './browser-judgment-composition.js';
 import { registerDaemonRuntimeBasePollers } from './disposal-wiring.js';
 import { attachConfigEmitBridge } from '@goodvibes-jev/engine/sdk/platform/runtime/config';
 import { WatcherRegistry } from '@goodvibes-jev/engine/sdk/platform/watchers';
@@ -81,18 +82,20 @@ export type { RuntimeServicesOptions, RuntimeServices } from './runtime-services
 /** Construct the daemon's base owners before the outer async handler boundary.
  * Adapted from pinned daemon 443e5ee; shared capabilities use canonical factories.
  */
-export async function createRuntimeBaseServices(options: RuntimeServicesOptions): Promise<{ services: Omit<RuntimeServices, 'daemonHandlers'>; handlerOptions: Omit<DaemonHandlerCompositionOptions, 'distributedRuntimeReady'>; closeWorkLedger: () => Promise<void> }> {
+export async function createRuntimeBaseServices(options: RuntimeServicesOptions): Promise<{ services: Omit<RuntimeServices, 'daemonHandlers'>; handlerOptions: Omit<DaemonHandlerCompositionOptions, 'distributedRuntimeReady'>; closeWorkLedger: () => Promise<void>; closeBrowserJudgment: () => Promise<void> }> {
   // The SDK's disposal scope and its all-required poller list, plus the four
   // pollers only the daemon has, see disposal-wiring.ts.
   const disposalScope = createRuntimeAcquisitionScope('RuntimeServices');
   let fenceWorkLedger: (() => Promise<void>) | undefined;
   let fenceNativeWork: (() => Promise<void>) | undefined;
+  let fenceBrowserJudgment: (() => Promise<void>) | undefined;
   let nativeFleetOwnership: ReturnType<typeof createDaemonNativeWorkExecutionActivation>['fleetOwnership'] = () => [];
   let acpFleetOwnership: typeof nativeFleetOwnership = () => [];
   const close = (): Promise<void> => {
     // Fence immediately, before reverse-order drains can await other owners.
     // The registered ledger owner reports any cleanup failure through the scope.
     void fenceWorkLedger?.().catch(() => {});
+    void fenceBrowserJudgment?.().catch(() => {});
     return disposalScope.close();
   };
   try {
@@ -144,8 +147,11 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       pairingTokenPath: controlPlaneStorePath(shellPaths, GOODVIBES_DAEMON_SURFACE_ROOT, 'pairing-tokens.json'),
     });
     const judgment = composeJudgment({ config: configManager, secrets: secretsManager, env: process.env, stateRoot: shellPaths.resolveProjectPath(GOODVIBES_DAEMON_SURFACE_ROOT), disposal: disposalScope.registry });
-    const browserJudgment = options.createBrowserJudgment?.(judgment);
-    if (browserJudgment) disposalScope.registry.add('browser judgment transport', () => browserJudgment.close());
+    const browserJudgment = options.createBrowserJudgment ? options.createBrowserJudgment(judgment)
+      : composeBrowserJudgment({ judgment, config: configManager, secrets: secretsManager, methods: gatewayMethods, env: process.env, disposal: disposalScope.registry });
+    let browserClosing: Promise<void> | undefined;
+    fenceBrowserJudgment = () => browserClosing ??= browserJudgment.close();
+    if (options.createBrowserJudgment) disposalScope.registry.add('browser judgment transport', fenceBrowserJudgment);
     const subscriptionManager = new SubscriptionManager(sharedSubscriptionsPath(shellPaths), { legacyPath: shellPaths.resolveUserPath(GOODVIBES_DAEMON_SURFACE_ROOT, 'subscriptions.json') });
     const serviceRegistry = new ServiceRegistry(shellPaths.resolveProjectPath(GOODVIBES_DAEMON_SURFACE_ROOT, 'services.json'), {
       secretsManager,
@@ -891,7 +897,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       clusterCoordinator,
       checkoutSeam: browserCheckoutSeam.get, channelDeliveryRouter, inboxFactory: options.inboxFactory,
     };
-    return { services, handlerOptions, closeWorkLedger: fenceWorkLedger };
+    return { services, handlerOptions, closeWorkLedger: fenceWorkLedger, closeBrowserJudgment: fenceBrowserJudgment };
   } catch (startupError) {
     try { await close(); }
     catch (cleanupError) { throw new AggregateError([startupError, cleanupError], 'Runtime graph construction and cleanup failed'); }

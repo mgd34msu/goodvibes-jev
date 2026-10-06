@@ -13,7 +13,7 @@ export async function createRuntimeServices(options: RuntimeServicesOptions): Pr
   if (typeof options.inboxFactory !== 'function') {
     throw new Error('An explicit daemon inbox factory is required until built-in provider composition is restored.');
   }
-  const { services, handlerOptions, closeWorkLedger } = await createRuntimeBaseServices(options);
+  const { services, handlerOptions, closeWorkLedger, closeBrowserJudgment } = await createRuntimeBaseServices(options);
   const scope = createDisposalScope('Daemon runtime acquisition');
   let shutdownRequested = false;
   const close = (): Promise<void> => {
@@ -22,6 +22,7 @@ export async function createRuntimeServices(options: RuntimeServicesOptions): Pr
     // Revoke the private read client before the base ledger begins its drain.
     // The base graph's registered owner awaits and reports this same drain.
     void closeWorkLedger().catch(() => {});
+    void closeBrowserJudgment().catch(() => {});
     return scope.close();
   };
   const dispose = (): void => { void close().catch(() => {}); };

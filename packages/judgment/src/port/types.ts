@@ -56,6 +56,13 @@ export interface JudgmentRequest<Q extends Questions> {
   readonly signal?: AbortSignal;
   /** Synchronous current-authority check before every wire attempt, including retries. */
   readonly beforeAttempt?: () => void;
+  /**
+   * Synchronous permission to hash and retain this call. The recording port
+   * checks before capture/hash and every answered or failed entry. A throw or
+   * non-undefined return refuses retention without writing a failure entry.
+   * Omitted preserves normal recording, including cancelled-call failures.
+   */
+  readonly assertLogCurrent?: () => void;
   /** Observes temporary unavailability without settling the reading. Observer errors are ignored. */
   readonly onRetry?: (progress: JudgmentRetryProgress) => void;
   /** Attribution for the decision log; never sent to the model. */

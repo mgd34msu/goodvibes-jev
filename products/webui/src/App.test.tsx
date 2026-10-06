@@ -73,6 +73,7 @@ let chatCloseCalls: string[] = [];
 let chatDeleteCalls: string[] = [];
 let chatDeleteReallyRemoves = true;
 let chatCloseAvailable = true;
+let chatCloseHasMachineCode = true;
 
 function resetChatDeleteFixtures() {
   chatSessionsFixture = [{ id: 'c1', title: 'Chat One', status: 'active' }];
@@ -80,6 +81,7 @@ function resetChatDeleteFixtures() {
   chatDeleteCalls = [];
   chatDeleteReallyRemoves = true;
   chatCloseAvailable = true;
+  chatCloseHasMachineCode = true;
 }
 resetChatDeleteFixtures();
 
@@ -214,7 +216,10 @@ mock.module('./lib/goodvibes', () => ({
         close: (sessionId: string) => {
           chatCloseCalls.push(sessionId);
           if (!chatCloseAvailable) {
-            return Promise.reject(Object.assign(new Error('Unknown gateway method'), { status: 404, body: { error: 'Unknown gateway method' } }));
+            return Promise.reject(Object.assign(new Error('Unknown gateway method'), {
+              status: 404,
+              body: { error: 'Unknown gateway method', ...(chatCloseHasMachineCode ? { code: 'METHOD_NOT_FOUND' } : {}) },
+            }));
           }
           const session = chatSessionsFixture.find((s) => s.id === sessionId);
           if (session) session.status = 'closed';
@@ -511,7 +516,7 @@ describe('App: delete-means-delete, companion chat sidebar delete', () => {
     unmount();
   });
 
-  test('an older daemon with no close route yet: close 404s honestly but delete still proceeds (and the reconcile still catches the still-soft-close outcome)', async () => {
+  test('a structural METHOD_NOT_FOUND close refusal permits delete, and reconciliation still catches a soft-close outcome', async () => {
     window.history.pushState({}, '', '/?view=chat');
     chatCloseAvailable = false;
     chatDeleteReallyRemoves = false;
@@ -527,6 +532,27 @@ describe('App: delete-means-delete, companion chat sidebar delete', () => {
     // close was attempted (and honestly failed as unavailable) but did not block delete.
     expect(chatCloseCalls).toEqual(['c1']);
     expect(chatDeleteCalls).toEqual(['c1']);
+    expect(container.textContent).toContain('Chat One');
+
+    unmount();
+  });
+
+  test('unissued method-unavailable prose does not authorize continuing to delete', async () => {
+    window.history.pushState({}, '', '/?view=chat');
+    chatCloseAvailable = false;
+    chatCloseHasMachineCode = false;
+    const { container, unmount } = render();
+    await flushMicrotasks();
+
+    flushSync(() => {
+      deleteButtonFor(container, 'Chat One').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    });
+    await flushMicrotasks();
+    await answerConfirm(true);
+
+    expect(chatCloseCalls).toEqual(['c1']);
+    expect(chatDeleteCalls).toEqual([]);
+    expect(chatSessionsFixture.find((session) => session.id === 'c1')?.status).toBe('active');
     expect(container.textContent).toContain('Chat One');
 
     unmount();
