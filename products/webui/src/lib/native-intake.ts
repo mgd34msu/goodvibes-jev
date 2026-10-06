@@ -1,4 +1,5 @@
 import type { OperatorRemoteClient } from "@goodvibes-jev/engine/operator-sdk";
+import { createOperatorNativeWorkExecutionClient } from "@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client";
 import {
   createOperatorNativeConversationIntakeClient,
   nativeConversationIntakeCaptureRequestSchema,
@@ -14,6 +15,11 @@ import {
 import { getActiveRoute } from "./relay-connection";
 import { getStoredRelayPairing } from "./relay-pairing";
 import { randomUuid } from "./uuid";
+import { createNativeIntakeExecution } from "./native-execution";
+import {
+  createNativeExecutionBrowserJournal,
+  type NativeExecutionBrowserJournal,
+} from "./native-execution-journal";
 import {
   createNativeIntakeBrowserJournal,
   type NativeIntakeBrowserBinding,
@@ -36,7 +42,8 @@ export async function openNativeIntake(
   lifetime: ClientLifetime,
   signal: AbortSignal,
   journal: NativeIntakeJournal = createNativeIntakeBrowserJournal(),
-  newId: () => string = randomUuid
+  newId: () => string = randomUuid,
+  executionJournal: NativeExecutionBrowserJournal = createNativeExecutionBrowserJournal()
 ) {
   let disposed = false;
   const lifetimeAbort = new AbortController();
@@ -55,7 +62,10 @@ export async function openNativeIntake(
   };
   const combined = (operation?: AbortSignal) =>
     AbortSignal.any([signal, lifetimeAbort.signal, ...(operation ? [operation] : [])]);
-  const readBinding = async (operation?: AbortSignal): Promise<NativeIntakeBrowserBinding> => {
+  const readBinding = async (
+    operation?: AbortSignal,
+    execution = false
+  ): Promise<NativeIntakeBrowserBinding> => {
     check();
     const current = combined(operation);
     current.throwIfAborted();
@@ -69,13 +79,18 @@ export async function openNativeIntake(
       !auth.principalId ||
       auth.principalId === "shared-token" ||
       auth.principalId.length > 200 ||
-      !["read:work-ledger", "write:work-ledger"].every(
+      !["read:work-ledger", execution ? "write:fleet" : "write:work-ledger"].every(
         (scope) => auth.scopes.includes("*") || auth.scopes.includes(scope)
       )
     ) {
-      throw new Error(
-        "Native requests require an existing paired admin with read:work-ledger and write:work-ledger. Shared tokens and user sessions are unsupported."
+      const error = new Error(
+        execution
+          ? "Native execution requires an existing paired admin with read:work-ledger and write:fleet. Shared tokens and user sessions are unsupported."
+          : "Native requests require an existing paired admin with read:work-ledger and write:work-ledger. Shared tokens and user sessions are unsupported."
       );
+      throw execution
+        ? Object.assign(error, { code: "NATIVE_EXECUTION_UNSUPPORTED_AUTHORITY" })
+        : error;
     }
     const project = await sdk.operator.invoke("workLedger.project", {}, current);
     check();
@@ -99,8 +114,8 @@ export async function openNativeIntake(
   };
   try {
     const binding = await readBinding();
-    const authorize = async (operation?: AbortSignal) => {
-      const current = await readBinding(operation);
+    const authorize = async (operation?: AbortSignal, execution = false) => {
+      const current = await readBinding(operation, execution);
       if (!sameBinding(binding, current))
         throw new Error("The native project or paired owner changed. Reopen Native request.");
       check();
@@ -110,12 +125,13 @@ export async function openNativeIntake(
       input?: Record<string, unknown>,
       options?: { signal?: AbortSignal }
     ) => {
-      await authorize(options?.signal);
+      await authorize(options?.signal, method.startsWith("workLedger.execution."));
       const result = await sdk.operator.invoke(method, input, combined(options?.signal));
       check();
       return result;
     }) as OperatorRemoteClient["invoke"];
     const client = createOperatorNativeConversationIntakeClient({ invoke }, binding.projectId);
+    const executionClient = createOperatorNativeWorkExecutionClient({ invoke }, binding.projectId);
     const confirm = async (record: NativeIntakeBrowserRecord) => {
       check();
       if (!sameBinding(binding, record.binding))
@@ -148,6 +164,17 @@ export async function openNativeIntake(
         await client.get({ inputId: record.command.inputId }, { signal: combined(operation) })
       );
     };
+    const execution = createNativeIntakeExecution({
+      binding,
+      client: executionClient,
+      journal: executionJournal,
+      confirm,
+      inspect,
+      active(operation) {
+        check();
+        combined(operation).throwIfAborted();
+      },
+    });
     const continueSubmission = async (
       record: NativeIntakeBrowserRecord,
       found: NativeIntakeResult,
@@ -175,6 +202,7 @@ export async function openNativeIntake(
     };
     return {
       binding,
+      execution,
       async list() {
         await authorize();
         const records = await journal.list(binding);
@@ -241,6 +269,7 @@ export async function openNativeIntake(
         disposed = true;
         stop();
         client.dispose();
+        executionClient.dispose();
         unsubscribe();
         signal.removeEventListener("abort", stop);
       },
@@ -267,7 +296,7 @@ export function nativeIntakeDescription(result: NativeIntakeResult): string {
         ? "Admission was interrupted. Resume asks Jev to continue under a new recovery generation."
         : `Jev admission is ${result.stage}. Inspect to read its current state.`;
     case "work":
-      return "Jev admitted this source to the work ledger. Execution has not been requested by this screen.";
+      return "Jev admitted this exact source to the work ledger. Native execution and verification are reported separately below.";
     case "turn":
       return `Jev routed this source to ${result.route}. Native conversation delivery is not connected to this screen; no model turn was dispatched.`;
     case "blocked":

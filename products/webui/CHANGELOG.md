@@ -8,6 +8,12 @@ This project uses semantic versioning with `vMAJOR.MINOR.PATCH` git tags.
 
 ### Fixed
 
+- Native requests now automatically hand admitted work to the existing paired
+  native execution owner. Exact targets are durably retained before dispatch;
+  status-only reopening, explicit interrupted recovery, cancellation and separate
+  execution/verification projections preserve the original attempt without a
+  human approval gate or legacy chat/contract fallback.
+
 - General settings now renders the engine-owned terminal palette as a 13-choice
   selector, with `goodvibes` as the fresh default. Changes persist through the
   connected host's client-local config store; browser appearance and other

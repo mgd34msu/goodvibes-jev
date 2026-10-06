@@ -1,7 +1,18 @@
 /** Real Chromium + strict IndexedDB + unchanged authenticated daemon capture bytes. */
 import { expect, test, type Page } from "@playwright/test";
 import { expectNoHorizontalScroll } from "./support/app";
-import { installNativeIntakeDaemon } from "./support/native-intake-fixture";
+import { installNativeIntakeDaemon as installIntakeCapture } from "./support/native-intake-fixture";
+
+/** Intake-only recordings cannot claim execution. Explicitly remove its authority. */
+async function installNativeIntakeDaemon(...args: Parameters<typeof installIntakeCapture>) {
+  const daemon = await installIntakeCapture(...args);
+  const auth = JSON.parse(daemon.capture.auth.body) as { scopes: string[] };
+  daemon.setAuthResponse({
+    ...auth,
+    scopes: auth.scopes.filter((scope) => scope !== "write:fleet"),
+  });
+  return daemon;
+}
 
 async function open(page: Page) {
   await page.getByRole("button", { name: "New", exact: true }).click();
@@ -54,15 +65,18 @@ test("an absent journaled input can be left saved while composing a deliberate n
     .getByRole("textbox", { name: "Original request", exact: true })
     .fill(daemon.capture.input.text);
   await dialog.getByRole("button", { name: "Submit", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toBeVisible();
+  await expect(dialog.getByRole("alert").first()).toBeVisible();
   await dialog.getByRole("button", { name: "Inspect", exact: true }).click();
-  await expect(dialog.getByRole("status")).toContainText("latest lookup found no capture");
+  // Source lookup can finish while the independent execution inspection is still busy.
+  await expect(
+    dialog.getByRole("status").filter({ hasText: "latest lookup found no capture" })
+  ).toContainText("latest lookup found no capture");
   await dialog.getByRole("button", { name: "New request", exact: true }).click();
   const field = dialog.getByRole("textbox", { name: "Original request", exact: true });
   await expect(field).toBeEnabled();
   await field.fill("A corrected, deliberately separate request");
   await dialog.getByRole("button", { name: "Submit", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toBeVisible();
+  await expect(dialog.getByRole("alert").first()).toBeVisible();
   const stored = await originals(page);
   expect(stored).toHaveLength(2);
   expect(stored.some((record) => record.command.text === daemon.capture.input.text)).toBe(true);
@@ -73,7 +87,7 @@ test("an absent journaled input can be left saved while composing a deliberate n
   expect(daemon.writes).toHaveLength(0);
 });
 
-test("one Submit durably preserves exact text then lets Jev admit work, without an approval gate or execution claim", async ({
+test("one Submit durably preserves exact text and admission when execution authority is unavailable", async ({
   page,
 }) => {
   const daemon = await installNativeIntakeDaemon(page, "work", { hold: ["capture"] });
@@ -91,8 +105,8 @@ test("one Submit durably preserves exact text then lets Jev admit work, without 
     dialog.getByRole("heading", { name: "Admission receipt", exact: true })
   ).toBeVisible();
   await expect(
-    dialog.getByText("Execution has not been requested by this screen.", { exact: false })
-  ).toBeVisible();
+    dialog.getByRole("region", { name: "Native execution", exact: true }).getByRole("alert")
+  ).toContainText("Execution outcome is unconfirmed");
   expect(await dialog.locator("pre").textContent()).toBe(daemon.capture.input.text);
   expect(daemon.writes.map((request) => request.operation)).toEqual(["capture", "admit"]);
   expect(daemon.writes.map((request) => request.body)).toEqual([
@@ -122,12 +136,10 @@ test("one Submit durably preserves exact text then lets Jev admit work, without 
   await expect(receipt).toBeInViewport();
   const receiptScreenshot = test.info().outputPath("native-admission-receipt.png");
   await page.screenshot({ path: receiptScreenshot, fullPage: true });
-  await test
-    .info()
-    .attach("Native admission receipt details", {
-      path: receiptScreenshot,
-      contentType: "image/png",
-    });
+  await test.info().attach("Native admission receipt details", {
+    path: receiptScreenshot,
+    contentType: "image/png",
+  });
 });
 
 test("lost capture acknowledgement survives reload; reopening only inspects and retry keeps the original IDs", async ({
@@ -167,7 +179,7 @@ test("interrupted admission does not reroll on inspect or reopen, and only expli
     .getByRole("textbox", { name: "Original request", exact: true })
     .fill(daemon.capture.input.text);
   await dialog.getByRole("button", { name: "Submit", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toBeVisible();
+  await expect(dialog.getByRole("alert").first()).toBeVisible();
   await dialog.getByRole("button", { name: "Inspect", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "Resume", exact: true })).toBeEnabled();
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
@@ -193,13 +205,13 @@ test("cancellation during a provider wait uses the real source identity and a la
   await dialog.getByRole("button", { name: "Submit", exact: true }).click();
   await expect.poll(() => daemon.pendingCount).toBe(1);
   await dialog.getByRole("button", { name: "Cancel intake", exact: true }).click();
-  await expect(dialog.getByRole("status")).toContainText(
-    "Intake was cancelled before work admission"
-  );
+  await expect(
+    dialog.getByRole("status").filter({ hasText: "Intake was cancelled before work admission" })
+  ).toContainText("Intake was cancelled before work admission");
   await daemon.release("admit");
-  await expect(dialog.getByRole("status")).toContainText(
-    "Intake was cancelled before work admission"
-  );
+  await expect(
+    dialog.getByRole("status").filter({ hasText: "Intake was cancelled before work admission" })
+  ).toContainText("Intake was cancelled before work admission");
   expect(daemon.writes.map((request) => request.operation)).toEqual(["capture", "admit", "cancel"]);
   expect(daemon.writes.at(-1)?.body).toEqual(daemon.capture.transition);
 });
@@ -233,12 +245,14 @@ for (const name of ["turn", "blocked", "refused"] as const)
     }
     await dialog.getByRole("button", { name: "Submit", exact: true }).click();
     await expect(dialog.getByRole("button", { name: "New request", exact: true })).toBeEnabled();
-    await expect(dialog.getByRole("status")).toContainText(
+    const disposition =
       name === "turn"
         ? "no model turn was dispatched"
         : name === "blocked"
           ? "blocked"
-          : "Jev refused"
+          : "Jev refused";
+    await expect(dialog.getByRole("status").filter({ hasText: disposition })).toContainText(
+      disposition
     );
     expect((await originals(page))[0]?.command).toEqual(daemon.capture.input);
     await expect(
@@ -370,9 +384,9 @@ test("a stale original does not prevent a separately identified request under th
     })
   );
   dialog = await open(page);
-  await expect(dialog.getByRole("alert")).toBeVisible();
+  await expect(dialog.getByRole("alert").first()).toBeVisible();
   await expect(
-    dialog.getByText("It does not cancel any daemon intake", { exact: false })
+    dialog.getByText("It does not cancel daemon intake", { exact: false })
   ).toBeVisible();
   await dialog.getByRole("button", { name: "New request", exact: true }).click();
   let fresh: unknown;
@@ -387,7 +401,7 @@ test("a stale original does not prevent a separately identified request under th
     .getByRole("textbox", { name: "Original request", exact: true })
     .fill("Fresh source for the current workspace scope");
   await dialog.getByRole("button", { name: "Submit", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toBeVisible();
+  await expect(dialog.getByRole("alert").first()).toBeVisible();
   expect(fresh).toMatchObject({
     text: "Fresh source for the current workspace scope",
     unsupportedSources: [],

@@ -1,0 +1,205 @@
+{
+  "source": "owned-synthetic-provider; real paired DaemonServer intake and native execution graph HTTP",
+  "name": "pending-intent",
+  "input": {
+    "requestId": "webui-native-execution-pending-intent-request",
+    "inputId": "webui-native-execution-pending-intent-input",
+    "text": "  Answer this request yourself without delegation. 🌻\nSay native execution is complete.\nSay native execution is complete.  ",
+    "unsupportedSources": []
+  },
+  "auth": {
+    "methodId": "control.auth.current",
+    "method": "GET",
+    "path": "/api/control-plane/auth",
+    "status": 200,
+    "body": "{\"authenticated\":true,\"authMode\":\"session\",\"tokenPresent\":true,\"authorizationHeaderPresent\":true,\"sessionCookiePresent\":false,\"principalId\":\"pairing:pair-5b2da227-102d-45c6-82a5-9285901f75c1\",\"principalKind\":\"token\",\"admin\":true,\"scopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:work-ledger\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"roles\":[]}"
+  },
+  "project": {
+    "methodId": "workLedger.project",
+    "method": "GET",
+    "path": "/api/work-ledger/project",
+    "status": 200,
+    "body": "{\"projectId\":\"workspace-532a2a3aa2\"}"
+  },
+  "lookupBefore": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-execution-pending-intent-input"
+    },
+    "requestJson": "{\"inputId\":\"webui-native-execution-pending-intent-input\"}",
+    "body": "{\"kind\":\"not-found\"}"
+  },
+  "capture": {
+    "methodId": "workLedger.intake.capture",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/capture",
+    "status": 200,
+    "requestBody": {
+      "requestId": "webui-native-execution-pending-intent-request",
+      "inputId": "webui-native-execution-pending-intent-input",
+      "text": "  Answer this request yourself without delegation. 🌻\nSay native execution is complete.\nSay native execution is complete.  ",
+      "unsupportedSources": []
+    },
+    "requestJson": "{\"requestId\":\"webui-native-execution-pending-intent-request\",\"inputId\":\"webui-native-execution-pending-intent-input\",\"text\":\"  Answer this request yourself without delegation. 🌻\\nSay native execution is complete.\\nSay native execution is complete.  \",\"unsupportedSources\":[]}",
+    "body": "{\"kind\":\"captured\",\"projectId\":\"workspace-532a2a3aa2\",\"requestId\":\"webui-native-execution-pending-intent-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-execution-pending-intent-input\",\"sourceId\":\"bba159524439cd4825ef9ceeb901ce42fbfbd11a2fe88be135c6d43d991464f5\",\"sourceRevision\":\"c79192132c749aff9172eda4a0743c655d259c14d7d2cb1ba0f41c3f7a6a5584\",\"sessionId\":\"native-work:workspace-532a2a3aa2\"}}"
+  },
+  "getCaptured": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-execution-pending-intent-input"
+    },
+    "requestJson": "{\"inputId\":\"webui-native-execution-pending-intent-input\"}",
+    "body": "{\"kind\":\"captured\",\"projectId\":\"workspace-532a2a3aa2\",\"requestId\":\"webui-native-execution-pending-intent-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-execution-pending-intent-input\",\"sourceId\":\"bba159524439cd4825ef9ceeb901ce42fbfbd11a2fe88be135c6d43d991464f5\",\"sourceRevision\":\"c79192132c749aff9172eda4a0743c655d259c14d7d2cb1ba0f41c3f7a6a5584\",\"sessionId\":\"native-work:workspace-532a2a3aa2\"}}"
+  },
+  "transition": {
+    "inputId": "webui-native-execution-pending-intent-input",
+    "sourceRevision": "c79192132c749aff9172eda4a0743c655d259c14d7d2cb1ba0f41c3f7a6a5584"
+  },
+  "admit": {
+    "methodId": "workLedger.intake.admit",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/admit",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-execution-pending-intent-input",
+      "sourceRevision": "c79192132c749aff9172eda4a0743c655d259c14d7d2cb1ba0f41c3f7a6a5584"
+    },
+    "requestJson": "{\"inputId\":\"webui-native-execution-pending-intent-input\",\"sourceRevision\":\"c79192132c749aff9172eda4a0743c655d259c14d7d2cb1ba0f41c3f7a6a5584\"}",
+    "body": "{\"kind\":\"work\",\"projectId\":\"workspace-532a2a3aa2\",\"requestId\":\"webui-native-execution-pending-intent-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-execution-pending-intent-input\",\"sourceId\":\"bba159524439cd4825ef9ceeb901ce42fbfbd11a2fe88be135c6d43d991464f5\",\"sourceRevision\":\"c79192132c749aff9172eda4a0743c655d259c14d7d2cb1ba0f41c3f7a6a5584\",\"sessionId\":\"native-work:workspace-532a2a3aa2\"},\"receipt\":{\"projectId\":\"workspace-532a2a3aa2\",\"requestId\":\"webui-native-execution-pending-intent-request\",\"inputId\":\"webui-native-execution-pending-intent-input\",\"ledgerRevision\":1,\"workId\":\"work-392c0d5b-268c-46a9-843e-b7d0cf933154\",\"attemptId\":\"attempt-4152982d-69db-42a2-9775-3688689468a9\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"source\":{\"version\":2,\"sourceId\":\"bba159524439cd4825ef9ceeb901ce42fbfbd11a2fe88be135c6d43d991464f5\",\"sourceRevision\":\"c79192132c749aff9172eda4a0743c655d259c14d7d2cb1ba0f41c3f7a6a5584\",\"sessionId\":\"native-work:workspace-532a2a3aa2\",\"offsetEncoding\":\"utf16\",\"proposalRevision\":\"da590c522ad0f7d9d5b018ddda3b915bdb5a4130d515af08749561845d07c073\",\"spans\":[{\"partId\":\"input\",\"start\":0,\"end\":123}],\"admissionDecisionId\":\"e6d6c234-86c5-444e-bd9c-42f481171184\",\"judgmentDecisionIds\":[\"01a10fff-f9d9-7000-89e7-78729520e3f8\",\"01a10fff-fa1e-7000-b2a7-7bad5e6075a3\",\"01a10fff-fa27-7000-8524-b34f6ed05b99\",\"01a10fff-fa35-7000-a470-36f75460dfee\"]},\"goal\":\"  Answer this request yourself without delegation. 🌻\\nSay native execution is complete.\\nSay native execution is complete.  \",\"criteria\":[\"  Answer this request yourself without delegation. 🌻\\nSay native execution is complete.\\nSay native execution is complete.  \"]}}"
+  },
+  "get": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-execution-pending-intent-input"
+    },
+    "requestJson": "{\"inputId\":\"webui-native-execution-pending-intent-input\"}",
+    "body": "{\"kind\":\"work\",\"projectId\":\"workspace-532a2a3aa2\",\"requestId\":\"webui-native-execution-pending-intent-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-execution-pending-intent-input\",\"sourceId\":\"bba159524439cd4825ef9ceeb901ce42fbfbd11a2fe88be135c6d43d991464f5\",\"sourceRevision\":\"c79192132c749aff9172eda4a0743c655d259c14d7d2cb1ba0f41c3f7a6a5584\",\"sessionId\":\"native-work:workspace-532a2a3aa2\"},\"receipt\":{\"projectId\":\"workspace-532a2a3aa2\",\"requestId\":\"webui-native-execution-pending-intent-request\",\"inputId\":\"webui-native-execution-pending-intent-input\",\"ledgerRevision\":1,\"workId\":\"work-392c0d5b-268c-46a9-843e-b7d0cf933154\",\"attemptId\":\"attempt-4152982d-69db-42a2-9775-3688689468a9\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"source\":{\"version\":2,\"sourceId\":\"bba159524439cd4825ef9ceeb901ce42fbfbd11a2fe88be135c6d43d991464f5\",\"sourceRevision\":\"c79192132c749aff9172eda4a0743c655d259c14d7d2cb1ba0f41c3f7a6a5584\",\"sessionId\":\"native-work:workspace-532a2a3aa2\",\"offsetEncoding\":\"utf16\",\"proposalRevision\":\"da590c522ad0f7d9d5b018ddda3b915bdb5a4130d515af08749561845d07c073\",\"spans\":[{\"partId\":\"input\",\"start\":0,\"end\":123}],\"admissionDecisionId\":\"e6d6c234-86c5-444e-bd9c-42f481171184\",\"judgmentDecisionIds\":[\"01a10fff-f9d9-7000-89e7-78729520e3f8\",\"01a10fff-fa1e-7000-b2a7-7bad5e6075a3\",\"01a10fff-fa27-7000-8524-b34f6ed05b99\",\"01a10fff-fa35-7000-a470-36f75460dfee\"]},\"goal\":\"  Answer this request yourself without delegation. 🌻\\nSay native execution is complete.\\nSay native execution is complete.  \",\"criteria\":[\"  Answer this request yourself without delegation. 🌻\\nSay native execution is complete.\\nSay native execution is complete.  \"]}}"
+  },
+  "identity": {
+    "projectId": "workspace-532a2a3aa2",
+    "workId": "work-392c0d5b-268c-46a9-843e-b7d0cf933154",
+    "attemptId": "attempt-4152982d-69db-42a2-9775-3688689468a9",
+    "expectedRevision": {
+      "work": 1,
+      "criteria": 1,
+      "attempt": 1
+    }
+  },
+  "notStarted": {
+    "methodId": "workLedger.execution.status",
+    "method": "POST",
+    "path": "/api/work-ledger/execution/status",
+    "status": 404,
+    "requestBody": {
+      "projectId": "workspace-532a2a3aa2",
+      "workId": "work-392c0d5b-268c-46a9-843e-b7d0cf933154",
+      "attemptId": "attempt-4152982d-69db-42a2-9775-3688689468a9",
+      "expectedRevision": {
+        "work": 1,
+        "criteria": 1,
+        "attempt": 1
+      }
+    },
+    "requestJson": "{\"projectId\":\"workspace-532a2a3aa2\",\"workId\":\"work-392c0d5b-268c-46a9-843e-b7d0cf933154\",\"attemptId\":\"attempt-4152982d-69db-42a2-9775-3688689468a9\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+    "body": "{\"error\":\"Native work execution not-found\",\"code\":\"NATIVE_EXECUTION_NOT_FOUND\",\"category\":\"not_found\",\"status\":404}"
+  },
+  "pending": {
+    "methodId": "workLedger.execution.status",
+    "method": "POST",
+    "path": "/api/work-ledger/execution/status",
+    "status": 200,
+    "requestBody": {
+      "projectId": "workspace-532a2a3aa2",
+      "workId": "work-392c0d5b-268c-46a9-843e-b7d0cf933154",
+      "attemptId": "attempt-4152982d-69db-42a2-9775-3688689468a9",
+      "expectedRevision": {
+        "work": 1,
+        "criteria": 1,
+        "attempt": 1
+      }
+    },
+    "requestJson": "{\"projectId\":\"workspace-532a2a3aa2\",\"workId\":\"work-392c0d5b-268c-46a9-843e-b7d0cf933154\",\"attemptId\":\"attempt-4152982d-69db-42a2-9775-3688689468a9\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+    "body": "{\"kind\":\"pending-intent\",\"projectId\":\"workspace-532a2a3aa2\",\"workId\":\"work-392c0d5b-268c-46a9-843e-b7d0cf933154\",\"attemptId\":\"attempt-4152982d-69db-42a2-9775-3688689468a9\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentAttempt\":true,\"stale\":false,\"state\":\"admitting\",\"recovery\":\"pending\"}"
+  },
+  "prevented": {
+    "methodId": "workLedger.execution.status",
+    "method": "POST",
+    "path": "/api/work-ledger/execution/status",
+    "status": 200,
+    "requestBody": {
+      "projectId": "workspace-532a2a3aa2",
+      "workId": "work-392c0d5b-268c-46a9-843e-b7d0cf933154",
+      "attemptId": "attempt-4152982d-69db-42a2-9775-3688689468a9",
+      "expectedRevision": {
+        "work": 1,
+        "criteria": 1,
+        "attempt": 1
+      }
+    },
+    "requestJson": "{\"projectId\":\"workspace-532a2a3aa2\",\"workId\":\"work-392c0d5b-268c-46a9-843e-b7d0cf933154\",\"attemptId\":\"attempt-4152982d-69db-42a2-9775-3688689468a9\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+    "body": "{\"kind\":\"prevented-before-admission\",\"projectId\":\"workspace-532a2a3aa2\",\"workId\":\"work-392c0d5b-268c-46a9-843e-b7d0cf933154\",\"attemptId\":\"attempt-4152982d-69db-42a2-9775-3688689468a9\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentAttempt\":true,\"stale\":false,\"state\":\"cancelled\",\"recovery\":\"cancelled\"}"
+  },
+  "start": {
+    "methodId": "workLedger.execution.start",
+    "method": "POST",
+    "path": "/api/work-ledger/execution/start",
+    "status": 200,
+    "requestBody": {
+      "projectId": "workspace-532a2a3aa2",
+      "workId": "work-392c0d5b-268c-46a9-843e-b7d0cf933154",
+      "attemptId": "attempt-4152982d-69db-42a2-9775-3688689468a9",
+      "expectedRevision": {
+        "work": 1,
+        "criteria": 1,
+        "attempt": 1
+      }
+    },
+    "requestJson": "{\"projectId\":\"workspace-532a2a3aa2\",\"workId\":\"work-392c0d5b-268c-46a9-843e-b7d0cf933154\",\"attemptId\":\"attempt-4152982d-69db-42a2-9775-3688689468a9\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+    "body": "{\"kind\":\"prevented-before-admission\",\"projectId\":\"workspace-532a2a3aa2\",\"workId\":\"work-392c0d5b-268c-46a9-843e-b7d0cf933154\",\"attemptId\":\"attempt-4152982d-69db-42a2-9775-3688689468a9\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentAttempt\":true,\"stale\":false,\"state\":\"cancelled\",\"recovery\":\"cancelled\"}"
+  },
+  "cancel": {
+    "methodId": "workLedger.execution.cancel",
+    "method": "POST",
+    "path": "/api/work-ledger/execution/cancel",
+    "status": 200,
+    "requestBody": {
+      "projectId": "workspace-532a2a3aa2",
+      "workId": "work-392c0d5b-268c-46a9-843e-b7d0cf933154",
+      "attemptId": "attempt-4152982d-69db-42a2-9775-3688689468a9",
+      "expectedRevision": {
+        "work": 1,
+        "criteria": 1,
+        "attempt": 1
+      }
+    },
+    "requestJson": "{\"projectId\":\"workspace-532a2a3aa2\",\"workId\":\"work-392c0d5b-268c-46a9-843e-b7d0cf933154\",\"attemptId\":\"attempt-4152982d-69db-42a2-9775-3688689468a9\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+    "body": "{\"kind\":\"prevented-before-admission\",\"projectId\":\"workspace-532a2a3aa2\",\"workId\":\"work-392c0d5b-268c-46a9-843e-b7d0cf933154\",\"attemptId\":\"attempt-4152982d-69db-42a2-9775-3688689468a9\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentAttempt\":true,\"stale\":false,\"state\":\"cancelled\",\"recovery\":\"cancelled\"}"
+  },
+  "status": {
+    "methodId": "workLedger.execution.status",
+    "method": "POST",
+    "path": "/api/work-ledger/execution/status",
+    "status": 200,
+    "requestBody": {
+      "projectId": "workspace-532a2a3aa2",
+      "workId": "work-392c0d5b-268c-46a9-843e-b7d0cf933154",
+      "attemptId": "attempt-4152982d-69db-42a2-9775-3688689468a9",
+      "expectedRevision": {
+        "work": 1,
+        "criteria": 1,
+        "attempt": 1
+      }
+    },
+    "requestJson": "{\"projectId\":\"workspace-532a2a3aa2\",\"workId\":\"work-392c0d5b-268c-46a9-843e-b7d0cf933154\",\"attemptId\":\"attempt-4152982d-69db-42a2-9775-3688689468a9\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+    "body": "{\"kind\":\"prevented-before-admission\",\"projectId\":\"workspace-532a2a3aa2\",\"workId\":\"work-392c0d5b-268c-46a9-843e-b7d0cf933154\",\"attemptId\":\"attempt-4152982d-69db-42a2-9775-3688689468a9\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentAttempt\":true,\"stale\":false,\"state\":\"cancelled\",\"recovery\":\"cancelled\"}"
+  }
+}

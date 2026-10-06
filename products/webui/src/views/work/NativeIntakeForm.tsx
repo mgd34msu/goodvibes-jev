@@ -9,13 +9,20 @@ import {
 } from "../../lib/native-intake";
 import type { NativeIntakeBrowserRecord } from "../../lib/native-intake-journal";
 import { formatError } from "../../lib/errors";
+import type { NativeExecutionObservation } from "../../lib/native-execution";
+import { NativeExecutionStatus } from "./NativeExecutionStatus";
 import { Button } from "../../components/ui/Button";
 import { Field, Input, Textarea } from "../../components/ui/Field";
 import { Select } from "../../components/ui/Select";
 import { Facts, DetailSection } from "../../components/data-view/DataView";
 
-/** Original source admission only. This view never creates a legacy task or turn. */
+/** One deliberate source submission continues admitted work into native execution. */
 export function NativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
+  return <ScopedNativeIntakeForm key={lifetime.revision} lifetime={lifetime} />;
+}
+
+/** Never carry source, receipts or controls across a selected connection change. */
+function ScopedNativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
   const [text, setText] = useState("");
   const [sources, setSources] = useState<NativeConversationIntakeUnsupportedSource[]>([]);
   const [records, setRecords] = useState<NativeIntakeBrowserRecord[]>([]);
@@ -23,11 +30,14 @@ export function NativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
   const [result, setResult] = useState<NativeIntakeResult>();
   const [busy, setBusy] = useState<string>("Connecting");
   const [error, setError] = useState<string>();
+  const [execution, setExecution] = useState<NativeExecutionObservation>();
+  const [executionError, setExecutionError] = useState<string>();
   const [ready, setReady] = useState(false);
   const session = useRef<NativeIntakeSession | undefined>(undefined);
   const operation = useRef<AbortController | undefined>(undefined);
   const generation = useRef(0);
   const busyRef = useRef(true);
+  const cancelling = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -52,8 +62,27 @@ export function NativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
         if (saved.length > 0) {
           const latest = [...saved].sort((a, b) => b.createdAt - a.createdAt)[0];
           setSelected(latest);
-          const found = await connected.inspect(latest, controller.signal);
-          if (current()) setResult(found);
+          setBusy("Inspecting");
+          const read = new AbortController();
+          operation.current = read;
+          await Promise.all([
+            connected.inspect(latest, read.signal).then(
+              (found) => {
+                if (current()) setResult(found);
+              },
+              (cause: unknown) => {
+                if (current()) setError(formatError(cause));
+              }
+            ),
+            connected.execution.inspect(latest, read.signal).then(
+              (found) => {
+                if (current()) setExecution(found);
+              },
+              (cause: unknown) => {
+                if (current()) setExecutionError(formatError(cause));
+              }
+            ),
+          ]);
         }
       } catch (cause) {
         if (current()) setError(formatError(cause));
@@ -78,11 +107,12 @@ export function NativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
       connected: NativeIntakeSession,
       signal: AbortSignal,
       current: () => boolean
-    ) => Promise<NativeIntakeResult>,
+    ) => Promise<void>,
     cancel = false
   ) => {
-    if (!session.current || (busyRef.current && !cancel)) return;
+    if (!session.current || (busyRef.current && (!cancel || cancelling.current))) return;
     busyRef.current = true;
+    cancelling.current = cancel;
     const epoch = ++generation.current;
     operation.current?.abort();
     const controller = new AbortController();
@@ -94,11 +124,9 @@ export function NativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
     setBusy(label);
     setError(undefined);
     try {
-      const found = await action(session.current, controller.signal, current);
-      if (current()) setResult(found);
+      await action(session.current, controller.signal, current);
     } catch (cause) {
       if (current()) {
-        setResult(undefined);
         setError(
           `${formatError(cause)} The outcome may be unknown. Inspect the saved input before retrying.`
         );
@@ -106,15 +134,68 @@ export function NativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
     } finally {
       if (current()) {
         busyRef.current = false;
+        cancelling.current = false;
         setBusy("");
       }
     }
   };
+  const observeExecution = async (
+    connected: NativeIntakeSession,
+    record: NativeIntakeBrowserRecord,
+    method: "inspect" | "request" | "resume" | "cancel",
+    signal: AbortSignal,
+    current: () => boolean
+  ) => {
+    if (!current()) return;
+    setExecutionError(undefined);
+    try {
+      const found = await connected.execution[method](record, signal);
+      if (current()) setExecution(found);
+    } catch (cause) {
+      if (current())
+        setExecutionError(
+          `${formatError(cause)} Execution outcome is unconfirmed. Inspect execution to read the host's current state.`
+        );
+    }
+  };
+  const continueWork = async (
+    connected: NativeIntakeSession,
+    record: NativeIntakeBrowserRecord,
+    found: NativeIntakeResult,
+    signal: AbortSignal,
+    current: () => boolean
+  ) => {
+    if (!current()) return;
+    // Admission is already durable. Never erase its receipt if execution fails.
+    setResult(found);
+    if (found.kind === "work") {
+      setBusy("Requesting execution");
+      await observeExecution(connected, record, "request", signal, current);
+    }
+  };
   const inspect = (record: NativeIntakeBrowserRecord) => {
     if (busyRef.current) return;
+    if (record.command.inputId !== selected?.command.inputId) {
+      setResult(undefined);
+      setExecution(undefined);
+      setExecutionError(undefined);
+    }
     setSelected(record);
-    setResult(undefined);
-    void run("Inspecting", (connected, signal) => connected.inspect(record, signal));
+    void run("Inspecting", async (connected, signal, current) => {
+      // Independent reads keep durable execution controls reachable when intake
+      // lookup is unavailable or its older source scope has become stale.
+      await Promise.all([
+        connected.inspect(record, signal).then(
+          (found) => {
+            if (current()) setResult(found);
+          },
+          (cause: unknown) => {
+            if (current()) setError(formatError(cause));
+          }
+        ),
+        observeExecution(connected, record, "inspect", signal, current),
+      ]);
+    });
   };
   const submit = (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -125,37 +206,79 @@ export function NativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
       busyRef.current
     )
       return;
-    void run("Submitting", (connected, signal, current) =>
-      connected.submit(
+    void run("Submitting", async (connected, signal, current) => {
+      let original: NativeIntakeBrowserRecord | undefined;
+      const found = await connected.submit(
         { text, unsupportedSources: sources },
         (record) => {
+          original = record;
           if (!current()) return;
           setSelected(record);
           setResult(undefined);
+          setExecution(undefined);
+          setExecutionError(undefined);
           setRecords((saved) => [...saved, record]);
           setText("");
           setSources([]);
         },
         signal
-      )
+      );
+      if (original) await continueWork(connected, original, found, signal, current);
+    });
+  };
+  const executionAction = (method: "inspect" | "request" | "resume" | "cancel") => {
+    if (!selected) return;
+    const labels = {
+      inspect: "Inspecting execution",
+      request: "Continuing execution request",
+      resume: "Resuming execution",
+      cancel: "Cancelling execution",
+    };
+    void run(
+      labels[method],
+      (connected, signal, current) =>
+        observeExecution(connected, selected, method, signal, current),
+      method === "cancel"
     );
+  };
+  const newRequest = () => {
+    // Detach only. The saved immutable input and host execution are untouched.
+    ++generation.current;
+    operation.current?.abort();
+    operation.current = undefined;
+    busyRef.current = false;
+    cancelling.current = false;
+    setBusy("");
+    setSelected(undefined);
+    setResult(undefined);
+    setExecution(undefined);
+    setExecutionError(undefined);
+    setError(undefined);
   };
   const terminal =
     result !== undefined &&
     ["work", "turn", "blocked", "refused", "cancelled"].includes(result.kind);
+  const hasExecutionTarget = execution !== undefined && execution.kind !== "not-requested";
+  const showExecution = result?.kind === "work" || hasExecutionTarget || Boolean(executionError);
   const canCancel = Boolean(
-    selected && !terminal && busy !== "Cancelling" && busy !== "Connecting"
+    selected &&
+    !terminal &&
+    !hasExecutionTarget &&
+    busy !== "Cancelling" &&
+    busy !== "Cancelling execution" &&
+    busy !== "Connecting"
   );
 
   return (
     <div className="work-form native-intake">
       <p>
-        Submit complete original text for Jev to assess. This screen records admission; it does not
-        launch execution or deliver a conversation turn.
+        Submit complete original text for Jev to assess. If Jev admits work, Submit automatically
+        requests native execution for that same work and attempt. Native conversation turns are not
+        connected to this screen.
       </p>
       <p className="dv-muted">
         Original text and source markers are saved in this browser before sending. Closing this view
-        does not cancel daemon intake.
+        does not cancel daemon intake or execution.
       </p>
       {error && <p role="alert">{error}</p>}
       {busy && <p role="status">{busy}…</p>}
@@ -298,8 +421,14 @@ export function NativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
               <Button
                 disabled={Boolean(busy)}
                 onClick={() =>
-                  void run("Retrying submission", (connected, signal) =>
-                    connected.retry(selected, signal)
+                  void run("Retrying submission", async (connected, signal, current) =>
+                    continueWork(
+                      connected,
+                      selected,
+                      await connected.retry(selected, signal),
+                      signal,
+                      current
+                    )
                   )
                 }
               >
@@ -310,7 +439,15 @@ export function NativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
               <Button
                 disabled={Boolean(busy)}
                 onClick={() =>
-                  void run("Resuming", (connected, signal) => connected.resume(selected, signal))
+                  void run("Resuming", async (connected, signal, current) =>
+                    continueWork(
+                      connected,
+                      selected,
+                      await connected.resume(selected, signal),
+                      signal,
+                      current
+                    )
+                  )
                 }
               >
                 Resume
@@ -321,7 +458,15 @@ export function NativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
                 onClick={() =>
                   void run(
                     "Cancelling",
-                    (connected, signal) => connected.cancel(selected, signal),
+                    async (connected, signal, current) => {
+                      const found = await connected.cancel(selected, signal);
+                      if (!current()) return;
+                      setResult(found);
+                      // A cancellation race may reveal admitted work. Read it;
+                      // cancellation must never become a new execution request.
+                      if (found.kind === "work")
+                        await observeExecution(connected, selected, "inspect", signal, current);
+                    },
                     true
                   )
                 }
@@ -329,21 +474,23 @@ export function NativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
                 Cancel intake
               </Button>
             )}
-            <Button
-              disabled={Boolean(busy)}
-              onClick={() => {
-                setSelected(undefined);
-                setResult(undefined);
-                setError(undefined);
-              }}
-            >
-              New request
-            </Button>
+            <Button onClick={newRequest}>New request</Button>
           </div>
+          {showExecution && (
+            <NativeExecutionStatus
+              observation={execution}
+              error={executionError}
+              busy={busy}
+              onInspect={() => executionAction("inspect")}
+              onRequest={() => executionAction("request")}
+              onResume={() => executionAction("resume")}
+              onCancel={() => executionAction("cancel")}
+            />
+          )}
           {!terminal && (
             <p className="dv-muted">
-              A separate new request keeps this original saved. It does not cancel any daemon intake
-              for this original.
+              A separate new request keeps this original saved. It does not cancel daemon intake or
+              execution for this original.
             </p>
           )}
         </>
