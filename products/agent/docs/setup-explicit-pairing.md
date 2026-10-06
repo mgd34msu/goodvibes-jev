@@ -17,6 +17,16 @@ before the migration request. `/setup pair` inside the interactive Agent remains
 preview-only, including when given apply-like arguments; its cancellation owner
 is not integrated with this standalone effect route.
 
+Enter or an incorrect phrase cancels with exit code 2. From the confirmation
+prompt onward, Ctrl-C and terminal EOF (Ctrl-D) interrupt with exit code 130,
+including while awaiting a request or verification reply. Process SIGINT and
+SIGTERM also interrupt the earlier preview with exit code 130. Before the
+migration request there is no new credential. Once a request may have reached
+the daemon, interruption preserves the durable unknown-outcome marker; after
+the returned secret is stored, interruption preserves that secret for a fresh
+`setup status` check. Closing the command's own terminal reader after successful
+completion does not turn success into cancellation.
+
 The action creates persistent **administrative operator access**. It is not a
 restricted read-only or ledger-only token. The current daemon migration method
 uses its migration-specific mint path, does not revoke the shared token, and
@@ -67,3 +77,22 @@ Jev availability and execution remain separate checks. This is a bounded THE-105
 increment; it does not retire the legacy planning workflow or establish hosted,
 inbound or derived-continuation authority. Development tests use synthetic
 loopback endpoints and scratch homes only.
+
+## Compiled terminal qualification
+
+`src/test/e2e/setup-pair-terminal.e2e.test.ts` runs the native compiled Agent in
+a real POSIX PTY against an owned loopback daemon. It types the displayed exact
+phrase rather than injecting terminal answers. The suite covers positive
+pairing, Enter/incorrect-answer cancellation, Ctrl-C/EOF and process-signal
+interruptions, post-storage verification, restart readiness, a killed process
+and a daemon-committed migration whose reply is withheld until client timeout.
+Unknown outcomes stay blocked after restart, without falling back to the shared
+token or minting another credential. Secret redaction, private store modes and
+the unchanged legacy token file are checked. No real accounts or providers are
+used, and this does not establish hosted/WebUI or cross-platform release parity.
+
+After building the engine and `bun run --cwd products/agent build:binary`, run:
+
+```sh
+bun packages/engine/scripts/test.ts --cwd ../../products/agent src/test/e2e/setup-pair-terminal.e2e.test.ts
+```
