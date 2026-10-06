@@ -10,7 +10,8 @@
   excerpt windows with protected complete-candidate judgment batches and exact
   source spans. Preserve large-corpus and foreground-repair behavior, keep
   rejected rows out of later graph expansion, and retain accepted support under
-  smaller display limits. Reader caps and shared retry ownership are unchanged.
+  smaller display limits. Result summaries retain shared readability and
+  cancellation; reader caps and shared retry ownership are unchanged.
 
 - Home Graph answer scoping now reads object/integration identity and result
   relevance through shared typed judgments instead of object/type point guesses.

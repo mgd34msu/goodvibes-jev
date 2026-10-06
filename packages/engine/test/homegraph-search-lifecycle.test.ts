@@ -323,3 +323,33 @@ test('active research gaps stay outside evidence projection', async () => {
   expect(JSON.stringify(fake.requests)).not.toContain('Excluded research gap');
   expect(JSON.stringify(fake.requests)).not.toContain('synthetic-gap');
 });
+
+test('summary readability receives deadline cancellation before excerpt dispatch', async () => {
+  const { store, source } = await fixture();
+  await store.upsertSource({ ...source, summary: 'A readable source summary.' });
+  const fake = fakePort(() => noulAnswer(0.99));
+  let signal: AbortSignal | undefined;
+  let release: (() => void) | undefined;
+  const entered = Promise.withResolvers<void>();
+  installJudgmentPort({
+    ...fake.port,
+    async ask(request) {
+      if ('readable' in request.questions) {
+        signal = request.signal;
+        entered.resolve();
+        await new Promise<void>(resolve => { release = resolve; });
+      }
+      return fake.port.ask(request);
+    },
+  });
+  const pending = readHomeGraphSearchSelection({
+    store, spaceId, query: { query: 'Reset procedure', timeoutMs: 1_000 }, state: readHomeGraphSearchState(store, spaceId),
+  });
+  const held = expect(pending).rejects.toMatchObject({ reason: 'budget' });
+  await entered.promise;
+  await held;
+  release?.();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  expect(signal?.aborted).toBe(true);
+  expect(fake.requests.some(request => 'excerptUseful' in request.questions)).toBe(false);
+});

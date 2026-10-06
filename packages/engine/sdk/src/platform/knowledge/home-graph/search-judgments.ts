@@ -1,6 +1,6 @@
 import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
 import { snapshotNodeInput } from '../activation/projection.js';
-import { assertKnowledgeExtractionInput } from '../extraction-policy.js';
+import { assertKnowledgeExtractionInput, readKnowledgeExtractionTextUsability } from '../extraction-policy.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
 import { knowledgeSourceJudgmentUris } from '../source-structural-references.js';
 import { KnowledgeSourceQualityHeldError } from '../source-quality.js';
@@ -84,7 +84,7 @@ export async function readHomeGraphSearchSelection(input: {
       }, { sources: input.state.sources, nodes: input.state.nodes, edges: input.state.edges });
       const checkPorts = captureAnswerReadingPorts(['engine.knowledge.answer-evidence-relevance',
         'engine.knowledge.answer-excerpt-selection', 'engine.knowledge.answer-object-alignment',
-        'engine.knowledge.answer-integration-intent']);
+        'engine.knowledge.answer-integration-intent', 'knowledge.extraction.readability']);
       guard.watch('home-graph-reading-ports', () => { checkPorts(); return true; });
       const assertCurrent = () => { guard.assertCurrent(); checkPorts(); };
       const check = () => { assertAnswerVerificationActive(signal); assertCurrent(); };
@@ -99,7 +99,10 @@ export async function readHomeGraphSearchSelection(input: {
         guard.watch(`extraction:${source.id}`, () => input.store.getExtractionBySourceId(source.id), extraction);
         if (extraction && (extraction.sourceId !== source.id || getKnowledgeSpaceId(extraction) !== getKnowledgeSpaceId(source))) throw new Held('malformed');
         assertKnowledgeExtractionInput(extraction);
-        const text = sourceSemanticText({ ...original, ...knowledgeSourceJudgmentUris(source) }, extraction);
+        const uris = knowledgeSourceJudgmentUris(source);
+        assertJudgmentInput({ title: original.title, summary: original.summary, description: original.description,
+          sourceType: original.sourceType, tags: original.tags, uris });
+        const text = sourceSemanticText({ ...original, ...uris }, extraction);
         const item = { kind: 'source' as const, id: source.id, title: source.title ?? source.sourceUri ?? source.id, score: 0, source };
         const candidate = initialEvidenceCandidate({ ...item, facts: [] }, `candidate-${items.length + 1}`, text, input.store, guard);
         assertJudgmentInput({ query: input.query.query, candidate });
@@ -138,6 +141,20 @@ export async function readHomeGraphSearchSelection(input: {
       check(); objects.assertCurrent();
       const byReference = new Map(candidates.map((candidate, index) => [candidate.reference, items[index]!]));
       const selected = relevance.accepted.slice(0, Math.max(1, input.query.limit ?? 8)).map((reading) => byReference.get(reading.reference)!);
+      // Keep the existing shared readability boundary for result-summary
+      // metadata. It is not a relevance filter or an answer-text fallback:
+      // exact-span selection below remains authoritative for literal excerpts.
+      const summaries = new Map<string, string>();
+      for (const item of selected) if (item.source) {
+        const extraction = input.state.extractionBySourceId.get(item.id);
+        for (const value of [extraction?.summary, item.source.summary]) {
+          if (typeof value !== 'string' || !value.trim()) continue;
+          check(); objects.assertCurrent();
+          const usable = await readKnowledgeExtractionTextUsability(value, signal);
+          check(); objects.assertCurrent();
+          if (usable) { summaries.set(item.id, value.trim()); break; }
+        }
+      }
       // The reader's probability orders accepted rows; zero explicitly means no
       // legacy retrieval-point score was computed, never answer confidence.
       const excerpts = prepareAnswerSourceExcerptBatches(input.store, input.query.query,
@@ -147,7 +164,7 @@ export async function readHomeGraphSearchSelection(input: {
       const spans = await excerpts.read(new Set(selected.flatMap((item) => item.source ? [item.id] : [])));
       const selectedText = new Map([...spans].map(([id, selection]) => [id, selection.map((span) => span.text).join('\n\n')]));
       check(); objects.assertCurrent();
-      const results = selected.map((item) => ({ ...item,
+      const results = selected.map((item) => ({ ...item, summary: item.source ? summaries.get(item.id) : item.node?.summary,
         // A settled empty excerpt is explicit. The literal renderer must not
         // revive an unselected summary or description with its fallback chain.
         excerpt: item.source ? selectedText.get(item.id) ?? '' : renderNodeEvidence(item.node!),

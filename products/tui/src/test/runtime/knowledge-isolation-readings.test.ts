@@ -23,4 +23,30 @@ describe('exact synthetic knowledge isolation readings', () => {
     expect(knowledgeIsolationAnswer('batteryApplicable', { subject: { kind: 'ha_device', title: 'Isolation Light', homeAssistant: { objectId: 'device-light' } } })).toEqual({ type: 'noul', noul: 0.01 });
     expect(() => knowledgeIsolationAnswer('batteryApplicable', { subject: { kind: 'ha_device', title: 'Isolation Light', homeAssistant: { objectId: 'other-device' } } })).toThrow();
   });
+  test('complete discovery reads only the exact authored documentation suggestion as irrelevant', () => {
+    const candidate = {
+      kind: 'source',
+      sourceType: 'url',
+      title: 'integration-light Home Assistant documentation',
+      text: [
+        'integration-light Home Assistant documentation',
+        'Suggested documentation source for the integration-light Home Assistant integration.',
+        'https://www.home-assistant.io/integrations/integration-light/',
+        'homeassistant home-graph documentation suggested-source integration-light home-assistant-docs',
+      ].join('\n\n'),
+      facts: [],
+    };
+    expect(knowledgeIsolationAnswer('useful', { query, candidate })).toEqual({ type: 'noul', noul: 0.01 });
+    for (const changed of [
+      { ...candidate, kind: 'node' },
+      { ...candidate, sourceType: 'dataset' },
+      { ...candidate, title: 'Other integration documentation' },
+      { ...candidate, text: `${candidate.text}\nThe light is in another room.` },
+      { ...candidate, facts: ['The light is in another room.'] },
+      { ...candidate, facts: undefined },
+    ]) expect(() => knowledgeIsolationAnswer('useful', { query, candidate: changed })).toThrow();
+    expect(() => knowledgeIsolationAnswer('useful', { query: 'different question', candidate })).toThrow();
+    expect(() => knowledgeIsolationAnswer('excerptUseful', { query, candidate })).toThrow();
+    expect(() => knowledgeIsolationAnswer('route', { query, candidate })).toThrow();
+  });
 });

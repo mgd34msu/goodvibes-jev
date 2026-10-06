@@ -46,7 +46,7 @@ async function source(store: KnowledgeStore, id: string, title: string, text: st
   return row;
 }
 function readings(options: { evidence?: Readonly<Record<string, number>>; spans?: readonly string[];
-  objects?: readonly string[]; intent?: number } = {}) {
+  objects?: readonly string[]; intent?: number; readability?: number } = {}) {
   const fake = fakePort((name, question, state) => {
     const candidate = (state as { candidate?: { title?: string; text?: string } }).candidate;
     if (name === 'useful') return noulAnswer(options.evidence?.[candidate?.title ?? ''] ?? 0.01);
@@ -55,7 +55,8 @@ function readings(options: { evidence?: Readonly<Record<string, number>>; spans?
     if (name === 'concreteObject') return noulAnswer(0.99);
     if (name === 'integrationObject') return noulAnswer(0.01);
     if (name === 'aligned') return noulAnswer(options.objects?.includes(candidate?.title ?? '') ? 0.99 : 0.01);
-    if (name === 'readable' || name === 'match' || name === 'supported' || name === 'attached') return noulAnswer(0.99);
+    if (name === 'readable') return noulAnswer(options.readability ?? 0.99);
+    if (name === 'match' || name === 'supported' || name === 'attached') return noulAnswer(0.99);
     if (name === 'fidelity') return choiceAnswer(question, 'supported', 0.97);
     if (name === 'preferred') return choiceAnswer(question, 'generated', 0.99);
     if (name === 'enough' || name === 'complete') return noulAnswer(0.99);
@@ -120,11 +121,37 @@ describe('Home Graph full-candidate search judgments (authored synthetic proof)'
   test('settled empty excerpt never revives source summary or description', async () => {
     const f = await fixture();
     await source(f.store, 'empty', 'Source identity', body, { summary: 'An unselected claim must not reappear.' });
-    readings({ evidence: { 'Source identity': 0.99 }, spans: [] });
+    const fake = readings({ evidence: { 'Source identity': 0.99 }, spans: [] });
     const answer = await f.service.ask({ knowledgeSpaceId: spaceId, query });
     expect(answer.results[0]!.excerpt).toBe('');
     expect(answer.answer.text).toBe('- Source identity');
     expect(answer.answer.text).not.toContain('unselected');
+    expect(answer.results[0]!.summary).toBe('An unselected claim must not reappear.');
+    expect(fake.requests.some((request) => 'readable' in request.questions)).toBe(true);
+  });
+  test('a negative shared readability result omits summary metadata without an excerpt fallback', async () => {
+    const f = await fixture();
+    await source(f.store, 'empty', 'Source identity', body, { summary: 'An unreadable synthetic summary.' });
+    const fake = readings({ evidence: { 'Source identity': 0.99 }, spans: [], readability: 0.01 });
+    const answer = await f.service.ask({ knowledgeSpaceId: spaceId, query });
+    expect(answer.results[0]!.summary).toBeUndefined();
+    expect(answer.results[0]!.excerpt).toBe('');
+    expect(answer.answer.text).toBe('- Source identity');
+    expect(fake.requests.some((request) => 'readable' in request.questions)).toBe(true);
+  });
+  test('readability configuration changes hold before excerpt dispatch', async () => {
+    const f = await fixture();
+    await source(f.store, 'summary', 'Source identity', body, { summary: 'A readable summary.' });
+    const fake = readings({ evidence: { 'Source identity': 0.99 } });
+    installJudgmentPort({ ...fake.port, async ask(request) {
+      const result = await fake.port.ask(request);
+      if ('readable' in request.questions) installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+      return result;
+    } });
+    const before = records(f.store);
+    await expect(select(f)).rejects.toMatchObject({ reason: 'stale' });
+    expect(fake.requests.some((request) => 'excerptUseful' in request.questions)).toBe(false);
+    expect(records(f.store)).toBe(before);
   });
   test.each([false, true])('settled empty search stays empty through answer composition, semantic=%s', async (semantic) => {
     const f = await fixture(semantic); await source(f.store, 'denied', 'Unrelated source', body);

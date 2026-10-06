@@ -43,7 +43,12 @@ partitions. Actual model, requested model, port identity and configured model
 must match across all batches. Ties retain the original candidate order. This
 establishes partition-invariant plumbing, not empirical probability calibration.
 
-Selected source excerpts use the existing exact-original-span reader. The shared
+Admitted result-summary metadata retains the existing shared extraction-
+readability reader. Its original sample/protection policy is unchanged, and
+its result cannot supply an excerpt fallback. Its shared operation receives the
+retrieval cancellation signal; the public one-argument compatibility helper
+retains its existing contract. Selected source excerpts use the
+existing exact-original-span reader. The shared
 `prepareAnswerSourceExcerptBatches` prepares each complete source before any
 read, preserves full within-source heading/table/footnote bundles and local span
 provenance, and reads only admitted sources. It keeps the original per-reader
