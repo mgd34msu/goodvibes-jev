@@ -31140,6 +31140,92 @@
       "text": "export type RouteResolver = (input: { provider: string; fromDigest: string; kind: InboundChannelItem['kind']; }) => Promise<string | undefined> | string | undefined; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
+      "name": "RunInboxTriageOptions",
+      "kind": "interface",
+      "text": "export interface RunInboxTriageOptions { readonly port?: JudgmentPort; readonly store?: TriageStore; readonly workingDirectory?: string; readonly dryRun?: boolean; readonly signal?: AbortSignal; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; JudgmentPort = export interface JudgmentPort { readonly model: string; ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>; readonly recorder?: DecisionRecorder; readonly health?: () => readonly JudgmentEndpointHealth[]; }"
+    },
+    {
+      "name": "SqliteTriageStore",
+      "kind": "class",
+      "publicMembers": [
+        "close",
+        "commit",
+        "constructor",
+        "dbPath",
+        "readBatch"
+      ],
+      "text": "export declare class SqliteTriageStore implements TriageStore { private readonly path; private closed; private closing; private readonly pending; constructor(workingDirectory: string); get dbPath(): string; readBatch(ids: readonly string[]): Promise<ReadonlyMap<string, TriageStoredRecord>>; commit(receipts: readonly TriageReceipt[], signal?: AbortSignal): Promise<void>; close(): Promise<void>; private enqueue; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
+    },
+    {
+      "name": "TRIAGE_MODEL",
+      "kind": "const",
+      "text": "TRIAGE_MODEL = \"jev-1.13.0\""
+    },
+    {
+      "name": "TriageBinding",
+      "kind": "interface",
+      "required": [
+        "battery",
+        "batteryVersion",
+        "id",
+        "inputHash",
+        "model"
+      ],
+      "text": "export interface TriageBinding { readonly id: string; readonly inputHash: string; readonly battery: string; readonly batteryVersion: number; readonly model: string; }"
+    },
+    {
+      "name": "TriageEvidence",
+      "kind": "interface",
+      "required": [
+        "label",
+        "score",
+        "signals",
+        "spam",
+        "status",
+        "tags",
+        "urgency"
+      ],
+      "text": "export interface TriageEvidence extends TriageBinding { readonly status: 'settled'; readonly spam: YesNoReading; readonly urgency: YesNoReading; readonly label: TriageLabel; readonly score: number; readonly tags: readonly string[]; readonly signals: Readonly<{ spam: number; urgency: number; }>; } ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; YesNoReading = export interface YesNoReading { readonly kind: 'yes-no'; readonly probability: number; readonly verdict: 'yes' | 'no' | 'uncertain'; readonly outcome: Outcome; }"
+    },
+    {
+      "name": "TriageInput",
+      "kind": "interface",
+      "required": [
+        "id",
+        "surface"
+      ],
+      "text": "export interface TriageInput { readonly id: string; readonly surface: string; readonly subject?: string; readonly snippet?: string; readonly conversationKind?: 'direct' | 'group' | 'channel' | 'thread' | 'service'; readonly unread?: boolean; readonly metadata?: Readonly<Record<string, unknown>>; } ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "TriageLabel",
+      "kind": "type",
+      "text": "export type TriageLabel = 'spam' | 'priority' | 'normal';"
+    },
+    {
+      "name": "TriageReceipt",
+      "kind": "type",
+      "text": "export type TriageReceipt = TriageEvidence | (TriageBinding & { readonly status: 'held' | 'unavailable'; });"
+    },
+    {
+      "name": "TriageStore",
+      "kind": "interface",
+      "required": [
+        "close",
+        "commit",
+        "readBatch"
+      ],
+      "text": "export interface TriageStore { readBatch(ids: readonly string[]): Promise<ReadonlyMap<string, TriageStoredRecord>>; commit(receipts: readonly TriageReceipt[], signal?: AbortSignal): Promise<void>; close(): Promise<void>; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
+    },
+    {
+      "name": "TriageStoredRecord",
+      "kind": "interface",
+      "required": [
+        "latest",
+        "settled"
+      ],
+      "text": "export interface TriageStoredRecord { readonly latest: TriageReceipt; readonly settled: TriageEvidence | null; }"
+    },
+    {
       "name": "aggregateInbox",
       "kind": "function",
       "text": "export declare function aggregateInbox(sources: InboxAggregatorSources, query: InboxListQuery): InboxListOutput;"
@@ -31175,9 +31261,24 @@
       "text": "export declare function encodePageCursor(position: InboxPosition): string;"
     },
     {
+      "name": "enrichItemsWithTriage",
+      "kind": "function",
+      "text": "export declare function enrichItemsWithTriage(items: readonly TriageInput[], store: TriageStore): Promise<readonly (TriageInput & { readonly triage?: TriageEvidence; })[]>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "inboxTriage",
+      "kind": "const",
+      "text": "inboxTriage: import(\"@goodvibes-jev/judgment\").Battery<{ readonly spam: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly urgency: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
+    },
+    {
       "name": "intakeImapDate",
       "kind": "function",
       "text": "export declare function imapDate(ms: number): string;"
+    },
+    {
+      "name": "labelToTag",
+      "kind": "function",
+      "text": "export declare function labelToTag(label: TriageLabel): string;"
     },
     {
       "name": "normalizeInboxQuery",
@@ -31193,6 +31294,11 @@
       "name": "parseIntakeFetchResponse",
       "kind": "function",
       "text": "export declare function parseIntakeFetchResponse(raw: string | Uint8Array): ImapEnvelope[]; ;; via ImapEnvelope = export interface ImapEnvelope { uid: number; from: string; subject: string; date: number; seen: boolean; bodyPreview: string; } ;; Uint8Array = interface Uint8Array<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> { readonly BYTES_PER_ELEMENT: number; readonly buffer: TArrayBuffer; readonly byteLength: number; readonly byteOffset: number; copyWithin(target: number, start: number, end?: number): this; every(predicate: (value: number, index: number, array: this) => unknown, thisArg?: any): boolean; fill(value: number, start?: number, end?: number): this; filter(predicate: (value: number, index: number, array: this) => any, thisArg?: any): Uint8Array<ArrayBuffer>; find(predicate: (value: number, index: number, obj: this) => boolean, thisArg?: any): number | undefined; findIndex(predicate: (value: number, index: number, obj: this) => boolean, thisArg?: any): number; forEach(callbackfn: (value: number, index: number, array: this) => void, thisArg?: any): void; indexOf(searchElement: number, fromIndex?: number): number; join(separator?: string): string; lastIndexOf(searchElement: number, fromIndex?: number): number; readonly length: number; map(callbackfn: (value: number, index: number, array: this) => number, thisArg?: any): Uint8Array<ArrayBuffer>; reduce(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number): number; reduce(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number, initialValue: number): number; reduce<U>(callbackfn: (previousValue: U, currentValue: number, currentIndex: number, array: this) => U, initialValue: U): U; reduceRight(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number): number; reduceRight(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number, initialValue: number): number; reduceRight<U>(callbackfn: (previousValue: U, currentValue: number, currentIndex: number, array: this) => U, initialValue: U): U; reverse(): this; set(array: ArrayLike<number>, offset?: number): void; slice(start?: number, end?: number): Uint8Array<ArrayBuffer>; some(predicate: (value: number, index: number, array: this) => unknown, thisArg?: any): boolean; sort(compareFn?: (a: number, b: number) => number): this; subarray(begin?: number, end?: number): Uint8Array<TArrayBuffer>; toLocaleString(): string; toString(): string; valueOf(): this; [index: number]: number; }"
+    },
+    {
+      "name": "readTriageMetadataBatch",
+      "kind": "function",
+      "text": "export declare function readTriageMetadataBatch(items: readonly TriageInput[], store: TriageStore): Promise<ReadonlyMap<string, TriageEvidence>>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
     },
     {
       "name": "registerAdapterFactory",
@@ -31213,6 +31319,16 @@
       "name": "resolveIntakeRouteId",
       "kind": "function",
       "text": "export declare function resolveRouteId(ctx: AdapterContext, provider: string, fromDigest: string, kind: InboundChannelItem['kind']): Promise<string | undefined>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "runInboxTriage",
+      "kind": "function",
+      "text": "export declare function runInboxTriage(items: readonly TriageInput[], options?: RunInboxTriageOptions): Promise<readonly TriageReceipt[]>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "scoreInboxTriage",
+      "kind": "function",
+      "text": "export declare function scoreInboxTriage(items: readonly TriageInput[], port?: JudgmentPort, signal?: AbortSignal): Promise<readonly TriageReceipt[]>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; JudgmentPort = export interface JudgmentPort { readonly model: string; ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>; readonly recorder?: DecisionRecorder; readonly health?: () => readonly JudgmentEndpointHealth[]; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "sha256First",
