@@ -105,7 +105,7 @@ export async function prepareHomeGraphAnswerScope(input: {
   }
 }
 
-function subjectIdentity(metadata: Readonly<Record<string, unknown>>): Readonly<Record<string, JsonValue>> {
+export function subjectIdentity(metadata: Readonly<Record<string, unknown>>): Readonly<Record<string, JsonValue>> {
   const fields = Object.fromEntries(['manufacturer', 'brand', 'vendor', 'model', 'modelNumber', 'variant', 'entityKind', 'subject', 'homeAssistant']
     .filter((key) => metadata[key] !== undefined).map((key) => [key, metadata[key]]));
   assertJudgmentInput(fields);

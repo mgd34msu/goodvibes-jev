@@ -14,11 +14,18 @@
   replay ring before the first observer, sharing event IDs across live readers.
 
 - Wire the private daemon command executable and explicit-inbox serving launcher to the existing command adapters and signal-owned runtime host. Default inbox and native release packaging remain incomplete.
+
+- Replace Home Graph answer-search token scores, source boosts, pruning and
+  excerpt windows with protected complete-candidate judgment batches and exact
+  source spans. Preserve large-corpus and foreground-repair behavior, keep
+  rejected rows out of later graph expansion, and retain accepted support under
+  smaller display limits. Result summaries retain shared readability and
+  cancellation; reader caps and shared retry ownership are unchanged.
+
 - Home Graph answer scoping now reads object/integration identity and result
   relevance through shared typed judgments instead of object/type point guesses.
-  Preserve bounded retrieval, keep unknown literal confidence at zero, and bind
-  scope results and post-answer device links to their original local records.
-  Upstream lexical ranking and live calibration remain separate work.
+  Keep unknown literal confidence at zero and bind scope results and post-answer
+  device links to their original local records. Live calibration remains separate work.
 
 - Install the authenticated WebUI command/error judgment runtime using the configured Jev route, actual host chat sources, bounded canonical error references, and revocation-safe dispatch, hashing, recording and attachment ownership.
 - Add explicit shared legacy import submission, Jev reconsideration and exact-request recovery. Durable command identity precedes dispatch; live paired authority and workspace generations fence native admission. Historical completion remains reported and unverified, with legacy source records retained.

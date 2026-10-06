@@ -7,6 +7,7 @@ import { logger } from '../../utils/logger.js';
 import { scheduleBackground, sleep, yieldEvery, yieldToEventLoop } from '../cooperative.js';
 import { getKnowledgeSpaceId, isHomeAssistantKnowledgeSpace, normalizeKnowledgeSpaceId } from '../spaces.js';
 import { answerKnowledgeQuery } from './answer.js';
+import { refreshAnswerCandidateWindowAfterRepair } from './answer-candidate-window.js';
 import { enrichKnowledgeSource } from './enrichment.js';
 import type {
   KnowledgeSemanticAnswerInput,
@@ -236,6 +237,7 @@ export class KnowledgeSemanticService {
         assertAnswerVerificationActive(input.signal);
         foregroundTaskIds.push(...foregroundRepair.taskIds);
         if (foregroundRepair.closedGaps > 0 || foregroundRepair.linkedRepairs > 0 || (foregroundRepair.promotedFactCount ?? 0) > 0) {
+          input = await refreshAnswerCandidateWindowAfterRepair(input);
           answer = withRefinementTaskIds(
             await answerKnowledgeQuery({
               store: this.store,
@@ -258,6 +260,7 @@ export class KnowledgeSemanticService {
             Math.min(15_000, foregroundBudgetMs), input.signal,
           );
           if (waited) {
+            input = await refreshAnswerCandidateWindowAfterRepair(input);
             answer = withRefinementTaskIds(
               await answerKnowledgeQuery({
                 store: this.store,

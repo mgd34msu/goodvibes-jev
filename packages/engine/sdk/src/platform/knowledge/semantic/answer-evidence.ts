@@ -1,12 +1,14 @@
+import { preparedAnswerCandidateWindow } from './answer-candidate-window.js';
 import { registerAnswerExcerptSelection } from './answer-excerpts/provenance.js';
 export { answerExcerptProvenance } from './answer-excerpts/provenance.js';
-import { prepareAnswerSourceExcerpts, type LocalAnswerExcerptSpan } from './answer-excerpts/prepare.js';
+import { prepareAnswerSourceExcerptBatches, type LocalAnswerExcerptSpan } from './answer-excerpts/prepare.js';
 import { snapshotNodeInput } from '../activation/projection.js';
 import { knowledgeSourceJudgmentUris, withKnowledgeSourceAnswerAliases } from '../source-structural-references.js';
 import { projectAnswerFactClaim } from './answer-claim-projection.js';
 import { assertJudgmentInput } from '../../gate/judgment-input.js';
 import { createSemanticWriteGuard, type SemanticWriteGuard } from './primary-source-plan.js';
-import { prepareAnswerEvidenceRelevance, KnowledgeEvidenceRelevanceHeldError, type AnswerEvidenceCandidate } from './evidence-ranking/reader.js';
+import { KnowledgeEvidenceRelevanceHeldError, type AnswerEvidenceCandidate } from './evidence-ranking/reader.js';
+import { prepareAnswerEvidenceRelevanceBatches } from './evidence-ranking/batch.js';
 import type { KnowledgeStore } from '../store.js';
 import type {
   KnowledgeNodeRecord,
@@ -49,6 +51,8 @@ interface InitialEvidencePass {
   readonly query: string;
   readonly rejectedSourceIds: ReadonlySet<string>;
   readonly factSelections: ReadonlyMap<string, boolean>;
+  readonly sourceWindow?: ReadonlySet<string> | undefined;
+  readonly factWindow?: ReadonlySet<string> | undefined;
   readonly assertCurrent: () => void;
 }
 export function assertAnswerEvidenceCurrent(evidence: readonly EvidenceItem[]): void { initialPasses.get(evidence)?.assertCurrent(); }
@@ -79,6 +83,8 @@ export async function collectAnswerEvidence(
   const guard = answerEvidenceGuard(store, spaceId, signal);
   guard.watch('answer-evidence-query', () => input.query, query);
   guard.assertCurrent();
+  const candidateWindow = preparedAnswerCandidateWindow(input, store, spaceId);
+  if (candidateWindow) guard.watch('prepared-candidate-window', () => { candidateWindow.assertCurrent(); return true; });
   const candidateSourceIds = new Set(input.candidateSourceIds ?? []);
   const candidateNodeIds = new Set(input.candidateNodeIds ?? []);
   const linkedObjectIds = new Set((input.linkedObjects ?? []).map((node) => node.id));
@@ -90,11 +96,12 @@ export async function collectAnswerEvidence(
   // Structural bounded windows, never a keyword/record-kind quality guess.
   // Inferred subject scope cannot discard a semantic paraphrase before the reading.
   const sources = answerSources.filter((source) => belongsToAnswerSpace(source, spaceId))
-    .filter((source) => !strictCandidates || candidateSourceIds.has(source.id) || linkedSourceIds.has(source.id)).slice(0, 50);
+    .filter((source) => candidateWindow ? candidateWindow.sourceIds.has(source.id)
+      : !strictCandidates || candidateSourceIds.has(source.id) || linkedSourceIds.has(source.id)).slice(0, 50);
   const nodes = listAnswerNodes(store, spaceId)
     .filter((node) => belongsToAnswerSpace(node, spaceId) && node.status === 'active')
     .filter((node) => node.metadata.semanticKind !== 'fact' || factHasUsableSource(node, usableSourceIds))
-    .filter((node) => !strictCandidates || candidateNodeIds.has(node.id) || linkedObjectIds.has(node.id)
+    .filter((node) => candidateWindow ? candidateWindow.nodeIds.has(node.id) : !strictCandidates || candidateNodeIds.has(node.id) || linkedObjectIds.has(node.id)
       || (typeof node.sourceId === 'string' && candidateSourceIds.has(node.sourceId))).slice(0, 50);
   const texts = new Map<string, string>();
   const items: EvidenceItem[] = [];
@@ -105,7 +112,7 @@ export async function collectAnswerEvidence(
     if (extraction && (extraction.sourceId !== source.id || getKnowledgeSpaceId(extraction) !== getKnowledgeSpaceId(source))) {
       throw new KnowledgeEvidenceRelevanceHeldError('malformed');
     }
-    const facts = sourceFacts.get(source.id) ?? [];
+    const facts = (sourceFacts.get(source.id) ?? []).filter((fact) => !candidateWindow || candidateWindow.factIds.has(fact.id));
     texts.set(`source:${source.id}`, sourceSemanticText({ ...snapshot, ...knowledgeSourceJudgmentUris(source) }, extraction));
     items.push({ kind: 'source', id: source.id, title: source.title ?? source.canonicalUri ?? source.sourceUri ?? 'Untitled source', score: 0, source, facts });
   }
@@ -114,7 +121,7 @@ export async function collectAnswerEvidence(
     guard.watch(`node:${node.id}`, () => store.getNode(node.id), node);
     texts.set(`node:${node.id}`, [renderNodeEvidence(snapshot), ...snapshot.aliases,
       readString(snapshot.metadata.manufacturer), readString(snapshot.metadata.model),
-      initialNodeReferenceContext(store, snapshot, spaceId, guard)].filter(Boolean).join('\n'));
+      initialNodeReferenceContext(store, snapshot, spaceId, guard, candidateWindow?.sourceIds)].filter(Boolean).join('\n'));
     items.push({ kind: 'node', id: node.id, title: node.title, score: 0, node, facts: node.metadata.semanticKind === 'fact' ? [node] : [] });
   }
   for (const fact of uniqueNodes(items.flatMap((item) => item.facts))) {
@@ -130,11 +137,16 @@ export async function collectAnswerEvidence(
     texts.get(`${item.kind}:${item.id}`)!, store, guard));
   // Full selected input is preflighted before any semantic port, including later
   // fact/excerpt readings. No keyword filter or display clipping precedes it.
-  assertJudgmentInput({ query, candidates });
-  const excerpts = prepareAnswerSourceExcerpts(store, query, items.flatMap((item, index) => item.source
+  for (const candidate of candidates) assertJudgmentInput({ query, candidate });
+  const excerpts = prepareAnswerSourceExcerptBatches(store, query, items.flatMap((item, index) => item.source
     ? [{ source: item.source, context: JSON.stringify({ facts: candidates[index]!.facts ?? [] }) }] : []), guard, signal);
   excerpts.start();
-  const plan = await prepareAnswerEvidenceRelevance({ query, candidates }, { signal });
+  candidateWindow?.assertCurrent();
+  const plan = await prepareAnswerEvidenceRelevanceBatches({ query, candidates }, { signal, assertCurrent: () => {
+    try { candidateWindow?.assertCurrent(); excerpts.assertCurrent(); }
+    catch { throw new KnowledgeEvidenceRelevanceHeldError(signal?.aborted ? 'aborted' : 'stale'); }
+  } });
+  candidateWindow?.assertCurrent();
   excerpts.assertCurrent();
   const byReference = new Map(candidates.map((candidate, index) => [candidate.reference, items[index]!]));
   const selected = plan.accepted.map((reading) => ({ ...byReference.get(reading.reference)!, score: reading.probability,
@@ -152,15 +164,16 @@ export async function collectAnswerEvidence(
   const spans = await excerpts.read(new Set(included.flatMap((item) => item.source ? [item.source.id] : [])));
   excerpts.assertCurrent();
   const result = included.map((item) => evidenceWithExcerpt(item, item.facts.filter((fact) => factIds.has(fact.id)), spans.get(item.id) ?? []));
-  return carryInitialPass(result, { store, query, factSelections: new Map(factsToRead.map((fact) => [fact.id, factIds.has(fact.id)])),
+  return carryInitialPass(result, { store, query, sourceWindow: candidateWindow?.sourceIds, factWindow: candidateWindow?.factIds, factSelections: new Map(factsToRead.map((fact) => [fact.id, factIds.has(fact.id)])),
     rejectedSourceIds: new Set(plan.rejected.flatMap((reading) => {
       const source = byReference.get(reading.reference)?.source;
       return source ? [source.id] : [];
-    })), assertCurrent: excerpts.assertCurrent });
+    })), assertCurrent: () => { candidateWindow?.assertCurrent(); excerpts.assertCurrent(); } });
 }
 
 /** A claim's source and subject identities carry meaning; their database keys stay local. */
-function initialNodeReferenceContext(store: KnowledgeStore, node: KnowledgeNodeRecord, spaceId: string, guard: SemanticWriteGuard): string {
+export function initialNodeReferenceContext(store: KnowledgeStore, node: KnowledgeNodeRecord, spaceId: string, guard: SemanticWriteGuard,
+  admissibleSourceIds?: ReadonlySet<string>): string {
   const sourceIds = factSourceIds(node);
   if (sourceIds.length > 32) throw new KnowledgeEvidenceRelevanceHeldError('budget');
   const hints = Array.isArray(node.metadata.targetHints) ? node.metadata.targetHints : [];
@@ -168,6 +181,7 @@ function initialNodeReferenceContext(store: KnowledgeStore, node: KnowledgeNodeR
     ...readStringArray(node.metadata.subjectIds), ...readStringArray(node.metadata.linkedObjectIds),
     ...hints.map((hint) => readString(readRecord(hint).id))]));
   const sources = sourceIds.flatMap((id) => {
+    if (admissibleSourceIds && !admissibleSourceIds.has(id)) return [];
     const source = guard.source(id);
     if (!source || !belongsToAnswerSpace(source, spaceId)) return [];
     const snapshot = snapshotNodeInput(source);
@@ -194,7 +208,7 @@ function initialNodeReferenceContext(store: KnowledgeStore, node: KnowledgeNodeR
   assertJudgmentInput(context); return JSON.stringify(context);
 }
 
-function initialEvidenceCandidate(item: EvidenceItem, reference: string, text: string, store: KnowledgeStore, guard: SemanticWriteGuard): AnswerEvidenceCandidate {
+export function initialEvidenceCandidate(item: EvidenceItem, reference: string, text: string, store: KnowledgeStore, guard: SemanticWriteGuard): AnswerEvidenceCandidate {
   const facts = item.facts.map((fact) => {
     const value = fact.metadata.value;
     if (value !== undefined && value !== null && typeof value !== 'string' && typeof value !== 'boolean'
@@ -248,6 +262,7 @@ export async function includeOfficialLinkedEvidence(
     .filter(isUsableAnswerSource)
     .filter((source) => belongsToAnswerSpace(source, spaceId))
     .filter((source) => !initial?.rejectedSourceIds.has(source.id))
+    .filter((source) => !initial?.sourceWindow || initial.sourceWindow.has(source.id))
     .filter((source) => linkedSourceIds.has(source.id) || readStringArray(readRecord(source.metadata.sourceDiscovery).linkedObjectIds).some((id) => linkedIds.has(id)))
     .slice(0, 50);
   if (officialSources.length === 0) return carryInitialPass([...evidence], initial);
@@ -257,7 +272,7 @@ export async function includeOfficialLinkedEvidence(
   const candidates: EvidenceItem[] = officialSources.map((source) => ({
     kind: 'source', id: source.id, title: source.title ?? source.canonicalUri ?? source.sourceUri ?? source.id,
     score: retrievalScores.get(source.id)?.score ?? 0, scoreScale: retrievalScores.get(source.id)?.scoreScale,
-    source, facts: sourceFacts.get(source.id) ?? [],
+    source, facts: (sourceFacts.get(source.id) ?? []).filter((fact) => !initial?.factWindow || initial.factWindow.has(fact.id)),
   }));
   const projected = candidates.map((item, index) => {
     const snapshot = snapshotNodeInput(item.source!);
@@ -268,11 +283,11 @@ export async function includeOfficialLinkedEvidence(
   });
   // A linked-only pass must preflight every source, fact and subject before the
   // first fact reading, not after a later source has already left the process.
-  assertJudgmentInput({ query, candidates: projected, subjects: linkedObjects.map((node) => ({
-    title: node.title, summary: node.summary, aliases: node.aliases,
-    context: initialNodeReferenceContext(store, node, spaceId, guard),
-  })) });
-  const excerpts = prepareAnswerSourceExcerpts(store, query, candidates.map((item, index) => ({
+  const subjects = linkedObjects.map((node) => ({ title: node.title, summary: node.summary, aliases: node.aliases,
+    context: initialNodeReferenceContext(store, node, spaceId, guard, initial?.sourceWindow) }));
+  assertJudgmentInput({ query, subjects });
+  for (const candidate of projected) assertJudgmentInput({ query, candidate, subjects });
+  const excerpts = prepareAnswerSourceExcerptBatches(store, query, candidates.map((item, index) => ({
     source: item.source!, context: JSON.stringify({ facts: projected[index]!.facts ?? [],
       subjects: linkedObjects.map((node) => ({ title: node.title, summary: node.summary, aliases: node.aliases })) }),
   })), guard, signal);
@@ -293,7 +308,7 @@ export async function includeOfficialLinkedEvidence(
   current();
   const byId = new Map(excerpted.map((item) => [item.id, item]));
   const officialItems = ranked.map((reading) => byId.get(reading.source.id)!);
-  const pass: InitialEvidencePass = { store, query, rejectedSourceIds: initial?.rejectedSourceIds ?? new Set(),
+  const pass: InitialEvidencePass = { store, query, sourceWindow: initial?.sourceWindow, factWindow: initial?.factWindow, rejectedSourceIds: initial?.rejectedSourceIds ?? new Set(),
     factSelections: new Map([...settled, ...allFacts.map((fact) => [fact.id, selectedFactIds.has(fact.id)] as const)]), assertCurrent: current };
   // Refresh even an existing item that the linked rank did not accept: its old
   // excerpt must not become a backup for a newer settled empty selection.
@@ -377,11 +392,11 @@ function buildSourceFactIndex(
   return bySource;
 }
 
-function factHasUsableSource(node: KnowledgeNodeRecord, usableSourceIds: ReadonlySet<string>): boolean {
+export function factHasUsableSource(node: KnowledgeNodeRecord, usableSourceIds: ReadonlySet<string>): boolean {
   return factSourceIds(node).some((sourceId) => usableSourceIds.has(sourceId));
 }
 
-function factSourceIds(fact: KnowledgeNodeRecord): string[] {
+export function factSourceIds(fact: KnowledgeNodeRecord): string[] {
   return uniqueStrings([
     ...readStringArray(fact.metadata.sourceIds),
     readString(fact.metadata.sourceId),
@@ -414,7 +429,7 @@ function listAnswerSources(store: KnowledgeStore, spaceId: string): KnowledgeSou
     .filter((source) => knowledgeSourceMatchesScope(source, answerEvidenceScope(spaceId)));
 }
 
-function listAnswerNodes(store: KnowledgeStore, spaceId: string): KnowledgeNodeRecord[] {
+export function listAnswerNodes(store: KnowledgeStore, spaceId: string): KnowledgeNodeRecord[] {
   const nodes = isBroadKnowledgeSpaceAlias(spaceId)
     ? store.listNodes(Number.MAX_SAFE_INTEGER)
     : store.listNodesInSpace(spaceId);

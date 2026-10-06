@@ -59,7 +59,6 @@ import type { HomeGraphTriageOptions } from './triage.js';
 import { isUnusableHomeGraphExtractionText } from './extraction-quality.js';
 import {
   readHomeGraphSearchState,
-  scoreHomeGraphResults,
   selectHomeGraphExtractionRepairCandidates,
 } from './search.js';
 import {
@@ -68,6 +67,7 @@ import {
   HOME_GRAPH_SYNC_SELF_IMPROVEMENT_START_DELAY_MS,
   runHomeGraphSyncSelfImprovementPump,
 } from './sync-self-improvement.js';
+import { readHomeGraphSearchSelection } from './search-judgments.js';
 import { resolveReadableHomeGraphSpace } from './space-selection.js';
 import { runHomeGraphSnapshotSync } from './sync.js';
 import { autoLinkExistingHomeGraphSources, extractHomeGraphArtifact, prepareHomeGraphArtifactExtraction, storeHomeGraphArtifactExtraction } from './extraction.js';
@@ -239,15 +239,9 @@ export class HomeGraphService {
     const initialState = readHomeGraphSearchState(this.store, spaceId);
     const repairedExtractions = await this.repairStaleExtractionsForAsk(spaceId, installationId, input.query, initialState);
     const state = repairedExtractions > 0 ? readHomeGraphSearchState(this.store, spaceId) : initialState;
-    const results = await scoreHomeGraphResults(
-      input.query,
-      state.sources,
-      state.nodes,
-      state.edges,
-      (sourceId) => state.extractionBySourceId.get(sourceId),
-      input.limit ?? 8,
-    );
-    const answer = await answerHomeGraphQuery({ store: this.store, semanticService: this.options.semanticService, spaceId, query: input, state, results });
+    const selection = await readHomeGraphSearchSelection({ store: this.store, spaceId, query: input, state });
+    const answer = await answerHomeGraphQuery({ store: this.store, semanticService: this.options.semanticService,
+      spaceId, query: input, state, results: selection.results });
     const pageRefresh = await refreshDevicePagesForHomeGraphAsk({
       store: this.store,
       artifactStore: this.artifactStore,

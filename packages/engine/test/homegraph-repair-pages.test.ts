@@ -4,6 +4,7 @@ import { homeGraphRepairProfileValues } from './_helpers/repair-profile-fixture-
 
 const qualityReadings = useKnowledgeAnswerReadings({ repairProfile: homeGraphRepairProfileValues });
 beforeEach(() => { qualityReadings.set({
+  excerpts: [['LG 86NANO90UNA TV features include Dolby Vision IQ, HDR10,\nHDMI eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control.', 0.99]],
   activation: [['Display and picture specifications', 0.99],['Input and output ports', 0.99],['Smart TV platform and integrations', 0.99],['Network and wireless capabilities', 0.99],['Gaming and HDMI features', 0.99],['Audio capabilities', 0.99],['Tuner and broadcast support', 0.99],['LG webOS Smart TV', 0.99],['LG TV', 0.99],['Display and audio specifications', 0.99]],
   quality: [['Amazon affiliate LG listing', 0.03], ['Pending LG candidate source', 0.03], ['LG 86NANO90UNA official specifications', 0.99]],
   authorities: [['LG 86NANO90UNA official specifications', 'official-vendor']],

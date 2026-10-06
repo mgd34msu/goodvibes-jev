@@ -49,6 +49,13 @@ function documents(source: KnowledgeSourceRecord, extraction: KnowledgeExtractio
 export function prepareAnswerSourceExcerpts(store: KnowledgeStore, query: string,
   entries: readonly { readonly source: KnowledgeSourceRecord; readonly context: string }[], guard: SemanticWriteGuard, signal?: AbortSignal,
 ) {
+  return prepareSourceExcerpts(store, query, entries, guard, signal);
+}
+
+function prepareSourceExcerpts(store: KnowledgeStore, query: string,
+  entries: readonly { readonly source: KnowledgeSourceRecord; readonly context: string }[], guard: SemanticWriteGuard, signal?: AbortSignal,
+  observeModel?: (model: string, requestedModel: string) => void,
+) {
   const rows = entries.map(({ source, context }, index) => {
     const original = guard.watch(`source:${source.id}`, () => store.getSource(source.id), source);
     if (!original) throw new Held('stale');
@@ -73,7 +80,7 @@ export function prepareAnswerSourceExcerpts(store: KnowledgeStore, query: string
       if (current !== configured || configured.model !== model) throw new Held('stale');
     }
   };
-  const prepared = prepareAnswerExcerptReadings(rows.map((row) => row.input), { signal, assertCurrent });
+  const prepared = prepareAnswerExcerptReadings(rows.map((row) => row.input), { signal, assertCurrent, observeModel });
   return {
     /** Capture provider configuration only after the caller's complete preflight. */
     start() {
@@ -98,6 +105,48 @@ export function prepareAnswerSourceExcerpts(store: KnowledgeStore, query: string
     },
   };
 }
+/** Prepare every complete source before any reading. Each unchanged reader sees
+ * one source's full documents; its exact spans never depend on other sources.
+ * The caller supplies the shared operation signal/deadline. No per-source result
+ * escapes until every requested source settles under one model configuration.
+ */
+export function prepareAnswerSourceExcerptBatches(store: KnowledgeStore, query: string,
+  entries: readonly { readonly source: KnowledgeSourceRecord; readonly context: string }[], guard: SemanticWriteGuard, signal?: AbortSignal,
+) {
+  let model: string | undefined, requestedModel: string | undefined;
+  const observeModel = (actual: string, requested: string) => {
+    if ((model !== undefined && actual !== model) || (requestedModel !== undefined && requested !== requestedModel)) throw new Held('stale');
+    model = actual; requestedModel = requested;
+  };
+  // Synchronous all-source preparation protects rejected and later sources too.
+  const prepared = entries.map((entry) => ({ sourceId: entry.source.id,
+    reader: prepareSourceExcerpts(store, query, [entry], guard, signal, observeModel) }));
+  const assertCurrent = () => {
+    if (signal?.aborted) throw new Held('aborted');
+    // An empty source set still belongs to the caller's captured read-set.
+    try { guard.assertCurrent(); } catch { throw new Held(signal?.aborted ? 'aborted' : 'stale'); }
+    for (const entry of prepared) entry.reader.assertCurrent();
+  };
+  return {
+    start() { assertCurrent(); for (const entry of prepared) entry.reader.start(); assertCurrent(); },
+    assertCurrent,
+    async read(sourceIds: ReadonlySet<string>) {
+      const selected = new Set(sourceIds);
+      const result = new Map<string, readonly LocalAnswerExcerptSpan[]>();
+      assertCurrent();
+      for (const entry of prepared) {
+        if (!selected.has(entry.sourceId)) continue;
+        assertCurrent();
+        const spans = await entry.reader.read(new Set([entry.sourceId]));
+        assertCurrent();
+        for (const [sourceId, selection] of spans) result.set(sourceId, selection);
+      }
+      assertCurrent();
+      return result;
+    },
+  };
+}
+
 function mergeSpans(spans: readonly AnswerExcerptSpan[]): { start: number; end: number }[] {
   const merged: { start: number; end: number }[] = [];
   for (const span of [...spans].sort((a, b) => a.start - b.start || a.end - b.end)) {

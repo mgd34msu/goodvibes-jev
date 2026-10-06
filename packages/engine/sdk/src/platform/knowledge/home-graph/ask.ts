@@ -1,12 +1,16 @@
 import { withKnowledgeSourceAnswerAliases } from '../source-structural-references.js';
 import type { KnowledgeSemanticService } from '../semantic/index.js';
+import type { KnowledgeSemanticAnswerInput } from '../semantic/types.js';
+import { bindAnswerCandidateWindow } from '../semantic/answer-candidate-window.js';
 import { logger } from '../../utils/logger.js';
 import { scheduleBackground } from '../cooperative.js';
 import type { KnowledgeStore } from '../store.js';
 import type { KnowledgeSourceRecord } from '../types.js';
 import { collectLinkedObjects, renderAskAnswer } from './state.js';
 import type { HomeGraphAskInput, HomeGraphAskResult, HomeGraphSearchResult } from './types.js';
-import type { HomeGraphSearchState } from './search.js';
+import { readHomeGraphSearchState, type HomeGraphSearchState } from './search.js';
+import { preparedHomeGraphSearchSelection, readHomeGraphSearchSelection } from './search-judgments.js';
+import { KnowledgeAnswerQualityHeldError } from '../semantic/answer-verification/types.js';
 import { prepareHomeGraphAnswerScope } from './answer-scope.js';
 
 export async function answerHomeGraphQuery(input: {
@@ -28,29 +32,52 @@ async function answerHomeGraphQueryOnce(input: {
   readonly state: HomeGraphSearchState;
   readonly results: readonly HomeGraphSearchResult[];
 }): Promise<HomeGraphAskResult> {
-  // The configured semantic service already owns typed alignment and source
-  // selection. Do not pre-empt it with another anchor guess or duplicate read.
-  const scoped = input.semanticService ? undefined : await prepareHomeGraphAnswerScope(input);
+  const selection = preparedHomeGraphSearchSelection(input);
+  // A completed retrieval pass already settled literal scope. Direct callers
+  // still use the bounded result-scope reader; configured semantic answers keep
+  // their own final evidence/fidelity pass with the selected candidate window.
+  const scoped = selection ?? (input.semanticService ? undefined : await prepareHomeGraphAnswerScope(input));
   const results = scoped?.results ?? input.results;
   const sources = results.flatMap((result) => result.source ? [result.source] : []).map(withAnswerSourceAliases);
   const linkedObjects = scoped?.linkedObjects ?? collectLinkedObjects(results, input.state);
   if (input.semanticService) {
-    const answer = await input.semanticService.answer({
-      query: input.query.query,
-      knowledgeSpaceId: input.spaceId,
-      mode: input.query.mode ?? 'standard',
-      limit: input.query.limit ?? 8,
-      includeSources: input.query.includeSources,
-      includeConfidence: input.query.includeConfidence,
-      includeLinkedObjects: input.query.includeLinkedObjects,
-      candidateSourceIds: sources.map((source) => source.id),
-      candidateNodeIds: results.flatMap((result) => result.node ? [result.node.id] : []),
-      strictCandidates: true,
-      linkedObjects,
-      noMatchMessage: `No Home Graph knowledge matched "${input.query.query}".`,
-      autoRepairGaps: true,
-      timeoutMs: input.query.timeoutMs,
-    });
+    const semanticInputFor = (current: typeof selection): KnowledgeSemanticAnswerInput => {
+      const currentResults = current?.results ?? results;
+      const semanticInput: KnowledgeSemanticAnswerInput = {
+        query: input.query.query,
+        knowledgeSpaceId: input.spaceId,
+        mode: input.query.mode ?? 'standard',
+        limit: input.query.limit ?? 8,
+        includeSources: input.query.includeSources,
+        includeConfidence: input.query.includeConfidence,
+        includeLinkedObjects: input.query.includeLinkedObjects,
+        candidateSourceIds: current?.candidateSourceIds ?? sources.map((source) => source.id),
+        candidateNodeIds: currentResults.flatMap((result) => result.node ? [result.node.id] : []),
+        strictCandidates: true,
+        linkedObjects: current?.linkedObjects ?? linkedObjects,
+        noMatchMessage: `No Home Graph knowledge matched "${input.query.query}".`,
+        autoRepairGaps: true,
+        timeoutMs: input.query.timeoutMs,
+      };
+      if (current) bindAnswerCandidateWindow(semanticInput, input.store, input.spaceId,
+        current.candidateSourceIds, currentResults.flatMap((result) => result.node ? [result.id] : []),
+        current.acceptedFactIds, current.assertCurrent, async () => {
+          // Repair changes evidence on purpose, never the original question,
+          // selected subject records or configured readers. Re-read the new
+          // corpus; do not silently bless an old stale candidate window.
+          selection!.assertRenewalAllowed();
+          const state = readHomeGraphSearchState(input.store, input.spaceId);
+          const next = await readHomeGraphSearchSelection({ store: input.store, spaceId: input.spaceId, query: input.query, state });
+          selection!.assertRenewalAllowed();
+          const originalIds = new Set(selection!.linkedObjects.map((node) => node.id));
+          if (next.linkedObjects.length !== originalIds.size || next.linkedObjects.some((node) => !originalIds.has(node.id))) {
+            throw new KnowledgeAnswerQualityHeldError('stale');
+          }
+          return semanticInputFor(next);
+        });
+      return semanticInput;
+    };
+    const answer = await input.semanticService.answer(semanticInputFor(selection));
     const selectedSources = uniqueSources(answer.results.flatMap((result) => result.source ? [result.source] : []));
     scheduleBackground(() => {
       // Governor backpressure: skip the post-answer enrichment tail while

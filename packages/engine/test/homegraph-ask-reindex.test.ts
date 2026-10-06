@@ -584,7 +584,8 @@ describe('Home Graph ask, source repair, and reindex', () => {
     readings.set({
       initialEvidenceDefault: 0.01,
       initialEvidenceCandidates: [['source', 'LG 86NANO90UNA manual', 0.99]],
-      excerpts: [['LG TV features include HDR10, HDMI eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control.', 0.99]],
+      // The synthetic one-line PDF clips at its page boundary; select its exact extracted span.
+      excerpts: [['LG TV features include HDR10, HDMI eARC, Filmmaker Mode, Game Optimizer, and Magic Remote v', 0.99]],
       objectAlignment: [{ query: 'what features does the LG TV have?', objects: [
         { title: 'LG TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 },
       ] }],
