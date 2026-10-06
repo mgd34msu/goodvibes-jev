@@ -15,6 +15,17 @@ async function openPalette(page: Page) {
 }
 async function deleteChat(page: Page, title: string) {
   await openNavigation(page);
+  const sidebar = page.getByRole('complementary', { name: 'Sidebar', exact: true });
+  if (await sidebar.count()) {
+    // Work opens a detail panel and auto-collapses the desktop sidebar. Reveal
+    // Recent through the real controls; pin it so moving to the confirmation
+    // cannot dismiss the hover peek and hide the later restore/delete proof.
+    const expand = sidebar.getByRole('button', { name: 'Expand sidebar', exact: true });
+    if (await expand.isVisible()) await expand.click();
+    await sidebar.getByRole('button', { name: 'Pin sidebar open', exact: true }).click();
+    await expect(sidebar).toHaveAttribute('data-form', 'expanded');
+    await sidebar.getByRole('button', { name: title, exact: true }).hover();
+  }
   await page.getByRole('button', { name: `Delete ${title} permanently`, exact: true }).click();
   const confirmation = page.getByRole('alertdialog', { name: 'Delete this chat?', exact: true });
   await expect(confirmation).toBeVisible();
