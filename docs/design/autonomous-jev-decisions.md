@@ -55,6 +55,16 @@ There is no `confirm`, `escalate`, `approved`, `allow-all` or terminal `unavaila
 
 References are opaque host-owned, nonempty printable-ASCII strings of at most 256 characters, not display names or credentials. A revision can be a content digest or a monotonic immutable version. This module does not compute or authenticate it. The host registry must make an ID/revision pair immutable; reusing a revision after content changes breaks the contract.
 
+Native contract criteria sets retain their `criteria:<sha256(workId)>` identity in
+both the immutable source and durable admission. At the native decision boundary,
+a matching durable checkpoint, work-derived criteria ID and criteria revision
+allow that one evidence reference to use its bare SHA-256 protocol encoding.
+Other references are unchanged. This is an owner-bound representation change,
+not a prefix exemption: arbitrary metadata, original goals/criteria, operation
+state and continuation input still pass the same protected-input checks. Existing
+saved decisions stay historical records; a resumed operation obtains a fresh
+current decision as before.
+
 The host assigns `decisionId`, validates that `judgmentDecisionIds` name actual recorded successful Jev calls for this binding, and supplies the available evidence manifest. An evidence reference is `{ id, revision }`. The receipt may select only known versions from that manifest. Call records and evidence must belong to the exact decision snapshot; a global allowlist is insufficient.
 
 The host also supplies exact versioned `continuations` and `resumeConditions`. Jev selects among these offered steps and conditions. An arbitrary string in the model response must never create a tool call, callback, subscription or condition. Each continuation's own capabilities and effect scope are checked deterministically before it runs. Host context must not be populated by echoing the untrusted receipt.

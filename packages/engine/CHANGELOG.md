@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Encode owner-generated native criteria references as canonical digests only
+  after checking their exact durable work/source binding. Keep arbitrary
+  references and original task content under the existing privacy guard.
+
 - Bind native Agent hosted delivery to a server-selected settings owner and a
   durable source/dispatch claim. Cross-surface replays and continuations cannot
   switch namespaces. Retain native turn/tool frames in the existing bounded
