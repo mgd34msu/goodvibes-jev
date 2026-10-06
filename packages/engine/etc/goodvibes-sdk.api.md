@@ -169,6 +169,7 @@ export type AgentEvent =
 /** Agent completed successfully. */
 | {
     type: 'AGENT_COMPLETED';
+    occurrenceId?: string | undefined;
     agentId: string;
     taskId?: string;
     durationMs: number;
@@ -179,6 +180,7 @@ export type AgentEvent =
 /** Agent failed with an error. */
 | {
     type: 'AGENT_FAILED';
+    occurrenceId?: string | undefined;
     agentId: string;
     taskId?: string;
     error: string;
@@ -836,7 +838,7 @@ export class ContractError extends GoodVibesSdkError {
 }
 
 // @public (undocumented)
-export type ContractEvent = {
+export type ContractEvent = ({
     type: 'CONTRACT_CREATED';
     contractId: string;
     sessionId: string;
@@ -1030,6 +1032,8 @@ export type ContractEvent = {
     depth: number;
     activeAgents: number;
     reason: string;
+}) & {
+    readonly occurrenceId?: string | undefined;
 };
 
 // @public (undocumented)

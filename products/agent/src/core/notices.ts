@@ -19,13 +19,13 @@
  */
 
 import type { Notification } from '@/runtime/index.ts';
-import { runtimeEventOfNotice } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
+import { runtimeEventOfNotice, runtimeEventKey, type RuntimeEventProvenance } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
 import { delegatedTaskEventOfNotice } from './delegated-task-notices.ts';
 import { getSharedNotificationFeed, type NotificationFeed } from './notifications-feed.ts';
 import { classifySystemMessage } from '../renderer/system-message.ts';
 
 /** Receives every system notice added to (or restored into) the conversation. */
-export type NoticeSink = (content: string, options: { readonly restored: boolean }) => void;
+export type NoticeSink = (content: string, options: { readonly restored: boolean; readonly runtimeEvent?: RuntimeEventProvenance | undefined }) => void;
 
 /** The pieces of a notice as the history and the toast show them. */
 export interface NoticeParts {
@@ -56,6 +56,7 @@ export interface NoticeOptions {
   /** Restored from a saved session: kept in history, not toasted. */
   readonly restored?: boolean;
   readonly now?: () => number;
+  readonly runtimeEvent?: RuntimeEventProvenance | undefined;
 }
 
 /** Keep one system notice in the history; the feed's toast bridge toasts it unless restored. */
@@ -63,9 +64,9 @@ export function publishNotice(feed: NotificationFeed, text: string, options: Not
   if (text.trim().length === 0) return;
   const parts = noticeParts(text);
   const restored = options.restored === true;
-  const event = delegatedTaskEventOfNotice(text) ?? runtimeEventOfNotice(text);
+  const event = delegatedTaskEventOfNotice(text) ?? runtimeEventOfNotice(text, options.runtimeEvent);
   if (event) {
-    feed.recordNotice({ domain: parts.domain, level: event.level, title: event.title, body: event.detail, timestamp: (options.now ?? Date.now)(), restored });
+    feed.recordNotice({ domain: parts.domain, level: event.level, title: event.title, body: event.detail, timestamp: (options.now ?? Date.now)(), restored, eventKey: runtimeEventKey(event.type, options.runtimeEvent) });
     return;
   }
   feed.recordNotice({ ...parts, timestamp: (options.now ?? Date.now)(), restored });
@@ -75,6 +76,6 @@ export function publishNotice(feed: NotificationFeed, text: string, options: Not
  * The shell's notice sink (ConversationManager.setNoticeSink): every system
  * notice of the main conversation goes to the shared notification feed.
  */
-export function publishToSharedFeed(content: string, options: { readonly restored: boolean }): void {
-  publishNotice(getSharedNotificationFeed(), content, { restored: options.restored });
+export function publishToSharedFeed(content: string, options: { readonly restored: boolean; readonly runtimeEvent?: RuntimeEventProvenance | undefined }): void {
+  publishNotice(getSharedNotificationFeed(), content, options);
 }

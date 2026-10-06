@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 /**
  * Contract emitters, one typed emission wrapper per `contracts` domain event
  * (docs/design/contract-runner.md section 8.1). The contract runner calls these
@@ -11,8 +12,9 @@ import type { EmitterContext } from './index.js';
 /** The payload of one contract event type, without its `type` discriminant. */
 export type ContractEventData<T extends ContractEventType> = Omit<Extract<ContractEvent, { type: T }>, 'type'>;
 
+/** Forward declared source provenance; a direct new emission mints it once. */
 function emitContract<T extends ContractEventType>(bus: RuntimeEventBus, ctx: EmitterContext, type: T, data: ContractEventData<T>): void {
-  const event = { type, ...data } as unknown as Extract<ContractEvent, { type: T }>;
+  const event = { type, ...data, occurrenceId: data.occurrenceId ?? randomUUID() } as unknown as Extract<ContractEvent, { type: T }>;
   bus.emit('contracts', createEventEnvelope(type, event, ctx));
 }
 
