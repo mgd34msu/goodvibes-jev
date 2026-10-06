@@ -744,6 +744,11 @@
       "types": "./sdk/dist/platform/intelligence/index.d.ts",
       "import": "./sdk/dist/platform/intelligence/index.js"
     },
+    "./sdk/platform/hosted-sessions/native-turn-client": {
+      "bun": "./sdk/src/platform/hosted-sessions/native-turn-client.ts",
+      "types": "./sdk/dist/platform/hosted-sessions/native-turn-client.d.ts",
+      "import": "./sdk/dist/platform/hosted-sessions/native-turn-client.js"
+    },
     "./sdk/platform/hosted-sessions": {
       "bun": "./sdk/src/platform/hosted-sessions/index.ts",
       "types": "./sdk/dist/platform/hosted-sessions/index.d.ts",

@@ -10,7 +10,7 @@ import type { OperatorMethodId } from './operator-method-ids.js';
  * call sites) hand-written on top of these generated primitives.
  *
  * Contract product version: 2.0.23
- * Methods: 530 total, 458 REST-routed, 72 ws-only invoke.
+ * Methods: 533 total, 461 REST-routed, 72 ws-only invoke.
  */
 
 export type WebuiHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -1848,6 +1848,18 @@ export const WEBUI_METHOD_ROUTES: Readonly<Record<string, WebuiRouteDefinition>>
     "method": "POST",
     "path": "/api/work-ledger/submissions"
   },
+  "workLedger.turn.cancel": {
+    "method": "POST",
+    "path": "/api/work-ledger/turn/cancel"
+  },
+  "workLedger.turn.start": {
+    "method": "POST",
+    "path": "/api/work-ledger/turn/start"
+  },
+  "workLedger.turn.status": {
+    "method": "POST",
+    "path": "/api/work-ledger/turn/status"
+  },
   "workspaces.registrations.add": {
     "method": "POST",
     "path": "/api/workspaces/registrations"
@@ -2475,6 +2487,9 @@ export const WEBUI_METHOD_DISPOSITION: Readonly<Record<string, WebuiMethodDispos
   "workLedger.snapshot": "rest",
   "workLedger.submission.get": "rest",
   "workLedger.submit": "rest",
+  "workLedger.turn.cancel": "rest",
+  "workLedger.turn.start": "rest",
+  "workLedger.turn.status": "rest",
   "workspaces.registrations.add": "rest",
   "workspaces.registrations.list": "rest",
   "workspaces.registrations.remove": "rest",
@@ -26139,6 +26154,57 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ]
       }
+    }
+  },
+  "workLedger.turn.cancel": {
+    "input": {
+      "projectId": "sample",
+      "inputId": "sample",
+      "sourceRevision": "sample"
+    },
+    "output": {
+      "projectId": "sample",
+      "requestId": "sample",
+      "inputId": "sample",
+      "sourceRevision": "sample",
+      "state": "preparing",
+      "sessionId": "sample",
+      "brokerInputId": "sample",
+      "correlationId": "sample"
+    }
+  },
+  "workLedger.turn.start": {
+    "input": {
+      "projectId": "sample",
+      "inputId": "sample",
+      "sourceRevision": "sample"
+    },
+    "output": {
+      "projectId": "sample",
+      "requestId": "sample",
+      "inputId": "sample",
+      "sourceRevision": "sample",
+      "state": "preparing",
+      "sessionId": "sample",
+      "brokerInputId": "sample",
+      "correlationId": "sample"
+    }
+  },
+  "workLedger.turn.status": {
+    "input": {
+      "projectId": "sample",
+      "inputId": "sample",
+      "sourceRevision": "sample"
+    },
+    "output": {
+      "projectId": "sample",
+      "requestId": "sample",
+      "inputId": "sample",
+      "sourceRevision": "sample",
+      "state": "preparing",
+      "sessionId": "sample",
+      "brokerInputId": "sample",
+      "correlationId": "sample"
     }
   },
   "workspaces.registrations.add": {

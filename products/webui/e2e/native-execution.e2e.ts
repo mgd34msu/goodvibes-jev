@@ -553,6 +553,10 @@ test("stale source lookup still allows reading and cancelling the same retained 
   dialog = await open(page);
   await expect(dialog.getByRole("alert")).toBeVisible();
   await receipt(dialog, daemon);
+  // An unreadable source does not create a second, unowned conversation error.
+  await expect(
+    dialog.getByRole("region", { name: "Hosted conversation", exact: true })
+  ).toHaveCount(0);
   await dialog.getByRole("button", { name: "Cancel execution", exact: true }).click();
   await expect(executionSection(dialog).getByRole("status")).toContainText(
     "Native execution is cancelled"

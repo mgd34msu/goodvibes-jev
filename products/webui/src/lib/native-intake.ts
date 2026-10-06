@@ -16,6 +16,7 @@ import { getActiveRoute } from "./relay-connection";
 import { getStoredRelayPairing } from "./relay-pairing";
 import { randomUuid } from "./uuid";
 import { createNativeIntakeExecution } from "./native-execution";
+import { createNativeIntakeTurn } from "./native-turn";
 import {
   createNativeExecutionBrowserJournal,
   type NativeExecutionBrowserJournal,
@@ -64,7 +65,7 @@ export async function openNativeIntake(
     AbortSignal.any([signal, lifetimeAbort.signal, ...(operation ? [operation] : [])]);
   const readBinding = async (
     operation?: AbortSignal,
-    execution = false
+    authority: "intake" | "execution" | "turn" = "intake"
   ): Promise<NativeIntakeBrowserBinding> => {
     check();
     const current = combined(operation);
@@ -79,16 +80,20 @@ export async function openNativeIntake(
       !auth.principalId ||
       auth.principalId === "shared-token" ||
       auth.principalId.length > 200 ||
-      !["read:work-ledger", execution ? "write:fleet" : "write:work-ledger"].every(
-        (scope) => auth.scopes.includes("*") || auth.scopes.includes(scope)
-      )
+      !(
+        authority === "turn"
+          ? ["read:work-ledger", "write:work-ledger", "write:sessions"]
+          : ["read:work-ledger", authority === "execution" ? "write:fleet" : "write:work-ledger"]
+      ).every((scope) => auth.scopes.includes("*") || auth.scopes.includes(scope))
     ) {
       const error = new Error(
-        execution
-          ? "Native execution requires an existing paired admin with read:work-ledger and write:fleet. Shared tokens and user sessions are unsupported."
-          : "Native requests require an existing paired admin with read:work-ledger and write:work-ledger. Shared tokens and user sessions are unsupported."
+        authority === "turn"
+          ? "Native conversation delivery requires an existing paired admin with read:work-ledger, write:work-ledger and write:sessions. Shared tokens and user sessions are unsupported."
+          : authority === "execution"
+            ? "Native execution requires an existing paired admin with read:work-ledger and write:fleet. Shared tokens and user sessions are unsupported."
+            : "Native requests require an existing paired admin with read:work-ledger and write:work-ledger. Shared tokens and user sessions are unsupported."
       );
-      throw execution
+      throw authority === "execution"
         ? Object.assign(error, { code: "NATIVE_EXECUTION_UNSUPPORTED_AUTHORITY" })
         : error;
     }
@@ -114,8 +119,11 @@ export async function openNativeIntake(
   };
   try {
     const binding = await readBinding();
-    const authorize = async (operation?: AbortSignal, execution = false) => {
-      const current = await readBinding(operation, execution);
+    const authorize = async (
+      operation?: AbortSignal,
+      authority: "intake" | "execution" | "turn" = "intake"
+    ) => {
+      const current = await readBinding(operation, authority);
       if (!sameBinding(binding, current))
         throw new Error("The native project or paired owner changed. Reopen Native request.");
       check();
@@ -125,7 +133,14 @@ export async function openNativeIntake(
       input?: Record<string, unknown>,
       options?: { signal?: AbortSignal }
     ) => {
-      await authorize(options?.signal, method.startsWith("workLedger.execution."));
+      await authorize(
+        options?.signal,
+        method.startsWith("workLedger.turn.")
+          ? "turn"
+          : method.startsWith("workLedger.execution.")
+            ? "execution"
+            : "intake"
+      );
       const result = await sdk.operator.invoke(method, input, combined(options?.signal));
       check();
       return result;
@@ -175,6 +190,16 @@ export async function openNativeIntake(
         combined(operation).throwIfAborted();
       },
     });
+    const turn = createNativeIntakeTurn({
+      binding,
+      invoke: (method, input, operation) => invoke(method, input, { signal: combined(operation) }),
+      confirm,
+      inspect,
+      active(operation) {
+        check();
+        combined(operation).throwIfAborted();
+      },
+    });
     const continueSubmission = async (
       record: NativeIntakeBrowserRecord,
       found: NativeIntakeResult,
@@ -203,6 +228,7 @@ export async function openNativeIntake(
     return {
       binding,
       execution,
+      turn,
       async list() {
         await authorize();
         const records = await journal.list(binding);
@@ -298,7 +324,7 @@ export function nativeIntakeDescription(result: NativeIntakeResult): string {
     case "work":
       return "Jev admitted this exact source to the work ledger. Native execution and verification are reported separately below.";
     case "turn":
-      return `Jev routed this source to ${result.route}. Native conversation delivery is not connected to this screen; no model turn was dispatched.`;
+      return `Jev routed this exact source to ${result.route}. Hosted conversation delivery is reported separately below.`;
     case "blocked":
       return result.reason === "unsupported-source"
         ? "Admission is blocked by an unsupported source. Submit a new complete request when that source is available."

@@ -1,3 +1,5 @@
+import { StoreWriteQueue } from '../state/store-write-queue.js';
+import { writeJsonFileAtomic } from '../utils/atomic-json-store.js';
 /**
  * store.ts, durable state for hosted sessions.
  *
@@ -126,6 +128,7 @@ export function boundMessages(messages: readonly unknown[], max: number): readon
  * The disk store. One directory, one file per session, atomic writes.
  */
 export class HostedSessionStore {
+  private readonly writes = new StoreWriteQueue();
   constructor(
     private readonly directory: string,
     private readonly limits: HostedSessionStoreLimits,
@@ -236,24 +239,19 @@ export class HostedSessionStore {
   }
 
   /** Atomically write one session. Bounds the conversation before writing. */
-  async save(record: HostedSessionRecord, conversation: unknown): Promise<void> {
+  async save(record: HostedSessionRecord, conversation: unknown, options: { readonly durable?: boolean } = {}): Promise<void> {
     if (!SAFE_ID.test(record.id)) {
       throw new Error(`Refusing to persist hosted session '${record.id}': the id is not a safe file name.`);
     }
     const bounded = this.boundConversation(conversation);
     const payload: PersistedHostedSession = { version: CURRENT_HOSTED_SESSION_VERSION, record, conversation: bounded };
     const file = this.fileFor(record.id);
-    const tmp = `${file}.tmp`;
-    try {
+    await this.writes.run(async () => {
+      // One synchronous atomic publication avoids a best-effort older save
+      // racing over the native turn's strict final transcript.
       this.ensureDir();
-      await fs.writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
-      await fs.rename(tmp, file);
-    } catch (error) {
-      if (existsSync(tmp)) {
-        await fs.unlink(tmp).catch(() => undefined);
-      }
-      throw new Error(`Persisting hosted session ${record.id} failed: ${summarizeError(error)}`);
-    }
+      writeJsonFileAtomic(file, payload, { durable: options.durable === true, mode: 0o600 });
+    });
   }
 
   /**

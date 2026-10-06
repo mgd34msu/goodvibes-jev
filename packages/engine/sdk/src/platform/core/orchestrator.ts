@@ -106,6 +106,8 @@ interface LowPrioritySystemMessageSink {
 export interface OrchestratorUserInputOptions {
   readonly origin?: TurnInputOrigin | undefined;
   readonly nativeConversationTurnPermit?: NativeConversationTurnPermit | undefined;
+  /** Host-owned dispatch must wait for execution, never mistake queue acceptance for completion. */
+  readonly requireImmediateNativeTurn?: boolean | undefined;
 }
 
 /**
@@ -193,6 +195,7 @@ export class Orchestrator {
   private autoSpawnTimeout: ReturnType<typeof setTimeout> | null = null;
   private nativeConversationProjectId: string | undefined;
   private activeNativeConversationTurn = false;
+  private activeNativeConversationPermit: NativeConversationTurnPermit | undefined;
   private nativeAdmissionAbort: AbortController | null = null;
   private acpManager: AcpManager | null = null;
   /** Message count at the start of a turn, used to rollback on cancel. */
@@ -576,6 +579,9 @@ export class Orchestrator {
     if (options?.nativeConversationTurnPermit) {
       if (!this.nativeConversationProjectId) throw new NativeConversationTurnAdmissionError('identity_mismatch');
       validateNativeConversationTurn(options.nativeConversationTurnPermit, text, content, this.nativeConversationProjectId);
+      if (options.requireImmediateNativeTurn && (this.disposed || this.turnInFlight || this.activeNativeConversationTurn || this.isThinking || this.isCompacting)) {
+        throw new NativeConversationTurnAdmissionError('recovery_required');
+      }
     }
     if (this.disposed) return;
     if (!text.trim() && !content?.length) return;
@@ -603,7 +609,19 @@ export class Orchestrator {
     // in-flight turn's freshly appended messages). Messages left queued during
     // compaction are drained by setCompacting() once compaction settles.
     try { await withTurnSurface(options?.origin, () => this.runTurn(text, content, options, nativeTurn)); }
-    finally { await this.drainMessageQueue(); }
+    finally {
+      if (options?.requireImmediateNativeTurn && nativeTurn) {
+        // The native owner joins only this input. Other queued turns have their
+        // own lifetime and must not become this dispatch's completion/cancel target.
+        void this.drainMessageQueue().catch(error => logger.warn('Queued turn failed after native delivery', { error: summarizeError(error) }));
+      } else await this.drainMessageQueue();
+    }
+  }
+
+  /** A native owner may cancel only its exact active, nonserialized permit. */
+  public cancelNativeConversationTurn(permit: NativeConversationTurnPermit): boolean {
+    if (this.activeNativeConversationPermit !== permit) return false;
+    this.abort(); return true;
   }
 
   /** Provider failover may preserve this exact binding only before effects. */
@@ -702,6 +720,7 @@ export class Orchestrator {
           validateNativeConversationTurn(nativeTurn.permit, text, content, this.nativeConversationProjectId);
           startNativeConversationTurn(nativeTurn);
           this.activeNativeConversationTurn = true;
+          this.activeNativeConversationPermit = nativeTurn.permit;
           const admissionAbort = new AbortController();
           this.nativeAdmissionAbort = admissionAbort;
           await revalidateNativeConversationTurnPermit(nativeTurn.permit);
@@ -711,7 +730,7 @@ export class Orchestrator {
         await this.runTurnBody(text, content, options, nativeTurn);
       }
       catch (error) { if (nativeTurn) failNativeConversationTurn(nativeTurn, false); throw error; }
-      finally { if (nativeTurn) { settleNativeConversationTurn(nativeTurn); this.activeNativeConversationTurn = false; this.nativeAdmissionAbort = null; } }
+      finally { if (nativeTurn) { settleNativeConversationTurn(nativeTurn); this.activeNativeConversationTurn = false; this.activeNativeConversationPermit = undefined; this.nativeAdmissionAbort = null; } }
     };
     if (nativeTurn) await withNativeConversationTurn(nativeTurn.permit, execute);
     else await withoutNativeConversationTurn(execute);

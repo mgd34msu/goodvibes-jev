@@ -1,3 +1,4 @@
+import { nativeHostedConversationOwner } from './native-hosted-conversation-composition.js';
 /**
  * hosted-session-composition.ts, what this daemon states so it may host
  * conversation loops.
@@ -139,6 +140,7 @@ export function createHostedSessionOptions(services: RuntimeServices): DaemonHos
   };
 
   return {
+    nativeConversation: nativeHostedConversationOwner(services.gatewayMethods),
     floorFactory: ({ workspaceRoot }): HostedWorkspaceFloor => {
       const floor = createClientRuntimeServices({
         configManager: services.configManager,

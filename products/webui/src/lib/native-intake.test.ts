@@ -22,9 +22,14 @@ function harness() {
   let principalId = "paired-owner";
   let projectId = "native-project";
   let admin = true;
-  let scopes = ["read:work-ledger", "write:work-ledger"];
+  let scopes = ["read:work-ledger", "write:work-ledger", "write:sessions"];
   let principalKind = "token";
   let failSave = false;
+  let failConfirm = false;
+  let turn: Record<string, unknown> | undefined;
+  let lostStart = false;
+  let invalidStatus = false;
+  let statusHook: (() => void) | undefined;
   let lostCapture = false;
   let drift = false;
   let command: NativeConversationIntakeCaptureRequest | undefined;
@@ -42,6 +47,7 @@ function harness() {
       rows.push(structuredClone(record));
     },
     async confirm(record) {
+      if (failConfirm) throw new Error("Original journal unavailable");
       if (!rows.some((row) => JSON.stringify(row) === JSON.stringify(record)))
         throw new Error("Journal mismatch");
     },
@@ -65,6 +71,41 @@ function harness() {
         sessionCookiePresent: false,
       });
     if (path === "/api/work-ledger/project") return Response.json({ projectId });
+    if (path.startsWith("/api/work-ledger/turn/")) {
+      expect(body).toEqual({
+        projectId: "native-project",
+        inputId: command!.inputId,
+        sourceRevision: state!.sourceRef.sourceRevision,
+      });
+      if (path.endsWith("/status")) {
+        statusHook?.();
+        return Response.json(invalidStatus ? { kind: "unknown" } : (turn ?? { kind: "not-found" }));
+      }
+      if (path.endsWith("/start")) {
+        turn = {
+          ...body,
+          requestId: command!.requestId,
+          state: "running",
+          sessionId: "hosted-session",
+          brokerInputId: "broker-input",
+          correlationId: "native-correlation",
+        };
+        if (lostStart) {
+          lostStart = false;
+          throw new TypeError("Lost turn acknowledgement");
+        }
+      } else if (path.endsWith("/cancel")) {
+        turn = {
+          ...body,
+          requestId: command!.requestId,
+          state: "cancelled",
+          sessionId: null,
+          brokerInputId: null,
+          correlationId: null,
+        };
+      } else throw new Error(`Unexpected turn route ${path}`);
+      return Response.json(turn);
+    }
     if (path === "/api/work-ledger/intake/capture") {
       command = body as unknown as NativeConversationIntakeCaptureRequest;
       expect(rows.some((row) => JSON.stringify(row.command) === JSON.stringify(command))).toBe(
@@ -144,6 +185,18 @@ function harness() {
     failSave() {
       failSave = true;
     },
+    failConfirm() {
+      failConfirm = true;
+    },
+    loseStart() {
+      lostStart = true;
+    },
+    invalidStatus() {
+      invalidStatus = true;
+    },
+    statusHook(callback: () => void) {
+      statusHook = callback;
+    },
     loseCapture() {
       lostCapture = true;
     },
@@ -163,7 +216,7 @@ function harness() {
   };
 }
 
-test("submission journals exact original source before capture, automatically admits and never dispatches a turn", async () => {
+test("intake helper preserves original source and leaves turn delivery to the form continuation", async () => {
   const h = harness();
   const session = await h.open();
   const markers = [{ kind: "context" as const, label: "Unread appendix" }];
@@ -331,4 +384,133 @@ test("A → B → A sign-in changes permanently retire the original intake clien
   ).rejects.toThrow("connection changed");
   expect(h.rows).toHaveLength(0);
   expect(h.writes()).toHaveLength(0);
+});
+
+const turnCalls = (h: ReturnType<typeof harness>) =>
+  h.requests.filter((row) => row.path.includes("/turn/"));
+async function admittedTurn(h: ReturnType<typeof harness>) {
+  const session = await h.open();
+  expect((await session.submit({ text: original, unsupportedSources: [] }, () => {})).kind).toBe(
+    "turn"
+  );
+  return session;
+}
+
+test("actual browser facade validates and sends identity-only native turn status/start", async () => {
+  const h = harness();
+  const session = await admittedTurn(h);
+  const observed = await session.turn.request(h.rows[0]!);
+  expect(observed).toMatchObject({
+    kind: "recorded",
+    snapshot: {
+      requestId: "logical-1",
+      inputId: "logical-2",
+      state: "running",
+      sessionId: "hosted-session",
+    },
+  });
+  expect(turnCalls(h).map((row) => row.path)).toEqual([
+    "/api/work-ledger/turn/status",
+    "/api/work-ledger/turn/start",
+  ]);
+  expect(
+    turnCalls(h).every(
+      (row) =>
+        JSON.stringify(row.input) ===
+        JSON.stringify({
+          projectId: "native-project",
+          inputId: "logical-2",
+          sourceRevision: "host-revision",
+        })
+    )
+  ).toBe(true);
+  expect(h.requests.some((row) => /\/api\/(sessions|contracts|tasks)\//.test(row.path))).toBe(
+    false
+  );
+  expect(h.writes()).toHaveLength(2);
+});
+
+for (const change of [
+  "owner",
+  "project",
+  "admin",
+  "session",
+  "shared",
+  "read",
+  "ledger",
+  "sessions",
+] as const)
+  test(`fresh browser authority fences native turn after ${change} change`, async () => {
+    const h = harness();
+    const session = await admittedTurn(h);
+    if (change === "owner") h.setPrincipal("another-paired-owner");
+    if (change === "project") h.setProject("another-project");
+    if (change === "admin") h.setAdmin(false);
+    if (change === "session") h.setKind("user");
+    if (change === "shared") h.setPrincipal("shared-token");
+    if (change === "read") h.setScopes(["write:work-ledger", "write:sessions"]);
+    if (change === "ledger") h.setScopes(["read:work-ledger", "write:sessions"]);
+    if (change === "sessions") h.setScopes(["read:work-ledger", "write:work-ledger"]);
+    await expect(session.turn.request(h.rows[0]!)).rejects.toThrow();
+    expect(turnCalls(h)).toHaveLength(0);
+  });
+
+for (const change of ["owner", "project", "scope", "journal"] as const)
+  test(`native turn rechecks ${change} after status and before start`, async () => {
+    const h = harness();
+    const session = await admittedTurn(h);
+    h.statusHook(() => {
+      if (change === "owner") h.setPrincipal("replacement-owner");
+      if (change === "project") h.setProject("replacement-project");
+      if (change === "scope") h.setScopes(["read:work-ledger", "write:work-ledger"]);
+      if (change === "journal") h.failConfirm();
+    });
+    await expect(session.turn.request(h.rows[0]!)).rejects.toThrow();
+    expect(turnCalls(h).map((row) => row.path)).toEqual(["/api/work-ledger/turn/status"]);
+  });
+
+test("lost turn response survives reopening and explicit status reconciliation without replay", async () => {
+  const h = harness();
+  const session = await admittedTurn(h);
+  h.loseStart();
+  await expect(session.turn.request(h.rows[0]!)).rejects.toThrow();
+  session.dispose();
+  const reopened = await h.open();
+  expect(await reopened.turn.inspect(h.rows[0]!)).toMatchObject({
+    kind: "recorded",
+    snapshot: { state: "running" },
+  });
+  await reopened.turn.request(h.rows[0]!);
+  expect(turnCalls(h).filter((row) => row.path.endsWith("/start"))).toHaveLength(1);
+  expect(h.writes()).toHaveLength(2);
+});
+
+test("unavailable original storage and unknown turn status fail closed in the browser facade", async () => {
+  for (const fault of ["failConfirm", "invalidStatus"] as const) {
+    const h = harness();
+    const session = await admittedTurn(h);
+    h[fault]();
+    await expect(session.turn.request(h.rows[0]!)).rejects.toThrow();
+    expect(turnCalls(h).filter((row) => !row.path.endsWith("/status"))).toHaveLength(0);
+  }
+});
+
+test("conversation cancellation uses the turn endpoint and never re-admits or starts", async () => {
+  const h = harness();
+  const session = await admittedTurn(h);
+  expect(await session.turn.cancel(h.rows[0]!)).toMatchObject({
+    kind: "recorded",
+    snapshot: { state: "cancelled" },
+  });
+  expect(turnCalls(h).map((row) => row.path)).toEqual(["/api/work-ledger/turn/cancel"]);
+  expect(h.writes()).toHaveLength(2);
+});
+
+test("A to B to A sign-in permanently retires the native conversation client", async () => {
+  const h = harness();
+  const session = await admittedTurn(h);
+  await tokenStore.setToken("another-owner");
+  await tokenStore.setToken("synthetic-native-owner");
+  await expect(session.turn.request(h.rows[0]!)).rejects.toThrow("connection changed");
+  expect(turnCalls(h)).toHaveLength(0);
 });
