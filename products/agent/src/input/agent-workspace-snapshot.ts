@@ -6,7 +6,6 @@ import { describeMemoryPromptEligibility, isPromptActiveMemory } from '../agent/
 import { summarizeAgentBehaviorDiscovery } from '../agent/behavior-discovery-summary.ts';
 import { buildSetupWizardDurableReceipts } from '../agent/setup-wizard-artifact-receipts.ts';
 import { mergeSetupWizardDurableReceipts, setupWizardLiveDurableReceipts } from './setup-wizard-live-receipts.ts';
-import { setupStepHasSatisfyingReceipt } from '../agent/setup-wizard.ts';
 import { buildAgentWorkspaceChannelSetupGuide, buildAgentWorkspaceChannels } from './agent-workspace-channels.ts';
 import { buildAgentWorkspaceSetupChecklist } from './agent-workspace-setup.ts';
 import { buildAgentWorkspaceVoiceMediaReadiness } from './agent-workspace-voice-media.ts';
@@ -247,7 +246,6 @@ export function buildAgentWorkspaceRuntimeSnapshot(context: CommandContext): Age
     voiceProviders: voiceProviderDescriptors,
     mediaProviders: mediaProviderDescriptors,
   });
-  const connectedHostAuthReceiptReady = setupStepHasSatisfyingReceipt(durableSetupReceipts, 'connected-host-auth');
   const setupChecklist = buildAgentWorkspaceSetupChecklist({
     provider,
     model,
@@ -256,7 +254,6 @@ export function buildAgentWorkspaceRuntimeSnapshot(context: CommandContext): Age
     connectedHostTokenReadable: companionAccess.tokenReadable,
     connectedHostTokenPath: companionAccess.tokenPath,
     connectedHostTokenError: companionAccess.tokenError,
-    connectedHostAuthReceiptReady,
     activeSubscriptionCount: subscriptionSnapshot.active,
     pendingSubscriptionCount: subscriptionSnapshot.pending,
     availableSubscriptionProviderCount: subscriptionSnapshot.available,

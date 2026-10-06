@@ -165,7 +165,7 @@ describe('Agent setup wizard checkpoints', () => {
     ]);
   });
 
-  test('auto-advances setup rows from ready durable receipts without counting blocked receipts', () => {
+  test('keeps host and auth unverified despite historical ready receipts', () => {
     const receipts: readonly AgentSetupWizardDurableReceipt[] = [
       {
         stepId: 'connected-host-readiness',
@@ -216,9 +216,9 @@ describe('Agent setup wizard checkpoints', () => {
 
     expect(setupStepHasSatisfyingReceipt(receipts, 'runtime')).toBe(true);
     expect(setupStepHasSatisfyingReceipt(receipts, 'browser-pwa')).toBe(false);
-    expect(wizard.steps.find((step) => step.id === 'runtime')?.status).toBe('done');
-    expect(wizard.steps.find((step) => step.id === 'connected-host-auth')?.status).toBe('done');
-    expect(wizard.currentStepId).toBe('install-smoke');
+    expect(wizard.steps.find((step) => step.id === 'runtime')?.status).toBe('blocked');
+    expect(wizard.steps.find((step) => step.id === 'connected-host-auth')?.status).toBe('current');
+    expect(wizard.currentStepId).toBe('connected-host-auth');
     expect(wizard.steps.find((step) => step.id === 'browser-pwa')?.status).toBe('pending');
     expect(wizard._diagnostic.stepHistory.find((entry) => entry.receiptId === 'browser-blocked')).toMatchObject({
       kind: 'durable-receipt',

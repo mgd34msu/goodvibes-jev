@@ -22,7 +22,7 @@ export function installSmokePlan(
   authPosture: SetupConnectedHostAuthPosture,
 ): SetupInstallSmokePlan {
   const hostReady = serviceProbe.status === 'reachable';
-  const authReady = authPosture.operatorToken.usable;
+  const authReady = authPosture.nativeIntake.status === 'ready';
   const modelReady = providerAccess.selected;
   const checks: SetupInstallSmokeCheck[] = [
     {
@@ -41,11 +41,9 @@ export function installSmokePlan(
     },
     {
       id: 'connected-host-auth',
-      label: 'Connected-host operator auth usable',
+      label: 'Connected-host native intake auth verified',
       status: installSmokeCheckStatus(authReady),
-      evidence: authReady
-        ? `Operator token is usable (${authPosture.operatorToken.fingerprint ?? 'fingerprint unavailable'}).`
-        : `Operator token is ${authPosture.operatorToken.present ? 'present but not usable' : 'missing'} at ${authPosture.operatorToken.path}.`,
+      evidence: authPosture.nativeIntake.detail,
       route: 'setup action:"item" setupItemId:"connected-host-auth"',
     },
     {

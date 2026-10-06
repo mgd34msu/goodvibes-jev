@@ -1,9 +1,9 @@
 import { getOperatorContract } from '@goodvibes-jev/engine/sdk/contracts';
-import { requireShellPaths } from '../input/commands/runtime-services.ts';
+import { requirePlatform, requireShellPaths } from '../input/commands/runtime-services.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import type { CliServicePosture } from '../cli/service-posture.ts';
 import { connectedHostOperatorTokenFingerprint, readConnectedHostOperatorToken } from '../runtime/connected-host-auth.ts';
-import { previewHarnessText } from './agent-harness-text.ts';
+import { readConnectedHostReadiness } from '../runtime/connected-host-readiness.ts';
 import { operatorMethodRoute, provisionConnectedHostTokenRoute } from './agent-harness-setup-posture-utils.ts';
 import type { OperatorContractMethod, SetupBootstrapPlan, SetupConnectedHostAuthPosture, SetupPlanStatus, SetupRepairCard, SetupRepairCardEffect, SetupRepairLiveEvidence, SetupRepairOutcome, SetupRepairRecommendation, SetupRepairCardState, SetupServiceLifecycleDecision, SetupServiceProbe, SetupServiceProbeStatus } from './agent-harness-setup-posture-types.ts';
 import type { collectSnapshot } from './agent-harness-setup-posture-utils.ts';
@@ -63,21 +63,23 @@ export function hostSetupStatus(snapshot: Awaited<ReturnType<typeof collectSnaps
   return 'check';
 }
 
-export function connectedHostAuthPosture(
+export async function connectedHostAuthPosture(
   context: CommandContext,
   snapshot: Awaited<ReturnType<typeof collectSnapshot>>,
-): SetupConnectedHostAuthPosture {
+): Promise<SetupConnectedHostAuthPosture> {
   const shellPaths = requireShellPaths(context);
   const token = readConnectedHostOperatorToken(shellPaths.homeDirectory);
+  const nativeIntake = await readConnectedHostReadiness({ configManager: requirePlatform(context).configManager, homeDirectory: () => requireShellPaths(context).homeDirectory });
   const usable = Boolean(token.token);
   return {
     owner: 'connected-host',
+    nativeIntake,
     operatorToken: {
       present: token.present,
       usable,
       path: token.path,
       ...(token.token ? { fingerprint: connectedHostOperatorTokenFingerprint(token.token) } : {}),
-      ...(token.error ? { error: previewHarnessText(token.error, 120) } : {}),
+      ...(token.error ? { error: 'The local token record could not be read.' } : {}),
     },
     compatibilityAuth: {
       userStorePath: snapshot.auth.snapshot.userStorePath,
@@ -101,7 +103,7 @@ export function connectedHostAuthPosture(
 }
 
 export function connectedHostAuthStatus(posture: SetupConnectedHostAuthPosture): SetupPlanStatus {
-  if (!posture.operatorToken.usable) return 'blocked';
+  if (posture.nativeIntake.status !== 'ready') return 'blocked';
   if (posture.compatibilityAuth.bootstrapCredentialPresent) return 'check';
   return 'ready';
 }
@@ -113,6 +115,7 @@ export function connectedHostAuthNextAction(posture: SetupConnectedHostAuthPostu
   if (!posture.operatorToken.usable) {
     return 'Run the confirmed connected-host token provisioning route to repair the local token file, then rerun auth review and connected-host status.';
   }
+  if (posture.nativeIntake.status !== 'ready') return posture.nativeIntake.detail + ' Readable credentials and historical setup receipts do not establish native intake readiness.';
   if (posture.compatibilityAuth.bootstrapCredentialPresent) {
     return 'Review auth status and clear or rotate the compatibility bootstrap credential through the owning GoodVibes host if it is no longer needed.';
   }
@@ -121,7 +124,8 @@ export function connectedHostAuthNextAction(posture: SetupConnectedHostAuthPostu
 
 export function connectedHostAuthSignals(posture: SetupConnectedHostAuthPosture): readonly string[] {
   return [
-    `operator token: ${posture.operatorToken.usable ? 'usable' : posture.operatorToken.present ? 'present but unusable' : 'missing'} (${posture.operatorToken.path})`,
+    `native intake auth: ${posture.nativeIntake.status}; ${posture.nativeIntake.detail}`,
+    `operator token: ${posture.operatorToken.usable ? 'readable (not authority evidence)' : posture.operatorToken.present ? 'present but unusable' : 'missing'} (${posture.operatorToken.path})`,
     ...(posture.operatorToken.fingerprint ? [`operator token fingerprint: ${posture.operatorToken.fingerprint}`] : []),
     ...(posture.operatorToken.error ? [`operator token parse error: ${posture.operatorToken.error}`] : []),
     `token provisioning route: ${posture.routes.provisionTokenRoute}`,

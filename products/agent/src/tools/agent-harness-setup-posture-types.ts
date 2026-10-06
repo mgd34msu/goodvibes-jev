@@ -1,3 +1,4 @@
+import type { ConnectedHostReadiness } from '../runtime/connected-host-readiness.ts';
 import type { ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { OnboardingStep1CapabilityItem, OnboardingSurfaceRecord } from '../runtime/onboarding/index.ts';
 import type { AgentHarnessVibeHealth } from './agent-harness-vibe-health.ts';
@@ -116,6 +117,7 @@ export interface SetupServiceProbe {
 
 export interface SetupConnectedHostAuthPosture {
   readonly owner: 'connected-host';
+  readonly nativeIntake: ConnectedHostReadiness;
   readonly operatorToken: {
     readonly present: boolean;
     readonly usable: boolean;

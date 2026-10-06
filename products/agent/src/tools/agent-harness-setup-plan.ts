@@ -12,12 +12,12 @@ import { connectedHostAuthNextAction, connectedHostAuthPosture, connectedHostAut
 import { installSmokePlan, installSmokeSignals, setupCompletionMarkerExists } from './agent-harness-setup-smoke.ts';
 import type { SetupPlanItem } from './agent-harness-setup-posture-types.ts';
 
-export function buildSetupPlan(
+export async function buildSetupPlan(
   context: CommandContext,
   snapshot: Awaited<ReturnType<typeof collectSnapshot>>,
   capabilities: readonly OnboardingStep1CapabilityItem[],
   servicePosture: CliServicePosture | null,
-): readonly SetupPlanItem[] {
+): Promise<readonly SetupPlanItem[]> {
   const providerAccess = capabilityById(capabilities, 'provider-access');
   const agentKnowledge = capabilityById(capabilities, 'agent-knowledge');
   const localBehavior = capabilityById(capabilities, 'local-behavior');
@@ -31,7 +31,7 @@ export function buildSetupPlan(
   const localModels = localModelCookbook(context, true);
   const localModelReadiness = localModelSetupReadiness(localModels);
   const serviceProbe = connectedHostServiceProbe(servicePosture);
-  const authPosture = connectedHostAuthPosture(context, snapshot);
+  const authPosture = await connectedHostAuthPosture(context, snapshot);
   const smokePlan = installSmokePlan(providerAccess, serviceProbe, authPosture);
   const vibeHealth = agentHarnessVibeHealth(context);
   const sudoPosture = sudoExecutionPosture(context);
@@ -40,7 +40,8 @@ export function buildSetupPlan(
     {
       id: 'connected-host-readiness',
       label: 'Connected host readiness',
-      status: hostSetupStatus(snapshot, serviceProbe),
+      status: authPosture.nativeIntake.status === 'ready' && !snapshot.collectionIssues.some(issue => issue.area === 'host')
+        ? 'ready' : hostSetupStatus(snapshot, serviceProbe),
       priority: 10,
       blocksAutonomy: true,
       reason: 'Daemon-backed automation, Agent Knowledge, channels, and companion routes need a reachable compatible GoodVibes host.',
@@ -64,7 +65,7 @@ export function buildSetupPlan(
       status: connectedHostAuthStatus(authPosture),
       priority: 12,
       blocksAutonomy: true,
-      reason: 'Protected daemon routes, approvals, schedules, channels, and Agent Knowledge writes need a usable connected-host operator token from the canonical GoodVibes host token store.',
+      reason: 'Native intake needs a fresh selected-host check of a paired owner with read:work-ledger and write:work-ledger. Provider, workspace and Jev readiness are separate checks.',
       nextAction: connectedHostAuthNextAction(authPosture),
       userRoute: 'Agent Workspace -> Connected Host; /auth review',
       modelRoute: authPosture.operatorToken.usable

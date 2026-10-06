@@ -1,3 +1,4 @@
+import { isNativePairedPrincipal } from './native-paired-principal.ts';
 import { realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createOperatorSdk } from '@goodvibes-jev/engine/operator-sdk';
@@ -17,11 +18,10 @@ export function createNativeWorkSubmissionBinding(host: NativeSubmissionHost, pr
     readPrincipal: signal => operator.invoke('control.auth.current', {}, { signal }).then(auth => {
       // authMode is intentionally not consulted: shared and paired tokens share
       // that coarse label. This exact principal comes from the live host.
-      if (!auth.authenticated || !auth.admin || auth.principalKind !== 'token' || !auth.principalId || auth.principalId === 'shared-token'
-        || auth.principalId.length > 200 || !['read:work-ledger', 'write:work-ledger'].every(scope => auth.scopes.includes('*') || auth.scopes.includes(scope))) {
+      if (!isNativePairedPrincipal(auth)) {
         throw Object.assign(new Error('Native submission requires an existing paired principal'), { code: 'NATIVE_SUBMISSION_UNSUPPORTED_AUTHORITY' });
       }
-      return auth.principalId;
+      return auth.principalId!;
     }),
     readSnapshot: () => reader.readSnapshot(), dispose() {
     try { client.dispose(); } finally { try { reader.dispose(); } finally { operator.dispose(); } }
