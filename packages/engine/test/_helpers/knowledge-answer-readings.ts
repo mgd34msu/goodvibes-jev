@@ -19,6 +19,10 @@ export interface AnswerFixtureReadings {
   /** Exact candidate titles with authored activation readings. Unlisted candidates never receive an implicit yes. */
   activation?: ReadonlyArray<readonly [string, number]>;
   initialEvidence?: ReadonlyArray<readonly [string, number]>;
+  /** Exact authored evidence kind/title outcomes; no title-substring classifier. */
+  initialEvidenceCandidates?: ReadonlyArray<readonly ['source' | 'node', string, number]>;
+  /** Exact extraction-readability samples; other synthetic documents retain the existing readable default. */
+  readability?: ReadonlyArray<readonly [string, number]>;
   initialEvidenceDefault?: number;
   /** Authored fixture expectations keyed by exact device title, never a keyword classifier. */
   homeGraph?: ReadonlyArray<readonly [string, Readonly<Partial<Record<'batteryApplicable' | 'manualApplicable' | 'manufacturerPresent' | 'modelPresent' | 'batteryTypePresent', number>>>]>;
@@ -88,12 +92,17 @@ export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings,
       if (name === 'useful') {
         const text = JSON.stringify(state);
         if (typeof (state as { candidate?: { reference?: unknown } }).candidate?.reference === 'string') {
-          return noulAnswer(table.initialEvidence?.find(([snippet]) => text.includes(snippet))?.[1] ?? table.initialEvidenceDefault ?? 0.97);
+          const candidate = (state as { candidate: { kind?: string; title?: string } }).candidate;
+          return noulAnswer(table.initialEvidenceCandidates?.find(([kind, title]) => candidate.kind === kind && candidate.title === title)?.[2]
+            ?? table.initialEvidence?.find(([snippet]) => text.includes(snippet))?.[1] ?? table.initialEvidenceDefault ?? 0.97);
         }
         return noulAnswer(table.quality?.find(([snippet]) => text.includes(snippet))?.[1] ?? 0.97);
       }
       if (name === 'supported' || name === 'attached') return noulAnswer(0.99); // Explicit synthetic support fixtures; not a semantic evaluator.
-      if (name === 'readable') return noulAnswer(0.99); // The suite supplies readable synthetic documents.
+      if (name === 'readable') {
+        const sample = (state as { readonly sample: string }).sample;
+        return noulAnswer(table.readability?.find(([text]) => text === sample)?.[1] ?? 0.99);
+      }
       if (name === 'features') return noulAnswer(table.features ?? 0.97);
       if (name !== 'match') throw new Error(`Unexpected answer fixture question: ${name}`);
       const candidate = (state as { candidate: Record<string, unknown> }).candidate;

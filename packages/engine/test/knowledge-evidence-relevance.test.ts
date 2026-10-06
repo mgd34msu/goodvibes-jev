@@ -45,6 +45,26 @@ describe('initial evidence relevance reading foundation', () => {
     const result = await prepareAnswerEvidenceRelevance(input([high, low]));
     expect(result.accepted.map(({ reference }) => reference)).toEqual(['candidate-2']); expect(result.rejected[0]!.reference).toBe('candidate-1');
   });
+  test('separate subject identities preserve meaning without becoming candidate evidence', async () => {
+    const fake = readings();
+    const subjects = [{ title: 'AC-7', kind: 'device', aliases: ['Seven'], identity: {
+      manufacturer: 'Fixture', brand: 'Example', vendor: 'Supplier', model: 'AC-7', modelNumber: 'AC-7-EU',
+      variant: { region: 'Europe', mains: '230 V' },
+    } }];
+    await prepareAnswerEvidenceRelevance({ ...input(), subjects });
+    expect(fake.requests[0]!.state).toMatchObject({ subjects, candidate: candidate() });
+    expect(Object.isFrozen((fake.requests[0]!.state as { subjects: unknown[] }).subjects)).toBe(true);
+    expect(answerEvidenceRelevance.version).toBe(2);
+    expect(answerEvidenceRelevance.fixtures.some(fixture => fixture.name.includes('regional variant'))).toBe(true);
+  });
+  test('subject shape, bounds and protected late identity are checked before the first request', async () => {
+    const fake = readings(); const subject = { title: 'AC-7', kind: 'device', aliases: [] };
+    await held(prepareAnswerEvidenceRelevance({ ...input(), subjects: Array.from({ length: 25 }, () => subject) }), 'budget');
+    await held(prepareAnswerEvidenceRelevance({ ...input(), subjects: [{ ...subject, identity: { arbitraryAdminData: 'not a subject field' } }] }), 'malformed');
+    await expect(prepareAnswerEvidenceRelevance({ ...input(), subjects: [subject, { ...subject, identity: { variant: { note: 'Card 4111111111111111' } } }] }))
+      .rejects.toBeInstanceOf(JudgmentInputError);
+    expect(fake.requests).toHaveLength(0);
+  });
   test('settled rejection returns no evidence while uncertainty holds the complete pass', async () => {
     readings(() => 0.01); expect((await prepareAnswerEvidenceRelevance(input())).accepted).toEqual([]);
     readings((state) => (state as { candidate: { reference: string } }).candidate.reference === 'candidate-2' ? 0.6 : 0.99);

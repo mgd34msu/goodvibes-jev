@@ -1,13 +1,17 @@
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
-useKnowledgeAnswerReadings();
-import { useExtractionReadings } from './_helpers/extraction-readings.js';
-
-useExtractionReadings();
+const readings = useKnowledgeAnswerReadings();
+beforeEach(() => readings.set({
+  initialEvidenceDefault: 0.01,
+  initialEvidenceCandidates: [['source', 'LG 86NANO90UNA manual', 0.99]],
+  objectAlignment: [{ query: 'What features does the TV have?', objects: [
+    { title: 'Living Room TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 },
+  ] }],
+}));
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { ArtifactStore } from '../sdk/src/platform/artifacts/index.js';
 import {
   HomeGraphService,

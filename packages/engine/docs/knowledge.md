@@ -556,10 +556,14 @@ of returning raw snippets. The response includes answer text, sources, linked HA
 object references, extracted facts, and gaps when the graph cannot answer the
 question.
 
-Home Graph passes strict semantic answer candidates after its object-scoped
-search, so a question about one device cannot pull in another device's manual
-only because both manuals contain generic words such as "features" or
-"supports".
+Home Graph passes its existing bounded retrieval candidates directly to the
+shared semantic answer service, which reads object/integration alignment and
+source relevance without a second caller-side keyword/point scope. Without
+that service, typed object and result-to-subject readings filter the literal
+rendering; missing or unsettled readers hold, and confidence is zero (unknown).
+Search ranking and extraction-repair selection still retain upstream heuristics;
+this narrower conversion does not claim to replace all Home Graph retrieval.
+See [the bounded scope audit](../../../docs/audit/knowledge-home-graph-object-scope.md).
 
 Object anchoring is limited to Home Assistant graph objects; generated semantic
 pages and extracted fact nodes never become anchors for another ask query. This
