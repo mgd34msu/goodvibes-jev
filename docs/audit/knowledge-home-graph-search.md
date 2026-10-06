@@ -76,7 +76,9 @@ in-scope indexed, non-generated support for factual nodes. The same captured
 source set bounds reference-header projection, so an active fact cannot expose
 stale or foreign source context after its support changes. Excluded rows remain
 in the local change guard. Existing generated-page and active-record filters
-remain in place. Shared reader dispatch checks
+remain in place. Unindexed documentation-candidate rows without extraction
+retain their original deterministic exclusion; relevance cannot override that
+serving boundary. Shared reader dispatch checks
 run immediately before `port.ask`, including later candidates and spans.
 
 An internal candidate-window handoff carries the completed search decision into

@@ -353,3 +353,57 @@ test('summary readability receives deadline cancellation before excerpt dispatch
   expect(signal?.aborted).toBe(true);
   expect(fake.requests.some(request => 'excerptUseful' in request.questions)).toBe(false);
 });
+
+test.each([
+  { label: 'pending unindexed suggestion', status: 'pending', suggestion: true, extraction: false, admitted: false },
+  { label: 'failed unindexed suggestion', status: 'failed', suggestion: true, extraction: false, admitted: false },
+  { label: 'indexed suggestion', status: 'indexed', suggestion: true, extraction: false, admitted: true },
+  { label: 'pending extracted suggestion', status: 'pending', suggestion: true, extraction: true, admitted: true },
+  { label: 'ordinary pending source', status: 'pending', suggestion: false, extraction: false, admitted: true },
+] as const)('$label preserves the exact documentation serving boundary under all-yes readings', async (scenario) => {
+  const { store, source } = await fixture();
+  const validSummary = 'The indexed manual has usable reset instructions.';
+  await store.upsertSource({ ...source, summary: validSummary });
+  const candidateSummary = `Fixture metadata for ${scenario.label}.`;
+  const candidate = await store.upsertSource({
+    id: 'candidate', connectorId: 'fixture', sourceType: 'url', title: scenario.label,
+    summary: candidateSummary, status: scenario.status,
+    metadata: { knowledgeSpaceId: spaceId, ...(scenario.suggestion ? { homeGraphSourceKind: 'documentation-candidate' } : {}) },
+  });
+  if (scenario.extraction) await store.upsertExtraction({
+    sourceId: candidate.id, extractorId: 'fixture', format: 'text', excerpt: 'A documented switch resets the device.',
+    metadata: { knowledgeSpaceId: spaceId },
+  });
+  const fake = fakePort(() => noulAnswer(0.99));
+  installJudgmentPort(fake.port);
+  const selection = await readHomeGraphSearchSelection({
+    store, spaceId, query: { query: 'Reset procedure' }, state: readHomeGraphSearchState(store, spaceId),
+  });
+  const state = (value: unknown) => value as { candidate?: { title?: string }; source?: { title?: string }; sample?: string };
+  const hasUseful = (title: string) => fake.requests.some(request => 'useful' in request.questions && state(request.state).candidate?.title === title);
+  const hasExcerpt = (title: string) => fake.requests.some(request => 'excerptUseful' in request.questions && state(request.state).source?.title === title);
+  const hasReadable = (sample: string) => fake.requests.some(request => 'readable' in request.questions && state(request.state).sample === sample);
+  expect(selection.results.some(row => row.id === source.id)).toBe(true);
+  expect(hasUseful(source.title!)).toBe(true);
+  expect(hasExcerpt(source.title!)).toBe(true);
+  expect(hasReadable(validSummary)).toBe(true);
+  expect(selection.results.some(row => row.id === candidate.id)).toBe(scenario.admitted);
+  expect(hasUseful(candidate.title!)).toBe(scenario.admitted);
+  expect(hasExcerpt(candidate.title!)).toBe(scenario.admitted);
+  expect(hasReadable(candidateSummary)).toBe(scenario.admitted);
+});
+
+test('excluded documentation suggestions retain complete preflight before any dispatch', async () => {
+  const { store } = await fixture();
+  await store.upsertSource({
+    id: 'private-suggestion', connectorId: 'fixture', sourceType: 'url', title: 'Unindexed suggestion', status: 'pending',
+    summary: 'Authorization: Bearer synthetic-suggestion',
+    metadata: { knowledgeSpaceId: spaceId, homeGraphSourceKind: 'documentation-candidate' },
+  });
+  const fake = fakePort(() => noulAnswer(0.99));
+  installJudgmentPort(fake.port);
+  await expect(readHomeGraphSearchSelection({
+    store, spaceId, query: { query: 'Reset procedure' }, state: readHomeGraphSearchState(store, spaceId),
+  })).rejects.toMatchObject({ problem: 'credential-material' });
+  expect(fake.requests).toHaveLength(0);
+});

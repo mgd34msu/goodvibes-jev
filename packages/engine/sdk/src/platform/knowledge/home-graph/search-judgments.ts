@@ -102,6 +102,10 @@ export async function readHomeGraphSearchSelection(input: {
         const uris = knowledgeSourceJudgmentUris(source);
         assertJudgmentInput({ title: original.title, summary: original.summary, description: original.description,
           sourceType: original.sourceType, tags: original.tags, uris });
+        // Preserve the producer's unindexed suggestion boundary. A relevance
+        // yes is not permission to serve a documentation candidate as evidence.
+        if (!extraction && source.status !== 'indexed'
+          && source.metadata.homeGraphSourceKind === 'documentation-candidate') continue;
         const text = sourceSemanticText({ ...original, ...uris }, extraction);
         const item = { kind: 'source' as const, id: source.id, title: source.title ?? source.sourceUri ?? source.id, score: 0, source };
         const candidate = initialEvidenceCandidate({ ...item, facts: [] }, `candidate-${items.length + 1}`, text, input.store, guard);

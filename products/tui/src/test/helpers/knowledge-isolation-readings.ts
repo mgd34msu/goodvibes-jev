@@ -32,18 +32,6 @@ export function knowledgeIsolationAnswer(name: string, state: unknown) {
   };
   const candidateKey = `${input.candidate?.kind ?? ''}:${input.candidate?.nodeKind ?? ''}:${input.candidate?.title ?? ''}`;
   if (name === 'useful' && input.query === 'where is the isolation light?' && Object.hasOwn(relevance, candidateKey)) return noulAnswer(relevance[candidateKey]!);
-  // Complete HomeGraph discovery also reads this exact unindexed suggestion.
-  // It supplies no location evidence for the Isolation Light question.
-  if (name === 'useful' && input.query === 'where is the isolation light?'
-    && input.candidate?.kind === 'source' && input.candidate.sourceType === 'url'
-    && input.candidate.title === 'integration-light Home Assistant documentation'
-    && input.candidate.text === [
-      'integration-light Home Assistant documentation',
-      'Suggested documentation source for the integration-light Home Assistant integration.',
-      'https://www.home-assistant.io/integrations/integration-light/',
-      'homeassistant home-graph documentation suggested-source integration-light home-assistant-docs',
-    ].join('\n\n')
-    && input.candidate.facts?.length === 0) return noulAnswer(0.01);
   if (name === 'excerptUseful' && input.query === 'where is the isolation light?' && input.candidate?.text === 'Home Assistant entity, device, area, automation, script, scene, label, and integration snapshot.') return noulAnswer(0.01);
   const objects: Readonly<Record<string, Readonly<Record<string, number>>>> = {
     'ha_entity:Isolation Light': { concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 },
