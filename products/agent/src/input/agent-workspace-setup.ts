@@ -18,7 +18,6 @@ export interface AgentWorkspaceSetupChecklistInput {
   readonly connectedHostTokenReadable: boolean;
   readonly connectedHostTokenPath: string;
   readonly connectedHostTokenError?: string | null;
-  readonly connectedHostAuthReceiptReady?: boolean;
   readonly activeSubscriptionCount: number;
   readonly pendingSubscriptionCount: number;
   readonly availableSubscriptionProviderCount: number;
@@ -58,36 +57,24 @@ function sampleNames(summary: AgentBehaviorDiscoverySummary): string {
 
 export function buildAgentWorkspaceSetupChecklist(input: AgentWorkspaceSetupChecklistInput): readonly AgentWorkspaceSetupChecklistItem[] {
   const providerReady = input.provider !== 'unknown' && input.model !== 'unknown';
-  const tokenPathKnown = input.connectedHostTokenPath !== '(Agent home unavailable)';
-  const connectedHostAuthReceiptReady = input.connectedHostAuthReceiptReady === true;
-  const connectedHostAuthStatus: AgentWorkspaceSetupStatus = input.connectedHostTokenReadable || connectedHostAuthReceiptReady
-    ? 'ready'
-    : tokenPathKnown
-      ? 'blocked'
-      : 'recommended';
+  // A synchronous snapshot has no fresh host-bound authority evidence.
+  const connectedHostAuthStatus: AgentWorkspaceSetupStatus = input.connectedHostTokenReadable || input.connectedHostTokenPath === '(Agent home unavailable)'
+    ? 'recommended' : 'blocked';
   const hasActivePersona = input.activePersonaName !== '(none)' && input.activePersonaName !== '(unavailable)';
   const discoveredBehaviorCount = input.discoveredPersonas.count + input.discoveredSkills.count + input.discoveredRoutines.count;
   return [
     {
       id: 'runtime',
       label: 'Connected host',
-      status: 'ready',
-      detail: `Agent will connect to ${input.runtimeBaseUrl}; protected host routes also need the Agent companion token below.`,
+      status: 'recommended',
+      detail: `Unverified: Agent is configured to connect to ${input.runtimeBaseUrl}; protected host routes also need the Agent companion token below.`,
       breadcrumb: 'Connected Host',
     },
     {
       id: 'connected-host-auth',
       label: 'Connected-host auth',
       status: connectedHostAuthStatus,
-      detail: connectedHostAuthReceiptReady
-        ? `Durable connected-host auth receipt is ready${input.connectedHostTokenReadable ? ` and Agent has a readable operator token at ${input.connectedHostTokenPath}` : ''}.`
-        : input.connectedHostTokenReadable
-        ? `Agent has a readable connected-host operator token at ${input.connectedHostTokenPath}.`
-        : input.connectedHostTokenError
-          ? `The connected-host operator token exists but cannot be read at ${input.connectedHostTokenPath}. Use the confirmed setup token provisioning route, then rerun auth review.`
-          : tokenPathKnown
-            ? `Provision Agent's local connected-host operator token at ${input.connectedHostTokenPath} before pairing channels, Knowledge, schedules, or protected daemon routes.`
-            : 'Shell paths are unavailable in this runtime, so connected-host auth cannot be verified from the workspace snapshot.',
+      detail: 'Unverified: run asynchronous setup status to check the selected host and current credential. A readable token or historical receipt does not prove a paired owner for native intake.',
       breadcrumb: 'Connected Host',
     },
     {

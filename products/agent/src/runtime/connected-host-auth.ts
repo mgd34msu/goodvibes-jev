@@ -44,8 +44,9 @@ export function readConnectedHostOperatorToken(homeDirectory: string): Connected
       ? parsed.token
       : null;
     return { path, present: true, token };
-  } catch (error) {
-    return { path, present: true, token: null, error: error instanceof Error ? error.message : String(error) };
+  } catch {
+    // Parser diagnostics can quote the secret-bearing source text.
+    return { path, present: true, token: null, error: 'Connected-host token record could not be read.' };
   }
 }
 

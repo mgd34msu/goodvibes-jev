@@ -415,6 +415,8 @@ function applyDurableReceiptStatus(
 ): readonly AgentSetupWizardSourceItem[] {
   if (receipts.length === 0) return items;
   return items.map((item) => {
+    // Historical receipts are useful history, never fresh host/auth authority.
+    if (['runtime', 'connected-host-readiness', 'connected-host-auth'].includes(item.id)) return item;
     const receipt = latestSatisfyingReceipt(receipts, item.id);
     if (!receipt) return item;
     return {
@@ -537,7 +539,7 @@ function buildCloseout(input: {
   const critical = new Set(input.criticalStepIds);
   const primaryBlocker = input.items.find((item) => (
     critical.has(item.id) && item.status === 'blocked'
-  )) ?? null;
+  )) ?? input.items.find((item) => critical.has(item.id) && item.status !== 'ready') ?? null;
   const smokeReady = input.setupSmokeReceiptReady
     || (input.smokeHistory.status === 'available' && input.smokeHistory.latestResult === 'ready-for-user-run');
   const latestSmoke = input.smokeHistory.status === 'available'

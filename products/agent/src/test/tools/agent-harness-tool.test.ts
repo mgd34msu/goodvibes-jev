@@ -729,6 +729,14 @@ async function withTcpListener<T>(fn: (port: number) => Promise<T>): Promise<T> 
   }
 }
 
+async function withPairedHost<T>(fn: (port: number) => Promise<T>): Promise<T> {
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
+    if (new URL(request.url).pathname !== '/api/control-plane/auth' || request.headers.get('authorization') !== 'Bearer fixture-connected-host-token') return new Response('unsupported fixture request', { status: 404 });
+    return Response.json({ authenticated: true, authMode: 'shared-token', tokenPresent: true, authorizationHeaderPresent: true, sessionCookiePresent: false, principalId: 'synthetic-paired-owner', principalKind: 'token', admin: true, scopes: ['read:work-ledger', 'write:work-ledger'], roles: [] });
+  } });
+  try { return await withClearedEnv(CONNECTED_HOST_AUTH_ENV_KEYS, () => fn(server.port!)); } finally { server.stop(true); }
+}
+
 function writeConnectedHostOperatorToken(fixture: HarnessFixture, token = 'fixture-connected-host-token'): void {
   writeFileSync(join(fixture.root, '.goodvibes', 'daemon', 'operator-tokens.json'), `${JSON.stringify({ token })}\n`, { mode: 0o600 });
 }
@@ -1478,7 +1486,7 @@ describe('agent_harness tool', () => {
     }
   });
 
-  test('auto-advances setup wizard rows from durable setup receipt artifacts', async () => {
+  test('retains durable receipts as history without upgrading live host or auth readiness', async () => {
     const artifacts = createHarnessArtifactStore();
     await artifacts.store.create({
       text: '{}',
@@ -1540,9 +1548,9 @@ describe('agent_harness tool', () => {
       }>(fixture, { mode: 'setup_posture', includeParameters: true });
 
       const steps = new Map(posture.setupWizard.steps.map((step) => [step.id, step]));
-      expect(steps.get('connected-host-readiness')?.status).toBe('done');
-      expect(steps.get('connected-host-readiness')?.detail).toContain('Durable receipt svc-ready');
-      expect(steps.get('connected-host-auth')?.status).toBe('done');
+      expect(steps.get('connected-host-readiness')?.status).toBe('blocked');
+      expect(steps.get('connected-host-readiness')?.detail).not.toContain('Durable receipt svc-ready');
+      expect(steps.get('connected-host-auth')?.status).toBe('current');
       expect(steps.get('install-smoke')?.status).toBe('done');
       expect(posture.setupWizard._diagnostic.stepHistory.filter((entry) => entry.kind === 'durable-receipt')).toHaveLength(3);
       expect(posture.setupWizard._diagnostic.stepHistory.every((entry) => entry.satisfiesReceipt === true)).toBe(true);
@@ -1553,7 +1561,7 @@ describe('agent_harness tool', () => {
     }
   });
 
-  test('auto-advances setup wizard rows from live setup receipt read models', async () => {
+  test('retains read-model receipts without upgrading live host or auth readiness', async () => {
     const fixture = makeFixture();
     try {
       const readModels = fixture.context.platform.readModels as unknown as Record<string, unknown>;
@@ -1635,9 +1643,9 @@ describe('agent_harness tool', () => {
       }>(fixture, { mode: 'setup_posture', includeParameters: true });
 
       const steps = new Map(posture.setupWizard.steps.map((step) => [step.id, step]));
-      expect(steps.get('connected-host-readiness')?.status).toBe('done');
-      expect(steps.get('connected-host-readiness')?.detail).toContain('live-svc-ready');
-      expect(steps.get('connected-host-auth')?.status).toBe('done');
+      expect(steps.get('connected-host-readiness')?.status).toBe('blocked');
+      expect(steps.get('connected-host-readiness')?.detail).not.toContain('live-svc-ready');
+      expect(steps.get('connected-host-auth')?.status).toBe('current');
       expect(steps.get('connected-host-auth')?.detail).not.toContain('hidden-live-secret');
       expect(steps.get('install-smoke')?.status).toBe('done');
       const durableHistory = posture.setupWizard._diagnostic.stepHistory.filter((entry: { kind: string; receiptId: string }) => entry.kind === 'durable-receipt');
@@ -1742,19 +1750,11 @@ describe('agent_harness tool', () => {
         };
         readonly currentStep: { readonly id: string; readonly status: string } | null;
       }>(fixture, { mode: 'setup_checkpoint' });
-      expect(advanced.checkpoint.status).toBe('stale');
-      expect(advanced.checkpoint.resumed).toBe(false);
-      expect(advanced.checkpoint.summary).toContain('already ready');
-      expect(advanced.checkpoint.autoAdvance).toMatchObject({
-        status: 'advanced',
-        fromStepId: 'connected-host-auth',
-        fromStepLabel: 'Connected-host auth',
-      });
-      expect(advanced.checkpoint.autoAdvance?.toStepId).not.toBe('connected-host-auth');
-      expect(advanced.checkpoint.autoAdvance?.reason).toContain('advanced');
-      expect(advanced.checkpoint.autoAdvance?.evidence).toContain('source status is ready');
-      expect(advanced.checkpoint.autoAdvance?.clearRoute).toContain('setup action:"clear_checkpoint"');
-      expect(advanced.currentStep?.id).not.toBe('connected-host-auth');
+      expect(advanced.checkpoint.status).toBe('available');
+      expect(advanced.checkpoint.resumed).toBe(true);
+      expect(advanced.checkpoint.summary).toContain('Resuming Connected-host auth');
+      expect(advanced.checkpoint.autoAdvance?.status).not.toBe('advanced');
+      expect(advanced.currentStep?.id).toBe('connected-host-auth');
 
       const workspaceSaved = await executeHarnessJson<{
         readonly status: string;
@@ -2985,7 +2985,7 @@ describe('agent_harness tool', () => {
   });
 
   test('promotes ready setup smoke evidence into a confirmed setup closeout path', async () => {
-    await withTcpListener(async (port) => {
+    await withPairedHost(async (port) => {
       const artifacts = createHarnessArtifactStore();
       const fixture = makeFixture({ artifactStore: artifacts.store, controlPlaneEnabled: true, controlPlanePort: port });
       try {
@@ -3081,6 +3081,23 @@ describe('agent_harness tool', () => {
         fixture.cleanup();
       }
     });
+  });
+
+  test('verified native auth does not upgrade an unconfigured provider', async () => {
+    await withClearedEnv(PROVIDER_AUTH_ENV_KEYS, () => withPairedHost(async (port) => {
+      const fixture = makeFixture({ controlPlaneEnabled: true, controlPlanePort: port });
+      try {
+        writeConnectedHostOperatorToken(fixture);
+        const posture = await executeHarnessJson<{
+          readonly readinessPlan: readonly { readonly setupItemId: string; readonly status: string }[];
+          readonly setupCloseout: { readonly status: string; readonly primaryStepId: string };
+        }>(fixture, { mode: 'setup_posture', includeParameters: true });
+        const plan = new Map(posture.readinessPlan.map(item => [item.setupItemId, item.status]));
+        expect(plan.get('connected-host-auth')).toBe('ready');
+        expect(plan.get('provider-access')).toBe('blocked');
+        expect(posture.setupCloseout).toMatchObject({ status: 'blocked', primaryStepId: 'provider-access' });
+      } finally { fixture.cleanup(); }
+    }));
   });
 
   test('uses live service probes before recommending connected-host lifecycle repair', async () => {
@@ -3314,8 +3331,8 @@ describe('agent_harness tool', () => {
           };
         }>(fixture, { mode: 'setup_item', setupItemId: 'connected-host-auth' });
 
-        expect(ready.status).toBe('ready');
-        expect(ready.signals?.join('\n')).toContain('operator token: usable');
+        expect(ready.status).toBe('blocked');
+        expect(ready.signals?.join('\n')).toContain('operator token: readable (not authority evidence)');
         expect(ready.authPosture?.operatorToken.present).toBe(true);
         expect(ready.authPosture?.operatorToken.usable).toBe(true);
         expect(ready.authPosture?.operatorToken.fingerprint).toHaveLength(12);
@@ -3429,7 +3446,7 @@ describe('agent_harness tool', () => {
             mode: 'setup_item',
             setupItemId: 'connected-host-auth',
           });
-          expect(auth.status).toBe('ready');
+          expect(auth.status).toBe('blocked');
         } finally {
           reachableHost.cleanup();
         }

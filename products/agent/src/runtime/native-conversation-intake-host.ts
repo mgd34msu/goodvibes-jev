@@ -1,3 +1,4 @@
+import { isNativePairedPrincipal } from './native-paired-principal.ts';
 import { createOperatorNativeWorkExecutionClient } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client';
 import { createOperatorSdk, type OperatorRemoteClient } from '@goodvibes-jev/engine/operator-sdk';
 import { createOperatorNativeConversationIntakeClient } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client';
@@ -22,11 +23,10 @@ export function createNativeConversationIntakeBinding(host: NativeSubmissionHost
     client, execution,
     async readPrincipal(signal) {
       const auth = await invoke('control.auth.current', {}, { signal });
-      if (!auth.authenticated || !auth.admin || auth.principalKind !== 'token' || !auth.principalId || auth.principalId === 'shared-token'
-        || auth.principalId.length > 200 || !['read:work-ledger', 'write:work-ledger'].every(scope => auth.scopes.includes('*') || auth.scopes.includes(scope))) {
+      if (!isNativePairedPrincipal(auth)) {
         throw new Error('Native intake requires an existing paired principal');
       }
-      return auth.principalId;
+      return auth.principalId!;
     },
     dispose() { try { client.dispose(); } finally { execution.dispose(); } },
   };

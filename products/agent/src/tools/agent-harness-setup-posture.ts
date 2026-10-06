@@ -18,7 +18,7 @@ import { collectServicePosture, collectSnapshot, itemSearchText, lookupFromArgs,
 export async function setupPostureCatalogStatus(context: CommandContext): Promise<Record<string, unknown>> {
   const snapshot = await collectSnapshot(context);
   const servicePosture = await collectServicePosture(context);
-  const plan = buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
+  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
   const setupSmokeEvidence = latestSetupSmokeEvidence(context);
   const setupSmokeHistory = setupSmokeEvidenceHistory(context);
   const setupWizard = buildSetupWizard(plan, context);
@@ -42,7 +42,7 @@ export async function setupPostureCatalogStatus(context: CommandContext): Promis
 export async function setupRepairSummary(context: CommandContext, args: AgentHarnessSetupArgs): Promise<Record<string, unknown>> {
   const snapshot = await collectSnapshot(context);
   const servicePosture = await collectServicePosture(context);
-  const plan = buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
+  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
   const setupWizard = buildSetupWizard(plan, context);
   const includeParameters = args.includeParameters === true;
   const target = setupRepairTarget(plan, setupWizard, args);
@@ -103,7 +103,7 @@ export async function setupPostureSummary(context: CommandContext, args: AgentHa
   const query = readString(args.query).toLowerCase();
   const includeParameters = args.includeParameters === true;
   const all = deriveStep1Capabilities(snapshot);
-  const plan = buildSetupPlan(context, snapshot, all, servicePosture);
+  const plan = await buildSetupPlan(context, snapshot, all, servicePosture);
   const setupSmokeEvidence = latestSetupSmokeEvidence(context);
   const setupSmokeHistory = setupSmokeEvidenceHistory(context);
   const setupWizard = buildSetupWizard(plan, context);
@@ -171,7 +171,7 @@ export async function setupPostureSummary(context: CommandContext, args: AgentHa
 export async function setupCheckpointSummary(context: CommandContext): Promise<Record<string, unknown>> {
   const snapshot = await collectSnapshot(context);
   const servicePosture = await collectServicePosture(context);
-  const plan = buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
+  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
   const setupWizard = buildSetupWizard(plan, context);
   return {
     mode: 'setup_checkpoint',
@@ -198,7 +198,7 @@ export async function setupCheckpointSummary(context: CommandContext): Promise<R
 export async function markSetupCheckpoint(context: CommandContext, args: AgentHarnessSetupArgs): Promise<Record<string, unknown>> {
   const snapshot = await collectSnapshot(context);
   const servicePosture = await collectServicePosture(context);
-  const plan = buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
+  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
   const setupWizard = buildSetupWizard(plan, context);
   const requestedStepId = readString(args.setupItemId);
   const step = requestedStepId
@@ -434,7 +434,7 @@ export async function runSetupInstallSmoke(context: CommandContext, args: AgentH
 
   const snapshot = await collectSnapshot(context);
   const servicePosture = await collectServicePosture(context);
-  const plan = buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
+  const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
   const installSmoke = plan.find((item) => item.id === 'install-smoke');
   const smokePlan = installSmoke?.installSmokePlan;
   if (!smokePlan) {
@@ -503,7 +503,7 @@ export async function describeHarnessSetupItem(context: CommandContext, args: Ag
   const snapshot = await collectSnapshot(context);
   const servicePosture = await collectServicePosture(context);
   const items = deriveStep1Capabilities(snapshot);
-  const plan = buildSetupPlan(context, snapshot, items, servicePosture);
+  const plan = await buildSetupPlan(context, snapshot, items, servicePosture);
   const normalized = lookup.input.toLowerCase();
   const exact = items.find((item) => item.id === lookup.input);
   if (exact) return { status: 'found', item: describeItem(exact, snapshot, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'id' } }) };

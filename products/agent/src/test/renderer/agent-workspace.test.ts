@@ -575,7 +575,7 @@ describe('renderAgentWorkspace', () => {
     expect(output).toContain('of 13 done');
     expect(output).toContain('Chat: openai-subscriber / GPT-5.5.');
     expect(output).toContain('Local: 1 personas, 1 skills, 1 routines, 1 memories.');
-    expect(output).toContain('Next: Agent Knowledge (recommended)');
+    expect(output).toContain('Next: Connected host (recommended)');
     expect(output).toContain('Setting');
     expect(output).toContain('Default');
     expect(output).toContain('Current');

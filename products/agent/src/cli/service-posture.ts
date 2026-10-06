@@ -188,7 +188,7 @@ export async function buildCliServicePosture(
       binding,
       bindPosture: classifyBindPosture(binding),
       networkFacing: isNetworkFacing(enabled, binding),
-      ...(options.probe && enabled ? { reachable: await probeTcp(binding.host, binding.port) } : {}),
+      ...(options.probe && enabled && resolveConnectedHostDialEnabled(runtime.configManager) ? { reachable: await probeTcp(binding.host, binding.port) } : {}),
     };
   }));
 

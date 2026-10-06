@@ -4,6 +4,8 @@ Product-facing release notes for GoodVibes Agent.
 
 ## Unreleased
 
+- Require a fresh selected-host paired-owner check for native intake setup readiness. Token readability, old receipts and saved checkpoints no longer upgrade live host/auth readiness; synchronous workspace snapshots stay unverified, and disabled dialing makes no readiness probe.
+
 - Reuse the shared contract lifecycle bridge so explicitly enabled Slack/Discord notifications retain task names on passed, failed and cancelled work. Restricted notifications still omit content; local contract lines and follow-ups use the same canonical labels.
 
 - Added explicit complete-source JSON-file submission with durable principal-bound request identity, crash-safe original-ID lookup/replay, and separate execution controls.

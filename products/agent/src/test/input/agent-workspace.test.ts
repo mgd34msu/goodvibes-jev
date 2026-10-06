@@ -2785,7 +2785,7 @@ describe('AgentWorkspace', () => {
     } as unknown as CommandContext);
     const byId = new Map(snapshot.setupChecklist.map((item) => [item.id, item]));
 
-    expect(byId.get('runtime')?.status).toBe('ready');
+    expect(byId.get('runtime')?.status).toBe('recommended');
     expect(byId.get('connected-host-auth')?.status).toBe('recommended');
     expect(byId.get('connected-host-auth')?.breadcrumb).toBe('Connected Host');
     expect(byId.get('provider-model')?.status).toBe('ready');
@@ -2803,7 +2803,7 @@ describe('AgentWorkspace', () => {
     expect(JSON.stringify(snapshot.setupChecklist)).not.toContain('SLACK_BOT_TOKEN');
   });
 
-  test('promotes setup checklist rows from durable setup receipt artifacts', () => {
+  test('keeps synchronous host auth unverified despite durable setup artifacts', () => {
     const configValues = new Map<string, unknown>([
       ['controlPlane.host', '127.0.0.1'],
       ['controlPlane.port', 3421],
@@ -2869,13 +2869,13 @@ describe('AgentWorkspace', () => {
     } as unknown as CommandContext);
     const byId = new Map(snapshot.setupChecklist.map((item) => [item.id, item]));
 
-    expect(byId.get('connected-host-auth')?.status).toBe('ready');
-    expect(byId.get('connected-host-auth')?.detail).toContain('Durable connected-host auth receipt is ready');
+    expect(byId.get('connected-host-auth')?.status).toBe('recommended');
+    expect(byId.get('connected-host-auth')?.detail).toContain('Unverified:');
     expect(snapshot.setupWizard._diagnostic.stepHistory.filter((entry) => entry.kind === 'durable-receipt')).toHaveLength(3);
     expect(snapshot.setupWizard._diagnostic.receiptGaps.map((gap) => gap.stepId)).toEqual(['runtime']);
   });
 
-  test('promotes setup checklist rows from live daemon setup receipt read models', () => {
+  test('keeps synchronous host auth unverified despite daemon receipt read models', () => {
     const configValues = new Map<string, unknown>([
       ['controlPlane.host', '127.0.0.1'],
       ['controlPlane.port', 3421],
@@ -2933,8 +2933,8 @@ describe('AgentWorkspace', () => {
     const byId = new Map(snapshot.setupChecklist.map((item) => [item.id, item]));
     const wizardSteps = new Map(snapshot.setupWizard.steps.map((step) => [step.id, step]));
 
-    expect(byId.get('connected-host-auth')?.status).toBe('ready');
-    expect(wizardSteps.get('connected-host-auth')?.detail).toContain('live-auth-ready');
+    expect(byId.get('connected-host-auth')?.status).toBe('recommended');
+    expect(wizardSteps.get('connected-host-auth')?.detail).toContain('Unverified:');
     expect(wizardSteps.get('connected-host-auth')?.detail).not.toContain('super-secret');
     const durableHistory = snapshot.setupWizard._diagnostic.stepHistory.filter((entry) => entry.kind === 'durable-receipt');
     expect(durableHistory).toHaveLength(3);
@@ -4288,7 +4288,7 @@ describe('AgentWorkspace', () => {
     const shellPaths = createShellPathService({ workingDirectory, homeDirectory });
 
     // Write a readable connected-host operator token so that connected-host-auth resolves to
-    // 'ready' in buildAgentWorkspaceSetupChecklist. Without this, connected-host-auth is also
+    // 'recommended' (unverified) in buildAgentWorkspaceSetupChecklist. Without this, connected-host-auth is also
     // blocked and becomes the resume target (category 'setup'), not provider-model.
     const tokenDir = join(homeDirectory, '.goodvibes', 'daemon');
     mkdirSync(tokenDir, { recursive: true });
@@ -4326,7 +4326,7 @@ describe('AgentWorkspace', () => {
     mkdirSync(workingDirectory, { recursive: true });
     mkdirSync(homeDirectory, { recursive: true });
     const shellPaths = createShellPathService({ workingDirectory, homeDirectory });
-    // Write the operator token so connected-host-auth is 'ready', leaving provider-access as the blocker.
+    // Write the operator token so connected-host-auth is unverified but not missing, leaving provider-access as the blocker.
     const tokenDir = join(homeDirectory, '.goodvibes', 'daemon');
     mkdirSync(tokenDir, { recursive: true });
     writeFileSync(connectedHostOperatorTokenPath(homeDirectory), JSON.stringify({ token: 'test-operator-token' }), 'utf-8');
@@ -4513,7 +4513,7 @@ describe('AgentWorkspace', () => {
     mkdirSync(homeDirectory, { recursive: true });
     const shellPaths = createShellPathService({ workingDirectory, homeDirectory });
 
-    // Write operator token so connected-host-auth is 'ready'.
+    // Write operator token so connected-host-auth is unverified but not missing.
     const tokenDir = join(homeDirectory, '.goodvibes', 'daemon');
     mkdirSync(tokenDir, { recursive: true });
     writeFileSync(connectedHostOperatorTokenPath(homeDirectory), JSON.stringify({ token: 'test-operator-token' }), 'utf-8');
