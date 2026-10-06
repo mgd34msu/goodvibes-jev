@@ -401,6 +401,37 @@ describe('Home Graph page quality persistence boundaries', () => {
     });
   }
 
+  test('ask refresh rejects an already-replaced selected device before quality or source linking', async () => {
+    const context = await fixture(); const source = await addSource(context, 'selected-reference', { linked: false });
+    await seedHomeAssistantObservation(context.store, { ...context.device, title: 'Different foreign device',
+      metadata: { ...context.device.metadata, knowledgeSpaceId: 'homeassistant:foreign', namespace: 'homeassistant:foreign' } });
+    const before = persisted(context); const fake = readings();
+    await expect(refreshAsk(context, [source])).rejects.toMatchObject({ reason: 'stale' });
+    expect(fake.requests).toHaveLength(0); expect(persisted(context)).toBe(before);
+    expect(context.store.listEdges().some(edge => edge.fromId === source.id && edge.toId === context.device.id)).toBe(false);
+  });
+
+  test('selected device ownership reaches the final prepared source-link write', async () => {
+    const context = await fixture(); const source = await addSource(context, 'selected-reference', { linked: false });
+    const original = context.store.applyPreparedIngest.bind(context.store);
+    let changed = false; readings();
+    const apply = spyOn(context.store, 'applyPreparedIngest').mockImplementation(async (...args) => {
+      if (!changed) {
+        changed = true;
+        await seedHomeAssistantObservation(context.store, { ...context.device, title: 'Different foreign device',
+          metadata: { ...context.device.metadata, knowledgeSpaceId: 'homeassistant:foreign', namespace: 'homeassistant:foreign' } });
+      }
+      return original(...args);
+    });
+    try {
+      await expect(refreshAsk(context, [source])).rejects.toMatchObject({ reason: 'stale' });
+      expect(changed).toBe(true);
+      expect(context.store.listEdges().some(edge => edge.fromId === source.id && edge.toId === context.device.id)).toBe(false);
+      expect(context.store.listSourcesInSpace(spaceId).some(row => row.metadata.generatedProjection === true)).toBe(false);
+      expect(context.artifactStore.list()).toEqual([]);
+    } finally { apply.mockRestore(); }
+  });
+
   test('a plain current source still receives Home Graph metadata during ask refresh', async () => {
     const context = await fixture();
     const source = await context.store.upsertSource({ id: 'plain-current-reference', connectorId: 'manual',

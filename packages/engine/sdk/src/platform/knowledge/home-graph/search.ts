@@ -1,3 +1,5 @@
+import { getKnowledgeSpaceId } from '../spaces.js';
+import { KnowledgeAnswerQualityHeldError } from '../semantic/answer-verification/types.js';
 import { assertJudgmentInput } from '../../gate/judgment-input.js';
 import type { KnowledgeStore } from '../store.js';
 import type {
@@ -158,6 +160,7 @@ export function readHomeGraphSearchState(store: KnowledgeStore, spaceId: string)
     .filter((source) => source.status !== 'stale' && !isGeneratedPageSource(source));
   const nodes = store.listNodesInSpace(spaceId).filter((node) => node.status === 'active');
   const sourceIds = new Set(sources.map((source) => source.id));
+  const sourcesById = new Map(sources.map((source) => [source.id, source]));
   const nodeIds = new Set(nodes.map((node) => node.id));
   const edges = store.listEdges().filter((edge) => (
     edgeIsActive(edge)
@@ -169,6 +172,10 @@ export function readHomeGraphSearchState(store: KnowledgeStore, spaceId: string)
   ));
   const extractionBySourceId = new Map<string, KnowledgeExtractionRecord>();
   for (const extraction of store.listExtractionsForSources(sourceIds)) {
+    const source = sourcesById.get(extraction.sourceId);
+    if (!source || getKnowledgeSpaceId(extraction) !== getKnowledgeSpaceId(source)) {
+      throw new KnowledgeAnswerQualityHeldError('malformed');
+    }
     if (!extractionBySourceId.has(extraction.sourceId)) {
       extractionBySourceId.set(extraction.sourceId, extraction);
     }

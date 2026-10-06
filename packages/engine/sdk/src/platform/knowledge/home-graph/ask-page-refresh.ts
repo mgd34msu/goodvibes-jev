@@ -1,3 +1,4 @@
+import { snapshotNodeInput } from '../activation/projection.js';
 import { KnowledgeGeneratedFactSupportHeldError } from '../semantic/verification/types.js';
 import { restoreKnowledgeSourceAnswerAliases } from '../source-structural-references.js';
 import type { ArtifactStore } from '../../artifacts/index.js';
@@ -38,12 +39,19 @@ export async function refreshDevicePagesForHomeGraphAsk(input: {
 }): Promise<{ readonly requested: boolean; readonly refreshed: number }> {
   if ((input.answer.answer.facts?.length ?? 0) === 0 && input.answer.answer.sources.length === 0) return { requested: false, refreshed: 0 };
   const devices = input.answer.answer.linkedObjects.filter((node) => node.kind === 'ha_device' && getKnowledgeSpaceId(node) === input.spaceId).slice(0, MAX_ASK_REFRESH_DEVICES);
+  // The answer selected these exact rows. A fresh current-row baseline cannot
+  // silently rebind that selection to a different device or installation.
+  const selectedDevices = createSemanticWriteGuard(input.store);
+  for (const device of devices) selectedDevices.watch(`selected-device:${device.id}`,
+    () => input.store.getNode(device.id), snapshotNodeInput(device));
+  selectedDevices.assertCurrent();
   try {
     await persistAnswerFactSubjectLinks({
       store: input.store,
       spaceId: input.spaceId,
       installationId: input.installationId,
       devices,
+      assertSelectedDevicesCurrent: selectedDevices.assertCurrent,
       facts: input.answer.answer.facts ?? [],
       sources: input.answer.answer.sources ?? [],
     });
@@ -57,6 +65,7 @@ export async function refreshDevicePagesForHomeGraphAsk(input: {
   }
   let refreshed = 0;
   for (const device of devices) {
+    selectedDevices.assertCurrent();
     const deviceId = readHomeAssistantMetadataString(device, 'objectId', 'deviceId') ?? device.id;
     try {
       await refreshHomeGraphDevicePassport({
@@ -70,6 +79,7 @@ export async function refreshDevicePagesForHomeGraphAsk(input: {
           metadata: { automation: 'ask-refresh' },
         },
       });
+      selectedDevices.assertCurrent();
       refreshed += 1;
     } catch (error) {
       if (isKnowledgeSourceQualityFailure(error)) throw error;
@@ -81,6 +91,7 @@ export async function refreshDevicePagesForHomeGraphAsk(input: {
       });
     }
   }
+  selectedDevices.assertCurrent();
   return { requested: devices.length > 0, refreshed };
 }
 
@@ -89,10 +100,12 @@ async function persistAnswerFactSubjectLinks(input: {
   readonly spaceId: string;
   readonly installationId: string;
   readonly devices: readonly KnowledgeNodeRecord[];
+  readonly assertSelectedDevicesCurrent: () => void;
   readonly facts: readonly KnowledgeNodeRecord[];
   readonly sources: readonly KnowledgeSourceRecord[];
 }): Promise<void> {
   if (input.devices.length === 0) return;
+  input.assertSelectedDevicesCurrent();
   const reader = createHomeGraphPageSourceReader();
   const guard = createSemanticWriteGuard(input.store);
   for (const device of input.devices) guard.node(device.id);
@@ -119,6 +132,7 @@ async function persistAnswerFactSubjectLinks(input: {
     .slice(0, MAX_ASK_PAGE_SOURCES_TO_LINK);
   const acceptedSourceIds = new Set(pageSources.map((reading) => reading.source.id));
   const assertRestoredAliasesCurrent = () => {
+    input.assertSelectedDevicesCurrent();
     for (const alias of restoredAliases) restoreKnowledgeSourceAnswerAliases(input.store, alias);
   };
   // The store methods await initialization/activation before committing. Keep

@@ -1,11 +1,5 @@
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
-useKnowledgeAnswerReadings();
-import { useExtractionReadings } from './_helpers/extraction-readings.js';
-
-useExtractionReadings([
-  'MANUAL_6420-010-01628_GAG_CLASSIC_PRO_USA_Rev_00.pdf: âÓÒó977 ç^Å‰zÇmÇì É¥NKºÚZjì†ÅjÒ(íÚD_EQ¥>ÅE',
-  '%PDF-1.7 7 0 obj /Filter /FlateDecode stream âÓÒó977 ç^Å‰zÇmÇì É¥NKºÚZjì†ÅjÒ(íÚD_EQ¥>ÅE yEx¥µržSã‹irvus Æw÷ùçùy¼4°',
-]);
+const readings = useKnowledgeAnswerReadings();
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -37,6 +31,11 @@ afterEach(() => {
 
 describe('Home Graph object-scoped search', () => {
   test('answers TV feature questions from TV evidence instead of unrelated feature documents', async () => {
+    readings.set({
+      initialEvidenceDefault: 0.01,
+      initialEvidenceCandidates: [['source', 'LG-86NANO90UNA-manual.pdf', 0.99]],
+      excerpts: [['TV features include HDR10, HDMI eARC, filmmaker mode, game optimizer, and Magic Remote voice control.', 0.99]],
+    });
     const { service, store } = createHomeGraphService();
     await service.syncSnapshot({
       installationId: 'house-1',
@@ -113,6 +112,10 @@ describe('Home Graph object-scoped search', () => {
   });
 
   test('does not answer object-scoped questions from garbled unrelated PDF text', async () => {
+    readings.set({ initialEvidenceDefault: 0.01, readability: [
+      ['MANUAL_6420-010-01628_GAG_CLASSIC_PRO_USA_Rev_00.pdf: âÓÒó977 ç^Å‰zÇmÇì É¥NKºÚZjì†ÅjÒ(íÚD_EQ¥>ÅE', 0.01],
+      ['%PDF-1.7 7 0 obj /Filter /FlateDecode stream âÓÒó977 ç^Å‰zÇmÇì É¥NKºÚZjì†ÅjÒ(íÚD_EQ¥>ÅE yEx¥µržSã‹irvus Æw÷ùçùy¼4°', 0.01],
+    ] });
     const { service, store } = createHomeGraphService();
     await service.syncSnapshot({
       installationId: 'house-1',

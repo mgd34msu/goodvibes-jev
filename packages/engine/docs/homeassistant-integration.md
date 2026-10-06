@@ -392,20 +392,14 @@ generation against the clean space.
 
 #### Ask ranking
 
-Ask ranking is object-aware. When a question names a Home Assistant object,
-such as "the TV" or "front door sensor", the SDK matches that query to Home
-Graph nodes and strongly prefers indexed sources linked to those nodes or
-sources whose identity matches a physical/device anchor.
-
-For TV questions, the
-source scope favors physical TV devices, `media_player` entities, and matching
-model/manufacturer evidence over generic Home Assistant integrations or other
-devices while ignoring noisy objects such as TV-show calendars, Plex library
-sensors, automations, and Wake-on-LAN switches. Singular object questions such
-as "the TV" are narrowed to the strongest matching object anchor before
-candidate sources are handed to the semantic answer layer, so answers are not
-blended across multiple televisions or manuals that only share broad TV/spec
-tokens.
+Home Graph keeps its bounded search and extraction-repair stages. Their existing
+lexical ranking is a retrieval window, not a final semantic subject decision.
+After retrieval, typed judgment readers select concrete objects and integration
+intent rather than using TV-brand weights, type-word lists or a singular-object
+regex. Ambiguous or unavailable readings hold instead of falling back to those
+guesses. The literal-rendering path uses the same object readers and a typed
+result-to-subject relevance reading, preserving the retrieval score units and
+order. Its confidence is zero (unknown); search points are not answer confidence.
 
 Pending integration documentation candidates are source suggestions,
 not answer material, until they are indexed. Device feature/spec/manual
@@ -423,10 +417,12 @@ locally re-ranking the graph or rendering raw extraction snippets.
 extraction artifacts such as generated wiki pages, fact nodes, and knowledge
 gaps remain in `facts`/`gaps` and are not reported as linked HA objects.
 
-Home Graph ask passes strict candidate ids into the shared semantic answer
-layer after object-scoped ranking. That keeps answer synthesis inside the
-matched Home Assistant object/source set and prevents unrelated manuals from
-appearing only because they contain generic feature/specification vocabulary.
+Home Graph ask passes its bounded retrieval candidates directly into the shared
+semantic answer layer when configured. That layer owns object/integration
+alignment and source/fact selection; the caller does not pre-empt it with a
+second inferred-object filter. The returned results and enrichment targets are
+the actual semantic-selected results. Upstream lexical search can still omit a
+candidate and remains separate migration work.
 Generated semantic wiki pages and extracted fact nodes are not used as Home
 Assistant object anchors, so a generated Kasa page or generic "features" fact
 cannot make a TV query pull Kasa sources into the answer.
