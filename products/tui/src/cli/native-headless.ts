@@ -1,3 +1,4 @@
+import { createNativeHostFetch } from '../runtime/client/native-host-fetch.ts';
 import { realpathSync } from 'node:fs';
 import { createOperatorSdk } from '@goodvibes-jev/engine/operator-sdk';
 import { getOperatorWorkLedgerProject, nativeWorkExecutionSnapshotSchema } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client';
@@ -92,10 +93,15 @@ export async function executeNativeHeadless(options: NativeHeadlessOptions): Pro
       if ('reason' in host) return resultForState(unavailable(host.reason), options.mode);
       const before = nativeSubmissionIdentity(host, '');
       const currentHost = () => { const current = options.resolveHost(); return !('reason' in current) && nativeSubmissionIdentity(current, '') === before; };
-      const operator = createOperatorSdk({ baseUrl: host.baseUrl, authToken: host.token });
+      const discovery = new AbortController();
+      const operator = createOperatorSdk({ baseUrl: host.baseUrl, authToken: host.token, fetchImpl: createNativeHostFetch({ current: () => !options.signal.aborted && !discovery.signal.aborted && currentHost() }) });
+      const guard = () => { try { if (!currentHost()) discovery.abort(); } catch { discovery.abort(); } };
+      const timer = setInterval(guard, 100); timer.unref?.();
       let projectId: string;
-      try { projectId = await getOperatorWorkLedgerProject(operator, { signal: options.signal }); }
-      finally { operator.dispose(); }
+      try {
+        guard();
+        projectId = await getOperatorWorkLedgerProject(operator, { signal: AbortSignal.any([options.signal, discovery.signal, AbortSignal.timeout(5000)]) });
+      } finally { clearInterval(timer); operator.dispose(); }
       if (options.signal.aborted) return cancelled();
       if (!currentHost()) return resultForState(unavailable('Native host selection changed.'), options.mode);
       const identity = nativeSubmissionIdentity(host, projectId);

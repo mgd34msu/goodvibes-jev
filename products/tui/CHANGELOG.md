@@ -6,6 +6,9 @@ All notable changes to GoodVibes TUI.
 
 ## Unreleased
 
+- Bind native TUI credentials to exact daemon origins in a private, durable TUI store; remove implicit daemon-global and environment-token fallback from native consumers.
+- Add explicit owner-terminal `host pair --bootstrap-shared --apply` migration with fresh confirmation, state/authority revalidation and interruption-safe no-remint recovery.
+
 - Added explicit complete-source JSON-file submission with durable principal-bound request identity, crash-safe original-ID lookup/replay, and separate execution controls.
 
 - Distinguish pending/refused admission and cancellation before admission from actual native execution receipts. Preserve explicit recovery and original requested revisions.

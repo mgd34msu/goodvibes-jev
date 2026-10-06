@@ -73,6 +73,7 @@ export function renderGoodVibesHelp(binary = 'goodvibes'): string {
     '  secrets                    List, set, link, delete, and test GoodVibes secret refs',
     '  sessions                   List, show, export, or resume saved sessions',
     '  tasks                      List/show in-process tasks or submit a non-interactive task',
+    '  host pair                 Review explicit TUI host pairing (--bootstrap-shared; --apply)',
     '  pair|qrcode                Print companion pairing payload and QR code',
     '  surfaces                   Inspect/check/enable/disable browser/listener/external surfaces',
     '  listener test              Test HTTP listener/webhook readiness',

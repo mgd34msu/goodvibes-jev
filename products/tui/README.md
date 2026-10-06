@@ -352,3 +352,7 @@ The upstream product follows semver from 1.0.0: incompatible changes to CLI flag
 ## License
 
 MIT
+
+### TUI host credentials
+
+Native `/work`, headless intake and legacy-import reads now require a TUI-owned credential bound to the exact configured daemon origin. Review `goodvibes host pair --bootstrap-shared` in an owner terminal; add `--apply` only after reviewing the persistent administrative scope. Use `--url <origin>` for a one-command endpoint override. `/host pair` is passive guidance, and companion `/pair` is unchanged. See [host pairing and recovery](docs/host-pairing.md).

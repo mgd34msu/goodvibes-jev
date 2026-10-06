@@ -315,6 +315,41 @@ jobs:
           PRODUCT: ${{ matrix.product }}
         run: bun run products:test "$PRODUCT"
 
+  # Exact TUI source, production migration handlers and real owner-terminal input.
+  # The ordinary TUI product runner intentionally excludes E2E files.
+  tui-host-pair-terminal:
+    name: TUI host pairing (compiled terminal)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [validate, build]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      - name: Download workspace package output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: workspace-build-output
+          path: /tmp/workspace-build-output
+      - name: Download TUI native artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tui-native-linux-x64
+          path: /tmp/tui-native-artifact
+      - name: Restore and verify exact source artifact
+        env:
+          TUI_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
+          tar -xzf /tmp/tui-native-artifact/tui-native-linux-x64.tgz -C .
+          bun products/tui/scripts/ci-artifact.ts verify "$GITHUB_SHA" "$TUI_SOURCE_HEAD"
+          products/tui/dist/goodvibes-linux-x64 --version
+      - name: Qualify host pairing and interruption recovery
+        env:
+          GOODVIBES_E2E_BINARY: ${{ github.workspace }}/products/tui/dist/goodvibes-linux-x64
+        run: bun packages/engine/scripts/test.ts --cwd ../../products/tui --timeout=300000 src/test/e2e/host-pair-terminal.e2e.test.ts
+
   # One browser lane exercises the production WebUI on both viewport sizes and
   # an actual LAN HTTP origin. Its daemon is a synthetic, loopback-only fixture.
   webui-browser:
@@ -593,6 +628,7 @@ jobs:
       - build
       - platform-matrix
       - product-tests
+      - tui-host-pair-terminal
       - webui-browser
       - exec-containment-proof
       - types-resolution-check

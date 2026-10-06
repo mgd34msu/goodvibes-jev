@@ -1,3 +1,4 @@
+import { createNativeHostFetch } from './client/native-host-fetch.ts';
 import { createOperatorNativeWorkExecutionClient } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client';
 import { createOperatorSdk, type OperatorRemoteClient } from '@goodvibes-jev/engine/operator-sdk';
 import { createOperatorNativeConversationIntakeClient } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client';
@@ -5,14 +6,19 @@ import type { NativeSubmissionHost } from './native-work-submission-host.ts';
 import type { NativeConversationIntakeBinding } from './native-conversation-intake.ts';
 
 export function createNativeConversationIntakeBinding(host: NativeSubmissionHost, projectId: string, current: () => boolean = () => true): NativeConversationIntakeBinding {
+  let disposed = false;
   // The engine may verify a queued permit after this intake operation has detached.
   // Each verification opens a fresh connection, fenced to the exact selected host.
   const invoke = (async (...args: Parameters<OperatorRemoteClient['invoke']>) => {
-    if (!current()) throw new Error('Native intake host selection changed');
-    const operator = createOperatorSdk({ baseUrl: host.baseUrl, authToken: host.token });
+    // Only the permit's read route may outlive normal intake disposal. Client
+    // requests are independently aborted by client.dispose(); queued permits
+    // retain no mutation method and still require the same host credential.
+    const available = () => current() && (!disposed || args[0] === 'workLedger.intake.get');
+    if (!available()) throw new Error('Native intake host selection changed');
+    const operator = createOperatorSdk({ baseUrl: host.baseUrl, authToken: host.token, fetchImpl: createNativeHostFetch({ current: available }) });
     try {
       const value = await operator.invoke(...args);
-      if (!current()) throw new Error('Native intake host selection changed');
+      if (!available()) throw new Error('Native intake host selection changed');
       return value;
     } finally { operator.dispose(); }
   }) as OperatorRemoteClient['invoke'];
@@ -28,6 +34,6 @@ export function createNativeConversationIntakeBinding(host: NativeSubmissionHost
       }
       return auth.principalId;
     },
-    dispose() { try { client.dispose(); } finally { execution.dispose(); } },
+    dispose() { disposed = true; try { client.dispose(); } finally { execution.dispose(); } },
   };
 }

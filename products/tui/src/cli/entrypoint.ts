@@ -1,3 +1,4 @@
+import { runTuiHostCommand } from './host-pair-command.ts';
 import { extractNativeHeadlessOptions } from './native-headless-options.ts';
 import { runNativeHeadlessCommand } from './native-headless-command.ts';
 import { existsSync } from 'node:fs';
@@ -67,6 +68,8 @@ export async function prepareShellCliRuntime(
   roots: ShellEntrypointRoots,
   binary = 'goodvibes',
 ): Promise<PreparedShellCliRuntime> {
+  // Product-owned host pairing is isolated from shared CLI/model dispatch.
+  if (argv[0] === 'host') process.exit(await runTuiHostCommand(argv.slice(1), roots));
   const native = extractNativeHeadlessOptions(argv);
   const parsed = parseGoodVibesCli(native.argv, binary);
   const nativeErrors = [...native.errors];

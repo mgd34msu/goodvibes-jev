@@ -6,7 +6,7 @@
 
 # Command Reference
 
-GoodVibes ships **160** built-in slash commands across **75** categories. Every command below is generated directly from the command registry, so this list is always complete and current. Type a command in the composer prefixed with `/`, or press `Ctrl+K` (or run `/palette`) to search them all in the command palette.
+GoodVibes ships **161** built-in slash commands across **75** categories. Every command below is generated directly from the command registry, so this list is always complete and current. Type a command in the composer prefixed with `/`, or press `Ctrl+K` (or run `/palette`) to search them all in the command palette.
 
 ## Categories
 
@@ -68,7 +68,7 @@ GoodVibes ships **160** built-in slash commands across **75** categories. Every 
 - [Remote](#remote): 2
 - [Scheduling](#scheduling): 1
 - [Secrets](#secrets): 1
-- [Security](#security): 1
+- [Security](#security): 2
 - [Services](#services): 1
 - [Session Content](#session-content): 10
 - [Sessions & Replay](#sessions-replay): 4
@@ -493,6 +493,7 @@ GoodVibes ships **160** built-in slash commands across **75** categories. Every 
 | Command | Aliases | Usage | Description |
 | --- | --- | --- | --- |
 | `/devices` | `/device` | `[list\|rename <id> <name>\|revoke <id>\|migrate-shared [name]\|revoke-shared]` | Manage paired-device tokens (list, rename, revoke, migrate-shared) |
+| `/host` | None | None | Inspect local host credential availability; pair explicitly from goodvibes host pair in an owner terminal |
 
 ## Services
 

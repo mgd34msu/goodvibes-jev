@@ -8,7 +8,9 @@ import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { createNativeWorkLedgerHost, registerNativeWorkLedgerCommand } from '../../../runtime/native-work-ledger-host.ts';
 import { CommandRegistry, type CommandContext } from '../../../input/command-registry.ts';
 
-function fixture() {
+import { pairNativeTestHost } from '../../helpers/native-host-pairing.ts';
+
+async function fixture() {
   const home = mkdtempSync(join(tmpdir(), 'native-submit-product-'));
   const sourcePath = join(home, 'source with spaces.json');
   const original = { goal: '  Exact goal\nwith line break  ', criteria: [' first ', 'second\nline', ' first '] };
@@ -34,7 +36,7 @@ function fixture() {
     throw new Error(`Unexpected native action ${path}`);
   } });
   const baseUrl = `http://127.0.0.1:${server.port}`;
-  writeFileSync(join(home, 'operator-tokens.json'), JSON.stringify({ token: 'synthetic-submission-token' }));
+  await pairNativeTestHost(home, baseUrl, 'synthetic-submission-token');
   const configManager = { get: (key: string) => key === 'daemon.enabled' ? true : key === 'controlPlane.publicBaseUrl' ? baseUrl : undefined } as unknown as ConfigManager;
   const host = createNativeWorkLedgerHost({ configManager, homeDirectory: home, daemonHomeDirectory: home, journalPath: join(home, 'tui-state', 'native-submissions.json'), workspace: () => home });
   const printed: string[] = []; const registry = new CommandRegistry(); registerNativeWorkLedgerCommand(registry, host.selectProject, host.discoverProject, host.submission);
@@ -45,7 +47,7 @@ function fixture() {
 }
 
 test('real product command preserves source and uses original-ID lookup after lost acknowledgement without executing', async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     await f.run('submit-file', pathToFileURL(f.sourcePath).href);
     expect(f.submissions).toHaveLength(1); expect(f.submissions[0]).toMatchObject({ expectedRevision: 0, ...f.original });
@@ -61,7 +63,7 @@ test('real product command preserves source and uses original-ID lookup after lo
 });
 
 test('invalid/missing criteria are refused by the command before any daemon call', async () => {
-  const f = fixture();
+  const f = await fixture();
   try {
     writeFileSync(f.sourcePath, JSON.stringify({ goal: 'Incomplete', criteria: [] }));
     await f.run('submit-file', pathToFileURL(f.sourcePath).href);

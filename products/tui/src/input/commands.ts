@@ -1,3 +1,4 @@
+import { registerHostPairingCommands } from './commands/host-pairing.ts';
 import { CommandRegistry } from './command-registry.ts';
 import type { SlashCommand } from './command-registry.ts';
 import { policyCommand } from './commands/policy.ts';
@@ -157,6 +158,7 @@ export const BUILTIN_COMMAND_GROUPS: readonly BuiltinCommandGroup[] = [
   { category: 'Conversation', register: registerConversationRuntimeCommands },
   { category: 'QR Codes', register: registerQrcodeRuntimeCommands },
   { category: 'Security', register: registerDevicesRuntimeCommands },
+  { category: 'Security', register: registerHostPairingCommands },
   { category: 'Relay', register: registerRelayRuntimeCommands },
   { category: 'Onboarding', register: registerOnboardingRuntimeCommands },
   { category: 'Voice & TTS', register: registerTtsRuntimeCommands },
