@@ -1,0 +1,205 @@
+{
+  "source": "owned-synthetic-provider; real paired DaemonServer intake and native execution graph HTTP",
+  "name": "prevented",
+  "input": {
+    "requestId": "webui-native-execution-prevented-request",
+    "inputId": "webui-native-execution-prevented-input",
+    "text": "  Answer this request yourself without delegation. 🌻\nSay native execution is complete.\nSay native execution is complete.  ",
+    "unsupportedSources": []
+  },
+  "auth": {
+    "methodId": "control.auth.current",
+    "method": "GET",
+    "path": "/api/control-plane/auth",
+    "status": 200,
+    "body": "{\"authenticated\":true,\"authMode\":\"session\",\"tokenPresent\":true,\"authorizationHeaderPresent\":true,\"sessionCookiePresent\":false,\"principalId\":\"pairing:pair-9ace7655-16d7-43cc-a744-cee26b7aa8bb\",\"principalKind\":\"token\",\"admin\":true,\"scopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:work-ledger\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"roles\":[]}"
+  },
+  "project": {
+    "methodId": "workLedger.project",
+    "method": "GET",
+    "path": "/api/work-ledger/project",
+    "status": 200,
+    "body": "{\"projectId\":\"workspace-a74585f53e\"}"
+  },
+  "lookupBefore": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-execution-prevented-input"
+    },
+    "requestJson": "{\"inputId\":\"webui-native-execution-prevented-input\"}",
+    "body": "{\"kind\":\"not-found\"}"
+  },
+  "capture": {
+    "methodId": "workLedger.intake.capture",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/capture",
+    "status": 200,
+    "requestBody": {
+      "requestId": "webui-native-execution-prevented-request",
+      "inputId": "webui-native-execution-prevented-input",
+      "text": "  Answer this request yourself without delegation. 🌻\nSay native execution is complete.\nSay native execution is complete.  ",
+      "unsupportedSources": []
+    },
+    "requestJson": "{\"requestId\":\"webui-native-execution-prevented-request\",\"inputId\":\"webui-native-execution-prevented-input\",\"text\":\"  Answer this request yourself without delegation. 🌻\\nSay native execution is complete.\\nSay native execution is complete.  \",\"unsupportedSources\":[]}",
+    "body": "{\"kind\":\"captured\",\"projectId\":\"workspace-a74585f53e\",\"requestId\":\"webui-native-execution-prevented-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-execution-prevented-input\",\"sourceId\":\"769afe4c3db088732783449457546bcd68e9d057582200eb13e8405919139883\",\"sourceRevision\":\"23f6d3a8bc51b434616f5d8bbb8293669a2a804125a1d1ebd0824c4927199104\",\"sessionId\":\"native-work:workspace-a74585f53e\"}}"
+  },
+  "getCaptured": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-execution-prevented-input"
+    },
+    "requestJson": "{\"inputId\":\"webui-native-execution-prevented-input\"}",
+    "body": "{\"kind\":\"captured\",\"projectId\":\"workspace-a74585f53e\",\"requestId\":\"webui-native-execution-prevented-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-execution-prevented-input\",\"sourceId\":\"769afe4c3db088732783449457546bcd68e9d057582200eb13e8405919139883\",\"sourceRevision\":\"23f6d3a8bc51b434616f5d8bbb8293669a2a804125a1d1ebd0824c4927199104\",\"sessionId\":\"native-work:workspace-a74585f53e\"}}"
+  },
+  "transition": {
+    "inputId": "webui-native-execution-prevented-input",
+    "sourceRevision": "23f6d3a8bc51b434616f5d8bbb8293669a2a804125a1d1ebd0824c4927199104"
+  },
+  "admit": {
+    "methodId": "workLedger.intake.admit",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/admit",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-execution-prevented-input",
+      "sourceRevision": "23f6d3a8bc51b434616f5d8bbb8293669a2a804125a1d1ebd0824c4927199104"
+    },
+    "requestJson": "{\"inputId\":\"webui-native-execution-prevented-input\",\"sourceRevision\":\"23f6d3a8bc51b434616f5d8bbb8293669a2a804125a1d1ebd0824c4927199104\"}",
+    "body": "{\"kind\":\"work\",\"projectId\":\"workspace-a74585f53e\",\"requestId\":\"webui-native-execution-prevented-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-execution-prevented-input\",\"sourceId\":\"769afe4c3db088732783449457546bcd68e9d057582200eb13e8405919139883\",\"sourceRevision\":\"23f6d3a8bc51b434616f5d8bbb8293669a2a804125a1d1ebd0824c4927199104\",\"sessionId\":\"native-work:workspace-a74585f53e\"},\"receipt\":{\"projectId\":\"workspace-a74585f53e\",\"requestId\":\"webui-native-execution-prevented-request\",\"inputId\":\"webui-native-execution-prevented-input\",\"ledgerRevision\":1,\"workId\":\"work-a6cdb6b9-7f16-4d75-81d6-8a758748f506\",\"attemptId\":\"attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"source\":{\"version\":2,\"sourceId\":\"769afe4c3db088732783449457546bcd68e9d057582200eb13e8405919139883\",\"sourceRevision\":\"23f6d3a8bc51b434616f5d8bbb8293669a2a804125a1d1ebd0824c4927199104\",\"sessionId\":\"native-work:workspace-a74585f53e\",\"offsetEncoding\":\"utf16\",\"proposalRevision\":\"a2c5781ef48c8a451536c6433f7025e021feb6ef67840d7f1eb51f0fe8089893\",\"spans\":[{\"partId\":\"input\",\"start\":0,\"end\":123}],\"admissionDecisionId\":\"1e97d0db-1f8e-4a58-a674-94a7e947fc93\",\"judgmentDecisionIds\":[\"01a10fff-f707-7000-8fa6-2424382c45b4\",\"01a10fff-f744-7000-890f-6c5f5bc81e2b\",\"01a10fff-f74b-7000-93b0-7d7908d0c934\",\"01a10fff-f75d-7000-9714-49ed8f0c41f2\"]},\"goal\":\"  Answer this request yourself without delegation. 🌻\\nSay native execution is complete.\\nSay native execution is complete.  \",\"criteria\":[\"  Answer this request yourself without delegation. 🌻\\nSay native execution is complete.\\nSay native execution is complete.  \"]}}"
+  },
+  "get": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-execution-prevented-input"
+    },
+    "requestJson": "{\"inputId\":\"webui-native-execution-prevented-input\"}",
+    "body": "{\"kind\":\"work\",\"projectId\":\"workspace-a74585f53e\",\"requestId\":\"webui-native-execution-prevented-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-execution-prevented-input\",\"sourceId\":\"769afe4c3db088732783449457546bcd68e9d057582200eb13e8405919139883\",\"sourceRevision\":\"23f6d3a8bc51b434616f5d8bbb8293669a2a804125a1d1ebd0824c4927199104\",\"sessionId\":\"native-work:workspace-a74585f53e\"},\"receipt\":{\"projectId\":\"workspace-a74585f53e\",\"requestId\":\"webui-native-execution-prevented-request\",\"inputId\":\"webui-native-execution-prevented-input\",\"ledgerRevision\":1,\"workId\":\"work-a6cdb6b9-7f16-4d75-81d6-8a758748f506\",\"attemptId\":\"attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"source\":{\"version\":2,\"sourceId\":\"769afe4c3db088732783449457546bcd68e9d057582200eb13e8405919139883\",\"sourceRevision\":\"23f6d3a8bc51b434616f5d8bbb8293669a2a804125a1d1ebd0824c4927199104\",\"sessionId\":\"native-work:workspace-a74585f53e\",\"offsetEncoding\":\"utf16\",\"proposalRevision\":\"a2c5781ef48c8a451536c6433f7025e021feb6ef67840d7f1eb51f0fe8089893\",\"spans\":[{\"partId\":\"input\",\"start\":0,\"end\":123}],\"admissionDecisionId\":\"1e97d0db-1f8e-4a58-a674-94a7e947fc93\",\"judgmentDecisionIds\":[\"01a10fff-f707-7000-8fa6-2424382c45b4\",\"01a10fff-f744-7000-890f-6c5f5bc81e2b\",\"01a10fff-f74b-7000-93b0-7d7908d0c934\",\"01a10fff-f75d-7000-9714-49ed8f0c41f2\"]},\"goal\":\"  Answer this request yourself without delegation. 🌻\\nSay native execution is complete.\\nSay native execution is complete.  \",\"criteria\":[\"  Answer this request yourself without delegation. 🌻\\nSay native execution is complete.\\nSay native execution is complete.  \"]}}"
+  },
+  "identity": {
+    "projectId": "workspace-a74585f53e",
+    "workId": "work-a6cdb6b9-7f16-4d75-81d6-8a758748f506",
+    "attemptId": "attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92",
+    "expectedRevision": {
+      "work": 1,
+      "criteria": 1,
+      "attempt": 1
+    }
+  },
+  "notStarted": {
+    "methodId": "workLedger.execution.status",
+    "method": "POST",
+    "path": "/api/work-ledger/execution/status",
+    "status": 404,
+    "requestBody": {
+      "projectId": "workspace-a74585f53e",
+      "workId": "work-a6cdb6b9-7f16-4d75-81d6-8a758748f506",
+      "attemptId": "attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92",
+      "expectedRevision": {
+        "work": 1,
+        "criteria": 1,
+        "attempt": 1
+      }
+    },
+    "requestJson": "{\"projectId\":\"workspace-a74585f53e\",\"workId\":\"work-a6cdb6b9-7f16-4d75-81d6-8a758748f506\",\"attemptId\":\"attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+    "body": "{\"error\":\"Native work execution not-found\",\"code\":\"NATIVE_EXECUTION_NOT_FOUND\",\"category\":\"not_found\",\"status\":404}"
+  },
+  "cancel": {
+    "methodId": "workLedger.execution.cancel",
+    "method": "POST",
+    "path": "/api/work-ledger/execution/cancel",
+    "status": 200,
+    "requestBody": {
+      "projectId": "workspace-a74585f53e",
+      "workId": "work-a6cdb6b9-7f16-4d75-81d6-8a758748f506",
+      "attemptId": "attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92",
+      "expectedRevision": {
+        "work": 1,
+        "criteria": 1,
+        "attempt": 1
+      }
+    },
+    "requestJson": "{\"projectId\":\"workspace-a74585f53e\",\"workId\":\"work-a6cdb6b9-7f16-4d75-81d6-8a758748f506\",\"attemptId\":\"attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+    "body": "{\"kind\":\"prevented-before-admission\",\"projectId\":\"workspace-a74585f53e\",\"workId\":\"work-a6cdb6b9-7f16-4d75-81d6-8a758748f506\",\"attemptId\":\"attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentAttempt\":true,\"stale\":false,\"state\":\"cancelled\",\"recovery\":\"cancelled\"}"
+  },
+  "start": {
+    "methodId": "workLedger.execution.start",
+    "method": "POST",
+    "path": "/api/work-ledger/execution/start",
+    "status": 200,
+    "requestBody": {
+      "projectId": "workspace-a74585f53e",
+      "workId": "work-a6cdb6b9-7f16-4d75-81d6-8a758748f506",
+      "attemptId": "attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92",
+      "expectedRevision": {
+        "work": 1,
+        "criteria": 1,
+        "attempt": 1
+      }
+    },
+    "requestJson": "{\"projectId\":\"workspace-a74585f53e\",\"workId\":\"work-a6cdb6b9-7f16-4d75-81d6-8a758748f506\",\"attemptId\":\"attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+    "body": "{\"kind\":\"prevented-before-admission\",\"projectId\":\"workspace-a74585f53e\",\"workId\":\"work-a6cdb6b9-7f16-4d75-81d6-8a758748f506\",\"attemptId\":\"attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentAttempt\":true,\"stale\":false,\"state\":\"cancelled\",\"recovery\":\"cancelled\"}"
+  },
+  "status": {
+    "methodId": "workLedger.execution.status",
+    "method": "POST",
+    "path": "/api/work-ledger/execution/status",
+    "status": 200,
+    "requestBody": {
+      "projectId": "workspace-a74585f53e",
+      "workId": "work-a6cdb6b9-7f16-4d75-81d6-8a758748f506",
+      "attemptId": "attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92",
+      "expectedRevision": {
+        "work": 1,
+        "criteria": 1,
+        "attempt": 1
+      }
+    },
+    "requestJson": "{\"projectId\":\"workspace-a74585f53e\",\"workId\":\"work-a6cdb6b9-7f16-4d75-81d6-8a758748f506\",\"attemptId\":\"attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+    "body": "{\"kind\":\"prevented-before-admission\",\"projectId\":\"workspace-a74585f53e\",\"workId\":\"work-a6cdb6b9-7f16-4d75-81d6-8a758748f506\",\"attemptId\":\"attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentAttempt\":true,\"stale\":false,\"state\":\"cancelled\",\"recovery\":\"cancelled\"}"
+  },
+  "resume": {
+    "methodId": "workLedger.execution.resume",
+    "method": "POST",
+    "path": "/api/work-ledger/execution/resume",
+    "status": 200,
+    "requestBody": {
+      "projectId": "workspace-a74585f53e",
+      "workId": "work-a6cdb6b9-7f16-4d75-81d6-8a758748f506",
+      "attemptId": "attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92",
+      "expectedRevision": {
+        "work": 1,
+        "criteria": 1,
+        "attempt": 1
+      }
+    },
+    "requestJson": "{\"projectId\":\"workspace-a74585f53e\",\"workId\":\"work-a6cdb6b9-7f16-4d75-81d6-8a758748f506\",\"attemptId\":\"attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+    "body": "{\"kind\":\"prevented-before-admission\",\"projectId\":\"workspace-a74585f53e\",\"workId\":\"work-a6cdb6b9-7f16-4d75-81d6-8a758748f506\",\"attemptId\":\"attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentAttempt\":true,\"stale\":false,\"state\":\"cancelled\",\"recovery\":\"cancelled\"}"
+  },
+  "repeatCancel": {
+    "methodId": "workLedger.execution.cancel",
+    "method": "POST",
+    "path": "/api/work-ledger/execution/cancel",
+    "status": 200,
+    "requestBody": {
+      "projectId": "workspace-a74585f53e",
+      "workId": "work-a6cdb6b9-7f16-4d75-81d6-8a758748f506",
+      "attemptId": "attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92",
+      "expectedRevision": {
+        "work": 1,
+        "criteria": 1,
+        "attempt": 1
+      }
+    },
+    "requestJson": "{\"projectId\":\"workspace-a74585f53e\",\"workId\":\"work-a6cdb6b9-7f16-4d75-81d6-8a758748f506\",\"attemptId\":\"attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1}}",
+    "body": "{\"kind\":\"prevented-before-admission\",\"projectId\":\"workspace-a74585f53e\",\"workId\":\"work-a6cdb6b9-7f16-4d75-81d6-8a758748f506\",\"attemptId\":\"attempt-7be58b65-421e-4f4e-9b61-54547f5d0f92\",\"expectedRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentRevision\":{\"work\":1,\"criteria\":1,\"attempt\":1},\"currentAttempt\":true,\"stale\":false,\"state\":\"cancelled\",\"recovery\":\"cancelled\"}"
+  }
+}
