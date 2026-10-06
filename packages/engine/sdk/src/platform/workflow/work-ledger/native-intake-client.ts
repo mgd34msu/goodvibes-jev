@@ -10,6 +10,7 @@ import {
   type NativeConversationIntakeLookupResult, type NativeConversationIntakeSourceRef,
 } from './native-intake-wire.js';
 export * from './native-intake-wire.js';
+export * from './native-diff-context.js';
 
 declare const nativeConversationTurnPermitBrand: unique symbol;
 /** Process-local capability. Serialization or copying never transfers it. */
@@ -73,7 +74,7 @@ export function createOperatorNativeConversationIntakeClient(client: Pick<Operat
   function eligible(result: NativeConversationIntakeResult): void {
     if (result.kind === 'turn') eligibleTurns.set(result, Object.freeze({ ...result,
       ...(result.continuation ? { continuation: captureNativeConversationContinuation(result.continuation) } : {}),
-      sourceRef: Object.freeze({ ...result.sourceRef, ...(result.sourceRef.continuation ? { continuation: Object.freeze({ ...result.sourceRef.continuation }) } : {}) }) }));
+      sourceRef: Object.freeze({ ...result.sourceRef, ...(result.sourceRef.continuation ? { continuation: Object.freeze({ ...result.sourceRef.continuation, ...(result.sourceRef.continuation.selectedDiff ? { selectedDiff: Object.freeze({ ...result.sourceRef.continuation.selectedDiff }) } : {}) }) } : {}) }) }));
   }
   function active(signal?: AbortSignal): void {
     if (disposed) throw new NativeConversationIntakeClientError('disposed');
@@ -110,7 +111,8 @@ export function createOperatorNativeConversationIntakeClient(client: Pick<Operat
     if (result.projectId !== projectId || sourceRef.inputId !== identity.inputId
       || ('requestId' in identity && result.requestId !== identity.requestId)
       || ('sourceRevision' in identity && sourceRef.sourceRevision !== identity.sourceRevision)
-      || ('text' in identity && sourceRef.continuation?.sessionId !== identity.continuation?.sessionId)
+      || ('text' in identity && (sourceRef.continuation?.sessionId !== identity.continuation?.sessionId
+        || JSON.stringify(sourceRef.continuation?.selectedDiff ?? null) !== JSON.stringify(identity.continuation?.selectedDiff ?? null)))
       || (previous && (result.requestId !== previous.requestId || sourceRef.sourceId !== previous.sourceRef.sourceId
         || sourceRef.sourceRevision !== previous.sourceRef.sourceRevision || sourceRef.sessionId !== previous.sourceRef.sessionId
         || JSON.stringify(sourceRef.continuation ?? null) !== JSON.stringify(previous.sourceRef.continuation ?? null)))) {
@@ -120,7 +122,7 @@ export function createOperatorNativeConversationIntakeClient(client: Pick<Operat
     if (text !== undefined && ((result.kind === 'work' && result.receipt.goal !== text)
       || (result.kind === 'turn' && result.text !== text))) throw new NativeConversationIntakeClientError('invalid_response');
     // Detached state: callers cannot mutate the identity used by later responses.
-    sources.set(identity.inputId, { requestId: result.requestId, sourceRef: { ...sourceRef, ...(sourceRef.continuation ? { continuation: { ...sourceRef.continuation } } : {}) }, ...(text === undefined ? {} : { text }) });
+    sources.set(identity.inputId, { requestId: result.requestId, sourceRef: { ...sourceRef, ...(sourceRef.continuation ? { continuation: { ...sourceRef.continuation, ...(sourceRef.continuation.selectedDiff ? { selectedDiff: { ...sourceRef.continuation.selectedDiff } } : {}) } } : {}) }, ...(text === undefined ? {} : { text }) });
   }
   function parseResult(value: unknown): NativeConversationIntakeResult {
     const result = nativeConversationIntakeResultSchema.safeParse(value);

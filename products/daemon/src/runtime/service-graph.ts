@@ -687,9 +687,9 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     registerNativeWorkSubmissionGatewayMethods(gatewayMethods, nativeSubmission);
     let nativeContinuationOwner: NativeConversationContinuationOwner | undefined;
     const continuationOwner: NativeConversationContinuationOwner = {
-      capture: (sessionId, principalId) => {
+      capture: (sessionId, principalId, selectedDiff) => {
         if (!nativeContinuationOwner) throw new Error('Native hosted continuation owner unavailable');
-        return nativeContinuationOwner.capture(sessionId, principalId);
+        return nativeContinuationOwner.capture(sessionId, principalId, selectedDiff);
       },
       assertCurrent: (context, principalId) => {
         if (!nativeContinuationOwner) throw new Error('Native hosted continuation owner unavailable');
@@ -702,7 +702,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     disposalScope.ownUntilRegistered('native conversation intake', nativeIntake.close);
     registerNativeConversationIntakeGatewayMethods(gatewayMethods, nativeIntake);
     const removeHostedOwner = installNativeHostedConversationOwner(gatewayMethods, { projectId: projectPlanningProjectId,
-      projectRoot: workingDirectory, intake: nativeIntake, journalPath: shellPaths.resolveUserPath('native-hosted-turns.json'),
+      projectRoot: workingDirectory, intake: nativeIntake, checkpoints: workspaceCheckpointManager, journalPath: shellPaths.resolveUserPath('native-hosted-turns.json'),
       installContinuationOwner: owner => { nativeContinuationOwner = owner; } });
     disposalScope.ownUntilRegistered('native hosted conversation binding', removeHostedOwner);
     const nativeWork = createDaemonNativeWorkExecutionActivation({

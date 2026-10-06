@@ -627,7 +627,7 @@ export class HostedSessionManager {
   assertNativeContinuation(value: NativeConversationContinuation): void {
     const context = captureNativeConversationContinuation(value);
     const live = this.requireLive(context.sessionId);
-    if (!live.runtime || createHash('sha256').update(canonicalNativeConversationContinuation(context.sessionId, context.messages)).digest('hex') !== context.revision) {
+    if (!live.runtime || createHash('sha256').update(canonicalNativeConversationContinuation(context.sessionId, context.messages, context.selectedDiff)).digest('hex') !== context.revision) {
       throw new Error('Native continuation context changed');
     }
     const current = this.history(live);

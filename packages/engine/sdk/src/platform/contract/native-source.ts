@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { captureNativeConversationContinuation, canonicalNativeConversationContinuation, type NativeConversationContinuation } from '../workflow/work-ledger/native-continuation-context.js';
 /** Immutable native requirements, independent of every generated plan and correction. */
 import { types as nodeTypes } from 'node:util';
+import type { NativeSelectedDiffContext } from '../workflow/work-ledger/native-diff-context.js';
 import type { ContractPlan, PlanProblem } from './plan-schema.js';
 import type { Contract, ContractView, Criterion, NativeContractSource } from './types.js';
 
@@ -31,7 +32,7 @@ export function captureNativeContractSource(value: unknown): NativeContractSourc
     criteria.push(item.value);
   }
   const continuation = Object.hasOwn(source, 'continuation') ? captureNativeConversationContinuation(source['continuation']) : undefined;
-  if (continuation && continuation.revision !== createHash('sha256').update(canonicalNativeConversationContinuation(continuation.sessionId, continuation.messages)).digest('hex')) throw new Error('Invalid native continuation revision');
+  if (continuation && continuation.revision !== createHash('sha256').update(canonicalNativeConversationContinuation(continuation.sessionId, continuation.messages, continuation.selectedDiff)).digest('hex')) throw new Error('Invalid native continuation revision');
   return Object.freeze({
     ...(continuation ? { continuation } : {}),
     sourceId: source['sourceId'] as string,
@@ -44,7 +45,7 @@ export function captureNativeContractSource(value: unknown): NativeContractSourc
   });
 }
 
-/** Persisted planner/unit task text excludes private hosted transcript evidence. */
+/** Persisted planner/unit task text excludes private hosted transcript and selected-diff evidence. */
 export function nativeContractTaskSource(source: NativeContractSource): Omit<NativeContractSource, 'continuation'> {
   const { continuation: _privateContext, ...original } = source;
   return original;
@@ -53,8 +54,12 @@ export function nativeContractTaskSource(source: NativeContractSource): Omit<Nat
 /** Explicit JSON projection retains frozen context while giving judgment mutable JSON arrays. */
 export function nativeContractSourceData(source: NativeContractSource) {
   const { continuation, ...original } = source;
+  const selectedDiff = continuation?.selectedDiff;
   return { ...original, criteria: [...source.criteria], ...(continuation ? { continuation: {
     sessionId: continuation.sessionId, revision: continuation.revision, messages: continuation.messages.map(message => ({ ...message })),
+    ...(selectedDiff ? { selectedDiff: selectedDiff.kind === 'session'
+      ? { ...selectedDiff, provenance: { ...selectedDiff.provenance } }
+      : { ...selectedDiff, provenance: { ...selectedDiff.provenance } } } : {}),
   } } : {}) };
 }
 
@@ -107,9 +112,10 @@ export function bindNativeContractSource(contract: Contract): void {
 }
 
 /** Admission projection from native authority only. Legacy/generated roots are deliberately refused. */
-export function nativeContractSourceForAdmission(contract: ContractView): Pick<NativeContractSource, 'goal' | 'criteria'> & { readonly conversationContext?: NativeConversationContinuation['messages'] } {
+export function nativeContractSourceForAdmission(contract: ContractView): Pick<NativeContractSource, 'goal' | 'criteria'> & { readonly conversationContext?: NativeConversationContinuation['messages']; readonly selectedDiffContext?: NativeSelectedDiffContext } {
   assertNativeContractSource(contract);
   if (contract.nativeSource === undefined) throw new Error('Contract has no native source for autonomous admission');
   return Object.freeze({ goal: contract.nativeSource.goal, criteria: Object.freeze([...contract.nativeSource.criteria]),
-    ...(contract.nativeSource.continuation ? { conversationContext: contract.nativeSource.continuation.messages } : {}) });
+    ...(contract.nativeSource.continuation ? { conversationContext: contract.nativeSource.continuation.messages,
+      ...(contract.nativeSource.continuation.selectedDiff ? { selectedDiffContext: contract.nativeSource.continuation.selectedDiff } : {}) } : {}) });
 }

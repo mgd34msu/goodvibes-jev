@@ -1,4 +1,8 @@
 /** Current native source + strict dispatch journal + actual hosted turn ownership. */
+import { createHash } from 'node:crypto';
+import { canonicalNativeConversationContinuation, captureNativeConversationContinuation } from '../workflow/work-ledger/native-continuation-context.js';
+import { captureNativeSelectedDiffContext, nativeSelectedDiffRevision, selectNativeDiffHunk, NativeSelectedDiffError } from '../workflow/work-ledger/native-diff-context.js';
+import type { WorkspaceCheckpointManager } from '../workspace/checkpoint/manager.js';
 import { realpathSync } from 'node:fs';
 import type { OperatorRemoteClient } from '@goodvibes-jev/engine/operator-sdk';
 import { createOperatorNativeConversationIntakeClient, type NativeConversationTurnPermit, type NativeConversationTurnSource } from '../workflow/work-ledger/native-intake-client.js';
@@ -24,6 +28,7 @@ export interface NativeHostedTurnDependencies {
   readonly projectRoot: string;
   readonly intake: Pick<NativeConversationIntakeHost, 'get' | 'admit'>;
   readonly journalPath: string;
+  readonly checkpoints?: Pick<WorkspaceCheckpointManager, 'init' | 'workspaceRoot' | 'sessionChanges' | 'diff'>;
   readonly installContinuationOwner?: (owner: NativeConversationContinuationOwner) => void;
 }
 interface NativeTurnOwnership {
@@ -78,9 +83,30 @@ export function createNativeHostedTurnHost(deps: NativeHostedTurnDependencies & 
     return assertSession(sessionId, principalId);
   }
   const continuation: NativeConversationContinuationOwner = {
-    async capture(sessionId, principalId) {
+    async capture(sessionId, principalId, selection) {
       await proveSession(sessionId, principalId);
-      const context = await deps.manager.captureNativeContinuation(sessionId);
+      let context = await deps.manager.captureNativeContinuation(sessionId);
+      if (selection) {
+        const checkpoints = deps.checkpoints;
+        if (!checkpoints) throw new NativeSelectedDiffError('missing');
+        await checkpoints.init();
+        if (realpathSync(checkpoints.workspaceRoot) !== projectRoot) throw new NativeHostedTurnError('stale');
+        assertSession(sessionId, principalId);
+        const diff = selection.kind === 'session' ? await checkpoints.sessionChanges(sessionId) : await checkpoints.diff(selection.baselineId).catch((error: unknown) => {
+          if (error instanceof Error && error.message.startsWith('WorkspaceCheckpointManager: no checkpoint found with id ')) throw new NativeSelectedDiffError('missing');
+          throw error;
+        });
+        assertSession(sessionId, principalId);
+        if (realpathSync(checkpoints.workspaceRoot) !== projectRoot) throw new NativeHostedTurnError('stale');
+        if (selection.kind === 'session' && (!('sessionId' in diff) || !('checkpointCount' in diff) || diff.sessionId !== sessionId || typeof diff.checkpointCount !== 'number' || diff.checkpointCount < 1 || diff.to === 'EMPTY')) throw new NativeSelectedDiffError('missing');
+        if (selection.kind === 'workspace' && (diff.from !== selection.baselineId || diff.to !== 'WORKING')) throw new NativeSelectedDiffError('stale');
+        if (await nativeSelectedDiffRevision(diff.unifiedDiff) !== selection.revision) throw new NativeSelectedDiffError('stale');
+        const selectedDiff = captureNativeSelectedDiffContext({ ...selection, unifiedDiff: selectNativeDiffHunk(diff.unifiedDiff, selection.fileIndex, selection.hunkIndex),
+          provenance: selection.kind === 'session' ? { kind: 'session', sessionId, baselineCheckpointId: diff.from, latestCheckpointId: diff.to }
+            : { kind: 'workspace', baselineId: diff.from, to: 'WORKING' } });
+        context = captureNativeConversationContinuation({ ...context, selectedDiff,
+          revision: createHash('sha256').update(canonicalNativeConversationContinuation(sessionId, context.messages, selectedDiff)).digest('hex') });
+      }
       assertSession(sessionId, principalId);
       deps.manager.assertNativeContinuation(context);
       return context;

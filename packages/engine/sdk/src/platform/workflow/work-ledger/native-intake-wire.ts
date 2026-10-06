@@ -1,5 +1,6 @@
 /** Browser-safe conversation data. Capture and admission never grant execution authority. */
 import { nativeConversationContinuationRefSchema, nativeConversationContinuationSchema } from './native-continuation-context.js';
+import { nativeSelectedDiffSelector, nativeSelectedDiffSelectorSchema, nativeSelectedDiffContextSchema } from './native-diff-context.js';
 import { array, enum as enumSchema, literal, number, strictObject, string, union, type z } from 'zod/v4';
 
 export const NATIVE_CONVERSATION_INTAKE_MAX_REQUEST_BYTES = 262_144;
@@ -14,7 +15,7 @@ const bounded = (value: unknown, limit: number): boolean => {
 };
 export const nativeConversationIntakeUnsupportedSourceSchema = strictObject({ kind: enumSchema(['image', 'file', 'context']), label: id });
 export const nativeConversationIntakeCaptureRequestSchema = strictObject({
-  requestId: id, inputId: id, text, continuation: strictObject({ sessionId: id }).optional(), unsupportedSources: array(nativeConversationIntakeUnsupportedSourceSchema).max(100),
+  requestId: id, inputId: id, text, continuation: strictObject({ sessionId: id, selectedDiff: nativeSelectedDiffSelectorSchema.optional() }).optional(), unsupportedSources: array(nativeConversationIntakeUnsupportedSourceSchema).max(100),
 }).refine(value => bounded(value, NATIVE_CONVERSATION_INTAKE_MAX_REQUEST_BYTES), 'Capture exceeds byte limit');
 export const nativeConversationIntakeLookupRequestSchema = strictObject({ inputId: id });
 export const nativeConversationIntakeTransitionRequestSchema = strictObject({ inputId: id, sourceRevision: id });
@@ -50,7 +51,7 @@ export const nativeConversationIntakeResultSchema = union([
   && value.receipt.source.sourceRevision === value.sourceRef.sourceRevision && value.receipt.source.sessionId === value.sourceRef.sessionId), 'Receipt source identity mismatch')
   .refine(value => {
     const continuation = value.kind === 'turn' ? value.continuation : value.kind === 'work' ? value.receipt.source.continuation : value.sourceRef.continuation;
-    return JSON.stringify(continuation ? { sessionId: continuation.sessionId, revision: continuation.revision } : null) === JSON.stringify(value.sourceRef.continuation ?? null);
+    return JSON.stringify(continuation ? { sessionId: continuation.sessionId, revision: continuation.revision, ...(continuation.selectedDiff ? { selectedDiff: 'unifiedDiff' in continuation.selectedDiff ? nativeSelectedDiffSelector(nativeSelectedDiffContextSchema.parse(continuation.selectedDiff)) : continuation.selectedDiff } : {}) } : null) === JSON.stringify(value.sourceRef.continuation ?? null);
   }, 'Continuation source binding mismatch')
   .refine(value => bounded(value, NATIVE_CONVERSATION_INTAKE_MAX_RESPONSE_BYTES), 'Intake result exceeds byte limit');
 export const nativeConversationIntakeLookupResultSchema = union([

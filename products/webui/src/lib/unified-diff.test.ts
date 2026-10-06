@@ -214,3 +214,15 @@ describe('buildHunkCommentSteer', () => {
     expect(block.trimEnd().endsWith('use a named constant here')).toBe(true);
   });
 });
+
+test('header-looking removed and added lines stay in the original hunk', () => {
+  const text = 'diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n--- old heading\n+++ new heading\n';
+  const files = parseUnifiedDiff(text);
+  expect(files).toHaveLength(1);
+  expect(files[0].path).toBe('notes.txt');
+  expect(files[0].hunks).toHaveLength(1);
+  expect(files[0].hunks[0].lines.slice(0, 2)).toEqual([
+    { type: 'del', text: '-- old heading', oldLine: 1, newLine: null },
+    { type: 'add', text: '++ new heading', oldLine: null, newLine: 1 },
+  ]);
+});

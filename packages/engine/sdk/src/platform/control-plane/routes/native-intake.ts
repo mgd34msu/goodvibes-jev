@@ -1,4 +1,5 @@
 /** Authenticated conversation admission only. Source text cannot select host authority. */
+import { NativeSelectedDiffError } from '../../workflow/work-ledger/native-diff-context.js';
 import type { GatewayMethodCatalog } from '../method-catalog.js';
 import type { GatewayMethodInvocation } from '../method-catalog-shared.js';
 import { WORK_LEDGER_WRITE_SCOPE } from '../method-catalog-native-work-submission.js';
@@ -52,6 +53,7 @@ export function registerNativeConversationIntakeGatewayMethods(catalog: GatewayM
         invocation.signal?.throwIfAborted(); authorize(invocation); return nativeConversationIntakeResultSchema.parse(result);
       } catch (error) {
         if (error instanceof GatewayVerbError) throw error;
+        if (error instanceof NativeSelectedDiffError) throw new GatewayVerbError(`Selected diff ${error.code}; inspect the current changes before submitting a new original`, `NATIVE_SELECTED_DIFF_${error.code.toUpperCase()}`, error.code === 'oversize' ? 413 : error.code === 'unsupported' ? 400 : 409);
         if (error instanceof NativeConversationIntakeError) {
           const status = ['unsupported-authority', 'forbidden'].includes(error.code) ? 403 : error.code === 'invalid' ? 400
             : ['stale', 'conflict', 'request-conflict', 'recovery-required'].includes(error.code) ? 409 : error.code === 'not-found' ? 404 : 503;

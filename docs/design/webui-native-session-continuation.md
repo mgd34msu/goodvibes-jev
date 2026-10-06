@@ -88,11 +88,11 @@ moving between these surfaces only inspects previously retained input. Fleet's
 legacy compact steer and browser detach retain their existing behavior; native
 receipts do not use the legacy “Steer sent” toast.
 
-Per-hunk Session Changes comments remain a separate migration. Their current
-legacy formatter trims the comment and prefixes a browser-selected, bounded diff
-excerpt. That formatter is not an original-source or host-owned context boundary;
-reusing it for native admission would misrepresent the source. A source-aware
-hunk-context capture contract is required before migrating that action.
+Per-hunk Session Changes comments now use the same classification and lifecycle
+through [source-aware selected-change capture](webui-native-diff-comments.md).
+Their exact original comments remain separate from host-resolved complete hunk
+and checkpoint evidence. The legacy formatter remains available only after an
+explicit legacy classification.
 
 Agent remote creation, inbound-derived authority, other ordinary hosted ingress and broader planning retirement are separate migrations. The
 recorded loopback/Chromium proofs establish orchestration and recovery behavior;

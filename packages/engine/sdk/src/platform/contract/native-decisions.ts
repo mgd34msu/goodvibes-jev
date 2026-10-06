@@ -3,6 +3,7 @@ import { hashState, JudgmentError, type EntryType, type JudgmentPort, type Judgm
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { captureJevDecisionContext, parseJevDecision, type JevDecision, type JevDecisionBinding, type JevVersionRef } from '@goodvibes-jev/judgment/decisions';
 import { decideAutonomous, type AutonomousDecision } from '../gate/autonomous-decision.js';
+import { autonomousSourceEvidence } from '../permissions/autonomous.js';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { assertNativeContractSource, nativeContractSourceForAdmission } from './native-source.js';
 import { assertDurableCheckpoint } from './durable-admission.js';
@@ -81,7 +82,7 @@ function readLifetime(contract: Contract, owner: NativeContractServices, signal?
 /** Routing uses the same owner signal and before-attempt guard as every other native read. */
 export async function nativeContractRoute(selector: ContractRouteSelector, contract: Contract, services: NativeContractServices | undefined, request: Parameters<ContractRouteSelector>[0], signal?: AbortSignal) {
   if (contract.nativeSource === undefined) return selector({ ...request, signal });
-  snapshotJudgmentInput(nativeContractSourceForAdmission(contract));
+  autonomousSourceEvidence(nativeContractSourceForAdmission(contract));
   const scope = readLifetime(contract, ownedServices(services), signal);
   try { scope.beforeAttempt(); const route = await selector({ ...request, signal, beforeAttempt: scope.beforeAttempt, onRetry: scope.onRetry }); scope.beforeAttempt(); return route; }
   finally { scope.finish(); }
@@ -170,7 +171,7 @@ export function nativeContractPort(contract: Contract, services: NativeContractS
       const lifetime = readLifetime(contract, owner, signal);
       const active = () => { lifetime.beforeAttempt(); request.signal?.throwIfAborted(); request.beforeAttempt?.(); };
       const combined = signal === undefined ? request.signal : request.signal === undefined ? signal : AbortSignal.any([signal, request.signal]);
-      const originalSource = snapshotJudgmentInput(nativeContractSourceForAdmission(contract)) as ReturnType<typeof nativeContractSourceForAdmission>;
+      const originalSource = autonomousSourceEvidence(nativeContractSourceForAdmission(contract));
       const state = request.state !== null && typeof request.state === 'object' && !Array.isArray(request.state)
         ? { ...request.state, originalSource } : { input: request.state, originalSource };
       try {
@@ -246,7 +247,7 @@ export async function decideNativeContract(contract: Contract, services: NativeC
     contract.nativeProgress = { schemaVersion: 1, state: 'deciding', stage: input.stage, targetId: input.targetId }; owner.changed(contract);
     const result = await decideAutonomous({ port: nativeSemanticPort(contract, owner, input.signal),
       site: `contract.native.${input.stage}`, instructions: INSTRUCTIONS, actionDescription: input.action, binding,
-      state: { source, evidence, externalConditions: capturedConditions.map(condition => ({ description: condition.description })) } as unknown as EntryType,
+      state: { source: autonomousSourceEvidence(source), evidence, externalConditions: capturedConditions.map(condition => ({ description: condition.description })) } as unknown as EntryType,
       evidence: [{ id: 'native-source', revision: hashState(source as unknown as EntryType) }, { id: 'operation-evidence', revision: hashState(evidence) },
         { id: contract.nativeSource!.criteriaId, revision: contract.nativeSource!.criteriaRevision }, { id: 'source-revision', revision: contract.nativeSource!.sourceRevision }],
       supportingDecisionIds: input.decisionIds,

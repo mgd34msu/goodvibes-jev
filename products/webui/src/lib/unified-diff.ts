@@ -139,7 +139,8 @@ export function parseUnifiedDiff(unifiedDiff: string): DiffFile[] {
 
     // A bare `--- `/`+++ ` pair with no preceding `diff --git` (e.g. a plain
     // `diff -u` fragment): open a file lazily on the `--- ` line.
-    if (line.startsWith('--- ')) {
+    const hunkComplete = hunkMeta && oldCursor >= hunkMeta.oldStart + hunkMeta.oldCount && newCursor >= hunkMeta.newStart + hunkMeta.newCount;
+    if (line.startsWith('--- ') && (!hunkMeta || hunkComplete)) {
       const oldPath = stripPrefix(line.slice(4).replace(/\t.*$/, ''));
       if (!current || current.hunks.length > 0 || hunkMeta) {
         current = startFile(oldPath, current?.newPath ?? '');
@@ -148,7 +149,7 @@ export function parseUnifiedDiff(unifiedDiff: string): DiffFile[] {
       }
       continue;
     }
-    if (line.startsWith('+++ ')) {
+    if (line.startsWith('+++ ') && !hunkMeta) {
       const newPath = stripPrefix(line.slice(4).replace(/\t.*$/, ''));
       if (current) current.newPath = newPath;
       continue;
@@ -203,7 +204,7 @@ export function parseUnifiedDiff(unifiedDiff: string): DiffFile[] {
     } else if (line.startsWith('\\')) {
       // "\ No newline at end of file", metadata, belongs to neither side.
       hunkLines.push({ type: 'meta', text: line, oldLine: null, newLine: null });
-    } else if (line.startsWith(' ') || line === '') {
+    } else if (line.startsWith(' ')) {
       hunkLines.push({ type: 'context', text: line.slice(1), oldLine: oldCursor, newLine: newCursor });
       oldCursor += 1;
       newCursor += 1;

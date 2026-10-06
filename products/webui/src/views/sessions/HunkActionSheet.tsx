@@ -25,8 +25,8 @@ export interface HunkActionSheetProps {
   hunk: DiffHunk;
   /** True when this hunk is already marked reviewed, the Approve button toggles it off. */
   reviewed: boolean;
-  /** 'steer' while an agent is bound, else 'followUp', labels the Comment action honestly. */
-  commentMode: 'steer' | 'followUp';
+  /** Before host classification, discovery names only the comment, never a promised dispatch mode. */
+  commentMode: 'steer' | 'followUp' | 'discover';
   onApprove: () => void;
   onComment: () => void;
   onReject: () => void;
@@ -70,7 +70,7 @@ export function HunkActionSheet({
         </button>
         <button type="button" className="gv-choice hunk-actions__btn" onClick={onComment}>
           <MessageSquare aria-hidden="true" />
-          <span className="gv-choice__label">{commentMode === 'steer' ? 'Comment & steer' : 'Comment & queue follow-up'}</span>
+          <span className="gv-choice__label">{commentMode === 'discover' ? 'Comment on this change' : commentMode === 'steer' ? 'Comment & steer' : 'Comment & queue follow-up'}</span>
         </button>
         <button type="button" className="gv-choice hunk-actions__btn hunk-actions__btn--reject" onClick={onReject}>
           <Undo2 aria-hidden="true" />

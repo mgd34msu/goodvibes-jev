@@ -9,6 +9,8 @@ import type { NativeIntakeBrowserRecord } from "./native-intake-journal";
 import type {
   NativeConversationIntakeCaptureRequest,
   NativeConversationIntakeResult,
+  NativeSelectedDiffSelector,
+  NativeSelectedDiffContext,
 } from "@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client";
 
 const originalFetch = globalThis.fetch;
@@ -21,12 +23,18 @@ afterEach(async () => {
   globalThis.fetch = originalFetch;
   await tokenStore.clearToken();
 });
+const selectedHunk = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n";
+function diffContext(selector: NativeSelectedDiffSelector, sessionId: string): NativeSelectedDiffContext {
+  return selector.kind === "session"
+    ? { ...selector, unifiedDiff: selectedHunk, provenance: { kind: "session", sessionId, baselineCheckpointId: "base", latestCheckpointId: "latest" } }
+    : { ...selector, unifiedDiff: selectedHunk, provenance: { kind: "workspace", baselineId: selector.baselineId, to: "WORKING" } };
+}
 const original = "  Fix 🧪.\nKeep both. Keep both.  ";
 function harness() {
   let principalId = "paired-owner";
   let projectId = "native-project";
   let admin = true;
-  let scopes = ["read:work-ledger", "write:work-ledger", "write:sessions"];
+  let scopes = ["read:work-ledger", "write:work-ledger", "write:sessions", "read:sessions", "read:checkpoints"];
   let principalKind = "token";
   let failSave = false;
   let failConfirm = false;
@@ -37,6 +45,7 @@ function harness() {
   let lostCapture = false;
   let drift = false;
   let continuationDrift = false;
+  let diffDrift = false;
   let command: NativeConversationIntakeCaptureRequest | undefined;
   let state: NativeConversationIntakeResult | undefined;
   const rows: NativeIntakeBrowserRecord[] = [];
@@ -130,6 +139,7 @@ function harness() {
             ? {
                 continuation: {
                   sessionId: command.continuation.sessionId,
+                  ...(command.continuation.selectedDiff ? { selectedDiff: command.continuation.selectedDiff } : {}),
                   revision: "a".repeat(64),
                 },
               }
@@ -150,6 +160,7 @@ function harness() {
           ? {
               continuation: {
                 sessionId: command!.continuation.sessionId,
+                ...(command!.continuation.selectedDiff ? { selectedDiff: diffContext(command!.continuation.selectedDiff, command!.continuation.sessionId) } : {}),
                 revision: "a".repeat(64),
                 messages: [
                   { role: "user" as const, content: "Prior completed original" },
@@ -180,6 +191,10 @@ function harness() {
         },
         continuation: { sessionId: "other-session", revision: "a".repeat(64), messages: [] },
       };
+    if (diffDrift && state?.sourceRef.continuation?.selectedDiff) {
+      state = structuredClone(state);
+      state.sourceRef.continuation!.selectedDiff = { ...state.sourceRef.continuation!.selectedDiff!, hunkIndex: 99 };
+    }
     return Response.json(
       state
         ? { ...state, ...(drift ? { requestId: "another-request" } : {}) }
@@ -241,6 +256,7 @@ function harness() {
     loseCapture() {
       lostCapture = true;
     },
+    driftDiff() { diffDrift = true; },
     driftContinuation() {
       continuationDrift = true;
     },
@@ -631,4 +647,65 @@ test("continuation opening requires native turn scopes and the discovered projec
     "write:sessions"
   );
   expect(h.writes()).toHaveLength(0);
+});
+
+test("selected native comments keep exact originals, selector, and independent repeated identities", async () => {
+  const h = harness();
+  const selectedDiff: NativeSelectedDiffSelector = { kind: "session", revision: "c".repeat(64), fileIndex: 0, hunkIndex: 0 };
+  const scope = { continuationSessionId: "native-session", projectId: "native-project", selectedDiff };
+  const session = await h.open(scope);
+  await session.submit({ text: original, unsupportedSources: [] }, () => {});
+  await session.submit({ text: original, unsupportedSources: [] }, () => {});
+  expect(h.rows.map(row => row.command.text)).toEqual([original, original]);
+  expect(new Set(h.rows.map(row => row.command.inputId)).size).toBe(2);
+  expect(new Set(h.rows.map(row => row.command.requestId)).size).toBe(2);
+  expect(h.rows.every(row => JSON.stringify(row.command.continuation) === JSON.stringify({ sessionId: "native-session", selectedDiff }))).toBe(true);
+  expect(h.writes().map(row => Object.keys(row.input).sort())).toEqual([
+    ["continuation", "inputId", "requestId", "text", "unsupportedSources"], ["inputId", "sourceRevision"],
+    ["continuation", "inputId", "requestId", "text", "unsupportedSources"], ["inputId", "sourceRevision"],
+  ]);
+});
+
+test("selected comment lost acknowledgement reopens read-only and an ordinary session can inspect it", async () => {
+  const h = harness();
+  const selectedDiff: NativeSelectedDiffSelector = { kind: "workspace", baselineId: "checkpoint-base", revision: "d".repeat(64), fileIndex: 0, hunkIndex: 0 };
+  const scope = { continuationSessionId: "native-session", selectedDiff };
+  const session = await h.open(scope); h.loseCapture();
+  await expect(session.submit({ text: original, unsupportedSources: [] }, () => {})).rejects.toThrow();
+  session.dispose();
+  const reopened = await h.open(scope);
+  expect(await reopened.list()).toEqual(h.rows);
+  expect((await reopened.inspect(h.rows[0]!)).kind).toBe("captured");
+  expect(h.writes()).toHaveLength(1);
+  const ordinary = await h.open({ continuationSessionId: "native-session" });
+  expect(await ordinary.list()).toEqual(h.rows);
+  expect((await ordinary.inspect(h.rows[0]!)).kind).toBe("captured");
+  expect(h.writes()).toHaveLength(1);
+  expect((await reopened.retry(h.rows[0]!)).kind).toBe("turn");
+  expect(h.writes()).toHaveLength(2);
+});
+
+test("selected diff scopes are immutable and cannot adopt another hunk or unbound selection", async () => {
+  const h = harness();
+  const selectedDiff = { kind: "session" as const, revision: "e".repeat(64), fileIndex: 0, hunkIndex: 0 };
+  await expect(h.open({ selectedDiff })).rejects.toThrow("verified native session");
+  const session = await h.open({ continuationSessionId: "native-session", selectedDiff });
+  selectedDiff.hunkIndex = 88;
+  await session.submit({ text: original, unsupportedSources: [] }, () => {});
+  expect(h.rows[0]!.command.continuation!.selectedDiff!.hunkIndex).toBe(0);
+  const other = await h.open({ continuationSessionId: "native-session", selectedDiff });
+  expect(await other.list()).toEqual([]);
+  await expect(other.inspect(h.rows[0]!)).rejects.toThrow("selected change");
+  h.driftDiff();
+  await expect(session.inspect(h.rows[0]!)).rejects.toThrow();
+  expect(h.writes()).toHaveLength(2);
+});
+
+test("selected source scopes are rechecked before mutation and not implied by native ownership", async () => {
+  const h = harness();
+  const selectedDiff: NativeSelectedDiffSelector = { kind: "workspace", baselineId: "base", revision: "f".repeat(64), fileIndex: 0, hunkIndex: 0 };
+  const session = await h.open({ continuationSessionId: "native-session", selectedDiff });
+  h.setScopes(["read:work-ledger", "write:work-ledger", "write:sessions", "read:sessions"]);
+  await expect(session.submit({ text: original, unsupportedSources: [] }, () => {})).rejects.toThrow("read:checkpoints");
+  expect(h.writes()).toHaveLength(0); expect(h.rows).toHaveLength(0);
 });

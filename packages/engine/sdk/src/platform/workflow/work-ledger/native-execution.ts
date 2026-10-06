@@ -1,3 +1,4 @@
+import { nativeSelectedDiffEvidence } from './native-diff-evidence.js';
 import { verifyNativeWorkExecution } from './native-execution-verifier.js';
 import { nativeSettlementDigest, type NativeWorkSettlementReceipt } from './native-settlement-types.js';
 import type { CheckSettings } from '../../contract/check.js';
@@ -241,7 +242,7 @@ export function createNativeWorkExecutionHost(deps: {
     const read = await decideAutonomous({ port: deps.port, site: 'work-ledger.native-start',
       instructions: 'Decide whether to start exactly this native work attempt from its complete original goal and ordered criteria. Authentication and scope are fixed host constraints. Do not ask for human approval or invent missing requirements.',
       actionDescription: 'Start the exact bound native work attempt through the durable contract runner.', binding,
-      state: { originalSource: { goal: source.goal, criteria: source.criteria, ...(source.continuation ? { conversationContext: source.continuation.messages } : {}) }, revisions: { work: target.workRevision, criteria: target.criteriaRevision, attempt: target.attemptRevision }, operation: { kind: 'start-native-work', projectRoot }, deterministicConstraints: { existingActiveClaim: true } } as unknown as EntryType,
+      state: { originalSource: { goal: source.goal, criteria: source.criteria, ...(source.continuation ? { conversationContext: source.continuation.messages, ...(source.continuation.selectedDiff ? { selectedDiffContext: nativeSelectedDiffEvidence(source.continuation.selectedDiff) } : {}) } : {}) }, revisions: { work: target.workRevision, criteria: target.criteriaRevision, attempt: target.attemptRevision }, operation: { kind: 'start-native-work', projectRoot }, deterministicConstraints: { existingActiveClaim: true } } as unknown as EntryType,
       evidence: [{ id: 'native-work-source', revision: source.inputRevision }, { id: 'native-work-attempt', revision: hash(target) }, ...(intent ? [{ id: 'native-intent-evaluation', revision: String(intent.generation) }] : [])],
       continuations: [], conditions: [], allowAct: true, assertCurrent, signal });
     assertCurrent();

@@ -3,8 +3,10 @@ import { createOperatorNativeWorkExecutionClient } from "@goodvibes-jev/engine/s
 import {
   createOperatorNativeConversationIntakeClient,
   nativeConversationIntakeCaptureRequestSchema,
+  nativeSelectedDiffSelectorSchema,
   type NativeConversationIntakeLookupResult,
   type NativeConversationIntakeUnsupportedSource,
+  type NativeSelectedDiffSelector,
 } from "@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client";
 import { GOODVIBES_BASE_URL, sdk } from "./goodvibes";
 import {
@@ -34,6 +36,8 @@ export interface NativeIntakeSource {
 }
 export interface NativeIntakeScope {
   continuationSessionId?: string;
+  /** Host-resolved evidence selector, never browser-authored source text or authority. */
+  selectedDiff?: NativeSelectedDiffSelector;
   /** Verified discovery result. Reopening must not silently adopt a different project. */
   projectId?: string;
 }
@@ -53,8 +57,11 @@ export async function openNativeIntake(
   scope: NativeIntakeScope = {}
 ) {
   const { continuationSessionId, projectId: expectedProjectId } = scope;
+  const selectedDiff = scope.selectedDiff ? nativeSelectedDiffSelectorSchema.parse(scope.selectedDiff) : undefined;
+  if (selectedDiff && !continuationSessionId)
+    throw new Error("A selected change requires a verified native session.");
   const continuation =
-    continuationSessionId === undefined ? undefined : { sessionId: continuationSessionId };
+    continuationSessionId === undefined ? undefined : { sessionId: continuationSessionId, ...(selectedDiff ? { selectedDiff } : {}) };
   if (continuation)
     nativeConversationIntakeCaptureRequestSchema.parse({
       requestId: "validation",
@@ -114,6 +121,9 @@ export async function openNativeIntake(
         ? Object.assign(error, { code: "NATIVE_EXECUTION_UNSUPPORTED_AUTHORITY" })
         : error;
     }
+    const diffScope = selectedDiff?.kind === "session" ? "read:sessions" : selectedDiff ? "read:checkpoints" : undefined;
+    if (diffScope && !auth.scopes.includes("*") && !auth.scopes.includes(diffScope))
+      throw new Error(`Native selected change requires current ${diffScope} permission.`);
     const project = await sdk.operator.invoke("workLedger.project", {}, current);
     check();
     current.throwIfAborted();
@@ -173,8 +183,9 @@ export async function openNativeIntake(
       check();
       if (!sameBinding(binding, record.binding))
         throw new Error("This request belongs to a different native owner.");
-      if (record.command.continuation?.sessionId !== continuationSessionId)
-        throw new Error("This saved request belongs to a different session scope.");
+      if (record.command.continuation?.sessionId !== continuationSessionId ||
+        (selectedDiff && JSON.stringify(record.command.continuation?.selectedDiff) !== JSON.stringify(selectedDiff)))
+        throw new Error("This saved request belongs to a different session scope or selected change.");
       await journal.confirm(record);
       check();
     };
@@ -188,6 +199,7 @@ export async function openNativeIntake(
           result.projectId !== binding.projectId ||
           result.sourceRef.inputId !== record.command.inputId ||
           result.sourceRef.continuation?.sessionId !== record.command.continuation?.sessionId ||
+          JSON.stringify(result.sourceRef.continuation?.selectedDiff) !== JSON.stringify(record.command.continuation?.selectedDiff) ||
           (result.kind === "turn" &&
             (result.continuation?.sessionId !== record.command.continuation?.sessionId ||
               result.continuation?.revision !== result.sourceRef.continuation?.revision)) ||
@@ -262,7 +274,8 @@ export async function openNativeIntake(
         const records = await journal.list(binding);
         check();
         return records.filter(
-          (record) => record.command.continuation?.sessionId === continuationSessionId
+          (record) => record.command.continuation?.sessionId === continuationSessionId &&
+            (!selectedDiff || JSON.stringify(record.command.continuation?.selectedDiff) === JSON.stringify(selectedDiff))
         );
       },
       async submit(
