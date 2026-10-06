@@ -24,21 +24,40 @@ async function setup(handler: (request: Request) => Response | Promise<Response>
   return { host, home, configManager, currentUrl: () => url, setHome: (value: string) => { selectedHome = value; }, workspace: (v: string) => { workspace = v; }, endpoint: (v: string) => { url = v; }, close: () => { server.stop(true); rmSync(home, { recursive: true, force: true }); } };
 }
 const status = () => Response.json({ projectId: 'daemon-owned-project' });
-test('passive empty-input host discovery uses existing auth, then public ledger transport', async () => {
+for (const heldHistory of [false, true]) test(`passive empty-input host discovery uses existing auth, then public ledger transport${heldHistory ? ' with delayed history' : ''}`, async () => {
   const paths: string[] = [];
-  const f = await setup(request => {
+  let releaseHistory!: () => void; let historyArrived!: () => void;
+  const historyGate = new Promise<void>(resolve => { releaseHistory = resolve; });
+  const historyRequest = new Promise<void>(resolve => { historyArrived = resolve; });
+  const f = await setup(async request => {
     expect(request.headers.get('authorization')).toBe('Bearer fixture-auth-only');
     const url = new URL(request.url); paths.push(url.pathname + url.search);
     if (url.pathname === '/api/work-ledger/project') { expect(url.search).toBe(''); return status(); }
     if (url.pathname.endsWith('/snapshot')) return Response.json({ projectId: 'daemon-owned-project', revision: 0, cursor: 0, works: [] });
-    if (url.pathname.endsWith('/history')) return Response.json({ projectId: 'daemon-owned-project', afterSequence: 0, cursor: 0, throughSequence: 0, hasMore: false, events: [] });
+    if (url.pathname.endsWith('/history')) {
+      historyArrived(); if (heldHistory) await historyGate;
+      return Response.json({ projectId: 'daemon-owned-project', afterSequence: 0, cursor: 0, throughSequence: 0, hasMore: false, events: [] });
+    }
     return new Response('missing', { status: 404 });
   });
+  const model = new NativeWorkLedgerModel(f.host.readSelection);
+  let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
     expect(await f.host.discoverProject()).toBe(true); const selection = f.host.readSelection(); expect(selection.available).toBe(true);
-    const model = new NativeWorkLedgerModel(f.host.readSelection); model.open(() => {}); await tick(); await tick();
-    expect(model.snapshot?.projectId).toBe('daemon-owned-project'); model.close(); expect(paths.some(p => p.includes('/history'))).toBe(true);
-  } finally { f.close(); }
+    const ready = new Promise<void>(resolve => { model.open(() => { if (model.snapshot) resolve(); }); });
+    await Promise.race([
+      (async () => {
+        if (heldHistory) {
+          await historyRequest; await tick(); await tick();
+          // Elapsed timer ticks cannot establish readiness before history settles.
+          expect(model.snapshot).toBeNull(); releaseHistory();
+        }
+        await ready;
+      })(),
+      new Promise<never>((_resolve, reject) => { deadline = setTimeout(() => reject(new Error(`Native ledger did not become ready: ${model.reason}`)), 4000); }),
+    ]);
+    expect(model.snapshot?.projectId).toBe('daemon-owned-project'); expect(paths.some(p => p.includes('/history'))).toBe(true);
+  } finally { if (deadline) clearTimeout(deadline); releaseHistory(); model.close(); f.close(); }
 });
 test('discovery scope denial stays unavailable; explicit project override needs no discovery', async () => {
   let calls = 0; const f = await setup(() => { calls++; return new Response('denied', { status: 403 }); });
