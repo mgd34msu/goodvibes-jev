@@ -103,11 +103,12 @@ function resolveConnection(options: AgentDaemonVerbCallerOptions): ResolvedConne
     };
   }
   const homeDirectory = typeof options.homeDirectory === 'function' ? options.homeDirectory() : options.homeDirectory;
-  const token = readConnectedHostOperatorToken(homeDirectory);
+  const baseUrl = resolveConnectedHostBaseUrl(configManager);
+  const token = readConnectedHostOperatorToken(homeDirectory, baseUrl);
   if (!token.token) {
-    return { reason: connectedHostTokenRequiredMessage(token.path) };
+    return { reason: token.error ?? connectedHostTokenRequiredMessage(token.path) };
   }
-  return { baseUrl: resolveConnectedHostBaseUrl(configManager), token: token.token };
+  return { baseUrl, token: token.token };
 }
 
 /**

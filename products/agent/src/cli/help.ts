@@ -186,9 +186,9 @@ const COMMAND_HELP: Record<string, CommandHelp> = {
     examples: ['run "summarize the current project"', 'run --output json "list risks"', 'exec --output stream-json "check runtime status"'],
   },
   setup: {
-    usage: ['setup', 'setup status', 'onboarding', 'onboarding status'],
+    usage: ['setup', 'setup status', 'setup pair [--name <device-name>]', 'setup pair [--name <device-name>] --apply', 'onboarding', 'onboarding status'],
     summary: 'Open the Agent workspace, or inspect whether setup has already been applied for this user.',
-    examples: ['setup', 'setup status', 'onboarding status'],
+    examples: ['setup', 'setup status', 'setup pair', 'setup pair --apply', 'onboarding status'],
   },
   status: {
     usage: ['status', 'status --json', '--runtime-url http://127.0.0.1:3421 status'],

@@ -68,7 +68,9 @@ export async function buildSetupPlan(
       reason: 'Native intake needs a fresh selected-host check of a paired owner with read:work-ledger and write:work-ledger. Provider, workspace and Jev readiness are separate checks.',
       nextAction: connectedHostAuthNextAction(authPosture),
       userRoute: 'Agent Workspace -> Connected Host; /auth review',
-      modelRoute: authPosture.operatorToken.usable
+      modelRoute: authPosture.operatorToken.path === 'Agent host-bound pairing store' && !authPosture.operatorToken.usable
+        ? 'agent_harness mode:"run_command" command:"/setup pair"'
+        : authPosture.operatorToken.usable
         ? 'host action:"status" includeParameters:true'
         : authPosture.routes.provisionTokenRoute,
       relatedSetupItemId: 'operator-terminal',

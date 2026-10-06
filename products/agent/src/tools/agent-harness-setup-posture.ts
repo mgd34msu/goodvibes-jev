@@ -1,3 +1,5 @@
+import { readAgentHostPairing } from '../runtime/connected-host-pairing-store.ts';
+import { resolveConnectedHostBaseUrl } from '../config/connected-host-dial.ts';
 import { join } from 'node:path';
 import { getOrCreateCompanionToken } from '@goodvibes-jev/engine/sdk/platform/pairing';
 import { GOODVIBES_AGENT_PAIRING_SURFACE } from '../config/surface.ts';
@@ -298,6 +300,12 @@ export function provisionConnectedHostOperatorToken(context: CommandContext, arg
   }
 
   const shellPaths = requireShellPaths(context);
+  const pairing = readAgentHostPairing(shellPaths.homeDirectory, resolveConnectedHostBaseUrl(context.platform.configManager));
+  if (pairing.status !== 'missing') return {
+    status: 'blocked', mode: 'provision_connected_host_token', setupItemId: 'connected-host-auth',
+    mutation: { performed: false },
+    error: 'Agent host-bound pairing already exists or requires review. Use /setup pair; this route will not rewrite shared-token storage to bypass it.',
+  };
   const before = readConnectedHostOperatorToken(shellPaths.homeDirectory);
   const explicitUserRequest = readString(args.explicitUserRequest);
   const beforeFingerprint = before.token ? connectedHostOperatorTokenFingerprint(before.token) : null;
