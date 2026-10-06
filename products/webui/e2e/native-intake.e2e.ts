@@ -36,6 +36,43 @@ async function originals(page: Page) {
   );
 }
 
+test("an absent journaled input can be left saved while composing a deliberate new request", async ({
+  page,
+}) => {
+  const daemon = await installNativeIntakeDaemon(page, "work");
+  // Fail before the fixture receives capture; its genuine lookup-before bytes
+  // remain not-found. This is not an acknowledgement-loss simulation.
+  await page.route("**/api/work-ledger/intake/capture", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: "Capture did not reach the owned daemon fixture" },
+    })
+  );
+  await page.goto("/?view=work");
+  const dialog = await open(page);
+  await dialog
+    .getByRole("textbox", { name: "Original request", exact: true })
+    .fill(daemon.capture.input.text);
+  await dialog.getByRole("button", { name: "Submit", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toBeVisible();
+  await dialog.getByRole("button", { name: "Inspect", exact: true }).click();
+  await expect(dialog.getByRole("status")).toContainText("latest lookup found no capture");
+  await dialog.getByRole("button", { name: "New request", exact: true }).click();
+  const field = dialog.getByRole("textbox", { name: "Original request", exact: true });
+  await expect(field).toBeEnabled();
+  await field.fill("A corrected, deliberately separate request");
+  await dialog.getByRole("button", { name: "Submit", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toBeVisible();
+  const stored = await originals(page);
+  expect(stored).toHaveLength(2);
+  expect(stored.some((record) => record.command.text === daemon.capture.input.text)).toBe(true);
+  expect(
+    stored.some((record) => record.command.text === "A corrected, deliberately separate request")
+  ).toBe(true);
+  expect(new Set(stored.map((record) => record.command.inputId)).size).toBe(2);
+  expect(daemon.writes).toHaveLength(0);
+});
+
 test("one Submit durably preserves exact text then lets Jev admit work, without an approval gate or execution claim", async ({
   page,
 }) => {

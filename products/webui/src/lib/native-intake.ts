@@ -259,7 +259,7 @@ export type NativeIntakeSession = Awaited<ReturnType<typeof openNativeIntake>>;
 export function nativeIntakeDescription(result: NativeIntakeResult): string {
   switch (result.kind) {
     case "not-found":
-      return "The daemon has no capture for this input. Retry submission retains its original text and IDs.";
+      return "The latest lookup found no capture for this input. Retry submission keeps its original text and IDs; New request keeps this original saved for later inspection.";
     case "captured":
       return "Original source captured. Retry submission continues Jev admission with the same identity.";
     case "processing":

@@ -141,7 +141,8 @@ export function NativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
     );
   };
   const terminal =
-    result && ["work", "turn", "blocked", "refused", "cancelled"].includes(result.kind);
+    result !== undefined &&
+    ["work", "turn", "blocked", "refused", "cancelled"].includes(result.kind);
   const canCancel = Boolean(
     selected && !terminal && busy !== "Cancelling" && busy !== "Connecting"
   );
@@ -328,7 +329,7 @@ export function NativeIntakeForm({ lifetime }: { lifetime: ClientLifetime }) {
                 Cancel intake
               </Button>
             )}
-            {terminal && (
+            {(terminal || result?.kind === "not-found") && (
               <Button
                 disabled={Boolean(busy)}
                 onClick={() => {
