@@ -122,7 +122,9 @@ describe('fleet plane adoption', () => {
     const runtime = getTestRuntimeServices();
 
     const memoryDbPath = join(makeProjectTempDir('fleet-attention-db'), `fleet-attention-${randomUUID()}.db`);
-    const projectIndexRoot = makeProjectTempDir(`fleet-attention-project-${randomUUID()}`);
+    // The helper already adds a unique suffix. UUID digit runs can look like
+    // card material to the real privacy guard and prevent this ordinary write's ask.
+    const projectIndexRoot = makeProjectTempDir('fleet-attention-project');
     const memoryStore = new MemoryStore(memoryDbPath, { embeddingRegistry: runtime.memoryEmbeddingRegistry });
     const memoryRegistry = new MemoryRegistry(memoryStore);
     const fileCache = new FileStateCache();
