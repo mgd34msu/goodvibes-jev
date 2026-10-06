@@ -12,7 +12,7 @@ import { judgmentInputProblem } from '../../sdk/src/platform/gate/judgment-input
 const workId = 'work-a73a83d8-d064-4be3-8217-012ebfe72275';
 const criteriaId = 'criteria:d6b72d9f28026994604091a0bbac8dfa87467c68300f6960922429de420bbdfb';
 const authority = { authorityId: 'owned-authority', authorityRevision: '1', scopeId: 'owned-scope', scopeRevision: '1' };
-function contract(overrides: Partial<NativeContractSource> = {}, admittedWorkId: string | undefined = workId): Contract {
+function contract(overrides: Partial<NativeContractSource> = {}, admittedWorkId: string | null = workId): Contract {
   const source = captureNativeContractSource({ sourceId: 'owned-source', sourceRevision: '1', inputRevision: 'owned-input',
     criteriaId, criteriaRevision: '1', goal: 'Preserve the original request.', criteria: ['Preserve all requirements.'], ...overrides });
   const request: DurableContractRequest = {
@@ -23,7 +23,7 @@ function contract(overrides: Partial<NativeContractSource> = {}, admittedWorkId:
   // This boundary fixture contains every field read by native decision/checkpoint validation.
   return { ...request.input, id: 'ctr-39723693', ownerAgentId: 'owned-owner', status: 'checking-plan',
     goal: source.goal, criteria: nativeSourceCriteria(source), judgmentUsage: { calls: 0, inputTokens: 0, outputTokens: 0 },
-    ...(admittedWorkId === undefined ? {} : { durableAdmission: { ...request, schemaVersion: 1, contractId: 'ctr-39723693',
+    ...(admittedWorkId === null ? {} : { durableAdmission: { ...request, schemaVersion: 1, contractId: 'ctr-39723693',
       ownerAgentId: 'owned-owner', payloadRevision: durablePayloadRevision(request) } }),
   } as Contract;
 }
@@ -60,8 +60,7 @@ test.each(['unbound', 'different-work', 'suffix', 'raw-pan', 'prefixed-pan', 'cr
   '%s criteria metadata cannot acquire the generated-reference exception', async mode => {
     const id = mode === 'suffix' ? `${criteriaId}:suffix` : mode === 'raw-pan' ? '4111111111111111'
       : mode === 'prefixed-pan' ? 'criteria:4111111111111111' : mode === 'credential' ? 'password=owned-synthetic-secret' : criteriaId;
-    const value = contract({ criteriaId: id }, mode === 'different-work' ? 'different-owned-work' : workId);
-    if (mode === 'unbound') delete value.durableAdmission;
+    const value = contract({ criteriaId: id }, mode === 'unbound' ? null : mode === 'different-work' ? 'different-owned-work' : workId);
     await recorded(async (fake, log) => {
       await expect(decide(value)).rejects.toMatchObject({ problem: mode === 'credential' ? 'credential-material' : 'card-material' });
       expect(fake.requests).toHaveLength(0); expect(log.query()).toHaveLength(0);
@@ -82,8 +81,9 @@ test.each(['goal', 'criterion', 'state', 'source-id', 'criteria-revision'] as co
 );
 
 test('inconsistent durable criteria binding cannot normalize a matching source ID', async () => {
-  const value = contract();
-  value.durableAdmission = { ...value.durableAdmission!, key: { ...value.durableAdmission!.key, criteriaId: 'different-owned-criteria' } };
+  const original = contract();
+  const value: Contract = { ...original, durableAdmission: { ...original.durableAdmission!,
+    key: { ...original.durableAdmission!.key, criteriaId: 'different-owned-criteria' } } };
   await recorded(async (fake, log) => {
     await expect(decide(value)).rejects.toMatchObject({ problem: 'card-material' });
     expect(fake.requests).toHaveLength(0); expect(log.query()).toHaveLength(0);
