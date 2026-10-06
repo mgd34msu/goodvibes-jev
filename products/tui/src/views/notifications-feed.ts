@@ -49,10 +49,19 @@ export interface NotificationFeedEntry {
    * happened), absent for a routed notification (warning and critical toast).
    */
   readonly toast?: 'always' | 'never';
+  /** Every occurrence in this row came from saved history; separate from this update's toast policy. */
+  readonly restored?: boolean;
 }
 
 /** Severity order, for folding two arrivals of one event (the higher level wins). */
 const LEVEL_RANK: Readonly<Record<Notification['level'], number>> = { debug: -1, info: 0, warning: 1, critical: 2 };
+
+/** Keep exact diagnostic text when a replay carries only part of an earlier detail. */
+function mergeDetail(previous: string | undefined, incoming: string | undefined): string | undefined {
+  if (!incoming || previous?.includes(incoming)) return previous;
+  if (!previous || incoming.includes(previous)) return incoming;
+  return `${previous}\n\n${incoming}`;
+}
 
 /** A conversation system notice to keep in the history (see recordNotice). */
 export interface NoticeInput {
@@ -104,6 +113,8 @@ export function groupTitle(domain: string): string {
  * long session's full notice history stays reachable in the modal.
  */
 const MAX_ENTRIES = 2000;
+/** Rotate collapsed groups so retained occurrence identities are bounded by 2000 × 100. */
+const MAX_GROUP_OCCURRENCES = 100;
 
 /** Reason codes whose notifications fold into one running-count entry per batch key, rather than one entry per occurrence. */
 const COLLAPSING_REASON_CODES: ReadonlySet<RoutingDecision['reasonCode']> = new Set([
@@ -119,6 +130,9 @@ export class NotificationFeed {
   /** Unix ms of the newest entry the user has seen in the Notifications modal. */
   private seenThrough = 0;
   private nextNoticeId = 1;
+  private nextGroupId = 1;
+  /** Only the current retained group for each router batch key. */
+  private readonly activeGroups = new Map<string, string>();
   /** Per collapsed group: how many of each notification title it folded. */
   private readonly groupTitles = new Map<string, Map<string, number>>();
   /**
@@ -128,6 +142,13 @@ export class NotificationFeed {
    * second arrival folds into the first entry instead of adding another.
    */
   private readonly eventEntries = new Map<string, string>();
+  /** Notice detail outranks bus summaries; subsequent notice replays may only add detail. */
+  private readonly noticeDetails = new Map<string, string>();
+  private readonly restoredEvents = new Set<string>();
+  /** Every member, including keyless arrivals, participates in the group's restored state. */
+  private readonly groupMembers = new Map<string, Set<string | symbol>>();
+  /** One retained diagnostic per occurrence in a bounded collapsed group. */
+  private readonly groupDetails = new Map<string, Map<string | symbol, string>>();
 
   /**
    * Record a routed notification. Only notifications actually targeted at
@@ -140,8 +161,20 @@ export class NotificationFeed {
     if (eventKey && this.foldEvent(eventKey, { level: notification.level, body: notification.body, fromNotice: false, restored: false })) return;
 
     const collapsing = COLLAPSING_REASON_CODES.has(decision.reasonCode) && Boolean(decision.batchKey);
-    const key = collapsing ? `group:${decision.batchKey}` : `single:${notification.id}`;
-    const previousCount = collapsing ? (this.entries.get(key)?.collapsedCount ?? 0) : 0;
+    const key = collapsing ? this.groupKey(decision.batchKey!)
+      : eventKey ? `event:${eventKey}` : `single:${notification.id}`;
+    const previous = collapsing ? this.entries.get(key) : undefined;
+    const previousCount = previous?.collapsedCount ?? 0;
+    if (collapsing) {
+      const members = this.groupMembers.get(key) ?? new Set<string | symbol>();
+      members.add(eventKey ?? Symbol('keyless delivery'));
+      this.groupMembers.set(key, members);
+    }
+    if (collapsing && notification.body) {
+      const details = this.groupDetails.get(key) ?? new Map<string | symbol, string>();
+      details.set(eventKey ?? Symbol('keyless detail'), notification.body);
+      this.groupDetails.set(key, details);
+    }
 
     // A collapsed group folds every notification of one domain and level, of
     // any kind. Its title names the group, never just its latest member, and
@@ -157,10 +190,11 @@ export class NotificationFeed {
         body = [...counts].sort((a, b) => b[1] - a[1]).map(([t, n]) => `${t} \u00d7${n}`).join(', ');
       }
     }
+    if (collapsing) body = this.groupBody(key, this.groupTitles.get(key));
     const entry: NotificationFeedEntry = {
       key,
       domain: notification.domain,
-      level: notification.level,
+      level: previous && LEVEL_RANK[previous.level] > LEVEL_RANK[notification.level] ? previous.level : notification.level,
       title,
       body,
       timestamp: notification.timestamp,
@@ -195,8 +229,10 @@ export class NotificationFeed {
       collapsedCount: 1,
       subject: AGENT_DOMAINS.has(input.domain) ? 'agents' : undefined,
       toast: input.restored ? 'never' : 'always',
+      restored: input.restored === true,
     };
-    if (input.restored) this.seenThrough = Math.max(this.seenThrough, input.timestamp);
+    if (input.eventKey && input.body) this.noticeDetails.set(input.eventKey, input.body);
+    if (input.restored && input.eventKey) this.restoredEvents.add(input.eventKey);
     this.store(key, entry);
     if (input.eventKey) this.eventEntries.set(input.eventKey, key);
     return entry;
@@ -206,8 +242,8 @@ export class NotificationFeed {
    * The second arrival of one runtime event: fold it into the entry the first
    * made, keeping that entry's plain title and place. The conversation line's
    * detail is the fuller one, so it becomes the body; the higher level wins;
-   * a live notice makes the entry toast (once, see the toast bridge). A
-   * collapsed group that already counted the event is left as it is. Returns
+   * a live notice makes the entry toast once; restored occurrences stay silent. A
+   * collapsed group retains its count while accepting detail and severity. Returns
    * the entry, or undefined when the event has no entry yet.
    */
   private foldEvent(
@@ -217,15 +253,49 @@ export class NotificationFeed {
     const key = this.eventEntries.get(eventKey);
     const existing = key === undefined ? undefined : this.entries.get(key);
     if (!key || !existing) return undefined;
-    if (existing.collapsedCount > 1) return existing;
+    if (arrival.restored) this.restoredEvents.add(eventKey);
+    const eventRestored = this.restoredEvents.has(eventKey);
+    const members = this.groupMembers.get(key);
+    const rowRestored = members ? [...members].every((member) => typeof member === 'string' && this.restoredEvents.has(member)) : eventRestored;
+    const noticeBody = arrival.fromNotice ? mergeDetail(this.noticeDetails.get(eventKey), arrival.body) : undefined;
+    if (noticeBody) this.noticeDetails.set(eventKey, noticeBody);
+    const details = this.groupDetails.get(key);
+    if (key.startsWith('group:')) {
+      const current = details ?? new Map<string | symbol, string>();
+      const body = arrival.fromNotice
+        ? noticeBody ?? current.get(eventKey)
+        : current.get(eventKey) ?? arrival.body;
+      if (body) current.set(eventKey, body);
+      this.groupDetails.set(key, current);
+    }
     const merged: NotificationFeedEntry = {
       ...existing,
       level: LEVEL_RANK[arrival.level] > LEVEL_RANK[existing.level] ? arrival.level : existing.level,
-      body: arrival.fromNotice ? (arrival.body ?? existing.body) : (existing.body ?? arrival.body),
-      ...(arrival.fromNotice && !arrival.restored ? { toast: 'always' as const } : {}),
+      body: key.startsWith('group:') ? this.groupBody(key, this.groupTitles.get(key))
+        : arrival.fromNotice ? (noticeBody ?? existing.body) : (existing.body ?? arrival.body),
+      restored: rowRestored,
+      ...(eventRestored ? { toast: 'never' as const }
+        : arrival.fromNotice && !eventRestored ? { toast: 'always' as const } : {}),
     };
     this.store(key, merged);
     return merged;
+  }
+
+  private groupBody(key: string, titles: ReadonlyMap<string, number> | undefined): string | undefined {
+    const summary = titles && titles.size > 1
+      ? [...titles].sort((a, b) => b[1] - a[1]).map(([title, count]) => `${title} ×${count}`).join(', ')
+      : undefined;
+    const details = [...this.groupDetails.get(key)?.values() ?? []];
+    return [summary, ...details].filter(Boolean).join('\n\n') || undefined;
+  }
+
+  private groupKey(batchKey: string): string {
+    const current = this.activeGroups.get(batchKey);
+    const entry = current === undefined ? undefined : this.entries.get(current);
+    if (current !== undefined && entry && entry.collapsedCount < MAX_GROUP_OCCURRENCES) return current;
+    const next = `group:${this.nextGroupId++}`;
+    this.activeGroups.set(batchKey, next);
+    return next;
   }
 
   private store(key: string, entry: NotificationFeedEntry): void {
@@ -254,6 +324,11 @@ export class NotificationFeed {
     this.entries.clear();
     this.groupTitles.clear();
     this.eventEntries.clear();
+    this.noticeDetails.clear();
+    this.restoredEvents.clear();
+    this.groupMembers.clear();
+    this.activeGroups.clear();
+    this.groupDetails.clear();
     this.order = [];
     this.emitChange();
   }
@@ -269,19 +344,27 @@ export class NotificationFeed {
   }
 
   private forgetEvents(entryKey: string): void {
-    for (const [eventKey, owner] of this.eventEntries) if (owner === entryKey) this.eventEntries.delete(eventKey);
+    this.groupDetails.delete(entryKey);
+    this.groupMembers.delete(entryKey);
+    for (const [batchKey, owner] of this.activeGroups) if (owner === entryKey) this.activeGroups.delete(batchKey);
+    for (const [eventKey, owner] of this.eventEntries) {
+      if (owner !== entryKey) continue;
+      this.eventEntries.delete(eventKey);
+      this.noticeDetails.delete(eventKey);
+      this.restoredEvents.delete(eventKey);
+    }
   }
 
   /** Entries updated since the user last looked. */
   unreadCount(): number {
     let n = 0;
-    for (const entry of this.entries.values()) if (entry.timestamp > this.seenThrough) n++;
+    for (const entry of this.entries.values()) if (!entry.restored && entry.timestamp > this.seenThrough) n++;
     return n;
   }
 
   /** Whether an entry was updated since the user last looked. */
   isUnread(entry: NotificationFeedEntry): boolean {
-    return entry.timestamp > this.seenThrough;
+    return !entry.restored && entry.timestamp > this.seenThrough;
   }
 
   /** Everything recorded so far counts as seen. */

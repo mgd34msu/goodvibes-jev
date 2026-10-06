@@ -1,3 +1,4 @@
+import type { RuntimeEventProvenance } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
 import { readTreeGlyphSet, TREE_GLYPHS_CONFIG_KEY } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { InfiniteBuffer } from '@goodvibes-jev/engine/terminal-shell';
 import { createEmptyLine, type Line, type Cell } from '@goodvibes-jev/engine/sdk/platform/types';
@@ -49,7 +50,7 @@ import type { ConversationMessageSnapshot } from '@goodvibes-jev/engine/sdk/plat
 type Message = ConversationMessageSnapshot;
 
 /** Receives every system notice added to (or restored into) the conversation. */
-export type NoticeSink = (content: string, options: { readonly restored: boolean }) => void;
+export type NoticeSink = (content: string, options: { readonly restored: boolean; readonly runtimeEvent?: RuntimeEventProvenance | undefined }) => void;
 
 export class ConversationManager extends SdkConversationManager {
   public history = new InfiniteBuffer();
@@ -159,10 +160,10 @@ export class ConversationManager extends SdkConversationManager {
     this.markDirty();
   }
 
-  public override addSystemMessage(content: string): void {
-    super.addSystemMessage(content);
+  public override addSystemMessage(content: string, runtimeEvent?: RuntimeEventProvenance): void {
+    super.addSystemMessage(content, runtimeEvent);
     this.markDirty();
-    this.noticeSink?.(content, { restored: false });
+    this.noticeSink?.(content, { restored: false, runtimeEvent });
   }
 
   /**
@@ -318,7 +319,7 @@ export class ConversationManager extends SdkConversationManager {
     super.fromJSON(data);
     this.usageHydrator?.();
     // A restored session's notices go back into the history (not toasted).
-    for (const message of data.messages) if (message.role === 'system') this.noticeSink?.(message.content, { restored: true });
+    for (const message of data.messages) if (message.role === 'system') this.noticeSink?.(message.content, { restored: true, runtimeEvent: message.runtimeEvent });
     // Output printed over the conversation this one replaces is not about it.
     this.displayOnly.drop();
     this.history.clear();

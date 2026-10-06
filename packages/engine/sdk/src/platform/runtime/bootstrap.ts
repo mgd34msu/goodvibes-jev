@@ -23,6 +23,7 @@ export type {
   HostRuntimeEventBridgeOptions,
   HostRuntimeMessageRouter,
   RuntimeEventNotice,
+  RuntimeEventProvenance,
 } from './bootstrap-runtime-events.js';
 export { startHostServices } from './bootstrap-services.js';
 export type {

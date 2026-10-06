@@ -1609,6 +1609,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `sessionId` | string | yes |
 | `origin` | enum: `turn`, `agent-tool`, `cli`, `hosted`, `external`, `proposal` | yes |
@@ -1619,6 +1620,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `from` | enum: `queued`, `shaping`, `planning`, `checking-plan`, `running`, `judging`, `fixing`, `committing`, `awaiting-owner`, `passed`, `failed`, `cancelled` | yes |
 | `to` | enum: `queued`, `shaping`, `planning`, `checking-plan`, `running`, `judging`, `fixing`, `committing`, `awaiting-owner`, `passed`, `failed`, `cancelled` | yes |
@@ -1627,6 +1629,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `forbidsDelegation` | object | yes |
 | `forbidsDelegation.verdict` | enum: `yes`, `no`, `uncertain` | yes |
@@ -1650,6 +1653,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `goal` | string | yes |
 | `criteria` | object[] | yes |
@@ -1679,6 +1683,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `check` | enum: `structure`, `criterion-trace`, `plan-coverage`, `criterion-shape`, `unit-shape` | yes |
 | `targetId` | string | optional |
@@ -1693,6 +1698,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `groupId` | string | yes |
 | `from` | enum: `pending`, `blocked`, `running`, `judging`, `fixing`, `awaiting-owner`, `passed`, `failed`, `cancelled` | yes |
@@ -1702,6 +1708,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `groupId` | string | yes |
 | `unitId` | string | yes |
@@ -1713,6 +1720,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `unitId` | string | yes |
 | `agentId` | string | yes |
@@ -1727,6 +1735,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `scope` | enum: `unit`, `group`, `deliverable` | yes |
 | `targetId` | string | yes |
@@ -1756,6 +1765,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `unitId` | string | yes |
 | `nudgeId` | string | yes |
@@ -1769,6 +1779,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `unitId` | string | yes |
 | `nudgeId` | string | yes |
@@ -1779,6 +1790,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `unitId` | string | yes |
 | `criterionId` | string | yes |
@@ -1789,6 +1801,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `scope` | enum: `unit`, `group`, `deliverable` | yes |
 | `targetId` | string | yes |
@@ -1801,6 +1814,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `scope` | enum: `unit`, `group`, `deliverable` | yes |
 | `targetId` | string | yes |
@@ -1812,6 +1826,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `escalationId` | string | yes |
 | `scope` | enum: `plan`, `unit`, `group`, `deliverable`, `shape` | yes |
@@ -1824,6 +1839,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `escalationId` | string | yes |
 | `reading` | enum: `approve`, `reject`, `amend`, `unclear` | yes |
@@ -1834,6 +1850,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `targetId` | string | yes |
 | `gate` | string | yes |
@@ -1845,6 +1862,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `unitId` | string | yes |
 | `agentId` | string | yes |
@@ -1855,6 +1873,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `unitId` | string | yes |
 | `branch` | string | yes |
@@ -1865,6 +1884,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `unitId` | string | yes |
 | `candidateIds` | string[] | yes |
@@ -1876,6 +1896,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `status` | enum: `committed`, `applied`, `skipped`, `failed` | yes |
 | `hash` | string | optional |
@@ -1885,6 +1906,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `criteriaMet` | number | yes |
 | `criteriaJudged` | number | yes |
@@ -1895,6 +1917,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `reason` | string | yes |
 | `failureKind` | enum: `transport`, `max_turns`, `planning`, `budget`, `owner-rejected`, `judgment-unavailable`, `zombie`, `other` | yes |
@@ -1906,6 +1929,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | yes |
 | `reason` | string | yes |
 | `filesModified` | number | yes |
@@ -1914,6 +1938,7 @@ The `contracts` domain carries one named event per step of a contract (docs/desi
 
 | Field | Type | Required |
 |-------|------|----------|
+| `occurrenceId` | string | optional |
 | `contractId` | string | optional |
 | `agentId` | string | yes |
 | `depth` | number | yes |

@@ -1,3 +1,4 @@
+import type { RuntimeEventProvenance } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
 /**
  * SystemMessageRouter, routes system messages to the right surfaces.
  *
@@ -66,6 +67,7 @@ export class SystemMessageRouter {
     message: string,
     priority: SystemMessagePriority,
     kind: SystemMessageKind,
+    runtimeEvent?: RuntimeEventProvenance,
   ): void {
     // Noise gate, keep first-run plumbing out of the Recent feed / transcript
     // while the information stays reachable via other live surfaces (activity
@@ -83,7 +85,8 @@ export class SystemMessageRouter {
       this.feed?.push(message, priority);
     }
     if (delivery.toConversation) {
-      this.conversation.addSystemMessage(message);
+      if (runtimeEvent) this.conversation.addSystemMessage(message, runtimeEvent);
+      else this.conversation.addSystemMessage(message);
     }
   }
 
@@ -116,8 +119,8 @@ export class SystemMessageRouter {
     logger.info(summary, { count: providerNames.length, providers: providerNames });
   }
 
-  routeSystemMessage(message: string, priority: SystemMessagePriority): void {
-    this.routeTypedSystemMessage(message, priority, classifySystemMessageKind(message));
+  routeSystemMessage(message: string, priority: SystemMessagePriority, runtimeEvent?: RuntimeEventProvenance): void {
+    this.routeTypedSystemMessage(message, priority, classifySystemMessageKind(message), runtimeEvent);
   }
 
   /**
@@ -141,12 +144,12 @@ export class SystemMessageRouter {
   }
 
   /** Low-priority shortcut, activity feed only. */
-  low(message: string): void {
-    this.routeSystemMessage(message, 'low');
+  low(message: string, runtimeEvent?: RuntimeEventProvenance): void {
+    this.routeSystemMessage(message, 'low', runtimeEvent);
   }
 
-  contract(message: string, priority: SystemMessagePriority = 'high'): void {
-    this.routeTypedSystemMessage(message, priority, 'contract');
+  contract(message: string, priority: SystemMessagePriority = 'high', runtimeEvent?: RuntimeEventProvenance): void {
+    this.routeTypedSystemMessage(message, priority, 'contract', runtimeEvent);
   }
 
   /** Returns the current activity feed reference. */

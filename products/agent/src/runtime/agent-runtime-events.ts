@@ -176,7 +176,7 @@ export function registerAgentRuntimeEvents(options: AgentRuntimeEventBridgeOptio
       const durationSeconds = record.completedAt !== undefined ? Math.round((record.completedAt - record.startedAt) / 1000) : 0;
       const taskSnippet = formatAgentTask(record.task);
       withRouter(getSystemMessageRouter, (router) => {
-        router.low(`[Delegated task] ${record.template} ${payload.agentId.slice(-8)} completed in ${durationSeconds}s "${taskSnippet}"`);
+        router.low(`[Delegated task] ${record.template} ${payload.agentId.slice(-8)} completed in ${durationSeconds}s "${taskSnippet}"`, payload);
       });
       queueConversationFollowUp?.({
         key: `agent:${payload.agentId}:completed`,
@@ -206,7 +206,7 @@ export function registerAgentRuntimeEvents(options: AgentRuntimeEventBridgeOptio
             ? 'a per-spawn override'
             : 'the agents.maxTurnsCap policy ceiling';
         withRouter(getSystemMessageRouter, (router) => {
-          router.low(`[Delegated task] ${record.template} ${payload.agentId.slice(-8)} spent its turn budget in ${durationSeconds}s, ${limit} turns (${sourceLabel}) while working on "${taskSnippet}"`);
+          router.low(`[Delegated task] ${record.template} ${payload.agentId.slice(-8)} spent its turn budget in ${durationSeconds}s, ${limit} turns (${sourceLabel}) while working on "${taskSnippet}"`, payload);
         });
         queueConversationFollowUp?.({
           key: `agent:${payload.agentId}:failed`,
@@ -223,7 +223,7 @@ export function registerAgentRuntimeEvents(options: AgentRuntimeEventBridgeOptio
       // with the AGENT_FAILED event.
       void fetchChildFailureSummary(toolRegistry, payload.agentId).then((envelopeSummary) => {
         withRouter(getSystemMessageRouter, (router) => {
-          router.low(`[Delegated task] ${record.template} ${payload.agentId.slice(-8)} failed in ${durationSeconds}s ${payload.error.slice(0, 80)}${envelopeSummary ? ` (${envelopeSummary})` : ''}`);
+          router.low(`[Delegated task] ${record.template} ${payload.agentId.slice(-8)} failed in ${durationSeconds}s ${payload.error}${envelopeSummary ? ` (${envelopeSummary})` : ''}`, payload);
         });
         requestRender();
       });
