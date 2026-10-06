@@ -341,7 +341,9 @@ function buildHarness(options: HarnessOptions): Harness {
   };
 
   const request: PurchaseRequest = {
-    purchaseId: `p-${merchant.shape}-${String(Math.random()).slice(2, 8)}`,
+    // Each harness owns its registry and ledger. Random digits can collide
+    // with the synthetic CVV in whole-record leak assertions.
+    purchaseId: `p-${merchant.shape}-fixture`,
     merchantDomain: new URL(origin).hostname,
     checkoutUrl: `${origin}/checkout`,
     item: unsafeOwnerSuppliedTextForTests(merchant.shape === 'alpha' ? 'Mechanical keyboard, tenkeyless' : 'Espressomaschine, zweikreisig'),
@@ -543,7 +545,14 @@ describe('the card never comes back', () => {
     const record = harness.recorded[0];
     expect(record).toBeDefined();
     expect(record?.cardLast4).toBe('1486');
+    expect(record?.purchaseId).toBe('p-alpha-fixture');
     expectNoCardMaterial('the purchase record', JSON.stringify(record));
+  });
+
+  test('the record leak assertion still rejects every synthetic card spelling', () => {
+    for (const spelling of SENTINEL_SPELLINGS) {
+      expect(() => expectNoCardMaterial('synthetic leak', JSON.stringify({ purchaseId: 'p-alpha-fixture', leaked: spelling }))).toThrow('contained card material');
+    }
   });
 
   test('the notice the owner reads carries last4 and no more of the card', async () => {
