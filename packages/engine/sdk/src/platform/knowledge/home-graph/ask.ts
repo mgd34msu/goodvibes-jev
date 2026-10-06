@@ -3,18 +3,11 @@ import type { KnowledgeSemanticService } from '../semantic/index.js';
 import { logger } from '../../utils/logger.js';
 import { scheduleBackground } from '../cooperative.js';
 import type { KnowledgeStore } from '../store.js';
-import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../types.js';
+import type { KnowledgeSourceRecord } from '../types.js';
 import { collectLinkedObjects, renderAskAnswer } from './state.js';
 import type { HomeGraphAskInput, HomeGraphAskResult, HomeGraphSearchResult } from './types.js';
 import type { HomeGraphSearchState } from './search.js';
-import {
-  inferAnswerObjectScopeForQuery,
-  nodeInAnswerObjectScope,
-  sourceInAnswerObjectScope,
-} from '../semantic/object-scope.js';
-import { uniqueStrings } from '../semantic/utils.js';
-import { canonicalRepairSubjectNodes } from '../semantic/repair-subjects.js';
-import { HOME_GRAPH_KNOWLEDGE_EXTENSION } from './extension.js';
+import { prepareHomeGraphAnswerScope } from './answer-scope.js';
 
 export async function answerHomeGraphQuery(input: {
   readonly store: KnowledgeStore;
@@ -35,9 +28,12 @@ async function answerHomeGraphQueryOnce(input: {
   readonly state: HomeGraphSearchState;
   readonly results: readonly HomeGraphSearchResult[];
 }): Promise<HomeGraphAskResult> {
-  const results = scopeHomeGraphAnswerResults(input.store, input.spaceId, input.query.query, input.results);
+  // The configured semantic service already owns typed alignment and source
+  // selection. Do not pre-empt it with another anchor guess or duplicate read.
+  const scoped = input.semanticService ? undefined : await prepareHomeGraphAnswerScope(input);
+  const results = scoped?.results ?? input.results;
   const sources = results.flatMap((result) => result.source ? [result.source] : []).map(withAnswerSourceAliases);
-  const linkedObjects = filterHomeGraphAnswerLinkedObjects(input.query.query, collectLinkedObjects(results, input.state));
+  const linkedObjects = scoped?.linkedObjects ?? collectLinkedObjects(results, input.state);
   if (input.semanticService) {
     const answer = await input.semanticService.answer({
       query: input.query.query,
@@ -55,13 +51,14 @@ async function answerHomeGraphQueryOnce(input: {
       autoRepairGaps: true,
       timeoutMs: input.query.timeoutMs,
     });
+    const selectedSources = uniqueSources(answer.results.flatMap((result) => result.source ? [result.source] : []));
     scheduleBackground(() => {
       // Governor backpressure: skip the post-answer enrichment tail while
       // background knowledge work is paused for memory pressure.
       if (input.semanticService?.isBackgroundWorkPaused()) return;
-      void input.semanticService?.enrichSources(uniqueSources(sources), {
+      void input.semanticService?.enrichSources(selectedSources, {
         knowledgeSpaceId: input.spaceId,
-        limit: Math.min(3, Math.max(1, sources.length)),
+        limit: Math.min(3, Math.max(1, selectedSources.length)),
       }).catch((error: unknown) => {
         logger.warn('Home Graph post-answer enrichment failed', {
           spaceId: input.spaceId,
@@ -85,10 +82,14 @@ async function answerHomeGraphQueryOnce(input: {
         refinement: answer.answer.refinement,
         synthesized: answer.answer.synthesized,
       },
-      results,
+      results: answer.results.map((result) => ({ ...result,
+        title: result.source?.title ?? result.node?.title ?? result.id,
+        summary: result.source?.summary ?? result.node?.summary,
+      })),
     };
   }
-  const confidence = Math.min(100, Math.max(10, results[0]?.score ?? 10));
+  // Retrieval points and relevance probabilities do not establish fidelity.
+  const confidence = 0;
   return {
     ok: true,
     spaceId: input.spaceId,
@@ -104,24 +105,6 @@ async function answerHomeGraphQueryOnce(input: {
   };
 }
 
-function scopeHomeGraphAnswerResults(
-  store: KnowledgeStore,
-  spaceId: string,
-  query: string,
-  results: readonly HomeGraphSearchResult[],
-): readonly HomeGraphSearchResult[] {
-  if (results.length === 0) return results;
-  const scope = inferAnswerObjectScopeForQuery(store, spaceId, query, HOME_GRAPH_KNOWLEDGE_EXTENSION.objectProfiles);
-  if (!scope || scope.anchorNodeIds.size === 0) return results;
-  const scoped = results.filter((result) => {
-    if (result.source) return sourceInAnswerObjectScope(store, result.source, scope);
-    if (result.node) return nodeInAnswerObjectScope(result.node, scope);
-    return false;
-  });
-  if (scoped.length > 0) return scoped;
-  return [];
-}
-
 function uniqueSources(sources: readonly KnowledgeSourceRecord[]): KnowledgeSourceRecord[] {
   const seen = new Set<string>();
   const out: KnowledgeSourceRecord[] = [];
@@ -135,29 +118,4 @@ function uniqueSources(sources: readonly KnowledgeSourceRecord[]): KnowledgeSour
 
 function withAnswerSourceAliases(source: KnowledgeSourceRecord): KnowledgeSourceRecord {
   return withKnowledgeSourceAnswerAliases(source);
-}
-
-function filterHomeGraphAnswerLinkedObjects(
-  query: string,
-  nodes: readonly KnowledgeNodeRecord[],
-): KnowledgeNodeRecord[] {
-  const canonical = canonicalRepairSubjectNodes({ nodes, text: query, objectProfiles: HOME_GRAPH_KNOWLEDGE_EXTENSION.objectProfiles });
-  if (canonical.length > 0) return canonical;
-  const integrationIntent = /\b(integration|platform|add-?on|addon|plugin|service|api|setup|configure|configuration|auth|credential|rate limit)\b/i.test(query);
-  return uniqueNodes(nodes)
-    .filter((node) => node.status !== 'stale')
-    .filter((node) => !node.metadata.semanticKind)
-    .filter((node) => !['fact', 'wiki_page', 'knowledge_gap', 'ha_device_passport'].includes(node.kind))
-    .filter((node) => integrationIntent || node.kind !== 'ha_integration');
-}
-
-function uniqueNodes(nodes: readonly KnowledgeNodeRecord[]): KnowledgeNodeRecord[] {
-  const seen = new Set<string>();
-  const result: KnowledgeNodeRecord[] = [];
-  for (const node of nodes) {
-    if (seen.has(node.id)) continue;
-    seen.add(node.id);
-    result.push(node);
-  }
-  return result;
 }

@@ -1,6 +1,6 @@
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
 
-useKnowledgeAnswerReadings();
+const readings = useKnowledgeAnswerReadings();
 
 import { describe, expect, test } from 'bun:test';
 import { HomeGraphRoutes } from '../sdk/src/platform/daemon/http/home-graph-routes.js';
@@ -25,6 +25,14 @@ useHomeGraphFixtures();
 
 describe('Home Graph ask, source repair, and reindex', () => {
   test('ingests notes, links and unlinks targets, and renders device passports', async () => {
+    readings.set({
+      initialEvidenceDefault: 0.01,
+      initialEvidenceCandidates: [['source', 'Front door battery', 0.99]],
+      excerpts: [['The front door sensor uses a CR2032 battery.', 0.99]],
+      objectAlignment: [{ query: 'CR2032 front door', objects: [
+        { title: 'Front Door Sensor', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 },
+      ] }],
+    });
     const { service } = createHomeGraphService();
     await service.syncSnapshot({
       installationId: 'house-1',
@@ -57,6 +65,8 @@ describe('Home Graph ask, source repair, and reindex', () => {
 
     expect(ingested.source.metadata.knowledgeSpaceId).toBe(homeAssistantKnowledgeSpaceId('house-1'));
     expect(ask.answer.text).toContain('Front door battery');
+    expect(ask.answer.sources.map((source) => source.title)).toContain('Front door battery');
+    expect(ask.answer.text).toContain('The front door sensor uses a CR2032 battery.');
     expect(ask.answer.linkedObjects.map((node) => node.title)).toContain('Front Door Sensor');
     expect(passport.markdown).toContain('Front Door Sensor');
     expect(passport.artifact.mimeType).toBe('text/markdown');
@@ -68,6 +78,13 @@ describe('Home Graph ask, source repair, and reindex', () => {
   });
 
   test('asks large manual-backed graphs through bounded searchable extraction text', async () => {
+    readings.set({
+      initialEvidenceDefault: 0.01,
+      initialEvidenceCandidates: [['source', 'Living Room TV manual', 0.99]],
+      objectAlignment: [{ query: 'what features does the tv have hdr10 earc game mode', objects: [
+        { title: 'Living Room TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 },
+      ] }],
+    });
     const { service, store } = createHomeGraphService();
     await service.syncSnapshot({
       installationId: 'house-1',
@@ -146,6 +163,14 @@ describe('Home Graph ask, source repair, and reindex', () => {
   });
 
   test('anchors ask results to linked Home Assistant objects instead of generic feature hits', async () => {
+    readings.set({
+      initialEvidenceDefault: 0.01,
+      initialEvidenceCandidates: [['source', 'Living Room Television manual', 0.99]],
+      excerpts: [['Picture and sound features include HDR10, HDMI eARC, filmmaker mode, low latency game mode, and voice remote support.', 0.99]],
+      objectAlignment: [{ query: 'what features does the tv have', objects: [
+        { title: 'Living Room TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 },
+      ] }],
+    });
     const { service, store } = createHomeGraphService();
     await service.syncSnapshot({
       installationId: 'house-1',
@@ -247,6 +272,14 @@ describe('Home Graph ask, source repair, and reindex', () => {
   });
 
   test('does not blend other television objects into singular TV feature asks', async () => {
+    readings.set({
+      initialEvidenceDefault: 0.01,
+      initialEvidenceCandidates: [['source', 'LG 86NANO90UNA specifications', 0.99]],
+      excerpts: [['LG 86NANO90UNA smart TV features include NanoCell 4K, HDR10, Dolby Vision, webOS, HDMI eARC, and gaming support.', 0.99]],
+      objectAlignment: [{ query: 'What refresh rate, HDR formats, HDMI 2.1 or gaming features, and smart TV features does the TV have?', objects: [
+        { title: 'LG webOS Smart TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 },
+      ] }],
+    });
     const { service, store } = createHomeGraphService();
     await service.syncSnapshot({
       installationId: 'house-1',
@@ -335,6 +368,14 @@ describe('Home Graph ask, source repair, and reindex', () => {
   });
 
   test('filters contaminated Home Graph answer candidates to the singular object scope', async () => {
+    readings.set({
+      initialEvidenceDefault: 0.01,
+      initialEvidenceCandidates: [['source', 'LG NanoCell 86NANO90UNA specifications', 0.99]],
+      excerpts: [['LG 86NANO90UNA smart TV features include NanoCell 4K, HDR10, Dolby Vision, webOS, HDMI eARC, and gaming support.', 0.99]],
+      objectAlignment: [{ query: 'What refresh rate, HDR formats, HDMI 2.1 or gaming features, and smart TV features does the TV have?', objects: [
+        { title: 'LG webOS Smart TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 },
+      ] }],
+    });
     const { service, store } = createHomeGraphService();
     await service.syncSnapshot({
       installationId: 'house-1',
@@ -442,6 +483,14 @@ describe('Home Graph ask, source repair, and reindex', () => {
   });
 
   test('keeps Home Assistant linked objects from repaired source metadata', async () => {
+    readings.set({
+      initialEvidenceDefault: 0.01,
+      initialEvidenceCandidates: [['source', 'LG 86NANO90UNA specifications', 0.99]],
+      excerpts: [['LG 86NANO90UNA features include 4K NanoCell display, HDR10, Dolby Vision, HLG, eARC, and AMD FreeSync.', 0.99]],
+      objectAlignment: [{ query: 'what HDR and gaming features does the LG TV have', objects: [
+        { title: 'Living Room TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 },
+      ] }],
+    });
     const { service, store } = createHomeGraphService();
     await service.syncSnapshot({
       installationId: 'house-1',
@@ -532,6 +581,14 @@ describe('Home Graph ask, source repair, and reindex', () => {
   });
 
   test('repairs already-uploaded stale stale PDF manual extractions during ask', async () => {
+    readings.set({
+      initialEvidenceDefault: 0.01,
+      initialEvidenceCandidates: [['source', 'LG 86NANO90UNA manual', 0.99]],
+      excerpts: [['LG TV features include HDR10, HDMI eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control.', 0.99]],
+      objectAlignment: [{ query: 'what features does the LG TV have?', objects: [
+        { title: 'LG TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 },
+      ] }],
+    });
     const { service, store, artifactStore } = createHomeGraphService();
     await service.syncSnapshot({
       installationId: 'house-1',
