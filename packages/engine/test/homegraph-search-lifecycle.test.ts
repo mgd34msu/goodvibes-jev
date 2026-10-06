@@ -307,7 +307,7 @@ test('mixed valid and stale backing never projects the excluded source header', 
 test('active research gaps stay outside evidence projection', async () => {
   const { store, source } = await fixture();
   const gapInput = {
-    id: 'research-gap', kind: 'knowledge_gap', slug: 'research-gap', title: 'Excluded research gap',
+    id: 'research-gap', kind: 'knowledge_gap' as const, slug: 'research-gap', title: 'Excluded research gap',
     summary: 'Authorization: Bearer synthetic-gap', status: 'active' as const,
     metadata: { knowledgeSpaceId: spaceId, semanticKind: 'gap' },
   };

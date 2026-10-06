@@ -75,7 +75,7 @@ describe('Home Graph full-candidate search judgments (authored synthetic proof)'
   test.each([false, true])('executable ask retrieves a paraphrase without lexical overlap, semantic=%s', async (semantic) => {
     const f = await fixture(semantic);
     await source(f.store, 'advertisement', 'Official router reset manual support', 'Buy now. Instructions are not provided here.', { sourceType: 'manual', tags: ['manual', 'router', 'reset'] });
-    const useful = await source(f.store, 'recovery', 'Recovery procedure', body, { sourceType: 'note' });
+    const useful = await source(f.store, 'recovery', 'Recovery procedure', body, { sourceType: 'other' });
     const fake = readings({ evidence: { 'Recovery procedure': 0.99 } });
     const answer = await f.service.ask({ knowledgeSpaceId: spaceId, query, limit: 1 });
     expect(answer.results.map((item) => item.id)).toEqual([useful.id]);
@@ -88,7 +88,7 @@ describe('Home Graph full-candidate search judgments (authored synthetic proof)'
   test('same reader ranks accepted rows across source types and keeps deterministic ties on repeat', async () => {
     const f = await fixture();
     await source(f.store, 'first', 'High-weight manual', body, { sourceType: 'manual' });
-    await source(f.store, 'second', 'Unboosted note', body, { sourceType: 'note' });
+    await source(f.store, 'second', 'Unboosted note', body, { sourceType: 'other' });
     readings({ evidence: { 'High-weight manual': 0.82, 'Unboosted note': 0.99 } });
     expect((await select(f)).results.map((row) => row.id)).toEqual(['second', 'first']);
     expect((await select(f)).results.map((row) => row.id)).toEqual(['second', 'first']);
