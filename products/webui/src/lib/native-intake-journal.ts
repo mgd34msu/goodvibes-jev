@@ -109,6 +109,13 @@ function bindingSnapshot(value: unknown): NativeIntakeBrowserBinding {
   return { endpoint, projectId, principalId, transport };
 }
 
+function continuationSnapshotShape(value: unknown): boolean {
+  if (exactObject(value, ["sessionId"])) return true;
+  if (!exactObject(value, ["sessionId", "selectedDiff"])) return false;
+  return exactObject(value.selectedDiff, ["kind", "revision", "fileIndex", "hunkIndex"]) ||
+    exactObject(value.selectedDiff, ["kind", "baselineId", "revision", "fileIndex", "hunkIndex"]);
+}
+
 function recordSnapshot(value: unknown): NativeIntakeBrowserRecord {
   if (
     !exactObject(value, ["binding", "command", "createdAt"]) ||
@@ -124,7 +131,7 @@ function recordSnapshot(value: unknown): NativeIntakeBrowserRecord {
         "unsupportedSources",
         "continuation",
       ]) &&
-        exactObject(value.command.continuation, ["sessionId"]))
+        continuationSnapshotShape(value.command.continuation))
     ) ||
     !Array.isArray(value.command.unsupportedSources) ||
     value.command.unsupportedSources.length > 100 ||

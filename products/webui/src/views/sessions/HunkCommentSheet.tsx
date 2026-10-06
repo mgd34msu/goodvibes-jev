@@ -1,5 +1,5 @@
 /**
- * HunkCommentSheet, the touch-first composer for a comment attached to ONE diff hunk.
+ * HunkCommentSheet, the explicit legacy touch-first composer for a comment attached to ONE diff hunk.
  *
  * Mirrors ConfirmSheet's idiom (bottom sheet on a phone, centered dialog on desktop,
  * focus trap, Escape/backdrop cancel) but carries a textarea instead of a yes/no: it
@@ -7,7 +7,7 @@
  * excerpt) so the operator is never guessing, then sends the comment as a steer/
  * follow-up to the session. Presentational-with-state: it owns only the draft text and
  * the composer-key handling; the PARENT owns the mutation (the same sessions.steer /
- * sessions.followUp path the SteerComposer and fleet needs-input flow use) and passes
+ * sessions.followUp path after authoritative legacy classification) and passes
  * back `pending` / `error` / a `mode` label so this sheet stays free of any wire concern.
  */
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type SyntheticEvent } from 'react';

@@ -72,10 +72,15 @@ const previewCalls: { path: string; hunk: string; sessionId?: string }[] = [];
 const revertCalls: { path: string; hunk: string; confirmToken?: string; sessionId?: string }[] = [];
 
 mock.module('../../lib/goodvibes', () => ({
+  GOODVIBES_BASE_URL: 'http://localhost:3000',
   getCurrentAuth: () => Promise.resolve({}),
   invokeMethod: () => Promise.resolve({}),
   sdk: {
     operator: {
+      invoke: (method: string) => {
+        if (method === 'workLedger.turn.session') return Promise.resolve({ kind: 'legacy' });
+        return Promise.reject(new Error(`Unexpected method ${method}`));
+      },
       checkpoints: {
         list: () => Promise.resolve({ checkpoints }),
         diff: (_input: { a: string }) => Promise.resolve({

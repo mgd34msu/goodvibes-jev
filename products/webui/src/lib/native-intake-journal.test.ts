@@ -542,3 +542,24 @@ test("source journal rejects continuation accessors and hidden fields without ev
   await expect(storage.journal().save(original)).rejects.toMatchObject({ code: "invalid-record" });
   expect(storage.state.opens).toBe(0);
 });
+
+test("selected diff identity is immutable alongside the exact comment without browser-authored context", async () => {
+  const storage = databaseDouble();
+  const source = record("diff");
+  source.command.continuation = { sessionId: "native-session", selectedDiff: { kind: "workspace", baselineId: "base", revision: "a".repeat(64), fileIndex: 1, hunkIndex: 2 } };
+  const expected = structuredClone(source);
+  const saving = storage.journal().save(source);
+  source.command.continuation.selectedDiff!.hunkIndex = 9;
+  await saving;
+  expect(await storage.journal().list(binding)).toEqual([expected]);
+  await expect(storage.journal().confirm(source)).rejects.toThrow("conflict");
+  const forged = structuredClone(expected);
+  Object.assign(forged.command.continuation!.selectedDiff!, { unifiedDiff: "manufactured" });
+  await expect(storage.journal().save(forged)).rejects.toThrow("invalid-record");
+  let invoked = false;
+  const getter = record("getter");
+  getter.command.continuation = { sessionId: "native-session", selectedDiff: { kind: "session", revision: "a".repeat(64), fileIndex: 0, hunkIndex: 0 } };
+  Object.defineProperty(getter.command.continuation.selectedDiff!, "revision", { enumerable: true, get: () => { invoked = true; return "a".repeat(64); } });
+  await expect(storage.journal().save(getter)).rejects.toThrow("invalid-record");
+  expect(invoked).toBe(false);
+});

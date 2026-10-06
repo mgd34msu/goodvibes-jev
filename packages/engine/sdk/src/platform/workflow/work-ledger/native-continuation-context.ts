@@ -1,21 +1,23 @@
 /** Browser-safe immutable conversation evidence. A snapshot is never execution authority. */
+import { captureNativeSelectedDiffContext, nativeSelectedDiffContextSchema, nativeSelectedDiffSelectorSchema, type NativeSelectedDiffContext } from './native-diff-context.js';
 import { array, enum as enumSchema, strictObject, string, type z } from 'zod/v4';
 
 export const NATIVE_CONVERSATION_CONTINUATION_MAX_MESSAGES = 128;
 export const NATIVE_CONVERSATION_CONTINUATION_MAX_BYTES = 131_072;
 const id = string().min(1).max(200);
-export const nativeConversationContinuationRefSchema = strictObject({ sessionId: id, revision: string().regex(/^[a-f0-9]{64}$/) });
+export const nativeConversationContinuationRefSchema = strictObject({ sessionId: id, revision: string().regex(/^[a-f0-9]{64}$/), selectedDiff: nativeSelectedDiffSelectorSchema.optional() });
 export const nativeConversationContinuationMessageSchema = strictObject({ role: enumSchema(['user', 'assistant', 'system', 'tool']), content: string().max(NATIVE_CONVERSATION_CONTINUATION_MAX_BYTES) });
 export const nativeConversationContinuationSchema = nativeConversationContinuationRefSchema.extend({
+  selectedDiff: nativeSelectedDiffContextSchema.optional(),
   messages: array(nativeConversationContinuationMessageSchema).max(NATIVE_CONVERSATION_CONTINUATION_MAX_MESSAGES).readonly(),
-}).refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= NATIVE_CONVERSATION_CONTINUATION_MAX_BYTES, 'Continuation snapshot exceeds byte limit');
+}).refine(value => value.selectedDiff?.kind !== 'session' || value.selectedDiff.provenance.sessionId === value.sessionId, 'Selected diff session mismatch').refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= NATIVE_CONVERSATION_CONTINUATION_MAX_BYTES, 'Continuation snapshot exceeds byte limit');
 export type NativeConversationContinuation = Readonly<Omit<z.infer<typeof nativeConversationContinuationSchema>, 'messages'> & {
   readonly messages: readonly Readonly<z.infer<typeof nativeConversationContinuationMessageSchema>>[];
 }>;
 
 /** Inspect descriptors before any schema access; never evaluate supplied accessors. */
 function data(value: unknown, seen = new Set<object>()): void {
-  if (typeof value === 'string') return;
+  if (typeof value === 'string' || (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)) return;
   if (!value || typeof value !== 'object' || seen.has(value)) throw new Error('Invalid native continuation context');
   const isArray = Array.isArray(value);
   if (Object.getPrototypeOf(value) !== (isArray ? Array.prototype : Object.prototype)) throw new Error('Invalid native continuation context');
@@ -34,10 +36,11 @@ export function captureNativeConversationContinuation(value: unknown): NativeCon
   data(value);
   const parsed = nativeConversationContinuationSchema.parse(value);
   return Object.freeze({ sessionId: parsed.sessionId, revision: parsed.revision,
+    ...(parsed.selectedDiff ? { selectedDiff: captureNativeSelectedDiffContext(parsed.selectedDiff) } : {}),
     messages: Object.freeze(parsed.messages.map(message => Object.freeze({ ...message }))) });
 }
 
 /** The host hashes these exact bytes with SHA-256. No clock or mutable runtime metadata. */
-export function canonicalNativeConversationContinuation(sessionId: string, messages: NativeConversationContinuation['messages']): string {
-  return JSON.stringify({ sessionId, messages: messages.map(message => ({ role: message.role, content: message.content })) });
+export function canonicalNativeConversationContinuation(sessionId: string, messages: NativeConversationContinuation['messages'], selectedDiff?: NativeSelectedDiffContext): string {
+  return JSON.stringify({ sessionId, messages: messages.map(message => ({ role: message.role, content: message.content })), ...(selectedDiff ? { selectedDiff } : {}) });
 }

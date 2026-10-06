@@ -3,7 +3,7 @@ import { hashState, JudgmentError, type EntryType, type JudgmentPort } from '@go
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { getProcessUntrustedContentLedger } from '../security/untrusted-content.js';
-import { autonomousRevision, assertAutonomousData, captureAutonomousChoices, captureAutonomousSource, decideAutonomousTool, type AutonomousToolChoices, type AutonomousToolRevision, type AutonomousToolSource } from './autonomous.js';
+import { autonomousSourceEvidence, autonomousRevision, assertAutonomousData, captureAutonomousChoices, captureAutonomousSource, decideAutonomousTool, type AutonomousToolChoices, type AutonomousToolRevision, type AutonomousToolSource } from './autonomous.js';
 import type { JevDecisionBinding, JevVersionRef } from '@goodvibes-jev/judgment/decisions';
 import { bindTurnHookDispatcher, type TurnHookOwner } from '../hooks/turn-ownership.js';
 import { getConfigSnapshot, isAutoApproveEnabled } from '../config/index.js';
@@ -298,8 +298,9 @@ export class PermissionManager {
       sessionGrants: [...this.sessionApprovals], exposure };
     assertAutonomousData(choices);
     assertAutonomousData(frame);
-    const ownedFrame = snapshotJudgmentInput({ ...frame, source: captureAutonomousSource(source) }) as Record<string, unknown>;
-    return Object.freeze({ ...ownedFrame, autonomousChoices: captureAutonomousChoices(choices) });
+    const capturedSource = captureAutonomousSource(source);
+    const ownedFrame = snapshotJudgmentInput({ ...frame, source: autonomousSourceEvidence(capturedSource) }) as Record<string, unknown>;
+    return Object.freeze({ ...ownedFrame, source: capturedSource, autonomousChoices: captureAutonomousChoices(choices) });
   }
 
   /** The same live authority owns pre-admission argument-repair judgment. */
@@ -359,7 +360,7 @@ export class PermissionManager {
     const authority = () => this.autonomousAuthority(sourceId, sourceOf);
     const capturedAuthority = authority() as { source: AutonomousToolSource; autonomousChoices: AutonomousToolChoices; directory: string | null; permissions: PermissionConfigSnapshot['permissions'] };
     const source = capturedAuthority.source;
-    const sourceRevision = autonomousRevision(source);
+    const sourceRevision = hashState(source as unknown as EntryType);
     const authorityRevision = hashState(capturedAuthority as unknown as EntryType);
     const offered = (capturedAuthority as { autonomousChoices: AutonomousToolChoices }).autonomousChoices;
     const directory = capturedAuthority.directory ?? undefined;
@@ -450,7 +451,7 @@ export class PermissionManager {
     };
     const decision = await decideAutonomousTool({
       port: scopedPort, binding,
-      state: readingArguments({ tool: toolName, arguments: args, source, ...(directory ? { workingDirectory: directory } : {}),
+      state: readingArguments({ tool: toolName, arguments: args, source: autonomousSourceEvidence(source), ...(directory ? { workingDirectory: directory } : {}),
         evidence: { boundary: boundaryRecord(boundary), ...(reading ? { reading: readingRecord(reading) } : {}),
           ...(settings ? { settings: { key: settings.key, hazard: settings.hazard.choice, hazardOutcome: settings.hazard.outcome,
             requested: settings.requested?.verdict ?? null, requestedOutcome: settings.requested?.outcome ?? null } } : {}),

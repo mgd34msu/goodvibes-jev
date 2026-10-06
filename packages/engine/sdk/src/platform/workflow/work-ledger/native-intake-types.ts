@@ -121,7 +121,7 @@ export function parseNativeConversationCapture(value: unknown): NativeConversati
       || new Set(parsed.owner.authorityScopes).size !== parsed.owner.authorityScopes.length
       || parsed.sourceId !== nativeConversationSourceId(parsed.projectId, parsed.principalId, parsed.inputId)
       || parsed.sourceRevision !== nativeConversationSourceRevision(parsed)) throw new Error();
-    if (parsed.continuation && parsed.continuation.revision !== createHash('sha256').update(canonicalNativeConversationContinuation(parsed.continuation.sessionId, parsed.continuation.messages)).digest('hex')) throw new Error();
+    if (parsed.continuation && parsed.continuation.revision !== createHash('sha256').update(canonicalNativeConversationContinuation(parsed.continuation.sessionId, parsed.continuation.messages, parsed.continuation.selectedDiff)).digest('hex')) throw new Error();
     const retained = decisions.map(entry => {
       if (Object.keys(entry).length !== 2 || !Object.hasOwn(entry, 'decision') || !Object.hasOwn(entry, 'context')) throw new Error();
       const context = captureJevDecisionContext(entry.context); const decision = validateJevDecision(entry.decision, context);

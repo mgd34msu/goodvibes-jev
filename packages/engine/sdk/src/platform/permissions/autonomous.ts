@@ -1,4 +1,6 @@
 import { array } from 'zod/v4';
+import { nativeSelectedDiffEvidence } from '../workflow/work-ledger/native-diff-evidence.js';
+import { captureNativeSelectedDiffContext, type NativeSelectedDiffContext } from '../workflow/work-ledger/native-diff-context.js';
 import { nativeConversationContinuationMessageSchema, NATIVE_CONVERSATION_CONTINUATION_MAX_MESSAGES, NATIVE_CONVERSATION_CONTINUATION_MAX_BYTES, type NativeConversationContinuation } from '../workflow/work-ledger/native-continuation-context.js';
 import { types as nodeTypes } from 'node:util';
 /** Recorded Jev tool outcomes. No human callback or transport retry lives here. */
@@ -19,6 +21,8 @@ export interface AutonomousToolSource {
   readonly criteria: readonly string[];
   /** Frozen prior transcript evidence; never adds requirements or grants authority. */
   readonly conversationContext?: NativeConversationContinuation['messages'];
+  /** Host-selected exact diff evidence; never adds requirements or grants authority. */
+  readonly selectedDiffContext?: NativeSelectedDiffContext;
 }
 
 /** Reject executable views before inspecting borrowed authority metadata. */
@@ -35,11 +39,15 @@ export function assertAutonomousData(value: unknown, seen = new Set<object>()): 
 /** Validate host-source structure before recording, hashing or transmitting it. */
 export function captureAutonomousSource(value: unknown): AutonomousToolSource {
   if (!value || typeof value !== 'object' || nodeTypes.isProxy(value)) throw new JudgmentError('invalid-request', 'autonomous host source must be owned data');
+  assertAutonomousData(value);
   const criteria = Object.getOwnPropertyDescriptor(value, 'criteria');
   if (!criteria || !('value' in criteria) || !Array.isArray(criteria.value) || nodeTypes.isProxy(criteria.value)) throw new JudgmentError('invalid-request', 'autonomous criteria must be owned data');
-  const captured = snapshotJudgmentInput(value) as Partial<AutonomousToolSource> | null;
+  const selectedDiff = Object.hasOwn(value, 'selectedDiffContext')
+    ? captureNativeSelectedDiffContext(Object.getOwnPropertyDescriptor(value, 'selectedDiffContext')!.value) : undefined;
+  const semantic = selectedDiff ? { ...value, selectedDiffContext: nativeSelectedDiffEvidence(selectedDiff) } : value;
+  const captured = snapshotJudgmentInput(semantic) as Partial<AutonomousToolSource> | null;
   if (!captured || typeof captured !== 'object' || Array.isArray(captured)
-    || Object.keys(captured).length !== (Object.hasOwn(captured, 'conversationContext') ? 3 : 2) || typeof captured.goal !== 'string' || !captured.goal.trim()
+    || Object.keys(captured).length !== (2 + (Object.hasOwn(captured, 'conversationContext') ? 1 : 0) + (Object.hasOwn(captured, 'selectedDiffContext') ? 1 : 0)) || typeof captured.goal !== 'string' || !captured.goal.trim()
     || !Array.isArray(captured.criteria) || captured.criteria.some(item => typeof item !== 'string' || !item.trim())) {
     throw new JudgmentError('invalid-request', 'autonomous admission requires a complete host goal and ordered criteria');
   }
@@ -47,7 +55,14 @@ export function captureAutonomousSource(value: unknown): AutonomousToolSource {
     const context = array(nativeConversationContinuationMessageSchema).max(NATIVE_CONVERSATION_CONTINUATION_MAX_MESSAGES).safeParse(captured.conversationContext);
     if (!context.success || new TextEncoder().encode(JSON.stringify(context.data)).byteLength > NATIVE_CONVERSATION_CONTINUATION_MAX_BYTES) throw new JudgmentError('invalid-request', 'autonomous conversation evidence must be complete bounded host data');
   }
-  return captured as AutonomousToolSource;
+  return Object.freeze({ ...captured, ...(selectedDiff ? { selectedDiffContext: selectedDiff } : {}) }) as AutonomousToolSource;
+}
+
+/** Privacy-safe semantic projection; full validated identity still binds tool-source hashes and retries. */
+export function autonomousSourceEvidence(source: AutonomousToolSource) {
+  const captured = captureAutonomousSource(source);
+  const { selectedDiffContext, ...original } = captured;
+  return Object.freeze({ ...original, ...(selectedDiffContext ? { selectedDiffContext: nativeSelectedDiffEvidence(selectedDiffContext) } : {}) });
 }
 
 /** A host-offered alternative, never a model-generated executable payload. */

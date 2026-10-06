@@ -107,6 +107,13 @@
   white-space: pre;
 }
 
+/* The source-aware form has its own receipts and recovery controls. Keep its
+ * complete source preview usable while the dialog body scrolls around it. */
+.hunk-sheet--native .hunk-sheet__excerpt {
+  flex-shrink: 0;
+  min-height: min(8rem, 30vh);
+}
+
 .hunk-sheet__form {
   display: flex;
   flex-direction: column;

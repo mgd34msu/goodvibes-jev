@@ -62,12 +62,12 @@ export async function createNativeIntakeExecutionHttpFixture(options: {
     daemon = await startDaemonFixture({ root,
       inboxFactory: (context, _routing, settings) => registerInboxSurface(context, { ...settings, adapters: new Map() }) });
   } catch (error) { restoreDiscovery(); throw error; }
-  const controls = { refuseExecution: false, failSettlement: false };
+  const controls: { refuseExecution: boolean; failSettlement: boolean; route: 'contract' | 'converse' } = { refuseExecution: false, failSettlement: false, route: 'contract' };
   const fake = fakePort((name, question) => {
     if (question.type === 'noul') return noulAnswer(name === 'forbids_delegation' || name === 'checkable' || name.startsWith('fit') ? 0.99 : 0.01);
     if (question.type === 'score') return scoreAnswer(question, 0, 0.99);
     const choices = Object.keys(question.criteria);
-    const preferred: Record<string, string> = { route: 'contract', disposition: 'act', relation: 'supports', role: 'research', tier: 'standard', intent: 'chat', strategy: 'single', category: 'unknown', connection_failure: 'none' };
+    const preferred: Record<string, string> = { route: controls.route, disposition: 'act', relation: 'supports', role: 'research', tier: 'standard', intent: 'chat', strategy: 'single', category: 'unknown', connection_failure: 'none' };
     const pick = preferred[name];
     return choiceAnswer(question, pick && choices.includes(pick) ? pick : choices.find(key => key !== 'none')!, 0.99);
   });
@@ -75,6 +75,7 @@ export async function createNativeIntakeExecutionHttpFixture(options: {
   const recorded = withDecisionLog(fake.port, daemon.services.judgment.decisionLog);
   const recordedRefusal = withDecisionLog(refused.port, daemon.services.judgment.decisionLog);
   const judgmentRequests: JudgmentRequest<Questions>[] = [];
+  const judgmentErrors: unknown[] = [];
   let delivered = false;
   const read = spyOn(daemon.services.judgment.port, 'ask').mockImplementation(async request => {
     judgmentRequests.push(request);
@@ -83,7 +84,8 @@ export async function createNativeIntakeExecutionHttpFixture(options: {
     // A second, host-owned verification follows the genuine runner checks.
     // The fault affects only that verification, never the executing unit.
     if (controls.failSettlement && delivered && request.context?.site === 'contract.check.unit-judge') throw new Error('Owned synthetic unavailable settlement');
-    return (controls.refuseExecution && request.context?.site === 'work-ledger.native-start' ? recordedRefusal : recorded).ask(request);
+    try { return await (controls.refuseExecution && request.context?.site === 'work-ledger.native-start' ? recordedRefusal : recorded).ask(request); }
+    catch (error) { judgmentErrors.push(error); throw error; }
   });
   const requests: ChatRequest[] = [];
   let originalText: string | undefined = options.resumedSourceText;
@@ -128,7 +130,7 @@ export async function createNativeIntakeExecutionHttpFixture(options: {
       ...(requestJson === undefined ? {} : { requestBody: body, requestJson }), body: await response.text() };
   }
   let stopping: Promise<void> | undefined;
-  return { root, daemon, paired, requests, judgmentRequests, controls, scopes, wire,
+  return { root, daemon, paired, requests, judgmentRequests, judgmentErrors, controls, scopes, wire,
     contracts: () => native?.runner.list({ includeTerminal: true }) ?? [],
     stop() { return stopping ??= daemon.stop().finally(() => { catalog.mockRestore(); read.mockRestore(); restoreDiscovery(); }); },
   };

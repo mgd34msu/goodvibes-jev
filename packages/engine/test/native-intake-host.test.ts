@@ -336,3 +336,44 @@ test('saved continuation remains inspectable and cancellable after its hosted tr
   expect(await f.host.capture(command, f.authority)).toEqual(admitted);
   expect(await f.host.cancel(f.target(captured), f.authority)).toEqual(admitted);
 });
+
+test('selected diff capture identity survives concurrent retry, later changes and restart without refreshing evidence', async () => {
+  const entered = deferred(), release = deferred(); let captures = 0;
+  const selectedDiff = { kind: 'workspace' as const, baselineId: 'wcp_baseline', revision: 'd'.repeat(64), fileIndex: 0, hunkIndex: 0,
+    unifiedDiff: 'diff --git a/file.ts b/file.ts\n--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-before\n+original selected evidence\n',
+    provenance: { kind: 'workspace' as const, baselineId: 'wcp_baseline', to: 'WORKING' as const } };
+  const selector = { kind: selectedDiff.kind, baselineId: selectedDiff.baselineId, revision: selectedDiff.revision, fileIndex: 0, hunkIndex: 0 };
+  const f = await fixture({ continuation: {
+    async capture(sessionId, _principalId, selected) {
+      captures++; expect(selected).toEqual(selector); entered.resolve(); await release.promise;
+      return { sessionId, messages: [], selectedDiff, revision: createHash('sha256').update(canonicalNativeConversationContinuation(sessionId, [], selectedDiff)).digest('hex') };
+    }, assertCurrent() {},
+  } });
+  const command = { ...f.original, continuation: { sessionId: 'hosted-owned', selectedDiff: selector } };
+  const first = f.host.capture(command, f.authority); await entered.promise;
+  const concurrent = f.host.capture(command, f.authority);
+  await Bun.sleep(10); expect(captures).toBe(1); release.resolve();
+  const captured = await first; expect(await concurrent).toEqual(captured);
+  const original = structuredClone(f.storage.current({ principalId: f.principalId, inputId: command.inputId })!.continuation);
+  selectedDiff.unifiedDiff = selectedDiff.unifiedDiff.replace('original selected evidence', 'later working-tree text');
+  expect(await f.host.capture(command, f.authority)).toEqual(captured); expect(captures).toBe(1);
+  await expect(f.host.capture({ ...command, continuation: { ...command.continuation, selectedDiff: { ...selector, baselineId: 'other-baseline' } } }, f.authority)).rejects.toMatchObject({ code: 'request-conflict' });
+  await f.host.close(); const replacement = createNativeConversationIntakeHost(f.deps);
+  try {
+    expect(await replacement.capture(command, f.authority)).toEqual(captured); expect(captures).toBe(1);
+    const admitted = await replacement.admit(f.target(captured), f.authority);
+    if (admitted.kind !== 'work') throw new Error('Expected native work');
+    expect(admitted.receipt.source.continuation).toEqual(original);
+    expect(admitted.receipt.goal).toBe(f.original.text); expect(admitted.receipt.criteria).toEqual([f.original.text]);
+  } finally { await replacement.close(); }
+});
+
+test.each(['session', 'workspace'] as const)('selected %s diff cannot bypass its source read scope', async kind => {
+  let captures = 0;
+  const f = await fixture({ continuation: { async capture() { captures++; throw new Error('Must not read'); }, assertCurrent() {} } });
+  const scopes = ['read:work-ledger', 'write:work-ledger', 'write:sessions', kind === 'session' ? 'read:checkpoints' : 'read:sessions'];
+  const authority = { current: () => ({ ...f.authority.current()!, scopes }), withCurrent: f.authority.withCurrent.bind(f.authority) };
+  const selectedDiff = kind === 'session' ? { kind, revision: 'd'.repeat(64), fileIndex: 0, hunkIndex: 0 } : { kind, baselineId: 'baseline', revision: 'd'.repeat(64), fileIndex: 0, hunkIndex: 0 };
+  await expect(f.host.capture({ ...f.original, continuation: { sessionId: 'hosted-owned', selectedDiff } }, authority)).rejects.toMatchObject({ code: 'forbidden' });
+  expect(captures).toBe(0);
+});
