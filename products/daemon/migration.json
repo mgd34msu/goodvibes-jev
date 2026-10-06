@@ -1,9 +1,10 @@
 {
   "sourceRevision": "254699bf5d834cdca41436211ada1ae32bf89258",
   "status": "partial",
-  "phase": "configured-runtime-service-and-setup-commands",
+  "phase": "command-executable-and-explicit-runtime-launcher",
   "entrypoints": [
-    "src/cli/index.ts"
+    "src/cli/index.ts",
+    "src/cli/entrypoint.ts"
   ],
   "mappings": [
     {
@@ -634,5 +635,5 @@
       ]
     }
   ],
-  "remaining": "The async runtime graph boots only with an explicit inbox factory. Built-in intake providers and triage, daemon executable/entrypoint and command parity, scripts, original contract-test scaffolding, packaging and other unmapped source modules remain pending. Engine hoists are tracked in docs/inventory/daemon.md. This partial workspace does not satisfy migration:complete. Source accounting now includes all 41 changes through 254699bf; this is a partial migration, not executable/release parity. Six release/entrypoint/packaging acceptance items remain deferred in docs/audit/daemon-upstream-reconciliation-2026-10-01.json."
+  "remaining": "The executable dispatches existing command adapters and explicitly composed hosts. Default serve still requires the built-in inbox provider/privacy-mapper/Discord catalog composition; send, automatic service/update lifecycle, discovery, pairing boot behavior, native binary/release packaging and other unmapped modules remain pending. The partial src/daemon/cli.ts adaptation is documented in docs/audit/daemon-cli-entrypoint.md and intentionally is not marked fully migrated. This partial workspace does not satisfy migration:complete; the original six deferred upstream release/entrypoint/packaging acceptance items remain open."
 }

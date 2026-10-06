@@ -1,0 +1,3 @@
+#!/usr/bin/env bun
+// This launcher exists during frozen installation, before dist is built.
+await import('../dist/cli/entrypoint.js');
