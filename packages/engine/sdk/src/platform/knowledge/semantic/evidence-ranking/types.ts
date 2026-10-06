@@ -1,3 +1,4 @@
+import type { JsonValue } from '@goodvibes-jev/judgment';
 /** Bookkeeping references are created by the caller; store identities stay in its local map. */
 export interface AnswerEvidenceCandidate {
   readonly reference: string;
@@ -12,7 +13,19 @@ export interface AnswerEvidenceCandidate {
     /** The exact structured claim fields used by final fidelity, serialized without database-only metadata. */
     readonly details?: string | undefined }[] | undefined;
 }
-export interface AnswerEvidenceRelevanceInput { readonly query: string; readonly candidates: readonly AnswerEvidenceCandidate[]; }
+export interface AnswerEvidenceSubject {
+  readonly title: string;
+  readonly kind: string;
+  readonly summary?: string | undefined;
+  readonly aliases: readonly string[];
+  readonly identity?: Readonly<Record<string, JsonValue>> | undefined;
+}
+export interface AnswerEvidenceRelevanceInput {
+  readonly query: string;
+  readonly candidates: readonly AnswerEvidenceCandidate[];
+  /** Settled object identities are lookup context, never evidence that a candidate supports a claim. */
+  readonly subjects?: readonly AnswerEvidenceSubject[] | undefined;
+}
 export interface AnswerEvidenceRelevanceReading {
   readonly reference: string;
   /** Actual probability of relevance, never legacy retrieval points or answer confidence. */
@@ -35,4 +48,4 @@ export class KnowledgeEvidenceRelevanceHeldError extends Error {
     super(`Knowledge evidence relevance held (${reason}); no partial evidence selection was authorized.`);
   }
 }
-export const EVIDENCE_RELEVANCE_LIMITS = Object.freeze({ candidates: 100, facts: 100, characters: 160_000, concurrency: 4, defaultTimeoutMs: 30_000, timeoutMs: 60_000 });
+export const EVIDENCE_RELEVANCE_LIMITS = Object.freeze({ candidates: 100, facts: 100, subjects: 24, characters: 160_000, concurrency: 4, defaultTimeoutMs: 30_000, timeoutMs: 60_000 });

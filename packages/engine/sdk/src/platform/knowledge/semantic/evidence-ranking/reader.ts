@@ -11,9 +11,21 @@ function record(value: unknown): value is Record<string, unknown> { return value
 function optionalText(value: unknown): boolean { return value === undefined || typeof value === 'string'; }
 function snapshotInput(input: AnswerEvidenceRelevanceInput): AnswerEvidenceRelevanceInput {
   assertJudgmentInput(input);
-  if (!record(input) || Object.keys(input).some((key) => !['query', 'candidates'].includes(key))
+  if (!record(input) || Object.keys(input).some((key) => !['query', 'candidates', 'subjects'].includes(key))
     || typeof input.query !== 'string' || !Array.isArray(input.candidates)) throw new Held('malformed');
   if (input.candidates.length > LIMITS.candidates) throw new Held('budget');
+  if (input.subjects !== undefined) {
+    if (!Array.isArray(input.subjects)) throw new Held('malformed');
+    if (input.subjects.length > LIMITS.subjects) throw new Held('budget');
+    for (const subject of input.subjects) {
+      if (!record(subject) || Object.keys(subject).some((key) => !['title', 'kind', 'summary', 'aliases', 'identity'].includes(key))
+        || typeof subject.title !== 'string' || typeof subject.kind !== 'string'
+        || !Array.isArray(subject.aliases) || subject.aliases.some((alias) => typeof alias !== 'string')
+        || !optionalText(subject.summary)
+        || (subject.identity !== undefined && (!record(subject.identity)
+          || Object.keys(subject.identity).some((key) => !['manufacturer', 'brand', 'vendor', 'model', 'modelNumber', 'variant', 'entityKind', 'subject', 'homeAssistant'].includes(key))))) throw new Held('malformed');
+    }
+  }
   const references = new Set<string>();
   for (const candidate of input.candidates) {
     if (!record(candidate) || Object.keys(candidate).some((key) => !['reference', 'kind', 'title', 'text', 'facts', 'sourceType', 'nodeKind', 'claimedProvenance'].includes(key))
@@ -84,7 +96,7 @@ export async function prepareAnswerEvidenceRelevance(input: AnswerEvidenceReleva
       while (next < snapshot.candidates.length) {
         check(); const index = next++; const candidate = snapshot.candidates[index]!;
         try {
-          const read = await answerEvidenceRelevance.run(port, jsonState({ query: snapshot.query, candidate }),
+          const read = await answerEvidenceRelevance.run(port, jsonState({ query: snapshot.query, candidate, ...(snapshot.subjects ? { subjects: snapshot.subjects } : {}) }),
             { signal: controller.signal, site: 'engine.knowledge.answer-evidence-relevance' });
           check(); checkConfiguration();
           if ((model !== undefined && read.result.model !== model) || (requestedModel !== undefined && read.result.requestedModel !== requestedModel)) throw new Held('stale');
