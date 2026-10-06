@@ -1,0 +1,143 @@
+# Protected local source screening prerequisite
+
+This is a bounded THE-123 dependency for content-bearing intake previews and
+later source consumers. THE-123 and THE-18 remain open. It does not establish
+complete research-reference screening, default daemon inbox composition, or
+live semantic privacy accuracy. Those live proofs remain under THE-35.
+
+## Explicit configuration and trust
+
+`sdk/platform/security` exposes `createProtectedSourceOwner`. A trusted product
+composition root supplies all of the following together:
+
+- A source-owner ID, authority revision, revocation signal and synchronous live
+  `assertCurrent` callback. These are not parsed from source text or model output.
+- An explicit `ephemeral-no-log` retention capability covering both local
+  services. The host must establish the services' behavior; a string option or
+  loopback address is not evidence that a service does not retain or forward data.
+- An immutable literal-loopback proposal endpoint and model, and an immutable
+  literal-loopback System One endpoint pinned to `jev-1.13.0`. Only literal
+  `127.0.0.1` or `[::1]` with an explicit port is accepted, without userinfo,
+  query, fragment, DNS hostname, or configurable path. The only permitted paths
+  are `/v1/chat/completions` and `/v1/systemone`, respectively.
+- A bounded per-attempt timeout and optional value-free retry-progress callback.
+
+There is no environment discovery, global setting, hosted fallback, credential
+creation, persisted configuration, or automatic adoption by the daemon. The
+proposal endpoint speaks the non-streaming chat-completions JSON protocol. It
+receives no tools or credential. System One uses the existing canonical client
+and retry owner with a fixed public local placeholder, not a stored API key.
+Services requiring private credentials are not provisioned by this slice.
+
+On the pinned Bun 1.3.14 runtime, the owner does not assume that a fetch proxy
+override or a Node compatibility agent establishes direct routing. Any configured
+HTTP/HTTPS/ALL proxy environment variable, including case variants, makes this
+route unavailable before dispatch. `NO_PROXY` does not grant an exception. The
+transport rechecks at each actual dispatch and the canonical retry boundary; it
+never rewrites the process environment or silently trusts a proxy. Proxy-free
+owned-loopback tests prove the supported configuration. This is a conservative
+runtime constraint, not a claim about all Node HTTP clients.
+
+The capability authorizes only the specified local processing. The host must
+establish local service identity, local execution without forwarding, revocation
+and no-retention behavior; unknown service provenance must keep the route held.
+A passing structural scan, generated span, typed receipt or HTTP response cannot
+establish those properties or authorize another destination or external action.
+
+## Capture, proposal, verification and projection
+
+The owner rejects proxies, accessors, malformed arrays and non-string parts
+before invoking the shared `snapshotJudgmentInput` boundary. The complete actual
+source is checked before content bounds, hashing or model access. Known declared
+credential/card material and canonical issuer credentials are refused. This is a
+structural floor, not a generic secret detector and not permission to send
+arbitrary text to a hosted redactor. At most eight parts and 40,000 total UTF-16
+code units are admitted; oversized inputs are refused rather than clipped.
+
+Original strings are immutable and private to opaque process-local handles.
+The local generator proposes at most 100 exact ranges with the exact source
+revision. The owner validates only declared fields, safe integer offsets,
+source-part identity/order, positive in-bounds ranges, no overlap and no split
+surrogate pairs. It never accepts generated replacement text. Repeated text
+retains independent positions. The exact owner-generated revision is validated
+as protocol provenance, not reinterpreted as arbitrary raw card material.
+
+The named, versioned Jev battery judges complete sensitive-material coverage and
+precision of the selected ranges against every full original part. Both readings
+must settle positively at the declared band before release. Malformed,
+unavailable, cancelled, stale or uncertain work yields no projection. A wrong
+model response is operational unavailability, not a semantic answer. Transport
+outages stay under the canonical System One retry owner and its cancellation and
+progress contract. There is no human approval fallback or regex-semantic backup.
+
+Releasing and recapturing identical parts does not reset an unsettled reading.
+The owner retains at most 1,024 unsettled revision digests without raw text, with
+no eviction that could turn an old hold into repeated sampling. Capacity
+exhaustion holds new work before a request. At most 128 original handles are
+retained at once. Only one attempt per exact revision is admitted at once; a
+different handle for an in-flight revision receives a nonsemantic busy hold.
+Potential held-revision slots are reserved before requests, so concurrent
+completions cannot exceed the bound. The refusal fingerprint survives handle
+release in memory until `owner.close()`; a new process/owner ends this local
+scope. A later unsettled attempt also prevents new projection through an older
+positive receipt for the identical revision. No automatic semantic repair or
+human approval loop is invented here.
+
+Only a genuine settled receipt minted by this owner can project the matching
+current source. Projection consists solely of original slices and the fixed
+`[redacted]` marker. Forged, foreign, released and revoked receipts fail. Source
+and route mutation during asynchronous work cannot alter the captured attempt.
+These are deterministic guarantees, not proof of a model's semantic accuracy.
+
+## Lifetime and retention
+
+No raw source or raw judgment state is placed in the general decision log,
+telemetry, diagnostics, disk store or a retained request history. Original parts
+and accepted projections remain private in-memory values. Each source operation
+owns its own transport, so release does not wait for unrelated sources. Release
+and close stop admission and await logical calls plus underlying request/body
+cleanup, including work that outlives a caller-facing cancellation race. Repeated
+close shares one completion boundary. JavaScript strings cannot be reliably
+zeroized; this is bounded lifetime ownership, not a memory-erasure guarantee.
+
+Once the authorized caller obtains a projection, later revocation cannot erase
+that copy. Callers retain downstream authority and effect boundaries. This API
+supplies no publication, transmission, persistence, execution or citation authority.
+
+## Inbox mapper adoption
+
+`sdk/platform/intake` exposes `createProtectedInboxMapper(owner)`, compatible with
+the existing private Slack and Discord mapper ports. Descriptor-only capture
+rejects proxies, getters and extra input fields. Both the complete raw subject
+and body and their canonical deterministic display candidates are screened in one
+owned operation before display clipping. Provider sender/channel identifiers
+remain bounded local protocol fields and never enter either model request. The
+identical characters in subject/body still face the unchanged privacy floor.
+
+The returned sender is the canonical digest, with 200/500-character subject/body
+limits that do not split surrogate pairs. The mapper returns null for held or
+cancelled work, preserving whole-poll withholding and the unchanged cursor. It
+never substitutes empty or raw content. Original handles are released afterward;
+no unauthenticated raw-message retrieval endpoint is installed. Display values
+remain plain text; consumers retain their normal safe text-rendering boundaries.
+
+This does not select credentials, complete Slack account/cursor ownership,
+supply Discord's missing complete DM catalog, touch legacy IMAP, or install a
+default provider set. The original `mapping.ts` disposition remains partial.
+No native settlement-security certification is claimed.
+
+## Verification boundary
+
+Tests use synthetic text and actual owned loopback proposal/System One servers.
+The System One server scripts typed readings; no live model calibration or real
+private source is involved. Coverage includes exact projection and preservation,
+source mutation, foreign/forged receipts, strict ranges, generated references,
+shared retry recovery, revocation/cancellation, capacity and uncertainty stability,
+and the real Slack adapter → registrar → SQLite mirror → wire inbox path.
+Transport tests cover exact routes, redirects, byte bounds, cleanup and proxy refusal.
+
+The local services' identity/no-retention capability and genuine Jev calibration
+need explicit live proof under THE-35. THE-123's separate protected name-only URL
+role interface and unbound research-reference controls remain open; existing
+research consumers are unchanged. The unpublished pre-reset worktree was lost;
+this reconstruction requires its own commit, generated baselines and fresh gates.

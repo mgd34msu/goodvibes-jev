@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Add an explicit protected local source owner and content-bearing inbox mapper prerequisite, with immutable original-span projection, typed Jev verification and awaited cancellation. Default provider composition and live privacy calibration remain open.
+
 - Bind native Agent hosted delivery to a server-selected settings owner and a
   durable source/dispatch claim. Cross-surface replays and continuations cannot
   switch namespaces. Retain native turn/tool frames in the existing bounded
