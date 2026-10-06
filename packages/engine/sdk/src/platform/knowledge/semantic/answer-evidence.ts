@@ -121,7 +121,7 @@ export async function collectAnswerEvidence(
     guard.watch(`node:${node.id}`, () => store.getNode(node.id), node);
     texts.set(`node:${node.id}`, [renderNodeEvidence(snapshot), ...snapshot.aliases,
       readString(snapshot.metadata.manufacturer), readString(snapshot.metadata.model),
-      initialNodeReferenceContext(store, snapshot, spaceId, guard)].filter(Boolean).join('\n'));
+      initialNodeReferenceContext(store, snapshot, spaceId, guard, candidateWindow?.sourceIds)].filter(Boolean).join('\n'));
     items.push({ kind: 'node', id: node.id, title: node.title, score: 0, node, facts: node.metadata.semanticKind === 'fact' ? [node] : [] });
   }
   for (const fact of uniqueNodes(items.flatMap((item) => item.facts))) {
@@ -284,7 +284,7 @@ export async function includeOfficialLinkedEvidence(
   // A linked-only pass must preflight every source, fact and subject before the
   // first fact reading, not after a later source has already left the process.
   const subjects = linkedObjects.map((node) => ({ title: node.title, summary: node.summary, aliases: node.aliases,
-    context: initialNodeReferenceContext(store, node, spaceId, guard) }));
+    context: initialNodeReferenceContext(store, node, spaceId, guard, initial?.sourceWindow) }));
   assertJudgmentInput({ query, subjects });
   for (const candidate of projected) assertJudgmentInput({ query, candidate, subjects });
   const excerpts = prepareAnswerSourceExcerptBatches(store, query, candidates.map((item, index) => ({
