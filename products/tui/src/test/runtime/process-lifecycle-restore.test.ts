@@ -20,18 +20,20 @@ import {
   PASTE_DISABLE,
 } from '../../renderer/terminal-escapes.ts';
 
-function makeHarness(noAltScreen: boolean): {
+function makeHarness(noAltScreen: boolean, disposePairing?: () => void): {
   handlers: ReturnType<typeof installProcessLifecycle>;
   written: () => string;
   rawModeCalls: boolean[];
   guardDisposed: () => boolean;
+  events: string[];
 } {
   const chunks: string[] = [];
+  const events: string[] = [];
   const rawModeCalls: boolean[] = [];
   let disposed = false;
   const deps = {
     stdin: { setRawMode: (v: boolean) => { rawModeCalls.push(v); } },
-    stdout: { write: (s: string) => { chunks.push(s); return true; } },
+    stdout: { write: (s: string) => { events.push('terminal-write'); chunks.push(s); return true; } },
     ctx: {},
     noAltScreen,
     ansi: {
@@ -43,7 +45,7 @@ function makeHarness(noAltScreen: boolean): {
       CURSOR_SHOW,
       FOCUS_DISABLE,
     },
-    getInput: () => { throw new Error('not used in these tests'); },
+    getInput: () => ({ hostPairing: { dispose: () => { events.push('pairing-dispose'); disposePairing?.(); } } }),
     render: () => {},
     getTerminalOutputGuard: () => ({ dispose: () => { disposed = true; } }),
     getPromptContentWidth: () => 80,
@@ -54,7 +56,7 @@ function makeHarness(noAltScreen: boolean): {
     getStopSpokenOutputForExit: () => null,
   } as unknown as ProcessLifecycleDeps;
   const handlers = installProcessLifecycle(deps);
-  return { handlers, written: () => chunks.join(''), rawModeCalls, guardDisposed: () => disposed };
+  return { handlers, written: () => chunks.join(''), rawModeCalls, guardDisposed: () => disposed, events };
 }
 
 describe('restoreTerminal', () => {
@@ -94,4 +96,25 @@ describe('restoreTerminal', () => {
     h.handlers.restoreTerminal();
     expect(h.written()).toBe(afterFirst);
   });
+
+  test('cancels the host pairing lifetime before writing terminal restore bytes', () => {
+    let pairingActive = true;
+    const h = makeHarness(false, () => { pairingActive = false; });
+    h.handlers.restoreTerminal();
+    expect(pairingActive).toBe(false);
+    expect(h.events[0]).toBe('pairing-dispose');
+    expect(h.events.indexOf('terminal-write')).toBeGreaterThan(h.events.indexOf('pairing-dispose'));
+    expect(h.handlers.isTerminalRestored()).toBe(true);
+  });
+
+  test('a failed pairing disposal does not prevent terminal restoration', () => {
+    const h = makeHarness(false, () => { throw new Error('synthetic pairing disposal failure'); });
+    h.handlers.restoreTerminal();
+    expect(h.events[0]).toBe('pairing-dispose');
+    expect(h.written()).toContain(ALT_SCREEN_EXIT);
+    expect(h.handlers.isTerminalRestored()).toBe(true);
+    expect(h.guardDisposed()).toBe(true);
+    expect(h.rawModeCalls).toEqual([false]);
+  });
+
 });

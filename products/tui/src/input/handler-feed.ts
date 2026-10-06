@@ -84,6 +84,7 @@ import type { FocusTracker } from '@goodvibes-jev/engine/sdk/platform/runtime/op
  * references are service handles whose identity never changes after construction.
  */
 export interface InputFeedContext {
+  handleHostPairingToken?: (token: InputToken) => boolean;
   prompt: string;
   cursorPos: number;
   inputScrollTop: number;
@@ -196,6 +197,8 @@ export function feedInputTokens(context: InputFeedContext, tokens: readonly Inpu
       context.focusTracker.setFocused(token.action === 'in');
       continue;
     }
+
+    if (context.handleHostPairingToken?.(token)) continue;
 
     if (token.type === 'key' && context.keybindingsManager.matches('clear-cancel', token)) {
       context.handleCtrlC();

@@ -14,6 +14,23 @@ describe('ConversationManager', () => {
     cm = new ConversationManager(() => 80);
   });
 
+  test('pairing disclosure remains complete at changing widths without entering model history', () => {
+    let width = 180;
+    const c = new ConversationManager(() => width);
+    const disclosure = 'Host: http://127.0.0.1:12345\nAccess: This creates a persistent administrative per-device credential on the displayed GoodVibes host, including native work and fleet execution authority. The bootstrap is the existing daemon-global operator token. The new secret is stored only in this TUI home, bound to this exact origin. The shared token remains active; nothing is revoked.';
+    c.dismissSplash();
+    c.logWrapped(disclosure);
+    for (const nextWidth of [180, 80, 40, 120]) {
+      width = nextWidth;
+      const lines = c.getDisplayBlocks();
+      const shown = lines.map(line => line.map(cell => cell.char).join('')).join('\n').replace(/^\s*> ?/gm, '').replace(/\s+/g, ' ').trim();
+      expect(shown).toBe(disclosure.replace(/\s+/g, ' '));
+      expect(lines.every(line => getDisplayWidth(line.map(cell => cell.char).join('')) <= width)).toBe(true);
+      expect(c.getMessagesForLLM()).toEqual([]);
+    }
+    expect(c.getDisplayOnlyCount()).toBe(1);
+  });
+
   describe('message accumulation', () => {
     test('starts with empty LLM messages', () => {
       expect(cm.getMessagesForLLM()).toEqual([]);

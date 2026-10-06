@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { wireHostPairingShell } from './shell/host-pairing-shell.ts';
+import type { HostPairingController } from './shell/host-pairing-controller.ts';
 import { isConversationUsageAvailable, isConversationContextAvailable } from './core/conversation-usage.ts';
 import type { NativeConversationIntakeState } from './runtime/native-conversation-intake.ts';
 import { captureNativeConversationInput, type ProductInputContext } from './runtime/native-conversation-input.ts';
@@ -176,6 +178,7 @@ async function main() {
   const typeahead = createStartupTypeaheadGate(); // keys typed before a startup modal appeared never answer it
 
   let pendingPermission: PendingPermissionState | null = null;
+  let hostPairing: HostPairingController | null = null;
   // One-key jump/attach to a spawned CI fix-session: the affordance ARMS the id; the next 'j' runs the resume so the user never retypes it.
   let fixSessionAttachArmed: string | null = null;
   const attachToFixSession = (fixSessionId: string) => { void commandContext.executeCommand?.('session', ['resume', fixSessionId]); };
@@ -189,7 +192,7 @@ async function main() {
   approvalBroker.subscribe((approval) => handleBrokerApprovalChange({
     approval, broker: approvalBroker, render, onFixSessionStarted, onFixSessionError,
     getPending: () => pendingPermission,
-    setPending: (next) => { pendingPermission = next; },
+    setPending: (next) => { if (next) hostPairing?.cancelForTakeover(); pendingPermission = next; },
   }));
   refreshFixSessionsFromApprovals(() => approvalBroker.listApprovals(), onFixSessionStarted, onFixSessionError); // catch pre-subscription stamps
 
@@ -302,6 +305,7 @@ async function main() {
   commandContext.dispatchNativeIntakeTurn = state => dispatchNativeTurn(state);
 
   const submitInput = (text: string, content?: ContentPart[], options: ProductInputContext = {}) => {
+    hostPairing?.cancelForTakeover();
     const original = options.source ?? { text, unsupportedSources: [{ kind: 'context' as const, label: 'derived-input' }] };
     input.clearModalStack();
     transcript.toBottom(); // Re-lock on any user input
@@ -375,6 +379,7 @@ async function main() {
   commandContext.requestFullRepaint = () => { compositor.resetDiff(); render(); }; commandContext.beginConcealedInput = (req) => input.beginConcealedInput(req);
   permissionPromptRef.requestPermission = wrapRequestPermissionWithAlert((request) =>
     new Promise((resolve) => {
+      hostPairing?.cancelForTakeover();
       pendingPermission = {
         ...request,
         ...buildPendingPermissionExtras(request, resolve, approvalBroker),
@@ -447,6 +452,11 @@ async function main() {
   input.transcriptScroll = { scrolledBack: () => transcript.scrolledBack && !views.active, toBottom: scrollToLiveBottom };
   commandContext.openSessionView = (target) => views.open(target);
 
+  hostPairing = wireHostPairingShell({ configManager, homeDirectory, input, commandRegistry, commandContext, conversation,
+    canPresent: () => !lifecycle.isTerminalRestored() && pendingPermission === null && !views.active,
+    render, scroll, toBottom: () => transcript.toBottom(),
+  });
+  unsubs.push(() => hostPairing?.dispose());
   input.setCommandRegistry(commandRegistry, commandContext);
   commandContext.openComposerEditor = makeComposerEditorOpener({ buffer: input, stdin, stdout, writeGuard: allowTerminalWrite, repaint: () => { compositor.resetDiff(); render(); }, cwd: workingDir, env: process.env, notify: (m) => systemMessageRouter.high(m) });
   commandContext.openFileInEditor = makeFileEditorOpener({ stdin, stdout, writeGuard: allowTerminalWrite, repaint: () => { compositor.resetDiff(); render(); }, cwd: workingDir, env: process.env, notify: (m) => systemMessageRouter.high(m) });
@@ -470,6 +480,7 @@ async function main() {
   };
 
   const renderNow = () => {
+    hostPairing?.checkPresentation();
     const width = stdout.columns || 80;
     const height = stdout.rows || 24;
 
@@ -780,6 +791,10 @@ async function main() {
   applyInitialTuiCliState({ cli, input, commandRegistry, commandContext, shellPaths: ctx.services.shellPaths, surface: ctx.services.surface, render, continueRecovery: { sessionManager: ctx.services.sessionManager, runtime, conversation, writeLastSessionPointer, receipt: (line) => systemMessageRouter.userReceipt(line), typeahead: typeaheadHooks } });
 
   const routeInput = (data: string): void => {
+    if (hostPairing?.ownsInput) {
+      if (pendingPermission) hostPairing.cancelForTakeover();
+      input.feed(data); return;
+    }
     const blocking = handleBlockingShellInput({
       data, pendingPermission, render,
       abortTurn: () => orchestrator.abort(),
@@ -804,6 +819,8 @@ async function main() {
     input.feed(data);
   };
   stdin.on('data', (raw: string) => { const data = typeahead.filter(themeProbe.filterInput(raw)); if (data.length > 0) routeInput(data); });
+  stdin.on('end', () => { hostPairing?.dispose(); void exitApp(); });
+  stdin.on('close', () => { hostPairing?.dispose(); void exitApp(); });
   process.on('SIGINT', sigintHandler); process.on('unhandledRejection', unhandledRejectionHandler); stdout.on('resize', resizeHandler);
 
   // State restores happen ONLY when the user explicitly asks, a CLI flag

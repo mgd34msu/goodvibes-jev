@@ -760,6 +760,11 @@ export class ConversationManager extends SdkConversationManager {
     this.recordDisplayOnly((width) => logConversationText(this.renderingContext(), width, text, style, indent));
   }
 
+  /** Persistent display-only prose, rewrapped at the current width on every rebuild. */
+  public logWrapped(text: string, style: Partial<Cell> = {}): void {
+    this.recordDisplayOnly((width) => this.history.addLines(conversationTextToLines(text, width, style)));
+  }
+
   /**
    * logToolResultBlock - Append a single tool-call-styled result line to the display
    * history only (never touches the LLM message list), so a slash command's subprocess

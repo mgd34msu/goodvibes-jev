@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { InputTokenizer } from '@goodvibes-jev/engine/sdk/platform/core';
+import { InputTokenizer, type InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
 import { createOAuthLocalListener } from '@goodvibes-jev/engine/sdk/platform/config';
 import { clearModalStackForHandler, cleanupMarkerRegistryForHandler, executeBlockActionForHandler, expandPromptForHandler, findMarkerAtPosForHandler, getImageAttachmentsForHandler, handleBlockCopyForHandler, handleBlockSaveForHandler, handleBlockToggleForHandler, handleBookmarkForHandler, handleCopyForHandler, handleCtrlCForHandler, handleDiffApplyForHandler, handleEscapeForHandler, handlePasteForHandler, hydrateOnboardingWizardFromRuntimeForHandler, modalOpenedForHandler, openOnboardingWizardForHandler, registerPasteForHandler } from './handler-interactions.ts';
 import { getViewportBottomLine } from '../renderer/conversation-layout.ts';
@@ -125,6 +125,7 @@ type SelectionModalCallback = (result: SelectionResult | null) => void;
  * Extracted from main.ts and StateManager.
  */
 export class InputHandler implements InputHandlerLike {
+  public hostPairing: { handleToken(token: InputToken): boolean; cancelForTakeover(): boolean; dispose(): void } | null = null;
   public prompt = '';
   public cursorPos = 0;
   public showExitNotice = false;
@@ -432,7 +433,7 @@ export class InputHandler implements InputHandlerLike {
   public handleBlockToggle(): void { handleBlockToggleForHandler(this); }
   public handleDiffApply(): boolean { return handleDiffApplyForHandler(this); }
   public handleCtrlC(): void { handleCtrlCForHandler(this); }
-  public modalOpened(name: string): void { modalOpenedForHandler(this, name); }
+  public modalOpened(name: string): void { this.hostPairing?.cancelForTakeover(); modalOpenedForHandler(this, name); }
   public clearModalStack(): void { clearModalStackForHandler(this); }
   public handleEscape(): void { handleEscapeForHandler(this); }
 
@@ -515,6 +516,7 @@ export class InputHandler implements InputHandlerLike {
       this.syncFeedSelectionCallback = (callback) => {
         context.selectionCallback = callback;
       };
+      context.handleHostPairingToken = token => this.hostPairing?.handleToken(token) ?? false;
       feedInputTokens(context, this.tokenizer.feed(data));
       this.prompt = context.prompt;
       this.cursorPos = context.cursorPos;
@@ -627,7 +629,7 @@ export class InputHandler implements InputHandlerLike {
   }
 
   /** Begin one line of concealed (masked) composer input. See concealed-input.ts. */
-  public beginConcealedInput(request: ConcealedInputRequest): void { beginConcealedInputFor(this, request); }
+  public beginConcealedInput(request: ConcealedInputRequest): void { this.hostPairing?.cancelForTakeover(); beginConcealedInputFor(this, request); }
   /** True while a concealed-input request is active. */
   public isConcealedInput(): boolean { return this.concealedInput !== null; }
   /** Deliver a concealed submission; returns true when concealed mode consumed it. */

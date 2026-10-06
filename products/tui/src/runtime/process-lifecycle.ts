@@ -228,7 +228,10 @@ export function installProcessLifecycle(deps: ProcessLifecycleDeps): ProcessLife
   // Idempotent, synchronous-only terminal restore. Safe to call from process.on('exit'),
   // signal handlers, uncaughtException, and exitApp. Disposes the output guard AFTER the
   // restore write so a crash stack reaches the real stderr instead of being suppressed.
-  const restoreTerminal = terminalLifecycle.restoreTerminal;
+  const restoreTerminal = (): void => {
+    bestEffort('host pairing cancellation', () => getInput().hostPairing?.dispose());
+    terminalLifecycle.restoreTerminal();
+  };
 
   const uncaughtExceptionHandler = (err: Error): void => {
     restoreTerminal();

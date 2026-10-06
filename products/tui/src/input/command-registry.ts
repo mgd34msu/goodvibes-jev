@@ -93,6 +93,9 @@ export interface CommandUiActions {
    * until the LLM sees it.
    */
   getPendingPastes?: () => ReadonlyMap<string, string>;
+  /** Reserved for direct owner-terminal dispatch; never a generic confirmation callback. */
+  beginHostPairing?: (request: { readonly apply: boolean; readonly bootstrapShared: boolean; readonly name: string }) => Promise<void>;
+  readonly invokedByModel?: boolean;
   executeCommand?: (name: string, args: string[]) => Promise<boolean>;
   /** Arm the one-key jump to a spawned CI fix-session (the surface attaches on the jump key; the user never retypes an id). */
   armFixSessionAttach?: (fixSessionId: string) => void;
@@ -463,6 +466,13 @@ export const COMMON_COMMAND_NAMES: ReadonlySet<string> = new Set([
   'workstream', 'checkpoint', 'search', 'imagine', 'sessions', 'quit',
 ]);
 
+/** A private, one-dispatch mark. Copies, model calls and nested execution lose it. */
+const directOwnerCommands = new WeakMap<CommandContext, string>();
+export function isDirectOwnerCommandContext(context: CommandContext, commandName?: string): boolean {
+  return context.invokedByModel !== true && directOwnerCommands.has(context)
+    && (commandName === undefined || directOwnerCommands.get(context) === commandName);
+}
+
 /**
  * SlashCommand - A single slash command definition.
  */
@@ -592,8 +602,18 @@ export class CommandRegistry {
   async execute(rawName: string, args: string[], context: CommandContext): Promise<boolean> {
     const cmd = this.get(rawName);
     if (!cmd) return false;
-    await cmd.handler(args, context);
+    await cmd.handler(args, directOwnerCommands.has(context) ? { ...context } : context);
     return true;
+  }
+
+  /** Reserved for the terminal's direct key-input route, not tools or startup. */
+  async executeFromOwner(rawName: string, args: string[], context: CommandContext): Promise<boolean> {
+    const cmd = this.get(rawName);
+    if (!cmd) return false;
+    const owned = { ...context };
+    directOwnerCommands.set(owned, cmd.name);
+    try { await cmd.handler(args, owned); return true; }
+    finally { directOwnerCommands.delete(owned); }
   }
 }
 

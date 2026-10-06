@@ -493,7 +493,7 @@ GoodVibes ships **161** built-in slash commands across **75** categories. Every 
 | Command | Aliases | Usage | Description |
 | --- | --- | --- | --- |
 | `/devices` | `/device` | `[list\|rename <id> <name>\|revoke <id>\|migrate-shared [name]\|revoke-shared]` | Manage paired-device tokens (list, rename, revoke, migrate-shared) |
-| `/host` | None | None | Inspect local host credential availability; pair explicitly from goodvibes host pair in an owner terminal |
+| `/host` | None | None | Inspect or explicitly pair this TUI with its selected host in the owner terminal |
 
 ## Services
 

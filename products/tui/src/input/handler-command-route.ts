@@ -93,7 +93,7 @@ export function handleCommandModeToken(state: CommandModeRouteState, token: Inpu
       const args = parts.slice(1);
       const ctx = withComposerBindings(state.commandContext, state);
       const commandPromise = state.commandRegistry.get(name)
-        ? state.commandRegistry.execute(name, args, ctx)
+        ? state.commandRegistry.executeFromOwner(name, args, ctx)
         : (ctx.executeCommand?.(name, args) ?? Promise.resolve(false));
       commandPromise
         .then((handled) => {

@@ -16,7 +16,7 @@ export interface TuiHostPairingResult {
 }
 export interface TuiHostPairingPreview {
   readonly result: TuiHostPairingResult;
-  /** Only the standalone owner-terminal prompt calls this one-shot capability. */
+  /** Only the standalone or interactive owner-terminal prompt calls this one-shot capability. */
   readonly confirm?: (answer: string, signal?: AbortSignal) => Promise<TuiHostPairingResult>;
 }
 export interface TuiHostPairingOptions extends NativeHostCredentialOptions {
@@ -48,8 +48,8 @@ async function readPairingResponse(response: Response): Promise<unknown> {
 }
 
 /** Read-only preview. Source credentials are used only after explicit bootstrap
- * selection; no generic command, startup, native operation or slash command can
- * confirm a migration. Secrets and remote errors never enter presentation data.
+ * selection; no generic command, startup or native operation can confirm a migration.
+ * The interactive shell holds its capability privately across the owner gesture. Secrets and remote errors never enter presentation data.
  */
 export async function previewTuiHostPairing(options: TuiHostPairingOptions, name = 'GoodVibes TUI', signal?: AbortSignal): Promise<TuiHostPairingPreview> {
   try {
