@@ -87,6 +87,18 @@ describe('core-verbs conformance', () => {
     }
   });
 
+  test('Agent hosted delivery is an exact method without a generic surface-start alias', () => {
+    expect(classifyVerb('workLedger.turn.startAgent')).toEqual({ kind: 'exempt', verb: 'startAgent', category: 'native-conversation-agent-delivery' });
+    expect(EXEMPT_VERBS.has('startAgent')).toBe(false);
+    for (const id of ['workLedger.startAgent', 'workLedger.turn.child.startAgent', 'workLedgerExtra.turn.startAgent', 'sessions.startAgent']) {
+      expect(classifyVerb(id).kind).toBe('unclassified');
+    }
+    expect(OPERATOR_METHOD_IDS.filter(id => {
+      const result = classifyVerb(id);
+      return result.kind === 'exempt' && result.category === 'native-conversation-agent-delivery';
+    })).toEqual(['workLedger.turn.startAgent']);
+  });
+
   test('retired automation aliases and native recovery lookalikes remain banned', () => {
     expect(BANNED_VERBS as readonly string[]).toContain('resume');
     for (const id of ['automation.jobs.resume', 'automation.jobs.pause', 'automation.jobs.patch', 'tasks.resume', 'workLedger.resume', 'workLedger.execution.child.resume', 'workLedgerExtra.execution.resume']) {
