@@ -28,6 +28,11 @@
 - Register shared autonomous disposition and refusal questions with calibration fixtures, while preserving dynamic host choices, caller-site attribution, authority checks and recorded decision lineage.
 
 - Native deferral retains its authority/scope identity through live and restored waits; unit-failure reads honor owned cancellation and avoid shared memo reuse; unchanged quality uncertainty cannot reroll into success; native model routing receives full structural source requirements.
+- Runtime notices carry producer-minted occurrence provenance through bus
+  delivery, operator routing and persisted conversation messages. Replays can
+  fold into the same history entry without collapsing later agent wakes or
+  contract import/resume outcomes. Legacy identity-free notices stay visible.
+
 - Remembered permission rules become live only after persistence succeeds.
   Failed writes leave the last committed rules unchanged, reject the calling
   operation, and cannot leak a grant into a later successful write. Concurrent

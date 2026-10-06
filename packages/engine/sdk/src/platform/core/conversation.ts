@@ -1,3 +1,4 @@
+import type { RuntimeEventProvenance } from '../../events/occurrence.js';
 import type { ProviderMessage, ContentPart } from '../providers/interface.js';
 import type { ToolCall, ToolResult } from '../types/tools.js';
 import type { ProviderRegistry } from '../providers/registry.js';
@@ -40,7 +41,7 @@ type AssistantMessage = {
 export type ConversationMessageSnapshot =
   | { role: 'user'; content: string | ContentPart[]; cancelled?: boolean }
   | AssistantMessage
-  | { role: 'system'; content: string }
+  | { role: 'system'; content: string; runtimeEvent?: RuntimeEventProvenance | undefined }
   | {
     role: 'tool';
     callId: string;
@@ -314,8 +315,10 @@ export class ConversationManager {
     this._messagesRevision++;
   }
 
-  public addSystemMessage(content: string): void {
-    this.messages.push({ role: 'system', content });
+  public addSystemMessage(content: string, runtimeEvent?: RuntimeEventProvenance): void {
+    this.messages.push({ role: 'system', content,
+      ...(runtimeEvent ? { runtimeEvent: { type: runtimeEvent.type, occurrenceId: runtimeEvent.occurrenceId } } : {}),
+    });
     this._messagesRevision++;
   }
 

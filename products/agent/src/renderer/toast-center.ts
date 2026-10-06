@@ -98,14 +98,21 @@ function toneForNotice(level: NotificationFeedEntry['level']): ToastTone {
  * in the title. Returns an unsubscribe function.
  */
 export function bridgeNotificationFeedToToasts(feed: NotificationFeed, toasts: ToastCenter): () => void {
-  const seen = new Map<string, number>();
-  for (const entry of feed.list()) seen.set(entry.key, entry.collapsedCount);
+  // Per entry: the count last toasted for, and whether it has toasted at that
+  // count. An entry toasts when its count grows, or once when a second arrival
+  // of the same event (feed eventKey folding) makes a quiet entry one that
+  // toasts; a fold never toasts an entry twice.
+  const seen = new Map<string, { readonly count: number; readonly toasted: boolean }>();
+  for (const entry of feed.list()) seen.set(entry.key, { count: entry.collapsedCount, toasted: true });
   return feed.subscribe(() => {
-    for (const entry of feed.list()) {
-      if (seen.get(entry.key) === entry.collapsedCount) continue;
-      seen.set(entry.key, entry.collapsedCount);
-      if (entry.toast === 'never') continue;
-      const tone = entry.toast === 'always' ? toneForNotice(entry.level) : toneForLevel(entry.level);
+    const entries = feed.list();
+    const retained = new Set(entries.map((entry) => entry.key));
+    for (const key of seen.keys()) if (!retained.has(key)) seen.delete(key);
+    for (const entry of entries) {
+      const previous = seen.get(entry.key);
+      const tone = entry.toast === 'never' ? null : entry.toast === 'always' ? toneForNotice(entry.level) : toneForLevel(entry.level);
+      if (previous && previous.count === entry.collapsedCount && (previous.toasted || !tone)) continue;
+      seen.set(entry.key, { count: entry.collapsedCount, toasted: Boolean(tone) });
       if (!tone) continue;
       const title = entry.collapsedCount > 1 ? `${entry.title} (${entry.collapsedCount} times)` : entry.title;
       toasts.show({ title, body: entry.body, tone });

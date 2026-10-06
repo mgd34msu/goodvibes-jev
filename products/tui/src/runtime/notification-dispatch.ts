@@ -205,9 +205,8 @@ export function wireRuntimeNotificationBridge(
       if (!event) return;
       const body = eventDetail(envelope.payload);
       // Notification.id identifies this delivery only. A trace and timestamp
-      // can be shared by distinct outcomes; only runtimeEventKey is a proven
-      // cross-path occurrence key, and the current SDK deliberately leaves it
-      // undefined for these events. Keyless deliveries must all remain visible.
+      // can be shared by distinct outcomes. Only producer-declared occurrence
+      // provenance is a cross-path key. Legacy keyless deliveries stay visible.
       dispatcher.dispatch({
         id: randomUUID(),
         domain,
@@ -224,5 +223,5 @@ export function wireRuntimeNotificationBridge(
 
 /** The shell's conversation notice sink: every system notice is a toast and a history entry (core/notices.ts). */
 export function createShellNoticeSink(feed: NotificationFeed = getSharedNotificationFeed()): NoticeSink {
-  return (content, { restored }) => publishNotice(feed, content, { restored });
+  return (content, options) => publishNotice(feed, content, options);
 }

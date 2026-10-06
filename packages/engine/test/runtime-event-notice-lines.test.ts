@@ -147,3 +147,16 @@ describe('runtime event notices', () => {
       .toBe('ctr-a PASSED: 2 of 2 criteria met, 0 corrections');
   });
 });
+
+
+test('a notice key requires matching declared provenance, never a guessed id or altered text', () => {
+  const line = '[Contract] ✓ ctr-a PASSED: 2 of 2 criteria met, 0 corrections';
+  const provenance = { type: 'CONTRACT_PASSED', occurrenceId: 'producer-occurrence' };
+  expect(runtimeEventOfNotice(line, provenance)?.key).toBe(runtimeEventKey(provenance.type, provenance));
+  for (const occurrenceId of ['', ' ', null, 1]) {
+    expect(runtimeEventKey(provenance.type, { ...provenance, occurrenceId })).toBeUndefined();
+  }
+  expect(runtimeEventOfNotice(line, { ...provenance, type: 'CONTRACT_FAILED' })?.key).toBeUndefined();
+  expect(runtimeEventOfNotice(line)?.key).toBeUndefined();
+  expect(runtimeEventOfNotice('[Contract] arbitrary prose', provenance)).toBeUndefined();
+});

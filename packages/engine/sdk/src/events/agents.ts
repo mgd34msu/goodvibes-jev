@@ -77,6 +77,8 @@ export type AgentEvent =
   /** Agent completed successfully. */
   | {
       type: 'AGENT_COMPLETED';
+      /** Identity minted once by the producer, retained by notice and replay deliveries. */
+      occurrenceId?: string | undefined;
       agentId: string;
       taskId?: string;
       durationMs: number;
@@ -86,7 +88,7 @@ export type AgentEvent =
       usage?: AgentUsage | undefined;
     }
   /** Agent failed with an error. */
-  | { type: 'AGENT_FAILED'; agentId: string; taskId?: string; error: string; durationMs: number }
+  | { type: 'AGENT_FAILED'; occurrenceId?: string | undefined; agentId: string; taskId?: string; error: string; durationMs: number }
   /** Agent was cancelled before completion. */
   | { type: 'AGENT_CANCELLED'; agentId: string; taskId?: string; reason?: string };
 

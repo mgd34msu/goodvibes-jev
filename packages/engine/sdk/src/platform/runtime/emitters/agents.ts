@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 /**
  * Agent emitters, typed emission wrappers for AgentEvent domain.
  */
@@ -111,7 +112,7 @@ export function emitAgentCompleted(
     usage?: AgentUsage | undefined;
   }
 ): void {
-  bus.emit('agents', createEventEnvelope('AGENT_COMPLETED', { type: 'AGENT_COMPLETED', ...data }, ctx));
+  bus.emit('agents', createEventEnvelope('AGENT_COMPLETED', { type: 'AGENT_COMPLETED', ...data, occurrenceId: randomUUID() }, ctx));
 }
 
 /** Emit AGENT_FAILED when an agent fails. */
@@ -120,7 +121,7 @@ export function emitAgentFailed(
   ctx: EmitterContext,
   data: { agentId: string; taskId?: string; error: string; durationMs: number }
 ): void {
-  bus.emit('agents', createEventEnvelope('AGENT_FAILED', { type: 'AGENT_FAILED', ...data }, ctx));
+  bus.emit('agents', createEventEnvelope('AGENT_FAILED', { type: 'AGENT_FAILED', ...data, occurrenceId: randomUUID() }, ctx));
 }
 
 /** Emit AGENT_CANCELLED when an agent is cancelled. */

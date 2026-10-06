@@ -79,9 +79,10 @@ const ROUTE_SUMMARY: readonly FieldSpec[] = [str('model'), str('provider'), optS
 
 /** The required and optional fields of every contract event, beside `type`. */
 export const CONTRACT_EVENT_FIELD_SPECS: { readonly [T in ContractEventType]: readonly FieldSpec[] } = {
-  CONTRACT_CREATED: [str('contractId'), str('sessionId'), oneOf('origin', CONTRACT_ORIGINS), str('ask'), str('ownerAgentId')],
-  CONTRACT_STATUS_CHANGED: [str('contractId'), oneOf('from', CONTRACT_STATUSES), oneOf('to', CONTRACT_STATUSES)],
+  CONTRACT_CREATED: [optStr('occurrenceId'), str('contractId'), str('sessionId'), oneOf('origin', CONTRACT_ORIGINS), str('ask'), str('ownerAgentId')],
+  CONTRACT_STATUS_CHANGED: [optStr('occurrenceId'), str('contractId'), oneOf('from', CONTRACT_STATUSES), oneOf('to', CONTRACT_STATUSES)],
   CONTRACT_SHAPED: [
+    optStr('occurrenceId'),
     str('contractId'),
     shape('forbidsDelegation'),
     shape('requestsParallelAgents'),
@@ -90,6 +91,7 @@ export const CONTRACT_EVENT_FIELD_SPECS: { readonly [T in ContractEventType]: re
     strs('decisionIds'),
   ],
   CONTRACT_PLANNED: [
+    optStr('occurrenceId'),
     str('contractId'),
     str('goal'),
     { key: 'criteria', kind: 'object[]', fields: PLANNED_CRITERION },
@@ -98,6 +100,7 @@ export const CONTRACT_EVENT_FIELD_SPECS: { readonly [T in ContractEventType]: re
     num('repair'),
   ],
   CONTRACT_PLAN_CHECKED: [
+    optStr('occurrenceId'),
     str('contractId'),
     oneOf('check', PLAN_CHECKS),
     optStr('targetId'),
@@ -106,12 +109,14 @@ export const CONTRACT_EVENT_FIELD_SPECS: { readonly [T in ContractEventType]: re
     strs('decisionIds'),
   ],
   CONTRACT_GROUP_STATUS_CHANGED: [
+    optStr('occurrenceId'),
     str('contractId'),
     str('groupId'),
     oneOf('from', CONTRACT_GROUP_STATUSES),
     oneOf('to', CONTRACT_GROUP_STATUSES),
   ],
   CONTRACT_UNIT_STATUS_CHANGED: [
+    optStr('occurrenceId'),
     str('contractId'),
     str('groupId'),
     str('unitId'),
@@ -120,6 +125,7 @@ export const CONTRACT_EVENT_FIELD_SPECS: { readonly [T in ContractEventType]: re
     optStr('agentId'),
   ],
   CONTRACT_UNIT_SPAWNED: [
+    optStr('occurrenceId'),
     str('contractId'),
     str('unitId'),
     str('agentId'),
@@ -127,6 +133,7 @@ export const CONTRACT_EVENT_FIELD_SPECS: { readonly [T in ContractEventType]: re
     oneOf('purpose', UNIT_SPAWN_PURPOSES),
   ],
   CONTRACT_CHECKED: [
+    optStr('occurrenceId'),
     str('contractId'),
     oneOf('scope', CHECK_SCOPES),
     str('targetId'),
@@ -141,6 +148,7 @@ export const CONTRACT_EVENT_FIELD_SPECS: { readonly [T in ContractEventType]: re
     strs('decisionIds'),
   ],
   CONTRACT_NUDGED: [
+    optStr('occurrenceId'),
     str('contractId'),
     str('unitId'),
     str('nudgeId'),
@@ -150,9 +158,10 @@ export const CONTRACT_EVENT_FIELD_SPECS: { readonly [T in ContractEventType]: re
     oneOf('delivery', NUDGE_DELIVERIES),
     str('agentId'),
   ],
-  CONTRACT_NUDGE_CONSUMED: [str('contractId'), str('unitId'), str('nudgeId'), str('agentId'), { key: 'turn', kind: 'number', optional: true }],
-  CONTRACT_CRITERION_REGRESSED: [str('contractId'), str('unitId'), str('criterionId'), str('metAtCheckId'), str('checkId')],
+  CONTRACT_NUDGE_CONSUMED: [optStr('occurrenceId'), str('contractId'), str('unitId'), str('nudgeId'), str('agentId'), { key: 'turn', kind: 'number', optional: true }],
+  CONTRACT_CRITERION_REGRESSED: [optStr('occurrenceId'), str('contractId'), str('unitId'), str('criterionId'), str('metAtCheckId'), str('checkId')],
   CONTRACT_STALLED: [
+    optStr('occurrenceId'),
     str('contractId'),
     oneOf('scope', CHECK_SCOPES),
     str('targetId'),
@@ -161,8 +170,9 @@ export const CONTRACT_EVENT_FIELD_SPECS: { readonly [T in ContractEventType]: re
     str('reason'),
     optStr('decisionId'),
   ],
-  CONTRACT_FIX_PLANNED: [str('contractId'), oneOf('scope', CHECK_SCOPES), str('targetId'), str('groupId'), strs('unitIds'), num('round')],
+  CONTRACT_FIX_PLANNED: [optStr('occurrenceId'), str('contractId'), oneOf('scope', CHECK_SCOPES), str('targetId'), str('groupId'), strs('unitIds'), num('round')],
   CONTRACT_ESCALATED: [
+    optStr('occurrenceId'),
     str('contractId'),
     str('escalationId'),
     oneOf('scope', ESCALATION_SCOPES),
@@ -172,16 +182,18 @@ export const CONTRACT_EVENT_FIELD_SPECS: { readonly [T in ContractEventType]: re
     strs('unmetCriterionIds'),
   ],
   CONTRACT_OWNER_REPLIED: [
+    optStr('occurrenceId'),
     str('contractId'),
     str('escalationId'),
     oneOf('reading', OWNER_REPLY_READINGS),
     oneOf('outcome', CONTRACT_OUTCOMES),
     str('action'),
   ],
-  CONTRACT_GATE_RESULT: [str('contractId'), str('targetId'), str('gate'), bool('passed'), bool('skipped'), num('durationMs')],
-  CONTRACT_UNIT_SILENT: [str('contractId'), str('unitId'), str('agentId'), num('silentMs'), oneOf('action', UNIT_SILENCE_ACTIONS)],
-  CONTRACT_MERGE_CONFLICT: [str('contractId'), str('unitId'), str('branch'), str('path'), strs('files')],
+  CONTRACT_GATE_RESULT: [optStr('occurrenceId'), str('contractId'), str('targetId'), str('gate'), bool('passed'), bool('skipped'), num('durationMs')],
+  CONTRACT_UNIT_SILENT: [optStr('occurrenceId'), str('contractId'), str('unitId'), str('agentId'), num('silentMs'), oneOf('action', UNIT_SILENCE_ACTIONS)],
+  CONTRACT_MERGE_CONFLICT: [optStr('occurrenceId'), str('contractId'), str('unitId'), str('branch'), str('path'), strs('files')],
   CONTRACT_ATTEMPTS_SELECTED: [
+    optStr('occurrenceId'),
     str('contractId'),
     str('unitId'),
     strs('candidateIds'),
@@ -189,9 +201,10 @@ export const CONTRACT_EVENT_FIELD_SPECS: { readonly [T in ContractEventType]: re
     oneOf('outcome', CONTRACT_OUTCOMES),
     optStr('decisionId'),
   ],
-  CONTRACT_COMMITTED: [str('contractId'), oneOf('status', CONTRACT_COMMIT_STATUSES), optStr('hash'), str('note')],
-  CONTRACT_PASSED: [str('contractId'), num('criteriaMet'), num('criteriaJudged'), num('excluded'), num('nudges')],
+  CONTRACT_COMMITTED: [optStr('occurrenceId'), str('contractId'), oneOf('status', CONTRACT_COMMIT_STATUSES), optStr('hash'), str('note')],
+  CONTRACT_PASSED: [optStr('occurrenceId'), str('contractId'), num('criteriaMet'), num('criteriaJudged'), num('excluded'), num('nudges')],
   CONTRACT_FAILED: [
+    optStr('occurrenceId'),
     str('contractId'),
     str('reason'),
     oneOf('failureKind', CONTRACT_FAILURE_KINDS),
@@ -199,8 +212,8 @@ export const CONTRACT_EVENT_FIELD_SPECS: { readonly [T in ContractEventType]: re
     { key: 'turnLimit', kind: 'number', optional: true },
     optOneOf('turnLimitSource', TURN_LIMIT_SOURCES),
   ],
-  CONTRACT_CANCELLED: [str('contractId'), str('reason'), num('filesModified')],
-  CONTRACT_SPAWN_GUARD_TRIGGERED: [optStr('contractId'), str('agentId'), num('depth'), num('activeAgents'), str('reason')],
+  CONTRACT_CANCELLED: [optStr('occurrenceId'), str('contractId'), str('reason'), num('filesModified')],
+  CONTRACT_SPAWN_GUARD_TRIGGERED: [optStr('occurrenceId'), optStr('contractId'), str('agentId'), num('depth'), num('activeAgents'), str('reason')],
 };
 
 /** One validator per contract event type, for the EVENT_VALIDATORS registry. */

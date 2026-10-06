@@ -1,3 +1,4 @@
+import type { RuntimeEventProvenance } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
 /**
  * SystemMessageRouter, routes system messages to the appropriate surfaces
  * based on their kind and configured routing target.
@@ -120,6 +121,7 @@ export class SystemMessageRouter {
     message: string,
     _priority: SystemMessagePriority,
     kind: SystemMessageKind,
+    runtimeEvent?: RuntimeEventProvenance,
   ): void {
     // Noise gate, keep first-run plumbing out of the transcript while the
     // information stays reachable via other live surfaces. (item 1.)
@@ -130,11 +132,11 @@ export class SystemMessageRouter {
       return;
     }
 
-    this.deliver(message, kind);
+    this.deliver(message, kind, runtimeEvent);
   }
 
   /** Post-noise-gate delivery: resolve target and append to the conversation. */
-  private deliver(message: string, kind: SystemMessageKind): void {
+  private deliver(message: string, kind: SystemMessageKind, runtimeEvent?: RuntimeEventProvenance): void {
     const target = this.getTargetForKind(kind);
     // hasPanel is always false now that side-surface delivery was removed, resolveSystemMessageDelivery's own
     // contract means every target ('panel' | 'conversation' | 'both')
@@ -144,7 +146,8 @@ export class SystemMessageRouter {
     if (toConversation) {
       // addTypedSystemMessage threads the kind into the conversation so the
       // renderer can use kind-based navigability instead of substring matching.
-      this.conversation.addTypedSystemMessage(message, kind);
+      if (runtimeEvent) this.conversation.addTypedSystemMessage(message, kind, runtimeEvent);
+      else this.conversation.addTypedSystemMessage(message, kind);
     }
   }
 
@@ -187,8 +190,8 @@ export class SystemMessageRouter {
     logger.info(summary, { count: providerNames.length, providers: providerNames });
   }
 
-  routeSystemMessage(message: string, priority: SystemMessagePriority): void {
-    this.routeTypedSystemMessage(message, priority, classifySystemMessageKind(message));
+  routeSystemMessage(message: string, priority: SystemMessagePriority, runtimeEvent?: RuntimeEventProvenance): void {
+    this.routeTypedSystemMessage(message, priority, classifySystemMessageKind(message), runtimeEvent);
   }
 
   /**
@@ -216,12 +219,12 @@ export class SystemMessageRouter {
    * Low-priority convenience shortcut.
    * Equivalent to routeSystemMessage(message, 'low').
    */
-  low(message: string): void {
-    this.routeSystemMessage(message, 'low');
+  low(message: string, runtimeEvent?: RuntimeEventProvenance): void {
+    this.routeSystemMessage(message, 'low', runtimeEvent);
   }
 
-  contract(message: string, priority: SystemMessagePriority = 'high'): void {
-    this.routeTypedSystemMessage(message, priority, 'contract');
+  contract(message: string, priority: SystemMessagePriority = 'high', runtimeEvent?: RuntimeEventProvenance): void {
+    this.routeTypedSystemMessage(message, priority, 'contract', runtimeEvent);
   }
 
   /**

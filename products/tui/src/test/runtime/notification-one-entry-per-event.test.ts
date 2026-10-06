@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { RuntimeEventBus, createEventEnvelope } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
 import { runtimeEventKey, registerHostRuntimeEvents } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
 import { createNotificationDispatcher, createShellNoticeSink, wireRuntimeNotificationBridge, wireMemoryPressureNotice } from '../../runtime/notification-dispatch.ts';
+import { emitContractPassed } from '@goodvibes-jev/engine/sdk/platform/runtime/emitters';
 import { NotificationFeed } from '../../views/notifications-feed.ts';
 import { configGetStub } from '../helpers/config-manager-stub.ts';
 import { SAMPLES } from '../helpers/contract-event-samples.ts';
@@ -51,8 +52,7 @@ for (const lineFirst of [true, false]) {
   test(`a caller with a proven occurrence key deduplicates repeated delivery (${lineFirst ? 'notice' : 'routed'} first)`, () => {
     const feed = new NotificationFeed();
     const dispatcher = createNotificationDispatcher(config, feed);
-    // This is the existing explicit dispatcher/feed seam. The current SDK
-    // runtimeEventKey does not supply such a key, so this test does not invent one there.
+    // Explicit proven-key seam also covers either arrival order before batching.
     const occurrenceKey = 'fixture-authoritative-occurrence-1';
     const notice = () => feed.recordNotice({ domain: 'agents', level: 'info', title: 'Agent finished', body: 'Complete detail', timestamp: 1000, eventKey: occurrenceKey });
     const routed = (id: string) => dispatcher.dispatch({ id, domain: 'agents', level: 'info', title: 'Agent finished', timestamp: 1000 }, occurrenceKey);
@@ -66,7 +66,7 @@ for (const lineFirst of [true, false]) {
 }
 
 for (const bridgeFirst of [true, false]) {
-  test(`actual SDK operator lines and bus events stay keyless (${bridgeFirst ? 'bridge' : 'line'} first)`, async () => {
+  test(`actual SDK operator lines and bus events share one occurrence (${bridgeFirst ? 'bridge' : 'line'} first)`, async () => {
     const feed = new NotificationFeed();
     const dispatcher = createNotificationDispatcher(config, feed);
     const bus = new RuntimeEventBus();
@@ -75,16 +75,16 @@ for (const bridgeFirst of [true, false]) {
     const host = registerHostRuntimeEvents({
       runtimeBus: bus,
       domainDispatch: new Proxy({}, { get: () => () => {} }) as never,
-      getSystemMessageRouter: () => ({ low: (line) => sink(line, { restored: false }), high: (line) => sink(line, { restored: false }), contract: (line) => sink(line, { restored: false }) }),
+      getSystemMessageRouter: () => ({ low: (line, runtimeEvent) => sink(line, { restored: false, runtimeEvent }), high: (line) => sink(line, { restored: false }), contract: (line, _priority, runtimeEvent) => sink(line, { restored: false, runtimeEvent }) }),
       requestRender: () => {},
       agentManager: { getStatus: () => undefined, list: () => [], listByCohort: () => [] } as never,
       contractRunner: { get: () => null, list: () => [] },
     });
     const stopAfter = bridgeFirst ? undefined : wireRuntimeNotificationBridge(bus, dispatcher);
     try {
-      bus.emit('contracts', createEventEnvelope('CONTRACT_PASSED', SAMPLES.CONTRACT_PASSED, context));
+      emitContractPassed(bus, context, SAMPLES.CONTRACT_PASSED);
       await Promise.resolve();
-      expect(feed.list()).toHaveLength(2);
+      expect(feed.list()).toHaveLength(1);
       expect(feed.list().every((entry) => entry.title === 'Workstream passed')).toBe(true);
     } finally {
       stopBridge?.(); stopAfter?.();
