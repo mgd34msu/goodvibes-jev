@@ -1128,9 +1128,7 @@ Schema blocks below are emitted directly from the synced contract JSON and may c
         },
         "nativeConversation": {
           "type": "boolean",
-          "enum": [
-            true
-          ]
+          "const": true
         },
         "workspaceRoot": {
           "type": "string"
@@ -1202,6 +1200,9 @@ Schema blocks below are emitted directly from the synced contract JSON and may c
         },
         "restoredFromDisk": {
           "type": "boolean"
+        },
+        "originSurface": {
+          "type": "string"
         },
         "contractIds": {
           "type": "array",

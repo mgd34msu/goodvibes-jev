@@ -3,6 +3,8 @@ import { expect, spyOn, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { WEBUI_METHOD_ROUTES } from '@goodvibes-jev/engine/contracts/generated/webui-facade';
+import { getOperatorContract, type OperatorMethodOutput } from '@goodvibes-jev/engine/contracts';
+import { firstJsonSchemaFailure } from '@goodvibes-jev/engine/transport-http';
 import { nativeConversationIntakeLookupResultSchema } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client';
 import { nativeHostedTurnLookupSchema } from '@goodvibes-jev/engine/sdk/platform/hosted-sessions/native-turn-client';
 import { createNativeIntakeHttpFixture } from '../helpers/native-intake-http-fixture.js';
@@ -83,7 +85,23 @@ test('paired native hosted HTTP preserves canonical identity, finishes a real tu
     const count = requests.length;
     const duplicate = await wire('workLedger.turn.start', identity);
     expect(duplicate.body).toBe(status.body); expect(requests).toHaveLength(count);
-    const attachment = await f.daemon.invoke<{ history: { role: string; content: string }[] }>('sessions.hosted.attach', { sessionId: running.sessionId, clientId: 'owned-native-reader' });
+    const attachmentResponse = await f.daemon.fetch('/api/control-plane/methods/sessions.hosted.attach/invoke', {
+      method: 'POST', body: JSON.stringify({ body: { sessionId: running.sessionId, clientId: 'owned-native-reader' } }),
+    });
+    const attachment = await attachmentResponse.json() as OperatorMethodOutput<'sessions.hosted.attach'>;
+    expect(attachmentResponse.status, JSON.stringify(attachment)).toBe(200);
+    const attachmentSchema = getOperatorContract().operator.methods.find(method => method.id === 'sessions.hosted.attach')?.outputSchema;
+    expect(attachmentSchema).toBeDefined();
+    expect(firstJsonSchemaFailure(attachmentSchema!, attachment)).toBeUndefined();
+    expect(attachment.session.originSurface).toBe('webui');
+    expect(attachment.session.nativeConversation).toBe(true);
+    // Validate the real response unchanged, then mutate only negative controls:
+    // declaring metadata must not open the record or erase native ownership's literal type.
+    for (const session of [
+      { ...attachment.session, originSurface: 42 },
+      { ...attachment.session, nativeConversation: false },
+      { ...attachment.session, inventedField: 'not part of the contract' },
+    ]) expect(firstJsonSchemaFailure(attachmentSchema!, { ...attachment, session })).toBeDefined();
     expect(attachment.history).toContainEqual({ role: 'user', content: TEXT });
     expect(attachment.history.some(message => message.role === 'assistant' && message.content.includes('Owned native hosted answer.'))).toBe(true);
     expect(f.daemon.services.contractRunner.list({ includeTerminal: true })).toHaveLength(0);

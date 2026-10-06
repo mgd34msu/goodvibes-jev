@@ -23249,6 +23249,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "terminatedAt": 0,
         "terminatedReason": "sample",
         "restoredFromDisk": false,
+        "originSurface": "sample",
         "contractIds": [
           "sample"
         ]
@@ -23269,7 +23270,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "modelId": "sample",
       "initialPrompt": "sample",
       "detachPolicy": "kill",
-      "clientId": "sample"
+      "clientId": "sample",
+      "originSurface": "sample"
     },
     "output": {
       "session": {
@@ -23293,6 +23295,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "terminatedAt": 0,
         "terminatedReason": "sample",
         "restoredFromDisk": false,
+        "originSurface": "sample",
         "contractIds": [
           "sample"
         ]
@@ -23326,6 +23329,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "terminatedAt": 0,
         "terminatedReason": "sample",
         "restoredFromDisk": false,
+        "originSurface": "sample",
         "contractIds": [
           "sample"
         ]
@@ -23358,6 +23362,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "terminatedAt": 0,
         "terminatedReason": "sample",
         "restoredFromDisk": false,
+        "originSurface": "sample",
         "contractIds": [
           "sample"
         ]
@@ -23391,6 +23396,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "terminatedAt": 0,
           "terminatedReason": "sample",
           "restoredFromDisk": false,
+          "originSurface": "sample",
           "contractIds": [
             "sample"
           ]
