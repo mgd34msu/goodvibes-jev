@@ -38,6 +38,55 @@ test('read never claims and a strict owner-only claim survives restart', async (
   expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ version: 1, records: [preparing()] });
 }));
 
+test('the atomic claim binds one immutable settings owner across replay, transition and restart', async () => fixture(async path => {
+  const journal = new NativeHostedTurnJournal(path);
+  expect(await journal.claim(identity, [], 'agent')).toBe(true);
+  expect(await journal.claim(identity, [], 'agent')).toBe(false);
+  const before = readFileSync(path, 'utf8');
+  await expect(new NativeHostedTurnJournal(path).claim(identity, [], 'webui')).rejects.toMatchObject({ code: 'surface-conflict' });
+  expect(readFileSync(path, 'utf8')).toBe(before);
+  await expect(journal.transition(identity, 'preparing', { state: 'dispatching', ...bound, originSurface: 'webui' } as Omit<NativeHostedTurnDispatch, 'identity'>)).rejects.toMatchObject({ code: 'invalid-dispatch' });
+  await journal.transition(identity, 'preparing', { state: 'dispatching', ...bound });
+  await journal.transition(identity, 'dispatching', { state: 'completed', ...bound });
+  expect(await new NativeHostedTurnJournal(path).read(identity)).toEqual({ identity, originSurface: 'agent', state: 'completed', ...bound });
+  await expect(journal.claim(identity)).rejects.toMatchObject({ code: 'surface-conflict' });
+}));
+
+test('different surface contenders cannot coalesce or acquire two claims', async () => fixture(async path => {
+  const outcomes = await Promise.allSettled((['agent', 'webui'] as const).map(surface => new NativeHostedTurnJournal(path).claim(identity, [], surface)));
+  expect(outcomes.filter(value => value.status === 'fulfilled' && value.value === true)).toHaveLength(1);
+  expect(outcomes.filter(value => value.status === 'rejected' && value.reason.code === 'surface-conflict')).toHaveLength(1);
+  expect(JSON.parse(readFileSync(path, 'utf8')).records).toHaveLength(1);
+}));
+
+test('legacy surface-less dispatches remain WebUI-owned and reject Agent replay', async () => fixture(async path => {
+  writeFileSync(path, savedFile([preparing()]));
+  const journal = new NativeHostedTurnJournal(path);
+  expect(await journal.claim(identity, [], 'webui')).toBe(false);
+  await expect(journal.claim(identity, [], 'agent')).rejects.toMatchObject({ code: 'surface-conflict' });
+  expect(await journal.read(identity)).toEqual(preparing());
+}));
+
+test('continuation claims cannot cross the original settings owner or poison its later claims', async () => fixture(async path => {
+  const journal = new NativeHostedTurnJournal(path);
+  await journal.claim(identity, [], 'agent');
+  await journal.transition(identity, 'preparing', { state: 'dispatching', ...bound });
+  await journal.transition(identity, 'dispatching', { state: 'completed', ...bound });
+  const next = { ...identity, inputId: 'next', requestId: 'next-request', continuationSessionId: bound.sessionId };
+  const before = readFileSync(path, 'utf8');
+  await expect(journal.claim(next, [], 'webui')).rejects.toMatchObject({ code: 'surface-conflict' });
+  expect(readFileSync(path, 'utf8')).toBe(before);
+  expect(await journal.claim(next, [], 'agent')).toBe(true);
+}));
+
+test('unclaimed cancellation is common to both entry points and confers no settings ownership', async () => fixture(async path => {
+  const journal = new NativeHostedTurnJournal(path);
+  await journal.prevent(identity);
+  expect(await journal.claim(identity, [], 'agent')).toBe(false);
+  expect(await journal.claim(identity, [], 'webui')).toBe(false);
+  expect(await journal.read(identity)).toEqual({ identity, state: 'cancelled', ...unbound });
+}));
+
 test('concurrent instances have one winning claim and retain unrelated identities', async () => fixture(async path => {
   const journals = Array.from({ length: 12 }, () => new NativeHostedTurnJournal(path));
   expect((await Promise.all(journals.map(journal => journal.claim(identity)))).filter(Boolean)).toHaveLength(1);
@@ -58,6 +107,26 @@ test('separate processes contend on the same durable claim', async () => fixture
   }));
   expect(results.filter(Boolean)).toHaveLength(1);
   expect(await new NativeHostedTurnJournal(path).claim(identity)).toBe(false);
+}));
+
+test('separate Agent and WebUI processes atomically choose one immutable surface', async () => fixture(async path => {
+  const modulePath = fileURLToPath(new URL('../sdk/src/platform/hosted-sessions/native-turn-journal.ts', import.meta.url));
+  const children = (['agent', 'webui', 'agent', 'webui'] as const).map(surface => {
+    const script = `import { NativeHostedTurnJournal } from ${JSON.stringify(modulePath)};
+      try { process.stdout.write(JSON.stringify({ surface: ${JSON.stringify(surface)}, claimed: await new NativeHostedTurnJournal(${JSON.stringify(path)}).claim(${JSON.stringify(identity)}, [], ${JSON.stringify(surface)}) })); }
+      catch (error) { process.stdout.write(JSON.stringify({ surface: ${JSON.stringify(surface)}, code: error.code })); }`;
+    return Bun.spawn([process.execPath, '-e', script], { stdout: 'pipe', stderr: 'pipe' });
+  });
+  const results = await Promise.all(children.map(async child => {
+    const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: '' });
+    return JSON.parse(stdout) as { surface: 'agent' | 'webui'; claimed?: boolean; code?: string };
+  }));
+  const winners = results.filter(result => result.claimed === true);
+  expect(winners).toHaveLength(1);
+  expect(results.filter(result => result.code === 'surface-conflict')).toHaveLength(2);
+  expect(results.filter(result => result.claimed === false)).toEqual([{ surface: winners[0]!.surface, claimed: false }]);
+  expect((await new NativeHostedTurnJournal(path).read(identity))?.originSurface).toBe(winners[0]!.surface);
 }));
 
 test('states advance monotonically and a bound destination never changes', async () => fixture(async path => {
@@ -161,6 +230,7 @@ test('corruption and duplicate identities fail closed without modifying the jour
     JSON.stringify({ version: 1, records: [], token: 'secret' }),
     savedFile([preparing(), preparing()]), savedFile([{ ...preparing(), extra: true }]),
     savedFile([{ ...preparing(), state: 'completed' }]), savedFile([{ ...preparing(), identity: { ...identity, extra: true } }]),
+    savedFile([{ ...preparing(), originSurface: 'tui' }]), savedFile([{ ...preparing(), originSurface: null }]),
   ];
   for (const raw of corrupt) {
     writeFileSync(path, raw);

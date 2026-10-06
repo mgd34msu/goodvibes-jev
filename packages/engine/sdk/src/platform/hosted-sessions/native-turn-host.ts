@@ -10,7 +10,7 @@ import type { NativeConversationIntakeHost, NativeConversationContinuationOwner 
 import type { NativePairedExecutionAuthority, NativePairedExecutionSnapshot } from '../workflow/work-ledger/native-execution.js';
 import type { SharedSessionBroker } from '../control-plane/session-broker.js';
 import type { HostedSessionManager } from './manager.js';
-import { NativeHostedTurnJournal, NativeHostedTurnJournalError, type NativeHostedTurnIdentity, type NativeHostedTurnDispatch } from './native-turn-journal.js';
+import { NativeHostedTurnJournal, NativeHostedTurnJournalError, type NativeHostedTurnIdentity, type NativeHostedTurnDispatch, type NativeHostedTurnOriginSurface } from './native-turn-journal.js';
 import { nativeHostedTurnRequestSchema, type NativeHostedTurnRequest, type NativeHostedTurnLookup, type NativeHostedTurnSnapshot, type NativeHostedSessionLookup } from './native-turn-wire.js';
 
 export const NATIVE_HOSTED_TURN_SCOPES = ['read:work-ledger', 'write:work-ledger', 'write:sessions'] as const;
@@ -48,9 +48,9 @@ export function createNativeHostedTurnHost(deps: NativeHostedTurnDependencies & 
   const journal = deps.journal ?? new NativeHostedTurnJournal(deps.journalPath);
   const active = new Map<string, NativeTurnOwnership>();
   let claims = Promise.resolve();
-  const starting = new Map<string, Promise<NativeHostedTurnLookup>>();
+  const starting = new Map<string, { readonly identity: NativeHostedTurnIdentity; readonly originSurface: NativeHostedTurnOriginSurface; readonly promise: Promise<NativeHostedTurnLookup> }>();
   const sessionTails = new Map<string, Promise<void>>();
-  const provenSessionOwners = new Map<string, string>();
+  const provenSessionOwners = new Map<string, { readonly principalId: string; readonly originSurface: NativeHostedTurnOriginSurface }>();
   let closed = false;
   const sameAuthority = (a: NativePairedExecutionSnapshot, b: NativePairedExecutionSnapshot) => a.principalId === b.principalId && a.authorityId === b.authorityId && a.authorityRevision === b.authorityRevision && JSON.stringify([...a.scopes].sort()) === JSON.stringify([...b.scopes].sort());
   const keyOf = (identity: NativeHostedTurnIdentity) => JSON.stringify([identity.projectId, identity.principalId, identity.inputId]);
@@ -61,26 +61,31 @@ export function createNativeHostedTurnHost(deps: NativeHostedTurnDependencies & 
       || value.authorityRevision !== value.tokenId || !NATIVE_HOSTED_TURN_SCOPES.every(scope => value.scopes.includes('*') || value.scopes.includes(scope))) throw new NativeHostedTurnError('forbidden');
     return value;
   }
-  function assertSession(sessionId: string, principalId: string) {
+  function assertSession(sessionId: string, principalId: string, originSurface?: NativeHostedTurnOriginSurface) {
     if (closed) throw new NativeHostedTurnError('closed');
     const session = deps.manager.get(sessionId);
-    if (provenSessionOwners.get(sessionId) !== principalId || !session || session.status === 'terminated'
+    const owner = provenSessionOwners.get(sessionId);
+    if (owner?.principalId !== principalId || !session || session.status === 'terminated'
+      || session.originSurface !== owner.originSurface || (originSurface !== undefined && originSurface !== owner.originSurface)
       || realpathSync(session.workspaceRoot) !== projectRoot || realpathSync(deps.projectRoot) !== projectRoot) throw new NativeHostedTurnError('stale');
     return session;
   }
-  async function proveSession(sessionId: string, principalId: string, allowRecovery = false) {
+  async function proveSession(sessionId: string, principalId: string, allowRecovery = false, originSurface?: NativeHostedTurnOriginSurface) {
     const records = await journal.sessionRecords(sessionId);
     const root = records.find(record => record.sessionId === sessionId && record.identity.continuationSessionId === undefined);
     if (!root) throw new NativeHostedTurnError('stale');
+    const surface = root.originSurface ?? 'webui';
+    if ((originSurface !== undefined && originSurface !== surface) || records.some(record =>
+      !(record.state === 'cancelled' && record.sessionId === null) && (record.originSurface ?? 'webui') !== surface)) throw new NativeHostedTurnError('stale');
     if (records.some(record => record.identity.projectId !== deps.projectId || record.identity.principalId !== principalId)) throw new NativeHostedTurnError('forbidden');
     if (!allowRecovery && records.some(record => !['completed', 'cancelled'].includes(record.state) && !active.has(keyOf(record.identity)))) throw new NativeHostedTurnError('recovery-required');
-    provenSessionOwners.set(sessionId, principalId);
+    provenSessionOwners.set(sessionId, { principalId, originSurface: surface });
     if (allowRecovery) {
       const session = deps.manager.get(sessionId);
-      if (!session || realpathSync(session.workspaceRoot) !== projectRoot || realpathSync(deps.projectRoot) !== projectRoot) throw new NativeHostedTurnError('stale');
+      if (!session || session.originSurface !== surface || realpathSync(session.workspaceRoot) !== projectRoot || realpathSync(deps.projectRoot) !== projectRoot) throw new NativeHostedTurnError('stale');
       return session;
     }
-    return assertSession(sessionId, principalId);
+    return assertSession(sessionId, principalId, originSurface);
   }
   const continuation: NativeConversationContinuationOwner = {
     async capture(sessionId, principalId, selection) {
@@ -131,15 +136,18 @@ export function createNativeHostedTurnHost(deps: NativeHostedTurnDependencies & 
     return { kind: 'native', projectId: deps.projectId, sessionId, busy: owned.status === 'running' || sessionTails.has(sessionId) };
   }
   const localInputs = () => [...active.keys()].map(key => (JSON.parse(key) as [string, string, string])[2]);
-  async function claimOwned(identity: NativeHostedTurnIdentity, owned: NativeTurnOwnership, reserve: () => void): Promise<boolean> {
+  async function claimOwned(identity: NativeHostedTurnIdentity, originSurface: NativeHostedTurnOriginSurface, owned: NativeTurnOwnership, reserve: () => void): Promise<boolean> {
     const previous = claims;
     let release = () => {};
     claims = new Promise<void>(resolve => { release = resolve; });
     await previous;
     try {
-      const claimed = await journal.claim(identity, localInputs());
+      const claimed = await journal.claim(identity, localInputs(), originSurface);
       if (claimed) { active.set(keyOf(identity), owned); reserve(); }
       return claimed;
+    } catch (error) {
+      if (error instanceof NativeHostedTurnJournalError && error.code === 'surface-conflict') throw new NativeHostedTurnError('stale');
+      throw error;
     } finally { release(); }
   }
   async function waitPredecessor(previous: Promise<void> | undefined, signal: AbortSignal) {
@@ -178,20 +186,32 @@ export function createNativeHostedTurnHost(deps: NativeHostedTurnDependencies & 
     return record ? project(record) : { kind: 'not-found' };
   }
   async function start(input: NativeHostedTurnRequest, authority: NativePairedExecutionAuthority, options: NativeHostedTurnOptions): Promise<NativeHostedTurnLookup> {
+    return startForSurface('webui', input, authority, options);
+  }
+  async function startAgent(input: NativeHostedTurnRequest, authority: NativePairedExecutionAuthority, options: NativeHostedTurnOptions): Promise<NativeHostedTurnLookup> {
+    return startForSurface('agent', input, authority, options);
+  }
+  async function startForSurface(originSurface: NativeHostedTurnOriginSurface, input: NativeHostedTurnRequest, authority: NativePairedExecutionAuthority, options: NativeHostedTurnOptions): Promise<NativeHostedTurnLookup> {
     options.signal?.throwIfAborted();
     const { source, identity, binding } = await sourceOf(input, authority, options);
     const key = keyOf(identity), pending = starting.get(key);
-    if (pending) return pending;
-    const run = prepare(source, identity, authority, binding, options);
-    starting.set(key, run);
-    try { return await run; } finally { if (starting.get(key) === run) starting.delete(key); }
+    if (pending) {
+      if (pending.originSurface !== originSurface || JSON.stringify(pending.identity) !== JSON.stringify(identity)) throw new NativeHostedTurnError('stale');
+      return pending.promise;
+    }
+    const run = prepare(source, identity, originSurface, authority, binding, options);
+    starting.set(key, { identity, originSurface, promise: run });
+    try { return await run; } finally { if (starting.get(key)?.promise === run) starting.delete(key); }
   }
-  async function prepare(source: NativeConversationTurnSource, identity: NativeHostedTurnIdentity, authority: NativePairedExecutionAuthority, binding: NativePairedExecutionSnapshot, options: NativeHostedTurnOptions): Promise<NativeHostedTurnLookup> {
+  async function prepare(source: NativeConversationTurnSource, identity: NativeHostedTurnIdentity, originSurface: NativeHostedTurnOriginSurface, authority: NativePairedExecutionAuthority, binding: NativePairedExecutionSnapshot, options: NativeHostedTurnOptions): Promise<NativeHostedTurnLookup> {
     const key = keyOf(identity);
     let contextReady = false;
     const assertCurrent = () => {
       if (!sameAuthority(binding, authorize(authority, options))) throw new NativeHostedTurnError('stale');
-      if (contextReady && source.continuation) continuation.assertCurrent(source.continuation, identity.principalId);
+      if (contextReady && source.continuation) {
+        assertSession(source.continuation.sessionId, identity.principalId, originSurface);
+        continuation.assertCurrent(source.continuation, identity.principalId);
+      }
     };
     options.signal?.throwIfAborted(); assertCurrent();
     let previous: Promise<void> | undefined;
@@ -206,7 +226,7 @@ export function createNativeHostedTurnHost(deps: NativeHostedTurnDependencies & 
       void barrier.then(() => { if (sessionTails.get(sessionId) === barrier) sessionTails.delete(sessionId); });
     };
     const owned: NativeTurnOwnership = { cancelled: false, controller: new AbortController(), sessionId: null, brokerInputId: null, permit: null, done: Promise.resolve() };
-    if (!await claimOwned(identity, owned, () => { if (identity.continuationSessionId) reserve(identity.continuationSessionId); })) {
+    if (!await claimOwned(identity, originSurface, owned, () => { if (identity.continuationSessionId) reserve(identity.continuationSessionId); })) {
       const record = await journal.read(identity);
       if (!record) throw new NativeHostedTurnError('unavailable');
       return project(record);
@@ -227,7 +247,7 @@ export function createNativeHostedTurnHost(deps: NativeHostedTurnDependencies & 
     const client = createOperatorNativeConversationIntakeClient({ invoke }, deps.projectId);
     let createdNewSession = false;
     try {
-      if (source.continuation) { await proveSession(source.continuation.sessionId, identity.principalId); contextReady = true; assertCurrent(); }
+      if (source.continuation) { await proveSession(source.continuation.sessionId, identity.principalId, false, originSurface); contextReady = true; assertCurrent(); }
       // Terminal admission replay neither rerolls Jev nor changes source evidence.
       const eligible = await client.admit({ inputId: identity.inputId, sourceRevision: identity.sourceRevision });
       if (eligible.kind !== 'turn' || JSON.stringify(eligible) !== JSON.stringify(source)) throw new NativeHostedTurnError('stale');
@@ -236,11 +256,11 @@ export function createNativeHostedTurnHost(deps: NativeHostedTurnDependencies & 
       assertCurrent(); options.signal?.throwIfAborted();
       if (owned.cancelled) throw new NativeHostedTurnError('closed');
       const session = source.continuation
-        ? await proveSession(source.continuation.sessionId, identity.principalId)
-        : await deps.manager.create({ workspaceRoot: projectRoot, title: 'Native conversation', originSurface: 'webui', detachPolicy: 'survive' }, { nativeConversation: true });
+        ? await proveSession(source.continuation.sessionId, identity.principalId, false, originSurface)
+        : await deps.manager.create({ workspaceRoot: projectRoot, title: 'Native conversation', originSurface, detachPolicy: 'survive' }, { nativeConversation: true });
       createdNewSession = !source.continuation;
       owned.sessionId = session.id;
-      if (realpathSync(session.workspaceRoot) !== projectRoot || realpathSync(deps.projectRoot) !== projectRoot) throw new NativeHostedTurnError('stale');
+      if (session.originSurface !== originSurface || realpathSync(session.workspaceRoot) !== projectRoot || realpathSync(deps.projectRoot) !== projectRoot) throw new NativeHostedTurnError('stale');
       assertCurrent();
       if (owned.cancelled) throw new NativeHostedTurnError('closed');
       if (!slot) reserve(session.id);
@@ -258,7 +278,7 @@ export function createNativeHostedTurnHost(deps: NativeHostedTurnDependencies & 
         if (owned.cancelled || closed) throw new NativeHostedTurnError('closed');
         await waitPredecessor(previous, owned.controller.signal);
         await deps.manager.waitForNativeAvailability(session.id, owned.controller.signal);
-        if (source.continuation) await proveSession(session.id, identity.principalId);
+        if (source.continuation) await proveSession(session.id, identity.principalId, false, originSurface);
         assertCurrent();
         if (source.continuation) continuation.assertCurrent(source.continuation, identity.principalId);
         if (queued) await journal.transition(identity, 'queued', { ...dispatch, state: 'dispatching' });
@@ -339,7 +359,7 @@ export function createNativeHostedTurnHost(deps: NativeHostedTurnDependencies & 
       // write cannot stop that lifetime or prove its effects have drained.
       return { ...project(record), state: 'recovery-required' };
     }
-    await starting.get(key)?.catch(() => {});
+    await starting.get(key)?.promise.catch(() => {});
     const latest = fence();
     await Promise.all([earlier?.done, current?.done, latest?.done]);
     record = await journal.read(identity);
@@ -348,11 +368,11 @@ export function createNativeHostedTurnHost(deps: NativeHostedTurnDependencies & 
     authorize(authority, options);
     return project(record);
   }
-  return { start, status, cancel, session, continuation,
+  return { start, startAgent, status, cancel, session, continuation,
     async close(): Promise<void> {
       closed = true;
       for (const owned of active.values()) { owned.cancelled = true; owned.controller.abort(); if (owned.sessionId && owned.permit) deps.manager.cancelNative(owned.sessionId, owned.permit); }
-      await Promise.allSettled([...starting.values()]);
+      await Promise.allSettled([...starting.values()].map(pending => pending.promise));
       await Promise.allSettled([...active.values()].map(owned => owned.done));
     },
   };

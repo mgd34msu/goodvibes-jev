@@ -3,7 +3,7 @@
   "info": {
     "title": "GoodVibes Operator API",
     "version": "2.0.23",
-    "description": "Generated from the operator contract (packages/contracts/artifacts/operator-contract.json). 534 cataloged methods: 462 with dedicated REST bindings, 72 reachable only through the generic invoke endpoint. 0 methods lack typed SDK client IO and are marked with `x-typed-client-io: false`. They are represented honestly, never omitted. Regenerate with `bun run openapi:generate`; drift fails `contracts:check`."
+    "description": "Generated from the operator contract (packages/contracts/artifacts/operator-contract.json). 535 cataloged methods: 463 with dedicated REST bindings, 72 reachable only through the generic invoke endpoint. 0 methods lack typed SDK client IO and are marked with `x-typed-client-io: false`. They are represented honestly, never omitted. Regenerate with `bun run openapi:generate`; drift fails `contracts:check`."
   },
   "servers": [
     {
@@ -139856,7 +139856,178 @@
       "post": {
         "operationId": "workLedger.turn.start",
         "summary": "Start Native Hosted Turn",
-        "description": "Deliver an already admitted native conversation input at most once through a host-owned broker identity and durable dispatch claim. Accepts source identity only. Ambiguous dispatch requires inspection and is never replayed.",
+        "description": "Deliver an already admitted native conversation input at most once through a host-owned broker identity and durable dispatch claim bound to the WebUI settings owner. Accepts source identity only. Cross-surface replay is refused. Ambiguous dispatch requires inspection and is never replayed.",
+        "tags": [
+          "work-ledger"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "projectId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "requestId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "inputId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "sourceRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "preparing",
+                            "queued",
+                            "running",
+                            "cancelling",
+                            "completed",
+                            "cancelled",
+                            "recovery-required"
+                          ]
+                        },
+                        "sessionId": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "brokerInputId": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "correlationId": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "projectId",
+                        "requestId",
+                        "inputId",
+                        "sourceRevision",
+                        "state",
+                        "sessionId",
+                        "brokerInputId",
+                        "correlationId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "not-found"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-typed-client-io": true,
+        "x-access": "admin",
+        "x-transport": [
+          "http",
+          "ws"
+        ],
+        "x-scopes": [
+          "read:work-ledger",
+          "write:work-ledger",
+          "write:sessions"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "inputId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "sourceRevision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "inputId",
+                  "sourceRevision"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/work-ledger/turn/startAgent": {
+      "post": {
+        "operationId": "workLedger.turn.startAgent",
+        "summary": "Start Agent Native Hosted Turn",
+        "description": "Deliver an already admitted native conversation input at most once through a host-owned broker identity and durable dispatch claim bound to the Agent settings owner. Accepts source identity only. Cross-surface replay is refused. Ambiguous dispatch requires inspection and is never replayed.",
         "tags": [
           "work-ledger"
         ],
@@ -145784,6 +145955,15 @@
       "category": "work-ledger",
       "access": "admin",
       "rest": "POST /api/work-ledger/turn/start",
+      "typedClientIo": true,
+      "inputSchemaCoverage": "typed",
+      "outputSchemaCoverage": "typed"
+    },
+    {
+      "id": "workLedger.turn.startAgent",
+      "category": "work-ledger",
+      "access": "admin",
+      "rest": "POST /api/work-ledger/turn/startAgent",
       "typedClientIo": true,
       "inputSchemaCoverage": "typed",
       "outputSchemaCoverage": "typed"

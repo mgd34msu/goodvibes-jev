@@ -73,6 +73,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { nativeHostedTurnSnapshotSchema, type NativeHostedTurnSnapshot } from '@goodvibes-jev/engine/sdk/platform/hosted-sessions/native-turn-client';
 import { createOperatorSdk, type OperatorSdk } from '@goodvibes-jev/engine/operator-sdk';
 import type { OperatorMethodOutput } from '@goodvibes-jev/engine/contracts';
 import { transport } from '@goodvibes-jev/engine/sdk/platform/runtime';
@@ -127,8 +128,14 @@ export type RemoteTurnOutcome =
 
 /** The connected host's address and token, or the honest reason there is none. */
 export type ConnectedHostResolution =
-  | { readonly baseUrl: string; readonly token: string }
+  | { readonly baseUrl: string; readonly token: string; readonly selectionIdentity?: string; readonly expectedPrincipalId?: string }
   | { readonly reason: string };
+
+/** Credential provenance is part of a native selection, even when its token is unchanged. */
+export function sameNativeRemoteConnection(left: ConnectedHostResolution, right: ConnectedHostResolution): boolean {
+  return !('reason' in left) && !('reason' in right) && left.baseUrl === right.baseUrl && left.token === right.token
+    && left.selectionIdentity === right.selectionIdentity && left.expectedPrincipalId === right.expectedPrincipalId;
+}
 
 export interface RemoteConversationRouterOptions {
   readonly verbs: DaemonVerbCaller;
@@ -190,6 +197,8 @@ export interface RemoteConversationRouter {
    * a keystroke path and a thrown error there loses the person's message.
    */
   submit(text: string, context?: RemoteTurnContext): Promise<RemoteTurnOutcome>;
+  /** Observe a verified native delivery. Never creates a session or sends a body. */
+  observeNative(snapshot: NativeHostedTurnSnapshot, cancel: () => Promise<void>, current?: () => boolean): Promise<RemoteTurnOutcome>;
   /** The hosted session this conversation is bound to, if any. */
   hostedSessionId(): string | null;
   /** Request Stop for this submission only; true means the hosted path owns it. */
@@ -239,12 +248,21 @@ export function createRemoteConversationRouter(
     identityNoticeShown: boolean;
     cancelRequest: Promise<void> | null;
     cancelController: AbortController | null;
+    nativeCancel?: (() => Promise<void>) | undefined;
+    nativeCurrent?: (() => boolean) | undefined;
+    nativeKey?: string | undefined;
+    nativeBrokerInputId?: string | undefined;
+    nativeTerminal?: 'completed' | 'cancelled' | undefined;
+    connection?: Extract<ConnectedHostResolution, { readonly baseUrl: string }> | undefined;
+    selectionTimer?: ReturnType<typeof setInterval> | undefined;
   }
   let hostedId: string | null = null;
   let active: WatchedTurn | null = null;
   let disposed = false;
   let submissionGeneration = 0;
   const streamPositions = new Map<string, string>();
+  const nativeTurnIds = new Map<string, string>();
+  const nativeObservations = new Map<string, { readonly turn: WatchedTurn; readonly outcome: Extract<RemoteTurnOutcome, { routed: true }> }>();
   const refuse = (reason: string, chosen = false): RemoteTurnOutcome => ({ routed: false, reason, chosen });
   const stopped = (): RemoteTurnOutcome => ({
     routed: false, chosen: true, cancelled: true,
@@ -261,6 +279,7 @@ export function createRemoteConversationRouter(
     turn.finished = true;
     if (active === turn) active = null;
     turn.cancelController?.abort();
+    if (turn.selectionTimer) clearInterval(turn.selectionTimer);
     const close = turn.closeStream;
     turn.closeStream = null;
     try { close?.(); } catch (error) {
@@ -272,9 +291,33 @@ export function createRemoteConversationRouter(
     turn.renderer?.abandon(reason);
     if (!turn.submissionPending) release(turn);
   };
-  const isCurrent = (turn: WatchedTurn): boolean => active === turn && !turn.finished && !disposed;
+  const isCurrent = (turn: WatchedTurn): boolean => {
+    if (active !== turn || turn.finished || disposed || (turn.nativeCurrent && !turn.nativeCurrent())) return false;
+    if (turn.connection) {
+      const now = options.resolveConnection();
+      if (!sameNativeRemoteConnection(now, turn.connection)) return false;
+    }
+    return true;
+  };
 
   const sendCancellation = (turn: WatchedTurn): void => {
+    if (turn.nativeCancel) {
+      if (!isCurrent(turn) || !turn.cancelQueued || turn.cancelRequest || turn.cancellationAcknowledged) return;
+      turn.cancelQueued = false;
+      turn.cancelRequest = Promise.resolve().then(async () => {
+        if (!isCurrent(turn)) return;
+        try {
+          await turn.nativeCancel!();
+          if (isCurrent(turn)) {
+            turn.cancellationAcknowledged = true;
+            notice(turn, '[Stop] Native cancellation recorded for this original input; waiting for its terminal event.');
+          }
+        } catch {
+          notice(turn, '[Stop] Native cancellation is unconfirmed. Inspect /work intake-status or press Stop to retry the same input.');
+        } finally { turn.cancelRequest = null; }
+      });
+      return;
+    }
     if (!isCurrent(turn) || !turn.cancelQueued || turn.cancelRequest || turn.cancellationAcknowledged
       || !turn.sessionId || !turn.turnId) return;
     const sessionId = turn.sessionId;
@@ -328,14 +371,22 @@ export function createRemoteConversationRouter(
     const renderer = createHostedFrameRenderer(options.conversation, options.requestRender);
     turn.renderer = renderer;
     const isCurrentWatch = (): boolean => isCurrent(turn) && turn.renderer === renderer;
-    const gate = createTurnLifecycleGate();
+    const gate = createTurnLifecycleGate(turn.turnId ? { turnId: turn.turnId } : undefined);
     const streamUrl = hostedSessionEventStreamUrl(baseUrl, sessionId);
+    const positionKey = turn.nativeKey ?? streamUrl;
     const terminalTypes = new Set(['TURN_CANCEL', 'TURN_COMPLETED', 'TURN_ERROR', 'PREFLIGHT_FAIL']);
     const close = await transport.openServerSentEventStream(options.fetchImpl ?? globalThis.fetch, streamUrl, {
       // The SDK parses id: before dispatching its event. After terminal release
       // or replacement, buffered frames no longer advance this watch's cursor.
-      onEventId: (id: string) => { if (isCurrentWatch()) streamPositions.set(streamUrl, id); },
+      onEventId: (id: string) => { if (isCurrentWatch()) streamPositions.set(positionKey, id); },
       onEvent: (_domain: string, payload: unknown) => {
+        // The first heartbeat follows catch-up replay. A terminal native
+        // receipt remains authoritative even when bounded event history can
+        // no longer reconstruct its reply; never wait forever or infer a turn.
+        if (isCurrentWatch() && _domain === 'heartbeat' && turn.nativeTerminal && !renderer.isTurnFinished()) {
+          abandon(turn, `The host reports this native turn ${turn.nativeTerminal}, but its complete event history is no longer available. Inspect the hosted conversation; this input was not replayed.`);
+          return;
+        }
         if (!isCurrentWatch() || !payload || typeof payload !== 'object') return;
         const frame = payload as HostedSessionFrame;
         if (typeof frame.type !== 'string') return;
@@ -358,6 +409,7 @@ export function createRemoteConversationRouter(
           }
           if (turn.turnId !== null && turn.turnId !== frameTurnId) return;
           turn.turnId = frameTurnId;
+          if (turn.nativeKey) nativeTurnIds.set(turn.nativeKey, frameTurnId);
         }
         // Neither rendering nor terminal settlement can use unrelated work
         // while this submission is still queued. Non-turn session notices may
@@ -394,7 +446,7 @@ export function createRemoteConversationRouter(
       },
     }, {
       getAuthToken: () => token,
-      lastEventId: streamPositions.get(streamUrl) ?? null,
+      lastEventId: streamPositions.get(positionKey) ?? null,
       ...(options.reconnect ? { reconnect: options.reconnect } : {}),
     });
     if (!isCurrentWatch()) close();
@@ -504,15 +556,70 @@ export function createRemoteConversationRouter(
     }
   };
 
+  const observeNative = async (raw: NativeHostedTurnSnapshot, cancel: () => Promise<void>, current: () => boolean = () => true): Promise<RemoteTurnOutcome> => {
+    const parsed = nativeHostedTurnSnapshotSchema.safeParse(raw);
+    if (!parsed.success) return refuse('Native hosted delivery identity is invalid. No legacy turn was started.', true);
+    const snapshot = parsed.data;
+    if (!snapshot.sessionId || !snapshot.correlationId || !snapshot.brokerInputId) {
+      return refuse(`Native hosted turn is ${snapshot.state}; inspect /work intake-status. No legacy turn was started.`, true);
+    }
+    const connection = options.resolveConnection();
+    if (disposed || !current() || 'reason' in connection) return stopped();
+    const key = JSON.stringify([connection.baseUrl, connection.token, connection.selectionIdentity, connection.expectedPrincipalId, snapshot.projectId, snapshot.requestId, snapshot.inputId, snapshot.sourceRevision]);
+    const observed = nativeObservations.get(key);
+    if (observed) {
+      if (observed.turn.sessionId !== snapshot.sessionId || observed.turn.correlationId !== snapshot.correlationId
+        || observed.turn.nativeBrokerInputId !== snapshot.brokerInputId) {
+        abandon(observed.turn, 'The host returned a different dispatch identity for the original native source. Observation was detached without replay.');
+        return refuse('Native hosted dispatch identity changed. Inspect the original input; no replacement was adopted.', true);
+      }
+      if (snapshot.state === 'completed' || snapshot.state === 'cancelled') observed.turn.nativeTerminal = snapshot.state;
+      if (isCurrent(observed.turn) || observed.turn.settledByHost) return observed.outcome;
+      nativeObservations.delete(key);
+      abandon(observed.turn, 'The previous native observation was detached. Reopening the saved original with current selection.');
+    }
+    ++submissionGeneration;
+    if (active) { active.submissionPending = false; abandon(active, 'This surface switched observations. The original remote outcome is unconfirmed; switching did not cancel it.'); }
+    const operator = createOperatorSdk({ baseUrl: connection.baseUrl, authToken: connection.token, fetchImpl: options.fetchImpl ?? globalThis.fetch });
+    const turn: WatchedTurn = {
+      operator, correlationId: snapshot.correlationId, sessionId: snapshot.sessionId,
+      turnId: nativeTurnIds.get(key) ?? null, renderer: null, closeStream: null, finished: false, submissionPending: false,
+      settledByHost: false, steerAttempted: false, cancelRequested: false, cancelQueued: false,
+      cancellationAcknowledged: false, identityNoticeShown: false, cancelRequest: null, cancelController: null,
+      nativeCancel: cancel, nativeCurrent: current, nativeKey: key, nativeBrokerInputId: snapshot.brokerInputId, connection,
+      ...(snapshot.state === 'completed' || snapshot.state === 'cancelled' ? { nativeTerminal: snapshot.state } : {}),
+    };
+    active = turn;
+    hostedId = snapshot.sessionId;
+    turn.selectionTimer = setInterval(() => {
+      if (!isCurrent(turn) && !turn.finished) abandon(turn, 'Selected host or credentials changed. Detached from this native turn; its remote outcome is unconfirmed.');
+    }, 100);
+    turn.selectionTimer.unref?.();
+    try {
+      const renderer = await watch(turn, connection.baseUrl, connection.token, snapshot.sessionId);
+      const outcome: Extract<RemoteTurnOutcome, { routed: true }> = {
+        routed: true, hostedSessionId: snapshot.sessionId, action: 'steered', completion: renderer.completion(),
+      };
+      nativeObservations.set(key, { turn, outcome });
+      void outcome.completion.then(value => { if (value.status === 'abandoned' && nativeObservations.get(key)?.outcome === outcome) nativeObservations.delete(key); });
+      return outcome;
+    } catch {
+      abandon(turn, 'Native turn observation could not be opened. The original hosted dispatch remains authoritative; inspect /work intake-status.');
+      release(turn);
+      return refuse('Native turn observation is unavailable. No legacy turn was started.', true);
+    }
+  };
+
   return {
     submit,
+    observeNative,
     hostedSessionId: () => hostedId,
     cancelTurn: () => {
       const turn = active;
       if (!turn || !isCurrent(turn) || (!turn.submissionPending && turn.renderer?.isTurnFinished())) return false;
       if (!turn.cancelRequested) {
         turn.cancelRequested = true;
-        if (!turn.turnId) notice(turn, '[Stop] Waiting for hosted submission identity; cancellation is pending.');
+        if (!turn.turnId && !turn.nativeCancel) notice(turn, '[Stop] Waiting for hosted submission identity; cancellation is pending.');
       }
       if (!turn.cancelRequest && !turn.cancellationAcknowledged) turn.cancelQueued = true;
       sendCancellation(turn);

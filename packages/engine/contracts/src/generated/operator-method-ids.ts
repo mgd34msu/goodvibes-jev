@@ -525,6 +525,7 @@ export const OPERATOR_METHOD_IDS = [
   "workLedger.turn.cancel",
   "workLedger.turn.session",
   "workLedger.turn.start",
+  "workLedger.turn.startAgent",
   "workLedger.turn.status",
   "workspaces.registrations.add",
   "workspaces.registrations.list",

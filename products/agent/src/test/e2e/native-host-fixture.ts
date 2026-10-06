@@ -9,6 +9,9 @@ import { seedProviderMetadataCacheFixture, seedProviderModelListCacheFixture } f
 import type { E2EHome } from './harness.ts';
 
 export async function startE2ENativeHost(home: E2EHome) {
+  // These fixtures prove local permit delivery. Remote-owner coverage uses a
+  // hosted-enabled daemon and must never rely on a failed route falling back.
+  home.setAgentSetting('hostedSessions.routeConversationTurns', false);
   const previousKey = process.env.TYPESAFE_API_KEY;
   process.env.TYPESAFE_API_KEY = 'local-e2e-judgment-fixture-not-a-secret';
   const restore = () => {

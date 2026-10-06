@@ -59,3 +59,53 @@ test('published-indeterminate execution intent remains exact and is confirmed on
   await expect(failing.saveExecutionIntent(binding, command, intent)).rejects.toThrow();
   await journal.saveExecutionIntent(binding, command, intent); expect((await journal.read(binding))?.execution).toEqual(intent);
 }));
+
+test('hosted delivery and continuation identity are durable before capture and cannot change mode', async () => fixture(async path => {
+  const journal = new NativeConversationIntakeJournal(path);
+  const original = { ...command, continuation: { sessionId: 'native-session' } };
+  await journal.save(binding, original, null, { delivery: 'hosted' });
+  const source = { version: 1 as const, inputId: command.inputId, sourceId: 'source', sourceRevision: 'r1', sessionId: 'intake-session', continuation: { sessionId: 'native-session', revision: 'a'.repeat(64) } };
+  await journal.saveHostedSource(binding, original, source);
+  const restarted = new NativeConversationIntakeJournal(path);
+  expect(await restarted.read(binding)).toEqual({ binding, command: original, delivery: 'hosted', hostedSource: source });
+  await expect(restarted.save(binding, original, original.requestId)).rejects.toThrow();
+  await expect(restarted.claimTurn(binding, original, 'r1')).rejects.toThrow();
+  await expect(restarted.saveHostedSource(binding, original, { ...source, sourceRevision: 'r2' })).rejects.toThrow();
+  await expect(restarted.saveHostedSource(binding, original, { ...source, continuation: { ...source.continuation, revision: 'b'.repeat(64) } })).rejects.toThrow();
+  await restarted.save(binding, original, original.requestId, { delivery: 'hosted' });
+  expect((await restarted.read(binding))?.hostedSource).toEqual(source);
+  expect(Object.keys((await restarted.read(binding))!.command.continuation!)).toEqual(['sessionId']);
+}));
+
+test('hosted source publication failure preserves the immutable visible identity for recovery', async () => fixture(async path => {
+  const journal = new NativeConversationIntakeJournal(path); await journal.save(binding, command, null, { delivery: 'hosted' });
+  const source = { version: 1 as const, inputId: command.inputId, sourceId: 'source', sourceRevision: 'r1', sessionId: 'intake-session' };
+  const failing = new NativeConversationIntakeJournal(path, { writeJsonFileAtomic: (target, value, options) => { writeJsonFileAtomic(target, value, options); throw new Error('published-indeterminate'); } });
+  await expect(failing.saveHostedSource(binding, command, source)).rejects.toThrow('published-indeterminate');
+  await journal.saveHostedSource(binding, command, source);
+  expect((await journal.read(binding))?.hostedSource).toEqual(source);
+}));
+
+test('hosted journal rejects local dispatch, unsupported modes and transcript-bearing continuation', async () => fixture(async path => {
+  const journal = new NativeConversationIntakeJournal(path);
+  const source = { version: 1 as const, inputId: command.inputId, sourceId: 'source', sourceRevision: 'r1', sessionId: 'intake-session' };
+  for (const record of [
+    { binding, command, delivery: 'hosted', dispatch: { sourceRevision: 'r1' } },
+    { binding, command, delivery: 'local' },
+    { binding, command, hostedSource: source },
+    { binding, command: { ...command, continuation: { sessionId: 's', messages: [] } }, delivery: 'hosted' },
+    { binding, command, delivery: 'hosted', hostedSource: { ...source, inputId: 'different' } },
+  ]) {
+    writeFileSync(path, JSON.stringify({ version: 1, records: [record] }));
+    await expect(journal.read(binding)).rejects.toThrow();
+  }
+}));
+
+test('Agent recovery fails closed on a selected-diff continuation instead of dropping its evidence selector', async () => fixture(async path => {
+  const journal = new NativeConversationIntakeJournal(path);
+  const original = { ...command, continuation: { sessionId: 'native-session', selectedDiff: { kind: 'session' as const, revision: 'a'.repeat(64), fileIndex: 0, hunkIndex: 0 } } };
+  await expect(journal.save(binding, original, null, { delivery: 'hosted' })).rejects.toThrow();
+  writeFileSync(path, JSON.stringify({ version: 1, records: [{ binding, command: original, delivery: 'hosted' }] }));
+  await expect(journal.read(binding)).rejects.toThrow();
+  expect(JSON.parse(readFileSync(path, 'utf8')).records[0].command).toEqual(original);
+}));

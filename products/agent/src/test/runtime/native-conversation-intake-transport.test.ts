@@ -1,3 +1,4 @@
+import type { NativeHostedTurnRequest, NativeHostedTurnSnapshot } from '@goodvibes-jev/engine/sdk/platform/hosted-sessions/native-turn-client';
 import type { NativeWorkExecutionIdentity, NativeWorkExecutionSnapshot } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client';
 import { readNativeConversationTurnPermit, revalidateNativeConversationTurnPermit } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client';
 import { dispatchNativeConversationTurn } from '../../runtime/native-conversation-ingress.ts';
@@ -14,13 +15,17 @@ function fixture() {
   const home = mkdtempSync(join(tmpdir(), 'native-intake-product-')); const journalPath = join(home, 'native-submissions.json');
   const requests: string[] = []; const captures: NativeConversationIntakeCaptureRequest[] = []; const states = new Map<string, NativeConversationIntakeResult>();
   const executionStarts: NativeWorkExecutionIdentity[] = []; const executions = new Map<string, NativeWorkExecutionSnapshot>(); let loseStart = false; let invalidStartRevision = false;
+  const hostedTurns = new Map<string, NativeHostedTurnSnapshot>(); const hostedBodies: NativeHostedTurnRequest[] = [];
+  let hostedFault: 'none' | 'lose-start' | 'drop-scope' | 'change-principal' | 'change-project' = 'none';
+  let principalId = 'paired-principal'; let projectId = 'p'; let scopes = ['read:work-ledger', 'write:work-ledger', 'write:fleet', 'write:sessions'];
   let processing = true; let loseAdmit = false; let turnMode = false; let revoked = false;
+  let heldHostedStart: Promise<void> | undefined; let releaseHostedStart = () => {}; let hostedStartArrived = () => {};
   let heldAdmit: Promise<void> | undefined; let releaseAdmit = () => {}; let admitArrived = () => {};
   const common = (command: NativeConversationIntakeCaptureRequest) => ({ projectId: 'p', requestId: command.requestId,
-    sourceRef: { version: 1 as const, inputId: command.inputId, sourceId: 'host-source', sourceRevision: 'r1', sessionId: 'host-session' } });
+    sourceRef: { version: 1 as const, inputId: command.inputId, sourceId: 'host-source', sourceRevision: 'r1', sessionId: 'host-session', ...(command.continuation ? { continuation: { sessionId: command.continuation.sessionId, revision: 'a'.repeat(64) } } : {}) } });
   const terminal = (command: NativeConversationIntakeCaptureRequest): NativeConversationIntakeResult => {
     const c = common(command);
-    if (turnMode) return { ...c, kind: 'turn', route: 'answer', text: command.text };
+    if (turnMode) return { ...c, kind: 'turn', route: 'answer', text: command.text, ...(c.sourceRef.continuation ? { continuation: { ...c.sourceRef.continuation, messages: [{ role: 'assistant', content: 'Host-owned prior transcript' }] } } : {}) };
     if (command.unsupportedSources.length) return { ...c, kind: 'blocked', reason: 'unsupported-source', recovery: 'required' };
     return { ...c, kind: 'work', receipt: { projectId: 'p', requestId: command.requestId, inputId: command.inputId, ledgerRevision: 1, workId: 'native-recorded-work', attemptId: 'native-recorded-attempt', expectedRevision: { work: 1, criteria: 1, attempt: 1 }, source: { version: 2, sourceId: c.sourceRef.sourceId, sourceRevision: c.sourceRef.sourceRevision, sessionId: c.sourceRef.sessionId, offsetEncoding: 'utf16', proposalRevision: 'proposal-r1', spans: [{ partId: 'input', start: 0, end: command.text.length }], admissionDecisionId: 'admission', judgmentDecisionIds: ['judge'] }, goal: command.text, criteria: [command.text] } };
   };
@@ -28,8 +33,8 @@ function fixture() {
     expect(request.headers.get('authorization')).toBe('Bearer synthetic-intake-token');
     const path = new URL(request.url).pathname; requests.push(path);
     if (revoked) return Response.json({ error: 'Revoked authority' }, { status: 403 });
-    if (path === '/api/control-plane/auth') return Response.json({ authenticated: true, authMode: 'shared-token', tokenPresent: true, authorizationHeaderPresent: true, sessionCookiePresent: false, principalId: 'paired-principal', principalKind: 'token', admin: true, scopes: ['read:work-ledger', 'write:work-ledger', 'write:fleet'], roles: [] });
-    if (path === '/api/work-ledger/project') return Response.json({ projectId: 'p' });
+    if (path === '/api/control-plane/auth') return Response.json({ authenticated: true, authMode: 'shared-token', tokenPresent: true, authorizationHeaderPresent: true, sessionCookiePresent: false, principalId, principalKind: 'token', admin: true, scopes, roles: [] });
+    if (path === '/api/work-ledger/project') return Response.json({ projectId });
     if (path === '/api/work-ledger/snapshot') return Response.json({ projectId: 'p', cursor: 0, revision: 0, works: [] });
     if (path === '/api/work-ledger/history') return Response.json({ projectId: 'p', afterSequence: 0, throughSequence: 0, cursor: 0, hasMore: false, events: [] });
     if (path === '/api/work-ledger/intake/capture') {
@@ -50,6 +55,28 @@ function fixture() {
       if (loseAdmit && path.endsWith('/admit')) return Response.json({ error: 'Synthetic lost admission reply' }, { status: 503 });
       return Response.json(result);
     }
+    if (path === '/api/work-ledger/turn/status' || path === '/api/work-ledger/turn/startAgent' || path === '/api/work-ledger/turn/cancel') {
+      const target = await request.json() as NativeHostedTurnRequest; hostedBodies.push(target);
+      expect(Object.keys(target).sort()).toEqual(['inputId', 'projectId', 'sourceRevision']);
+      expect(target.projectId).toBe('p'); expect(target.sourceRevision).toBe('r1');
+      const command = captures.find(command => command.inputId === target.inputId)!;
+      if (path.endsWith('/status')) {
+        if (hostedFault === 'drop-scope') scopes = scopes.filter(scope => scope !== 'write:sessions');
+        if (hostedFault === 'change-principal') principalId = 'changed-paired-principal';
+        if (hostedFault === 'change-project') projectId = 'changed-project';
+        return Response.json(hostedTurns.get(target.inputId) ?? { kind: 'not-found' });
+      }
+      const previous = hostedTurns.get(target.inputId);
+      const snapshot: NativeHostedTurnSnapshot = path.endsWith('/cancel')
+        ? { ...target, requestId: command.requestId, state: 'cancelled', sessionId: previous?.sessionId ?? null, brokerInputId: previous?.brokerInputId ?? null, correlationId: previous?.correlationId ?? null }
+        : { ...target, requestId: command.requestId, state: 'running', sessionId: command.continuation?.sessionId ?? 'hosted-native-session', brokerInputId: 'broker-input', correlationId: 'hosted-correlation' };
+      const stored = JSON.parse(readFileSync(`${journalPath}.intake`, 'utf8'));
+      expect(stored.records[0].delivery).toBe('hosted'); expect(stored.records[0].hostedSource.sourceRevision).toBe('r1'); expect(stored.records[0].dispatch).toBeUndefined();
+      hostedTurns.set(target.inputId, snapshot);
+      if (heldHostedStart && path.endsWith('/startAgent')) { const hold = heldHostedStart; heldHostedStart = undefined; hostedStartArrived(); await hold; }
+      if (hostedFault === 'lose-start' && path.endsWith('/startAgent')) return Response.json({ error: 'Lost hosted start acknowledgement' }, { status: 503 });
+      return Response.json(snapshot);
+    }
     if (path === '/api/work-ledger/execution/status' || path === '/api/work-ledger/execution/start') {
       const body = await request.json() as NativeWorkExecutionIdentity & { projectId: string };
       const { projectId, ...target } = body; expect(projectId).toBe('p');
@@ -67,11 +94,15 @@ function fixture() {
   } });
   const baseUrl = `http://127.0.0.1:${server.port}`;
   const view = createNativeWorkLedgerView(() => ({ baseUrl, token: 'synthetic-intake-token', workspace: home, journalPath }), () => {});
-  const intake = view.intake!; const close = () => view.close();
+  const extraViews: ReturnType<typeof createNativeWorkLedgerView>[] = [];
+  const intake = view.intake!; const close = () => { view.close(); for (const extra of extraViews) extra.close(); };
   const printed: string[] = []; let dispatches = 0; const registry = new CommandRegistry();
   registerAgentWorkspaceRuntimeCommands(registry);
   const context = { nativeConversationIntake: intake, dispatchNativeIntakeTurn: async () => { dispatches++; }, print: (line: string) => printed.push(line) } as unknown as CommandContext;
-  return { intake, requests, captures, printed, executionStarts, executions, dispatches: () => dispatches,
+  return { intake, requests, captures, printed, executionStarts, executions, hostedTurns, hostedBodies,
+    newIntake() { const extra = createNativeWorkLedgerView(() => ({ baseUrl, token: 'synthetic-intake-token', workspace: home, journalPath }), () => {}); extraViews.push(extra); return extra.intake!; },
+    holdHostedStart() { heldHostedStart = new Promise(resolve => { releaseHostedStart = resolve; }); return { arrived: new Promise<void>(resolve => { hostedStartArrived = resolve; }), release: () => releaseHostedStart() }; },
+    setHostedFault(value: typeof hostedFault) { hostedFault = value; }, dispatches: () => dispatches,
     run: (action: string) => registry.execute('work', [action], context),
     journal: () => JSON.parse(readFileSync(`${journalPath}.intake`, 'utf8')),
     invalidStartRevision() { invalidStartRevision = true; },
@@ -79,7 +110,7 @@ function fixture() {
     settle() { processing = false; }, loseAdmit() { loseAdmit = true; },
     turn() { processing = false; turnMode = true; }, revoke() { revoked = true; },
     holdAdmit() { heldAdmit = new Promise(resolve => { releaseAdmit = resolve; }); return { arrived: new Promise<void>(resolve => { admitArrived = resolve; }), release: () => releaseAdmit() }; },
-    close() { releaseAdmit(); close(); server.stop(true); rmSync(home, { recursive: true, force: true }); } };
+    close() { releaseAdmit(); releaseHostedStart(); close(); server.stop(true); rmSync(home, { recursive: true, force: true }); } };
 }
 test('ordinary product transport persists exact source and explicitly recovered admission starts its native target', async () => {
   const f = fixture(); const text = '  Deliver the exact change\r\nkeep 😀 and spaces  ';
@@ -203,4 +234,106 @@ test('real client still rejects a start acknowledgement with revisions different
     expect(f.journal().records[0].execution.target.expectedRevision).toEqual({ work: 1, criteria: 1, attempt: 1 });
     expect(f.requests.filter(path => path.includes('/execution/'))).toEqual(['/api/work-ledger/execution/status', '/api/work-ledger/execution/start', '/api/work-ledger/execution/status']);
   } finally { f.close(); }
+});
+
+
+test('hosted product transport persists delivery and uses qualified identity-only routes without local claims', async () => {
+  const f = fixture(); f.turn();
+  try {
+    const state = await f.intake.submit({ text: '  Exact hosted input\r\n界 😀  ', unsupportedSources: [] }, { delivery: 'hosted' });
+    expect(state?.hostedTurn).toMatchObject({ state: 'running', sessionId: 'hosted-native-session' });
+    expect(state?.turnReady).toBeUndefined(); expect(state?.turnPermit).toBeUndefined(); expect(f.dispatches()).toBe(0);
+    expect(f.requests.filter(path => path.includes('/turn/'))).toEqual(['/api/work-ledger/turn/status', '/api/work-ledger/turn/startAgent']);
+    expect(f.hostedBodies).toEqual(Array(2).fill({ projectId: 'p', inputId: f.captures[0]!.inputId, sourceRevision: 'r1' }));
+    expect(f.journal().records[0].delivery).toBe('hosted'); expect(f.journal().records[0].dispatch).toBeUndefined();
+    const startIndex = f.requests.indexOf('/api/work-ledger/turn/startAgent');
+    expect(f.requests.slice(startIndex - 2, startIndex)).toEqual(['/api/control-plane/auth', '/api/work-ledger/project']);
+  } finally { f.close(); }
+});
+
+test('hosted transport loses a start acknowledgement then reads status without replay or legacy delivery', async () => {
+  const f = fixture(); f.turn(); f.setHostedFault('lose-start');
+  try {
+    const state = await f.intake.submit({ text: 'Original hosted input', unsupportedSources: [] }, { delivery: 'hosted' });
+    expect(state?.status).toBe('unknown');
+    const before = f.requests.length; const recovered = await f.intake.retry();
+    expect(recovered?.hostedTurn).toMatchObject({ state: 'running' });
+    expect(f.requests.slice(before).filter(path => path.includes('/turn/'))).toEqual(['/api/work-ledger/turn/status']);
+    expect(f.requests.filter(path => path === '/api/work-ledger/turn/startAgent')).toHaveLength(1);
+    expect(f.captures).toHaveLength(1); expect(f.dispatches()).toBe(0);
+  } finally { f.close(); }
+});
+
+test('hosted mutation refreshes paired scopes, principal and project after its status read', async () => {
+  for (const fault of ['drop-scope', 'change-principal', 'change-project'] as const) {
+    const f = fixture(); f.turn(); f.setHostedFault(fault);
+    try {
+      const state = await f.intake.submit({ text: 'Original hosted input', unsupportedSources: [] }, { delivery: 'hosted' });
+      expect(state?.status).toBe('unknown');
+      expect(f.requests).toContain('/api/work-ledger/turn/status'); expect(f.requests).not.toContain('/api/work-ledger/turn/startAgent');
+      expect(f.dispatches()).toBe(0); expect(f.journal().records[0].delivery).toBe('hosted');
+    } finally { f.close(); }
+  }
+});
+
+test('hosted continuation forwards only session identity and cancels only its retained source', async () => {
+  const f = fixture(); f.turn();
+  try {
+    const state = await f.intake.submit({ text: 'Follow-up exact original', unsupportedSources: [] }, { delivery: 'hosted', continuationSessionId: 'native-session' });
+    expect(state?.hostedTurn).toMatchObject({ state: 'running', sessionId: 'native-session' });
+    expect(f.captures[0]?.continuation).toEqual({ sessionId: 'native-session' });
+    expect(f.journal().records[0].command.continuation).toEqual({ sessionId: 'native-session' });
+    const cancelled = await f.intake.cancel(state!.request!);
+    expect(cancelled?.hostedTurn).toMatchObject({ state: 'cancelled', sessionId: 'native-session' });
+    expect(f.requests.filter(path => path.endsWith('/cancel'))).toEqual(['/api/work-ledger/turn/cancel']);
+    expect(f.hostedBodies.at(-1)).toEqual({ projectId: 'p', inputId: state!.request!.inputId, sourceRevision: 'r1' });
+    expect(f.dispatches()).toBe(0);
+  } finally { f.close(); }
+});
+
+test('a stale hosted observer cannot detach another product submission during admission', async () => {
+  const f = fixture(); f.turn();
+  try {
+    const first = await f.intake.submit({ text: 'First input', unsupportedSources: [] }, { delivery: 'hosted' });
+    expect(first?.hostedTurn).toMatchObject({ state: 'running' });
+    const firstId = first!.request!.inputId;
+    f.hostedTurns.set(firstId, { ...f.hostedTurns.get(firstId)!, state: 'completed' });
+    const held = f.holdAdmit();
+    const pending = f.intake.submit({ text: 'Second input', unsupportedSources: [] }, { delivery: 'hosted' }); await held.arrived;
+    expect((await f.intake.cancel(first!.request!))?.status).toBe('pending');
+    held.release(); expect((await pending)?.hostedTurn).toMatchObject({ state: 'running' });
+    expect(f.requests).not.toContain('/api/work-ledger/turn/cancel');
+  } finally { f.close(); }
+});
+
+
+test('product Stop before hosted ACK pins its own durable identity across another process replacing the journal', async () => {
+  const f = fixture(); f.turn(); const held = f.holdHostedStart();
+  try {
+    const pending = f.intake.submit({ text: 'First process original', unsupportedSources: [] }, { delivery: 'hosted' }); await held.arrived;
+    const firstId = f.captures[0]!.inputId;
+    f.hostedTurns.set(firstId, { ...f.hostedTurns.get(firstId)!, state: 'completed' });
+    const other = f.newIntake();
+    const second = await other.submit({ text: 'Second process original', unsupportedSources: [] }, { delivery: 'hosted' });
+    expect(second?.hostedTurn).toMatchObject({ state: 'running' }); expect(second?.request?.inputId).not.toBe(firstId);
+    expect(f.journal().records[0].command.inputId).toBe(second!.request!.inputId);
+    const stopped = await f.intake.stop!();
+    expect(stopped?.status).toBe('invalid'); expect(stopped?.message).toContain('newer input was not cancelled');
+    expect(f.requests.filter(path => path.endsWith('/cancel'))).toEqual([]);
+    expect(f.hostedTurns.get(second!.request!.inputId)?.state).toBe('running');
+    held.release(); expect(await pending).toBeUndefined();
+  } finally { held.release(); f.close(); }
+});
+
+test('product Stop before hosted ACK cancels the pinned original when its journal identity still matches', async () => {
+  const f = fixture(); f.turn(); const held = f.holdHostedStart();
+  try {
+    const pending = f.intake.submit({ text: 'Stop this exact original', unsupportedSources: [] }, { delivery: 'hosted' }); await held.arrived;
+    const original = f.captures[0]!;
+    const stopped = await f.intake.stop!();
+    expect(stopped?.hostedTurn).toMatchObject({ requestId: original.requestId, inputId: original.inputId, state: 'cancelled' });
+    expect(f.requests.filter(path => path.endsWith('/cancel'))).toEqual(['/api/work-ledger/turn/cancel']);
+    expect(f.hostedBodies.at(-1)).toEqual({ projectId: 'p', inputId: original.inputId, sourceRevision: 'r1' });
+    held.release(); expect(await pending).toBeUndefined();
+  } finally { held.release(); f.close(); }
 });

@@ -141287,7 +141287,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       {
         "id": "workLedger.turn.start",
         "title": "Start Native Hosted Turn",
-        "description": "Deliver an already admitted native conversation input at most once through a host-owned broker identity and durable dispatch claim. Accepts source identity only. Ambiguous dispatch requires inspection and is never replayed.",
+        "description": "Deliver an already admitted native conversation input at most once through a host-owned broker identity and durable dispatch claim bound to the WebUI settings owner. Accepts source identity only. Cross-surface replay is refused. Ambiguous dispatch requires inspection and is never replayed.",
         "category": "work-ledger",
         "source": "builtin",
         "access": "admin",
@@ -141303,6 +141303,162 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "http": {
           "method": "POST",
           "path": "/api/work-ledger/turn/start"
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "projectId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "inputId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "sourceRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "projectId",
+            "inputId",
+            "sourceRevision"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "projectId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "inputId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "sourceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "preparing",
+                    "queued",
+                    "running",
+                    "cancelling",
+                    "completed",
+                    "cancelled",
+                    "recovery-required"
+                  ]
+                },
+                "sessionId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "brokerInputId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "correlationId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "projectId",
+                "requestId",
+                "inputId",
+                "sourceRevision",
+                "state",
+                "sessionId",
+                "brokerInputId",
+                "correlationId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "not-found"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
+      },
+      {
+        "id": "workLedger.turn.startAgent",
+        "title": "Start Agent Native Hosted Turn",
+        "description": "Deliver an already admitted native conversation input at most once through a host-owned broker identity and durable dispatch claim bound to the Agent settings owner. Accepts source identity only. Cross-surface replay is refused. Ambiguous dispatch requires inspection and is never replayed.",
+        "category": "work-ledger",
+        "source": "builtin",
+        "access": "admin",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "read:work-ledger",
+          "write:work-ledger",
+          "write:sessions"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/work-ledger/turn/startAgent"
         },
         "inputSchema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -144458,10 +144614,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       }
     ],
     "schemaCoverage": {
-      "methods": 534,
-      "typedInputs": 534,
+      "methods": 535,
+      "typedInputs": 535,
       "genericInputs": 0,
-      "typedOutputs": 534,
+      "typedOutputs": 535,
       "genericOutputs": 0
     },
     "eventCoverage": {
@@ -144470,8 +144626,8 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       "withWireEvents": 34
     },
     "validationCoverage": {
-      "methods": 534,
-      "validated": 526,
+      "methods": 535,
+      "validated": 527,
       "skippedGeneric": 0,
       "skippedUntyped": 8
     }
