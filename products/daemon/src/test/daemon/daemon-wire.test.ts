@@ -19,6 +19,8 @@ import { join } from 'node:path';
 import { ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { registerInboxSurface } from '@goodvibes-jev/engine/sdk/platform/intake';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { getOperatorContract } from '@goodvibes-jev/engine/contracts';
+import { firstJsonSchemaFailure } from '@goodvibes-jev/engine/transport-http';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { startDaemonFixture, type DaemonFixture } from '../../testing/daemon-fixture.ts';
@@ -128,6 +130,11 @@ async function invokeOverHttp<T>(methodId: string, body: Record<string, unknown>
   });
   const payload = await response.json() as unknown;
   if (!response.ok) throw new Error(`${methodId} -> ${response.status} ${JSON.stringify(payload)}`);
+  if (methodId.startsWith('sessions.hosted.')) {
+    const schema = getOperatorContract().operator.methods.find(method => method.id === methodId)?.outputSchema;
+    expect(schema, `${methodId} output schema`).toBeDefined();
+    expect(firstJsonSchemaFailure(schema!, payload), methodId).toBeUndefined();
+  }
   return payload as T;
 }
 
@@ -301,7 +308,7 @@ describe('SSE replay after a reconnect with Last-Event-ID', () => {
     const missed = [];
     for (const clientId of ['sse-missed-one', 'sse-missed-two']) {
       missed.push(await invokeOverHttp<{ session: HostedSession }>('sessions.hosted.create', {
-        workspaceRoot: fixture.workingDirectory, clientId, detachPolicy: 'survive',
+        workspaceRoot: fixture.workingDirectory, clientId, detachPolicy: 'survive', originSurface: 'webui',
       }));
     }
 
@@ -323,6 +330,12 @@ describe('SSE replay after a reconnect with Last-Event-ID', () => {
         && frame.data['event'] === 'hosted-session-created')
         .map((frame) => (frame.data['session'] as { id: string }).id);
       expect(createdIds).toEqual(missed.map((result) => result.session.id));
+      const lifecycleSchema = getOperatorContract().operator.events.find(event => event.id === 'control.hosted_session_update')?.outputSchema;
+      expect(lifecycleSchema).toBeDefined();
+      for (const frame of replay.filter(frame => frame.event === 'hosted-session-update')) {
+        expect(frame.data['session']).toMatchObject({ originSurface: 'webui' });
+        expect(firstJsonSchemaFailure(lifecycleSchema!, frame.data)).toBeUndefined();
+      }
       const redelivered = second.frames.filter((frame) => frame.id !== null && seenIds.has(frame.id));
       expect(redelivered.map((frame) => `${frame.event} ${frame.id}`)).toEqual([]);
     } finally {
@@ -343,6 +356,7 @@ describe('a hosted session over the HTTP control plane', () => {
       modelId: 'wire-stub:wire-model',
       detachPolicy: 'survive',
       title: 'daemon wire test',
+      originSurface: 'webui',
     });
     const sessionId = created.session.id;
     expect(created.session.status).toBe('idle');

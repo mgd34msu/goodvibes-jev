@@ -114282,9 +114282,7 @@ Join a hosted session and receive its transcript so far, so a client that was ne
         },
         "nativeConversation": {
           "type": "boolean",
-          "enum": [
-            true
-          ]
+          "const": true
         },
         "workspaceRoot": {
           "type": "string"
@@ -114356,6 +114354,9 @@ Join a hosted session and receive its transcript so far, so a client that was ne
         },
         "restoredFromDisk": {
           "type": "boolean"
+        },
+        "originSurface": {
+          "type": "string"
         },
         "contractIds": {
           "type": "array",
@@ -114459,6 +114460,9 @@ Compose a full conversation loop INSIDE the daemon for a workspace: the same orc
     },
     "clientId": {
       "type": "string"
+    },
+    "originSurface": {
+      "type": "string"
     }
   },
   "required": [
@@ -114482,9 +114486,7 @@ Compose a full conversation loop INSIDE the daemon for a workspace: the same orc
         },
         "nativeConversation": {
           "type": "boolean",
-          "enum": [
-            true
-          ]
+          "const": true
         },
         "workspaceRoot": {
           "type": "string"
@@ -114556,6 +114558,9 @@ Compose a full conversation loop INSIDE the daemon for a workspace: the same orc
         },
         "restoredFromDisk": {
           "type": "boolean"
+        },
+        "originSurface": {
+          "type": "string"
         },
         "contractIds": {
           "type": "array",
@@ -114638,9 +114643,7 @@ Leave a hosted session. When other clients are still attached, nothing else happ
         },
         "nativeConversation": {
           "type": "boolean",
-          "enum": [
-            true
-          ]
+          "const": true
         },
         "workspaceRoot": {
           "type": "string"
@@ -114712,6 +114715,9 @@ Leave a hosted session. When other clients are still attached, nothing else happ
         },
         "restoredFromDisk": {
           "type": "boolean"
+        },
+        "originSurface": {
+          "type": "string"
         },
         "contractIds": {
           "type": "array",
@@ -114790,9 +114796,7 @@ End a hosted session regardless of who is attached or what its detach policy say
         },
         "nativeConversation": {
           "type": "boolean",
-          "enum": [
-            true
-          ]
+          "const": true
         },
         "workspaceRoot": {
           "type": "string"
@@ -114864,6 +114868,9 @@ End a hosted session regardless of who is attached or what its detach policy say
         },
         "restoredFromDisk": {
           "type": "boolean"
+        },
+        "originSurface": {
+          "type": "string"
         },
         "contractIds": {
           "type": "array",
@@ -114941,9 +114948,7 @@ Every session this daemon hosts, most recently updated first. Terminated session
           },
           "nativeConversation": {
             "type": "boolean",
-            "enum": [
-              true
-            ]
+            "const": true
           },
           "workspaceRoot": {
             "type": "string"
@@ -115015,6 +115020,9 @@ Every session this daemon hosts, most recently updated first. Terminated session
           },
           "restoredFromDisk": {
             "type": "boolean"
+          },
+          "originSurface": {
+            "type": "string"
           },
           "contractIds": {
             "type": "array",
@@ -145965,9 +145973,7 @@ Every lifecycle transition of a session whose loop runs INSIDE the daemon: creat
         },
         "nativeConversation": {
           "type": "boolean",
-          "enum": [
-            true
-          ]
+          "const": true
         },
         "workspaceRoot": {
           "type": "string"
@@ -146039,6 +146045,9 @@ Every lifecycle transition of a session whose loop runs INSIDE the daemon: creat
         },
         "restoredFromDisk": {
           "type": "boolean"
+        },
+        "originSurface": {
+          "type": "string"
         },
         "contractIds": {
           "type": "array",

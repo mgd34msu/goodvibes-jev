@@ -11,6 +11,11 @@
   source-read scopes, immutable continuation binding and shared durable recovery.
   Only explicit legacy sessions use excerpt-prefixed steer/follow-up messages.
 
+- Hosted-session contracts now preserve optional `originSurface` metadata in
+  lifecycle responses and events, and declare the existing create input.
+  Generated clients retain the literal native-ownership marker; real daemon
+  response checks keep closed-record validation intact.
+
 - Add source-bound continuation of native-owned hosted sessions, with immutable completed conversation context, exact original intake, durable FIFO dispatch and input-specific cancellation.
 
 - WebUI native conversation admission now reaches the real hosted turn through
