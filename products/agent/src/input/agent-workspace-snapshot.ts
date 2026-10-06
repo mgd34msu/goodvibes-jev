@@ -1,3 +1,4 @@
+import { readConnectedHostOperatorToken } from '../runtime/connected-host-auth.ts';
 import { basename, sep } from 'node:path';
 import type { CommandContext } from './command-registry.ts';
 import { AgentRoutineRegistry } from '../agent/routine-registry.ts';
@@ -246,14 +247,18 @@ export function buildAgentWorkspaceRuntimeSnapshot(context: CommandContext): Age
     voiceProviders: voiceProviderDescriptors,
     mediaProviders: mediaProviderDescriptors,
   });
+  const homeDirectory = context.workspace?.shellPaths?.homeDirectory;
+  const nativeCredential = homeDirectory
+    ? readConnectedHostOperatorToken(homeDirectory, runtimeBaseUrl)
+    : { present: false, token: null, path: '(Agent home unavailable)', error: undefined };
   const setupChecklist = buildAgentWorkspaceSetupChecklist({
     provider,
     model,
     runtimeBaseUrl,
-    connectedHostTokenPresent: companionAccess.tokenPresent,
-    connectedHostTokenReadable: companionAccess.tokenReadable,
-    connectedHostTokenPath: companionAccess.tokenPath,
-    connectedHostTokenError: companionAccess.tokenError,
+    connectedHostTokenPresent: nativeCredential.present,
+    connectedHostTokenReadable: Boolean(nativeCredential.token),
+    connectedHostTokenPath: nativeCredential.path,
+    connectedHostTokenError: nativeCredential.error,
     activeSubscriptionCount: subscriptionSnapshot.active,
     pendingSubscriptionCount: subscriptionSnapshot.pending,
     availableSubscriptionProviderCount: subscriptionSnapshot.available,

@@ -1,3 +1,5 @@
+import { canonicalizePairingHost } from './connected-host-pairing-store.ts';
+import { resolveConnectedHostBaseUrl } from '../config/connected-host-dial.ts';
 import { createOperatorSdk } from '@goodvibes-jev/engine/operator-sdk';
 import { resolveConnectedHostDialEnabled } from '@goodvibes-jev/engine/sdk/platform/config';
 import { resolveConnectedHostConnection, type AgentDaemonVerbCallerOptions } from './client/daemon-verbs.ts';
@@ -15,6 +17,7 @@ export async function readConnectedHostReadiness(options: AgentDaemonVerbCallerO
   if (!resolveConnectedHostDialEnabled(options.configManager)) {
     return { status: 'disabled', detail: 'Connected-host dialing is disabled; no auth probe was made.' };
   }
+  if (!canonicalizePairingHost(resolveConnectedHostBaseUrl(options.configManager))) return { status: 'unavailable', detail: 'The selected host URL is invalid; no auth probe was made.' };
   const selected = resolveConnectedHostConnection(options);
   if ('reason' in selected) {
     return { status: 'missing-credential', detail: 'No effective connected-host credential is available for a live auth check.' };

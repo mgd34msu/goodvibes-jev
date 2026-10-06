@@ -44,7 +44,7 @@ export function createSpineConnectionResolver(
       configManager.get('controlPlane.host'),
       configManager.get('controlPlane.port'),
     );
-    const token = readConnectedHostOperatorToken(homeDirectory);
+    const token = readConnectedHostOperatorToken(homeDirectory, baseUrl);
     return { baseUrl, token: token.token, tokenPath: token.path };
   };
 }

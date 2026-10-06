@@ -1,3 +1,6 @@
+import { readConnectedHostReadiness } from '../runtime/connected-host-readiness.ts';
+import { readAgentHostPairing } from '../runtime/connected-host-pairing-store.ts';
+import { resolveConnectedHostBaseUrl } from '../config/connected-host-dial.ts';
 import { extractNativeHeadlessOptions } from './native-headless-options.ts';
 import { runNativeHeadlessCommand } from './native-headless-command.ts';
 import { existsSync } from 'node:fs';
@@ -205,7 +208,17 @@ export async function prepareShellCliRuntime(
     process.exit(await runNativeHeadlessCommand({ cli, configManager, workingDirectory: bootstrapWorkingDir, homeDirectory: bootstrapHomeDirectory }, native.mode));
   }
 
-  if (cli.command === 'status' || cli.command === 'doctor' || (cli.command === 'onboarding' && cli.commandArgs[0] === 'status')) {
+  if (cli.command === 'onboarding' && cli.commandArgs[0] === 'status') {
+    const shellPaths = createShellPathService({ workingDirectory: bootstrapWorkingDir, homeDirectory: bootstrapHomeDirectory });
+    const selectedHost = resolveConnectedHostBaseUrl(configManager);
+    const nativeReadiness = await readConnectedHostReadiness({ configManager, homeDirectory: bootstrapHomeDirectory });
+    const pairingStatus = readAgentHostPairing(bootstrapHomeDirectory, selectedHost).status;
+    writeExitingStdoutLine(renderOnboardingCliStatus({ configManager, workingDirectory: bootstrapWorkingDir, homeDirectory: bootstrapHomeDirectory,
+      onboardingMarkers: readOnboardingCheckMarkers(shellPaths), nativeReadiness, pairingStatus, selectedHost, outputFormat: cli.flags.outputFormat }));
+    process.exit(0);
+  }
+
+  if (cli.command === 'status' || cli.command === 'doctor') {
     const shellPaths = createShellPathService({
       workingDirectory: bootstrapWorkingDir,
       homeDirectory: bootstrapHomeDirectory,
@@ -270,9 +283,7 @@ export async function prepareShellCliRuntime(
       outputFormat: cli.flags.outputFormat,
     };
     const snapshot = buildCliStatusSnapshot(statusOptions);
-    writeExitingStdoutLine(cli.command === 'onboarding'
-      ? renderOnboardingCliStatus(statusOptions)
-      : renderCliStatus(statusOptions));
+    writeExitingStdoutLine(renderCliStatus(statusOptions));
     process.exit(cli.command === 'doctor' && snapshot.findings.length > 0 ? 1 : 0);
   }
 

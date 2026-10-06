@@ -68,7 +68,7 @@ export async function inspectCliExternalRuntime(
   options: CliExternalRuntimeInspectionOptions,
 ): Promise<CliExternalRuntimeSnapshot> {
   const baseUrl = resolveBaseUrl(options.configManager);
-  const token = readConnectedHostOperatorToken(options.homeDirectory);
+  const token = readConnectedHostOperatorToken(options.homeDirectory, baseUrl);
   const timeoutMs = options.timeoutMs ?? 1500;
   const route = '/api/goodvibes-agent/knowledge/status' as const;
 

@@ -1,3 +1,4 @@
+import type { ConnectedHostReadiness } from '../runtime/connected-host-readiness.ts';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { OnboardingCheckMarkersState } from '../runtime/onboarding/index.ts';
 import { resolveRuntimeEndpointBinding } from './endpoints.ts';
@@ -16,6 +17,9 @@ export interface CliStatusOptions {
   readonly workingDirectory: string;
   readonly homeDirectory: string;
   readonly onboardingMarkers?: OnboardingCheckMarkersState;
+  readonly nativeReadiness?: ConnectedHostReadiness;
+  readonly pairingStatus?: string;
+  readonly selectedHost?: string;
   readonly auth?: CliAuthStatus;
   readonly service?: CliServicePosture;
   readonly externalRuntime?: CliExternalRuntimeSnapshot;
@@ -499,8 +503,19 @@ export function renderCliStatus(options: CliStatusOptions): string {
 
 export function renderOnboardingCliStatus(options: CliStatusOptions): string {
   const marker = options.onboardingMarkers?.effective;
+  if (options.outputFormat === 'json') return JSON.stringify({
+    title: 'GoodVibes Agent setup status', selectedHost: options.selectedHost ?? null,
+    nativeReadiness: options.nativeReadiness ?? { status: 'unverified', detail: 'No live auth check was performed.' },
+    pairingStatus: options.pairingStatus ?? 'unverified', checked: marker?.exists ?? false,
+    scope: marker?.scope ?? 'none', workingDirectory: options.workingDirectory,
+  }, null, 2);
   return [
     'GoodVibes Agent setup status',
+    `  selected host ${options.selectedHost ?? '(unavailable)'}`,
+    `  native intake auth ${options.nativeReadiness?.status ?? 'unverified'}`,
+    `  ${options.nativeReadiness?.detail ?? 'No live auth check was performed.'}`,
+    `  Agent pairing store ${options.pairingStatus ?? 'unverified'}`,
+    '  Provider, workspace, Jev and execution readiness are separate checks.',
     `  checked ${marker?.exists ? 'yes' : 'no'}`,
     `  scope ${marker?.scope ?? 'none'}`,
     `  origin ${marker?.payload?.source ? formatAgentRecordSource(marker.payload.source) : 'n/a'}`,

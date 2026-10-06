@@ -62,7 +62,7 @@ export function resolveConnectedHostConnection(runtime: AgentKnowledgeConnection
     runtime.configManager.get('controlPlane.host'),
     runtime.configManager.get('controlPlane.port'),
   );
-  const token = readConnectedHostOperatorToken(runtime.homeDirectory);
+  const token = readConnectedHostOperatorToken(runtime.homeDirectory, baseUrl);
   return { baseUrl, token: token.token, tokenPath: token.path };
 }
 

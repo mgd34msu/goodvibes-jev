@@ -1,5 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readConnectedHostOperatorToken } from '../runtime/connected-host-auth.ts';
 import { classifyConnectedHostError, type ConnectedHostFailure } from './connected-host-failure.ts';
 import { createBrowserGoodVibesSdk } from '@goodvibes-jev/engine/sdk/browser';
 import type { OperatorMethodInput, OperatorMethodOutput } from '@goodvibes-jev/engine/sdk/contracts';
@@ -201,15 +200,8 @@ export function resolveAgentConnectedHostConnection(
     configManager.get('controlPlane.host'),
     configManager.get('controlPlane.port'),
   );
-  const tokenPath = join(homeDirectory, '.goodvibes', 'daemon', 'operator-tokens.json');
-  if (!existsSync(tokenPath)) return { baseUrl, token: null, tokenPath };
-  try {
-    const parsed = JSON.parse(readFileSync(tokenPath, 'utf-8')) as unknown;
-    const token = isRecord(parsed) && typeof parsed.token === 'string' ? parsed.token : null;
-    return { baseUrl, token, tokenPath };
-  } catch {
-    return { baseUrl, token: null, tokenPath };
-  }
+  const credential = readConnectedHostOperatorToken(homeDirectory, baseUrl);
+  return { baseUrl, token: credential.token, tokenPath: credential.path };
 }
 
 export function buildRoutineSchedulePrompt(routine: AgentRoutineRecord): string {

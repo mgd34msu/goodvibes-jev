@@ -1,3 +1,5 @@
+import { resolveConnectedHostBaseUrl } from '../config/connected-host-dial.ts';
+import { runSetupPairingCommand } from './setup-pair-command.ts';
 import { runNativeHeadlessCommand } from './native-headless-command.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -221,7 +223,7 @@ export function readAuthPaths(runtime: CliCommandRuntime) {
   });
   const userStorePath = shellPaths.resolveUserPath(GOODVIBES_AGENT_SURFACE_ROOT, 'auth-users.json');
   const bootstrapCredentialPath = shellPaths.resolveUserPath(GOODVIBES_AGENT_SURFACE_ROOT, 'auth-bootstrap.txt');
-  const operatorToken = readConnectedHostOperatorToken(runtime.homeDirectory);
+  const operatorToken = readConnectedHostOperatorToken(runtime.homeDirectory, resolveConnectedHostBaseUrl(runtime.configManager));
   return {
     userStorePath,
     userStorePresent: existsSync(userStorePath),
@@ -517,6 +519,10 @@ async function renderAuth(runtime: CliCommandRuntime): Promise<string> {
 export async function handleGoodVibesCliCommand(runtime: CliCommandRuntime): Promise<CliCommandResult> {
   try {
     switch (runtime.cli.command) {
+      case 'onboarding':
+        return runtime.cli.commandArgs[0] === 'pair'
+          ? { handled: true, exitCode: await runSetupPairingCommand(runtime) }
+          : { handled: false, exitCode: 0 };
       case 'run':
         return { handled: true, exitCode: await runNonInteractiveAgent(runtime) };
       case 'providers': {

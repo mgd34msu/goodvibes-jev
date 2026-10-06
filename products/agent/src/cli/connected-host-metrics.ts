@@ -116,7 +116,7 @@ export async function inspectConnectedHostMetrics(
     requiredScope: 'read:telemetry' as const,
   };
   const baseUrl = resolveBaseUrl(options.configManager);
-  const token = readConnectedHostOperatorToken(options.homeDirectory);
+  const token = readConnectedHostOperatorToken(options.homeDirectory, baseUrl);
   if (!token.token) {
     return { ...base, status: 'auth_required', statusCode: null, metrics: null, error: `No connected-host operator token found at ${token.path}` };
   }

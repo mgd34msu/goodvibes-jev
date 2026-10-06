@@ -1,3 +1,4 @@
+import { resolveConnectedHostBaseUrl } from '../config/connected-host-dial.ts';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { resolveRuntimeEndpointBinding } from '../cli/endpoints.ts';
 import { inspectCliExternalRuntime, type CliExternalRuntimeSnapshot } from '../cli/external-runtime.ts';
@@ -77,7 +78,7 @@ export async function connectedHostStatusSummary(
 ): Promise<Record<string, unknown>> {
   const homeDirectory = resolveHomeDirectory(context);
   const workingDirectory = resolveWorkingDirectory(context);
-  const token = readConnectedHostOperatorToken(homeDirectory);
+  const token = readConnectedHostOperatorToken(homeDirectory, resolveConnectedHostBaseUrl(context.platform.configManager));
   const runtime = await inspectCliExternalRuntime({
     configManager: context.platform.configManager,
     homeDirectory,

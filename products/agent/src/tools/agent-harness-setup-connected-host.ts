@@ -1,3 +1,4 @@
+import { resolveConnectedHostBaseUrl } from '../config/connected-host-dial.ts';
 import { getOperatorContract } from '@goodvibes-jev/engine/sdk/contracts';
 import { requirePlatform, requireShellPaths } from '../input/commands/runtime-services.ts';
 import type { CommandContext } from '../input/command-registry.ts';
@@ -68,7 +69,7 @@ export async function connectedHostAuthPosture(
   snapshot: Awaited<ReturnType<typeof collectSnapshot>>,
 ): Promise<SetupConnectedHostAuthPosture> {
   const shellPaths = requireShellPaths(context);
-  const token = readConnectedHostOperatorToken(shellPaths.homeDirectory);
+  const token = readConnectedHostOperatorToken(shellPaths.homeDirectory, resolveConnectedHostBaseUrl(requirePlatform(context).configManager));
   const nativeIntake = await readConnectedHostReadiness({ configManager: requirePlatform(context).configManager, homeDirectory: () => requireShellPaths(context).homeDirectory });
   const usable = Boolean(token.token);
   return {
@@ -79,7 +80,7 @@ export async function connectedHostAuthPosture(
       usable,
       path: token.path,
       ...(token.token ? { fingerprint: connectedHostOperatorTokenFingerprint(token.token) } : {}),
-      ...(token.error ? { error: 'The local token record could not be read.' } : {}),
+      ...(token.error ? { error: token.error } : {}),
     },
     compatibilityAuth: {
       userStorePath: snapshot.auth.snapshot.userStorePath,
@@ -109,13 +110,16 @@ export function connectedHostAuthStatus(posture: SetupConnectedHostAuthPosture):
 }
 
 export function connectedHostAuthNextAction(posture: SetupConnectedHostAuthPosture): string {
+  if (posture.operatorToken.path === 'Agent host-bound pairing store' && !posture.operatorToken.usable) {
+    return 'The Agent pairing store needs review. Run goodvibes-agent setup pair to inspect the prior host-bound attempt. Do not provision another shared token or retry migration while its outcome is unknown or the store is unsafe.';
+  }
   if (!posture.operatorToken.present) {
     return 'Run the confirmed connected-host token provisioning route, inspect pairing posture for visible handoff routes, then rerun auth review and connected-host status.';
   }
   if (!posture.operatorToken.usable) {
     return 'Run the confirmed connected-host token provisioning route to repair the local token file, then rerun auth review and connected-host status.';
   }
-  if (posture.nativeIntake.status !== 'ready') return posture.nativeIntake.detail + ' Readable credentials and historical setup receipts do not establish native intake readiness.';
+  if (posture.nativeIntake.status !== 'ready') return posture.nativeIntake.detail + ' Preview explicit Agent pairing with /setup pair; persistent administrative access requires goodvibes-agent setup pair --apply and a fresh terminal confirmation. Readable credentials and historical receipts are not authority evidence.';
   if (posture.compatibilityAuth.bootstrapCredentialPresent) {
     return 'Review auth status and clear or rotate the compatibility bootstrap credential through the owning GoodVibes host if it is no longer needed.';
   }
