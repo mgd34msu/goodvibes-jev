@@ -1,0 +1,479 @@
+{
+  "source": "Owned loopback synthetic System One; actual default runtime composition and authenticated DaemonServer HTTP. No live model or credential.",
+  "title": "Synthetic café plans",
+  "sessionId": "558cc3a7-5925-4c6e-81b1-9c7024644f7b",
+  "listBefore": {
+    "path": "/api/companion/chat/sessions?includeClosed=true&limit=100",
+    "method": "GET",
+    "status": 200,
+    "cacheControl": null,
+    "body": "{\"sessions\":[{\"id\":\"558cc3a7-5925-4c6e-81b1-9c7024644f7b\",\"kind\":\"companion-chat\",\"title\":\"Synthetic café plans\",\"model\":\"openrouter/free\",\"provider\":\"openrouter\",\"systemPrompt\":null,\"status\":\"active\",\"createdAt\":1791310606530,\"updatedAt\":1791310606530,\"closedAt\":null,\"messageCount\":0}],\"totals\":{\"sessions\":1,\"active\":1,\"closed\":0}}"
+  },
+  "session": {
+    "path": "/api/companion/chat/sessions/558cc3a7-5925-4c6e-81b1-9c7024644f7b",
+    "method": "GET",
+    "status": 200,
+    "cacheControl": null,
+    "body": "{\"session\":{\"id\":\"558cc3a7-5925-4c6e-81b1-9c7024644f7b\",\"kind\":\"companion-chat\",\"title\":\"Synthetic café plans\",\"model\":\"openrouter/free\",\"provider\":\"openrouter\",\"systemPrompt\":null,\"status\":\"active\",\"createdAt\":1791310606530,\"updatedAt\":1791310606530,\"closedAt\":null,\"messageCount\":0},\"messages\":[]}"
+  },
+  "library": {
+    "path": "/api/judgment/batteries/run",
+    "method": "POST",
+    "requestBody": {
+      "protocolVersion": 1,
+      "requestId": "2b0109c8-2f7c-4bbb-9b8d-18aff94b1272",
+      "battery": "webui.palette.command-rank",
+      "batteryVersion": 1,
+      "input": {
+        "query": {
+          "kind": "inline",
+          "text": "show saved material"
+        },
+        "registryVersion": "webui.commands.v1",
+        "candidates": [
+          {
+            "kind": "builtin",
+            "commandId": "chat.new"
+          },
+          {
+            "kind": "chat",
+            "sessionId": "558cc3a7-5925-4c6e-81b1-9c7024644f7b"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.chat"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.knowledge"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.library"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.personal"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.work"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.about"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.all"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.general"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.checkins"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.credentials"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.devices"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.memory"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.providers"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.network"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.notifications"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.admin"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.people"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.permissions"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.account"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.usage"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.voice"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "system.palette"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "system.shortcuts"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "system.toggleTheme"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "view.toggleDensity"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "view.toggleSidebar"
+          }
+        ]
+      }
+    },
+    "status": 200,
+    "cacheControl": "no-store",
+    "body": "{\"protocolVersion\":1,\"requestId\":\"2b0109c8-2f7c-4bbb-9b8d-18aff94b1272\",\"battery\":\"webui.palette.command-rank\",\"batteryVersion\":1,\"status\":\"settled\",\"value\":{\"registryVersion\":\"webui.commands.v1\",\"accepted\":[{\"candidateIndex\":4,\"probability\":0.99}],\"rejected\":[0,1,2,3,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27]},\"readings\":{\"candidate_0\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_1\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_2\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_3\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_4\":{\"kind\":\"yes-no\",\"probability\":0.99,\"verdict\":\"yes\",\"outcome\":\"act\"},\"candidate_5\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_6\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_7\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_8\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_9\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_10\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_11\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_12\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_13\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_14\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_15\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_16\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_17\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_18\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_19\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_20\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_21\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_22\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_23\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_24\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_25\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_26\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_27\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"}},\"outcome\":\"act\",\"evidence\":[{\"decisionId\":\"01a1126e-b11d-7000-9da4-ea1d6306aa1e\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":12.827028999999811},{\"decisionId\":\"01a1126e-b123-7000-8528-bb93cde7850e\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":17.61458300000004},{\"decisionId\":\"01a1126e-b128-7000-9863-4faef85555e3\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":21.396528999999873},{\"decisionId\":\"01a1126e-b12d-7000-b7e6-59754764ddae\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":25.54737},{\"decisionId\":\"01a1126e-b136-7000-a782-a3f62fc41364\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":19.317532999999912},{\"decisionId\":\"01a1126e-b13b-7000-81a9-b8c002047e3f\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":19.98003299999982},{\"decisionId\":\"01a1126e-b140-7000-9f4c-bb4e3871151b\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":19.75934600000005},{\"decisionId\":\"01a1126e-b14a-7000-b97b-5b50e81f034d\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":15.658177999999907},{\"decisionId\":\"01a1126e-b150-7000-8c2e-530eecd0d669\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":16.979052000000138},{\"decisionId\":\"01a1126e-b154-7000-8161-138dba8dd9de\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":16.782012000000122},{\"decisionId\":\"01a1126e-b159-7000-b027-583e928e0662\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":40.283955000000105},{\"decisionId\":\"01a1126e-b162-7000-9098-590ac631d003\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":19.061463999999887},{\"decisionId\":\"01a1126e-b166-7000-b235-61430d0f659c\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":18.71929799999998},{\"decisionId\":\"01a1126e-b16a-7000-a80b-6cb4d1fa24cf\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":18.180159999999887},{\"decisionId\":\"01a1126e-b175-7000-984b-bc0af3d8b88f\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":15.834308999999848},{\"decisionId\":\"01a1126e-b17b-7000-8396-719639e91b4a\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":17.48088500000017},{\"decisionId\":\"01a1126e-b181-7000-aa62-e5d45aaedf91\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":18.39180299999998},{\"decisionId\":\"01a1126e-b188-7000-a7db-a1120fc54fc4\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":43.03062399999999},{\"decisionId\":\"01a1126e-b194-7000-b32e-e91dafef86e8\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":25.086049000000003},{\"decisionId\":\"01a1126e-b199-7000-967c-fef3f85dcfb3\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":26.165976999999884},{\"decisionId\":\"01a1126e-b19d-7000-8fcc-744219c78075\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":22.90136499999994},{\"decisionId\":\"01a1126e-b1a8-7000-b6b1-8a557e80e278\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":15.52657400000021},{\"decisionId\":\"01a1126e-b1ae-7000-bdcb-022705134da6\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":15.96305899999993},{\"decisionId\":\"01a1126e-b1b5-7000-9395-ad6318c98184\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":40.236048999999866},{\"decisionId\":\"01a1126e-b1bd-7000-afb7-84dcb8252079\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":17.850808000000143},{\"decisionId\":\"01a1126e-b1bf-7000-9962-4de2b4eae384\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":12.464522999999872},{\"decisionId\":\"01a1126e-b1c2-7000-bb2c-407b047efce4\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":9.05206300000009},{\"decisionId\":\"01a1126e-b1c3-7000-97a3-694b2e7c6859\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":33.9985200000001}]}"
+  },
+  "chat": {
+    "path": "/api/judgment/batteries/run",
+    "method": "POST",
+    "requestBody": {
+      "protocolVersion": 1,
+      "requestId": "0e4f7115-30b0-4a5e-9170-e7a59eadf43b",
+      "battery": "webui.palette.command-rank",
+      "batteryVersion": 1,
+      "input": {
+        "query": {
+          "kind": "inline",
+          "text": "Find synthetic café plans"
+        },
+        "registryVersion": "webui.commands.v1",
+        "candidates": [
+          {
+            "kind": "builtin",
+            "commandId": "chat.new"
+          },
+          {
+            "kind": "chat",
+            "sessionId": "558cc3a7-5925-4c6e-81b1-9c7024644f7b"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.chat"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.knowledge"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.library"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.personal"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.work"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.about"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.all"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.general"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.checkins"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.credentials"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.devices"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.memory"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.providers"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.network"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.notifications"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.admin"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.people"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.permissions"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.account"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.usage"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.voice"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "system.palette"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "system.shortcuts"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "system.toggleTheme"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "view.toggleDensity"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "view.toggleSidebar"
+          }
+        ]
+      }
+    },
+    "status": 200,
+    "cacheControl": "no-store",
+    "body": "{\"protocolVersion\":1,\"requestId\":\"0e4f7115-30b0-4a5e-9170-e7a59eadf43b\",\"battery\":\"webui.palette.command-rank\",\"batteryVersion\":1,\"status\":\"settled\",\"value\":{\"registryVersion\":\"webui.commands.v1\",\"accepted\":[{\"candidateIndex\":1,\"probability\":0.99}],\"rejected\":[0,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27]},\"readings\":{\"candidate_0\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_1\":{\"kind\":\"yes-no\",\"probability\":0.99,\"verdict\":\"yes\",\"outcome\":\"act\"},\"candidate_2\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_3\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_4\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_5\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_6\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_7\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_8\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_9\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_10\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_11\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_12\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_13\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_14\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_15\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_16\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_17\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_18\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_19\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_20\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_21\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_22\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_23\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_24\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_25\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_26\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"candidate_27\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"}},\"outcome\":\"act\",\"evidence\":[{\"decisionId\":\"01a1126e-b217-7000-acce-15df8d88315f\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":14.668298999999934},{\"decisionId\":\"01a1126e-b21d-7000-9b7a-b0cc99e6c9c7\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":20.240253999999823},{\"decisionId\":\"01a1126e-b223-7000-a747-8589b127e749\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":25.661866000000146},{\"decisionId\":\"01a1126e-b228-7000-93b2-bedc27979d5c\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":28.179135000000088},{\"decisionId\":\"01a1126e-b231-7000-a937-eebee912b960\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":20.716838000000052},{\"decisionId\":\"01a1126e-b236-7000-a010-8def2a5b62b7\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":19.903132999999798},{\"decisionId\":\"01a1126e-b23a-7000-b45f-5074b68c976c\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":19.55967499999997},{\"decisionId\":\"01a1126e-b243-7000-b103-508615019aa8\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":13.98209799999995},{\"decisionId\":\"01a1126e-b247-7000-8a2f-eb16fcd95355\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":14.11589600000002},{\"decisionId\":\"01a1126e-b24c-7000-a005-8769312232b3\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":31.76214600000003},{\"decisionId\":\"01a1126e-b255-7000-90bb-2df3dacad0b9\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":14.063399000000118},{\"decisionId\":\"01a1126e-b25b-7000-b116-91bed18c3603\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":15.980244999999968},{\"decisionId\":\"01a1126e-b260-7000-9b6b-c30435b07187\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":34.39690500000006},{\"decisionId\":\"01a1126e-b266-7000-9f04-092a1c4ec6b2\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":12.36896200000001},{\"decisionId\":\"01a1126e-b271-7000-81f1-af835308ca26\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":18.106611000000157},{\"decisionId\":\"01a1126e-b275-7000-bf3e-4342e6b00156\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":38.039273000000094},{\"decisionId\":\"01a1126e-b27e-7000-9ece-1763822e644c\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":13.817585000000008},{\"decisionId\":\"01a1126e-b282-7000-98a5-0a8a395eac8b\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":13.57102000000009},{\"decisionId\":\"01a1126e-b286-7000-b517-2476553bb5de\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":33.62746600000014},{\"decisionId\":\"01a1126e-b28e-7000-8c32-85689efc8ee0\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":12.513255000000072},{\"decisionId\":\"01a1126e-b292-7000-841a-6798146a4890\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":13.041226000000051},{\"decisionId\":\"01a1126e-b296-7000-90c4-f6266d1e7357\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":12.798286999999846},{\"decisionId\":\"01a1126e-b29a-7000-bf96-42ca151fbbe7\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":32.87952999999993},{\"decisionId\":\"01a1126e-b2a2-7000-99d3-5c148f407667\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":16.575935999999956},{\"decisionId\":\"01a1126e-b2a6-7000-8c3e-63d7eafb8ac8\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":17.157717000000048},{\"decisionId\":\"01a1126e-b2a8-7000-8399-5c00ec5c50b3\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":15.091970000000174},{\"decisionId\":\"01a1126e-b2aa-7000-aa8c-b26a128e4490\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":4.165814000000182},{\"decisionId\":\"01a1126e-b2ac-7000-ae9c-d23c17435d1a\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":14.605591000000004}]}"
+  },
+  "held": {
+    "path": "/api/judgment/batteries/run",
+    "method": "POST",
+    "requestBody": {
+      "protocolVersion": 1,
+      "requestId": "7b2b15bb-6dd5-4c7b-a12e-6433917bf4fa",
+      "battery": "webui.palette.command-rank",
+      "batteryVersion": 1,
+      "input": {
+        "query": {
+          "kind": "inline",
+          "text": "uncertain synthetic command"
+        },
+        "registryVersion": "webui.commands.v1",
+        "candidates": [
+          {
+            "kind": "builtin",
+            "commandId": "chat.new"
+          },
+          {
+            "kind": "chat",
+            "sessionId": "558cc3a7-5925-4c6e-81b1-9c7024644f7b"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.chat"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.knowledge"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.library"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.personal"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.work"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.about"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.all"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.general"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.checkins"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.credentials"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.devices"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.memory"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.providers"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.network"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.notifications"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "nav.admin"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.people"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.permissions"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.account"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.usage"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "settings.voice"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "system.palette"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "system.shortcuts"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "system.toggleTheme"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "view.toggleDensity"
+          },
+          {
+            "kind": "builtin",
+            "commandId": "view.toggleSidebar"
+          }
+        ]
+      }
+    },
+    "status": 200,
+    "cacheControl": "no-store",
+    "body": "{\"protocolVersion\":1,\"requestId\":\"7b2b15bb-6dd5-4c7b-a12e-6433917bf4fa\",\"battery\":\"webui.palette.command-rank\",\"batteryVersion\":1,\"status\":\"held\",\"reason\":\"uncertain\",\"readings\":{\"candidate_0\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_1\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_2\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_3\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_4\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_5\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_6\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_7\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_8\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_9\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_10\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_11\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_12\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_13\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_14\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_15\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_16\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_17\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_18\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_19\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_20\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_21\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_22\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_23\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_24\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_25\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_26\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"candidate_27\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"}},\"outcome\":\"escalate\",\"evidence\":[{\"decisionId\":\"01a1126e-b2fb-7000-b46c-f390e62e34ab\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":7.166163000000097},{\"decisionId\":\"01a1126e-b300-7000-858d-4ec1de903e1b\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":11.14334800000006},{\"decisionId\":\"01a1126e-b303-7000-9e8f-d8d93ef122fb\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":14.314199000000144},{\"decisionId\":\"01a1126e-b307-7000-ac99-36b0252faaba\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":17.39997500000004},{\"decisionId\":\"01a1126e-b30e-7000-835b-f5a6294eb2d1\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":15.439885000000004},{\"decisionId\":\"01a1126e-b312-7000-9875-83a416eabb34\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":15.66931499999987},{\"decisionId\":\"01a1126e-b316-7000-b8be-4cfadb2cf5d5\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":16.147742000000108},{\"decisionId\":\"01a1126e-b31a-7000-923a-37016ad50fac\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":16.15651600000001},{\"decisionId\":\"01a1126e-b322-7000-9a86-2111cb70cd10\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":16.360366999999997},{\"decisionId\":\"01a1126e-b326-7000-a2e7-b616c1682845\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":16.638148},{\"decisionId\":\"01a1126e-b32e-7000-af13-805c6cfcc2ad\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":20.25575099999992},{\"decisionId\":\"01a1126e-b337-7000-8d50-eace6a504ec1\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":16.844624000000067},{\"decisionId\":\"01a1126e-b33c-7000-b137-5eca350468c0\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":16.132700000000114},{\"decisionId\":\"01a1126e-b340-7000-bf29-3414d73fbdab\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":34.78130299999998},{\"decisionId\":\"01a1126e-b347-7000-a285-dc7f8801c603\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":12.19106799999986},{\"decisionId\":\"01a1126e-b34b-7000-834b-e6482cdecf66\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":12.587483999999904},{\"decisionId\":\"01a1126e-b34f-7000-9213-4e069eebeb74\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":29.773584000000028},{\"decisionId\":\"01a1126e-b352-7000-9fb2-b9daddd77655\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":7.749686999999994},{\"decisionId\":\"01a1126e-b356-7000-b31f-d6d17162775d\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":8.196918000000096},{\"decisionId\":\"01a1126e-b35b-7000-8c62-af68108ff581\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":23.959921000000122},{\"decisionId\":\"01a1126e-b364-7000-97b6-a419c1d87b0f\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":14.061545000000024},{\"decisionId\":\"01a1126e-b368-7000-99f6-5cf4ace55e93\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":14.280610000000024},{\"decisionId\":\"01a1126e-b36c-7000-b966-53af8a85831d\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":26.39971199999991},{\"decisionId\":\"01a1126e-b370-7000-8000-52dc55dce3a2\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":8.662728000000016},{\"decisionId\":\"01a1126e-b374-7000-8204-e16fd191d956\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":8.409593000000086},{\"decisionId\":\"01a1126e-b376-7000-bb5e-286bc8f91108\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":6.4605300000000625},{\"decisionId\":\"01a1126e-b378-7000-b819-224b7ecd4cf6\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":25.638556000000108},{\"decisionId\":\"01a1126e-b37a-7000-a6e0-fd79b259d2e2\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":6.268305000000055}]}"
+  },
+  "close": {
+    "path": "/api/control-plane/methods/companion.chat.sessions.close/invoke",
+    "method": "POST",
+    "requestBody": {
+      "body": {
+        "sessionId": "558cc3a7-5925-4c6e-81b1-9c7024644f7b"
+      }
+    },
+    "status": 404,
+    "cacheControl": "no-store",
+    "body": "{\"error\":\"Synthetic close operation is unavailable on this endpoint.\",\"code\":\"SYNTHETIC_CLOSE_UNAVAILABLE\",\"category\":\"not_found\",\"status\":404,\"errorRef\":\"3c969a8b-bee5-4ecf-be70-037acf11be94\"}"
+  },
+  "errorSettled": {
+    "path": "/api/judgment/batteries/run",
+    "method": "POST",
+    "requestBody": {
+      "protocolVersion": 1,
+      "requestId": "846cb7b2-7a45-446a-bae3-19ca867bc798",
+      "battery": "webui.errors.daemon-refusal",
+      "batteryVersion": 1,
+      "input": {
+        "errorRef": "3c969a8b-bee5-4ecf-be70-037acf11be94"
+      }
+    },
+    "status": 200,
+    "cacheControl": "no-store",
+    "body": "{\"protocolVersion\":1,\"requestId\":\"846cb7b2-7a45-446a-bae3-19ca867bc798\",\"battery\":\"webui.errors.daemon-refusal\",\"batteryVersion\":1,\"status\":\"settled\",\"value\":{\"session_not_found\":false,\"session_closed\":false,\"session_active\":false,\"session_not_local\":false,\"method_unknown\":true},\"readings\":{\"session_not_found\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"session_closed\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"session_active\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"session_not_local\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"},\"method_unknown\":{\"kind\":\"yes-no\",\"probability\":0.99,\"verdict\":\"yes\",\"outcome\":\"act\"}},\"outcome\":\"act\",\"evidence\":[{\"decisionId\":\"01a1126e-b3ac-7000-adea-73dcb09dc017\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":1.1276380000003883}]}"
+  },
+  "errorHeld": {
+    "path": "/api/judgment/batteries/run",
+    "method": "POST",
+    "requestBody": {
+      "protocolVersion": 1,
+      "requestId": "1ca6c509-e6b2-4008-af5d-a48153d39e7a",
+      "battery": "webui.errors.daemon-refusal",
+      "batteryVersion": 1,
+      "input": {
+        "errorRef": "3c969a8b-bee5-4ecf-be70-037acf11be94"
+      }
+    },
+    "status": 200,
+    "cacheControl": "no-store",
+    "body": "{\"protocolVersion\":1,\"requestId\":\"1ca6c509-e6b2-4008-af5d-a48153d39e7a\",\"battery\":\"webui.errors.daemon-refusal\",\"batteryVersion\":1,\"status\":\"held\",\"reason\":\"uncertain\",\"readings\":{\"session_not_found\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"session_closed\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"session_active\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"session_not_local\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"},\"method_unknown\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"}},\"outcome\":\"escalate\",\"evidence\":[{\"decisionId\":\"01a1126e-b3bc-7000-a0eb-83c6d57d4702\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":1.3227280000000974}]}"
+  },
+  "deleted": {
+    "path": "/api/companion/chat/sessions/558cc3a7-5925-4c6e-81b1-9c7024644f7b",
+    "method": "DELETE",
+    "status": 200,
+    "cacheControl": null,
+    "body": "{\"sessionId\":\"558cc3a7-5925-4c6e-81b1-9c7024644f7b\",\"deleted\":true}"
+  },
+  "listAfter": {
+    "path": "/api/companion/chat/sessions?includeClosed=true&limit=100",
+    "method": "GET",
+    "status": 200,
+    "cacheControl": null,
+    "body": "{\"sessions\":[],\"totals\":{\"sessions\":0,\"active\":0,\"closed\":0}}"
+  }
+}

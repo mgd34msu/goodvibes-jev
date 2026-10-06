@@ -9,6 +9,7 @@ import { getClientLifetime, isClientLifetimeCurrent, tokenStore, WEBUI_TOKEN_STO
 export { tokenStore, WEBUI_TOKEN_STORE_KEY } from './client-lifetime';
 import { isRuntimeEventDomain } from '@goodvibes-jev/engine/contracts';
 import { routedFetch } from './relay-connection';
+import { resolveDaemonRefusal } from './daemon-refusal';
 import { readClientCompatibilityFloor, recordObservedClientCompatibilityFloor } from './client-compatibility';
 // The union profile.forget accepts as a target (a field id OR a raw line index), named in
 // lib/owner-profile.ts beside the readers for the same verbs' output. The generated
@@ -304,6 +305,7 @@ async function authHeaders(): Promise<Record<string, string>> {
 }
 
 async function requestJson<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
+  const failureLifetime = getClientLifetime();
   const lifetime = options.signal ? getClientLifetime() : undefined;
   const check = () => {
     options.signal?.throwIfAborted();
@@ -337,13 +339,19 @@ async function requestJson<T = unknown>(path: string, options: RequestOptions = 
   const body = await readJson(response);
   check();
   if (!response.ok) {
-    throw Object.assign(new Error(`${method} ${path} failed: ${response.status} ${response.statusText}`.trim()), {
+    const error = Object.assign(new Error(`${method} ${path} failed: ${response.status} ${response.statusText}`.trim()), {
       status: response.status,
       url,
       method,
       body,
       category: response.status === 401 ? 'authentication' : 'service',
     });
+    if (path !== '/api/judgment/batteries/run') await resolveDaemonRefusal(error, runBrowserJudgment, {
+      signal: options.signal, isCurrent: () => isClientLifetimeCurrent(failureLifetime),
+    });
+    // Interpretation never replaces the original HTTP failure, even if its
+    // signal or account changed while the bounded reading was in flight.
+    throw error;
   }
   return body as T;
 }
@@ -499,11 +507,15 @@ async function invokeOperator(methodId: string, input?: unknown, signal?: AbortS
     // (SHARED_BROWSER_ROUTES ∪ KNOWLEDGE_BROWSER_ROUTES), a runtime invariant the type
     // system cannot see through a string-keyed table lookup. isExtraRoutedMethod's test
     // coverage below is what actually enforces it, not this cast.
-    return scopedSdk.operator.invoke(
+    const lifetime = getClientLifetime();
+    try { return await scopedSdk.operator.invoke(
       methodId as BrowserKnowledgeMethodId,
       input as OperatorMethodInput<BrowserKnowledgeMethodId>,
       { signal },
-    );
+    ); } catch (error) {
+      await resolveDaemonRefusal(error, runBrowserJudgment, { signal, isCurrent: () => isClientLifetimeCurrent(lifetime) });
+      throw error;
+    }
   }
   const { path, rest } = interpolateRoute(route, input);
   if (route.method === 'GET') return requestJson(path, { method: route.method, query: rest, signal });
@@ -2378,9 +2390,9 @@ export const sdk = {
       // time (see goodvibes.test.ts's "wrong-typed steer input is a compile error" case).
       get: (sessionId: string, signal?: AbortSignal) => invokeOperator('sessions.get', { sessionId }, signal),
       steer: (sessionId: string, input: OperatorMethodInput<'sessions.steer'>, signal?: AbortSignal) =>
-        scopedSdk.operator.invoke('sessions.steer', { sessionId, ...input }, { signal }),
+        invokeOperator('sessions.steer', { sessionId, ...input }, signal),
       followUp: (sessionId: string, input: OperatorMethodInput<'sessions.followUp'>, signal?: AbortSignal) =>
-        scopedSdk.operator.invoke('sessions.followUp', { sessionId, ...input }, { signal }),
+        invokeOperator('sessions.followUp', { sessionId, ...input }, signal),
       create: (input: OperatorMethodInput<'sessions.create'>) => invokeOperator('sessions.create', input),
       close: (sessionId: string, signal?: AbortSignal) => invokeOperator('sessions.close', { sessionId }, signal),
       reopen: (sessionId: string, signal?: AbortSignal) => invokeOperator('sessions.reopen', { sessionId }, signal),
@@ -2415,7 +2427,7 @@ export const sdk = {
         list: (sessionId: string) => invokeOperator('sessions.messages.list', { sessionId }),
       },
       inputs: {
-        list: (sessionId: string, signal?: AbortSignal) => scopedSdk.operator.invoke('sessions.inputs.list', { sessionId }, { signal }),
+        list: (sessionId: string, signal?: AbortSignal) => invokeOperator('sessions.inputs.list', { sessionId }, signal),
         cancel: (sessionId: string, inputId: string) => invokeOperator('sessions.inputs.cancel', { sessionId, inputId }),
       },
       // toolCalls.cancel (SDK 1.8.0's interaction-wins round): stop ONE running tool
@@ -2619,7 +2631,11 @@ export const sdk = {
   },
   chat: {
     sessions: {
-      ...scopedSdk.chat.sessions,
+      create: (input?: OperatorMethodInput<'companion.chat.sessions.create'>) => invokeOperator('companion.chat.sessions.create', input),
+      get: (sessionId: string) => invokeOperator('companion.chat.sessions.get', { sessionId }),
+      list: (input?: OperatorMethodInput<'companion.chat.sessions.list'>) => invokeOperator('companion.chat.sessions.list', input),
+      update: (sessionId: string, input: Parameters<typeof scopedSdk.chat.sessions.update>[1]) =>
+        invokeOperator('companion.chat.sessions.update', { sessionId, ...input }),
       // delete-means-delete: this call site itself is UNCHANGED, the route
       // (DELETE /api/companion/chat/sessions/{sessionId}) already resolves through
       // EXTRA_METHOD_ROUTES either way. What changes is the daemon behind it: an older
@@ -2643,7 +2659,11 @@ export const sdk = {
       close: (sessionId: string) => invokeOperator('companion.chat.sessions.close', { sessionId }),
     },
     messages: {
-      ...scopedSdk.chat.messages,
+      create: (sessionId: string, input: Parameters<typeof scopedSdk.chat.messages.create>[1]) =>
+        invokeOperator('companion.chat.messages.create', { sessionId, ...input }),
+      list: (sessionId: string) => invokeOperator('companion.chat.messages.list', { sessionId }),
+      steer: (sessionId: string, input: Parameters<typeof scopedSdk.chat.messages.steer>[1]) =>
+        invokeOperator('companion.chat.messages.steer', { sessionId, ...input }),
       // regenerate (companion.chat.messages.retry): re-run an assistant response
       // honestly. Omit messageId to regenerate the latest assistant reply. The prior
       // response is superseded (retained, flagged), never deleted, and a fresh turn
@@ -2671,7 +2691,10 @@ export const sdk = {
     // terminal turn.cancelled event on the session stream is the authoritative
     // signal; treat 404 NO_ACTIVE_TURN as benign and feature-detect older
     // daemons with isMethodUnavailableError.
-    turns: scopedSdk.chat.turns,
+    turns: {
+      cancel: (sessionId: string, input?: Parameters<typeof scopedSdk.chat.turns.cancel>[1]) =>
+        invokeOperator('companion.chat.turns.cancel', { sessionId, ...input }),
+    },
     events: scopedSdk.chat.events,
   },
   artifacts: scopedSdk.artifacts,

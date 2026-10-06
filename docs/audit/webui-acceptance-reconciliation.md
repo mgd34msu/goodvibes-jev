@@ -96,16 +96,22 @@ the browser replays prove a real connected deployment, user account or provider.
    semantic projections and settings consumers. Merged inspection does not close
    every judgment/action obligation. No new mappings or disposition changes are
    inferred by this reconciliation.
-2. **Browser judgment production composition and readers (THE-70).** Fixed
-   Library/status catalogs, authenticated transport, versioned adapters and the
-   palette caller exist. Production registry installation, genuine authenticated
-   source-reference issuers, the dynamic-error caller and remaining semantic
-   readers need integration and real daemon proof. Unknown prose stays
-   unclassified. Source references do not grant hosted transmission permission;
-   no browser credential/model client or heuristic outage fallback is permitted.
+2. **Browser judgment runtime publication (THE-70).** The production daemon now
+   installs the existing command/error adapters against its configured Jev route
+   and decision-log policy for three closed source purposes. Its actual initialized
+   chat manager supplies titles with fresh read permission and source/lifetime
+   fences; canonical authenticated failures issue bounded error references.
+   Real asynchronous browser callers adopt only complete current readings.
+   Source references never choose an outbound route or grant transmission by
+   possession. Revocation fences dispatch, hashes, records and attachments;
+   unknown prose has no substring fallback. Controlled actual-daemon HTTP and
+   runtime-capture browser tests establish these implementation boundaries.
+   Final publication/CI remains required; live provider calibration is separately
+   tracked in THE-35, and no connected deployment or real-user egress is claimed.
    Sources: [THE-70](https://linear.app/the-artificery/issue/THE-70/integrate-authenticated-webui-judgments),
-   [palette caller](../../products/webui/src/lib/command-judgment.ts),
-   [optional runtime capability](../../packages/engine/sdk/src/platform/runtime/services.ts).
+   [runtime policy](../../products/daemon/src/runtime/browser-judgment-composition.ts),
+   [source owner](../../packages/engine/sdk/src/platform/judgment-browser/webui-runtime.ts),
+   [runtime browser captures](../../products/webui/e2e/support/fixtures/browser-judgment-runtime/README.md).
 3. **Native host/source-bearing ingress.** The bounded
    [WebUI original-source admission](../design/webui-native-intake.md) surface now
    journals exact text and invokes capture/admission in one Submit, with paired

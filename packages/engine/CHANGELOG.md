@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Install the authenticated WebUI command/error judgment runtime using the configured Jev route, actual host chat sources, bounded canonical error references, and revocation-safe dispatch, hashing, recording and attachment ownership.
+
 - Native Session Changes comments now preserve exact originals separately from
   host-verified complete selected hunks and checkpoint provenance, with live
   source-read scopes, immutable continuation binding and shared durable recovery.

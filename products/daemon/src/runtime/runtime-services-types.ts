@@ -76,7 +76,7 @@ export interface RuntimeServicesOptions {
    * notification privacy and awaited webhook lifetime dependencies are ready.
    */
   readonly createBootOperations?: ((services: RuntimeServices) => DaemonBootOperations) | undefined;
-  /** Explicit server-side installation. Receives this graph's recorded port, never browser credentials. */
+  /** Optional host override of the built-in WebUI registry. Receives this graph's recorded port, never browser credentials. */
   readonly createBrowserJudgment?: ((judgment: JudgmentServices) => BrowserJudgmentService) | undefined;
   /** Required explicit composition until built-in inbox migration is complete. */
   readonly inboxFactory: DaemonInboxFactory;

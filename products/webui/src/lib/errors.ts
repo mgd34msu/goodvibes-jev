@@ -1,4 +1,5 @@
 import { asRecord, compactJson } from './object';
+import { daemonRefusalValue } from './daemon-refusal';
 
 function readString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
@@ -64,102 +65,25 @@ export function errorCode(error: unknown): string {
 }
 
 export function isSessionNotFoundError(error: unknown): boolean {
-  if (errorCode(error) === 'SESSION_NOT_FOUND') return true;
-  const serialized = serializeError(error);
-  const transport = asRecord(serialized.transport);
-  const body = asRecord(serialized.body ?? transport.body);
-  const message = [
-    readString(serialized, 'message'),
-    readString(body, 'message'),
-    readString(body, 'error'),
-  ].join(' ').toLowerCase();
-  return message.includes('session not found');
+  return errorCode(error) === 'SESSION_NOT_FOUND' || daemonRefusalValue(error)?.session_not_found === true;
 }
 
-/**
- * True for the daemon's 409 SESSION_CLOSED rejection (steerMessage / followUp on a
- * session that already closed). The wire contract is `code: 'SESSION_CLOSED'`
- * (runtime-session-routes.ts, session-broker.ts); the message fallback covers the
- * `Session is closed: <sessionId>` text some paths throw before that code is attached.
- */
+/** SESSION_CLOSED is structural; unresolved prose requires a genuine daemon reading. */
 export function isSessionClosedError(error: unknown): boolean {
-  if (errorCode(error) === 'SESSION_CLOSED') return true;
-  const serialized = serializeError(error);
-  const transport = asRecord(serialized.transport);
-  const body = asRecord(serialized.body ?? transport.body);
-  const message = [
-    readString(serialized, 'message'),
-    readString(body, 'message'),
-    readString(body, 'error'),
-  ].join(' ').toLowerCase();
-  return message.includes('session is closed') || message.includes('session closed');
+  return errorCode(error) === 'SESSION_CLOSED' || daemonRefusalValue(error)?.session_closed === true;
 }
 
-/**
- * True for the daemon's 409 SESSION_ACTIVE rejection (deleting a shared/companion
- * session that is still active, the delete verb requires close-first). The wire
- * contract is `code: 'SESSION_ACTIVE'` (companion-chat-manager.ts / session-broker.ts /
- * runtime-session-lifecycle-routes.ts); the message fallback covers the
- * "Session is active, close it, then delete." text some paths throw before the code
- * is attached.
- */
+/** SESSION_ACTIVE is structural; unresolved prose requires a genuine daemon reading. */
 export function isSessionActiveError(error: unknown): boolean {
-  if (errorCode(error) === 'SESSION_ACTIVE') return true;
-  const serialized = serializeError(error);
-  const transport = asRecord(serialized.transport);
-  const body = asRecord(serialized.body ?? transport.body);
-  const message = [
-    readString(serialized, 'message'),
-    readString(body, 'message'),
-    readString(body, 'error'),
-  ].join(' ').toLowerCase();
-  return message.includes('session is active');
+  return errorCode(error) === 'SESSION_ACTIVE' || daemonRefusalValue(error)?.session_active === true;
 }
 
-/**
- * True for the daemon's honest 404 SESSION_NOT_LOCAL refusal (sessions.permissionMode.get/
- * set, sessions.contextUsage.get, routes/session-runtime.ts), the session id a caller
- * asked about is real, but it is not the daemon's OWN live local runtime, so the daemon
- * cannot answer the mode/usage question truthfully. Distinct from `isSessionNotFoundError`
- * (the session does not exist at all) and from `isMethodUnavailableError` (the verb itself
- * is unregistered), this is "the verb exists and the session exists, but this daemon isn't
- * the one hosting it." Code-first, message-fallback, same pattern as the other daemon-code
- * checks above.
- */
+/** SESSION_NOT_LOCAL is structural; unresolved prose requires a genuine daemon reading. */
 export function isSessionNotLocalError(error: unknown): boolean {
-  if (errorCode(error) === 'SESSION_NOT_LOCAL') return true;
-  const serialized = serializeError(error);
-  const transport = asRecord(serialized.transport);
-  const body = asRecord(serialized.body ?? transport.body);
-  const message = [
-    readString(serialized, 'message'),
-    readString(body, 'message'),
-    readString(body, 'error'),
-  ].join(' ').toLowerCase();
-  return message.includes('does not host a live runtime');
+  return errorCode(error) === 'SESSION_NOT_LOCAL' || daemonRefusalValue(error)?.session_not_local === true;
 }
 
-/**
- * True when a gateway method id is not registered on the connected daemon at all, the
- * honest "capability not available yet" signal (as opposed to a normal 404 on a known
- * resource, e.g. SESSION_NOT_FOUND).
- *
- * Since the 1.0.0 delete-means-delete change, the daemon carries a machine
- * `code: 'METHOD_NOT_FOUND'` on this 404
- * (SDKErrorCodes.METHOD_NOT_FOUND, daemon-sdk's control-routes.ts getGatewayMethod /
- * invokeGatewayMethod, and the SDK's own invokeGatewayMethodCall /
- * GatewayMethodCatalog.invoke()), so this checks the CODE first, the same code-first
- * pattern as `isSessionClosedError`/`isSessionActiveError` above. The message-sniff
- * (`'unknown gateway method'`, still the wire shape's human text either way) stays as
- * a fallback so this keeps working unchanged against an un-upgraded daemon (npm 0.38
- * and earlier) that predates the code and only ever sent
- * `{error: 'Unknown gateway method'}` with no `code` field, verified live against a
- * bootDaemon instance calling GET /api/control-plane/methods/{methodId} and POST
- * /api/control-plane/methods/{methodId}/invoke for an id the daemon build has never
- * heard of. Used to distinguish "this daemon doesn't serve this verb yet" (render an
- * honest degraded affordance) from "this session doesn't exist" (SESSION_NOT_FOUND) or
- * a genuine server error.
- */
+
 /**
  * The benign refusal from companion.chat.turns.cancel: no turn was in flight,
  * it finished naturally before the stop landed. Rendered quietly, never as an
@@ -207,15 +131,7 @@ export function isMethodUnavailableError(error: unknown): boolean {
   const serialized = serializeError(error);
   const transport = asRecord(serialized.transport);
   const status = readNumber(serialized, 'status') ?? readNumber(transport, 'status');
-  if (status !== 404) return false;
-  if (errorCode(error) === 'METHOD_NOT_FOUND') return true;
-  const body = asRecord(serialized.body ?? transport.body);
-  const message = [
-    readString(serialized, 'message'),
-    readString(body, 'message'),
-    readString(body, 'error'),
-  ].join(' ').toLowerCase();
-  return message.includes('unknown gateway method');
+  return status === 404 && (errorCode(error) === 'METHOD_NOT_FOUND' || daemonRefusalValue(error)?.method_unknown === true);
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   isEmailUnconfiguredError,
   isMethodUnavailableError,
   isSessionActiveError,
+  isSessionClosedError,
   isSessionNotFoundError,
   isSessionNotLocalError,
   isStepUpRequiredError,
@@ -99,7 +100,7 @@ describe('error formatting', () => {
     expect(isSessionNotFoundError(Object.assign(new Error('Request failed'), {
       transport: { body: { code: 'SESSION_NOT_FOUND' } },
     }))).toBe(true);
-    expect(isSessionNotFoundError(new Error('Session not found'))).toBe(true);
+    expect(isSessionNotFoundError(new Error('Session not found'))).toBe(false);
   });
 
   test('detects a 401 / category:authentication as an expired-token error', () => {
@@ -119,7 +120,7 @@ describe('error formatting', () => {
 
   test('detects the honest 409 SESSION_ACTIVE delete-rejection (delete-means-delete)', () => {
     expect(isSessionActiveError({ body: { code: 'SESSION_ACTIVE', error: 'Session is active; close it, then delete.' } })).toBe(true);
-    expect(isSessionActiveError(new Error('Session is active; close it, then delete.'))).toBe(true);
+    expect(isSessionActiveError(new Error('Session is active; close it, then delete.'))).toBe(false);
     expect(isSessionActiveError({ body: { code: 'SESSION_NOT_FOUND' } })).toBe(false);
   });
 
@@ -127,7 +128,7 @@ describe('error formatting', () => {
     expect(isMethodUnavailableError({
       status: 404,
       body: { error: 'Unknown gateway method' },
-    })).toBe(true);
+    })).toBe(false);
     // A genuine SESSION_NOT_FOUND is ALSO a 404 but is a different honest signal
     // (the resource doesn't exist, not "this daemon has never heard of this verb"),
     // isMethodUnavailableError must not conflate the two.
@@ -138,8 +139,7 @@ describe('error formatting', () => {
 
   // Since the 1.0.0 delete-means-delete change, the daemon carries
   // code: 'METHOD_NOT_FOUND' on this 404 (SDKErrorCodes.METHOD_NOT_FOUND).
-  // Code-first, message-fallback, the same pattern as
-  // isSessionClosedError/isSessionActiveError above.
+  // Machine codes remain structural; prose requires a genuine, awaited reading.
   test('recognizes the machine code METHOD_NOT_FOUND (an upgraded daemon), no message-sniff needed', () => {
     expect(isMethodUnavailableError({
       status: 404,
@@ -151,11 +151,11 @@ describe('error formatting', () => {
     }))).toBe(true);
   });
 
-  test('back-compat: an un-upgraded daemon (pre-1.0.0, npm 0.38) with no code field still falls back to the message match', () => {
+  test('unissued legacy prose remains unclassified rather than triggering a fallback', () => {
     expect(isMethodUnavailableError({
       status: 404,
       body: { error: 'Unknown gateway method: sessions.delete' },
-    })).toBe(true);
+    })).toBe(false);
   });
 
   // sessions.permissionMode.get/set + sessions.contextUsage.get (SDK 1.6.1): the daemon's
@@ -165,7 +165,15 @@ describe('error formatting', () => {
     expect(isSessionNotLocalError(Object.assign(new Error('Request failed'), {
       transport: { status: 404, body: { code: 'SESSION_NOT_LOCAL' } },
     }))).toBe(true);
-    expect(isSessionNotLocalError(new Error('This daemon does not host a live runtime for session s-1.'))).toBe(true);
+    expect(isSessionNotLocalError(new Error('This daemon does not host a live runtime for session s-1.'))).toBe(false);
+  });
+
+  test('SESSION_CLOSED is structural; browser-authored prose cannot classify it', () => {
+    expect(isSessionClosedError({ body: { code: 'SESSION_CLOSED' } })).toBe(true);
+    expect(isSessionClosedError(Object.assign(new Error('Request failed'), {
+      transport: { body: { error: { code: 'SESSION_CLOSED' } } },
+    }))).toBe(true);
+    expect(isSessionClosedError(new Error('Session is closed'))).toBe(false);
   });
 
   test('SESSION_NOT_LOCAL is not confused with SESSION_NOT_FOUND (both 404, different meanings)', () => {

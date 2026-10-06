@@ -8,6 +8,8 @@ This project uses semantic versioning with `vMAJOR.MINOR.PATCH` git tags.
 
 ### Fixed
 
+- Await authenticated daemon error-reference readings at real chat/session callers. Unissued, uncertain or stale prose no longer becomes a guessed session or method classification.
+
 - Fleet actions for native-owned sessions now share the conversation composer's
   source-bound continuation workflow. Only authoritative legacy classification
   enables compact legacy steering. Exact originals, saved-input recovery and

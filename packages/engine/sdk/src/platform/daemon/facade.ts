@@ -167,6 +167,7 @@ export class DaemonServer {
   /** Lifecycle sidecar: clean-shutdown marker, receipts, hourly auto-update. */
   private lifecycle: DaemonLifecycleRuntime | null = null;
   private readonly companionChatManager: CompanionChatManager;
+  private releaseBrowserJudgmentChats: (() => void) | undefined;
   private readonly hostedSessions: HostedSessionManager | null;
   private relayReachability: RelayReachability | null = null;
   private agentTaskAdapter: import('../runtime/tasks/adapters/agent-adapter.js').AgentTaskAdapter | null = null;
@@ -500,6 +501,7 @@ export class DaemonServer {
       await this.clusterCoordinator.start();
       this.channelHealth.start(); // after the coordinator, so the first sweep sees the ingress this node actually won rather than calling every surface dead mid-election
       await this.companionChatManager.init();
+      this.releaseBrowserJudgmentChats = this.runtimeServices.browserJudgment?.bindChatSessions?.(this.companionChatManager);
       // Restore what survived; the report states what could not come back.
       if (this.hostedSessions) reportHostedSessionRestore(await this.hostedSessions.init());
       // Init the canonical memory store so the daemon is a live single-writer memory service on accept (memory.records.add would else throw "not initialized" on a cold store).
@@ -553,6 +555,8 @@ export class DaemonServer {
       });
     } catch (err) {
       const message = summarizeError(err);
+      this.releaseBrowserJudgmentChats?.();
+      this.releaseBrowserJudgmentChats = undefined;
       if (this.replyPoller !== null) {
         clearInterval(this.replyPoller);
         this.replyPoller = null;
@@ -644,6 +648,8 @@ export class DaemonServer {
     this.relayReachability?.stop();
     this.relayReachability = null;
     this.httpRouter.dispose();
+    this.releaseBrowserJudgmentChats?.();
+    this.releaseBrowserJudgmentChats = undefined;
     this.companionChatManager.dispose();
     // Kill-policy sessions end here; survive-policy ones are parked with their transcript.
     if (this.hostedSessions) await this.hostedSessions.dispose();

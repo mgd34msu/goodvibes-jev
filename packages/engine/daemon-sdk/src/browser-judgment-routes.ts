@@ -8,6 +8,19 @@ import { parseBrowserJudgmentRequest } from './browser-judgment-validation.js';
 
 export interface BrowserJudgmentCapability {
   execute(input: unknown, principal: AuthenticatedPrincipal, signal: AbortSignal, currentPrincipal: () => AuthenticatedPrincipal): Promise<object>;
+  /** Server-only canonical failure producer. Never populated from request JSON. */
+  issueErrorReference?(input: BrowserJudgmentErrorSource): string | undefined;
+  /** Binds the actual host chat store; the returned release fences that store's lifetime. */
+  bindChatSessions?(source: BrowserJudgmentChatSessions): () => void;
+}
+export interface BrowserJudgmentChatSessions {
+  getSession(id: string): { readonly id: string; readonly title: string; readonly createdAt: number; readonly updatedAt: number } | null;
+}
+export interface BrowserJudgmentErrorSource {
+  readonly principal: AuthenticatedPrincipal;
+  readonly methodId: string;
+  readonly status: number;
+  readonly body: unknown;
 }
 export interface BrowserJudgmentHttpContext {
   readonly authenticate: (req: Request) => AuthenticatedPrincipal | null;
@@ -77,7 +90,7 @@ export function createBrowserJudgmentHttpHandler(context: BrowserJudgmentHttpCon
       if (!principal.admin && missingScopes(principal.scopes, ['write:judgment']).length) throw new BrowserJudgmentError('JUDGMENT_ACCESS_DENIED');
       const currentPrincipal = (): AuthenticatedPrincipal => {
         const current = context.authenticate(req);
-        if (!current || current.principalId !== principal.principalId
+        if (!current || current.principalId !== principal.principalId || current.principalKind !== principal.principalKind
           || (!current.admin && missingScopes(current.scopes, ['write:judgment']).length)) throw new BrowserJudgmentError('JUDGMENT_AUTH_REQUIRED');
         return current;
       };
