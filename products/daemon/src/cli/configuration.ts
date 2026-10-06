@@ -28,7 +28,7 @@ export function createDaemonCliConfiguration(
 ) {
   const homes = resolveDaemonCliOwnership(flags, env, cwd);
   const { workingDirectory } = homes;
-  runDaemonConfigMigration(homes.homeDirectory);
+  runDaemonConfigMigration(homes.homeDirectory, daemonConfigPathForHome(homes.daemonHomeDirectory));
   const config = new ConfigManager({
     workingDir: workingDirectory, homeDir: homes.homeDirectory,
     surfaceRoot: GOODVIBES_DAEMON_SURFACE_ROOT,

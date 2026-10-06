@@ -19,11 +19,12 @@ export type DaemonCliRuntime = Pick<RuntimeServicesOptions,
 export function prepareDaemonCliServe(config: DaemonCliConfiguration['config'], flags: DaemonCliFlags): readonly string[] {
   const errors = [...applyRuntimeConfigOverrides(config, flags.configOverrides)];
   if (errors.length) return errors;
-  applyRuntimeFeatureFlagOverrides(config, flags);
+  errors.push(...applyRuntimeFeatureFlagOverrides(config, flags));
+  if (errors.length) return errors;
   if (flags.provider !== undefined || flags.model !== undefined) {
     const current = config.get('provider.model');
     applyRuntimeConfigValue(config, 'provider.model', formatProviderModel(
-      flags.provider ?? getProviderIdFromModel(current), flags.model ?? getModelIdFromProviderModel(current),
+      flags.provider ?? getProviderIdFromModel(current), getModelIdFromProviderModel(flags.model ?? current),
     ));
   }
   errors.push(...applyRuntimeEndpointFlagOverrides(config, 'controlPlane', flags));

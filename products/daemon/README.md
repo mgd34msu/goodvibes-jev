@@ -10,7 +10,8 @@ Default `serve` is still unavailable: built-in inbox composition is unfinished.
 A bare invocation fails before acquiring runtime resources or changing files.
 `send` also refuses explicitly. Service install/start/restart/migrate requires a
 launcher that supplies both real inbox composition and its installed executable
-path, so this package cannot install an unbootable default service.
+path and canonical (non-overridden) homes, so this package cannot install an
+unbootable default service or silently relaunch a different identity.
 
 From this directory:
 

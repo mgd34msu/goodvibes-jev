@@ -121,6 +121,9 @@
     "products/daemon": {
       "name": "@goodvibes-jev/daemon",
       "version": "1.28.25",
+      "bin": {
+        "goodvibes-daemon": "./dist/cli/entrypoint.js",
+      },
       "dependencies": {
         "@goodvibes-jev/engine": "workspace:*",
       },

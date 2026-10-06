@@ -29,7 +29,9 @@ migration mapping for that whole file:
   remain explicit in the launcher's runtime options. No lifecycle implementation
   is copied from the historical unawaited shutdown.
 - Service activation needs both the caller's explicit runtime composition and
-  installed executable path. The uncomposed package refuses before service work.
+  installed executable path. Overridden tree/identity homes refuse because the
+  current service builder cannot preserve them. The selected ConfigManager is
+  passed through. The uncomposed package refuses before service work.
   `send` has no migrated composition and refuses without sending.
 
 The package remains private with its original version. Build emits the actual
@@ -70,3 +72,19 @@ not persisted. Synthetic identity, metadata and provider seams are explicit.
 There are no live account/provider/credential/mail/payment/inference/remote-host
 calls, actual host-service changes, installation, release or deployment tests.
 Full original daemon acceptance and live proof are not established here.
+
+## Dispatcher corrections found during independent review
+
+Offline probes reproduced and the final path repairs ignored feature-override
+refusals, explicit-provider precedence for qualified model flags, doubled OSC-52
+escape output, provisioning help accidentally reaching the download adapter,
+and migration into the default identity instead of the selected daemon tier.
+Service activation with overridden homes is explicitly refused before any
+service inspection/mutation, rather than generating a unit that relaunches
+another tree or identity. Existing service mutation policy is unchanged.
+
+The Bun lock's daemon workspace bin metadata now matches the package manifest.
+Frozen installation links the binary in the actual Agent and TUI consumer
+workspaces; the root is not a daemon dependency consumer. The emitted CLI tests
+assert the manifest, lock, shebang and resolved consumer links. Tarball smoke
+checks use the existing built workspace dependencies, not a registry release.

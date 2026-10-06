@@ -1,11 +1,15 @@
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { makeOwnedTempDir } from '../helpers/owned-temp.js';
 import { runDaemonCli } from '../../cli/run.js';
+import { createDaemonCliConfiguration } from '../../cli/configuration.js';
+import { parseDaemonCli } from '../../cli/parser.js';
+import { prepareDaemonCliServe } from '../../cli/serve.js';
+import * as shell from '@goodvibes-jev/engine/terminal-shell';
 
 const entrypoint = fileURLToPath(new URL('../../../dist/cli/entrypoint.js', import.meta.url));
 function launch(args: string[], composed = false, root = makeOwnedTempDir('daemon-built-cli')) {
@@ -50,9 +54,15 @@ test('emitted package entry retains the Bun shebang and canonical bin path', () 
   const manifest = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as { bin: Record<string, string> };
   expect(manifest.bin['goodvibes-daemon']).toBe('./dist/cli/entrypoint.js');
   expect(readFileSync(entrypoint, 'utf8').startsWith('#!/usr/bin/env bun\n')).toBe(true);
+  const lock = Bun.JSONC.parse(readFileSync(new URL('../../../../../bun.lock', import.meta.url), 'utf8')) as { workspaces: Record<string, { bin?: Record<string, string> }> };
+  expect(lock.workspaces['products/daemon']?.bin).toEqual(manifest.bin);
+  for (const consumer of ['agent', 'tui']) {
+    const bin = fileURLToPath(new URL(`../../../../${consumer}/node_modules/.bin/goodvibes-daemon`, import.meta.url));
+    expect(realpathSync(bin)).toBe(realpathSync(entrypoint));
+  }
 });
 
-for (const args of [['--help'], ['help', 'config'], ['--version'], ['completion', 'bash']]) {
+for (const args of [['--help'], ['help', 'config'], ['--version'], ['completion', 'bash'], ['provision-wake-model', '--help']]) {
   test(`built CLI handles ${args.join(' ')} without acquiring config or runtime`, async () => {
     const result = await oneShot(args);
     expect(result.code).toBe(0); expect(result.stdout.length).toBeGreaterThan(20);
@@ -60,7 +70,7 @@ for (const args of [['--help'], ['help', 'config'], ['--version'], ['completion'
     expect(existsSync(join(result.root, 'daemon'))).toBe(false);
   });
 }
-for (const args of [['install-servce'], ['serve', '--port'], ['--resume'], ['help', 'unknown'], ['--daemon-home', 'elsewhere', 'webui', 'status']]) {
+for (const args of [['install-servce'], ['serve', '--port'], ['--resume'], ['provision-wake-model', '--typo'], ['help', 'unknown'], ['--daemon-home', 'elsewhere', 'webui', 'status']]) {
   test(`built CLI refuses invalid arguments ${args.join(' ')}`, async () => {
     const result = await oneShot(args);
     expect(result.code).toBe(2); expect(result.stderr.length).toBeGreaterThan(5);
@@ -132,4 +142,77 @@ test('emitted launcher reports failed bind, drains its graph and leaves the exis
     expect(fx.output().stdout).not.toContain('host started');
     expect(await (await fetch(`http://127.0.0.1:${lease.port}`)).text()).toBe('existing-owner');
   } finally { await fx.close(); await lease.stop(true); }
+});
+
+for (const flag of ['--enable', '--disable']) {
+  test(`explicit launcher refuses invalid ${flag} before acquiring its runtime`, async () => {
+    const root = makeOwnedTempDir('daemon-cli-feature-refusal');
+    const stderr: string[] = [];
+    let inboxAcquisitions = 0;
+    const code = await runDaemonCli(['serve', flag, 'unknown-fixture-feature'], {
+      env: { HOME: root, GOODVIBES_HOME: root }, cwd: root,
+      runtime: { inboxFactory() { inboxAcquisitions++; throw new Error('Must not acquire'); } },
+      process: { process: { on() {}, off() {}, exit() {} } },
+      stdout() { throw new Error('Must not report startup'); }, stderr: (line) => { stderr.push(line); },
+    });
+    expect(code).toBe(2); expect(stderr.join('\n')).toContain('unknown feature id');
+    expect(inboxAcquisitions).toBe(0);
+  });
+}
+
+test('custom daemon identity receives the legacy migration and does not seed the default tier', async () => {
+  const root = makeOwnedTempDir('daemon-cli-selected-migration');
+  const legacy = join(root, 'home', '.goodvibes', 'tui');
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(join(legacy, 'settings.json'), JSON.stringify({ controlPlane: { port: 43129 } }));
+  const read = await oneShot(['--daemon-home', 'selected', 'config', 'get', 'controlPlane.port', '--json'], root);
+  expect(read.code).toBe(0); expect(read.stdout).toContain('43129');
+  expect(readFileSync(join(root, 'work', 'selected', 'settings.json'), 'utf8')).toContain('43129');
+  expect(existsSync(join(root, 'home', '.goodvibes', 'daemon', 'settings.json'))).toBe(false);
+});
+
+for (const flags of [
+  ['--provider', 'openai', '--model', 'anthropic:fixture-model'],
+  ['--model', 'anthropic:fixture-model', '--provider', 'openai'],
+]) {
+  test(`explicit provider reaches runtime config for ${flags.join(' ')}`, () => {
+    const root = makeOwnedTempDir('daemon-cli-provider');
+    const parsed = parseDaemonCli(['serve', ...flags]);
+    const { config } = createDaemonCliConfiguration(parsed.flags, { HOME: root }, root);
+    expect(prepareDaemonCliServe(config, parsed.flags)).toEqual([]);
+    expect(config.get('provider.model')).toBe('openai:fixture-model');
+  });
+}
+
+test('known capabilities without a switch refuse before serving', () => {
+  const root = makeOwnedTempDir('daemon-cli-unswitchable');
+  const parsed = parseDaemonCli(['serve', '--disable', 'fetch-sanitization']);
+  const { config } = createDaemonCliConfiguration(parsed.flags, { HOME: root }, root);
+  expect(prepareDaemonCliServe(config, parsed.flags).join('\n')).toContain('no off switch');
+});
+
+for (const command of ['install-service', 'start-service', 'restart-service', 'migrate-service']) {
+  test(`composed ${command} refuses home overrides before service mutations`, async () => {
+    const root = makeOwnedTempDir('daemon-cli-service-homes');
+    const stderr: string[] = [];
+    const code = await runDaemonCli([command], {
+      env: { HOME: root, GOODVIBES_DAEMON_HOME: join(root, 'selected') }, cwd: root,
+      runtime: { inboxFactory() { throw new Error('Must not acquire'); } },
+      serviceBinaryPath: '/synthetic-installed-daemon', stdout() {}, stderr: (line) => { stderr.push(line); },
+    });
+    expect(code).toBe(2); expect(stderr.join('\n')).toContain('overridden tree or daemon homes');
+    expect(existsSync(join(root, '.goodvibes'))).toBe(false);
+  });
+}
+
+test('cluster clipboard output is emitted byte-for-byte without a second escape', async () => {
+  const root = makeOwnedTempDir('daemon-cli-cluster-output');
+  const rawOutput = '\u001b]52;c;U1lOVEhFVElD\u0007';
+  const command = spyOn(shell, 'runClusterCommand').mockResolvedValue({ exitCode: 0, lines: [], rawOutput });
+  const lines: string[] = [];
+  try {
+    expect(await runDaemonCli(['cluster', 'key', '--copy'], { env: { HOME: root }, cwd: root,
+      stdout: (line) => { lines.push(line); }, stderr() { throw new Error('No refusal expected'); } })).toBe(0);
+    expect(lines).toEqual([rawOutput]);
+  } finally { command.mockRestore(); }
 });

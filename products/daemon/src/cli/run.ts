@@ -57,10 +57,14 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
     if (isRawInterceptCommand(cli.command) && argv[0] !== cli.command) return refuse(`\`${cli.command}\` has to be the first argument: goodvibes-daemon ${cli.command} …`);
     if (cli.command === 'send') return refuse('The daemon send composition has not been migrated. No message was sent.');
     if (cli.command === 'serve' && typeof options.runtime?.inboxFactory !== 'function') return refuse(PARTIAL);
-    if (['install-service', 'start-service', 'restart-service', 'migrate-service'].includes(cli.command)
-      && (typeof options.runtime?.inboxFactory !== 'function' || !options.serviceBinaryPath)) return refuse(`${PARTIAL} Service activation requires an explicitly composed executable.`);
+    if (['install-service', 'start-service', 'restart-service', 'migrate-service'].includes(cli.command)) {
+      if (typeof options.runtime?.inboxFactory !== 'function' || !options.serviceBinaryPath) return refuse(`${PARTIAL} Service activation requires an explicitly composed executable.`);
+      if (resolveDaemonCliOwnership(cli.flags, env, options.cwd).isOverridden) return refuse('Service activation with overridden tree or daemon homes is not supported by this partial launcher. No service was changed.');
+    }
 
     if (cli.command === 'provision-wake-model') {
+      if (cli.commandArgs.some((arg) => arg === '--help' || arg === '-h')) return result({ exitCode: 0, lines: [renderDaemonCommandHelp(cli.command)!] });
+      if (cli.commandArgs.some((arg) => arg !== '--strict')) return refuse('Usage: goodvibes-daemon provision-wake-model [--strict] [--help]');
       const { homeDirectory } = resolveDaemonCliOwnership(cli.flags, env, options.cwd);
       return result(await runProvisionWakeModelCommand(cli.commandArgs, { homeDirectory, env }));
     }
@@ -78,7 +82,7 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
       case 'webui': return result(runWebuiCommand(cli.commandArgs, { configManager: config, baseDirectory: workingDirectory }));
       case 'cluster': {
         const answer = await runClusterCommand({ argv: cli.commandArgs, configManager: config, daemonHomeDir: daemonHomeDirectory });
-        if (answer.rawOutput) stdout(`\u001b${answer.rawOutput}`);
+        if (answer.rawOutput) stdout(answer.rawOutput);
         return result(answer);
       }
       case 'serve': {
@@ -98,7 +102,7 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
         const binding = resolveRuntimeEndpointBinding(config, 'controlPlane');
         return result(await runDaemonServiceCli({ subcommand: cli.command,
           binaryPath: options.serviceBinaryPath ?? resolveInstalledDaemonBinary({ moduleUrl: import.meta.url }),
-          homeDir: homeDirectory, unitHomeDir: env.HOME ?? homedir(), workingDirectory,
+          configManager: config, homeDir: homeDirectory, unitHomeDir: env.HOME ?? homedir(), workingDirectory,
           host: binding.host, port: binding.port, confirmMigration: cli.flags.yes, json: cli.flags.json,
           hostnameFlagProvided: cli.flags.hostname !== undefined, portFlagProvided: cli.flags.port !== undefined,
         }));
