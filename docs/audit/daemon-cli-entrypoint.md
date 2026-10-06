@@ -86,5 +86,7 @@ another tree or identity. Existing service mutation policy is unchanged.
 The Bun lock's daemon workspace bin metadata now matches the package manifest.
 Frozen installation links the binary in the actual Agent and TUI consumer
 workspaces; the root is not a daemon dependency consumer. The emitted CLI tests
-assert the manifest, lock, shebang and resolved consumer links. Tarball smoke
+assert the manifest, lock, shebang and resolved consumer links, and execute
+those actual bin links. The build finisher sets executable mode after emission;
+a fresh tsc output cannot rely on installation having already chmodded it. Tarball smoke
 checks use the existing built workspace dependencies, not a registry release.

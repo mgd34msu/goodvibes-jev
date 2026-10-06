@@ -22,7 +22,7 @@
     }
   },
   "scripts": {
-    "build": "bunx tsc -p tsconfig.build.json",
+    "build": "bunx tsc -p tsconfig.build.json && bun scripts/prepare-cli.ts",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
     "test": "bun run build && bun ../../packages/engine/scripts/test.ts --cwd ../../products/daemon src/test",
     "start": "bun dist/cli/entrypoint.js"

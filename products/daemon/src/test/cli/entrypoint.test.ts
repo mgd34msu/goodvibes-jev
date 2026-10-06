@@ -1,10 +1,11 @@
 import { expect, spyOn, test } from 'bun:test';
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { makeOwnedTempDir } from '../helpers/owned-temp.js';
+import { prepareDaemonCli } from '../../../scripts/prepare-cli.js';
 import { runDaemonCli } from '../../cli/run.js';
 import { createDaemonCliConfiguration } from '../../cli/configuration.js';
 import { parseDaemonCli } from '../../cli/parser.js';
@@ -51,6 +52,14 @@ async function oneShot(args: string[], root?: string) {
 }
 
 test('emitted package entry retains the Bun shebang and canonical bin path', () => {
+  if (process.platform !== 'win32') {
+    // A fresh compiler output has no executable bits. Test the real finisher
+    // against an owned copy without changing an artifact another task may read.
+    const fresh = join(makeOwnedTempDir('daemon-cli-first-emission'), 'entrypoint.js');
+    writeFileSync(fresh, readFileSync(entrypoint), { mode: 0o644 });
+    prepareDaemonCli(fresh);
+    expect(statSync(fresh).mode & 0o111).toBe(0o111);
+  }
   const manifest = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as { bin: Record<string, string> };
   expect(manifest.bin['goodvibes-daemon']).toBe('./dist/cli/entrypoint.js');
   expect(readFileSync(entrypoint, 'utf8').startsWith('#!/usr/bin/env bun\n')).toBe(true);
@@ -59,6 +68,13 @@ test('emitted package entry retains the Bun shebang and canonical bin path', () 
   for (const consumer of ['agent', 'tui']) {
     const bin = fileURLToPath(new URL(`../../../../${consumer}/node_modules/.bin/goodvibes-daemon`, import.meta.url));
     expect(realpathSync(bin)).toBe(realpathSync(entrypoint));
+    if (process.platform !== 'win32') {
+      const root = makeOwnedTempDir('daemon-cli-bin-link');
+      const invoked = spawnSync(bin, ['--version'], { timeout: 10_000, encoding: 'utf8',
+        env: { ...process.env, HOME: root, GOODVIBES_HOME: root, GOODVIBES_DAEMON_HOME: join(root, 'daemon') } });
+      expect(invoked.status).toBe(0); expect(invoked.stdout).toContain('goodvibes-daemon 1.28.25');
+      expect(existsSync(join(root, '.goodvibes'))).toBe(false);
+    }
   }
 });
 
