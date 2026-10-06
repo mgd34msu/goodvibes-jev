@@ -261,7 +261,8 @@ for (const exitCode of [3, 4]) {
     const root = makeOwnedTempDir('daemon-cli-service-receipt');
     const receipt = JSON.stringify({ installed: exitCode === 3, running: false });
     const run = spyOn(serviceCommands, 'runDaemonServiceCli').mockResolvedValue({
-      ok: true, exitCode, lines: [receipt], status: { platform: 'manual', installed: exitCode === 3, running: false, path: '' },
+      ok: true, exitCode, lines: [receipt], status: { platform: 'manual', installed: exitCode === 3, running: false, path: '',
+        serviceName: 'fixture', autostart: false, commandPreview: 'fixture', suggestedCommands: [] },
     });
     const stdout: string[] = []; const stderr: string[] = [];
     try {
