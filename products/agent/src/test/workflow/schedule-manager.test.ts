@@ -1,9 +1,17 @@
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { ScheduleManager } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { getTestScheduleManager, resetTestRuntimeServices } from '../helpers/runtime-services.ts';
 
+let scheduleManager: ScheduleManager;
+
 beforeEach(() => {
   resetTestRuntimeServices();
+  scheduleManager = getTestScheduleManager();
+});
+
+afterEach(() => {
+  // Resetting the runtime graph drops its reference without stopping its timers.
+  scheduleManager.destroy();
 });
 
 // ---------------------------------------------------------------------------
