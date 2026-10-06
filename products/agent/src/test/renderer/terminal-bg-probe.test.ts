@@ -322,3 +322,33 @@ describe('installBackgroundThemeProbe: auto probe flow', () => {
     }
   });
 });
+
+
+describe('startup owner cancellation during an unanswered background probe', () => {
+  test('a held Escape is forwarded once instead of swallowed at timeout', async () => {
+    const forwarded: string[] = [];
+    const handle = installBackgroundThemeProbe({
+      configManager: fakeConfig('auto'), isTTY: true, timeoutMs: 5,
+      writeQuery: () => {}, applyThemeMode: () => {}, requestRepaint: () => {},
+      forwardInput: bytes => forwarded.push(bytes),
+    });
+    expect(handle.filterInput('\x1b')).toBe('');
+    await Bun.sleep(15);
+    expect(forwarded).toEqual(['\x1b']);
+    expect(handle.filterInput('next')).toBe('next');
+  });
+
+  test('a split OSC reply is consumed and genuine partial replies never become keys', async () => {
+    for (const fragment of ['\x1b]1', '\x1b]11;rgb:0000/']) {
+      const forwarded: string[] = [];
+      const probe = new TerminalBackgroundProbe({ timeoutMs: 5, onResolve: () => {}, onFlush: bytes => forwarded.push(bytes) });
+      probe.startTimeout(); expect(probe.feed(fragment)).toBe('');
+      await Bun.sleep(15); expect(forwarded).toEqual([]);
+    }
+    const forwarded: string[] = [];
+    const probe = new TerminalBackgroundProbe({ timeoutMs: 5, onResolve: () => {}, onFlush: bytes => forwarded.push(bytes) });
+    probe.startTimeout(); expect(probe.feed('\x1b')).toBe('');
+    expect(probe.feed(']11;rgb:0000/0000/0000\x07')).toBe('');
+    await Bun.sleep(15); expect(forwarded).toEqual([]);
+  });
+});

@@ -19,7 +19,8 @@
  * keystrokes reach the tokenizer untouched, and consumes ONLY a matched OSC 11
  * reply (whole or split across chunks). On timeout, any buffered reply fragment
  * is discarded rather than flushed, so partial/garbled bytes never leak into the
- * input pipeline.
+ * input pipeline. A held bare Escape / Alt+] key is returned through the
+ * shell callback on timeout so early owner cancellation is not swallowed.
  *
  * tmux: the query goes out as it is. tmux answers OSC 10 / 11 / 4 itself from
  * the attached terminal's colours; the DCS passthrough envelope this used to use
@@ -231,6 +232,8 @@ export interface TerminalBackgroundProbeOptions {
    * colour, since this filter consumes the reply ahead of it.
    */
   readonly onReplySpec?: (spec: string) => void;
+  /** Return a held Esc / Alt+] key when it never became an OSC reply. */
+  readonly onFlush?: (bytes: string) => void;
 }
 
 /**
@@ -248,10 +251,12 @@ export class TerminalBackgroundProbe {
   private readonly onResolve: (result: ProbeResolution) => void;
   private readonly onReplySpec: ((spec: string) => void) | undefined;
   private readonly timeoutMs: number;
+  private readonly onFlush: ((bytes: string) => void) | undefined;
 
   constructor(options: TerminalBackgroundProbeOptions) {
     this.onResolve = options.onResolve;
     this.onReplySpec = options.onReplySpec;
+    this.onFlush = options.onFlush;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
   }
 
@@ -321,10 +326,12 @@ export class TerminalBackgroundProbe {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    // Any bytes still buffered here are an incomplete/garbled reply fragment,
-    // discard them so they can never leak into the composer.
+    // A bare Esc is also a valid key. Discard genuine partial replies, but
+    // return that key on timeout so an early owner cancellation is not lost.
+    const held = this.buffer;
     this.buffer = '';
     this.onResolve({ mode, reason });
+    if (reason === 'timeout' && (held === '\x1b' || held === '\x1b]')) this.onFlush?.(held);
   }
 }
 
@@ -423,6 +430,7 @@ export function installBackgroundThemeProbe(options: InstallThemeProbeOptions): 
 
   const probe = new TerminalBackgroundProbe({
     timeoutMs: options.timeoutMs,
+    onFlush: options.forwardInput,
     onReplySpec: palette === null ? undefined : (spec) => palette.noteBackgroundSpec(spec),
     onResolve: (result) => {
       backgroundTimedOut = result.reason === 'timeout';

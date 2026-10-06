@@ -19,7 +19,7 @@ export interface AgentHostPairingResult {
 
 export interface AgentHostPairingPreview {
   readonly result: AgentHostPairingResult;
-  /** Only the standalone CLI's action-time terminal prompt may call this capability. */
+  /** Only a live owner-terminal pairing controller may call this one-shot capability. */
   readonly confirm?: (answer: string, signal?: AbortSignal) => Promise<AgentHostPairingResult>;
 }
 
@@ -90,7 +90,7 @@ export async function previewAgentHostPairing(
     const result: AgentHostPairingResult = {
       status: 'preview', host, name, confirmation, environmentOverride: envOverride(),
       scopeDisclosure: 'This creates a persistent administrative per-device credential on the selected GoodVibes host. It can exercise operator authority, including native work and fleet execution. The secret is stored only in this Agent home, bound to this host. The legacy shared token remains active; no credential is revoked.',
-      message: 'Preview only. No credential has been created or stored. Confirm the exact phrase at the standalone CLI prompt to make one migration request.',
+      message: 'Preview only. No credential has been created or stored. Confirm the exact phrase at the owner-terminal prompt to make one migration request.',
     };
     return { result, async confirm(answer, actionSignal) {
       if (consumed || answer !== confirmation || actionSignal?.aborted) return cancelled();

@@ -736,6 +736,11 @@ export class ConversationManager extends SdkConversationManager {
     this.recordDisplayOnly((width) => logConversationText(this.renderingContext(), width, text, style, indent));
   }
 
+  /** Persistent display-only prose, rewrapped at the current width on every rebuild. */
+  public logWrapped(text: string, style: Partial<Cell> = {}): void {
+    this.recordDisplayOnly((width) => this.history.addLines(conversationTextToLines(text, width, style)));
+  }
+
   /**
    * clearDisplay - Clear the visual history buffer without touching the LLM context messages.
    * The next render will show a blank conversation area. Subsequent message additions

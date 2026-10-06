@@ -89,10 +89,10 @@ describe('standalone setup pair confirmation boundary', () => {
     expect(JSON.parse(out).selectedHost).toBe('(invalid endpoint)'); expect(f.migrations()).toBe(0);
   }));
 
-  test('interactive slash command remains preview-only even with apply/yes arguments', async () => withFixture(async f => {
+  test('interactive slash command refuses apply/yes arguments without an owner gesture', async () => withFixture(async f => {
     const registry = new CommandRegistry(); registerOnboardingRuntimeCommands(registry); const printed: string[] = [];
     const context = { platform: { configManager: f.configManager }, workspace: { shellPaths: { homeDirectory: f.homeDirectory } }, print: (text: string) => printed.push(text) } as unknown as CommandContext;
     await registry.execute('setup', ['pair', '--apply', '--yes'], context);
-    expect(f.migrations()).toBe(0); expect(printed.join('\n')).toContain('preview-only'); expect(readAgentHostPairing(f.homeDirectory, f.host).status).toBe('missing');
+    expect(f.migrations()).toBe(0); expect(printed.join('\n')).toContain('unsupported'); expect(readAgentHostPairing(f.homeDirectory, f.host).status).toBe('missing');
   }));
 });
