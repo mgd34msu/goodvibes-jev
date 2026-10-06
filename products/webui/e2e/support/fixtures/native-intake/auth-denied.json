@@ -1,0 +1,254 @@
+{
+  "source": "owned-synthetic-provider; real authenticated DaemonServer HTTP",
+  "name": "auth-denied",
+  "denied": [
+    {
+      "methodId": "workLedger.intake.capture",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/capture",
+      "status": 401,
+      "requestBody": {
+        "requestId": "webui-native-auth-request",
+        "inputId": "webui-native-auth-input",
+        "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+        "unsupportedSources": []
+      },
+      "body": "{\"error\":\"Authentication required\",\"hint\":\"Authenticate with the operator shared token or an authenticated user session before calling daemon APIs.\",\"code\":\"AUTH_REQUIRED\",\"category\":\"authentication\",\"source\":\"runtime\",\"recoverable\":false,\"status\":401}"
+    },
+    {
+      "methodId": "workLedger.intake.capture",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/capture",
+      "status": 401,
+      "requestBody": {
+        "requestId": "webui-native-auth-request",
+        "inputId": "webui-native-auth-input",
+        "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+        "unsupportedSources": []
+      },
+      "body": "{\"error\":\"Authentication required\",\"hint\":\"Authenticate with the operator shared token or an authenticated user session before calling daemon APIs.\",\"code\":\"AUTH_REQUIRED\",\"category\":\"authentication\",\"source\":\"runtime\",\"recoverable\":false,\"status\":401}"
+    },
+    {
+      "methodId": "workLedger.intake.capture",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/capture",
+      "status": 403,
+      "requestBody": {
+        "requestId": "webui-native-auth-request",
+        "inputId": "webui-native-auth-input",
+        "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+        "unsupportedSources": []
+      },
+      "body": "{\"error\":\"Native intake requires a persisted paired-token owner; shared tokens and user sessions are unsupported\",\"hint\":\"Possible causes include missing model access, account permissions, safety/policy restrictions, or provider routing to a service that does not expose this model.\",\"code\":\"NATIVE_INTAKE_UNSUPPORTED_AUTHORITY\",\"category\":\"authorization\",\"status\":403}"
+    },
+    {
+      "methodId": "workLedger.intake.capture",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/capture",
+      "status": 403,
+      "requestBody": {
+        "requestId": "webui-native-auth-request",
+        "inputId": "webui-native-auth-input",
+        "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+        "unsupportedSources": []
+      },
+      "body": "{\"error\":\"Native intake requires a persisted paired-token owner; shared tokens and user sessions are unsupported\",\"hint\":\"Possible causes include missing model access, account permissions, safety/policy restrictions, or provider routing to a service that does not expose this model.\",\"code\":\"NATIVE_INTAKE_UNSUPPORTED_AUTHORITY\",\"category\":\"authorization\",\"status\":403}"
+    },
+    {
+      "methodId": "workLedger.intake.capture",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/capture",
+      "status": 403,
+      "requestBody": {
+        "requestId": "webui-native-auth-request",
+        "inputId": "webui-native-auth-input",
+        "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+        "unsupportedSources": []
+      },
+      "body": "{\"error\":\"Missing required scope for workLedger.intake.capture: read:work-ledger\",\"requiredScopes\":[\"read:work-ledger\",\"write:work-ledger\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"read:work-ledger\"]}"
+    },
+    {
+      "methodId": "workLedger.intake.get",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/get",
+      "status": 403,
+      "requestBody": {
+        "inputId": "webui-native-auth-input"
+      },
+      "body": "{\"error\":\"Missing required scope for workLedger.intake.get: read:work-ledger\",\"requiredScopes\":[\"read:work-ledger\",\"write:work-ledger\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"read:work-ledger\"]}"
+    },
+    {
+      "methodId": "workLedger.intake.admit",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/admit",
+      "status": 403,
+      "requestBody": {
+        "inputId": "webui-native-auth-input",
+        "sourceRevision": "not-yet-captured"
+      },
+      "body": "{\"error\":\"Missing required scope for workLedger.intake.admit: read:work-ledger\",\"requiredScopes\":[\"read:work-ledger\",\"write:work-ledger\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"read:work-ledger\"]}"
+    },
+    {
+      "methodId": "workLedger.intake.resume",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/resume",
+      "status": 403,
+      "requestBody": {
+        "inputId": "webui-native-auth-input",
+        "sourceRevision": "not-yet-captured"
+      },
+      "body": "{\"error\":\"Missing required scope for workLedger.intake.resume: read:work-ledger\",\"requiredScopes\":[\"read:work-ledger\",\"write:work-ledger\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"read:work-ledger\"]}"
+    },
+    {
+      "methodId": "workLedger.intake.cancel",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/cancel",
+      "status": 403,
+      "requestBody": {
+        "inputId": "webui-native-auth-input",
+        "sourceRevision": "not-yet-captured"
+      },
+      "body": "{\"error\":\"Missing required scope for workLedger.intake.cancel: read:work-ledger\",\"requiredScopes\":[\"read:work-ledger\",\"write:work-ledger\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"read:work-ledger\"]}"
+    },
+    {
+      "methodId": "workLedger.intake.capture",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/capture",
+      "status": 403,
+      "requestBody": {
+        "requestId": "webui-native-auth-request",
+        "inputId": "webui-native-auth-input",
+        "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+        "unsupportedSources": []
+      },
+      "body": "{\"error\":\"Missing required scope for workLedger.intake.capture: write:work-ledger\",\"requiredScopes\":[\"read:work-ledger\",\"write:work-ledger\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:work-ledger\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"write:work-ledger\"]}"
+    },
+    {
+      "methodId": "workLedger.intake.get",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/get",
+      "status": 403,
+      "requestBody": {
+        "inputId": "webui-native-auth-input"
+      },
+      "body": "{\"error\":\"Missing required scope for workLedger.intake.get: write:work-ledger\",\"requiredScopes\":[\"read:work-ledger\",\"write:work-ledger\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:work-ledger\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"write:work-ledger\"]}"
+    },
+    {
+      "methodId": "workLedger.intake.admit",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/admit",
+      "status": 403,
+      "requestBody": {
+        "inputId": "webui-native-auth-input",
+        "sourceRevision": "not-yet-captured"
+      },
+      "body": "{\"error\":\"Missing required scope for workLedger.intake.admit: write:work-ledger\",\"requiredScopes\":[\"read:work-ledger\",\"write:work-ledger\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:work-ledger\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"write:work-ledger\"]}"
+    },
+    {
+      "methodId": "workLedger.intake.resume",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/resume",
+      "status": 403,
+      "requestBody": {
+        "inputId": "webui-native-auth-input",
+        "sourceRevision": "not-yet-captured"
+      },
+      "body": "{\"error\":\"Missing required scope for workLedger.intake.resume: write:work-ledger\",\"requiredScopes\":[\"read:work-ledger\",\"write:work-ledger\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:work-ledger\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"write:work-ledger\"]}"
+    },
+    {
+      "methodId": "workLedger.intake.cancel",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/cancel",
+      "status": 403,
+      "requestBody": {
+        "inputId": "webui-native-auth-input",
+        "sourceRevision": "not-yet-captured"
+      },
+      "body": "{\"error\":\"Missing required scope for workLedger.intake.cancel: write:work-ledger\",\"requiredScopes\":[\"read:work-ledger\",\"write:work-ledger\"],\"grantedScopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:work-ledger\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"missingScopes\":[\"write:work-ledger\"]}"
+    },
+    {
+      "methodId": "workLedger.intake.capture",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/capture",
+      "status": 400,
+      "requestBody": {
+        "requestId": "webui-native-auth-request",
+        "inputId": "webui-native-auth-input",
+        "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+        "unsupportedSources": [],
+        "projectId": "injected"
+      },
+      "body": "{\"error\":\"Invalid native conversation source\",\"code\":\"INVALID_ARGUMENT\",\"category\":\"bad_request\",\"status\":400}"
+    },
+    {
+      "methodId": "workLedger.intake.capture",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/capture",
+      "status": 400,
+      "requestBody": {
+        "requestId": "webui-native-auth-request",
+        "inputId": "webui-native-auth-input",
+        "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+        "unsupportedSources": [],
+        "actorId": "injected"
+      },
+      "body": "{\"error\":\"Invalid native conversation source\",\"code\":\"INVALID_ARGUMENT\",\"category\":\"bad_request\",\"status\":400}"
+    },
+    {
+      "methodId": "workLedger.intake.capture",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/capture",
+      "status": 400,
+      "requestBody": {
+        "requestId": "webui-native-auth-request",
+        "inputId": "webui-native-auth-input",
+        "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+        "unsupportedSources": [],
+        "sessionId": "injected"
+      },
+      "body": "{\"error\":\"Invalid native conversation source\",\"code\":\"INVALID_ARGUMENT\",\"category\":\"bad_request\",\"status\":400}"
+    },
+    {
+      "methodId": "workLedger.intake.capture",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/capture",
+      "status": 400,
+      "requestBody": {
+        "requestId": "webui-native-auth-request",
+        "inputId": "webui-native-auth-input",
+        "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+        "unsupportedSources": [],
+        "sourceId": "injected"
+      },
+      "body": "{\"error\":\"Invalid native conversation source\",\"code\":\"INVALID_ARGUMENT\",\"category\":\"bad_request\",\"status\":400}"
+    },
+    {
+      "methodId": "workLedger.intake.capture",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/capture",
+      "status": 400,
+      "requestBody": {
+        "requestId": "webui-native-auth-request",
+        "inputId": "webui-native-auth-input",
+        "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+        "unsupportedSources": [],
+        "criteria": "injected"
+      },
+      "body": "{\"error\":\"Invalid native conversation source\",\"code\":\"INVALID_ARGUMENT\",\"category\":\"bad_request\",\"status\":400}"
+    },
+    {
+      "methodId": "workLedger.intake.capture",
+      "method": "POST",
+      "path": "/api/work-ledger/intake/capture",
+      "status": 400,
+      "requestBody": {
+        "requestId": "webui-native-auth-request",
+        "inputId": "webui-native-auth-input",
+        "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+        "unsupportedSources": [],
+        "decisionId": "injected"
+      },
+      "body": "{\"error\":\"Invalid native conversation source\",\"code\":\"INVALID_ARGUMENT\",\"category\":\"bad_request\",\"status\":400}"
+    }
+  ]
+}

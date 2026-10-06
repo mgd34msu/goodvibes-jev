@@ -1,0 +1,117 @@
+{
+  "source": "owned-synthetic-provider; real authenticated DaemonServer HTTP",
+  "name": "turn",
+  "input": {
+    "requestId": "webui-native-turn-request",
+    "inputId": "webui-native-turn-input",
+    "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+    "unsupportedSources": []
+  },
+  "auth": {
+    "methodId": "control.auth.current",
+    "method": "GET",
+    "path": "/api/control-plane/auth",
+    "status": 200,
+    "body": "{\"authenticated\":true,\"authMode\":\"session\",\"tokenPresent\":true,\"authorizationHeaderPresent\":true,\"sessionCookiePresent\":false,\"principalId\":\"pairing:pair-d8f96882-8f5a-4d09-a4f1-d8efc08eb9b9\",\"principalKind\":\"token\",\"admin\":true,\"scopes\":[\"read:accounts\",\"read:approvals\",\"read:artifacts\",\"read:auth\",\"read:automation\",\"read:browser\",\"read:calendar\",\"read:channels\",\"read:checkin\",\"read:checkpoints\",\"read:ci\",\"read:config\",\"read:continuity\",\"read:control-plane\",\"read:deliveries\",\"read:email\",\"read:events\",\"read:fleet\",\"read:health\",\"read:intelligence\",\"read:knowledge\",\"read:mcp\",\"read:media\",\"read:memory\",\"read:occasions\",\"read:panels\",\"read:payments\",\"read:principals\",\"read:profile\",\"read:profile-document\",\"read:providers\",\"read:push\",\"read:relay\",\"read:remote\",\"read:routes\",\"read:services\",\"read:sessions\",\"read:settings\",\"read:skills\",\"read:tasks\",\"read:telemetry\",\"read:telemetry-sensitive\",\"read:voice\",\"read:watchers\",\"read:web-search\",\"read:work-ledger\",\"read:workspaces\",\"read:worktrees\",\"write:approvals\",\"write:artifacts\",\"write:auth\",\"write:automation\",\"write:browser\",\"write:calendar\",\"write:channels\",\"write:checkin\",\"write:checkpoints\",\"write:ci\",\"write:config\",\"write:control-plane\",\"write:email\",\"write:fleet\",\"write:judgment\",\"write:knowledge\",\"write:mcp\",\"write:media\",\"write:memory\",\"write:occasions\",\"write:panels\",\"write:payments\",\"write:principals\",\"write:profile\",\"write:providers\",\"write:push\",\"write:relay\",\"write:remote\",\"write:routes\",\"write:services\",\"write:sessions\",\"write:skills\",\"write:tasks\",\"write:voice\",\"write:watchers\",\"write:web-search\",\"write:work-ledger\",\"write:work-ledger-import\",\"write:workspaces\",\"write:worktrees\"],\"roles\":[]}"
+  },
+  "project": {
+    "methodId": "workLedger.project",
+    "method": "GET",
+    "path": "/api/work-ledger/project",
+    "status": 200,
+    "body": "{\"projectId\":\"workspace-45e40fd4c2\"}"
+  },
+  "lookupBefore": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-turn-input"
+    },
+    "body": "{\"kind\":\"not-found\"}"
+  },
+  "capture": {
+    "methodId": "workLedger.intake.capture",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/capture",
+    "status": 200,
+    "requestBody": {
+      "requestId": "webui-native-turn-request",
+      "inputId": "webui-native-turn-input",
+      "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+      "unsupportedSources": []
+    },
+    "body": "{\"kind\":\"captured\",\"projectId\":\"workspace-45e40fd4c2\",\"requestId\":\"webui-native-turn-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-turn-input\",\"sourceId\":\"d302a1b0da174c50026b197f8a26b4b6b2de1c8fe6e399dd8c6af0c55f954183\",\"sourceRevision\":\"ddf2a9d3b0cb5b67368e64b83fc382807488b77f3b1ea899c5e03724434038df\",\"sessionId\":\"native-work:workspace-45e40fd4c2\"}}"
+  },
+  "getCaptured": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-turn-input"
+    },
+    "body": "{\"kind\":\"captured\",\"projectId\":\"workspace-45e40fd4c2\",\"requestId\":\"webui-native-turn-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-turn-input\",\"sourceId\":\"d302a1b0da174c50026b197f8a26b4b6b2de1c8fe6e399dd8c6af0c55f954183\",\"sourceRevision\":\"ddf2a9d3b0cb5b67368e64b83fc382807488b77f3b1ea899c5e03724434038df\",\"sessionId\":\"native-work:workspace-45e40fd4c2\"}}"
+  },
+  "transition": {
+    "inputId": "webui-native-turn-input",
+    "sourceRevision": "ddf2a9d3b0cb5b67368e64b83fc382807488b77f3b1ea899c5e03724434038df"
+  },
+  "admit": {
+    "methodId": "workLedger.intake.admit",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/admit",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-turn-input",
+      "sourceRevision": "ddf2a9d3b0cb5b67368e64b83fc382807488b77f3b1ea899c5e03724434038df"
+    },
+    "body": "{\"kind\":\"turn\",\"projectId\":\"workspace-45e40fd4c2\",\"requestId\":\"webui-native-turn-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-turn-input\",\"sourceId\":\"d302a1b0da174c50026b197f8a26b4b6b2de1c8fe6e399dd8c6af0c55f954183\",\"sourceRevision\":\"ddf2a9d3b0cb5b67368e64b83fc382807488b77f3b1ea899c5e03724434038df\",\"sessionId\":\"native-work:workspace-45e40fd4c2\"},\"route\":\"converse\",\"text\":\"  Add JSON export.\\nKeep CSV output unchanged. 🌻\\nKeep CSV output unchanged.  \"}"
+  },
+  "get": {
+    "methodId": "workLedger.intake.get",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/get",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-turn-input"
+    },
+    "body": "{\"kind\":\"turn\",\"projectId\":\"workspace-45e40fd4c2\",\"requestId\":\"webui-native-turn-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-turn-input\",\"sourceId\":\"d302a1b0da174c50026b197f8a26b4b6b2de1c8fe6e399dd8c6af0c55f954183\",\"sourceRevision\":\"ddf2a9d3b0cb5b67368e64b83fc382807488b77f3b1ea899c5e03724434038df\",\"sessionId\":\"native-work:workspace-45e40fd4c2\"},\"route\":\"converse\",\"text\":\"  Add JSON export.\\nKeep CSV output unchanged. 🌻\\nKeep CSV output unchanged.  \"}"
+  },
+  "resume": {
+    "methodId": "workLedger.intake.resume",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/resume",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-turn-input",
+      "sourceRevision": "ddf2a9d3b0cb5b67368e64b83fc382807488b77f3b1ea899c5e03724434038df"
+    },
+    "body": "{\"kind\":\"turn\",\"projectId\":\"workspace-45e40fd4c2\",\"requestId\":\"webui-native-turn-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-turn-input\",\"sourceId\":\"d302a1b0da174c50026b197f8a26b4b6b2de1c8fe6e399dd8c6af0c55f954183\",\"sourceRevision\":\"ddf2a9d3b0cb5b67368e64b83fc382807488b77f3b1ea899c5e03724434038df\",\"sessionId\":\"native-work:workspace-45e40fd4c2\"},\"route\":\"converse\",\"text\":\"  Add JSON export.\\nKeep CSV output unchanged. 🌻\\nKeep CSV output unchanged.  \"}"
+  },
+  "replay": {
+    "methodId": "workLedger.intake.capture",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/capture",
+    "status": 200,
+    "requestBody": {
+      "requestId": "webui-native-turn-request",
+      "inputId": "webui-native-turn-input",
+      "text": "  Add JSON export.\nKeep CSV output unchanged. 🌻\nKeep CSV output unchanged.  ",
+      "unsupportedSources": []
+    },
+    "body": "{\"kind\":\"turn\",\"projectId\":\"workspace-45e40fd4c2\",\"requestId\":\"webui-native-turn-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-turn-input\",\"sourceId\":\"d302a1b0da174c50026b197f8a26b4b6b2de1c8fe6e399dd8c6af0c55f954183\",\"sourceRevision\":\"ddf2a9d3b0cb5b67368e64b83fc382807488b77f3b1ea899c5e03724434038df\",\"sessionId\":\"native-work:workspace-45e40fd4c2\"},\"route\":\"converse\",\"text\":\"  Add JSON export.\\nKeep CSV output unchanged. 🌻\\nKeep CSV output unchanged.  \"}"
+  },
+  "cancel": {
+    "methodId": "workLedger.intake.cancel",
+    "method": "POST",
+    "path": "/api/work-ledger/intake/cancel",
+    "status": 200,
+    "requestBody": {
+      "inputId": "webui-native-turn-input",
+      "sourceRevision": "ddf2a9d3b0cb5b67368e64b83fc382807488b77f3b1ea899c5e03724434038df"
+    },
+    "body": "{\"kind\":\"turn\",\"projectId\":\"workspace-45e40fd4c2\",\"requestId\":\"webui-native-turn-request\",\"sourceRef\":{\"version\":1,\"inputId\":\"webui-native-turn-input\",\"sourceId\":\"d302a1b0da174c50026b197f8a26b4b6b2de1c8fe6e399dd8c6af0c55f954183\",\"sourceRevision\":\"ddf2a9d3b0cb5b67368e64b83fc382807488b77f3b1ea899c5e03724434038df\",\"sessionId\":\"native-work:workspace-45e40fd4c2\"},\"route\":\"converse\",\"text\":\"  Add JSON export.\\nKeep CSV output unchanged. 🌻\\nKeep CSV output unchanged.  \"}"
+  }
+}

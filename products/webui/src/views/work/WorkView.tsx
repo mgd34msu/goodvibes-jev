@@ -396,7 +396,7 @@ function WorkViewContent({ contractScope, tab, onTabChange, subscriptionActive =
     <DataPage
       title={WORK.label}
       description={data.firstLoad ? WORK.description : workSummary(items.filter((i) => scope === 'archived' || i.group !== 'finished'))}
-      action={<NewWorkMenu onCreated={(key) => { dismissedRef.current = true; setSelectedKey(key); }} />}
+      action={<NewWorkMenu lifetime={contractScope} onCreated={(key) => { dismissedRef.current = true; setSelectedKey(key); }} />}
       filters={(
         <>
           <Segmented<WorkTab>

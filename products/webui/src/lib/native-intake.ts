@@ -1,0 +1,284 @@
+import type { OperatorRemoteClient } from "@goodvibes-jev/engine/operator-sdk";
+import {
+  createOperatorNativeConversationIntakeClient,
+  nativeConversationIntakeCaptureRequestSchema,
+  type NativeConversationIntakeLookupResult,
+  type NativeConversationIntakeUnsupportedSource,
+} from "@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client";
+import { GOODVIBES_BASE_URL, sdk } from "./goodvibes";
+import {
+  isClientLifetimeCurrent,
+  subscribeClientLifetime,
+  type ClientLifetime,
+} from "./client-lifetime";
+import { getActiveRoute } from "./relay-connection";
+import { getStoredRelayPairing } from "./relay-pairing";
+import { randomUuid } from "./uuid";
+import {
+  createNativeIntakeBrowserJournal,
+  type NativeIntakeBrowserBinding,
+  type NativeIntakeBrowserRecord,
+} from "./native-intake-journal";
+
+export type NativeIntakeResult = NativeConversationIntakeLookupResult;
+export interface NativeIntakeSource {
+  text: string;
+  unsupportedSources: NativeConversationIntakeUnsupportedSource[];
+}
+export type NativeIntakeJournal = ReturnType<typeof createNativeIntakeBrowserJournal>;
+const terminal = (result: NativeIntakeResult) =>
+  ["work", "turn", "blocked", "refused", "cancelled"].includes(result.kind);
+const sameBinding = (left: NativeIntakeBrowserBinding, right: NativeIntakeBrowserBinding) =>
+  JSON.stringify(left) === JSON.stringify(right);
+
+/** A selected browser identity is a fence, never a native authority grant. */
+export async function openNativeIntake(
+  lifetime: ClientLifetime,
+  signal: AbortSignal,
+  journal: NativeIntakeJournal = createNativeIntakeBrowserJournal(),
+  newId: () => string = randomUuid
+) {
+  let disposed = false;
+  const lifetimeAbort = new AbortController();
+  const stop = () => lifetimeAbort.abort();
+  const unsubscribe = subscribeClientLifetime(stop);
+  signal.addEventListener("abort", stop, { once: true });
+  const check = () => {
+    if (
+      disposed ||
+      signal.aborted ||
+      lifetimeAbort.signal.aborted ||
+      !isClientLifetimeCurrent(lifetime)
+    ) {
+      throw new Error("The selected connection changed. Reopen Native request to inspect it.");
+    }
+  };
+  const combined = (operation?: AbortSignal) =>
+    AbortSignal.any([signal, lifetimeAbort.signal, ...(operation ? [operation] : [])]);
+  const readBinding = async (operation?: AbortSignal): Promise<NativeIntakeBrowserBinding> => {
+    check();
+    const current = combined(operation);
+    current.throwIfAborted();
+    const auth = await sdk.operator.invoke("control.auth.current", {}, current);
+    check();
+    current.throwIfAborted();
+    if (
+      !auth.authenticated ||
+      !auth.admin ||
+      auth.principalKind !== "token" ||
+      !auth.principalId ||
+      auth.principalId === "shared-token" ||
+      auth.principalId.length > 200 ||
+      !["read:work-ledger", "write:work-ledger"].every(
+        (scope) => auth.scopes.includes("*") || auth.scopes.includes(scope)
+      )
+    ) {
+      throw new Error(
+        "Native requests require an existing paired admin with read:work-ledger and write:work-ledger. Shared tokens and user sessions are unsupported."
+      );
+    }
+    const project = await sdk.operator.invoke("workLedger.project", {}, current);
+    check();
+    current.throwIfAborted();
+    if (
+      typeof project.projectId !== "string" ||
+      !project.projectId ||
+      project.projectId.length > 200
+    )
+      throw new Error("The daemon did not identify its native project.");
+    const relay = getActiveRoute() === "relay" ? getStoredRelayPairing() : null;
+    if (getActiveRoute() === "relay" && !relay)
+      throw new Error("The selected relay connection is unavailable.");
+    // Only the public host key is retained. No token, relay rendezvous or grant.
+    return {
+      endpoint: GOODVIBES_BASE_URL,
+      projectId: project.projectId,
+      principalId: auth.principalId,
+      transport: relay ? `relay:${relay.daemonPublicKey}` : "direct",
+    };
+  };
+  try {
+    const binding = await readBinding();
+    const authorize = async (operation?: AbortSignal) => {
+      const current = await readBinding(operation);
+      if (!sameBinding(binding, current))
+        throw new Error("The native project or paired owner changed. Reopen Native request.");
+      check();
+    };
+    const invoke = (async (
+      method: string,
+      input?: Record<string, unknown>,
+      options?: { signal?: AbortSignal }
+    ) => {
+      await authorize(options?.signal);
+      const result = await sdk.operator.invoke(method, input, combined(options?.signal));
+      check();
+      return result;
+    }) as OperatorRemoteClient["invoke"];
+    const client = createOperatorNativeConversationIntakeClient({ invoke }, binding.projectId);
+    const confirm = async (record: NativeIntakeBrowserRecord) => {
+      check();
+      if (!sameBinding(binding, record.binding))
+        throw new Error("This request belongs to a different native owner.");
+      await journal.confirm(record);
+      check();
+    };
+    const validate = (
+      record: NativeIntakeBrowserRecord,
+      result: NativeIntakeResult
+    ): NativeIntakeResult => {
+      if (
+        result.kind !== "not-found" &&
+        (result.requestId !== record.command.requestId ||
+          result.projectId !== binding.projectId ||
+          result.sourceRef.inputId !== record.command.inputId ||
+          (result.kind === "turn" && result.text !== record.command.text) ||
+          (result.kind === "work" && result.receipt.goal !== record.command.text))
+      ) {
+        throw new Error(
+          "The daemon returned a different original source. Keep the saved request for inspection."
+        );
+      }
+      return result;
+    };
+    const inspect = async (record: NativeIntakeBrowserRecord, operation?: AbortSignal) => {
+      await confirm(record);
+      return validate(
+        record,
+        await client.get({ inputId: record.command.inputId }, { signal: combined(operation) })
+      );
+    };
+    const continueSubmission = async (
+      record: NativeIntakeBrowserRecord,
+      found: NativeIntakeResult,
+      operation?: AbortSignal
+    ): Promise<NativeIntakeResult> => {
+      let result = found;
+      if (result.kind === "not-found") {
+        await confirm(record);
+        result = validate(
+          record,
+          await client.capture(record.command, { signal: combined(operation) })
+        );
+      }
+      if (result.kind === "captured") {
+        await confirm(record);
+        result = validate(
+          record,
+          await client.admit(
+            { inputId: record.command.inputId, sourceRevision: result.sourceRef.sourceRevision },
+            { signal: combined(operation) }
+          )
+        );
+      }
+      return result;
+    };
+    return {
+      binding,
+      async list() {
+        await authorize();
+        const records = await journal.list(binding);
+        check();
+        return records;
+      },
+      async submit(
+        source: NativeIntakeSource,
+        saved: (record: NativeIntakeBrowserRecord) => void,
+        operation?: AbortSignal
+      ) {
+        // Validate before allocating identities. Deliberate identical inputs still get new IDs.
+        const original = nativeConversationIntakeCaptureRequestSchema.parse({
+          requestId: "validation",
+          inputId: "validation",
+          ...source,
+        });
+        await authorize(operation);
+        const record = {
+          binding,
+          command: nativeConversationIntakeCaptureRequestSchema.parse({
+            requestId: newId(),
+            inputId: newId(),
+            text: original.text,
+            unsupportedSources: original.unsupportedSources,
+          }),
+          createdAt: Date.now(),
+        };
+        await journal.save(record);
+        check();
+        saved(record);
+        return continueSubmission(record, { kind: "not-found" }, operation);
+      },
+      inspect,
+      async retry(record: NativeIntakeBrowserRecord, operation?: AbortSignal) {
+        // Never repeat an uncertain mutation until authoritative lookup has answered.
+        return continueSubmission(record, await inspect(record, operation), operation);
+      },
+      async resume(record: NativeIntakeBrowserRecord, operation?: AbortSignal) {
+        const found = await inspect(record, operation);
+        if (found.kind !== "processing" || found.recovery !== "required") return found;
+        await confirm(record);
+        return validate(
+          record,
+          await client.resume(
+            { inputId: record.command.inputId, sourceRevision: found.sourceRef.sourceRevision },
+            { signal: combined(operation) }
+          )
+        );
+      },
+      async cancel(record: NativeIntakeBrowserRecord, operation?: AbortSignal) {
+        const found = await inspect(record, operation);
+        if (found.kind === "not-found" || terminal(found)) return found;
+        await confirm(record);
+        return validate(
+          record,
+          await client.cancel(
+            { inputId: record.command.inputId, sourceRevision: found.sourceRef.sourceRevision },
+            { signal: combined(operation) }
+          )
+        );
+      },
+      dispose() {
+        disposed = true;
+        stop();
+        client.dispose();
+        unsubscribe();
+        signal.removeEventListener("abort", stop);
+      },
+    };
+  } catch (error) {
+    unsubscribe();
+    signal.removeEventListener("abort", stop);
+    stop();
+    throw error;
+  }
+}
+
+export type NativeIntakeSession = Awaited<ReturnType<typeof openNativeIntake>>;
+
+/** The protocol discriminators are factual lifecycle states, not prose classifiers. */
+export function nativeIntakeDescription(result: NativeIntakeResult): string {
+  switch (result.kind) {
+    case "not-found":
+      return "The latest lookup found no capture for this input. Retry submission keeps its original text and IDs; New request keeps this original saved for later inspection.";
+    case "captured":
+      return "Original source captured. Retry submission continues Jev admission with the same identity.";
+    case "processing":
+      return result.recovery === "required"
+        ? "Admission was interrupted. Resume asks Jev to continue under a new recovery generation."
+        : `Jev admission is ${result.stage}. Inspect to read its current state.`;
+    case "work":
+      return "Jev admitted this source to the work ledger. Execution has not been requested by this screen.";
+    case "turn":
+      return `Jev routed this source to ${result.route}. Native conversation delivery is not connected to this screen; no model turn was dispatched.`;
+    case "blocked":
+      return result.reason === "unsupported-source"
+        ? "Admission is blocked by an unsupported source. Submit a new complete request when that source is available."
+        : "Admission is blocked by missing context. Submit a new complete request with the context included.";
+    case "refused":
+      return result.reason === "exhausted"
+        ? "Jev admission refused this source after the bounded proposal attempts."
+        : "Jev refused admission of this source.";
+    case "cancelled":
+      return "Intake was cancelled before work admission.";
+  }
+}
