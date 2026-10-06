@@ -9,7 +9,7 @@ import { EVIDENCE_RELEVANCE_LIMITS as LIMITS, KnowledgeEvidenceRelevanceHeldErro
 export * from './types.js';
 function record(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function optionalText(value: unknown): boolean { return value === undefined || typeof value === 'string'; }
-function snapshotInput(input: AnswerEvidenceRelevanceInput): AnswerEvidenceRelevanceInput {
+export function snapshotAnswerEvidenceRelevanceInput(input: AnswerEvidenceRelevanceInput): AnswerEvidenceRelevanceInput {
   assertJudgmentInput(input);
   if (!record(input) || Object.keys(input).some((key) => !['query', 'candidates', 'subjects'].includes(key))
     || typeof input.query !== 'string' || !Array.isArray(input.candidates)) throw new Held('malformed');
@@ -52,8 +52,9 @@ function jsonState(value: object): Record<string, JsonValue> {
   if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Held('malformed');
   return freezeSupport(state);
 }
-function validatedPort(port: JudgmentPort): JudgmentPort {
+function validatedPort(port: JudgmentPort, beforeAsk: () => void): JudgmentPort {
   return { ...port, model: port.model, async ask(request) {
+    beforeAsk();
     const result = await port.ask(request);
     if (!result?.answers || typeof result.model !== 'string' || !result.model.trim()
       || typeof result.requestedModel !== 'string' || !result.requestedModel.trim()
@@ -69,9 +70,10 @@ function validatedPort(port: JudgmentPort): JudgmentPort {
 /** Pure initial ranking. Callers retain access/serving filters and must revalidate their local record map before applying it. */
 export async function prepareAnswerEvidenceRelevance(input: AnswerEvidenceRelevanceInput, options: {
   readonly signal?: AbortSignal | undefined; readonly timeoutMs?: number | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
 } = {}): Promise<AnswerEvidenceRelevancePlan> {
   if (options.signal?.aborted) throw new Held('aborted');
-  const snapshot = snapshotInput(input);
+  const snapshot = snapshotAnswerEvidenceRelevanceInput(input);
   const inputHash = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
   if (!snapshot.query.trim() || !snapshot.candidates.length) return freezeSupport({ inputHash, accepted: [], rejected: [] });
   const timeoutMs = options.timeoutMs ?? LIMITS.defaultTimeoutMs;
@@ -83,13 +85,14 @@ export async function prepareAnswerEvidenceRelevance(input: AnswerEvidenceReleva
   const abort = () => stop(new Held('aborted'));
   options.signal?.addEventListener('abort', abort, { once: true });
   const timer = setTimeout(() => stop(new Held('budget')), timeoutMs);
-  const check = () => { if (stoppedError) throw stoppedError; if (options.signal?.aborted) throw new Held('aborted'); };
+  const check = () => { if (stoppedError) throw stoppedError; if (options.signal?.aborted) throw new Held('aborted'); options.assertCurrent?.(); };
   const run = async () => {
     check(); const configuredPort = judgmentPort('engine.knowledge.answer-evidence-relevance');
-    const configuredModel = configuredPort.model, port = validatedPort(configuredPort);
+    const configuredModel = configuredPort.model;
     const checkConfiguration = () => {
       if (judgmentPort('engine.knowledge.answer-evidence-relevance') !== configuredPort || configuredPort.model !== configuredModel) throw new Held('stale');
     };
+    const port = validatedPort(configuredPort, () => { check(); checkConfiguration(); });
     const readings: AnswerEvidenceRelevanceReading[] = []; let next = 0;
     let model: string | undefined, requestedModel: string | undefined;
     await Promise.all(Array.from({ length: Math.min(LIMITS.concurrency, snapshot.candidates.length) }, async () => {

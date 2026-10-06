@@ -13,12 +13,8 @@ import { belongsToSpace, edgeIsActive, isGeneratedPageSource, readRecord } from 
 import { isUnusableHomeGraphExtractionText } from './extraction-quality.js';
 import { buildSourceLinkIndex } from './source-links.js';
 import { intersects, isSingularObjectQuery } from './search-utils.js';
-import type { HomeGraphSearchResult } from './types.js';
 
-const MAX_FIELD_CHARS = 4_096;
-const MAX_SECTION_COUNT = 32;
 const MAX_SEARCH_TEXT_CHARS = 64 * 1024;
-const MAX_ANSWER_EXCERPT_CHARS = 640;
 const ANCHOR_SCOPE_LIMIT = 5;
 
 const STOPWORDS = new Set([
@@ -88,45 +84,6 @@ const GENERIC_ANCHOR_TOKENS = new Set([
   'tv',
 ]);
 
-const QUERY_EXPANSIONS: Record<string, readonly string[]> = {
-  capability: ['capabilities', 'feature', 'features', 'function', 'functions', 'mode', 'modes', 'spec', 'specs', 'support', 'supports'],
-  capabilities: ['capability', 'feature', 'features', 'function', 'functions', 'mode', 'modes', 'spec', 'specs', 'support', 'supports'],
-  feature: ['features', 'capability', 'capabilities', 'function', 'functions', 'mode', 'modes', 'spec', 'specs', 'support', 'supports'],
-  features: ['feature', 'capability', 'capabilities', 'function', 'functions', 'mode', 'modes', 'spec', 'specs', 'support', 'supports'],
-  television: ['tv', 'media_player'],
-  tv: ['television', 'media_player'],
-};
-
-const SOURCE_EVIDENCE_TOKENS = new Set([
-  'battery',
-  'capabilities',
-  'capability',
-  'feature',
-  'features',
-  'manual',
-  'model',
-  'reset',
-  'serial',
-  'spec',
-  'specs',
-  'support',
-  'supports',
-  'warranty',
-]);
-
-const ANCHOR_INTENT_TOKENS = new Set([
-  ...SOURCE_EVIDENCE_TOKENS,
-  'function',
-  'functions',
-  'mode',
-  'modes',
-  'setup',
-  'install',
-  'configure',
-  'documentation',
-  'manual',
-]);
-
 const HOME_GRAPH_ANCHOR_KINDS = new Set([
   'ha_home',
   'ha_entity',
@@ -183,100 +140,6 @@ export function readHomeGraphSearchState(store: KnowledgeStore, spaceId: string)
   return { spaceId, sources, nodes, edges, extractionBySourceId };
 }
 
-export async function scoreHomeGraphResults(
-  query: string,
-  sources: readonly KnowledgeSourceRecord[],
-  nodes: readonly KnowledgeNodeRecord[],
-  edges: readonly KnowledgeEdgeRecord[],
-  extractionBySourceId: (sourceId: string) => KnowledgeExtractionRecord | null | undefined,
-  limit: number,
-): Promise<HomeGraphSearchResult[]> {
-  assertExtractionInputs(sources, extractionBySourceId);
-  const tokens = tokenizeQuery(query);
-  if (tokens.length === 0) return [];
-  const expandedTokens = expandTokens(tokens);
-  const anchorTokens = selectAnchorQueryTokens(tokens);
-  const anchors = selectAnchorNodes(anchorTokens, nodes);
-  const sourceAnchors = selectSourceAnchors(anchorTokens, anchors.map((anchor) => anchor.node), isSingularObjectQuery(query, tokens));
-  const anchorIds = new Set(sourceAnchors.map((node) => node.id));
-  const anchorIdentityTokens = collectAnchorIdentityTokens(sourceAnchors);
-  const sourceLinks = buildSourceLinkIndex(edges, nodes);
-  const useAnchorScope = sourceAnchors.length > 0 && sourceAnchors.length <= ANCHOR_SCOPE_LIMIT;
-  const objectScopedQuery = sourceAnchors.length > 0;
-  const sourceEvidenceQuery = queryNeedsSourceEvidence(expandedTokens);
-  const integrationQuery = queryMentionsIntegration(tokens);
-  const sourceResults: HomeGraphSearchResult[] = await Promise.all(sources.map(async (source) => {
-    const extraction = extractionBySourceId(source.id);
-    if (isPendingDocumentationCandidate(source, extraction)) {
-      return await sourceResult(source, extraction, 0);
-    }
-    if (sourceEvidenceQuery && !integrationQuery && isHomeAssistantIntegrationSource(source)) {
-      return await sourceResult(source, extraction, 0);
-    }
-    const linkedNodeIds = sourceLinks.get(source.id) ?? new Set<string>();
-    const linkedToAnchor = useAnchorScope && intersects(linkedNodeIds, anchorIds);
-    const anchorIdentityScore = objectScopedQuery
-      ? await sourceAnchorIdentityScore(anchorIdentityTokens, source, extraction)
-      : 0;
-    const identityScore = scoreFields(tokens, [
-      source.title,
-      source.summary,
-      source.description,
-      source.sourceUri,
-      source.canonicalUri,
-      source.tags.join(' '),
-    ]);
-    const contentScore = scoreFields(expandedTokens, [
-      extraction?.title,
-      extraction?.summary,
-      extraction?.excerpt,
-      await readSearchText(extraction),
-      ...limitedSections(extraction),
-    ]);
-    const baseScore = identityScore + contentScore;
-    const linkBoost = linkedToAnchor ? 120 + relationBoost(source.id, anchorIds, edges) : 0;
-    const inferredAnchorBoost = !linkedToAnchor && anchorIdentityScore > 0 ? Math.min(90, 30 + anchorIdentityScore) : 0;
-    const manualBoost = isManualLikeSource(source) ? 24 : 0;
-    const indexedBoost = source.status === 'indexed' ? 18 : 0;
-    const extractionBoost = extraction ? 20 : 0;
-    const score = baseScore > 0 || linkBoost > 0 || inferredAnchorBoost > 0
-      ? baseScore + linkBoost + inferredAnchorBoost + manualBoost + indexedBoost + extractionBoost
-      : 0;
-    return await sourceResult(source, extraction, score, await selectRelevantExcerpt(expandedTokens, source, extraction));
-  }));
-  const nodeResults: HomeGraphSearchResult[] = nodes.map((node) => {
-    const baseScore = scoreFields(tokens, nodeIdentityFields(node));
-    const anchorBoost = anchorIds.has(node.id) ? 40 + nodeKindBoost(node.kind) : 0;
-    return {
-      kind: 'node' as const,
-      id: node.id,
-      score: baseScore > 0 ? baseScore + anchorBoost + Math.round(node.confidence / 20) : 0,
-      title: node.title,
-      summary: node.summary,
-      excerpt: node.summary,
-      node,
-    };
-  });
-  let results = [...sourceResults, ...nodeResults]
-    .filter((entry) => entry.score > 0)
-    .sort(compareHomeGraphResults);
-  const anchoredSourceResults = useAnchorScope
-    ? (await Promise.all(results.map(async (result) => {
-        if (!result.source) return undefined;
-        return (intersects(sourceLinks.get(result.source.id) ?? new Set<string>(), anchorIds)
-          || await sourceAnchorIdentityScore(anchorIdentityTokens, result.source, extractionBySourceId(result.source.id)) > 0) ? result : undefined;
-      }))).filter((result): result is HomeGraphSearchResult => result !== undefined)
-    : [];
-  if (anchoredSourceResults.length > 0) {
-    results = anchoredSourceResults.sort(compareHomeGraphResults);
-  }
-  if (sourceEvidenceQuery) {
-    results = await pruneWeakSourceEvidence(results, tokens, sourceLinks, anchorIds, anchorIdentityTokens, objectScopedQuery, extractionBySourceId);
-  }
-  const strongResults = pruneWeakTokenCoverage(results, tokens);
-  return strongResults.slice(0, Math.max(1, limit));
-}
-
 export async function selectHomeGraphExtractionRepairCandidates(
   query: string,
   sources: readonly KnowledgeSourceRecord[],
@@ -321,28 +184,6 @@ export async function selectHomeGraphExtractionRepairCandidates(
     .sort((left, right) => right.score - left.score || left.source.id.localeCompare(right.source.id))
     .slice(0, Math.max(1, limit))
     .map((entry) => entry.source);
-}
-
-async function sourceResult(
-  source: KnowledgeSourceRecord,
-  extraction: KnowledgeExtractionRecord | null | undefined,
-  score: number,
-  excerpt?: string,
-): Promise<HomeGraphSearchResult> {
-  return {
-    kind: 'source',
-    id: source.id,
-    score,
-    title: source.title ?? source.sourceUri ?? source.id,
-    summary: await usefulExtractionSummary(extraction) ?? source.summary,
-    ...(excerpt ? { excerpt } : {}),
-    source,
-  };
-}
-
-function limitedSections(extraction: KnowledgeExtractionRecord | null | undefined): string[] {
-  if (!extraction) return [];
-  return extraction.sections.slice(0, MAX_SECTION_COUNT).map((section) => clampText(section, MAX_FIELD_CHARS));
 }
 
 async function readSearchText(extraction: KnowledgeExtractionRecord | null | undefined): Promise<string | undefined> {
@@ -434,10 +275,6 @@ function selectAnchorNodes(tokens: readonly string[], nodes: readonly KnowledgeN
     .slice(0, 12);
 }
 
-function selectAnchorQueryTokens(tokens: readonly string[]): string[] {
-  return tokens.filter((token) => !ANCHOR_INTENT_TOKENS.has(token));
-}
-
 function isHomeGraphAnchorNode(node: KnowledgeNodeRecord): boolean {
   if (typeof node.metadata.semanticKind === 'string') return false;
   return HOME_GRAPH_ANCHOR_KINDS.has(node.kind);
@@ -505,21 +342,8 @@ function nodeKindBoost(kind: string): number {
   }
 }
 
-function isPendingDocumentationCandidate(
-  source: KnowledgeSourceRecord,
-  extraction: KnowledgeExtractionRecord | null | undefined,
-): boolean {
-  return !extraction
-    && source.status !== 'indexed'
-    && source.metadata.homeGraphSourceKind === 'documentation-candidate';
-}
-
 export async function homeGraphExtractionNeedsRepair(extraction: KnowledgeExtractionRecord | null | undefined): Promise<boolean> {
   return knowledgeExtractionNeedsRefresh(extraction ?? null);
-}
-
-function queryNeedsSourceEvidence(tokens: readonly string[]): boolean {
-  return tokens.some((token) => SOURCE_EVIDENCE_TOKENS.has(token));
 }
 
 function queryMentionsIntegration(tokens: readonly string[]): boolean {
@@ -534,171 +358,6 @@ function isManualLikeSource(source: KnowledgeSourceRecord): boolean {
     || tags.includes('manual')
     || tags.includes('artifact')
     || tags.includes('document');
-}
-
-function isHomeAssistantIntegrationSource(source: KnowledgeSourceRecord): boolean {
-  const tags = source.tags.map((tag) => tag.toLowerCase());
-  const sourceKind = typeof source.metadata.homeGraphSourceKind === 'string'
-    ? source.metadata.homeGraphSourceKind.toLowerCase()
-    : '';
-  return tags.includes('integration')
-    || tags.includes('documentation')
-    || sourceKind === 'documentation-candidate';
-}
-
-async function pruneWeakSourceEvidence(
-  results: readonly HomeGraphSearchResult[],
-  tokens: readonly string[],
-  sourceLinks: ReadonlyMap<string, ReadonlySet<string>>,
-  anchorIds: ReadonlySet<string>,
-  anchorIdentityTokens: readonly string[],
-  objectScopedQuery: boolean,
-  extractionBySourceId: (sourceId: string) => KnowledgeExtractionRecord | null | undefined,
-): Promise<HomeGraphSearchResult[]> {
-  const sourceResults = results.filter((result) => result.source);
-  if (sourceResults.length === 0) return [...results];
-  const strongSourceResults = await Promise.all(sourceResults.map(async (result) => {
-    const source = result.source;
-    if (!source) return undefined;
-    if (!(await hasUsefulSourceAnswerText(result))) return undefined;
-    const linkedToAnchor = intersects(sourceLinks.get(source.id) ?? new Set<string>(), anchorIds);
-    const matchesAnchorIdentity = await sourceAnchorIdentityScore(anchorIdentityTokens, source, extractionBySourceId(source.id)) > 0;
-    const coverage = tokenCoverage(tokens, resultText(result));
-    return (linkedToAnchor
-      || (matchesAnchorIdentity && coverage >= 1)
-      || (!objectScopedQuery && coverage >= Math.min(2, tokens.length))) ? result : undefined;
-  }));
-  return strongSourceResults.filter((result): result is HomeGraphSearchResult => result !== undefined);
-}
-
-async function hasUsefulSourceAnswerText(result: HomeGraphSearchResult): Promise<boolean> {
-  const detail = result.excerpt ?? result.summary ?? result.source?.description;
-  return typeof detail === 'string' && detail.trim().length > 0 && !(await isLowInformationExtractionText(detail));
-}
-
-async function selectRelevantExcerpt(
-  tokens: readonly string[],
-  source: KnowledgeSourceRecord,
-  extraction: KnowledgeExtractionRecord | null | undefined,
-): Promise<string | undefined> {
-  const chunks = await candidateExcerptChunks(tokens, source, extraction);
-  let best: { readonly score: number; readonly text: string } | undefined;
-  for (const chunk of chunks) {
-    const text = cleanWhitespace(chunk);
-    if (!text || await isLowInformationExtractionText(text)) continue;
-    const score = scoreFields(tokens, [text]);
-    if (!best || score > best.score || (score === best.score && text.length < best.text.length)) {
-      best = { score, text };
-    }
-  }
-  if (!best || best.score <= 0) {
-    const useful = await Promise.all(chunks.map(async (chunk) => await isLowInformationExtractionText(chunk) ? undefined : chunk));
-    return firstBoundedText(useful, MAX_ANSWER_EXCERPT_CHARS);
-  }
-  return clampAroundBestToken(best.text, tokens, MAX_ANSWER_EXCERPT_CHARS);
-}
-
-async function candidateExcerptChunks(
-  tokens: readonly string[],
-  source: KnowledgeSourceRecord,
-  extraction: KnowledgeExtractionRecord | null | undefined,
-): Promise<string[]> {
-  const searchText = await readSearchText(extraction);
-  return [
-    extraction?.excerpt,
-    extraction?.summary,
-    ...limitedSections(extraction),
-    ...searchTextWindows(tokens, searchText),
-    ...sentenceChunks(searchText),
-    source.description,
-    source.summary,
-  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
-}
-
-async function usefulExtractionSummary(extraction: KnowledgeExtractionRecord | null | undefined): Promise<string | undefined> {
-  const summary = extraction?.summary?.trim();
-  return summary && !(await isLowInformationExtractionText(summary)) ? summary : undefined;
-}
-
-async function isLowInformationExtractionText(value: string): Promise<boolean> {
-  return isUnusableHomeGraphExtractionText(value);
-}
-
-function sentenceChunks(value: string | undefined): string[] {
-  const text = cleanWhitespace(value ?? '');
-  if (!text) return [];
-  const matches = text.match(/[^.!?\n]+[.!?]?/g) ?? [text];
-  return matches.map((entry) => entry.trim()).filter(Boolean).slice(0, 80);
-}
-
-function searchTextWindows(tokens: readonly string[], value: string | undefined): string[] {
-  const text = cleanWhitespace(value ?? '');
-  if (!text) return [];
-  const lower = text.toLowerCase();
-  const windows: string[] = [];
-  const seen = new Set<string>();
-  for (const token of tokens) {
-    const index = lower.indexOf(token.toLowerCase());
-    if (index < 0) continue;
-    const start = Math.max(0, index - Math.floor(MAX_ANSWER_EXCERPT_CHARS / 3));
-    const end = Math.min(text.length, start + MAX_ANSWER_EXCERPT_CHARS);
-    const window = `${start > 0 ? '...' : ''}${text.slice(start, end).trim()}${end < text.length ? '...' : ''}`;
-    if (window && !seen.has(window)) {
-      seen.add(window);
-      windows.push(window);
-    }
-  }
-  return windows;
-}
-
-function clampAroundBestToken(value: string, tokens: readonly string[], maxLength: number): string {
-  const text = cleanWhitespace(value);
-  if (text.length <= maxLength) return text;
-  const lower = text.toLowerCase();
-  const index = tokens
-    .map((token) => lower.indexOf(token.toLowerCase()))
-    .filter((entry) => entry >= 0)
-    .sort((a, b) => a - b)[0] ?? 0;
-  const start = Math.max(0, index - Math.floor(maxLength / 3));
-  const end = Math.min(text.length, start + maxLength);
-  const prefix = start > 0 ? '...' : '';
-  const suffix = end < text.length ? '...' : '';
-  return `${prefix}${text.slice(start, end).trim()}${suffix}`;
-}
-
-function cleanWhitespace(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
-}
-
-function pruneWeakTokenCoverage(
-  results: readonly HomeGraphSearchResult[],
-  tokens: readonly string[],
-): HomeGraphSearchResult[] {
-  if (results.length <= 1 || tokens.length <= 1) return [...results];
-  const topCoverage = tokenCoverage(tokens, resultText(results[0]!));
-  if (topCoverage < 2) return [...results];
-  return results.filter((result) => tokenCoverage(tokens, resultText(result)) >= Math.max(1, topCoverage - 1));
-}
-
-function tokenCoverage(tokens: readonly string[], text: string): number {
-  const haystack = text.toLowerCase();
-  let count = 0;
-  for (const token of tokens) {
-    if (fieldIncludesToken(haystack, token)) count += 1;
-  }
-  return count;
-}
-
-function resultText(result: HomeGraphSearchResult): string {
-  return [
-    result.title,
-    result.summary,
-    result.excerpt,
-    result.source?.description,
-    result.source?.sourceUri,
-    result.source?.canonicalUri,
-    result.source?.tags.join(' '),
-  ].filter((value): value is string => typeof value === 'string').join(' ');
 }
 
 function firstBoundedText(values: readonly unknown[], maxLength: number): string | undefined {
@@ -721,17 +380,6 @@ function tokenizeQuery(value: string): string[] {
     .map((entry) => entry.trim())
     .filter((entry) => isMeaningfulToken(entry));
   return [...new Set(tokens)];
-}
-
-function expandTokens(tokens: readonly string[]): string[] {
-  const expanded = new Set<string>();
-  for (const token of tokens) {
-    expanded.add(token);
-    for (const synonym of QUERY_EXPANSIONS[token] ?? []) {
-      expanded.add(synonym);
-    }
-  }
-  return [...expanded];
 }
 
 function isMeaningfulToken(token: string): boolean {
@@ -763,18 +411,6 @@ function fieldIncludesToken(haystack: string, token: string): boolean {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function compareHomeGraphResults(left: HomeGraphSearchResult, right: HomeGraphSearchResult): number {
-  return right.score - left.score
-    || resultKindPriority(right) - resultKindPriority(left)
-    || left.id.localeCompare(right.id);
-}
-
-function resultKindPriority(result: HomeGraphSearchResult): number {
-  if (result.source) return 2;
-  if (result.node) return 1;
-  return 0;
 }
 
 function assertExtractionInputs(

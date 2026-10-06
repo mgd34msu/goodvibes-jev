@@ -507,7 +507,7 @@ authoritative reference; other docs link here instead of repeating it.
 | `ha_device_passport` | The generated living device profile page for one device | Created and refreshed by passport generation; reindexing a manual-backed device refreshes its passport |
 | `ha_maintenance_item` | A maintenance task or schedule entry for something in the home | No automatic producer; recorded through the object surface and rendered as the map's Maintenance section |
 | `ha_troubleshooting_case` | A recorded troubleshooting episode | No automatic producer; recorded through the object surface and rendered as the map's Troubleshooting section |
-| `ha_purchase` | A purchase record for something in the home | No automatic producer; recorded through the object surface and rank-boosted in Home Graph search |
+| `ha_purchase` | A purchase record for something in the home | No automatic producer; recorded through the object surface and considered by typed Home Graph evidence retrieval |
 | `ha_network_node` | A network infrastructure element such as a router, switch, or access point | No automatic producer; recorded through the object surface and rendered as the map's Network section |
 
 The relation vocabulary splits the same way. A few relations are written by the
@@ -538,8 +538,9 @@ relations from that layer (`supports_fact`, `has_gap`, `describes`,
 knowledge engine rather than here.
 
 Home Graph ask uses a namespace-filtered search state, batches extraction
-lookup by source id, and scores bounded document fields. It does not load the
-full graph export state or repeatedly scan every extraction for each source.
+lookup by source id, and reads complete candidate meaning through bounded shared
+judgment batches before applying the result limit. It does not load the full
+graph export state or repeatedly scan every extraction for each source.
 
 Read-only Home Graph routes infer the active Home Assistant space when clients
 omit the space fields, and they resolve existing Home Assistant spaces by
@@ -548,22 +549,21 @@ letter casing. Home Assistant space reads are case-tolerant so existing
 manuals, graph nodes, links, and extraction rows remain visible without
 reuploading or migrating data.
 
-Object-specific questions are anchored to matching Home Assistant nodes, then
-indexed sources linked to those nodes are preferred over unrelated generic
-keyword hits. The matched sources are semantically enriched into durable facts
-and pages when needed, and the answer is synthesized from that evidence instead
-of returning raw snippets. The response includes answer text, sources, linked HA
-object references, extracted facts, and gaps when the graph cannot answer the
-question.
+Object-specific questions use typed object/integration alignment and complete
+candidate evidence relevance, with separate model/variant subject context.
+Every eligible candidate is protected before any request, then whole candidates
+are batched under the existing reader limits. Keyword overlap, record types and
+graph links do not supply relevance scores or discard paraphrases.
 
-Home Graph passes its existing bounded retrieval candidates directly to the
-shared semantic answer service, which reads object/integration alignment and
-source relevance without a second caller-side keyword/point scope. Without
-that service, typed object and result-to-subject readings filter the literal
-rendering; missing or unsettled readers hold, and confidence is zero (unknown).
-Search ranking and extraction-repair selection still retain upstream heuristics;
-this narrower conversion does not claim to replace all Home Graph retrieval.
-See [the bounded scope audit](../../../docs/audit/knowledge-home-graph-object-scope.md).
+Configured semantic answers receive a guarded local candidate window so later
+linked-source or embedded-fact discovery cannot revive a rejected row. Accepted
+backing evidence can survive a smaller display limit. Foreground repair performs
+a fresh typed retrieval at its existing successful re-answer transition while
+retaining the original question, subject and configuration bindings. Without a
+semantic service, the literal renderer reuses the completed search selection;
+its confidence and legacy score fields remain zero (unknown/not computed).
+Extraction-repair candidate selection remains separate policy. See
+[the retrieval audit](../../../docs/audit/knowledge-home-graph-search.md).
 
 Object anchoring is limited to Home Assistant graph objects; generated semantic
 pages and extracted fact nodes never become anchors for another ask query. This
@@ -577,9 +577,11 @@ batteries, and warranties require useful source text; low-information
 extraction placeholders and unrelated integration documentation are not treated
 as answer material.
 
-Excerpt selection scans bounded windows across stored searchable text, so
-sections that appear later in a large manual can be used as answer evidence
-without an unbounded document scan.
+Excerpt selection uses typed readings of exact original source spans, including
+whole-field and cross-field context bundles for labels and qualifications. An
+empty selection has no prefix or summary fallback. Corpus batching preserves the
+existing large-manual fixture; a single source beyond a reader budget still holds
+rather than being clipped or sent through an enlarged privacy limit.
 
 Home Graph snapshot sync creates living generated-page sources for device
 passports and room pages by default. This uses the shared knowledge generated

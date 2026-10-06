@@ -830,7 +830,14 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
 
   test('Home Graph semantic ask does not let unrelated semantic pages become object anchors', async () => {
     // Explicit readings for the off-intent maintenance/setup facts in this fixture.
-    answerReadings.set({ facts: [
+    answerReadings.set({ initialEvidenceDefault: 0.01, initialEvidenceCandidates: [
+      ['source', 'LG 86NANO90UNA manual', 0.99],
+      ['node', 'LG TV supports HDR10, HDMI eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control', 0.99],
+      ['source', 'Home Assistant snapshot', 0.01],
+      ['source', 'Kasa Smart Wi-Fi Plug Slim with Energy Monitoring', 0.01],
+      ['node', 'Features include energy monitoring, Matter support, scheduling, and away mode', 0.01],
+      ['node', 'Kasa Smart Wi-Fi Plug', 0.01],
+    ], facts: [
       ['Fasten the stand screws to prevent the TV from overturning during setup', 0.03],
       ['Refer all servicing to qualified personnel and contact customer service for repair', 0.03],
       ['Clean the TV with a dry cloth', 0.03],

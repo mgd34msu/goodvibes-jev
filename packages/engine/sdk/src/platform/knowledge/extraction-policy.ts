@@ -63,7 +63,15 @@ export async function readKnowledgeSearchText(record: Record<string, unknown>): 
   return typeof value === 'string' && await hasUsefulKnowledgeExtractionText(value) ? value : undefined;
 }
 
-export async function hasUsefulKnowledgeExtractionText(value: string | undefined): Promise<boolean> {
+export function hasUsefulKnowledgeExtractionText(value: string | undefined): Promise<boolean> {
+  return readKnowledgeExtractionTextUsability(value);
+}
+
+/** Shared readability operation with caller-owned cancellation. The public
+ * compatibility helper above retains its existing signature and policy.
+ */
+export async function readKnowledgeExtractionTextUsability(value: string | undefined, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) throw new KnowledgeExtractionJudgmentHoldError();
   if (!value?.trim()) return false;
   assertJudgmentInput(value);
   const normalized = value.toLowerCase();
@@ -72,7 +80,8 @@ export async function hasUsefulKnowledgeExtractionText(value: string | undefined
   return requireExtractionJudgment(async () => {
     const run = await extractionReadability.run(judgmentPort('knowledge.extraction.readability'), {
       sample: value.slice(0, KNOWLEDGE_EXTRACTION_SAMPLE_CHARS),
-    }, { site: 'knowledge.extraction.readability' });
+    }, { site: 'knowledge.extraction.readability', ...(signal ? { signal } : {}) });
+    if (signal?.aborted) throw new KnowledgeExtractionJudgmentHoldError();
     const reading = run.readings.readable;
     if (reading.outcome !== 'act' || reading.verdict === 'uncertain') {
       run.recordAction('hold');

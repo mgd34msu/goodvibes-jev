@@ -315,11 +315,11 @@ persist binary-like stream data as `searchText`, summaries, sections, or page
 content. If no readable text can be extracted, the PDF extraction fails instead
 of becoming placeholder Home Graph evidence.
 
-Ask excerpt selection scans bounded windows throughout the stored searchable
-text, so a query can match a feature/spec/reset section that appears later in a
-large manual instead of being limited to the first parsed chunks. This is still
-bounded by the SDK search caps and does not rescan whole documents on every
-question.
+Ask retrieval protects complete stored candidate meaning before shared bounded
+judgment batches. Selected excerpts are exact original spans with full
+within-source context, including later qualifications. No keyword window or
+clipped prefix decides usefulness. Per-reader limits remain unchanged; an
+oversized single source holds rather than losing its exceptions.
 
 Home Graph artifact sources do not need to be uploaded again after extraction
 quality improves. When ask finds a relevant linked source with missing or
@@ -392,14 +392,14 @@ generation against the clean space.
 
 #### Ask ranking
 
-Home Graph keeps its bounded search and extraction-repair stages. Their existing
-lexical ranking is a retrieval window, not a final semantic subject decision.
-After retrieval, typed judgment readers select concrete objects and integration
-intent rather than using TV-brand weights, type-word lists or a singular-object
-regex. Ambiguous or unavailable readings hold instead of falling back to those
-guesses. The literal-rendering path uses the same object readers and a typed
-result-to-subject relevance reading, preserving the retrieval score units and
-order. Its confidence is zero (unknown); search points are not answer confidence.
+Home Graph uses typed object/integration alignment, complete-candidate evidence
+relevance and exact-span excerpt readings. Whole candidates are batched under
+unchanged reader limits before the result limit is applied. Token matches,
+source-type boosts, graph weights and keyword pruning no longer rank answer
+retrieval. Missing or unsettled readers hold without a heuristic fallback.
+Literal confidence and the uncomputed legacy retrieval-points field are zero;
+judgment probabilities order accepted rows internally. Extraction-repair
+candidate selection remains a separate, earlier policy.
 
 Pending integration documentation candidates are source suggestions,
 not answer material, until they are indexed. Device feature/spec/manual
@@ -417,12 +417,15 @@ locally re-ranking the graph or rendering raw extraction snippets.
 extraction artifacts such as generated wiki pages, fact nodes, and knowledge
 gaps remain in `facts`/`gaps` and are not reported as linked HA objects.
 
-Home Graph ask passes its bounded retrieval candidates directly into the shared
-semantic answer layer when configured. That layer owns object/integration
-alignment and source/fact selection; the caller does not pre-empt it with a
-second inferred-object filter. The returned results and enrichment targets are
-the actual semantic-selected results. Upstream lexical search can still omit a
-candidate and remains separate migration work.
+Configured semantic answers receive a guarded local candidate window. Rejected
+sources and embedded facts cannot reappear through later graph expansion, while
+independently accepted backing evidence survives a smaller display limit.
+Foreground repair re-reads the changed corpus through the same typed readers at
+its existing successful re-answer transition, retaining the original question,
+subject and configuration bindings. Returned results and enrichment targets use
+the actual semantic-selected results. See the
+[retrieval audit](../../../docs/audit/knowledge-home-graph-search.md) for proof,
+remaining limits and calibration status.
 Generated semantic wiki pages and extracted fact nodes are not used as Home
 Assistant object anchors, so a generated Kasa page or generic "features" fact
 cannot make a TV query pull Kasa sources into the answer.
