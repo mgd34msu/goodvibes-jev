@@ -4622,6 +4622,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "files": [
           "sample"
         ],
+        "nativeRevision": "sample",
         "unifiedDiff": "sample",
         "stat": "sample"
       }
@@ -20233,6 +20234,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "files": [
         "sample"
       ],
+      "nativeRevision": "sample",
       "unifiedDiff": "sample",
       "stat": "sample"
     }
@@ -23123,7 +23125,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "sessionId": "sample",
         "continuation": {
           "sessionId": "sample",
-          "revision": "sample"
+          "revision": "sample",
+          "selectedDiff": {
+            "kind": "session",
+            "revision": "sample",
+            "fileIndex": 0,
+            "hunkIndex": 0
+          }
         }
       }
     }
@@ -23147,7 +23155,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "sessionId": "sample",
         "continuation": {
           "sessionId": "sample",
-          "revision": "sample"
+          "revision": "sample",
+          "selectedDiff": {
+            "kind": "session",
+            "revision": "sample",
+            "fileIndex": 0,
+            "hunkIndex": 0
+          }
         }
       }
     }
@@ -23171,7 +23185,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "sessionId": "sample",
         "continuation": {
           "sessionId": "sample",
-          "revision": "sample"
+          "revision": "sample",
+          "selectedDiff": {
+            "kind": "session",
+            "revision": "sample",
+            "fileIndex": 0,
+            "hunkIndex": 0
+          }
         }
       }
     }
@@ -23195,7 +23215,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "sessionId": "sample",
         "continuation": {
           "sessionId": "sample",
-          "revision": "sample"
+          "revision": "sample",
+          "selectedDiff": {
+            "kind": "session",
+            "revision": "sample",
+            "fileIndex": 0,
+            "hunkIndex": 0
+          }
         }
       }
     }
@@ -23219,7 +23245,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "sessionId": "sample",
         "continuation": {
           "sessionId": "sample",
-          "revision": "sample"
+          "revision": "sample",
+          "selectedDiff": {
+            "kind": "session",
+            "revision": "sample",
+            "fileIndex": 0,
+            "hunkIndex": 0
+          }
         }
       }
     }

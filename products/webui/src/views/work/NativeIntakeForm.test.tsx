@@ -245,7 +245,7 @@ async function settle(check: () => boolean) {
 }
 async function render(
   onOpenSession?: (sessionId: string) => void,
-  initial: { continuationSessionId?: string; projectId?: string; closed?: boolean } = {}
+  initial: Pick<Parameters<typeof NativeIntakeForm>[0], "continuationSessionId" | "projectId" | "closed" | "selectedDiff"> = {}
 ) {
   let scope = initial;
   const el = document.createElement("div");
@@ -1116,4 +1116,32 @@ describe("Native session continuation form", () => {
     expect(button("Submit")).toBeUndefined();
     expect(connected.turn.request).not.toHaveBeenCalled();
   });
+});
+
+test("selected comment form saves exact text separately, scopes reopening, and retires a replaced hunk", async () => {
+  const selectedDiff = { kind: "session" as const, revision: "a".repeat(64), fileIndex: 0, hunkIndex: 0 };
+  const source: NativeIntakeBrowserRecord = { ...record, command: { ...record.command, continuation: { sessionId: "native-a", selectedDiff } } };
+  const other: NativeIntakeBrowserRecord = { ...source, command: { ...source.command, inputId: "other-hunk", requestId: "other-hunk-request", text: "Other hunk comment", continuation: { sessionId: "native-a", selectedDiff: { ...selectedDiff, hunkIndex: 1 } } } };
+  connected.list.mockResolvedValue([other]);
+  connected.submit.mockImplementation(async (_source, saved) => { saved(source); return turn; });
+  const pending = deferred<NativeTurnObservation>();
+  connected.turn.request.mockImplementation(() => pending.promise);
+  const view = await render(undefined, { continuationSessionId: "native-a", selectedDiff });
+  expect(view.el.textContent).not.toContain("Other hunk comment");
+  expect(view.el.textContent).toContain("Original comment");
+  submit(view.el);
+  await settle(() => connected.turn.request.mock.calls.length === 1);
+  expect(connected.submit.mock.calls[0]?.[0]).toEqual({ text: original, unsupportedSources: [] });
+  expect(view.el.querySelector("pre.native-intake__source")?.textContent).toBe(original);
+  expect(view.el.textContent).toContain("Session-stamped checkpoint aggregate");
+  const previous = connected;
+  connected = fixture(); session = connected;
+  view.rerender({ continuationSessionId: "native-a", selectedDiff: { ...selectedDiff, hunkIndex: 1 } });
+  await settle(() => Boolean(view.button("Submit")));
+  expect(previous.dispose).toHaveBeenCalledTimes(1);
+  expect(previous.turn.request.mock.calls[0]?.[1]?.aborted).toBe(true);
+  pending.resolve(turnRunning);
+  await new Promise(resolve => setTimeout(resolve, 5)); flushSync(() => {});
+  expect(view.el.textContent).not.toContain("broker-input-real");
+  expect(connected.turn.request).not.toHaveBeenCalled();
 });

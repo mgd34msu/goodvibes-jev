@@ -14,9 +14,9 @@
  *   - APPROVE, mark the hunk reviewed. Purely client-side progress tracking (a
  *     reviewed/total indicator); no wire call, resets on refresh (honest, a refreshed diff
  *     is a new capture).
- *   - COMMENT & STEER, the existing flow: HunkCommentSheet composes a comment sent through
- *     the same steer path (sessions.steer when an agent is bound, sessions.followUp
- *     otherwise), prefixed with a structured context block naming the file/ranges/excerpt.
+ *   - COMMENT, host classification selects genuine native source-aware intake or the
+ *     explicit legacy formatter. Native originals remain separate from host-resolved
+ *     complete selected hunk evidence; no native failure falls back to ordinary steer.
  *   - REJECT & REVERT, checkpoints.revertHunkPreview → render exactly what would be
  *     reverted → confirm → checkpoints.revertHunk with the minted confirm token. A stale
  *     hunk (preview applies:false, or a 409 CONFLICT on apply) renders the honest conflict
@@ -35,7 +35,7 @@ import { buildHunkCommentSteer, hunkToPatch, parseUnifiedDiff, type DiffFile, ty
 import { DiffMultibuffer, hunkReviewKey, type HunkReviewStatus } from '../../components/diff/DiffMultibuffer';
 import { SkeletonBlock } from '../../components/feedback/SkeletonBlock';
 import { ErrorState } from '../../components/feedback/ErrorState';
-import { HunkCommentSheet } from './HunkCommentSheet';
+import { SessionHunkComment, type SessionHunkCommentSelection } from './SessionHunkComment';
 import { HunkActionSheet } from './HunkActionSheet';
 import { HunkRevertSheet, type HunkRevertPhase } from './HunkRevertSheet';
 import { Button } from '../../components/ui/Button';
@@ -76,7 +76,7 @@ export function SessionChanges({ sessionId, canSteer, closed, streamPaused = fal
 
   // The three sheets: tap → action chooser; then either comment or revert.
   const [actionTarget, setActionTarget] = useState<HunkTarget | null>(null);
-  const [commentTarget, setCommentTarget] = useState<(HunkTarget & { capturedLabel: string }) | null>(null);
+  const [commentTarget, setCommentTarget] = useState<(HunkTarget & { capturedLabel: string; selection: SessionHunkCommentSelection }) | null>(null);
   const [revertTarget, setRevertTarget] = useState<HunkTarget | null>(null);
   const [revertConflict, setRevertConflict] = useState<string | null>(null);
 
@@ -174,7 +174,7 @@ export function SessionChanges({ sessionId, canSteer, closed, streamPaused = fal
     return next;
   }
 
-  // ── Comment → steer/follow-up (existing flow) ─────────────────────────────────
+  // ── Explicit legacy comment → steer/follow-up ─────────────────────────────────
   const send = useMutation({
     mutationFn: (body: string) => (
       mutationMode === 'steer'
@@ -281,7 +281,15 @@ export function SessionChanges({ sessionId, canSteer, closed, streamPaused = fal
     if (!actionTarget) return;
     setSendError(null);
     setSendState('idle');
-    setCommentTarget({ ...actionTarget, capturedLabel });
+    const fileIndex = files.indexOf(actionTarget.file);
+    const hunkIndex = actionTarget.file.hunks.indexOf(actionTarget.hunk);
+    const unifiedDiff = mode === 'session' ? sessionChanges.data?.unifiedDiff : diff.data?.diff.unifiedDiff;
+    if (fileIndex < 0 || hunkIndex < 0 || unifiedDiff === undefined) return;
+    setCommentTarget({ ...actionTarget, capturedLabel, selection: {
+      kind: mode, ...(mode === 'workspace' ? { baselineId: effectiveBaselineId } : {}),
+      unifiedDiff, fileIndex, hunkIndex,
+      revision: mode === 'session' ? sessionChanges.data?.nativeRevision : diff.data?.diff.nativeRevision,
+    } });
     setActionTarget(null);
   }
 
@@ -488,7 +496,7 @@ export function SessionChanges({ sessionId, canSteer, closed, streamPaused = fal
           filePath={actionTarget.file.path}
           hunk={actionTarget.hunk}
           reviewed={actionReviewed}
-          commentMode={mutationMode}
+          commentMode="discover"
           onApprove={approve}
           onComment={startComment}
           onReject={startRevert}
@@ -497,7 +505,10 @@ export function SessionChanges({ sessionId, canSteer, closed, streamPaused = fal
       )}
 
       {commentTarget && (
-        <HunkCommentSheet
+        <SessionHunkComment
+          sessionId={sessionId}
+          closed={closed}
+          selection={commentTarget.selection}
           open
           filePath={commentTarget.file.path}
           hunk={commentTarget.hunk}

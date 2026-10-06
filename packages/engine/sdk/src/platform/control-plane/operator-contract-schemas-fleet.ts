@@ -273,6 +273,7 @@ export const CHECKPOINT_DIFF_SCHEMA = objectSchema({
   from: STRING_SCHEMA,
   to: STRING_SCHEMA,
   files: STRING_LIST_SCHEMA,
+  nativeRevision: { type: 'string', pattern: '^[a-f0-9]{64}$' },
   unifiedDiff: STRING_SCHEMA,
   stat: STRING_SCHEMA,
 }, ['from', 'to', 'files', 'unifiedDiff', 'stat']);
@@ -572,6 +573,7 @@ export const SESSIONS_CHANGES_GET_OUTPUT_SCHEMA = objectSchema({
   from: STRING_SCHEMA,
   to: STRING_SCHEMA,
   files: STRING_LIST_SCHEMA,
+  nativeRevision: { type: 'string', pattern: '^[a-f0-9]{64}$' },
   unifiedDiff: STRING_SCHEMA,
   stat: STRING_SCHEMA,
 }, ['sessionId', 'checkpointCount', 'checkpointIds', 'from', 'to', 'files', 'unifiedDiff', 'stat']);

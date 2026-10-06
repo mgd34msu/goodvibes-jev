@@ -7726,6 +7726,18 @@ export interface OperatorMethodInputMap {
         text: string;
         continuation?: {
             sessionId: string;
+            selectedDiff?: {
+                kind: "session";
+                revision: string;
+                fileIndex: number;
+                hunkIndex: number;
+            } | {
+                kind: "workspace";
+                baselineId: string;
+                revision: string;
+                fileIndex: number;
+                hunkIndex: number;
+            };
         };
         unsupportedSources: readonly ({
             kind: "context" | "file" | "image";
@@ -11983,6 +11995,7 @@ export interface OperatorMethodOutputMap {
             from: string;
             to: string;
             files: readonly string[];
+            nativeRevision?: string;
             unifiedDiff: string;
             stat: string;
         };
@@ -26166,6 +26179,7 @@ export interface OperatorMethodOutputMap {
         from: string;
         to: string;
         files: readonly string[];
+        nativeRevision?: string;
         unifiedDiff: string;
         stat: string;
     };
@@ -29031,6 +29045,31 @@ export interface OperatorMethodOutputMap {
                     continuation?: {
                         sessionId: string;
                         revision: string;
+                        selectedDiff?: {
+                            kind: "session";
+                            revision: string;
+                            fileIndex: number;
+                            hunkIndex: number;
+                            unifiedDiff: string;
+                            provenance: {
+                                kind: "session";
+                                sessionId: string;
+                                baselineCheckpointId: string;
+                                latestCheckpointId: string;
+                            };
+                        } | {
+                            kind: "workspace";
+                            baselineId: string;
+                            revision: string;
+                            fileIndex: number;
+                            hunkIndex: number;
+                            unifiedDiff: string;
+                            provenance: {
+                                kind: "workspace";
+                                baselineId: string;
+                                to: "WORKING";
+                            };
+                        };
                         messages: readonly ({
                             role: "assistant" | "system" | "tool" | "user";
                             content: string;
@@ -29123,6 +29162,31 @@ export interface OperatorMethodOutputMap {
                     continuation?: {
                         sessionId: string;
                         revision: string;
+                        selectedDiff?: {
+                            kind: "session";
+                            revision: string;
+                            fileIndex: number;
+                            hunkIndex: number;
+                            unifiedDiff: string;
+                            provenance: {
+                                kind: "session";
+                                sessionId: string;
+                                baselineCheckpointId: string;
+                                latestCheckpointId: string;
+                            };
+                        } | {
+                            kind: "workspace";
+                            baselineId: string;
+                            revision: string;
+                            fileIndex: number;
+                            hunkIndex: number;
+                            unifiedDiff: string;
+                            provenance: {
+                                kind: "workspace";
+                                baselineId: string;
+                                to: "WORKING";
+                            };
+                        };
                         messages: readonly ({
                             role: "assistant" | "system" | "tool" | "user";
                             content: string;
@@ -29183,6 +29247,31 @@ export interface OperatorMethodOutputMap {
                     continuation?: {
                         sessionId: string;
                         revision: string;
+                        selectedDiff?: {
+                            kind: "session";
+                            revision: string;
+                            fileIndex: number;
+                            hunkIndex: number;
+                            unifiedDiff: string;
+                            provenance: {
+                                kind: "session";
+                                sessionId: string;
+                                baselineCheckpointId: string;
+                                latestCheckpointId: string;
+                            };
+                        } | {
+                            kind: "workspace";
+                            baselineId: string;
+                            revision: string;
+                            fileIndex: number;
+                            hunkIndex: number;
+                            unifiedDiff: string;
+                            provenance: {
+                                kind: "workspace";
+                                baselineId: string;
+                                to: "WORKING";
+                            };
+                        };
                         messages: readonly ({
                             role: "assistant" | "system" | "tool" | "user";
                             content: string;
@@ -29275,6 +29364,31 @@ export interface OperatorMethodOutputMap {
                     continuation?: {
                         sessionId: string;
                         revision: string;
+                        selectedDiff?: {
+                            kind: "session";
+                            revision: string;
+                            fileIndex: number;
+                            hunkIndex: number;
+                            unifiedDiff: string;
+                            provenance: {
+                                kind: "session";
+                                sessionId: string;
+                                baselineCheckpointId: string;
+                                latestCheckpointId: string;
+                            };
+                        } | {
+                            kind: "workspace";
+                            baselineId: string;
+                            revision: string;
+                            fileIndex: number;
+                            hunkIndex: number;
+                            unifiedDiff: string;
+                            provenance: {
+                                kind: "workspace";
+                                baselineId: string;
+                                to: "WORKING";
+                            };
+                        };
                         messages: readonly ({
                             role: "assistant" | "system" | "tool" | "user";
                             content: string;
@@ -29326,6 +29440,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
     } | {
@@ -29341,6 +29467,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         stage: "checking" | "deciding" | "extracting" | "routing" | "waiting";
@@ -29358,6 +29496,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         route: "answer" | "converse";
@@ -29365,6 +29515,31 @@ export interface OperatorMethodOutputMap {
         continuation?: {
             sessionId: string;
             revision: string;
+            selectedDiff?: {
+                kind: "session";
+                revision: string;
+                fileIndex: number;
+                hunkIndex: number;
+                unifiedDiff: string;
+                provenance: {
+                    kind: "session";
+                    sessionId: string;
+                    baselineCheckpointId: string;
+                    latestCheckpointId: string;
+                };
+            } | {
+                kind: "workspace";
+                baselineId: string;
+                revision: string;
+                fileIndex: number;
+                hunkIndex: number;
+                unifiedDiff: string;
+                provenance: {
+                    kind: "workspace";
+                    baselineId: string;
+                    to: "WORKING";
+                };
+            };
             messages: readonly ({
                 role: "assistant" | "system" | "tool" | "user";
                 content: string;
@@ -29383,6 +29558,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         reason: "missing-context" | "unsupported-source";
@@ -29400,6 +29587,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         reason: "exhausted" | "semantic";
@@ -29416,6 +29615,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
     } | {
@@ -29431,6 +29642,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         receipt: {
@@ -29460,6 +29683,31 @@ export interface OperatorMethodOutputMap {
                 continuation?: {
                     sessionId: string;
                     revision: string;
+                    selectedDiff?: {
+                        kind: "session";
+                        revision: string;
+                        fileIndex: number;
+                        hunkIndex: number;
+                        unifiedDiff: string;
+                        provenance: {
+                            kind: "session";
+                            sessionId: string;
+                            baselineCheckpointId: string;
+                            latestCheckpointId: string;
+                        };
+                    } | {
+                        kind: "workspace";
+                        baselineId: string;
+                        revision: string;
+                        fileIndex: number;
+                        hunkIndex: number;
+                        unifiedDiff: string;
+                        provenance: {
+                            kind: "workspace";
+                            baselineId: string;
+                            to: "WORKING";
+                        };
+                    };
                     messages: readonly ({
                         role: "assistant" | "system" | "tool" | "user";
                         content: string;
@@ -29486,6 +29734,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
     } | {
@@ -29501,6 +29761,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         stage: "checking" | "deciding" | "extracting" | "routing" | "waiting";
@@ -29518,6 +29790,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         route: "answer" | "converse";
@@ -29525,6 +29809,31 @@ export interface OperatorMethodOutputMap {
         continuation?: {
             sessionId: string;
             revision: string;
+            selectedDiff?: {
+                kind: "session";
+                revision: string;
+                fileIndex: number;
+                hunkIndex: number;
+                unifiedDiff: string;
+                provenance: {
+                    kind: "session";
+                    sessionId: string;
+                    baselineCheckpointId: string;
+                    latestCheckpointId: string;
+                };
+            } | {
+                kind: "workspace";
+                baselineId: string;
+                revision: string;
+                fileIndex: number;
+                hunkIndex: number;
+                unifiedDiff: string;
+                provenance: {
+                    kind: "workspace";
+                    baselineId: string;
+                    to: "WORKING";
+                };
+            };
             messages: readonly ({
                 role: "assistant" | "system" | "tool" | "user";
                 content: string;
@@ -29543,6 +29852,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         reason: "missing-context" | "unsupported-source";
@@ -29560,6 +29881,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         reason: "exhausted" | "semantic";
@@ -29576,6 +29909,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
     } | {
@@ -29591,6 +29936,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         receipt: {
@@ -29620,6 +29977,31 @@ export interface OperatorMethodOutputMap {
                 continuation?: {
                     sessionId: string;
                     revision: string;
+                    selectedDiff?: {
+                        kind: "session";
+                        revision: string;
+                        fileIndex: number;
+                        hunkIndex: number;
+                        unifiedDiff: string;
+                        provenance: {
+                            kind: "session";
+                            sessionId: string;
+                            baselineCheckpointId: string;
+                            latestCheckpointId: string;
+                        };
+                    } | {
+                        kind: "workspace";
+                        baselineId: string;
+                        revision: string;
+                        fileIndex: number;
+                        hunkIndex: number;
+                        unifiedDiff: string;
+                        provenance: {
+                            kind: "workspace";
+                            baselineId: string;
+                            to: "WORKING";
+                        };
+                    };
                     messages: readonly ({
                         role: "assistant" | "system" | "tool" | "user";
                         content: string;
@@ -29646,6 +30028,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
     } | {
@@ -29661,6 +30055,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         stage: "checking" | "deciding" | "extracting" | "routing" | "waiting";
@@ -29678,6 +30084,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         route: "answer" | "converse";
@@ -29685,6 +30103,31 @@ export interface OperatorMethodOutputMap {
         continuation?: {
             sessionId: string;
             revision: string;
+            selectedDiff?: {
+                kind: "session";
+                revision: string;
+                fileIndex: number;
+                hunkIndex: number;
+                unifiedDiff: string;
+                provenance: {
+                    kind: "session";
+                    sessionId: string;
+                    baselineCheckpointId: string;
+                    latestCheckpointId: string;
+                };
+            } | {
+                kind: "workspace";
+                baselineId: string;
+                revision: string;
+                fileIndex: number;
+                hunkIndex: number;
+                unifiedDiff: string;
+                provenance: {
+                    kind: "workspace";
+                    baselineId: string;
+                    to: "WORKING";
+                };
+            };
             messages: readonly ({
                 role: "assistant" | "system" | "tool" | "user";
                 content: string;
@@ -29703,6 +30146,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         reason: "missing-context" | "unsupported-source";
@@ -29720,6 +30175,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         reason: "exhausted" | "semantic";
@@ -29736,6 +30203,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
     } | {
@@ -29751,6 +30230,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         receipt: {
@@ -29780,6 +30271,31 @@ export interface OperatorMethodOutputMap {
                 continuation?: {
                     sessionId: string;
                     revision: string;
+                    selectedDiff?: {
+                        kind: "session";
+                        revision: string;
+                        fileIndex: number;
+                        hunkIndex: number;
+                        unifiedDiff: string;
+                        provenance: {
+                            kind: "session";
+                            sessionId: string;
+                            baselineCheckpointId: string;
+                            latestCheckpointId: string;
+                        };
+                    } | {
+                        kind: "workspace";
+                        baselineId: string;
+                        revision: string;
+                        fileIndex: number;
+                        hunkIndex: number;
+                        unifiedDiff: string;
+                        provenance: {
+                            kind: "workspace";
+                            baselineId: string;
+                            to: "WORKING";
+                        };
+                    };
                     messages: readonly ({
                         role: "assistant" | "system" | "tool" | "user";
                         content: string;
@@ -29806,6 +30322,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
     } | {
@@ -29821,6 +30349,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         stage: "checking" | "deciding" | "extracting" | "routing" | "waiting";
@@ -29838,6 +30378,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         route: "answer" | "converse";
@@ -29845,6 +30397,31 @@ export interface OperatorMethodOutputMap {
         continuation?: {
             sessionId: string;
             revision: string;
+            selectedDiff?: {
+                kind: "session";
+                revision: string;
+                fileIndex: number;
+                hunkIndex: number;
+                unifiedDiff: string;
+                provenance: {
+                    kind: "session";
+                    sessionId: string;
+                    baselineCheckpointId: string;
+                    latestCheckpointId: string;
+                };
+            } | {
+                kind: "workspace";
+                baselineId: string;
+                revision: string;
+                fileIndex: number;
+                hunkIndex: number;
+                unifiedDiff: string;
+                provenance: {
+                    kind: "workspace";
+                    baselineId: string;
+                    to: "WORKING";
+                };
+            };
             messages: readonly ({
                 role: "assistant" | "system" | "tool" | "user";
                 content: string;
@@ -29863,6 +30440,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         reason: "missing-context" | "unsupported-source";
@@ -29880,6 +30469,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         reason: "exhausted" | "semantic";
@@ -29896,6 +30497,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
     } | {
@@ -29911,6 +30524,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         receipt: {
@@ -29940,6 +30565,31 @@ export interface OperatorMethodOutputMap {
                 continuation?: {
                     sessionId: string;
                     revision: string;
+                    selectedDiff?: {
+                        kind: "session";
+                        revision: string;
+                        fileIndex: number;
+                        hunkIndex: number;
+                        unifiedDiff: string;
+                        provenance: {
+                            kind: "session";
+                            sessionId: string;
+                            baselineCheckpointId: string;
+                            latestCheckpointId: string;
+                        };
+                    } | {
+                        kind: "workspace";
+                        baselineId: string;
+                        revision: string;
+                        fileIndex: number;
+                        hunkIndex: number;
+                        unifiedDiff: string;
+                        provenance: {
+                            kind: "workspace";
+                            baselineId: string;
+                            to: "WORKING";
+                        };
+                    };
                     messages: readonly ({
                         role: "assistant" | "system" | "tool" | "user";
                         content: string;
@@ -29968,6 +30618,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
     } | {
@@ -29983,6 +30645,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         stage: "checking" | "deciding" | "extracting" | "routing" | "waiting";
@@ -30000,6 +30674,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         route: "answer" | "converse";
@@ -30007,6 +30693,31 @@ export interface OperatorMethodOutputMap {
         continuation?: {
             sessionId: string;
             revision: string;
+            selectedDiff?: {
+                kind: "session";
+                revision: string;
+                fileIndex: number;
+                hunkIndex: number;
+                unifiedDiff: string;
+                provenance: {
+                    kind: "session";
+                    sessionId: string;
+                    baselineCheckpointId: string;
+                    latestCheckpointId: string;
+                };
+            } | {
+                kind: "workspace";
+                baselineId: string;
+                revision: string;
+                fileIndex: number;
+                hunkIndex: number;
+                unifiedDiff: string;
+                provenance: {
+                    kind: "workspace";
+                    baselineId: string;
+                    to: "WORKING";
+                };
+            };
             messages: readonly ({
                 role: "assistant" | "system" | "tool" | "user";
                 content: string;
@@ -30025,6 +30736,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         reason: "missing-context" | "unsupported-source";
@@ -30042,6 +30765,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         reason: "exhausted" | "semantic";
@@ -30058,6 +30793,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
     } | {
@@ -30073,6 +30820,18 @@ export interface OperatorMethodOutputMap {
             continuation?: {
                 sessionId: string;
                 revision: string;
+                selectedDiff?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                };
             };
         };
         receipt: {
@@ -30102,6 +30861,31 @@ export interface OperatorMethodOutputMap {
                 continuation?: {
                     sessionId: string;
                     revision: string;
+                    selectedDiff?: {
+                        kind: "session";
+                        revision: string;
+                        fileIndex: number;
+                        hunkIndex: number;
+                        unifiedDiff: string;
+                        provenance: {
+                            kind: "session";
+                            sessionId: string;
+                            baselineCheckpointId: string;
+                            latestCheckpointId: string;
+                        };
+                    } | {
+                        kind: "workspace";
+                        baselineId: string;
+                        revision: string;
+                        fileIndex: number;
+                        hunkIndex: number;
+                        unifiedDiff: string;
+                        provenance: {
+                            kind: "workspace";
+                            baselineId: string;
+                            to: "WORKING";
+                        };
+                    };
                     messages: readonly ({
                         role: "assistant" | "system" | "tool" | "user";
                         content: string;
@@ -30156,6 +30940,31 @@ export interface OperatorMethodOutputMap {
                     continuation?: {
                         sessionId: string;
                         revision: string;
+                        selectedDiff?: {
+                            kind: "session";
+                            revision: string;
+                            fileIndex: number;
+                            hunkIndex: number;
+                            unifiedDiff: string;
+                            provenance: {
+                                kind: "session";
+                                sessionId: string;
+                                baselineCheckpointId: string;
+                                latestCheckpointId: string;
+                            };
+                        } | {
+                            kind: "workspace";
+                            baselineId: string;
+                            revision: string;
+                            fileIndex: number;
+                            hunkIndex: number;
+                            unifiedDiff: string;
+                            provenance: {
+                                kind: "workspace";
+                                baselineId: string;
+                                to: "WORKING";
+                            };
+                        };
                         messages: readonly ({
                             role: "assistant" | "system" | "tool" | "user";
                             content: string;

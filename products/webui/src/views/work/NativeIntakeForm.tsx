@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
-import type { NativeConversationIntakeUnsupportedSource } from "@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client";
+import type { NativeConversationIntakeUnsupportedSource, NativeSelectedDiffSelector } from "@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client";
 import { type ClientLifetime, isClientLifetimeCurrent } from "../../lib/client-lifetime";
 import {
   nativeIntakeDescription,
@@ -23,6 +23,7 @@ interface NativeIntakeFormProps {
   lifetime: ClientLifetime;
   onOpenSession?: (sessionId: string) => void;
   continuationSessionId?: string;
+  selectedDiff?: NativeSelectedDiffSelector;
   projectId?: string;
   closed?: boolean;
 }
@@ -32,6 +33,7 @@ export function NativeIntakeForm(props: NativeIntakeFormProps) {
       key={JSON.stringify([
         props.lifetime.revision,
         props.continuationSessionId ?? null,
+        props.selectedDiff ?? null,
         props.projectId ?? null,
       ])}
       {...props}
@@ -44,6 +46,7 @@ function ScopedNativeIntakeForm({
   lifetime,
   onOpenSession,
   continuationSessionId,
+  selectedDiff,
   projectId,
   closed = false,
 }: NativeIntakeFormProps) {
@@ -82,6 +85,7 @@ function ScopedNativeIntakeForm({
           undefined,
           {
             continuationSessionId,
+            selectedDiff,
             projectId,
           }
         );
@@ -91,7 +95,8 @@ function ScopedNativeIntakeForm({
         }
         session.current = connected;
         const saved = (await connected.list()).filter(
-          (record) => record.command.continuation?.sessionId === continuationSessionId
+          (record) => record.command.continuation?.sessionId === continuationSessionId &&
+            (!selectedDiff || JSON.stringify(record.command.continuation?.selectedDiff) === JSON.stringify(selectedDiff))
         );
         if (!current()) return;
         setRecords(saved);
@@ -145,7 +150,7 @@ function ScopedNativeIntakeForm({
       session.current?.dispose();
       session.current = undefined;
     };
-  }, [lifetime, continuationSessionId, projectId]);
+  }, [lifetime, continuationSessionId, selectedDiff, projectId]);
 
   const run = async (
     label: string,
@@ -381,7 +386,7 @@ function ScopedNativeIntakeForm({
       {ready && !selected && !closed && (
         <form className="work-form" onSubmit={submit}>
           <Field
-            label="Original request"
+            label={selectedDiff ? "Original comment" : "Original request"}
             help="Include all required context. Whitespace and repeated requirements are preserved exactly; maximum 20,000 UTF-16 characters."
           >
             <Textarea
@@ -469,7 +474,7 @@ function ScopedNativeIntakeForm({
       )}
       {selected && (
         <>
-          <DetailSection title="Original request">
+          <DetailSection title={selectedDiff ? "Original comment" : "Original request"}>
             <pre className="native-intake__source">{selected.command.text}</pre>
             {selected.command.unsupportedSources.length > 0 && (
               <ul>
@@ -496,11 +501,16 @@ function ScopedNativeIntakeForm({
               ...(result && result.kind !== "not-found" && result.sourceRef.continuation
                 ? [
                     {
-                      label: "Completed transcript revision",
+                      label: "Completed context revision",
                       value: result.sourceRef.continuation.revision,
                     },
                   ]
                 : []),
+              ...(selected.command.continuation?.selectedDiff ? [
+                { label: "Selected change scope", value: selected.command.continuation.selectedDiff.kind === "session" ? "Session-stamped checkpoint aggregate" : "Workspace checkpoint to captured working tree" },
+                { label: "Selected diff revision", value: selected.command.continuation.selectedDiff.revision },
+                { label: "Selected file / hunk", value: `${selected.command.continuation.selectedDiff.fileIndex + 1} / ${selected.command.continuation.selectedDiff.hunkIndex + 1}` },
+              ] : []),
               ...(result && result.kind !== "not-found"
                 ? [{ label: "Source revision", value: result.sourceRef.sourceRevision }]
                 : []),

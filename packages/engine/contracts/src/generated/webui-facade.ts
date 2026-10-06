@@ -7106,6 +7106,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "files": [
           "sample"
         ],
+        "nativeRevision": "sample",
         "unifiedDiff": "sample",
         "stat": "sample"
       }
@@ -22869,6 +22870,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "files": [
         "sample"
       ],
+      "nativeRevision": "sample",
       "unifiedDiff": "sample",
       "stat": "sample"
     }
@@ -25911,7 +25913,13 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "sessionId": "sample",
         "continuation": {
           "sessionId": "sample",
-          "revision": "sample"
+          "revision": "sample",
+          "selectedDiff": {
+            "kind": "session",
+            "revision": "sample",
+            "fileIndex": 0,
+            "hunkIndex": 0
+          }
         }
       }
     }
@@ -25933,7 +25941,13 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "sessionId": "sample",
         "continuation": {
           "sessionId": "sample",
-          "revision": "sample"
+          "revision": "sample",
+          "selectedDiff": {
+            "kind": "session",
+            "revision": "sample",
+            "fileIndex": 0,
+            "hunkIndex": 0
+          }
         }
       }
     }
@@ -25944,7 +25958,13 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "inputId": "sample",
       "text": "sample",
       "continuation": {
-        "sessionId": "sample"
+        "sessionId": "sample",
+        "selectedDiff": {
+          "kind": "session",
+          "revision": "sample",
+          "fileIndex": 0,
+          "hunkIndex": 0
+        }
       },
       "unsupportedSources": [
         {
@@ -25965,7 +25985,13 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "sessionId": "sample",
         "continuation": {
           "sessionId": "sample",
-          "revision": "sample"
+          "revision": "sample",
+          "selectedDiff": {
+            "kind": "session",
+            "revision": "sample",
+            "fileIndex": 0,
+            "hunkIndex": 0
+          }
         }
       }
     }
@@ -25986,7 +26012,13 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "sessionId": "sample",
         "continuation": {
           "sessionId": "sample",
-          "revision": "sample"
+          "revision": "sample",
+          "selectedDiff": {
+            "kind": "session",
+            "revision": "sample",
+            "fileIndex": 0,
+            "hunkIndex": 0
+          }
         }
       }
     }
@@ -26008,7 +26040,13 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "sessionId": "sample",
         "continuation": {
           "sessionId": "sample",
-          "revision": "sample"
+          "revision": "sample",
+          "selectedDiff": {
+            "kind": "session",
+            "revision": "sample",
+            "fileIndex": 0,
+            "hunkIndex": 0
+          }
         }
       }
     }

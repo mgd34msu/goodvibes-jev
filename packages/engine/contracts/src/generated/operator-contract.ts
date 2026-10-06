@@ -26631,6 +26631,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     "type": "string"
                   }
                 },
+                "nativeRevision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
                 "unifiedDiff": {
                   "type": "string"
                 },
@@ -110687,6 +110691,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "type": "string"
               }
             },
+            "nativeRevision": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
             "unifiedDiff": {
               "type": "string"
             },
@@ -127256,6 +127264,155 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                             "type": "string",
                                             "pattern": "^[a-f0-9]{64}$"
                                           },
+                                          "selectedDiff": {
+                                            "anyOf": [
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "kind": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "session"
+                                                    ]
+                                                  },
+                                                  "revision": {
+                                                    "type": "string",
+                                                    "pattern": "^[a-f0-9]{64}$"
+                                                  },
+                                                  "fileIndex": {
+                                                    "type": "integer",
+                                                    "minimum": 0,
+                                                    "maximum": 9007199254740991
+                                                  },
+                                                  "hunkIndex": {
+                                                    "type": "integer",
+                                                    "minimum": 0,
+                                                    "maximum": 9007199254740991
+                                                  },
+                                                  "unifiedDiff": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "maxLength": 65536
+                                                  },
+                                                  "provenance": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                      "kind": {
+                                                        "type": "string",
+                                                        "enum": [
+                                                          "session"
+                                                        ]
+                                                      },
+                                                      "sessionId": {
+                                                        "type": "string",
+                                                        "minLength": 1,
+                                                        "maxLength": 200
+                                                      },
+                                                      "baselineCheckpointId": {
+                                                        "type": "string",
+                                                        "minLength": 1,
+                                                        "maxLength": 200
+                                                      },
+                                                      "latestCheckpointId": {
+                                                        "type": "string",
+                                                        "minLength": 1,
+                                                        "maxLength": 200
+                                                      }
+                                                    },
+                                                    "required": [
+                                                      "kind",
+                                                      "sessionId",
+                                                      "baselineCheckpointId",
+                                                      "latestCheckpointId"
+                                                    ],
+                                                    "additionalProperties": false
+                                                  }
+                                                },
+                                                "required": [
+                                                  "kind",
+                                                  "revision",
+                                                  "fileIndex",
+                                                  "hunkIndex",
+                                                  "unifiedDiff",
+                                                  "provenance"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "kind": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "workspace"
+                                                    ]
+                                                  },
+                                                  "baselineId": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "maxLength": 200
+                                                  },
+                                                  "revision": {
+                                                    "type": "string",
+                                                    "pattern": "^[a-f0-9]{64}$"
+                                                  },
+                                                  "fileIndex": {
+                                                    "type": "integer",
+                                                    "minimum": 0,
+                                                    "maximum": 9007199254740991
+                                                  },
+                                                  "hunkIndex": {
+                                                    "type": "integer",
+                                                    "minimum": 0,
+                                                    "maximum": 9007199254740991
+                                                  },
+                                                  "unifiedDiff": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "maxLength": 65536
+                                                  },
+                                                  "provenance": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                      "kind": {
+                                                        "type": "string",
+                                                        "enum": [
+                                                          "workspace"
+                                                        ]
+                                                      },
+                                                      "baselineId": {
+                                                        "type": "string",
+                                                        "minLength": 1,
+                                                        "maxLength": 200
+                                                      },
+                                                      "to": {
+                                                        "type": "string",
+                                                        "enum": [
+                                                          "WORKING"
+                                                        ]
+                                                      }
+                                                    },
+                                                    "required": [
+                                                      "kind",
+                                                      "baselineId",
+                                                      "to"
+                                                    ],
+                                                    "additionalProperties": false
+                                                  }
+                                                },
+                                                "required": [
+                                                  "kind",
+                                                  "baselineId",
+                                                  "revision",
+                                                  "fileIndex",
+                                                  "hunkIndex",
+                                                  "unifiedDiff",
+                                                  "provenance"
+                                                ],
+                                                "additionalProperties": false
+                                              }
+                                            ]
+                                          },
                                           "messages": {
                                             "readOnly": true,
                                             "maxItems": 128,
@@ -127892,6 +128049,155 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                               "type": "string",
                                               "pattern": "^[a-f0-9]{64}$"
                                             },
+                                            "selectedDiff": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "object",
+                                                  "properties": {
+                                                    "kind": {
+                                                      "type": "string",
+                                                      "enum": [
+                                                        "session"
+                                                      ]
+                                                    },
+                                                    "revision": {
+                                                      "type": "string",
+                                                      "pattern": "^[a-f0-9]{64}$"
+                                                    },
+                                                    "fileIndex": {
+                                                      "type": "integer",
+                                                      "minimum": 0,
+                                                      "maximum": 9007199254740991
+                                                    },
+                                                    "hunkIndex": {
+                                                      "type": "integer",
+                                                      "minimum": 0,
+                                                      "maximum": 9007199254740991
+                                                    },
+                                                    "unifiedDiff": {
+                                                      "type": "string",
+                                                      "minLength": 1,
+                                                      "maxLength": 65536
+                                                    },
+                                                    "provenance": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "kind": {
+                                                          "type": "string",
+                                                          "enum": [
+                                                            "session"
+                                                          ]
+                                                        },
+                                                        "sessionId": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "maxLength": 200
+                                                        },
+                                                        "baselineCheckpointId": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "maxLength": 200
+                                                        },
+                                                        "latestCheckpointId": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "maxLength": 200
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "kind",
+                                                        "sessionId",
+                                                        "baselineCheckpointId",
+                                                        "latestCheckpointId"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "kind",
+                                                    "revision",
+                                                    "fileIndex",
+                                                    "hunkIndex",
+                                                    "unifiedDiff",
+                                                    "provenance"
+                                                  ],
+                                                  "additionalProperties": false
+                                                },
+                                                {
+                                                  "type": "object",
+                                                  "properties": {
+                                                    "kind": {
+                                                      "type": "string",
+                                                      "enum": [
+                                                        "workspace"
+                                                      ]
+                                                    },
+                                                    "baselineId": {
+                                                      "type": "string",
+                                                      "minLength": 1,
+                                                      "maxLength": 200
+                                                    },
+                                                    "revision": {
+                                                      "type": "string",
+                                                      "pattern": "^[a-f0-9]{64}$"
+                                                    },
+                                                    "fileIndex": {
+                                                      "type": "integer",
+                                                      "minimum": 0,
+                                                      "maximum": 9007199254740991
+                                                    },
+                                                    "hunkIndex": {
+                                                      "type": "integer",
+                                                      "minimum": 0,
+                                                      "maximum": 9007199254740991
+                                                    },
+                                                    "unifiedDiff": {
+                                                      "type": "string",
+                                                      "minLength": 1,
+                                                      "maxLength": 65536
+                                                    },
+                                                    "provenance": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "kind": {
+                                                          "type": "string",
+                                                          "enum": [
+                                                            "workspace"
+                                                          ]
+                                                        },
+                                                        "baselineId": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "maxLength": 200
+                                                        },
+                                                        "to": {
+                                                          "type": "string",
+                                                          "enum": [
+                                                            "WORKING"
+                                                          ]
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "kind",
+                                                        "baselineId",
+                                                        "to"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "kind",
+                                                    "baselineId",
+                                                    "revision",
+                                                    "fileIndex",
+                                                    "hunkIndex",
+                                                    "unifiedDiff",
+                                                    "provenance"
+                                                  ],
+                                                  "additionalProperties": false
+                                                }
+                                              ]
+                                            },
                                             "messages": {
                                               "readOnly": true,
                                               "maxItems": 128,
@@ -128354,6 +128660,155 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                             "revision": {
                                               "type": "string",
                                               "pattern": "^[a-f0-9]{64}$"
+                                            },
+                                            "selectedDiff": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "object",
+                                                  "properties": {
+                                                    "kind": {
+                                                      "type": "string",
+                                                      "enum": [
+                                                        "session"
+                                                      ]
+                                                    },
+                                                    "revision": {
+                                                      "type": "string",
+                                                      "pattern": "^[a-f0-9]{64}$"
+                                                    },
+                                                    "fileIndex": {
+                                                      "type": "integer",
+                                                      "minimum": 0,
+                                                      "maximum": 9007199254740991
+                                                    },
+                                                    "hunkIndex": {
+                                                      "type": "integer",
+                                                      "minimum": 0,
+                                                      "maximum": 9007199254740991
+                                                    },
+                                                    "unifiedDiff": {
+                                                      "type": "string",
+                                                      "minLength": 1,
+                                                      "maxLength": 65536
+                                                    },
+                                                    "provenance": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "kind": {
+                                                          "type": "string",
+                                                          "enum": [
+                                                            "session"
+                                                          ]
+                                                        },
+                                                        "sessionId": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "maxLength": 200
+                                                        },
+                                                        "baselineCheckpointId": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "maxLength": 200
+                                                        },
+                                                        "latestCheckpointId": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "maxLength": 200
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "kind",
+                                                        "sessionId",
+                                                        "baselineCheckpointId",
+                                                        "latestCheckpointId"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "kind",
+                                                    "revision",
+                                                    "fileIndex",
+                                                    "hunkIndex",
+                                                    "unifiedDiff",
+                                                    "provenance"
+                                                  ],
+                                                  "additionalProperties": false
+                                                },
+                                                {
+                                                  "type": "object",
+                                                  "properties": {
+                                                    "kind": {
+                                                      "type": "string",
+                                                      "enum": [
+                                                        "workspace"
+                                                      ]
+                                                    },
+                                                    "baselineId": {
+                                                      "type": "string",
+                                                      "minLength": 1,
+                                                      "maxLength": 200
+                                                    },
+                                                    "revision": {
+                                                      "type": "string",
+                                                      "pattern": "^[a-f0-9]{64}$"
+                                                    },
+                                                    "fileIndex": {
+                                                      "type": "integer",
+                                                      "minimum": 0,
+                                                      "maximum": 9007199254740991
+                                                    },
+                                                    "hunkIndex": {
+                                                      "type": "integer",
+                                                      "minimum": 0,
+                                                      "maximum": 9007199254740991
+                                                    },
+                                                    "unifiedDiff": {
+                                                      "type": "string",
+                                                      "minLength": 1,
+                                                      "maxLength": 65536
+                                                    },
+                                                    "provenance": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "kind": {
+                                                          "type": "string",
+                                                          "enum": [
+                                                            "workspace"
+                                                          ]
+                                                        },
+                                                        "baselineId": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "maxLength": 200
+                                                        },
+                                                        "to": {
+                                                          "type": "string",
+                                                          "enum": [
+                                                            "WORKING"
+                                                          ]
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "kind",
+                                                        "baselineId",
+                                                        "to"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "kind",
+                                                    "baselineId",
+                                                    "revision",
+                                                    "fileIndex",
+                                                    "hunkIndex",
+                                                    "unifiedDiff",
+                                                    "provenance"
+                                                  ],
+                                                  "additionalProperties": false
+                                                }
+                                              ]
                                             },
                                             "messages": {
                                               "readOnly": true,
@@ -128984,6 +129439,155 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                                 "type": "string",
                                                 "pattern": "^[a-f0-9]{64}$"
                                               },
+                                              "selectedDiff": {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "object",
+                                                    "properties": {
+                                                      "kind": {
+                                                        "type": "string",
+                                                        "enum": [
+                                                          "session"
+                                                        ]
+                                                      },
+                                                      "revision": {
+                                                        "type": "string",
+                                                        "pattern": "^[a-f0-9]{64}$"
+                                                      },
+                                                      "fileIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0,
+                                                        "maximum": 9007199254740991
+                                                      },
+                                                      "hunkIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0,
+                                                        "maximum": 9007199254740991
+                                                      },
+                                                      "unifiedDiff": {
+                                                        "type": "string",
+                                                        "minLength": 1,
+                                                        "maxLength": 65536
+                                                      },
+                                                      "provenance": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                          "kind": {
+                                                            "type": "string",
+                                                            "enum": [
+                                                              "session"
+                                                            ]
+                                                          },
+                                                          "sessionId": {
+                                                            "type": "string",
+                                                            "minLength": 1,
+                                                            "maxLength": 200
+                                                          },
+                                                          "baselineCheckpointId": {
+                                                            "type": "string",
+                                                            "minLength": 1,
+                                                            "maxLength": 200
+                                                          },
+                                                          "latestCheckpointId": {
+                                                            "type": "string",
+                                                            "minLength": 1,
+                                                            "maxLength": 200
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind",
+                                                          "sessionId",
+                                                          "baselineCheckpointId",
+                                                          "latestCheckpointId"
+                                                        ],
+                                                        "additionalProperties": false
+                                                      }
+                                                    },
+                                                    "required": [
+                                                      "kind",
+                                                      "revision",
+                                                      "fileIndex",
+                                                      "hunkIndex",
+                                                      "unifiedDiff",
+                                                      "provenance"
+                                                    ],
+                                                    "additionalProperties": false
+                                                  },
+                                                  {
+                                                    "type": "object",
+                                                    "properties": {
+                                                      "kind": {
+                                                        "type": "string",
+                                                        "enum": [
+                                                          "workspace"
+                                                        ]
+                                                      },
+                                                      "baselineId": {
+                                                        "type": "string",
+                                                        "minLength": 1,
+                                                        "maxLength": 200
+                                                      },
+                                                      "revision": {
+                                                        "type": "string",
+                                                        "pattern": "^[a-f0-9]{64}$"
+                                                      },
+                                                      "fileIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0,
+                                                        "maximum": 9007199254740991
+                                                      },
+                                                      "hunkIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0,
+                                                        "maximum": 9007199254740991
+                                                      },
+                                                      "unifiedDiff": {
+                                                        "type": "string",
+                                                        "minLength": 1,
+                                                        "maxLength": 65536
+                                                      },
+                                                      "provenance": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                          "kind": {
+                                                            "type": "string",
+                                                            "enum": [
+                                                              "workspace"
+                                                            ]
+                                                          },
+                                                          "baselineId": {
+                                                            "type": "string",
+                                                            "minLength": 1,
+                                                            "maxLength": 200
+                                                          },
+                                                          "to": {
+                                                            "type": "string",
+                                                            "enum": [
+                                                              "WORKING"
+                                                            ]
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind",
+                                                          "baselineId",
+                                                          "to"
+                                                        ],
+                                                        "additionalProperties": false
+                                                      }
+                                                    },
+                                                    "required": [
+                                                      "kind",
+                                                      "baselineId",
+                                                      "revision",
+                                                      "fileIndex",
+                                                      "hunkIndex",
+                                                      "unifiedDiff",
+                                                      "provenance"
+                                                    ],
+                                                    "additionalProperties": false
+                                                  }
+                                                ]
+                                              },
                                               "messages": {
                                                 "readOnly": true,
                                                 "maxItems": 128,
@@ -129373,6 +129977,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -129459,6 +130137,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -129564,6 +130316,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -129606,6 +130432,155 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     "revision": {
                       "type": "string",
                       "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "selectedDiff": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "session"
+                              ]
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "fileIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "hunkIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "unifiedDiff": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 65536
+                            },
+                            "provenance": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "baselineCheckpointId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "latestCheckpointId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "sessionId",
+                                "baselineCheckpointId",
+                                "latestCheckpointId"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "revision",
+                            "fileIndex",
+                            "hunkIndex",
+                            "unifiedDiff",
+                            "provenance"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "workspace"
+                              ]
+                            },
+                            "baselineId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "fileIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "hunkIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "unifiedDiff": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 65536
+                            },
+                            "provenance": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "to": {
+                                  "type": "string",
+                                  "enum": [
+                                    "WORKING"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "to"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "baselineId",
+                            "revision",
+                            "fileIndex",
+                            "hunkIndex",
+                            "unifiedDiff",
+                            "provenance"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
                     },
                     "messages": {
                       "readOnly": true,
@@ -129713,6 +130688,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -129814,6 +130863,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -129908,6 +131031,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -129994,6 +131191,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -130149,6 +131420,155 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             "revision": {
                               "type": "string",
                               "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "selectedDiff": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "session"
+                                      ]
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "unifiedDiff": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 65536
+                                    },
+                                    "provenance": {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "session"
+                                          ]
+                                        },
+                                        "sessionId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        "baselineCheckpointId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        "latestCheckpointId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "sessionId",
+                                        "baselineCheckpointId",
+                                        "latestCheckpointId"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex",
+                                    "unifiedDiff",
+                                    "provenance"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workspace"
+                                      ]
+                                    },
+                                    "baselineId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "unifiedDiff": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 65536
+                                    },
+                                    "provenance": {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "workspace"
+                                          ]
+                                        },
+                                        "baselineId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        "to": {
+                                          "type": "string",
+                                          "enum": [
+                                            "WORKING"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "baselineId",
+                                        "to"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "baselineId",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex",
+                                    "unifiedDiff",
+                                    "provenance"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
                             },
                             "messages": {
                               "readOnly": true,
@@ -130366,6 +131786,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -130452,6 +131946,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -130557,6 +132125,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -130599,6 +132241,155 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     "revision": {
                       "type": "string",
                       "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "selectedDiff": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "session"
+                              ]
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "fileIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "hunkIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "unifiedDiff": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 65536
+                            },
+                            "provenance": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "baselineCheckpointId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "latestCheckpointId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "sessionId",
+                                "baselineCheckpointId",
+                                "latestCheckpointId"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "revision",
+                            "fileIndex",
+                            "hunkIndex",
+                            "unifiedDiff",
+                            "provenance"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "workspace"
+                              ]
+                            },
+                            "baselineId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "fileIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "hunkIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "unifiedDiff": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 65536
+                            },
+                            "provenance": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "to": {
+                                  "type": "string",
+                                  "enum": [
+                                    "WORKING"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "to"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "baselineId",
+                            "revision",
+                            "fileIndex",
+                            "hunkIndex",
+                            "unifiedDiff",
+                            "provenance"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
                     },
                     "messages": {
                       "readOnly": true,
@@ -130706,6 +132497,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -130807,6 +132672,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -130901,6 +132840,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -130987,6 +133000,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -131142,6 +133229,155 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             "revision": {
                               "type": "string",
                               "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "selectedDiff": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "session"
+                                      ]
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "unifiedDiff": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 65536
+                                    },
+                                    "provenance": {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "session"
+                                          ]
+                                        },
+                                        "sessionId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        "baselineCheckpointId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        "latestCheckpointId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "sessionId",
+                                        "baselineCheckpointId",
+                                        "latestCheckpointId"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex",
+                                    "unifiedDiff",
+                                    "provenance"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workspace"
+                                      ]
+                                    },
+                                    "baselineId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "unifiedDiff": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 65536
+                                    },
+                                    "provenance": {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "workspace"
+                                          ]
+                                        },
+                                        "baselineId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        "to": {
+                                          "type": "string",
+                                          "enum": [
+                                            "WORKING"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "baselineId",
+                                        "to"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "baselineId",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex",
+                                    "unifiedDiff",
+                                    "provenance"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
                             },
                             "messages": {
                               "readOnly": true,
@@ -131303,6 +133539,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 200
+                },
+                "selectedDiff": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "session"
+                          ]
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "fileIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "hunkIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "revision",
+                        "fileIndex",
+                        "hunkIndex"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "workspace"
+                          ]
+                        },
+                        "baselineId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "fileIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "hunkIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "baselineId",
+                        "revision",
+                        "fileIndex",
+                        "hunkIndex"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
                 }
               },
               "required": [
@@ -131408,6 +133718,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -131494,6 +133878,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -131599,6 +134057,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -131641,6 +134173,155 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     "revision": {
                       "type": "string",
                       "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "selectedDiff": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "session"
+                              ]
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "fileIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "hunkIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "unifiedDiff": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 65536
+                            },
+                            "provenance": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "baselineCheckpointId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "latestCheckpointId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "sessionId",
+                                "baselineCheckpointId",
+                                "latestCheckpointId"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "revision",
+                            "fileIndex",
+                            "hunkIndex",
+                            "unifiedDiff",
+                            "provenance"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "workspace"
+                              ]
+                            },
+                            "baselineId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "fileIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "hunkIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "unifiedDiff": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 65536
+                            },
+                            "provenance": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "to": {
+                                  "type": "string",
+                                  "enum": [
+                                    "WORKING"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "to"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "baselineId",
+                            "revision",
+                            "fileIndex",
+                            "hunkIndex",
+                            "unifiedDiff",
+                            "provenance"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
                     },
                     "messages": {
                       "readOnly": true,
@@ -131748,6 +134429,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -131849,6 +134604,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -131943,6 +134772,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -132029,6 +134932,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -132184,6 +135161,155 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             "revision": {
                               "type": "string",
                               "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "selectedDiff": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "session"
+                                      ]
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "unifiedDiff": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 65536
+                                    },
+                                    "provenance": {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "session"
+                                          ]
+                                        },
+                                        "sessionId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        "baselineCheckpointId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        "latestCheckpointId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "sessionId",
+                                        "baselineCheckpointId",
+                                        "latestCheckpointId"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex",
+                                    "unifiedDiff",
+                                    "provenance"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workspace"
+                                      ]
+                                    },
+                                    "baselineId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "unifiedDiff": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 65536
+                                    },
+                                    "provenance": {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "workspace"
+                                          ]
+                                        },
+                                        "baselineId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        "to": {
+                                          "type": "string",
+                                          "enum": [
+                                            "WORKING"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "baselineId",
+                                        "to"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "baselineId",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex",
+                                    "unifiedDiff",
+                                    "provenance"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
                             },
                             "messages": {
                               "readOnly": true,
@@ -132397,6 +135523,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             "revision": {
                               "type": "string",
                               "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "selectedDiff": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "session"
+                                      ]
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workspace"
+                                      ]
+                                    },
+                                    "baselineId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "baselineId",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -132483,6 +135683,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             "revision": {
                               "type": "string",
                               "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "selectedDiff": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "session"
+                                      ]
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workspace"
+                                      ]
+                                    },
+                                    "baselineId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "baselineId",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -132588,6 +135862,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             "revision": {
                               "type": "string",
                               "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "selectedDiff": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "session"
+                                      ]
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workspace"
+                                      ]
+                                    },
+                                    "baselineId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "baselineId",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -132630,6 +135978,155 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "unifiedDiff": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 65536
+                                },
+                                "provenance": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "session"
+                                      ]
+                                    },
+                                    "sessionId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "baselineCheckpointId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "latestCheckpointId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "sessionId",
+                                    "baselineCheckpointId",
+                                    "latestCheckpointId"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex",
+                                "unifiedDiff",
+                                "provenance"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "unifiedDiff": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 65536
+                                },
+                                "provenance": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workspace"
+                                      ]
+                                    },
+                                    "baselineId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "to": {
+                                      "type": "string",
+                                      "enum": [
+                                        "WORKING"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "baselineId",
+                                    "to"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex",
+                                "unifiedDiff",
+                                "provenance"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         },
                         "messages": {
                           "readOnly": true,
@@ -132737,6 +136234,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             "revision": {
                               "type": "string",
                               "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "selectedDiff": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "session"
+                                      ]
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workspace"
+                                      ]
+                                    },
+                                    "baselineId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "baselineId",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -132838,6 +136409,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             "revision": {
                               "type": "string",
                               "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "selectedDiff": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "session"
+                                      ]
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workspace"
+                                      ]
+                                    },
+                                    "baselineId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "baselineId",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -132932,6 +136577,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             "revision": {
                               "type": "string",
                               "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "selectedDiff": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "session"
+                                      ]
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workspace"
+                                      ]
+                                    },
+                                    "baselineId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "baselineId",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -133018,6 +136737,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             "revision": {
                               "type": "string",
                               "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "selectedDiff": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "session"
+                                      ]
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workspace"
+                                      ]
+                                    },
+                                    "baselineId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "baselineId",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -133173,6 +136966,155 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                 "revision": {
                                   "type": "string",
                                   "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "selectedDiff": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "session"
+                                          ]
+                                        },
+                                        "revision": {
+                                          "type": "string",
+                                          "pattern": "^[a-f0-9]{64}$"
+                                        },
+                                        "fileIndex": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "hunkIndex": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "unifiedDiff": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 65536
+                                        },
+                                        "provenance": {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "session"
+                                              ]
+                                            },
+                                            "sessionId": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            "baselineCheckpointId": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            "latestCheckpointId": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "sessionId",
+                                            "baselineCheckpointId",
+                                            "latestCheckpointId"
+                                          ],
+                                          "additionalProperties": false
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "revision",
+                                        "fileIndex",
+                                        "hunkIndex",
+                                        "unifiedDiff",
+                                        "provenance"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "workspace"
+                                          ]
+                                        },
+                                        "baselineId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        "revision": {
+                                          "type": "string",
+                                          "pattern": "^[a-f0-9]{64}$"
+                                        },
+                                        "fileIndex": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "hunkIndex": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "unifiedDiff": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 65536
+                                        },
+                                        "provenance": {
+                                          "type": "object",
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string",
+                                              "enum": [
+                                                "workspace"
+                                              ]
+                                            },
+                                            "baselineId": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            "to": {
+                                              "type": "string",
+                                              "enum": [
+                                                "WORKING"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "baselineId",
+                                            "to"
+                                          ],
+                                          "additionalProperties": false
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "baselineId",
+                                        "revision",
+                                        "fileIndex",
+                                        "hunkIndex",
+                                        "unifiedDiff",
+                                        "provenance"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  ]
                                 },
                                 "messages": {
                                   "readOnly": true,
@@ -133407,6 +137349,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -133493,6 +137509,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -133598,6 +137688,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -133640,6 +137804,155 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     "revision": {
                       "type": "string",
                       "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "selectedDiff": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "session"
+                              ]
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "fileIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "hunkIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "unifiedDiff": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 65536
+                            },
+                            "provenance": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "baselineCheckpointId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "latestCheckpointId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "sessionId",
+                                "baselineCheckpointId",
+                                "latestCheckpointId"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "revision",
+                            "fileIndex",
+                            "hunkIndex",
+                            "unifiedDiff",
+                            "provenance"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "workspace"
+                              ]
+                            },
+                            "baselineId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "fileIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "hunkIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "unifiedDiff": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 65536
+                            },
+                            "provenance": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "to": {
+                                  "type": "string",
+                                  "enum": [
+                                    "WORKING"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "to"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "baselineId",
+                            "revision",
+                            "fileIndex",
+                            "hunkIndex",
+                            "unifiedDiff",
+                            "provenance"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
                     },
                     "messages": {
                       "readOnly": true,
@@ -133747,6 +138060,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -133848,6 +138235,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -133942,6 +138403,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -134028,6 +138563,80 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "revision": {
                           "type": "string",
                           "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedDiff": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "session"
+                                  ]
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "workspace"
+                                  ]
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "fileIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "hunkIndex": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "revision",
+                                "fileIndex",
+                                "hunkIndex"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -134183,6 +138792,155 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             "revision": {
                               "type": "string",
                               "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "selectedDiff": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "session"
+                                      ]
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "unifiedDiff": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 65536
+                                    },
+                                    "provenance": {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "session"
+                                          ]
+                                        },
+                                        "sessionId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        "baselineCheckpointId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        "latestCheckpointId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "sessionId",
+                                        "baselineCheckpointId",
+                                        "latestCheckpointId"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex",
+                                    "unifiedDiff",
+                                    "provenance"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workspace"
+                                      ]
+                                    },
+                                    "baselineId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "fileIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "hunkIndex": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "unifiedDiff": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 65536
+                                    },
+                                    "provenance": {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "workspace"
+                                          ]
+                                        },
+                                        "baselineId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        "to": {
+                                          "type": "string",
+                                          "enum": [
+                                            "WORKING"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "baselineId",
+                                        "to"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "baselineId",
+                                    "revision",
+                                    "fileIndex",
+                                    "hunkIndex",
+                                    "unifiedDiff",
+                                    "provenance"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
                             },
                             "messages": {
                               "readOnly": true,
@@ -134615,6 +139373,155 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                       "revision": {
                                         "type": "string",
                                         "pattern": "^[a-f0-9]{64}$"
+                                      },
+                                      "selectedDiff": {
+                                        "anyOf": [
+                                          {
+                                            "type": "object",
+                                            "properties": {
+                                              "kind": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "session"
+                                                ]
+                                              },
+                                              "revision": {
+                                                "type": "string",
+                                                "pattern": "^[a-f0-9]{64}$"
+                                              },
+                                              "fileIndex": {
+                                                "type": "integer",
+                                                "minimum": 0,
+                                                "maximum": 9007199254740991
+                                              },
+                                              "hunkIndex": {
+                                                "type": "integer",
+                                                "minimum": 0,
+                                                "maximum": 9007199254740991
+                                              },
+                                              "unifiedDiff": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 65536
+                                              },
+                                              "provenance": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "kind": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "session"
+                                                    ]
+                                                  },
+                                                  "sessionId": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "maxLength": 200
+                                                  },
+                                                  "baselineCheckpointId": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "maxLength": 200
+                                                  },
+                                                  "latestCheckpointId": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "maxLength": 200
+                                                  }
+                                                },
+                                                "required": [
+                                                  "kind",
+                                                  "sessionId",
+                                                  "baselineCheckpointId",
+                                                  "latestCheckpointId"
+                                                ],
+                                                "additionalProperties": false
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "revision",
+                                              "fileIndex",
+                                              "hunkIndex",
+                                              "unifiedDiff",
+                                              "provenance"
+                                            ],
+                                            "additionalProperties": false
+                                          },
+                                          {
+                                            "type": "object",
+                                            "properties": {
+                                              "kind": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "workspace"
+                                                ]
+                                              },
+                                              "baselineId": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 200
+                                              },
+                                              "revision": {
+                                                "type": "string",
+                                                "pattern": "^[a-f0-9]{64}$"
+                                              },
+                                              "fileIndex": {
+                                                "type": "integer",
+                                                "minimum": 0,
+                                                "maximum": 9007199254740991
+                                              },
+                                              "hunkIndex": {
+                                                "type": "integer",
+                                                "minimum": 0,
+                                                "maximum": 9007199254740991
+                                              },
+                                              "unifiedDiff": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 65536
+                                              },
+                                              "provenance": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "kind": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "workspace"
+                                                    ]
+                                                  },
+                                                  "baselineId": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "maxLength": 200
+                                                  },
+                                                  "to": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "WORKING"
+                                                    ]
+                                                  }
+                                                },
+                                                "required": [
+                                                  "kind",
+                                                  "baselineId",
+                                                  "to"
+                                                ],
+                                                "additionalProperties": false
+                                              }
+                                            },
+                                            "required": [
+                                              "kind",
+                                              "baselineId",
+                                              "revision",
+                                              "fileIndex",
+                                              "hunkIndex",
+                                              "unifiedDiff",
+                                              "provenance"
+                                            ],
+                                            "additionalProperties": false
+                                          }
+                                        ]
                                       },
                                       "messages": {
                                         "readOnly": true,

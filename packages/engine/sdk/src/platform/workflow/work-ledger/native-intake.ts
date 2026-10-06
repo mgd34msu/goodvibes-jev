@@ -1,4 +1,5 @@
 /** Durable original-input ownership before native work exists. Never starts execution. */
+import { nativeSelectedDiffSelector, type NativeSelectedDiffSelector } from './native-diff-context.js';
 import { captureNativeConversationContinuation, nativeConversationContinuationSchema, type NativeConversationContinuation } from './native-continuation-context.js';
 import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
@@ -27,7 +28,7 @@ export class NativeConversationIntakeError extends Error {
   }
 }
 export interface NativeConversationContinuationOwner {
-  capture(sessionId: string, principalId: string): Promise<NativeConversationContinuation>;
+  capture(sessionId: string, principalId: string, selectedDiff?: NativeSelectedDiffSelector): Promise<NativeConversationContinuation>;
   /** Synchronous publication fence: same owner/workspace and exact captured transcript prefix. */
   assertCurrent(context: NativeConversationContinuation, principalId: string): void;
 }
@@ -51,6 +52,7 @@ function paired(authority: NativePairedExecutionAuthority): NativePairedExecutio
     || !scopes.every(scope => value.scopes.includes('*') || value.scopes.includes(scope))) throw new NativeConversationIntakeError('unsupported-authority');
   return Object.freeze({ ...value, scopes: Object.freeze([...value.scopes].sort()) });
 }
+const contextReadScope = (selectedDiff: NativeSelectedDiffSelector | undefined) => selectedDiff ? selectedDiff.kind === 'session' ? 'read:sessions' : 'read:checkpoints' : undefined;
 const terminal = (record: NativeConversationCapture) => ['associated', 'turn', 'cancelled'].includes(record.state);
 
 export function createNativeConversationIntakeHost(deps: {
@@ -61,6 +63,7 @@ export function createNativeConversationIntakeHost(deps: {
 }): NativeConversationIntakeHost {
   const root = realpathSync(deps.projectRoot);
   const lifetime = new AbortController(); const pending = new Set<Promise<unknown>>();
+  const captures = new Map<string, Promise<NativeConversationCapture>>();
   const deliveries = new Map<string, { controller: AbortController; promise: Promise<NativeConversationIntakeResult>; generation?: number }>();
   let closed = false; let closing: Promise<void> | undefined;
   const assertOpen = () => { if (closed) throw new NativeConversationIntakeError('closed'); };
@@ -83,7 +86,8 @@ export function createNativeConversationIntakeHost(deps: {
     if (record.projectId !== deps.projectId || record.principalId !== current.identity.principalId || record.sessionId !== deps.sessionId
       || !isDeepStrictEqual(record.owner, current.facts)) throw new NativeConversationIntakeError('stale');
     if (record.continuation) {
-      if (!current.identity.scopes.includes('*') && !current.identity.scopes.includes('write:sessions')) throw new NativeConversationIntakeError('forbidden');
+      if (!current.identity.scopes.includes('*') && (!current.identity.scopes.includes('write:sessions')
+        || (contextReadScope(record.continuation.selectedDiff) !== undefined && !current.identity.scopes.includes(contextReadScope(record.continuation.selectedDiff)!)))) throw new NativeConversationIntakeError('forbidden');
     }
   }
   function assertContinuation(record: NativeConversationCapture): void {
@@ -135,7 +139,7 @@ export function createNativeConversationIntakeHost(deps: {
   async function projection(record: NativeConversationCapture): Promise<NativeConversationIntakeResult> {
     const common = { projectId: record.projectId, requestId: record.requestId,
       sourceRef: { version: 1 as const, inputId: record.inputId, sourceId: record.sourceId, sourceRevision: record.sourceRevision, sessionId: record.sessionId,
-        ...(record.continuation ? { continuation: { sessionId: record.continuation.sessionId, revision: record.continuation.revision } } : {}) } };
+        ...(record.continuation ? { continuation: { sessionId: record.continuation.sessionId, revision: record.continuation.revision, ...(record.continuation.selectedDiff ? { selectedDiff: nativeSelectedDiffSelector(record.continuation.selectedDiff) } : {}) } } : {}) } };
     switch (record.state) {
       case 'captured': return { kind: 'captured', ...common };
       case 'processing': return { kind: 'processing', ...common, stage: record.stage ?? 'routing', recovery: deliveries.get(keyId(record))?.generation === record.generation ? 'pending' : 'required' };
@@ -321,31 +325,47 @@ export function createNativeConversationIntakeHost(deps: {
       if (!parsed.success) return Promise.reject(new NativeConversationIntakeError('invalid'));
       return track(async () => {
         options.signal?.throwIfAborted(); const current = owner(authority, options); const { continuation: selection, ...original } = parsed.data;
-        if (selection && !current.identity.scopes.includes('*') && !current.identity.scopes.includes('write:sessions')) throw new NativeConversationIntakeError('forbidden');
+        if (selection && !current.identity.scopes.includes('*') && (!current.identity.scopes.includes('write:sessions')
+          || (contextReadScope(selection.selectedDiff) !== undefined && !current.identity.scopes.includes(contextReadScope(selection.selectedDiff)!)))) throw new NativeConversationIntakeError('forbidden');
         const key = { principalId: current.identity.principalId, inputId: original.inputId };
         const matches = (existing: NativeConversationCapture) => existing.requestId === original.requestId && existing.text === original.text
-          && isDeepStrictEqual(existing.unsupportedSources, original.unsupportedSources) && existing.continuation?.sessionId === selection?.sessionId;
+          && isDeepStrictEqual(existing.unsupportedSources, original.unsupportedSources) && existing.continuation?.sessionId === selection?.sessionId
+          && isDeepStrictEqual(existing.continuation?.selectedDiff ? nativeSelectedDiffSelector(existing.continuation.selectedDiff) : undefined, selection?.selectedDiff);
         // Replayed capture retains its original checkpoint even when later turns appended.
         const prior = deps.storage.current(key);
         if (prior) { inspect(prior, authority, options); if (!matches(prior)) throw new NativeConversationIntakeError('request-conflict'); return projection(prior); }
-        if (selection && !deps.continuation) throw new NativeConversationIntakeError('unavailable');
-        const continuation = selection ? captureNativeConversationContinuation(await deps.continuation!.capture(selection.sessionId, current.identity.principalId)) : undefined;
-        if (continuation && continuation.sessionId !== selection?.sessionId) throw new NativeConversationIntakeError('stale');
-        options.signal?.throwIfAborted();
-        const source = { ...original, ...(continuation ? { continuation } : {}) };
-        const record = parseNativeConversationCapture({ version: 1, projectId: deps.projectId, principalId: current.identity.principalId,
-          ...source, sourceId: nativeConversationSourceId(deps.projectId, current.identity.principalId, source.inputId), sourceRevision: nativeConversationSourceRevision(source),
-          sessionId: deps.sessionId, owner: current.facts, generation: 1, state: 'captured', stage: null, route: null, reason: null,
-          proposalsSpent: 0, proposal: null, decisions: [], association: null });
-        const stored = await withOwners(record, authority, options, assertCurrent => deps.storage.transaction(record, existing => {
-          assertCurrent(); options.signal?.throwIfAborted();
-          if (existing) {
-            inspect(existing, authority, options);
-            if (!matches(existing)) throw new NativeConversationIntakeError('request-conflict');
-            return { next: null, value: existing };
-          }
-          assertContinuation(record); return { next: record, value: record };
-        }));
+        const captureKey = keyId(key);
+        const pending = captures.get(captureKey);
+        if (pending) {
+          const existing = await pending;
+          inspect(existing, authority, options);
+          if (!matches(existing)) throw new NativeConversationIntakeError('request-conflict');
+          return projection(existing);
+        }
+        const capture = (async () => {
+          if (selection && !deps.continuation) throw new NativeConversationIntakeError('unavailable');
+          const continuation = selection ? captureNativeConversationContinuation(await deps.continuation!.capture(selection.sessionId, current.identity.principalId, selection.selectedDiff)) : undefined;
+          if (continuation && (continuation.sessionId !== selection?.sessionId || !isDeepStrictEqual(continuation.selectedDiff ? nativeSelectedDiffSelector(continuation.selectedDiff) : undefined, selection?.selectedDiff))) throw new NativeConversationIntakeError('stale');
+          options.signal?.throwIfAborted();
+          const source = { ...original, ...(continuation ? { continuation } : {}) };
+          const record = parseNativeConversationCapture({ version: 1, projectId: deps.projectId, principalId: current.identity.principalId,
+            ...source, sourceId: nativeConversationSourceId(deps.projectId, current.identity.principalId, source.inputId), sourceRevision: nativeConversationSourceRevision(source),
+            sessionId: deps.sessionId, owner: current.facts, generation: 1, state: 'captured', stage: null, route: null, reason: null,
+            proposalsSpent: 0, proposal: null, decisions: [], association: null });
+          const stored = await withOwners(record, authority, options, assertCurrent => deps.storage.transaction(record, existing => {
+            assertCurrent(); options.signal?.throwIfAborted();
+            if (existing) {
+              inspect(existing, authority, options);
+              if (!matches(existing)) throw new NativeConversationIntakeError('request-conflict');
+              return { next: null, value: existing };
+            }
+            assertContinuation(record); return { next: record, value: record };
+          }));
+          return stored;
+        })();
+        captures.set(captureKey, capture);
+        let stored: NativeConversationCapture;
+        try { stored = await capture; } finally { if (captures.get(captureKey) === capture) captures.delete(captureKey); }
         inspect(stored, authority, options); return projection(stored);
       });
     },
