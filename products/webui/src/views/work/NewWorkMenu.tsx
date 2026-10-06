@@ -278,7 +278,7 @@ export function NewWorkMenu({ onCreated, lifetime }: NewWorkMenuProps) {
         title={open ? TITLES[open].title : ''}
         description={open ? TITLES[open].description : undefined}
       >
-        {open === 'native' && <NativeIntakeForm lifetime={lifetime} />}
+        {open === 'native' && <NativeIntakeForm lifetime={lifetime} onOpenSession={(id) => done(`hosted:${id}`)} />}
         {open === 'task' && <TaskForm onDone={() => done()} />}
         {open === 'hosted' && <HostedForm onDone={done} />}
         {open === 'ci-watch' && <CiWatchForm onDone={done} />}

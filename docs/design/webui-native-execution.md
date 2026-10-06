@@ -8,7 +8,7 @@ gate. Jev remains the semantic decision owner; the existing shared transport
 remains the only Jev retry implementation.
 
 A `turn`, blocked, refused or cancelled intake result does not dispatch execution.
-Hosted conversation delivery is still a separate gap. This path never converts a
+Hosted conversation delivery uses its [separate native owner](webui-native-hosted-turn.md). This path never converts a
 serialized result into a turn permit or invokes ordinary chat,
 `contracts.start/reply` or `tasks.create`.
 
@@ -94,6 +94,6 @@ are not relabelled as ledger verification or published evidence.
 
 No real user credential or provider was exercised. These are product orchestration
 and lifecycle proofs, not live semantic calibration, live-provider acceptance or
-an independent settlement-security certification. Hosted turn delivery still
-requires canonical broker input identity, current native authority, an actual
-nonserialized admission capability and durable ambiguous-dispatch reconciliation.
+an independent settlement-security certification. Hosted turn delivery now retains canonical broker input identity, current native
+authority, a genuine nonserialized admission capability and durable
+ambiguous-dispatch reconciliation in its separate owner.

@@ -134130,6 +134130,471 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         }
       },
       {
+        "id": "workLedger.turn.cancel",
+        "title": "Cancel Native Hosted Turn",
+        "description": "Persist cancellation of the exact native hosted dispatch and drain its owned turn. Cancellation does not undo effects already performed.",
+        "category": "work-ledger",
+        "source": "builtin",
+        "access": "admin",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "read:work-ledger",
+          "write:work-ledger",
+          "write:sessions"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/work-ledger/turn/cancel"
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "projectId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "inputId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "sourceRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "projectId",
+            "inputId",
+            "sourceRevision"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "projectId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "inputId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "sourceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "preparing",
+                    "running",
+                    "cancelling",
+                    "completed",
+                    "cancelled",
+                    "recovery-required"
+                  ]
+                },
+                "sessionId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "brokerInputId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "correlationId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "projectId",
+                "requestId",
+                "inputId",
+                "sourceRevision",
+                "state",
+                "sessionId",
+                "brokerInputId",
+                "correlationId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "not-found"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
+      },
+      {
+        "id": "workLedger.turn.start",
+        "title": "Start Native Hosted Turn",
+        "description": "Deliver an already admitted native conversation input at most once through a host-owned broker identity and durable dispatch claim. Accepts source identity only. Ambiguous dispatch requires inspection and is never replayed.",
+        "category": "work-ledger",
+        "source": "builtin",
+        "access": "admin",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "read:work-ledger",
+          "write:work-ledger",
+          "write:sessions"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/work-ledger/turn/start"
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "projectId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "inputId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "sourceRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "projectId",
+            "inputId",
+            "sourceRevision"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "projectId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "inputId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "sourceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "preparing",
+                    "running",
+                    "cancelling",
+                    "completed",
+                    "cancelled",
+                    "recovery-required"
+                  ]
+                },
+                "sessionId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "brokerInputId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "correlationId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "projectId",
+                "requestId",
+                "inputId",
+                "sourceRevision",
+                "state",
+                "sessionId",
+                "brokerInputId",
+                "correlationId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "not-found"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
+      },
+      {
+        "id": "workLedger.turn.status",
+        "title": "Status Native Hosted Turn",
+        "description": "Read native hosted dispatch status. Does not admit, claim, retry or execute.",
+        "category": "work-ledger",
+        "source": "builtin",
+        "access": "admin",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "read:work-ledger",
+          "write:work-ledger",
+          "write:sessions"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/work-ledger/turn/status"
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "projectId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "inputId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "sourceRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "projectId",
+            "inputId",
+            "sourceRevision"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "projectId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "inputId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "sourceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "preparing",
+                    "running",
+                    "cancelling",
+                    "completed",
+                    "cancelled",
+                    "recovery-required"
+                  ]
+                },
+                "sessionId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "brokerInputId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "correlationId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "projectId",
+                "requestId",
+                "inputId",
+                "sourceRevision",
+                "state",
+                "sessionId",
+                "brokerInputId",
+                "correlationId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "not-found"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
+      },
+      {
         "id": "workspaces.registrations.add",
         "title": "Register a Workspace",
         "description": "Register a workspace root so the whole subtree beneath it is covered. Refuses an absurdly broad root (the home directory, the filesystem root, or the daemon state directory) with a 400, coverage flows down the entire subtree, so a root that broad would sweep far more than a project. Idempotent: re-registering the same normalized root returns alreadyRegistered:true. Registering a root clears any remembered decline recorded at exactly that root.",
@@ -136984,10 +137449,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       }
     ],
     "schemaCoverage": {
-      "methods": 530,
-      "typedInputs": 530,
+      "methods": 533,
+      "typedInputs": 533,
       "genericInputs": 0,
-      "typedOutputs": 530,
+      "typedOutputs": 533,
       "genericOutputs": 0
     },
     "eventCoverage": {
@@ -136996,8 +137461,8 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       "withWireEvents": 34
     },
     "validationCoverage": {
-      "methods": 530,
-      "validated": 522,
+      "methods": 533,
+      "validated": 525,
       "skippedGeneric": 0,
       "skippedUntyped": 8
     }

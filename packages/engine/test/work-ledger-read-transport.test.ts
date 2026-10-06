@@ -359,10 +359,10 @@ describe('fresh authorization on every ledger entry point', () => {
     expect((await ws.call(method, { body: { actorId: 'forged', authority: {}, context: { admin: true, scopes: ['*'] } } }))?.status).toBe(400);
     expect(host.snapshotCalls).toBe(0); expect(host.historyCalls).toBe(0);
   });
-  test('ledger read and import methods opt into the fresh-auth gate', () => {
+  test('ledger read, import and native methods opt into the fresh-auth gate', () => {
     const host = fixture();
     expect(host.catalog.list().filter(method => method.metadata?.requiresFreshOperatorAuth === true).map(method => method.id).sort())
-      .toEqual(['workLedger.execution.cancel', 'workLedger.execution.resume', 'workLedger.execution.start', 'workLedger.execution.status', 'workLedger.history', 'workLedger.importLegacy', 'workLedger.intake.admit', 'workLedger.intake.cancel', 'workLedger.intake.capture', 'workLedger.intake.get', 'workLedger.intake.resume', 'workLedger.prepareLegacyImport', 'workLedger.project', 'workLedger.snapshot', 'workLedger.submission.get', 'workLedger.submit']);
+      .toEqual(['workLedger.execution.cancel', 'workLedger.execution.resume', 'workLedger.execution.start', 'workLedger.execution.status', 'workLedger.history', 'workLedger.importLegacy', 'workLedger.intake.admit', 'workLedger.intake.cancel', 'workLedger.intake.capture', 'workLedger.intake.get', 'workLedger.intake.resume', 'workLedger.prepareLegacyImport', 'workLedger.project', 'workLedger.snapshot', 'workLedger.submission.get', 'workLedger.submit', 'workLedger.turn.cancel', 'workLedger.turn.start', 'workLedger.turn.status']);
   });
 });
 

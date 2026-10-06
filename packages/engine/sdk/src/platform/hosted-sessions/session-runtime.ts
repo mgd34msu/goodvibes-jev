@@ -1,3 +1,5 @@
+import { readNativeConversationTurnPermit, type NativeConversationTurnPermit } from '../workflow/work-ledger/native-intake-client.js';
+import { readNativeConversationTurnStatus } from '../core/native-turn-admission.js';
 /**
  * session-runtime.ts, the per-session half of a hosted session: the loop.
  *
@@ -179,8 +181,11 @@ export interface HostedSessionRuntime {
    * and this resolves immediately, which is the same contract a terminal has.
    */
   submit(text: string, correlationId?: string): Promise<void>;
+  /** Dedicated native delivery; refuses queue acceptance and requires actual completion. */
+  submitNative(permit: NativeConversationTurnPermit, inputId: string, correlationId: string): Promise<void>;
   /** Interrupt the in-flight turn. Returns whether one was running. */
   cancel(): boolean;
+  cancelNative(permit: NativeConversationTurnPermit): boolean;
   dispose(): void;
 }
 
@@ -339,6 +344,16 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
         },
       });
     },
+    submitNative: async (permit, inputId, correlationId): Promise<void> => {
+      const source = readNativeConversationTurnPermit(permit);
+      if (orchestrator.isTurnInFlight || orchestrator.isThinking
+        || readNativeConversationTurnStatus(permit) !== 'unclaimed') throw new Error('Native turn cannot be queued or replayed');
+      orchestrator.bindNativeConversationProject(source.projectId);
+      await orchestrator.handleUserInput(source.text, undefined, { nativeConversationTurnPermit: permit, requireImmediateNativeTurn: true,
+        origin: { source: 'native-hosted-conversation', surface: 'service', metadata: { inputId, correlationId } } });
+      if (readNativeConversationTurnStatus(permit) !== 'settled') throw new Error('Native hosted turn did not complete');
+    },
+    cancelNative: permit => orchestrator.cancelNativeConversationTurn(permit),
     cancel: (): boolean => {
       if (!orchestrator.isTurnInFlight) return false;
       orchestrator.abort();

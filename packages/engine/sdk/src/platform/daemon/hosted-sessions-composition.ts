@@ -1,3 +1,6 @@
+import { createNativeHostedTurnHost, type NativeHostedTurnDependencies, type NativeHostedTurnHost } from '../hosted-sessions/native-turn-host.js';
+import { registerNativeHostedTurnGatewayMethods } from '../control-plane/routes/native-hosted-turn.js';
+import type { SharedSessionBroker } from '../control-plane/session-broker.js';
 /**
  * hosted-sessions-composition.ts, wiring the hosted-session engine into a
  * daemon.
@@ -48,6 +51,8 @@ import { CONVERSATIONAL_DIAGNOSIS_SECTION } from '../agents/conversational-contr
 
 /** What a product states to turn hosted sessions on. */
 export interface DaemonHostedSessionsOptions {
+  /** Host-private owner supplied by product composition, never wire data. */
+  readonly nativeConversation?: NativeHostedTurnDependencies | undefined;
   /**
    * How a workspace floor is built. Required, see the module header for why
    * there is no default.
@@ -115,7 +120,9 @@ export function composeHostedSessions(input: HostedSessionCompositionInput): Hos
       get terminatedRetentionMs(): number { return config.get('hostedSessions.terminatedRetentionMs'); },
     },
   );
+  let native: NativeHostedTurnHost | undefined;
   const manager = new HostedSessionManager({
+    closeNativeTurns: () => native?.close() ?? Promise.resolve(),
     floorFactory: input.options.floorFactory,
     store,
     // Read live on every use: a policy change applies to the next detach, not
@@ -131,6 +138,12 @@ export function composeHostedSessions(input: HostedSessionCompositionInput): Hos
     ...(input.spine === undefined ? {} : { spine: input.spine }),
     isWorkspaceUsable: input.options.isWorkspaceUsable ?? isExistingDirectory,
   });
+  if (input.options.nativeConversation) {
+    const broker = input.spine as SharedSessionBroker | undefined;
+    if (!broker || typeof broker.reserveNativeTurnInput !== 'function') throw new Error('Native hosted delivery requires the canonical session broker');
+    native = createNativeHostedTurnHost({ ...input.options.nativeConversation, manager, broker });
+    registerNativeHostedTurnGatewayMethods(input.gatewayMethods, native);
+  }
   manager.setEventPublisher(input.eventPublisher);
   registerHostedSessionGatewayMethods(input.gatewayMethods, manager);
   return manager;

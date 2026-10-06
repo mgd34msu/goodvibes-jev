@@ -110,16 +110,14 @@ the browser replays prove a real connected deployment, user account or provider.
    [WebUI original-source admission](../design/webui-native-intake.md) surface now
    journals exact text and invokes capture/admission in one Submit, with paired
    authority checks and explicit inspect/recovery/cancellation. It renders real
-   admission receipts without claiming execution or dispatching native turns.
-   Native execution and hosted continuation remain open. The existing `contracts.start` input
-   carries `ask`, session, workspace and isolation, but no native source. A native
-   runner rejects a source-less start. Source-bearing native task
-   ingress and host-owned continuation/execution integration require current
-   authority/scope and durable execution ownership; this does not imply a new
-   user-facing Revise action. Existing
-   `workLedger.intake.*` requires a persisted paired-token admin owner, fresh
-   authorization and `read:work-ledger` plus `write:work-ledger`; shared tokens and
-   user sessions are unsupported there. Intake admission is not execution. A
+   admission receipts separately from [native execution](../design/webui-native-execution.md)
+   and [hosted conversation delivery](../design/webui-native-hosted-turn.md), both
+   of which now continue automatically for their matching recorded disposition.
+   These owners preserve current authority, exact source and durable no-replay
+   boundaries. Ordinary hosted create/steer/follow-up ingress remains a separate
+   migration. The existing `contracts.start` input carries no native source and
+   remains unsuitable as a substitute. Intake admission is not execution;
+   shared tokens and user sessions remain unsupported on the native routes. A
    WebUI caller must not fabricate source revisions, broaden scopes, substitute
    legacy start/reply, or infer authority from inspection receipts.
    Sources: [start wire](../../packages/engine/sdk/src/platform/control-plane/operator-contract-schemas-contracts.ts),

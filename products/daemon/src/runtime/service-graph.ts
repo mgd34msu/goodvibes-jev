@@ -1,3 +1,4 @@
+import { installNativeHostedConversationOwner } from './native-hosted-conversation-composition.js';
 import { createNativeWorkSubmissionHost } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-submission';
 import { createNativeConversationIntakeHost, createNativeRequirementProposer } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake';
 import { createLocalWorkLedgerReadBinding } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
@@ -689,6 +690,9 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       scopes: nativeScopes, port: judgment.port, decisionLog: judgment.decisionLog, proposer: createNativeRequirementProposer(providerRegistry) });
     disposalScope.ownUntilRegistered('native conversation intake', nativeIntake.close);
     registerNativeConversationIntakeGatewayMethods(gatewayMethods, nativeIntake);
+    const removeHostedOwner = installNativeHostedConversationOwner(gatewayMethods, { projectId: projectPlanningProjectId,
+      projectRoot: workingDirectory, intake: nativeIntake, journalPath: shellPaths.resolveUserPath('native-hosted-turns.json') });
+    disposalScope.ownUntilRegistered('native hosted conversation binding', removeHostedOwner);
     const nativeWork = createDaemonNativeWorkExecutionActivation({
       runtimeBus: options.runtimeBus, configManager, providerRegistry, runtimeStore: options.runtimeStore,
       projectRoot: workingDirectory, projectId: projectPlanningProjectId,
@@ -857,6 +861,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     // Native turns borrow these owners, so they drain before shared pollers.
     disposalScope.registry.add('native work submission', nativeSubmission.close);
     disposalScope.registry.add('native conversation intake', nativeIntake.close);
+    disposalScope.registry.add('native hosted conversation binding', removeHostedOwner);
     disposalScope.registry.add('native work execution', nativeWork.close);
     // Drain plugin work before releasing the graph it can call into.
     disposalScope.registry.add('plugins', () => pluginManager.close());

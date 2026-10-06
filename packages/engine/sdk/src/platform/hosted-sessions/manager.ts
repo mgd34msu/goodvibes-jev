@@ -1,3 +1,4 @@
+import { readNativeConversationTurnPermit, type NativeConversationTurnPermit } from '../workflow/work-ledger/native-intake-client.js';
 /**
  * manager.ts, the hosted-session engine: lifecycle, policy, durability.
  *
@@ -100,6 +101,8 @@ export interface HostedLiveTurnRegistry {
 
 export interface HostedSessionManagerOptions {
   readonly floorFactory: HostedWorkspaceFloorFactory;
+  /** Fences and drains native dispatch ownership before runtime teardown. */
+  readonly closeNativeTurns?: (() => Promise<void>) | undefined;
   readonly store: HostedSessionStore;
   readonly settings: HostedSessionSettings;
   /** The runtime bus turn events are observed on, the daemon's own. */
@@ -519,6 +522,24 @@ export class HostedSessionManager {
     }
   }
 
+  /** Dedicated native path: exact broker input, real permit, no ordinary queue/retry. */
+  async deliverNative(sessionId: string, inputId: string, permit: NativeConversationTurnPermit): Promise<void> {
+    const source = readNativeConversationTurnPermit(permit);
+    const live = this.requireLive(sessionId);
+    await this.ensureComposed(live);
+    const input = this.options.spine?.getInputsSince(sessionId, {}).find(value => value.id === inputId);
+    if (!input || input.state !== 'delivered' || input.body !== source.text || input.correlationId !== `session-input:${inputId}`
+      || JSON.stringify(input.metadata?.['nativeConversation']) !== JSON.stringify({ projectId: source.projectId, requestId: source.requestId, sourceRef: source.sourceRef })
+      || !live.runtime) throw new Error('Native hosted broker identity mismatch');
+    await live.runtime.submitNative(permit, input.id, input.correlationId);
+    live.record = { ...live.record, messageCount: live.runtime.conversation.getMessageCount(), updatedAt: this.now() };
+    // Unlike ordinary best-effort persistence, this failure prevents a completion receipt.
+    await this.options.store.save(live.record, live.runtime.conversation.toJSON(), { durable: true });
+  }
+
+  /** Native owner cancellation interrupts only its exact hosted session. */
+  cancelNative(sessionId: string, permit: NativeConversationTurnPermit): void { this.sessions.get(sessionId)?.runtime?.cancelNative(permit); }
+
   /** The conversation as a client renders it. Empty for a session with no loop yet. */
   private history(live: LiveSession): readonly HostedSessionHistoryMessage[] {
     const conversation = live.runtime?.conversation;
@@ -743,6 +764,7 @@ export class HostedSessionManager {
     if (this.disposed) return;
     this.disposed = true;
     this.spine.stop();
+    await this.options.closeNativeTurns?.();
     if (this.attachmentTimer) {
       clearInterval(this.attachmentTimer);
       this.attachmentTimer = null;
