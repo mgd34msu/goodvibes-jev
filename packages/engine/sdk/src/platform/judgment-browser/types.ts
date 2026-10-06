@@ -20,6 +20,8 @@ export interface BrowserJudgmentResolvedInput<S> {
   readonly signal?: AbortSignal;
   /** Throws a value-free hold if source revision, permission, or lifetime changed. */
   readonly assertCurrent: () => void;
+  /** Release an operation-local snapshot after its actual work has drained. */
+  readonly dispose?: () => void;
 }
 export interface BrowserJudgmentResolveContext {
   readonly principal: AuthenticatedPrincipal;
@@ -41,6 +43,8 @@ export interface BrowserJudgmentBattery<K extends BrowserJudgmentBatteryId, S, R
 }
 /** Acquired by server composition. Neither route identity nor port comes from browser JSON. */
 export interface BrowserJudgmentRoute {
+  /** Revoking the configured route cancels pending key acquisition and retry waits. */
+  readonly signal?: AbortSignal;
   readonly revision: string;
   readonly kind: 'hosted' | 'local';
   readonly port: JudgmentPort;

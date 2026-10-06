@@ -115,6 +115,31 @@ function recorded<T>(write: () => T): T {
   catch { throw new JudgmentError('unrecorded', FAILURE_MESSAGES.unrecorded); }
 }
 
+/** A retention refusal never copies private assertion text or creates a log entry. */
+function assertLogCurrent(check: (() => void) | undefined): void {
+  if (check === undefined) return;
+  try {
+    const value: unknown = check();
+    if (value === undefined) return;
+    // A refused async assertion must not leave its rejection unhandled. A
+    // hostile then/constructor getter is also only a value-free refusal.
+    try { void Promise.resolve(value).catch(() => {}); }
+    catch { /* Refuse the assertion below. */ }
+  } catch { /* Refuse the assertion below. */ }
+  throw new JudgmentError('rejected', FAILURE_MESSAGES.rejected);
+}
+
+/** Object-spread semantics, but the admitted assertion accessor is read only once. */
+function captureRequest<Q extends Questions>(request: JudgmentRequest<Q>, check: (() => void) | undefined): JudgmentRequest<Q> {
+  const entries: [PropertyKey, unknown][] = [];
+  for (const key of Reflect.ownKeys(request)) {
+    if (Object.prototype.propertyIsEnumerable.call(request, key)) {
+      entries.push([key, key === 'assertLogCurrent' ? check : Reflect.get(request, key)]);
+    }
+  }
+  return Object.fromEntries(entries) as unknown as JudgmentRequest<Q>;
+}
+
 /** A borrowed port is as untrusted as a wire response; normalize before writing or returning it. */
 function projectResult<Q extends Questions>(questions: Q, expectedModel: string, result: JudgmentResult<Q>): JudgmentResult<Q> {
   let requestId: string | undefined;
@@ -147,9 +172,10 @@ function projectResult<Q extends Questions>(questions: Q, expectedModel: string,
 }
 
 /**
- * Wraps a port so every call is recorded, answered or failed. When the log
- * cannot record a call, the call fails with `unrecorded`: no decision acts
- * on a reading the log does not hold.
+ * Wraps a port so every admitted call is recorded, answered or failed. An
+ * optional current-retention assertion can refuse capture or a later write.
+ * When the log cannot record a call, the call fails with `unrecorded`: no
+ * decision acts on a reading the log does not hold.
  */
 export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () => Date = () => new Date()): JudgmentPort {
   return {
@@ -162,14 +188,26 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
     async ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>> {
       const started = performance.now();
       let requestedModel: string | undefined;
-      const signal = request.signal;
+      let logAssertion: (() => void) | undefined;
+      try { logAssertion = request.assertLogCurrent; }
+      catch { throw new JudgmentError('rejected', FAILURE_MESSAGES.rejected); }
+      assertLogCurrent(logAssertion);
       // Admit one immutable payload before settings/key acquisition can await.
       // Keep a separate question snapshot so a borrowed port cannot alter validation.
-      const input = freezeSnapshot(toJson({ state: request.state, questions: request.questions })) as unknown as Pick<JudgmentRequest<Q>, 'state' | 'questions'>;
-      const questions = toJson(input.questions);
+      const { signal, input, questions, at, context } = (() => {
+        try {
+          const signal = request.signal;
+          const input = freezeSnapshot(toJson({ state: request.state, questions: request.questions })) as unknown as Pick<JudgmentRequest<Q>, 'state' | 'questions'>;
+          return { signal, input, questions: toJson(input.questions), at: isoTime(now()), context: Object.freeze({ ...request.context }) };
+        } finally {
+          // Borrowed accessors can revoke retention even when they throw. The
+          // detached state has no borrowed getters left when it is hashed.
+          assertLogCurrent(logAssertion);
+        }
+      })();
       const call = {
-        at: isoTime(now()),
-        context: Object.freeze({ ...request.context }),
+        at,
+        context,
         stateHash: hashState(input.state),
         questions,
       };
@@ -178,7 +216,7 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
         requestedModel = identifier(request.model ?? inner.model, true);
         if (requestedModel === undefined) throw new JudgmentError('invalid-request', FAILURE_MESSAGES['invalid-request']);
         checkCancellation(signal);
-        const response = await inner.ask(Object.freeze({ ...request, ...input, context: call.context, model: requestedModel }));
+        const response = await inner.ask(Object.freeze({ ...captureRequest(request, logAssertion), ...input, context: call.context, model: requestedModel }));
         checkCancellation(signal);
         result = projectResult(questions as unknown as Q, requestedModel, response);
         checkCancellation(signal);
@@ -194,22 +232,25 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
           lineage: failure.lineage ?? { logicalRequestId: crypto.randomUUID(), attempts: [] },
           error: { kind: failure.kind, message: failure.message },
         };
+        // Failure projection can itself call borrowed getters. A refused
+        // retention assertion escapes this catch without a replacement entry.
+        assertLogCurrent(logAssertion);
         recorded(() => log.record(entry));
         throw failure;
       }
-      const decisionId = recorded(() =>
-        log.record({
-          ...call,
-          status: 'answered',
-          requestedModel: result.requestedModel,
-          model: result.model,
-          answers: toJson(result.answers),
-          latencyMs: result.latencyMs,
-          usage: result.usage,
-          requestId: result.requestId,
-          lineage: result.lineage ?? { logicalRequestId: crypto.randomUUID(), attempts: [] },
-        }),
-      );
+      const entry: NewDecisionEntry = recorded(() => ({
+        ...call,
+        status: 'answered',
+        requestedModel: result.requestedModel,
+        model: result.model,
+        answers: toJson(result.answers),
+        latencyMs: result.latencyMs,
+        usage: result.usage,
+        requestId: result.requestId,
+        lineage: result.lineage ?? { logicalRequestId: crypto.randomUUID(), attempts: [] },
+      }));
+      assertLogCurrent(logAssertion);
+      const decisionId = recorded(() => log.record(entry));
       return { ...result, decisionId };
     },
   };

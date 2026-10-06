@@ -206,7 +206,9 @@ describe('actual WebUI descriptors through the published service', () => {
       expect(await pending).toMatchObject({ code: 'JUDGMENT_REFERENCE_HELD' });
       await f.service.close();
       expect(active).toBe(4); expect(f.requests).toHaveLength(0);
-      expect(f.log.query({ status: 'failed' })).toHaveLength(4);
+      // Retiring the source also retires retention authority. Drained calls
+      // cannot acquire a source-bearing failure hash after that boundary.
+      expect(f.log.query()).toEqual([]);
     } finally { await f.close(); }
   });
 
