@@ -22,10 +22,13 @@ import { Field, Input } from '../../components/ui/Field';
 import { Menu, MenuItem } from '../../components/ui/Menu';
 import { Select } from '../../components/ui/Select';
 import { CiReportDetail, type CiReport } from './CiWatchDetail';
+import { NativeIntakeForm } from './NativeIntakeForm';
+import type { ClientLifetime } from '../../lib/client-lifetime';
 
-type NewKind = 'task' | 'hosted' | 'ci-watch' | 'ci-status';
+type NewKind = 'native' | 'task' | 'hosted' | 'ci-watch' | 'ci-status';
 
 export interface NewWorkMenuProps {
+  lifetime: ClientLifetime;
   /** A created item to open: its Work key (`hosted:<id>`, ...). */
   onCreated: (key: string) => void;
 }
@@ -237,13 +240,14 @@ function CiStatusForm() {
 }
 
 const TITLES: Record<NewKind, { title: string; description: string }> = {
+  native: { title: 'Native request', description: 'Capture original text and let Jev decide admission to the work ledger.' },
   task: { title: 'New task', description: 'Submit a task for the daemon to run.' },
   hosted: { title: 'New hosted session', description: 'A conversation that runs inside the daemon and survives this tab.' },
   'ci-watch': { title: 'Watch CI', description: 'Get notified when a repository, ref or pull request finishes its checks.' },
   'ci-status': { title: 'Check CI status', description: 'Look up any repository, ref or pull request once, without creating a watch.' },
 };
 
-export function NewWorkMenu({ onCreated }: NewWorkMenuProps) {
+export function NewWorkMenu({ onCreated, lifetime }: NewWorkMenuProps) {
   const [open, setOpen] = useState<NewKind | null>(null);
   const close = () => setOpen(null);
   const done = (key?: string) => {
@@ -262,6 +266,7 @@ export function NewWorkMenu({ onCreated }: NewWorkMenuProps) {
           </Button>
         )}
       >
+        <MenuItem icon={<ListTodo />} onSelect={() => setOpen('native')}>Native request</MenuItem>
         <MenuItem icon={<ListTodo />} onSelect={() => setOpen('task')}>Task</MenuItem>
         <MenuItem icon={<Server />} onSelect={() => setOpen('hosted')}>Hosted session</MenuItem>
         <MenuItem icon={<GitBranch />} onSelect={() => setOpen('ci-watch')}>CI watch</MenuItem>
@@ -273,6 +278,7 @@ export function NewWorkMenu({ onCreated }: NewWorkMenuProps) {
         title={open ? TITLES[open].title : ''}
         description={open ? TITLES[open].description : undefined}
       >
+        {open === 'native' && <NativeIntakeForm lifetime={lifetime} />}
         {open === 'task' && <TaskForm onDone={() => done()} />}
         {open === 'hosted' && <HostedForm onDone={done} />}
         {open === 'ci-watch' && <CiWatchForm onDone={done} />}
