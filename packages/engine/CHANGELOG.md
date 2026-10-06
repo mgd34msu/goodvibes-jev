@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Patch Git command/environment guards and transitive compression/source-map
+  denial-of-service advisories. Git stays optional; checkpoint repositories
+  retain their isolated routing and discovery ceiling without unsafe escapes.
+
 - Terminal palette configuration now exposes the supported 13-choice enum and
   defaults to `goodvibes`. Existing `vaporwave` values retain their neon palette;
   recognized saved case/whitespace forms remain readable without ingestion

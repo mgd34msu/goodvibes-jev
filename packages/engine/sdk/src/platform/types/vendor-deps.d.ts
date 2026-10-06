@@ -117,6 +117,7 @@ declare module 'node-edge-tts/dist/drm.js' {
 // simple-git, Git wrapper used by the git integration service.
 declare module 'simple-git' {
   export interface SimpleGitOptions {
+    allowEnvironment?: readonly string[];
     baseDir?: string;
     config?: string[];
     binary?: string;
@@ -178,6 +179,5 @@ declare module 'simple-git' {
     [key: string]: any;
   }
   function simpleGit(options?: string | Partial<SimpleGitOptions>): SimpleGit;
-  export default simpleGit;
   export { simpleGit };
 }
