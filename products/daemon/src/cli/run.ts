@@ -37,8 +37,8 @@ const PARTIAL = 'This partial daemon package requires an explicit inbox composit
 export async function runDaemonCli(argv: readonly string[], options: DaemonCliOptions = {}): Promise<number> {
   const stdout = options.stdout ?? ((line: string) => { writeSync(1, `${line}\n`); });
   const stderr = options.stderr ?? ((line: string) => { writeSync(2, `${line}\n`); });
-  const result = (answer: DaemonCommandResult): number => {
-    for (const line of answer.lines) (answer.exitCode === 0 ? stdout : stderr)(line);
+  const result = (answer: DaemonCommandResult, write = answer.exitCode === 0 ? stdout : stderr): number => {
+    for (const line of answer.lines) write(line);
     return answer.exitCode;
   };
   const refuse = (line: string): number => result({ exitCode: 2, lines: [line] });
@@ -66,7 +66,9 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
       if (cli.commandArgs.some((arg) => arg === '--help' || arg === '-h')) return result({ exitCode: 0, lines: [renderDaemonCommandHelp(cli.command)!] });
       if (cli.commandArgs.some((arg) => arg !== '--strict')) return refuse('Usage: goodvibes-daemon provision-wake-model [--strict] [--help]');
       const { homeDirectory } = resolveDaemonCliOwnership(cli.flags, env, options.cwd);
-      return result(await runProvisionWakeModelCommand(cli.commandArgs, { homeDirectory, env }));
+      // Provisioning and service commands preserve their stdout receipt even when
+      // a nonzero status carries a degraded/absent state.
+      return result(await runProvisionWakeModelCommand(cli.commandArgs, { homeDirectory, env }), stdout);
     }
     const configuration = createDaemonCliConfiguration(cli.flags, env, options.cwd);
     const { config, homeDirectory, daemonHomeDirectory, workingDirectory } = configuration;
@@ -105,7 +107,7 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
           configManager: config, homeDir: homeDirectory, unitHomeDir: env.HOME ?? homedir(), workingDirectory,
           host: binding.host, port: binding.port, confirmMigration: cli.flags.yes, json: cli.flags.json,
           hostnameFlagProvided: cli.flags.hostname !== undefined, portFlagProvided: cli.flags.port !== undefined,
-        }));
+        }), stdout);
       }
     }
   } catch {

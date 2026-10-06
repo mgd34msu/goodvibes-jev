@@ -10,6 +10,8 @@ import { createDaemonCliConfiguration } from '../../cli/configuration.js';
 import { parseDaemonCli } from '../../cli/parser.js';
 import { prepareDaemonCliServe } from '../../cli/serve.js';
 import * as shell from '@goodvibes-jev/engine/terminal-shell';
+import * as serviceCommands from '../../daemon/service-commands.js';
+import * as wakeCommand from '../../daemon/provision-wake-model.js';
 
 const entrypoint = fileURLToPath(new URL('../../../dist/cli/entrypoint.js', import.meta.url));
 function launch(args: string[], composed = false, root = makeOwnedTempDir('daemon-built-cli')) {
@@ -252,4 +254,31 @@ test('fresh frozen workspace install links the launcher before compiled output e
   writeFileSync(join(daemon, 'dist', 'cli', 'entrypoint.js'), 'console.log("compiled-fixture-reached");\n', { mode: 0o644 });
   const invoked = spawnSync(process.execPath, [link], { cwd: root, env, timeout: 10_000, encoding: 'utf8' });
   expect(invoked.status).toBe(0); expect(invoked.stdout.trim()).toBe('compiled-fixture-reached');
+});
+
+for (const exitCode of [3, 4]) {
+  test(`service-status exit ${exitCode} preserves its JSON receipt on stdout`, async () => {
+    const root = makeOwnedTempDir('daemon-cli-service-receipt');
+    const receipt = JSON.stringify({ installed: exitCode === 3, running: false });
+    const run = spyOn(serviceCommands, 'runDaemonServiceCli').mockResolvedValue({
+      ok: true, exitCode, lines: [receipt], status: { platform: 'manual', installed: exitCode === 3, running: false, path: '' },
+    });
+    const stdout: string[] = []; const stderr: string[] = [];
+    try {
+      expect(await runDaemonCli(['service-status', '--json'], { env: { HOME: root }, cwd: root,
+        stdout: (line) => { stdout.push(line); }, stderr: (line) => { stderr.push(line); } })).toBe(exitCode);
+      expect(stdout).toEqual([receipt]); expect(stderr).toEqual([]);
+    } finally { run.mockRestore(); }
+  });
+}
+
+test('strict wake-provisioning degradation keeps its receipt on stdout without downloading', async () => {
+  const root = makeOwnedTempDir('daemon-cli-wake-receipt');
+  const run = spyOn(wakeCommand, 'runProvisionWakeModelCommand').mockResolvedValue({ exitCode: 1, lines: ['wake-word model: synthetic degraded receipt'] });
+  const stdout: string[] = []; const stderr: string[] = [];
+  try {
+    expect(await runDaemonCli(['provision-wake-model', '--strict'], { env: { HOME: root }, cwd: root,
+      stdout: (line) => { stdout.push(line); }, stderr: (line) => { stderr.push(line); } })).toBe(1);
+    expect(stdout).toEqual(['wake-word model: synthetic degraded receipt']); expect(stderr).toEqual([]);
+  } finally { run.mockRestore(); }
 });

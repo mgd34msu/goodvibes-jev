@@ -93,3 +93,10 @@ built: Bun does not create bin links for a missing dist target during a fresh
 frozen install. A disposable dependency-free workspace proves frozen install
 before emission, then invokes that same launcher against its emitted fixture. Tarball smoke
 checks use the existing built workspace dependencies, not a registry release.
+
+Service commands and strict wake provisioning preserve their original stdout
+receipts even when an absent/stopped/degraded result has a nonzero exit code.
+In particular, `service-status --json` remains consumable from stdout for both
+exit 3 (installed but stopped) and exit 4 (not installed); the exit status does
+not silently reroute that ordinary state document to stderr. Dispatcher-level
+fixtures cover this without invoking any real service or download.
