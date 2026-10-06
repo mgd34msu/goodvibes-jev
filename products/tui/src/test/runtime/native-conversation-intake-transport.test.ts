@@ -10,7 +10,10 @@ import { CommandRegistry, type CommandContext } from '../../input/command-regist
 import { createNativeWorkLedgerHost, registerNativeWorkLedgerCommand } from '../../runtime/native-work-ledger-host.ts';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 
-function fixture() {
+import { tuiHostPairingStorePath } from '../../runtime/tui-host-credential-store.ts';
+import { pairNativeTestHost, replaceNativeTestCredential } from '../helpers/native-host-pairing.ts';
+
+async function fixture() {
   const home = mkdtempSync(join(tmpdir(), 'native-intake-product-')); const journalPath = join(home, 'native-submissions.json');
   const requests: string[] = []; const captures: NativeConversationIntakeCaptureRequest[] = []; const states = new Map<string, NativeConversationIntakeResult>();
   const executionStarts: NativeWorkExecutionIdentity[] = []; const executions = new Map<string, NativeWorkExecutionSnapshot>(); let loseStart = false; let invalidStartRevision = false;
@@ -66,14 +69,14 @@ function fixture() {
     return Response.json({ error: `Unexpected route ${path}` }, { status: 500 });
   } });
   const baseUrl = `http://127.0.0.1:${server.port}`;
-  writeFileSync(join(home, 'operator-tokens.json'), JSON.stringify({ token: 'synthetic-intake-token' }));
+  await pairNativeTestHost(home, baseUrl, 'synthetic-intake-token');
   const configManager = { get: (key: string) => key === 'daemon.enabled' ? true : key === 'controlPlane.publicBaseUrl' ? baseUrl : undefined } as unknown as ConfigManager;
   const host = createNativeWorkLedgerHost({ configManager, homeDirectory: home, daemonHomeDirectory: home, journalPath, workspace: () => home });
   const intake = host.intake; const close = () => { intake.close(); host.submission.close(); };
   const printed: string[] = []; let dispatches = 0; const registry = new CommandRegistry();
   registerNativeWorkLedgerCommand(registry, host.selectProject, host.discoverProject, host.submission);
   const context = { nativeConversationIntake: intake, dispatchNativeIntakeTurn: async () => { dispatches++; }, print: (line: string) => printed.push(line) } as unknown as CommandContext;
-  return { intake, requests, captures, printed, executionStarts, executions, dispatches: () => dispatches,
+  return { intake, home, baseUrl, requests, captures, printed, executionStarts, executions, dispatches: () => dispatches,
     run: (action: string) => registry.execute('work', [action], context),
     journal: () => JSON.parse(readFileSync(`${journalPath}.intake`, 'utf8')),
     invalidStartRevision() { invalidStartRevision = true; },
@@ -84,7 +87,7 @@ function fixture() {
     close() { releaseAdmit(); close(); server.stop(true); rmSync(home, { recursive: true, force: true }); } };
 }
 test('ordinary product transport persists exact source and explicitly recovered admission starts its native target', async () => {
-  const f = fixture(); const text = '  Deliver the exact change\r\nkeep 😀 and spaces  ';
+  const f = await fixture(); const text = '  Deliver the exact change\r\nkeep 😀 and spaces  ';
   try {
     expect((await f.intake.submit({ text, unsupportedSources: [] }))?.result?.kind).toBe('processing');
     expect(f.captures).toHaveLength(1); expect(f.captures[0]?.text).toBe(text);
@@ -98,7 +101,7 @@ test('ordinary product transport persists exact source and explicitly recovered 
   } finally { f.close(); }
 });
 test('lost admission response recovers terminal work by get and does not re-admit', async () => {
-  const f = fixture(); f.settle(); f.loseAdmit();
+  const f = await fixture(); f.settle(); f.loseAdmit();
   try {
     expect((await f.intake.submit({ text: 'Build the source', unsupportedSources: [] }))?.status).toBe('unknown');
     const before = f.requests.length; await f.run('intake-retry');
@@ -107,7 +110,7 @@ test('lost admission response recovers terminal work by get and does not re-admi
   } finally { f.close(); }
 });
 test('unsupported references remain blocked under all recovery commands', async () => {
-  const f = fixture(); f.settle();
+  const f = await fixture(); f.settle();
   try {
     expect((await f.intake.submit({ text: 'Use !@file', unsupportedSources: [{ kind: 'file', label: '!@file' }] }))?.result?.kind).toBe('blocked');
     const before = f.requests.length;
@@ -117,7 +120,7 @@ test('unsupported references remain blocked under all recovery commands', async 
 });
 
 test('real turn permit outlives intake transport, preserves exact source and rechecks live authority', async () => {
-  const f = fixture(); f.turn(); const text = '  Original ordinary turn\r\n😀  ';
+  const f = await fixture(); f.turn(); const text = '  Original ordinary turn\r\n😀  ';
   try {
     const state = await f.intake.submit({ text, unsupportedSources: [] });
     expect(state?.turnReady).toBe(true); expect(state?.turnPermit).toBeDefined();
@@ -135,7 +138,7 @@ test('real turn permit outlives intake transport, preserves exact source and rec
   } finally { f.close(); }
 });
 test('lost settled turn reply requires explicit resume and a single durable dispatch claim', async () => {
-  const f = fixture(); f.turn(); f.loseAdmit();
+  const f = await fixture(); f.turn(); f.loseAdmit();
   try {
     expect((await f.intake.submit({ text: 'Explain the original', unsupportedSources: [] }))?.status).toBe('unknown');
     const before = f.requests.length; await f.run('intake-status'); expect(f.dispatches()).toBe(0);
@@ -148,7 +151,7 @@ test('lost settled turn reply requires explicit resume and a single durable disp
 });
 
 test('intake-cancel crosses the pending preflight and interrupts an in-flight admission without stale dispatch', async () => {
-  const f = fixture(); const held = f.holdAdmit();
+  const f = await fixture(); const held = f.holdAdmit();
   try {
     const pending = f.intake.submit({ text: 'Explain this pending input', unsupportedSources: [] });
     await held.arrived;
@@ -159,7 +162,7 @@ test('intake-cancel crosses the pending preflight and interrupts an in-flight ad
 });
 
 test('initial work admission automatically starts its durable native target and lost acknowledgement only reads status', async () => {
-  const f = fixture(); f.settle(); f.loseStart();
+  const f = await fixture(); f.settle(); f.loseStart();
   try {
     const state = await f.intake.submit({ text: 'Implement the requested native work', unsupportedSources: [] });
     expect(state?.execution?.snapshot?.kind).toBe('execution');
@@ -173,7 +176,7 @@ test('initial work admission automatically starts its durable native target and 
 });
 
 test('real client status accepts recorded revisions for the same attempt without rewriting target or blocking a new input', async () => {
-  const f = fixture(); f.settle();
+  const f = await fixture(); f.settle();
   try {
     await f.intake.submit({ text: 'Original admitted source', unsupportedSources: [] });
     const original = f.executions.get('native-recorded-attempt')!;
@@ -195,7 +198,7 @@ test('real client status accepts recorded revisions for the same attempt without
   } finally { f.close(); }
 });
 test('real client still rejects a start acknowledgement with revisions different from the immutable target', async () => {
-  const f = fixture(); f.settle(); f.invalidStartRevision();
+  const f = await fixture(); f.settle(); f.invalidStartRevision();
   try {
     const state = await f.intake.submit({ text: 'Original exact start target', unsupportedSources: [] });
     expect(state?.execution?.snapshot).toBeUndefined();
@@ -204,5 +207,19 @@ test('real client still rejects a start acknowledgement with revisions different
     expect(f.executionStarts[0]!.expectedRevision).toEqual({ work: 1, criteria: 1, attempt: 1 });
     expect(f.journal().records[0].execution.target.expectedRevision).toEqual({ work: 1, criteria: 1, attempt: 1 });
     expect(f.requests.filter(path => path.includes('/execution/'))).toEqual(['/api/work-ledger/execution/status', '/api/work-ledger/execution/start', '/api/work-ledger/execution/status']);
+  } finally { f.close(); }
+});
+
+for (const change of ['token', 'store', 'missing', 'corrupt'] as const) test(`queued native turn permit refuses ${change} credential changes without sending the old bearer`, async () => {
+  const f = await fixture(); f.turn();
+  try {
+    const state = await f.intake.submit({ text: 'Explain this original input', unsupportedSources: [] });
+    expect(state?.turnReady).toBe(true); const before = f.requests.length;
+    if (change === 'token') replaceNativeTestCredential(f.home, 'replacement-token');
+    if (change === 'store') replaceNativeTestCredential(f.home);
+    if (change === 'missing') rmSync(tuiHostPairingStorePath(f.home));
+    if (change === 'corrupt') writeFileSync(tuiHostPairingStorePath(f.home), '{invalid');
+    await expect(revalidateNativeConversationTurnPermit(state!.turnPermit!)).rejects.toThrow();
+    expect(f.requests.length).toBe(before);
   } finally { f.close(); }
 });

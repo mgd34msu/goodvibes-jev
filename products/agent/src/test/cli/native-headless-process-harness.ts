@@ -105,7 +105,24 @@ export async function makeHeadlessFixture(product: HeadlessProduct, reply = HEAD
     host = await startE2ENativeHost(home);
     door = nativeDoor(host.daemon.baseUrl);
     const pairedToken = host.env.GOODVIBES_CONNECTED_HOST_TOKEN;
-    const setToken = (token: string) => writeFileSync(join(home!.daemonHome, 'operator-tokens.json'), JSON.stringify({ token, peerId: 'native-headless-fixture', createdAt: Date.now() }));
+    const pairedPrincipal = host.daemon.services.pairingTokens.authenticateNative(pairedToken);
+    if (!pairedPrincipal) throw new Error('Headless fixture requires a live paired principal');
+    const credentialCreatedAt = Date.now();
+    const setToken = (token: string) => {
+      writeFileSync(join(home!.daemonHome, 'operator-tokens.json'), JSON.stringify({ token, peerId: 'native-headless-fixture', createdAt: Date.now() }));
+      if (product === 'tui') {
+        // Seed the TUI's version-1 owned-store contract locally, without making
+        // Agent production depend on TUI code. Native credentials are bound to
+        // the selected front-door origin, not the daemon's upstream address.
+        const directory = join(tuiRoot, 'connected-host-credentials');
+        mkdirSync(directory, { recursive: true, mode: 0o700 });
+        writeFileSync(join(directory, 'credentials.json'), JSON.stringify({ version: 1, records: [{
+          host: new URL(door!.baseUrl).origin,
+          pairing: { status: 'paired', token, tokenId: token === pairedToken ? pairedPrincipal.tokenId : 'shared-token',
+            name: 'Owned headless fixture', createdAt: credentialCreatedAt },
+        }] }), { mode: 0o600 });
+      }
+    };
     setToken(pairedToken);
     writeFileSync(join(home.daemonHome, 'settings.json'), JSON.stringify({ controlPlane: {
       host: '127.0.0.1', port: Number(new URL(door.baseUrl).port), publicBaseUrl: door.baseUrl,

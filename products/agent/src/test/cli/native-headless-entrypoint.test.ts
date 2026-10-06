@@ -220,13 +220,18 @@ for (const product of ['agent', 'tui'] as const) describe(`${product} real nativ
 
   test('a shared token or revoked paired principal cannot capture or fall back to an ordinary model', async () => {
     const f = await fixture(product);
+    const beforeShared = f.door.requests.length;
     const shared = await f.run(['run', HEADLESS_PROMPT, ...json], f.host.daemon.token);
     expect(shared.code).toBe(1);
+    // Prove live authority rejection, not an early missing-credential refusal.
+    expect(f.door.requests.slice(beforeShared).map(request => request.path)).toContain('/api/control-plane/auth');
     expect(f.captures()).toHaveLength(0);
     const principal = f.host.daemon.services.pairingTokens.authenticateNative(f.pairedToken)!;
     expect(f.host.daemon.services.pairingTokens.revoke(principal.tokenId)).toBe(true);
+    const beforeRevoked = f.door.requests.length;
     const revoked = await f.run(['-p', HEADLESS_PROMPT, ...json]);
     expect(revoked.code).toBe(1);
+    expect(f.door.requests.slice(beforeRevoked).map(request => request.path)).toContain('/api/work-ledger/project');
     expect(f.captures()).toHaveLength(0);
     expect(f.model.requests).toHaveLength(0);
     expect(f.home.judgments.accepted).toHaveLength(0);

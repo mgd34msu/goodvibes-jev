@@ -1,3 +1,4 @@
+import { createNativeHostFetch } from './client/native-host-fetch.ts';
 import { NativeConversationIntakePreflight } from './native-conversation-intake-preflight.ts';
 import { NativeConversationIntakeControls, nativeConversationIntakeLines, type NativeConversationIntakeActions, type NativeConversationIntakeState } from './native-conversation-intake.ts';
 import { NativeConversationIntakeJournal } from './native-conversation-intake-journal.ts';
@@ -8,14 +9,10 @@ import { NativeWorkSubmissionJournal } from './native-work-submission-journal.ts
 import { NativeWorkSubmissionControls, nativeWorkSubmissionLines, type NativeWorkSubmissionActions, type NativeWorkSubmissionState } from './native-work-submission.ts';
 import { createNativeWorkSubmissionBinding, nativeSubmissionIdentity } from './native-work-submission-host.ts';
 import { NativeWorkSourceError, readNativeWorkSourceFile } from './native-work-submission-source.ts';
-import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
-import { join } from 'node:path';
-import { createOperatorSdk } from '@goodvibes-jev/engine/operator-sdk';
+import { createOperatorSdk, type OperatorRemoteClient } from '@goodvibes-jev/engine/operator-sdk';
 import { createOperatorNativeWorkExecutionClient, getOperatorWorkLedgerProject } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
-import { resolveDaemonEnabled } from '@goodvibes-jev/engine/sdk/platform/config';
-import { resolveDaemonStateDirectory, resolveControlPlaneBaseUrl } from './client/operator-endpoint.ts';
+import { resolveNativeHostCredential } from './client/native-host-credential.ts';
 import { createOperatorWorkLedgerReadClient } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/operator-read-client';
 import type { NativeWorkLedgerSelectionReader } from './native-work-ledger.ts';
 import type { CommandRegistry } from '../input/command-registry.ts';
@@ -23,84 +20,108 @@ import type { CommandRegistry } from '../input/command-registry.ts';
 /** Explicit project selection on the configured authenticated daemon. No legacy ID inference. */
 export function createNativeWorkLedgerHost(deps: {
   readonly configManager: ConfigManager;
-  readonly homeDirectory: string;
+  readonly homeDirectory: string | (() => string);
   readonly daemonHomeDirectory?: string;
   readonly journalPath?: string;
   readonly workspace: () => string;
 }) {
   let discovery: { controller: AbortController; identity: string } | undefined;
   let projectId = ''; let generation = 0; let selectedLocation = ''; let discoveryReason = '';
-  const readToken = (): string | undefined => {
-    try {
-      const record: unknown = JSON.parse(readFileSync(join(deps.daemonHomeDirectory ?? resolveDaemonStateDirectory(deps.homeDirectory), 'operator-tokens.json'), 'utf8'));
-      if (record && typeof record === 'object' && 'token' in record && typeof record.token === 'string' && record.token) return record.token;
-    } catch { /* A read-only view never mints or repairs credentials. */ }
-    return undefined;
+  // Capture endpoint, home, store generation and token together. Never combine
+  // a selection from one credential with a second independent token read.
+  const captureConnection = () => {
+    const homeDirectory = typeof deps.homeDirectory === 'function' ? deps.homeDirectory() : deps.homeDirectory;
+    const credential = resolveNativeHostCredential({ configManager: deps.configManager, homeDirectory });
+    const workspace = deps.workspace();
+    const location = JSON.stringify([credential.available ? credential.baseUrl : credential.identity, homeDirectory, workspace]);
+    return { credential, workspace, location };
   };
-  const location = () => JSON.stringify([resolveControlPlaneBaseUrl(deps.configManager), deps.workspace()]);
   const selectProject = (id: string, fromDiscovery = false): void => {
     if (!id.trim() || id.length > 200 || /[\u0000-\u001f\u007f]/.test(id)) throw new Error('Use the exact daemon project ID (1–200 characters).');
     if (!fromDiscovery) { preflight.close(); intakePreflight.close(); }
     submission.close(); intake.close(); discovery?.controller.abort();
-    projectId = id; discoveryReason = ''; selectedLocation = location(); generation++;
+    projectId = id; discoveryReason = ''; selectedLocation = captureConnection().location; generation++;
   };
-  const readSelection: NativeWorkLedgerSelectionReader = () => {
-    if (projectId && selectedLocation !== location()) { projectId = ''; generation++; }
-    const url = resolveControlPlaneBaseUrl(deps.configManager);
-    const enabled = resolveDaemonEnabled(deps.configManager);
-    const token = readToken();
-    const authEpoch = token ? createHash('sha256').update(token).digest('hex') : 'no-auth';
-    const identity = JSON.stringify([generation, url, enabled, deps.workspace(), projectId, authEpoch]);
+  const captureSelection = () => {
+    const connection = captureConnection();
+    if (projectId && selectedLocation !== connection.location) { projectId = ''; generation++; }
+    const identity = JSON.stringify([generation, connection.credential.identity, connection.workspace, projectId]);
     if (discovery && identity !== discovery.identity) discovery.controller.abort();
-    if (!projectId) return { available: false, identity, reason: discoveryReason || 'Select an exact daemon project with /work <project-id>.' };
-    if (!enabled || !url) return { available: false, identity, reason: 'Selected daemon is disabled or has no endpoint.' };
-    if (!token) return { available: false, identity, reason: 'Selected daemon has no existing authentication. Connect to the daemon first.' };
-    const selectedProject = projectId;
+    return { ...connection, identity, projectId };
+  };
+  const unavailable = (capture: ReturnType<typeof captureSelection>) => !capture.credential.available
+    ? { available: false as const, identity: capture.identity, reason: capture.credential.reason }
+    : !capture.projectId ? { available: false as const, identity: capture.identity, reason: discoveryReason || 'Select an exact daemon project with /work <project-id>.' } : undefined;
+  const readSelection: NativeWorkLedgerSelectionReader = () => {
+    const capture = captureSelection(); const missing = unavailable(capture);
+    if (missing) return missing;
+    const { credential, projectId: selectedProject, identity } = capture;
+    if (!credential.available) return { available: false, identity, reason: credential.reason };
     return { available: true, identity, projectId: selectedProject, bind: onUnavailable => {
-      const operator = createOperatorSdk({ baseUrl: url, authToken: token });
-      const reader = createOperatorWorkLedgerReadClient(operator, selectedProject, { onUnavailable });
-      return { available: true, execution: createOperatorNativeWorkExecutionClient(operator, selectedProject), client: {
+      const current = () => captureSelection().identity === identity;
+      if (!current()) return { available: false, reason: 'Native host selection changed.' };
+      let disposed = false;
+      const operator = createOperatorSdk({ baseUrl: credential.baseUrl, authToken: credential.token, fetchImpl: createNativeHostFetch({ current: () => !disposed && current() }) });
+      const invoke = (async (...args: Parameters<OperatorRemoteClient['invoke']>) => {
+        if (disposed || !current()) throw new Error('Native host selection changed.');
+        try {
+          const value = await operator.invoke(...args);
+          if (disposed || !current()) throw new Error('Native host selection changed.');
+          return value;
+        } catch (error) {
+          // Remote failures are visible in the ledger view. Preserve the typed
+          // status/code while preventing a hostile host from reflecting its bearer.
+          if (error instanceof Error) {
+            error.message = error.message.split(credential.token).join('[redacted]');
+            if (error.stack) error.stack = error.stack.split(credential.token).join('[redacted]');
+          }
+          throw error;
+        }
+      }) as OperatorRemoteClient['invoke'];
+      const reader = createOperatorWorkLedgerReadClient({ invoke }, selectedProject, { onUnavailable });
+      return { available: true, execution: createOperatorNativeWorkExecutionClient({ invoke }, selectedProject), client: {
         projectId: reader.projectId, readSnapshot: () => reader.readSnapshot(), history: cursor => reader.history(cursor),
-        subscribe: listener => reader.subscribe(listener), dispose: () => { try { reader.dispose(); } finally { operator.dispose(); } },
+        subscribe: listener => reader.subscribe(listener), dispose: () => { disposed = true; try { reader.dispose(); } finally { operator.dispose(); } },
       } };
     } };
   };
   const submission = new NativeWorkSubmissionControls(() => {
-    const selection = readSelection();
-    if (!selection.available) return selection;
-    const baseUrl = resolveControlPlaneBaseUrl(deps.configManager); const token = readToken(); const workspace = deps.workspace();
-    if (!baseUrl || !token || !resolveDaemonEnabled(deps.configManager)) return { available: false, identity: 'unavailable', reason: 'Selected daemon has no existing native submission authentication.' };
-    if (!deps.journalPath) return { available: false, identity: selection.identity, reason: 'Native submission journal location is unavailable in this shell.' };
-    const host = { baseUrl, token, workspace, journalPath: deps.journalPath }; const project = selection.projectId;
-    return { available: true, identity: nativeSubmissionIdentity(host, project), endpoint: baseUrl, projectId: project, workspace: realpathSync(workspace), journal: new NativeWorkSubmissionJournal(deps.journalPath), bind: () => createNativeWorkSubmissionBinding(host, project) };
+    const capture = captureSelection(); const missing = unavailable(capture);
+    if (missing) return missing;
+    const { credential, workspace, projectId: project } = capture;
+    if (!credential.available) return { available: false, identity: capture.identity, reason: credential.reason };
+    if (!deps.journalPath) return { available: false, identity: capture.identity, reason: 'Native submission journal location is unavailable in this shell.' };
+    const host = { baseUrl: credential.baseUrl, token: credential.token, credentialIdentity: credential.identity, workspace, journalPath: deps.journalPath };
+    const identity = nativeSubmissionIdentity(host, project);
+    return { available: true, identity: JSON.stringify([capture.identity, identity]), endpoint: host.baseUrl, projectId: project, workspace: realpathSync(workspace), journal: new NativeWorkSubmissionJournal(deps.journalPath), bind: () => createNativeWorkSubmissionBinding(host, project, () => captureSelection().identity === capture.identity && nativeSubmissionIdentity(host, project) === identity) };
   });
   const intake = new NativeConversationIntakeControls(() => {
-    const selection = readSelection(); if (!selection.available) return selection;
-    const baseUrl = resolveControlPlaneBaseUrl(deps.configManager); const token = readToken(); const workspace = deps.workspace();
-    if (!baseUrl || !token || !deps.journalPath) return { available: false, identity: selection.identity, reason: 'Native intake requires an authenticated host and durable journal.' };
-    const host = { baseUrl, token, workspace, journalPath: deps.journalPath }; const project = selection.projectId;
+    const capture = captureSelection(); const missing = unavailable(capture);
+    if (missing) return missing;
+    const { credential, workspace, projectId: project } = capture;
+    if (!credential.available) return { available: false, identity: capture.identity, reason: credential.reason };
+    if (!deps.journalPath) return { available: false, identity: capture.identity, reason: 'Native intake requires an authenticated host and durable journal.' };
+    const host = { baseUrl: credential.baseUrl, token: credential.token, credentialIdentity: credential.identity, workspace, journalPath: deps.journalPath };
     const identity = nativeSubmissionIdentity(host, project);
-    return { available: true, identity, endpoint: baseUrl, projectId: project, workspace: realpathSync(workspace), journal: new NativeConversationIntakeJournal(`${deps.journalPath}.intake`), bind: () => createNativeConversationIntakeBinding(host, project, () => readSelection().identity === selection.identity && nativeSubmissionIdentity(host, project) === identity) };
+    return { available: true, identity: JSON.stringify([capture.identity, identity]), endpoint: host.baseUrl, projectId: project, workspace: realpathSync(workspace), journal: new NativeConversationIntakeJournal(`${deps.journalPath}.intake`), bind: () => createNativeConversationIntakeBinding(host, project, () => captureSelection().identity === capture.identity && nativeSubmissionIdentity(host, project) === identity) };
   });
-  const preflight = new NativeWorkSubmissionPreflight(() => JSON.stringify([
-    resolveDaemonEnabled(deps.configManager), resolveControlPlaneBaseUrl(deps.configManager),
-    readToken(), realpathSync(deps.workspace()), deps.journalPath,
-  ]), () => { submission.close(); intake.close(); discovery?.controller.abort(); });
-  const intakePreflight = new NativeConversationIntakePreflight(() => JSON.stringify([
-    resolveDaemonEnabled(deps.configManager), resolveControlPlaneBaseUrl(deps.configManager), readToken(), realpathSync(deps.workspace()), deps.journalPath,
-  ]), () => { intake.close(); discovery?.controller.abort(); });
+  const preflightIdentity = () => {
+    const { credential, workspace } = captureConnection();
+    return JSON.stringify([credential.identity, realpathSync(workspace), deps.journalPath]);
+  };
+  const preflight = new NativeWorkSubmissionPreflight(preflightIdentity, () => { submission.close(); intake.close(); discovery?.controller.abort(); });
+  const intakePreflight = new NativeConversationIntakePreflight(preflightIdentity, () => { intake.close(); discovery?.controller.abort(); });
   const discoverProject = async (capture?: (identity: string) => void): Promise<boolean> => {
     const ready = (): boolean => { capture?.(readSelection().identity); return true; };
-    const before = readSelection();
-    if (projectId) return ready();
-    const url = resolveControlPlaneBaseUrl(deps.configManager); const token = readToken();
-    if (!url || !token || !resolveDaemonEnabled(deps.configManager)) return ready();
-    const operator = createOperatorSdk({ baseUrl: url, authToken: token });
+    const before = captureSelection();
+    if (before.projectId || !before.credential.available) return ready();
     const controller = new AbortController();
+    const operator = createOperatorSdk({ baseUrl: before.credential.baseUrl, authToken: before.credential.token, fetchImpl: createNativeHostFetch({ current: () => !controller.signal.aborted && captureSelection().identity === before.identity }) });
     discovery?.controller.abort(); discovery = { controller, identity: before.identity };
     const timer = setInterval(() => { readSelection(); }, 100);
     timer.unref?.();
     try {
+      if (readSelection().identity !== before.identity || controller.signal.aborted) return false;
       const id = await getOperatorWorkLedgerProject(operator, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]) });
       if (readSelection().identity !== before.identity || controller.signal.aborted) return false;
       selectProject(id, true);

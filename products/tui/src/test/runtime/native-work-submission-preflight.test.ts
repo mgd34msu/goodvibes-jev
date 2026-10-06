@@ -6,6 +6,8 @@ import { NativeWorkSubmissionPreflight } from '../../runtime/native-work-submiss
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { createNativeWorkLedgerHost } from '../../runtime/native-work-ledger-host.ts';
 
+import { pairNativeTestHost, replaceNativeTestCredential } from '../helpers/native-host-pairing.ts';
+
 function gate() { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve; }); return { promise, release }; }
 
 test('single-flight covers preflight before source IO; close aborts and discards late results', async () => {
@@ -16,7 +18,7 @@ test('single-flight covers preflight before source IO; close aborts and discards
   expect(actions).toBe(1); guard.close(); wait.release(); expect(await first).toBeUndefined(); expect(invalidations).toBe(1);
 });
 
-for (const change of ['close', 'workspace', 'token', 'project'] as const) test(`held discovery discards ${change} change before principal/journal/submission`, async () => {
+for (const change of ['close', 'workspace', 'token', 'store', 'home', 'project', 'endpoint'] as const) test(`held discovery discards ${change} change before principal/journal/submission`, async () => {
   const home = mkdtempSync(join(tmpdir(), 'submission-preflight-'));
   const first = join(home, 'first'); const second = join(home, 'second'); const workspace = join(home, 'selected');
   mkdirSync(first); mkdirSync(second); symlinkSync(first, workspace);
@@ -29,11 +31,11 @@ for (const change of ['close', 'workspace', 'token', 'project'] as const) test(`
     if (path === '/api/work-ledger/history') return Response.json({ projectId: 'p', afterSequence: 0, throughSequence: 0, cursor: 0, hasMore: false, events: [] });
     return Response.json({ error: 'Unexpected submission action' }, { status: 500 });
   } });
-  const baseUrl = `http://127.0.0.1:${server.port}`; const journalPath = join(home, 'journal.json');
-  let token = 'synthetic-first-token';
-  const tokenPath = join(home, 'operator-tokens.json'); writeFileSync(tokenPath, JSON.stringify({ token }));
+  let baseUrl = `http://127.0.0.1:${server.port}`; let selectedHome = home; const journalPath = join(home, 'journal.json');
+  await pairNativeTestHost(home, baseUrl, 'synthetic-first-token');
+  await pairNativeTestHost(second, baseUrl, 'synthetic-first-token');
   const configManager = { get: (key: string) => key === 'daemon.enabled' ? true : key === 'controlPlane.publicBaseUrl' ? baseUrl : undefined } as unknown as ConfigManager;
-  const host = createNativeWorkLedgerHost({ configManager, homeDirectory: home, daemonHomeDirectory: home, journalPath, workspace: () => workspace });
+  const host = createNativeWorkLedgerHost({ configManager, homeDirectory: () => selectedHome, daemonHomeDirectory: home, journalPath, workspace: () => workspace });
   const actions = { submit: () => host.submission.submitFile('source.json'), close: () => host.submission.close(), project: () => host.selectProject('other') };
   try {
     const pending = actions.submit();
@@ -43,7 +45,10 @@ for (const change of ['close', 'workspace', 'token', 'project'] as const) test(`
     if (change === 'close') actions.close();
     if (change === 'project') actions.project();
     if (change === 'workspace') { unlinkSync(workspace); symlinkSync(second, workspace); }
-    if (change === 'token') { token = 'synthetic-replacement-token'; writeFileSync(tokenPath, JSON.stringify({ token })); }
+    if (change === 'token') replaceNativeTestCredential(home, 'synthetic-replacement-token');
+    if (change === 'store') replaceNativeTestCredential(home);
+    if (change === 'home') selectedHome = second;
+    if (change === 'endpoint') baseUrl = 'http://127.0.0.1:1';
     response.release(); expect(await pending).toBeUndefined();
     expect(requests.filter(path => path === '/api/control-plane/auth' || path.includes('/submissions'))).toEqual([]);
     expect(existsSync(journalPath)).toBe(false);
