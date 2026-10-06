@@ -6,6 +6,8 @@ import { routeNativeConversationInput, dispatchNativeConversationTurn } from './
 import { createNativeWorkLedgerView } from './runtime/native-work-ledger-host.ts';
 import { resolveConnectedHostConnection as resolveNativeLedgerHost } from './runtime/client/daemon-verbs.ts';
 import { homedir } from 'node:os';
+import { SetupPairingController } from './shell/setup-pairing-controller.ts';
+import { parseSlashCommand } from './input/slash-command-parser.ts';
 import { settleInteractiveExit } from './shell/exit-completion.ts';
 import { Compositor } from './renderer/compositor.ts';
 import { installStartupThemeProbe } from './renderer/startup-theme-probe.ts';
@@ -181,6 +183,7 @@ async function main() {
     };
   };
 
+  let setupPairing: SetupPairingController | null = null;
   let pendingPermission: PendingPermissionState | null = null;
   const approvalsBinding = bindApprovals({
     broker: approvalBroker,
@@ -189,7 +192,7 @@ async function main() {
     // calls it from inside the broker subscription.
     render: () => { render(); },
     getPending: () => pendingPermission,
-    setPending: (next) => { pendingPermission = next; },
+    setPending: (next) => { if (next) setupPairing?.cancelForTakeover(); pendingPermission = next; },
   });
 
   let streamTokenSpeed = 0;
@@ -296,6 +299,7 @@ async function main() {
     // spoken-audio drain below must not re-run teardown.
     if (exiting) return;
     exiting = true;
+    setupPairing?.dispose();
     // Gate render() before anything else so no late frame follows the terminal-restore write below.
     paintWindow.close();
     // Exit lets the spoken audio the user is already hearing finish inside a
@@ -318,6 +322,9 @@ async function main() {
     stdin.removeAllListeners('data');
     stdout.removeListener('resize', resizeHandler);
     process.removeListener('SIGINT', sigintHandler);
+    process.removeListener('SIGTERM', terminalClosed);
+    stdin.removeListener('end', terminalClosed);
+    stdin.removeListener('close', terminalClosed);
     processFaults.dispose();
     allowTerminalWrite(() => stdout.write(buildExitSequence(cli.flags.noAltScreen)));
     terminalOutputGuard.dispose();
@@ -330,6 +337,7 @@ async function main() {
     });
   };
 
+  const terminalClosed = (): void => exitApp();
   commandContext.exit = exitApp;
 
   // A long-running agent looks for a newer release too, not only at launch: it
@@ -374,6 +382,7 @@ async function main() {
   commandContext.dispatchNativeIntakeTurn = state => dispatchNativeTurn(state);
 
   const submitInput = (text: string, content?: ContentPart[], options: ProductInputContext = {}) => {
+    setupPairing?.cancelForTakeover();
     const original = options.source ?? { text, unsupportedSources: [{ kind: 'context' as const, label: 'derived-input' }] };
     input.clearModalStack();
     transcript.toBottom(); // Re-lock on user input
@@ -457,7 +466,7 @@ async function main() {
   commandContext.scrollToLine = scrollToLine;
   const commandUi = createCommandContextUi({
     compositor, stdout, render: () => render(), terminalWidth: () => getTerminalSize(stdout).width,
-    setPendingPermission: (pending) => { pendingPermission = pending; },
+    setPendingPermission: (pending) => { if (pending) setupPairing?.cancelForTakeover(); pendingPermission = pending; },
   });
   commandContext.clearScreen = commandUi.clearScreen;
   // The Activity modal (Ctrl+O, /activity): what is running and what happened, as a kit modal.
@@ -520,6 +529,27 @@ async function main() {
       },
     },
   );
+  setupPairing = new SetupPairingController({ configManager, homeDirectory }, {
+    print: text => { transcript.toBottom(); conversation.logWrapped(text); render(); },
+    scroll: lines => { scroll(lines); render(); },
+    readPrompt: () => input.prompt,
+    setPrompt: text => {
+      input.prompt = text; input.cursorPos = text.length; input.commandMode = false;
+      input.autocomplete?.reset(); input.syncFeedContextMutableFields(); render();
+    },
+    canPresent: () => !exiting && pendingPermission === null && recoveryPending === null
+      && !daemonRepairPrompt?.pending() && !input.concealedInput && !input.plainLineInput
+      && !input.surfaceModals.active && input.modalStack.length === 0
+      && !input.searchManager.active && !input.historySearch.active && !sessionViews.active,
+    executeOwnerCommand: line => {
+      const parsed = parseSlashCommand(line);
+      void commandRegistry.executeFromOwner(parsed.name, [...parsed.args], commandContext)
+        .catch(() => { systemMessageRouter.userAction('Pairing replacement command failed. Preview pairing again before taking further action.'); render(); });
+    },
+  });
+  input.setupPairing = setupPairing;
+  commandContext.beginSetupPairing = request => setupPairing!.start(request);
+
 
   orchestratorRefs.getViewportHeight = getViewportHeight;
   orchestratorRefs.scrollToEnd = scrollToEnd;
@@ -553,6 +583,7 @@ async function main() {
   function render(): void {
     // Outside the window where this app owns the screen: the alternate screen does not exist yet, or the terminal has already been handed back. Never paint in either case.
     if (!paintWindow.isOpen()) return;
+    setupPairing?.checkPresentation();
     const { width, height } = getTerminalSize(stdout);
 
     // Fire-and-forget refresh for the Activity modal's 'Coming up' section.
@@ -764,6 +795,12 @@ async function main() {
   });
 
   const routeInput = (data: string): void => {
+    // The administrative gesture has one input owner throughout its I/O. A
+    // new blocking prompt cancels it before that prompt may consume any key.
+    if (setupPairing?.ownsInput) {
+      if (pendingPermission || recoveryPending || daemonRepairPrompt?.pending()) setupPairing.cancelForTakeover();
+      input.feed(data); return;
+    }
     const blocking = handleBlockingShellInput({
       data,
       pendingPermission,
@@ -787,6 +824,9 @@ async function main() {
   // Strip the terminal probe replies (OSC 11, and OSC 10 / OSC 4 for the palette) before the input pipeline sees them.
   stdin.on('data', (raw: string) => { const data = themeProbe.filterInput(raw); if (data.length > 0) routeInput(data); });
   process.on('SIGINT', sigintHandler);
+  process.on('SIGTERM', terminalClosed);
+  stdin.on('end', terminalClosed);
+  stdin.on('close', terminalClosed);
   processFaults.register();
   stdout.on('resize', resizeHandler);
 

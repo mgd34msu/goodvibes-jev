@@ -4,9 +4,11 @@ Product-facing release notes for GoodVibes Agent.
 
 ## Unreleased
 
+- Add owner-only interactive `/setup pair --apply` with shell-owned exact confirmation and cancellation across preview, migration and verification. Model and nested routes cannot apply; interrupted outcomes preserve existing recovery state without reminting.
+
 - Handle real-terminal Ctrl-C and EOF throughout setup pairing, report interrupted previews consistently, and qualify the compiled binary against an owned daemon for confirmation, cancellation, restart and unknown-outcome recovery without reminting.
 
-- Add preview-first Agent setup pairing with fresh terminal confirmation for persistent administrative access. Per-host credentials live in an Agent-owned private store; interrupted migration outcomes block silent retries, shared-token storage and environment overrides remain unchanged, and the interactive slash route is preview-only.
+- Add preview-first Agent setup pairing with fresh terminal confirmation for persistent administrative access. Per-host credentials live in an Agent-owned private store; interrupted migration outcomes block silent retries, shared-token storage and environment overrides remain unchanged.
 
 - Require a fresh selected-host paired-owner check for native intake setup readiness. Token readability, old receipts and saved checkpoints no longer upgrade live host/auth readiness; synchronous workspace snapshots stay unverified, and disabled dialing makes no readiness probe.
 

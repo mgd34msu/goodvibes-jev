@@ -210,6 +210,21 @@ describe('ConversationManager', () => {
       expect(shown.indexOf('partial answer grows more')).toBeLessThan(shown.indexOf('printed mid-turn'));
     });
 
+    test('wrapped disclosure reflows completely across widths without entering model history', () => {
+      let width = 180;
+      const c = new ConversationManager(() => width);
+      const disclosure = 'Host: http://127.0.0.1:12345\nAccess: This creates persistent administrative access including native work and fleet execution. The secret is stored only in this Agent home, bound to this host. The legacy shared token remains active; no credential is revoked.';
+      c.logWrapped(disclosure);
+      for (const nextWidth of [180, 80, 40, 120]) {
+        width = nextWidth;
+        const shown = text(c).replace(/^\s*> ?/gm, '').replace(/\s+/g, ' ').trim();
+        expect(shown).toBe(disclosure.replace(/\s+/g, ' '));
+        expect(c.getDisplayBlocks().every(line => getDisplayWidth(line.map(cell => cell.char).join('')) <= width)).toBe(true);
+        expect(c.getMessagesForLLM()).toEqual([]);
+      }
+      expect(c.getDisplayOnlyCount()).toBe(1);
+    });
+
     test('clearing the display drops kept display-only output', () => {
       let width = 120;
       const c = new ConversationManager(() => width);

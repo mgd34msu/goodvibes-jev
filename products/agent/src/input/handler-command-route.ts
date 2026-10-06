@@ -5,6 +5,7 @@ import type { AutocompleteEngine } from './autocomplete.ts';
 import type { InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { ConversationManager } from '../core/conversation';
 import type { ClipboardPasteSource } from './handler-content-actions.ts';
+import { parseSlashCommand } from './slash-command-parser.ts';
 import { activeTokens } from '../renderer/theme.ts';
 
 export type CommandModeRouteState = {
@@ -84,12 +85,11 @@ export function handleCommandModeToken(state: CommandModeRouteState, token: Inpu
     const raw = selectedCmd ? `/${selectedCmd.name}` : state.prompt.trim();
     if (raw.startsWith('/') && state.commandRegistry && state.commandContext) {
       closeCommandMode();
-      const parts = raw.slice(1).trim().split(/\s+/);
-      const name = parts[0];
-      const args = parts.slice(1);
+      const { name, args: parsedArgs } = parseSlashCommand(raw);
+      const args = [...parsedArgs];
       const ctx = state.commandContext;
       const commandPromise = state.commandRegistry.get(name)
-        ? state.commandRegistry.execute(name, args, ctx)
+        ? state.commandRegistry.executeFromOwner(name, args, ctx)
         : (ctx.executeCommand?.(name, args) ?? Promise.resolve(false));
       commandPromise.then((handled) => {
         if (handled) {

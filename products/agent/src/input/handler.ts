@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { InputTokenizer } from '@goodvibes-jev/engine/sdk/platform/core';
+import { InputTokenizer, type InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
 import { clearModalStackForHandler, cleanupMarkerRegistryForHandler, executeBlockActionForHandler, expandPromptForHandler, findMarkerAtPosForHandler, getImageAttachmentsForHandler, handleBlockCopyForHandler, handleBlockRerunForHandler, handleBlockSaveForHandler, handleBlockToggleForHandler, handleBookmarkForHandler, handleCopyForHandler, handleCtrlCForHandler, handleEscapeForHandler, handlePasteForHandler, modalOpenedForHandler, registerPasteForHandler } from './handler-interactions.ts';
 import { SelectionManager } from '@goodvibes-jev/engine/terminal-shell';
 import type { InfiniteBuffer } from '@goodvibes-jev/engine/terminal-shell';
@@ -89,6 +89,7 @@ type SelectionModalCallback = (result: SelectionResult | null) => void;
  * Extracted from main.ts and StateManager.
  */
 export class InputHandler {
+  public setupPairing: { handleToken(token: InputToken): boolean; cancelForTakeover(): boolean } | null = null;
   public prompt = '';
   public cursorPos = 0;
   public showExitNotice = false;
@@ -384,6 +385,7 @@ export class InputHandler {
   public handleBlockToggle(): void { handleBlockToggleForHandler(this); }
   public handleCtrlC(): void { handleCtrlCForHandler(this); }
   public modalOpened(name: string): void {
+    this.setupPairing?.cancelForTakeover();
     const keepAgentWorkspaceUnderlay = name === 'modelPicker' || name === 'settings';
     if (name !== 'agentWorkspace' && !keepAgentWorkspaceUnderlay && this.agentWorkspace.active) {
       this.closeAgentWorkspaceModal();
@@ -396,10 +398,10 @@ export class InputHandler {
   // ── Composer line prompts (see handler-line-prompts.ts) ─────────────────
 
   /** Begin one line of masked composer entry. */
-  public beginConcealedInput(request: ConcealedInputRequest): void { beginConcealedInputForHandler(this, request); }
+  public beginConcealedInput(request: ConcealedInputRequest): void { this.setupPairing?.cancelForTakeover(); beginConcealedInputForHandler(this, request); }
 
   /** Begin one line of ordinary, echoed composer entry. */
-  public beginPlainInput(request: PlainLineInputRequest): void { beginPlainInputForHandler(this, request); }
+  public beginPlainInput(request: PlainLineInputRequest): void { this.setupPairing?.cancelForTakeover(); beginPlainInputForHandler(this, request); }
 
   /** Deliver an Enter to a pending line prompt. True means it was consumed. */
   public submitConcealedInput(value: string): boolean { return submitLinePromptForHandler(this, value); }
@@ -584,6 +586,7 @@ export class InputHandler {
       this.syncFeedSelectionCallback = (callback) => {
         context.selectionCallback = callback;
       };
+      context.handleSetupPairingToken = token => this.setupPairing?.handleToken(token) ?? false;
       feedInputTokens(context, this.tokenizer.feed(data));
       this.prompt = context.prompt;
       this.cursorPos = context.cursorPos;

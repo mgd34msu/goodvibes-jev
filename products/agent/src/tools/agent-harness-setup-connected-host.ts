@@ -119,7 +119,7 @@ export function connectedHostAuthNextAction(posture: SetupConnectedHostAuthPostu
   if (!posture.operatorToken.usable) {
     return 'Run the confirmed connected-host token provisioning route to repair the local token file, then rerun auth review and connected-host status.';
   }
-  if (posture.nativeIntake.status !== 'ready') return posture.nativeIntake.detail + ' Preview explicit Agent pairing with /setup pair; persistent administrative access requires goodvibes-agent setup pair --apply and a fresh terminal confirmation. Readable credentials and historical receipts are not authority evidence.';
+  if (posture.nativeIntake.status !== 'ready') return posture.nativeIntake.detail + ' Preview explicit Agent pairing with /setup pair; persistent administrative access requires the owner to type /setup pair --apply in the live Agent terminal (or goodvibes-agent setup pair --apply) and confirm the fresh exact phrase. Model and nested commands cannot grant it. Readable credentials and historical receipts are not authority evidence.';
   if (posture.compatibilityAuth.bootstrapCredentialPresent) {
     return 'Review auth status and clear or rotate the compatibility bootstrap credential through the owning GoodVibes host if it is no longer needed.';
   }

@@ -1,17 +1,9 @@
 import { createInterface } from 'node:readline/promises';
 import type { CliCommandRuntime } from './management.ts';
-import { previewAgentHostPairing, type AgentHostPairingResult } from '../runtime/agent-host-pairing.ts';
+import { previewAgentHostPairing } from '../runtime/agent-host-pairing.ts';
 
-export function formatSetupPairing(result: AgentHostPairingResult): string {
-  return [
-    `Agent host pairing: ${result.status}`,
-    ...(result.host ? [`  Host: ${result.host}`] : []),
-    ...(result.name ? [`  Device name: ${result.name}`] : []),
-    ...(result.scopeDisclosure ? [`  Access: ${result.scopeDisclosure}`] : []),
-    ...(result.environmentOverride ? ['  Environment token takes precedence over saved host-bound credentials and will remain unchanged.'] : []),
-    `  ${result.message}`,
-  ].join('\n');
-}
+import { formatSetupPairing } from '../runtime/setup-pairing-presentation.ts';
+export { formatSetupPairing } from '../runtime/setup-pairing-presentation.ts';
 
 export interface SetupPairingTerminal {
   readonly interactive: boolean;

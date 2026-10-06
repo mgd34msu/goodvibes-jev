@@ -13,11 +13,34 @@ host, effective source credential, Agent home, name and observed local pairing
 state. Before mutation, the source must still be verified by `auth.current` as
 an admin legacy shared-token principal with `write:control-plane` or `*`.
 Changed selection, credentials, local state, revocation or cancellation aborts
-before the migration request. `/setup pair` inside the interactive Agent remains
-preview-only, including when given apply-like arguments; its cancellation owner
-is not integrated with this standalone effect route.
+before the migration request.
 
-Enter or an incorrect phrase cancels with exit code 2. From the confirmation
+Inside the interactive Agent, `/setup pair` remains read-only. The owner can type
+`/setup pair --apply` (optionally `--name "Device name"`) to preview the selected
+host and administrative scope, then enter the displayed fresh exact phrase.
+Only direct terminal command input opens that operation. Model/harness calls,
+including `confirm:true`, nested commands, `--yes` and inline phrases cannot
+create or replace a credential. No confirmation answer enters normal chat,
+input history or model submission. The disclosure and phrase remain in the
+display-only transcript; PageUp/PageDown and the mouse wheel can review them
+without giving up the operation.
+
+The interactive shell owns cancellation from the beginning of preview through
+verification. Escape, Ctrl-C and Ctrl-D cancel even after the answer is submitted;
+terminal EOF/close, SIGTERM and shell exit dispose the operation. A typed slash
+command replaces it and invalidates its old answer and callbacks. Starting a
+new line prompt or modal cancels it; a pending permission/recovery prompt cannot
+consume its confirmation. When another surface takes focus or replaces the
+visible draft, the abandoned pairing line is drained through Enter/Escape
+before that surface can accept an answer. Cancellation suppresses late preview and success
+messages. The durable pairing state remains authoritative: an unknown migration
+outcome remains unknown, and a stored credential survives interrupted verification.
+Run `/setup pair` or `goodvibes-agent setup status` to inspect/reverify rather than
+retrying or revoking. Pairing success does not establish provider, workspace,
+Jev or execution readiness.
+
+In the standalone command, Enter or an incorrect phrase cancels with exit code 2.
+From the confirmation
 prompt onward, Ctrl-C and terminal EOF (Ctrl-D) interrupt with exit code 130,
 including while awaiting a request or verification reply. Process SIGINT and
 SIGTERM also interrupt the earlier preview with exit code 130. Before the
@@ -96,3 +119,12 @@ After building the engine and `bun run --cwd products/agent build:binary`, run:
 ```sh
 bun packages/engine/scripts/test.ts --cwd ../../products/agent src/test/e2e/setup-pair-terminal.e2e.test.ts
 ```
+
+The compiled interactive suite `src/test/e2e/setup-pair-interactive.e2e.test.ts`
+drives the actual composer through a POSIX PTY against an owned daemon and
+scratch home. It covers the owner phrase, read-only preview, cancellation and
+replacement before/after confirmation, interrupted verification, restart without
+remint, environment precedence, secret redaction and unchanged legacy storage.
+Controller and actual harness-runner tests additionally cover stale responses,
+missing shell ownership and nested/model refusal. This is Agent acceptance only;
+TUI credential unification, hosted/WebUI and cross-platform parity remain separate.
