@@ -1,5 +1,11 @@
 # Native Vibecheck entry-point cutover
 
+Historical October 4 inspection. Native project discovery, submission, execution
+controls and autonomous intake have since shipped. The current explicit legacy
+import workflow is documented in [native legacy import and recovery](../../products/agent/docs/legacy-ledger-migration.md). The historical gaps below are not a
+current acceptance checklist; active planning retirement and remaining hosted
+ingress are separately qualified.
+
 Inspected public main `5325a16d` on October 4, 2026. The cited legacy planning/intake implementations have identical contents in reconstructed import checkpoint `d58fdfa4`; its Agent command runner and TUI bootstrap additionally wire the reconstructed read-only import path. This is an implementation map, not a claim of a working native execution flow. No live provider, source migration or remote mutation was performed.
 
 ## Practical gaps

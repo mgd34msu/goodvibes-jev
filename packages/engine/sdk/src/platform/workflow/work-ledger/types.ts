@@ -323,9 +323,13 @@ export interface WorkLedgerService {
   history(afterSequence: number, actor: WorkLedgerActor): Promise<readonly WorkLedgerEvent[]>;
   /** Actor-scoped persisted submission receipt; no execution or capability is returned. */
   lookupSubmission(requestId: string, actor: WorkLedgerActor): Promise<WorkLedgerSubmission | null>;
+  /** Exact actor-scoped durable import replay, without evaluating or rereading sources. */
+  lookupLegacyImport(command: unknown, actor: WorkLedgerActor): Promise<WorkLedgerResult | null>;
   /** Delta notification; readSnapshot is the authoritative initial view. */
   subscribe(actor: WorkLedgerActor, listener: (snapshot: WorkLedgerSnapshot) => void): () => void;
-  execute(command: unknown, trustedHostActor: WorkLedgerActor, options?: { readonly signal?: AbortSignal | undefined; readonly isAuthorized?: (() => boolean) | undefined }): Promise<WorkLedgerResult>;
+  execute(command: unknown, trustedHostActor: WorkLedgerActor, options?: { readonly signal?: AbortSignal | undefined; readonly isAuthorized?: (() => boolean) | undefined;
+    /** Trusted composition only. Synchronous final guard for a new import, inside the native transaction. */
+    readonly assertImportAdmission?: (() => void) | undefined }): Promise<WorkLedgerResult>;
   /** Stop new admissions and notifications; drain already admitted commands. */
   close(): Promise<void>;
 }

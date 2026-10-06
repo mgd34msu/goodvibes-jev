@@ -1,3 +1,4 @@
+import { createNativeLegacyImportHost, NATIVE_IMPORT_SCOPES, type NativeLegacyImportDependencies } from '../../workflow/work-ledger/native-import.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod/v4';
 import type { GatewayMethodCatalog } from '../method-catalog.js';
@@ -5,17 +6,11 @@ import type { GatewayMethodInvocation } from '../method-catalog-shared.js';
 import { WORK_LEDGER_IMPORT_SCOPE, WORK_LEDGER_READ_SCOPE } from '../method-catalog-work-ledger.js';
 import { GatewayVerbError } from './gateway-verb-error.js';
 import { readInvocationParams } from './invocation-params.js';
-import { LEGACY_IMPORT_MAX_BYTES, prepareLegacyWorkLedgerMigration, workLedgerCommandSchema,
-  type WorkLedgerAuthority, type WorkLedgerService } from '../../workflow/work-ledger/index.js';
+import { LEGACY_IMPORT_MAX_BYTES, prepareLegacyWorkLedgerMigration, workLedgerCommandSchema } from '../../workflow/work-ledger/index.js';
 
 /** Trusted selected-host composition only. No path, authority or actor from request data. */
-export function registerWorkLedgerImportGatewayMethods(catalog: GatewayMethodCatalog, host: {
-  readonly hostId: string;
-  readonly projectId: string;
-  readonly service: WorkLedgerService;
-  readonly authority: WorkLedgerAuthority;
-  readonly readSource: (id: string) => { readonly source: unknown; readonly generation: string | null };
-}): void {
+export function registerWorkLedgerImportGatewayMethods(catalog: GatewayMethodCatalog, host: NativeLegacyImportDependencies): { close(): Promise<void> } {
+  const native = createNativeLegacyImportHost(host);
   const attach = (id: string, handler: (invocation: GatewayMethodInvocation) => Promise<unknown>) => {
     const descriptor = catalog.get(id);
     if (!descriptor) throw new Error(`Missing legacy import descriptor: ${id}`);
@@ -26,9 +21,22 @@ export function registerWorkLedgerImportGatewayMethods(catalog: GatewayMethodCat
     const operationScope = prepare ? WORK_LEDGER_READ_SCOPE : WORK_LEDGER_IMPORT_SCOPE;
     if (!context.admin || !context.principalId || !context.scopes?.some(scope => scope === '*' || scope === operationScope)
       || !context.scopes?.some(scope => scope === '*' || scope === 'read:knowledge')
-      || typeof invocation.isAuthorized !== 'function' || invocation.isAuthorized() !== true) throw new GatewayVerbError(`Legacy import requires current admin authorization, ${operationScope} and read:knowledge`, 'FORBIDDEN', 403);
+      || typeof invocation.isAuthorized !== 'function' || invocation.isAuthorized([operationScope, 'read:knowledge']) !== true) throw new GatewayVerbError(`Legacy import requires current admin authorization, ${operationScope} and read:knowledge`, 'FORBIDDEN', 403);
     const input = readInvocationParams(invocation);
     if (new TextEncoder().encode(JSON.stringify(input)).byteLength > LEGACY_IMPORT_MAX_BYTES) throw new GatewayVerbError('Legacy import exceeds request limit', 'WORK_LEDGER_IMPORT_LIMIT', 413);
+    if (!prepare) {
+      const authority = invocation.nativeExecutionAuthority, current = authority?.current();
+      if (!authority || !current || context.principalKind !== 'token' || current.kind !== 'pairing-token' || current.principalId !== context.principalId
+        || current.authorityId !== current.principalId || current.authorityRevision !== current.tokenId
+        || !NATIVE_IMPORT_SCOPES.every(scope => current.scopes.includes('*') || current.scopes.includes(scope))) {
+        throw new GatewayVerbError('Native legacy import requires a persisted paired-token owner', 'NATIVE_IMPORT_UNSUPPORTED_AUTHORITY', 403);
+      }
+      const parsed = workLedgerCommandSchema.safeParse(input);
+      if (!parsed.success || parsed.data.type !== 'import_legacy') throw new GatewayVerbError('Invalid exact import command', 'INVALID_ARGUMENT', 400);
+      const result = await native.run(parsed.data, authority, { signal: invocation.signal, isAuthorized: () => invocation.isAuthorized?.(NATIVE_IMPORT_SCOPES) === true });
+      if (invocation.isAuthorized(NATIVE_IMPORT_SCOPES) !== true) throw new GatewayVerbError('Owner authorization changed', 'FORBIDDEN', 403);
+      return result;
+    }
     const actor = host.authority.issueActor({ projectId: host.projectId, role: 'coordinator',
       actorId: `host:legacy-import:${createHash('sha256').update(JSON.stringify([context.principalKind, context.principalId])).digest('hex')}` });
     try {
@@ -44,11 +52,9 @@ export function registerWorkLedgerImportGatewayMethods(catalog: GatewayMethodCat
           expectedLedgerRevision: snapshot.revision, pendingLocalChanges: false,
           sources: sources as { source: unknown; generation: string }[], occupiedWorkIds: snapshot.works.map(view => view.work.id) }, invocation.signal);
       }
-      const parsed = workLedgerCommandSchema.safeParse(input);
-      if (!parsed.success || parsed.data.type !== 'import_legacy') throw new GatewayVerbError('Invalid reviewed import command', 'INVALID_ARGUMENT', 400);
-      return await host.service.execute(parsed.data, actor, { signal: invocation.signal, isAuthorized: invocation.isAuthorized });
     } finally { host.authority.revokeActor(actor); }
   };
   attach('workLedger.prepareLegacyImport', invocation => run(invocation, true));
   attach('workLedger.importLegacy', invocation => run(invocation, false));
+  return { close: native.close };
 }

@@ -1,3 +1,4 @@
+import { JEV_DECISION_SCHEMA } from '@goodvibes-jev/judgment/decisions';
 import { array, boolean, literal, union, enum as enumSchema, number, strictObject, string, toJSONSchema, type z } from 'zod/v4';
 import { ledgerWorkSchema, ledgerAttemptSchema, ledgerEvidenceSchema, workLedgerReadEventSchema, ledgerEventSchema, legacyWorkLedgerManifestSchema } from '../workflow/work-ledger/types.js';
 import { methodDescriptor, type GatewayMethodDescriptor } from './method-catalog-shared.js';
@@ -50,16 +51,17 @@ export const builtinGatewayWorkLedgerMethodDescriptors: readonly GatewayMethodDe
   }),
   methodDescriptor({
     id: 'workLedger.importLegacy', title: 'Import Legacy Work Atomically', category: 'work-ledger',
-    description: 'Import one reviewed versioned legacy manifest with durable exact-request replay. Preserves source records, grants no execution or verification authority.',
+    description: 'Import one exact versioned legacy manifest only after fresh recorded autonomous admission under paired authority. Durable exact-request replay bypasses new evaluation. Preserves source records and grants no execution or verification authority.',
     access: 'admin', scopes: [WORK_LEDGER_IMPORT_SCOPE, 'read:knowledge'], metadata: { requiresFreshOperatorAuth: true },
     http: { method: 'POST', path: '/api/work-ledger/legacy-import' },
     inputSchema: { type: 'object', additionalProperties: false, required: ['type','requestId','expectedRevision','manifest'],
       properties: { type: { type: 'string', enum: ['import_legacy'] }, requestId: { type: 'string', minLength: 1, maxLength: 200 }, expectedRevision: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER }, manifest: manifestJsonSchema } },
-    outputSchema: json(union([
+    outputSchema: { anyOf: [json(union([
       strictObject({ kind: literal('accepted'), replayed: boolean(), event: ledgerEventSchema }),
       strictObject({ kind: literal('rejected'), code: string(), reason: string(), revision: sequence.nullable() }),
       strictObject({ kind: literal('indeterminate'), requestId: projectId, actorId: projectId, reason: string() }),
-    ])),
+    ])), { type: 'object', additionalProperties: false, required: ['kind', 'decision'],
+      properties: { kind: { type: 'string', enum: ['decision'] }, decision: { oneOf: JEV_DECISION_SCHEMA.oneOf.filter(variant => variant.properties.outcome.const !== 'act') } } }] },
   }),
   methodDescriptor({
     id: 'workLedger.snapshot', title: 'Read Native Work Ledger', category: 'work-ledger',

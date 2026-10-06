@@ -1,0 +1,219 @@
+{
+  "hostId": "synthetic-selected-host",
+  "projectId": "synthetic-project",
+  "expectedLedgerRevision": 0,
+  "pendingLocalChanges": false,
+  "occupiedWorkIds": [],
+  "sources": [
+    {
+      "source": {
+        "id": "source-state",
+        "connectorId": "goodvibes-project-planning",
+        "sourceType": "dataset",
+        "canonicalUri": "goodvibes://planning/project%3Asynthetic-project/state/plan-1",
+        "tags": [
+          "project-planning"
+        ],
+        "status": "indexed",
+        "metadata": {
+          "projectId": "synthetic-project",
+          "knowledgeSpaceId": "project:synthetic-project",
+          "projectPlanning": true,
+          "planningArtifactKind": "state",
+          "planningArtifactId": "plan-1",
+          "value": {
+            "id": "plan-1",
+            "projectId": "synthetic-project",
+            "knowledgeSpaceId": "project:synthetic-project",
+            "goal": "Preserve synthetic history",
+            "scope": "Fixtures only",
+            "knownContext": [
+              "Synthetic"
+            ],
+            "openQuestions": [
+              {
+                "id": "q-open",
+                "prompt": "Which host?",
+                "status": "open"
+              }
+            ],
+            "answeredQuestions": [
+              {
+                "id": "q-answered",
+                "prompt": "Keep IDs?",
+                "status": "answered",
+                "answer": "Yes",
+                "answeredAt": 150
+              }
+            ],
+            "decisions": [
+              {
+                "id": "decision-1",
+                "title": "Use one store",
+                "decision": "Keep the selected daemon authoritative",
+                "status": "accepted",
+                "metadata": {
+                  "synthetic": true
+                }
+              }
+            ],
+            "assumptions": [],
+            "constraints": [],
+            "risks": [],
+            "tasks": [
+              {
+                "id": "planning-task-1",
+                "title": "Historical planning task",
+                "status": "completed",
+                "dependencies": [
+                  "task-1"
+                ],
+                "verification": [
+                  "Historical claim only"
+                ]
+              }
+            ],
+            "dependencies": [
+              {
+                "fromTaskId": "planning-task-1",
+                "toTaskId": "task-1",
+                "reason": "Preserve relation"
+              }
+            ],
+            "verificationGates": [
+              {
+                "id": "gate-1",
+                "description": "Old test",
+                "status": "passed",
+                "evidence": "Prose is not evidence"
+              }
+            ],
+            "agentAssignments": [],
+            "readiness": "executable",
+            "executionApproved": true,
+            "createdAt": 100,
+            "updatedAt": 200,
+            "metadata": {
+              "executionApproved": true,
+              "opaque": {
+                "retain": "exactly"
+              }
+            }
+          }
+        },
+        "createdAt": 100,
+        "updatedAt": 200
+      },
+      "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "source": {
+        "id": "source-work",
+        "connectorId": "goodvibes-project-planning",
+        "sourceType": "dataset",
+        "canonicalUri": "goodvibes://planning/project%3Asynthetic-project/work-plan/work-plan-1",
+        "tags": [
+          "project-planning"
+        ],
+        "status": "indexed",
+        "metadata": {
+          "projectId": "synthetic-project",
+          "knowledgeSpaceId": "project:synthetic-project",
+          "projectPlanning": true,
+          "planningArtifactKind": "work-plan",
+          "planningArtifactId": "work-plan-1",
+          "value": {
+            "id": "work-plan-1",
+            "projectId": "synthetic-project",
+            "knowledgeSpaceId": "project:synthetic-project",
+            "tasks": [
+              {
+                "taskId": "task-1",
+                "projectId": "synthetic-project",
+                "knowledgeSpaceId": "project:synthetic-project",
+                "title": "Legacy done item",
+                "notes": "Keep notes",
+                "status": "done",
+                "order": 0,
+                "tags": [
+                  "fixture"
+                ],
+                "source": "user",
+                "decisionId": "decision-1",
+                "sourceMessageId": "message-1",
+                "linkedArtifactIds": [
+                  "artifact-external"
+                ],
+                "linkedSourceIds": [
+                  "source-external"
+                ],
+                "linkedNodeIds": [
+                  "node-external"
+                ],
+                "originSurface": "tui",
+                "createdAt": 100,
+                "updatedAt": 200,
+                "completedAt": 190,
+                "metadata": {
+                  "executionApproved": true,
+                  "evidence": "old claim"
+                }
+              },
+              {
+                "taskId": "task-2",
+                "projectId": "synthetic-project",
+                "knowledgeSpaceId": "project:synthetic-project",
+                "title": "Legacy failed item",
+                "status": "failed",
+                "order": 1,
+                "tags": [],
+                "parentTaskId": "task-1",
+                "linkedArtifactIds": [],
+                "linkedSourceIds": [],
+                "linkedNodeIds": [],
+                "createdAt": 100,
+                "updatedAt": 200
+              }
+            ],
+            "createdAt": 100,
+            "updatedAt": 200
+          }
+        },
+        "createdAt": 100,
+        "updatedAt": 200
+      },
+      "generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "source": {
+        "id": "source-decision",
+        "connectorId": "goodvibes-project-planning",
+        "sourceType": "dataset",
+        "canonicalUri": "goodvibes://planning/project%3Asynthetic-project/decision/decision-1",
+        "tags": [
+          "project-planning"
+        ],
+        "status": "indexed",
+        "metadata": {
+          "projectId": "synthetic-project",
+          "knowledgeSpaceId": "project:synthetic-project",
+          "projectPlanning": true,
+          "planningArtifactKind": "decision",
+          "planningArtifactId": "decision-1",
+          "value": {
+            "id": "decision-1",
+            "title": "Use one store",
+            "decision": "Keep the selected daemon authoritative",
+            "status": "accepted",
+            "metadata": {
+              "synthetic": true
+            }
+          }
+        },
+        "createdAt": 100,
+        "updatedAt": 200
+      },
+      "generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ]
+}
