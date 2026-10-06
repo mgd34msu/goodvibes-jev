@@ -31,7 +31,7 @@ export interface VoiceCaptureShellDeps {
   /** The shell's teardown registry; the device release is appended to it. */
   readonly unsubs: Array<() => void>;
   /** The live composer buffer, InputHandler exposes public `prompt`/`cursorPos`. */
-  readonly buffer: { prompt: string; cursorPos: number };
+  readonly buffer: { prompt: string; cursorPos: number; hostPairing?: { cancelForTakeover(): boolean } | null };
   readonly submitInput: (text: string) => void;
   readonly notify: (message: string) => void;
   readonly render: () => void;
@@ -55,6 +55,7 @@ export function installVoiceCapture(deps: VoiceCaptureShellDeps): () => VoiceCap
     homeDirectory: deps.homeDirectory,
     sessionId: deps.sessionId,
     writeDraft: (text) => {
+      deps.buffer.hostPairing?.cancelForTakeover();
       deps.buffer.prompt = text;
       deps.buffer.cursorPos = text.length;
       deps.render();
