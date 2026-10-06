@@ -4,7 +4,7 @@ Generated from the synced GoodVibes operator contract artifact.
 
 ## Summary
 
-- Methods: `533`
+- Methods: `534`
 - Events: `34`
 - Auth modes: `shared-bearer`, `session-login`
 - HTTP status path: `/status`
@@ -114272,6 +114272,12 @@ Join a hosted session and receive its transcript so far, so a client that was ne
         "id": {
           "type": "string"
         },
+        "nativeConversation": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
         "workspaceRoot": {
           "type": "string"
         },
@@ -114466,6 +114472,12 @@ Compose a full conversation loop INSIDE the daemon for a workspace: the same orc
         "id": {
           "type": "string"
         },
+        "nativeConversation": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
         "workspaceRoot": {
           "type": "string"
         },
@@ -114616,6 +114628,12 @@ Leave a hosted session. When other clients are still attached, nothing else happ
         "id": {
           "type": "string"
         },
+        "nativeConversation": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
         "workspaceRoot": {
           "type": "string"
         },
@@ -114762,6 +114780,12 @@ End a hosted session regardless of who is attached or what its detach policy say
         "id": {
           "type": "string"
         },
+        "nativeConversation": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
         "workspaceRoot": {
           "type": "string"
         },
@@ -114906,6 +114930,12 @@ Every session this daemon hosts, most recently updated first. Terminated session
         "properties": {
           "id": {
             "type": "string"
+          },
+          "nativeConversation": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
           },
           "workspaceRoot": {
             "type": "string"
@@ -129237,6 +129267,54 @@ Read at most 100 events after an exclusive cursor, pinned to a history high-wate
                                 "minLength": 1,
                                 "maxLength": 200
                               },
+                              "continuation": {
+                                "type": "object",
+                                "properties": {
+                                  "sessionId": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "revision": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "messages": {
+                                    "readOnly": true,
+                                    "maxItems": 128,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "role": {
+                                          "type": "string",
+                                          "enum": [
+                                            "user",
+                                            "assistant",
+                                            "system",
+                                            "tool"
+                                          ]
+                                        },
+                                        "content": {
+                                          "type": "string",
+                                          "maxLength": 131072
+                                        }
+                                      },
+                                      "required": [
+                                        "role",
+                                        "content"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "sessionId",
+                                  "revision",
+                                  "messages"
+                                ],
+                                "additionalProperties": false
+                              },
                               "extraction": {
                                 "type": "object",
                                 "properties": {
@@ -129825,6 +129903,54 @@ Read at most 100 events after an exclusive cursor, pinned to a history high-wate
                                   "minLength": 1,
                                   "maxLength": 200
                                 },
+                                "continuation": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sessionId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "messages": {
+                                      "readOnly": true,
+                                      "maxItems": 128,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "role": {
+                                            "type": "string",
+                                            "enum": [
+                                              "user",
+                                              "assistant",
+                                              "system",
+                                              "tool"
+                                            ]
+                                          },
+                                          "content": {
+                                            "type": "string",
+                                            "maxLength": 131072
+                                          }
+                                        },
+                                        "required": [
+                                          "role",
+                                          "content"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "sessionId",
+                                    "revision",
+                                    "messages"
+                                  ],
+                                  "additionalProperties": false
+                                },
                                 "extraction": {
                                   "type": "object",
                                   "properties": {
@@ -130239,6 +130365,54 @@ Import one reviewed versioned legacy manifest with durable exact-request replay.
                                   "type": "string",
                                   "minLength": 1,
                                   "maxLength": 200
+                                },
+                                "continuation": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sessionId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "messages": {
+                                      "readOnly": true,
+                                      "maxItems": 128,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "role": {
+                                            "type": "string",
+                                            "enum": [
+                                              "user",
+                                              "assistant",
+                                              "system",
+                                              "tool"
+                                            ]
+                                          },
+                                          "content": {
+                                            "type": "string",
+                                            "maxLength": 131072
+                                          }
+                                        },
+                                        "required": [
+                                          "role",
+                                          "content"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "sessionId",
+                                    "revision",
+                                    "messages"
+                                  ],
+                                  "additionalProperties": false
                                 },
                                 "extraction": {
                                   "type": "object",
@@ -130821,6 +130995,54 @@ Import one reviewed versioned legacy manifest with durable exact-request replay.
                                     "minLength": 1,
                                     "maxLength": 200
                                   },
+                                  "continuation": {
+                                    "type": "object",
+                                    "properties": {
+                                      "sessionId": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "revision": {
+                                        "type": "string",
+                                        "pattern": "^[a-f0-9]{64}$"
+                                      },
+                                      "messages": {
+                                        "readOnly": true,
+                                        "maxItems": 128,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "role": {
+                                              "type": "string",
+                                              "enum": [
+                                                "user",
+                                                "assistant",
+                                                "system",
+                                                "tool"
+                                              ]
+                                            },
+                                            "content": {
+                                              "type": "string",
+                                              "maxLength": 131072
+                                            }
+                                          },
+                                          "required": [
+                                            "role",
+                                            "content"
+                                          ],
+                                          "additionalProperties": false
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "sessionId",
+                                      "revision",
+                                      "messages"
+                                    ],
+                                    "additionalProperties": false
+                                  },
                                   "extraction": {
                                     "type": "object",
                                     "properties": {
@@ -131162,6 +131384,25 @@ Start the single initial semantic admission of captured conversation text. Repla
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -131229,6 +131470,25 @@ Start the single initial semantic admission of captured conversation text. Repla
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -131315,6 +131575,25 @@ Start the single initial semantic admission of captured conversation text. Repla
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -131338,6 +131617,54 @@ Start the single initial semantic admission of captured conversation text. Repla
           "minLength": 1,
           "maxLength": 20000,
           "pattern": "\\S"
+        },
+        "continuation": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "messages": {
+              "readOnly": true,
+              "maxItems": 128,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "assistant",
+                      "system",
+                      "tool"
+                    ]
+                  },
+                  "content": {
+                    "type": "string",
+                    "maxLength": 131072
+                  }
+                },
+                "required": [
+                  "role",
+                  "content"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "sessionId",
+            "revision",
+            "messages"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -131397,6 +131724,25 @@ Start the single initial semantic admission of captured conversation text. Repla
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -131479,6 +131825,25 @@ Start the single initial semantic admission of captured conversation text. Repla
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -131554,6 +131919,25 @@ Start the single initial semantic admission of captured conversation text. Repla
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -131621,6 +132005,25 @@ Start the single initial semantic admission of captured conversation text. Repla
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -131757,6 +132160,54 @@ Start the single initial semantic admission of captured conversation text. Repla
                     ],
                     "additionalProperties": false
                   }
+                },
+                "continuation": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "messages": {
+                      "readOnly": true,
+                      "maxItems": 128,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "assistant",
+                              "system",
+                              "tool"
+                            ]
+                          },
+                          "content": {
+                            "type": "string",
+                            "maxLength": 131072
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "content"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "revision",
+                    "messages"
+                  ],
+                  "additionalProperties": false
                 },
                 "admissionDecisionId": {
                   "type": "string",
@@ -131926,6 +132377,25 @@ Persist a terminal intake cancellation before work admission. If admission alrea
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -131993,6 +132463,25 @@ Persist a terminal intake cancellation before work admission. If admission alrea
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -132079,6 +132568,25 @@ Persist a terminal intake cancellation before work admission. If admission alrea
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -132102,6 +132610,54 @@ Persist a terminal intake cancellation before work admission. If admission alrea
           "minLength": 1,
           "maxLength": 20000,
           "pattern": "\\S"
+        },
+        "continuation": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "messages": {
+              "readOnly": true,
+              "maxItems": 128,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "assistant",
+                      "system",
+                      "tool"
+                    ]
+                  },
+                  "content": {
+                    "type": "string",
+                    "maxLength": 131072
+                  }
+                },
+                "required": [
+                  "role",
+                  "content"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "sessionId",
+            "revision",
+            "messages"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -132161,6 +132717,25 @@ Persist a terminal intake cancellation before work admission. If admission alrea
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -132243,6 +132818,25 @@ Persist a terminal intake cancellation before work admission. If admission alrea
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -132318,6 +132912,25 @@ Persist a terminal intake cancellation before work admission. If admission alrea
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -132385,6 +132998,25 @@ Persist a terminal intake cancellation before work admission. If admission alrea
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -132521,6 +133153,54 @@ Persist a terminal intake cancellation before work admission. If admission alrea
                     ],
                     "additionalProperties": false
                   }
+                },
+                "continuation": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "messages": {
+                      "readOnly": true,
+                      "maxItems": 128,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "assistant",
+                              "system",
+                              "tool"
+                            ]
+                          },
+                          "content": {
+                            "type": "string",
+                            "maxLength": 131072
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "content"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "revision",
+                    "messages"
+                  ],
+                  "additionalProperties": false
                 },
                 "admissionDecisionId": {
                   "type": "string",
@@ -132634,6 +133314,20 @@ Persist exact original conversation text and unsupported-source disclosures on t
       "maxLength": 20000,
       "pattern": "\\S"
     },
+    "continuation": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
     "unsupportedSources": {
       "maxItems": 100,
       "type": "array",
@@ -132725,6 +133419,25 @@ Persist exact original conversation text and unsupported-source disclosures on t
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -132792,6 +133505,25 @@ Persist exact original conversation text and unsupported-source disclosures on t
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -132878,6 +133610,25 @@ Persist exact original conversation text and unsupported-source disclosures on t
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -132901,6 +133652,54 @@ Persist exact original conversation text and unsupported-source disclosures on t
           "minLength": 1,
           "maxLength": 20000,
           "pattern": "\\S"
+        },
+        "continuation": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "messages": {
+              "readOnly": true,
+              "maxItems": 128,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "assistant",
+                      "system",
+                      "tool"
+                    ]
+                  },
+                  "content": {
+                    "type": "string",
+                    "maxLength": 131072
+                  }
+                },
+                "required": [
+                  "role",
+                  "content"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "sessionId",
+            "revision",
+            "messages"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -132960,6 +133759,25 @@ Persist exact original conversation text and unsupported-source disclosures on t
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -133042,6 +133860,25 @@ Persist exact original conversation text and unsupported-source disclosures on t
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -133117,6 +133954,25 @@ Persist exact original conversation text and unsupported-source disclosures on t
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -133184,6 +134040,25 @@ Persist exact original conversation text and unsupported-source disclosures on t
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -133320,6 +134195,54 @@ Persist exact original conversation text and unsupported-source disclosures on t
                     ],
                     "additionalProperties": false
                   }
+                },
+                "continuation": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "messages": {
+                      "readOnly": true,
+                      "maxItems": 128,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "assistant",
+                              "system",
+                              "tool"
+                            ]
+                          },
+                          "content": {
+                            "type": "string",
+                            "maxLength": 131072
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "content"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "revision",
+                    "messages"
+                  ],
+                  "additionalProperties": false
                 },
                 "admissionDecisionId": {
                   "type": "string",
@@ -133485,6 +134408,25 @@ Read the current conversation intake or immutable admitted-work receipt by origi
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 200
+                },
+                "continuation": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "revision"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -133552,6 +134494,25 @@ Read the current conversation intake or immutable admitted-work receipt by origi
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 200
+                },
+                "continuation": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "revision"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -133638,6 +134599,25 @@ Read the current conversation intake or immutable admitted-work receipt by origi
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 200
+                },
+                "continuation": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "revision"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -133661,6 +134641,54 @@ Read the current conversation intake or immutable admitted-work receipt by origi
               "minLength": 1,
               "maxLength": 20000,
               "pattern": "\\S"
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "messages": {
+                  "readOnly": true,
+                  "maxItems": 128,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "assistant",
+                          "system",
+                          "tool"
+                        ]
+                      },
+                      "content": {
+                        "type": "string",
+                        "maxLength": 131072
+                      }
+                    },
+                    "required": [
+                      "role",
+                      "content"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision",
+                "messages"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -133720,6 +134748,25 @@ Read the current conversation intake or immutable admitted-work receipt by origi
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 200
+                },
+                "continuation": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "revision"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -133802,6 +134849,25 @@ Read the current conversation intake or immutable admitted-work receipt by origi
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 200
+                },
+                "continuation": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "revision"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -133877,6 +134943,25 @@ Read the current conversation intake or immutable admitted-work receipt by origi
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 200
+                },
+                "continuation": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "revision"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -133944,6 +135029,25 @@ Read the current conversation intake or immutable admitted-work receipt by origi
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 200
+                },
+                "continuation": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "revision"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -134080,6 +135184,54 @@ Read the current conversation intake or immutable admitted-work receipt by origi
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "messages": {
+                          "readOnly": true,
+                          "maxItems": 128,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "role": {
+                                "type": "string",
+                                "enum": [
+                                  "user",
+                                  "assistant",
+                                  "system",
+                                  "tool"
+                                ]
+                              },
+                              "content": {
+                                "type": "string",
+                                "maxLength": 131072
+                              }
+                            },
+                            "required": [
+                              "role",
+                              "content"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision",
+                        "messages"
+                      ],
+                      "additionalProperties": false
                     },
                     "admissionDecisionId": {
                       "type": "string",
@@ -134266,6 +135418,25 @@ Explicitly recover captured conversation admission with a fresh semantic operati
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -134333,6 +135504,25 @@ Explicitly recover captured conversation admission with a fresh semantic operati
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -134419,6 +135609,25 @@ Explicitly recover captured conversation admission with a fresh semantic operati
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -134442,6 +135651,54 @@ Explicitly recover captured conversation admission with a fresh semantic operati
           "minLength": 1,
           "maxLength": 20000,
           "pattern": "\\S"
+        },
+        "continuation": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "messages": {
+              "readOnly": true,
+              "maxItems": 128,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "assistant",
+                      "system",
+                      "tool"
+                    ]
+                  },
+                  "content": {
+                    "type": "string",
+                    "maxLength": 131072
+                  }
+                },
+                "required": [
+                  "role",
+                  "content"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "sessionId",
+            "revision",
+            "messages"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -134501,6 +135758,25 @@ Explicitly recover captured conversation admission with a fresh semantic operati
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -134583,6 +135859,25 @@ Explicitly recover captured conversation admission with a fresh semantic operati
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -134658,6 +135953,25 @@ Explicitly recover captured conversation admission with a fresh semantic operati
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -134725,6 +136039,25 @@ Explicitly recover captured conversation admission with a fresh semantic operati
               "type": "string",
               "minLength": 1,
               "maxLength": 200
+            },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "revision": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "sessionId",
+                "revision"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -134861,6 +136194,54 @@ Explicitly recover captured conversation admission with a fresh semantic operati
                     ],
                     "additionalProperties": false
                   }
+                },
+                "continuation": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "messages": {
+                      "readOnly": true,
+                      "maxItems": 128,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "assistant",
+                              "system",
+                              "tool"
+                            ]
+                          },
+                          "content": {
+                            "type": "string",
+                            "maxLength": 131072
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "content"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "revision",
+                    "messages"
+                  ],
+                  "additionalProperties": false
                 },
                 "admissionDecisionId": {
                   "type": "string",
@@ -135247,6 +136628,54 @@ Read the selected host project ledger, without mutation authority or allowedActi
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 200
+                          },
+                          "continuation": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "revision": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{64}$"
+                              },
+                              "messages": {
+                                "readOnly": true,
+                                "maxItems": 128,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "role": {
+                                      "type": "string",
+                                      "enum": [
+                                        "user",
+                                        "assistant",
+                                        "system",
+                                        "tool"
+                                      ]
+                                    },
+                                    "content": {
+                                      "type": "string",
+                                      "maxLength": 131072
+                                    }
+                                  },
+                                  "required": [
+                                    "role",
+                                    "content"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "revision",
+                              "messages"
+                            ],
+                            "additionalProperties": false
                           },
                           "extraction": {
                             "type": "object",
@@ -136230,6 +137659,7 @@ Persist cancellation of the exact native hosted dispatch and drain its owned tur
           "type": "string",
           "enum": [
             "preparing",
+            "queued",
             "running",
             "cancelling",
             "completed",
@@ -136298,6 +137728,96 @@ Persist cancellation of the exact native hosted dispatch and drain its owned tur
       },
       "required": [
         "kind"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}
+```
+
+#### `workLedger.turn.session`
+
+Read authoritative native session ownership. Only an explicit legacy result permits ordinary session ingress. Native sessions additionally require their current paired owner and native delivery scopes.
+
+- Title: `Inspect Native Hosted Session`
+- Source: `builtin`
+- Access: `authenticated`
+- Transport: `http`, `ws`
+- HTTP: `POST /api/work-ledger/turn/session`
+- Scopes: `read:sessions`
+- Emits events: none
+- Dangerous: `no`
+- Invokable: `yes`
+
+##### Input schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  },
+  "required": [
+    "sessionId"
+  ],
+  "additionalProperties": false
+}
+```
+
+##### Output schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "legacy"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "native"
+          ]
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "busy": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "projectId",
+        "sessionId",
+        "busy"
       ],
       "additionalProperties": false
     }
@@ -136384,6 +137904,7 @@ Deliver an already admitted native conversation input at most once through a hos
           "type": "string",
           "enum": [
             "preparing",
+            "queued",
             "running",
             "cancelling",
             "completed",
@@ -136538,6 +138059,7 @@ Read native hosted dispatch status. Does not admit, claim, retry or execute.
           "type": "string",
           "enum": [
             "preparing",
+            "queued",
             "running",
             "cancelling",
             "completed",
@@ -138967,6 +140489,12 @@ Every lifecycle transition of a session whose loop runs INSIDE the daemon: creat
       "properties": {
         "id": {
           "type": "string"
+        },
+        "nativeConversation": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
         },
         "workspaceRoot": {
           "type": "string"

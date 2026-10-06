@@ -3,7 +3,7 @@
   "info": {
     "title": "GoodVibes Operator API",
     "version": "2.0.23",
-    "description": "Generated from the operator contract (packages/contracts/artifacts/operator-contract.json). 533 cataloged methods: 461 with dedicated REST bindings, 72 reachable only through the generic invoke endpoint. 0 methods lack typed SDK client IO and are marked with `x-typed-client-io: false`. They are represented honestly, never omitted. Regenerate with `bun run openapi:generate`; drift fails `contracts:check`."
+    "description": "Generated from the operator contract (packages/contracts/artifacts/operator-contract.json). 534 cataloged methods: 462 with dedicated REST bindings, 72 reachable only through the generic invoke endpoint. 0 methods lack typed SDK client IO and are marked with `x-typed-client-io: false`. They are represented honestly, never omitted. Regenerate with `bun run openapi:generate`; drift fails `contracts:check`."
   },
   "servers": [
     {
@@ -125611,6 +125611,54 @@
                                                 "minLength": 1,
                                                 "maxLength": 200
                                               },
+                                              "continuation": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "sessionId": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "maxLength": 200
+                                                  },
+                                                  "revision": {
+                                                    "type": "string",
+                                                    "pattern": "^[a-f0-9]{64}$"
+                                                  },
+                                                  "messages": {
+                                                    "readOnly": true,
+                                                    "maxItems": 128,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "role": {
+                                                          "type": "string",
+                                                          "enum": [
+                                                            "user",
+                                                            "assistant",
+                                                            "system",
+                                                            "tool"
+                                                          ]
+                                                        },
+                                                        "content": {
+                                                          "type": "string",
+                                                          "maxLength": 131072
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "role",
+                                                        "content"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "sessionId",
+                                                  "revision",
+                                                  "messages"
+                                                ],
+                                                "additionalProperties": false
+                                              },
                                               "extraction": {
                                                 "type": "object",
                                                 "properties": {
@@ -126199,6 +126247,54 @@
                                                   "minLength": 1,
                                                   "maxLength": 200
                                                 },
+                                                "continuation": {
+                                                  "type": "object",
+                                                  "properties": {
+                                                    "sessionId": {
+                                                      "type": "string",
+                                                      "minLength": 1,
+                                                      "maxLength": 200
+                                                    },
+                                                    "revision": {
+                                                      "type": "string",
+                                                      "pattern": "^[a-f0-9]{64}$"
+                                                    },
+                                                    "messages": {
+                                                      "readOnly": true,
+                                                      "maxItems": 128,
+                                                      "type": "array",
+                                                      "items": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                          "role": {
+                                                            "type": "string",
+                                                            "enum": [
+                                                              "user",
+                                                              "assistant",
+                                                              "system",
+                                                              "tool"
+                                                            ]
+                                                          },
+                                                          "content": {
+                                                            "type": "string",
+                                                            "maxLength": 131072
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "role",
+                                                          "content"
+                                                        ],
+                                                        "additionalProperties": false
+                                                      }
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "sessionId",
+                                                    "revision",
+                                                    "messages"
+                                                  ],
+                                                  "additionalProperties": false
+                                                },
                                                 "extraction": {
                                                   "type": "object",
                                                   "properties": {
@@ -126620,6 +126716,54 @@
                                                   "type": "string",
                                                   "minLength": 1,
                                                   "maxLength": 200
+                                                },
+                                                "continuation": {
+                                                  "type": "object",
+                                                  "properties": {
+                                                    "sessionId": {
+                                                      "type": "string",
+                                                      "minLength": 1,
+                                                      "maxLength": 200
+                                                    },
+                                                    "revision": {
+                                                      "type": "string",
+                                                      "pattern": "^[a-f0-9]{64}$"
+                                                    },
+                                                    "messages": {
+                                                      "readOnly": true,
+                                                      "maxItems": 128,
+                                                      "type": "array",
+                                                      "items": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                          "role": {
+                                                            "type": "string",
+                                                            "enum": [
+                                                              "user",
+                                                              "assistant",
+                                                              "system",
+                                                              "tool"
+                                                            ]
+                                                          },
+                                                          "content": {
+                                                            "type": "string",
+                                                            "maxLength": 131072
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "role",
+                                                          "content"
+                                                        ],
+                                                        "additionalProperties": false
+                                                      }
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "sessionId",
+                                                    "revision",
+                                                    "messages"
+                                                  ],
+                                                  "additionalProperties": false
                                                 },
                                                 "extraction": {
                                                   "type": "object",
@@ -127202,6 +127346,54 @@
                                                     "minLength": 1,
                                                     "maxLength": 200
                                                   },
+                                                  "continuation": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                      "sessionId": {
+                                                        "type": "string",
+                                                        "minLength": 1,
+                                                        "maxLength": 200
+                                                      },
+                                                      "revision": {
+                                                        "type": "string",
+                                                        "pattern": "^[a-f0-9]{64}$"
+                                                      },
+                                                      "messages": {
+                                                        "readOnly": true,
+                                                        "maxItems": 128,
+                                                        "type": "array",
+                                                        "items": {
+                                                          "type": "object",
+                                                          "properties": {
+                                                            "role": {
+                                                              "type": "string",
+                                                              "enum": [
+                                                                "user",
+                                                                "assistant",
+                                                                "system",
+                                                                "tool"
+                                                              ]
+                                                            },
+                                                            "content": {
+                                                              "type": "string",
+                                                              "maxLength": 131072
+                                                            }
+                                                          },
+                                                          "required": [
+                                                            "role",
+                                                            "content"
+                                                          ],
+                                                          "additionalProperties": false
+                                                        }
+                                                      }
+                                                    },
+                                                    "required": [
+                                                      "sessionId",
+                                                      "revision",
+                                                      "messages"
+                                                    ],
+                                                    "additionalProperties": false
+                                                  },
                                                   "extraction": {
                                                     "type": "object",
                                                     "properties": {
@@ -127569,6 +127761,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -127636,6 +127847,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -127722,6 +127952,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -127745,6 +127994,54 @@
                           "minLength": 1,
                           "maxLength": 20000,
                           "pattern": "\\S"
+                        },
+                        "continuation": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "messages": {
+                              "readOnly": true,
+                              "maxItems": 128,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "role": {
+                                    "type": "string",
+                                    "enum": [
+                                      "user",
+                                      "assistant",
+                                      "system",
+                                      "tool"
+                                    ]
+                                  },
+                                  "content": {
+                                    "type": "string",
+                                    "maxLength": 131072
+                                  }
+                                },
+                                "required": [
+                                  "role",
+                                  "content"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "revision",
+                            "messages"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -127804,6 +128101,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -127886,6 +128202,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -127961,6 +128296,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -128028,6 +128382,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -128164,6 +128537,54 @@
                                     ],
                                     "additionalProperties": false
                                   }
+                                },
+                                "continuation": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sessionId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "messages": {
+                                      "readOnly": true,
+                                      "maxItems": 128,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "role": {
+                                            "type": "string",
+                                            "enum": [
+                                              "user",
+                                              "assistant",
+                                              "system",
+                                              "tool"
+                                            ]
+                                          },
+                                          "content": {
+                                            "type": "string",
+                                            "maxLength": 131072
+                                          }
+                                        },
+                                        "required": [
+                                          "role",
+                                          "content"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "sessionId",
+                                    "revision",
+                                    "messages"
+                                  ],
+                                  "additionalProperties": false
                                 },
                                 "admissionDecisionId": {
                                   "type": "string",
@@ -128348,6 +128769,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -128415,6 +128855,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -128501,6 +128960,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -128524,6 +129002,54 @@
                           "minLength": 1,
                           "maxLength": 20000,
                           "pattern": "\\S"
+                        },
+                        "continuation": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "messages": {
+                              "readOnly": true,
+                              "maxItems": 128,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "role": {
+                                    "type": "string",
+                                    "enum": [
+                                      "user",
+                                      "assistant",
+                                      "system",
+                                      "tool"
+                                    ]
+                                  },
+                                  "content": {
+                                    "type": "string",
+                                    "maxLength": 131072
+                                  }
+                                },
+                                "required": [
+                                  "role",
+                                  "content"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "revision",
+                            "messages"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -128583,6 +129109,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -128665,6 +129210,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -128740,6 +129304,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -128807,6 +129390,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -128943,6 +129545,54 @@
                                     ],
                                     "additionalProperties": false
                                   }
+                                },
+                                "continuation": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sessionId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "messages": {
+                                      "readOnly": true,
+                                      "maxItems": 128,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "role": {
+                                            "type": "string",
+                                            "enum": [
+                                              "user",
+                                              "assistant",
+                                              "system",
+                                              "tool"
+                                            ]
+                                          },
+                                          "content": {
+                                            "type": "string",
+                                            "maxLength": 131072
+                                          }
+                                        },
+                                        "required": [
+                                          "role",
+                                          "content"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "sessionId",
+                                    "revision",
+                                    "messages"
+                                  ],
+                                  "additionalProperties": false
                                 },
                                 "admissionDecisionId": {
                                   "type": "string",
@@ -129127,6 +129777,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -129194,6 +129863,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -129280,6 +129968,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -129303,6 +130010,54 @@
                           "minLength": 1,
                           "maxLength": 20000,
                           "pattern": "\\S"
+                        },
+                        "continuation": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "messages": {
+                              "readOnly": true,
+                              "maxItems": 128,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "role": {
+                                    "type": "string",
+                                    "enum": [
+                                      "user",
+                                      "assistant",
+                                      "system",
+                                      "tool"
+                                    ]
+                                  },
+                                  "content": {
+                                    "type": "string",
+                                    "maxLength": 131072
+                                  }
+                                },
+                                "required": [
+                                  "role",
+                                  "content"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "revision",
+                            "messages"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -129362,6 +130117,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -129444,6 +130218,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -129519,6 +130312,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -129586,6 +130398,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -129723,6 +130554,54 @@
                                     "additionalProperties": false
                                   }
                                 },
+                                "continuation": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sessionId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "messages": {
+                                      "readOnly": true,
+                                      "maxItems": 128,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "role": {
+                                            "type": "string",
+                                            "enum": [
+                                              "user",
+                                              "assistant",
+                                              "system",
+                                              "tool"
+                                            ]
+                                          },
+                                          "content": {
+                                            "type": "string",
+                                            "maxLength": 131072
+                                          }
+                                        },
+                                        "required": [
+                                          "role",
+                                          "content"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "sessionId",
+                                    "revision",
+                                    "messages"
+                                  ],
+                                  "additionalProperties": false
+                                },
                                 "admissionDecisionId": {
                                   "type": "string",
                                   "minLength": 1,
@@ -129837,6 +130716,20 @@
                     "maxLength": 20000,
                     "pattern": "\\S"
                   },
+                  "continuation": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      }
+                    },
+                    "required": [
+                      "sessionId"
+                    ],
+                    "additionalProperties": false
+                  },
                   "unsupportedSources": {
                     "maxItems": 100,
                     "type": "array",
@@ -129943,6 +130836,25 @@
                                   "type": "string",
                                   "minLength": 1,
                                   "maxLength": 200
+                                },
+                                "continuation": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sessionId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    }
+                                  },
+                                  "required": [
+                                    "sessionId",
+                                    "revision"
+                                  ],
+                                  "additionalProperties": false
                                 }
                               },
                               "required": [
@@ -130010,6 +130922,25 @@
                                   "type": "string",
                                   "minLength": 1,
                                   "maxLength": 200
+                                },
+                                "continuation": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sessionId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    }
+                                  },
+                                  "required": [
+                                    "sessionId",
+                                    "revision"
+                                  ],
+                                  "additionalProperties": false
                                 }
                               },
                               "required": [
@@ -130096,6 +131027,25 @@
                                   "type": "string",
                                   "minLength": 1,
                                   "maxLength": 200
+                                },
+                                "continuation": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sessionId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    }
+                                  },
+                                  "required": [
+                                    "sessionId",
+                                    "revision"
+                                  ],
+                                  "additionalProperties": false
                                 }
                               },
                               "required": [
@@ -130119,6 +131069,54 @@
                               "minLength": 1,
                               "maxLength": 20000,
                               "pattern": "\\S"
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "messages": {
+                                  "readOnly": true,
+                                  "maxItems": 128,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "role": {
+                                        "type": "string",
+                                        "enum": [
+                                          "user",
+                                          "assistant",
+                                          "system",
+                                          "tool"
+                                        ]
+                                      },
+                                      "content": {
+                                        "type": "string",
+                                        "maxLength": 131072
+                                      }
+                                    },
+                                    "required": [
+                                      "role",
+                                      "content"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision",
+                                "messages"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -130178,6 +131176,25 @@
                                   "type": "string",
                                   "minLength": 1,
                                   "maxLength": 200
+                                },
+                                "continuation": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sessionId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    }
+                                  },
+                                  "required": [
+                                    "sessionId",
+                                    "revision"
+                                  ],
+                                  "additionalProperties": false
                                 }
                               },
                               "required": [
@@ -130260,6 +131277,25 @@
                                   "type": "string",
                                   "minLength": 1,
                                   "maxLength": 200
+                                },
+                                "continuation": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sessionId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    }
+                                  },
+                                  "required": [
+                                    "sessionId",
+                                    "revision"
+                                  ],
+                                  "additionalProperties": false
                                 }
                               },
                               "required": [
@@ -130335,6 +131371,25 @@
                                   "type": "string",
                                   "minLength": 1,
                                   "maxLength": 200
+                                },
+                                "continuation": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sessionId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    }
+                                  },
+                                  "required": [
+                                    "sessionId",
+                                    "revision"
+                                  ],
+                                  "additionalProperties": false
                                 }
                               },
                               "required": [
@@ -130402,6 +131457,25 @@
                                   "type": "string",
                                   "minLength": 1,
                                   "maxLength": 200
+                                },
+                                "continuation": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sessionId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    }
+                                  },
+                                  "required": [
+                                    "sessionId",
+                                    "revision"
+                                  ],
+                                  "additionalProperties": false
                                 }
                               },
                               "required": [
@@ -130538,6 +131612,54 @@
                                         ],
                                         "additionalProperties": false
                                       }
+                                    },
+                                    "continuation": {
+                                      "type": "object",
+                                      "properties": {
+                                        "sessionId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        "revision": {
+                                          "type": "string",
+                                          "pattern": "^[a-f0-9]{64}$"
+                                        },
+                                        "messages": {
+                                          "readOnly": true,
+                                          "maxItems": 128,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "object",
+                                            "properties": {
+                                              "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "user",
+                                                  "assistant",
+                                                  "system",
+                                                  "tool"
+                                                ]
+                                              },
+                                              "content": {
+                                                "type": "string",
+                                                "maxLength": 131072
+                                              }
+                                            },
+                                            "required": [
+                                              "role",
+                                              "content"
+                                            ],
+                                            "additionalProperties": false
+                                          }
+                                        }
+                                      },
+                                      "required": [
+                                        "sessionId",
+                                        "revision",
+                                        "messages"
+                                      ],
+                                      "additionalProperties": false
                                     },
                                     "admissionDecisionId": {
                                       "type": "string",
@@ -130733,6 +131855,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -130800,6 +131941,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -130886,6 +132046,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -130909,6 +132088,54 @@
                           "minLength": 1,
                           "maxLength": 20000,
                           "pattern": "\\S"
+                        },
+                        "continuation": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "messages": {
+                              "readOnly": true,
+                              "maxItems": 128,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "role": {
+                                    "type": "string",
+                                    "enum": [
+                                      "user",
+                                      "assistant",
+                                      "system",
+                                      "tool"
+                                    ]
+                                  },
+                                  "content": {
+                                    "type": "string",
+                                    "maxLength": 131072
+                                  }
+                                },
+                                "required": [
+                                  "role",
+                                  "content"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "revision",
+                            "messages"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -130968,6 +132195,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -131050,6 +132296,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -131125,6 +132390,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -131192,6 +132476,25 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 200
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -131328,6 +132631,54 @@
                                     ],
                                     "additionalProperties": false
                                   }
+                                },
+                                "continuation": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sessionId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    "revision": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "messages": {
+                                      "readOnly": true,
+                                      "maxItems": 128,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "role": {
+                                            "type": "string",
+                                            "enum": [
+                                              "user",
+                                              "assistant",
+                                              "system",
+                                              "tool"
+                                            ]
+                                          },
+                                          "content": {
+                                            "type": "string",
+                                            "maxLength": 131072
+                                          }
+                                        },
+                                        "required": [
+                                          "role",
+                                          "content"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "sessionId",
+                                    "revision",
+                                    "messages"
+                                  ],
+                                  "additionalProperties": false
                                 },
                                 "admissionDecisionId": {
                                   "type": "string",
@@ -131751,6 +133102,54 @@
                                             "type": "string",
                                             "minLength": 1,
                                             "maxLength": 200
+                                          },
+                                          "continuation": {
+                                            "type": "object",
+                                            "properties": {
+                                              "sessionId": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 200
+                                              },
+                                              "revision": {
+                                                "type": "string",
+                                                "pattern": "^[a-f0-9]{64}$"
+                                              },
+                                              "messages": {
+                                                "readOnly": true,
+                                                "maxItems": 128,
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "object",
+                                                  "properties": {
+                                                    "role": {
+                                                      "type": "string",
+                                                      "enum": [
+                                                        "user",
+                                                        "assistant",
+                                                        "system",
+                                                        "tool"
+                                                      ]
+                                                    },
+                                                    "content": {
+                                                      "type": "string",
+                                                      "maxLength": 131072
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "role",
+                                                    "content"
+                                                  ],
+                                                  "additionalProperties": false
+                                                }
+                                              }
+                                            },
+                                            "required": [
+                                              "sessionId",
+                                              "revision",
+                                              "messages"
+                                            ],
+                                            "additionalProperties": false
                                           },
                                           "extraction": {
                                             "type": "object",
@@ -132756,6 +134155,7 @@
                           "type": "string",
                           "enum": [
                             "preparing",
+                            "queued",
                             "running",
                             "cancelling",
                             "completed",
@@ -132883,6 +134283,110 @@
         }
       }
     },
+    "/api/work-ledger/turn/session": {
+      "post": {
+        "operationId": "workLedger.turn.session",
+        "summary": "Inspect Native Hosted Session",
+        "description": "Read authoritative native session ownership. Only an explicit legacy result permits ordinary session ingress. Native sessions additionally require their current paired owner and native delivery scopes.",
+        "tags": [
+          "work-ledger"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "legacy"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "native"
+                          ]
+                        },
+                        "projectId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "busy": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "projectId",
+                        "sessionId",
+                        "busy"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-typed-client-io": true,
+        "x-access": "authenticated",
+        "x-transport": [
+          "http",
+          "ws"
+        ],
+        "x-scopes": [
+          "read:sessions"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "sessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "sessionId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/work-ledger/turn/start": {
       "post": {
         "operationId": "workLedger.turn.start",
@@ -132926,6 +134430,7 @@
                           "type": "string",
                           "enum": [
                             "preparing",
+                            "queued",
                             "running",
                             "cancelling",
                             "completed",
@@ -133096,6 +134601,7 @@
                           "type": "string",
                           "enum": [
                             "preparing",
+                            "queued",
                             "running",
                             "cancelling",
                             "completed",
@@ -138795,6 +140301,15 @@
       "category": "work-ledger",
       "access": "admin",
       "rest": "POST /api/work-ledger/turn/cancel",
+      "typedClientIo": true,
+      "inputSchemaCoverage": "typed",
+      "outputSchemaCoverage": "typed"
+    },
+    {
+      "id": "workLedger.turn.session",
+      "category": "work-ledger",
+      "access": "authenticated",
+      "rest": "POST /api/work-ledger/turn/session",
       "typedClientIo": true,
       "inputSchemaCoverage": "typed",
       "outputSchemaCoverage": "typed"

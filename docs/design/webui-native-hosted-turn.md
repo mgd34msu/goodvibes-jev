@@ -81,5 +81,6 @@ owned loopback streaming model. Chromium replays the unchanged captured HTTP
 bytes through the production WebUI and real IndexedDB.
 
 These are orchestration and lifecycle proofs, not live-provider acceptance,
-semantic calibration or independent settlement-security certification. Existing
-ordinary hosted create/steer/follow-up ingress remains a separate migration.
+semantic calibration or independent settlement-security certification. Native-owned WebUI conversation composer continuation is described in
+[Native session continuation](webui-native-session-continuation.md). Other ordinary
+hosted create/steer/follow-up ingress remains a separate migration.

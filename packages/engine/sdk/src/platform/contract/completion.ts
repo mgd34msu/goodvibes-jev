@@ -1,3 +1,4 @@
+import { nativeContractSourceData } from './native-source.js';
 /**
  * Groups, the deliverable, and finishing (docs/design/contract-runner.md
  * sections 6.4 and 6.5).
@@ -143,7 +144,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const gates = await runContractGates({ configManager: context.configManager, cwd: tree, runtimeBus: context.runtimeBus, sessionId: contract.sessionId, contractId: contract.id, targetId: input.targetId });
     if (run.terminal) return null;
     const evidence = trimEvidence({ output: input.output, changes, gates, commands: [] }, { goal: input.goal, brief: '', files: [] });
-    const digest = hashState({ goal: input.goal, output: evidence.output, evidence: judgeEvidence(evidence), ...(contract.nativeSource === undefined ? {} : { nativeSource: { ...contract.nativeSource, criteria: [...contract.nativeSource.criteria] } }) });
+    const digest = hashState({ goal: input.goal, output: evidence.output, evidence: judgeEvidence(evidence), ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) });
     const prior = input.checks.at(-1);
     if (contract.nativeSource !== undefined && prior !== undefined && prior.result !== 'pass' && prior.evidenceDigest === digest) {
       return { check: prior, verdicts: new Map(input.criteria.filter(criterion => criterion.disposition === 'judged').map(criterion => [criterion.id, criterion.status === 'unread' ? 'unshown' : criterion.status])), passed: false, output: evidence.output };
@@ -156,7 +157,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     try {
       judgment = await judges[config().acceptanceStakes].judge(
         meteredPort(nativeContractPort(contract, context.native, judgmentPort(site), run.abort.signal), usage),
-        { goal: input.goal, criteria: judgedCriteria.map((criterion) => criterion.text), output: evidence.output, evidence: { ...(judgeEvidence(evidence) as Record<string, JsonValue>), ...(contract.nativeSource === undefined ? {} : { nativeSource: { ...contract.nativeSource, criteria: [...contract.nativeSource.criteria] } }), [input.scope === 'group' ? 'units' : 'criteria']: input.summaries } },
+        { goal: input.goal, criteria: judgedCriteria.map((criterion) => criterion.text), output: evidence.output, evidence: { ...(judgeEvidence(evidence) as Record<string, JsonValue>), ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }), [input.scope === 'group' ? 'units' : 'criteria']: input.summaries } },
         { site, signal: run.abort.signal },
       );
     } finally {

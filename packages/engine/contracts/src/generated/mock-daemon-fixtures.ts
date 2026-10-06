@@ -20583,6 +20583,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     "body": {
       "session": {
         "id": "sample",
+        "nativeConversation": true,
         "workspaceRoot": "sample",
         "title": "sample",
         "status": "idle",
@@ -20621,6 +20622,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     "body": {
       "session": {
         "id": "sample",
+        "nativeConversation": true,
         "workspaceRoot": "sample",
         "title": "sample",
         "status": "idle",
@@ -20652,6 +20654,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     "body": {
       "session": {
         "id": "sample",
+        "nativeConversation": true,
         "workspaceRoot": "sample",
         "title": "sample",
         "status": "idle",
@@ -20683,6 +20686,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     "body": {
       "session": {
         "id": "sample",
+        "nativeConversation": true,
         "workspaceRoot": "sample",
         "title": "sample",
         "status": "idle",
@@ -20715,6 +20719,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "sessions": [
         {
           "id": "sample",
+          "nativeConversation": true,
           "workspaceRoot": "sample",
           "title": "sample",
           "status": "idle",
@@ -23115,7 +23120,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "inputId": "sample",
         "sourceId": "sample",
         "sourceRevision": "sample",
-        "sessionId": "sample"
+        "sessionId": "sample",
+        "continuation": {
+          "sessionId": "sample",
+          "revision": "sample"
+        }
       }
     }
   },
@@ -23135,7 +23144,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "inputId": "sample",
         "sourceId": "sample",
         "sourceRevision": "sample",
-        "sessionId": "sample"
+        "sessionId": "sample",
+        "continuation": {
+          "sessionId": "sample",
+          "revision": "sample"
+        }
       }
     }
   },
@@ -23155,7 +23168,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "inputId": "sample",
         "sourceId": "sample",
         "sourceRevision": "sample",
-        "sessionId": "sample"
+        "sessionId": "sample",
+        "continuation": {
+          "sessionId": "sample",
+          "revision": "sample"
+        }
       }
     }
   },
@@ -23175,7 +23192,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "inputId": "sample",
         "sourceId": "sample",
         "sourceRevision": "sample",
-        "sessionId": "sample"
+        "sessionId": "sample",
+        "continuation": {
+          "sessionId": "sample",
+          "revision": "sample"
+        }
       }
     }
   },
@@ -23195,7 +23216,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "inputId": "sample",
         "sourceId": "sample",
         "sourceRevision": "sample",
-        "sessionId": "sample"
+        "sessionId": "sample",
+        "continuation": {
+          "sessionId": "sample",
+          "revision": "sample"
+        }
       }
     }
   },
@@ -23399,6 +23424,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "sessionId": "sample",
       "brokerInputId": "sample",
       "correlationId": "sample"
+    }
+  },
+  "workLedger.turn.session": {
+    "methodId": "workLedger.turn.session",
+    "http": {
+      "method": "POST",
+      "path": "/api/work-ledger/turn/session"
+    },
+    "status": 200,
+    "body": {
+      "kind": "legacy"
     }
   },
   "workLedger.turn.start": {

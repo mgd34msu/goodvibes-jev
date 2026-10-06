@@ -115,7 +115,17 @@ function recordSnapshot(value: unknown): NativeIntakeBrowserRecord {
     typeof value.createdAt !== "number" ||
     !Number.isSafeInteger(value.createdAt) ||
     value.createdAt < 0 ||
-    !exactObject(value.command, ["requestId", "inputId", "text", "unsupportedSources"]) ||
+    !(
+      exactObject(value.command, ["requestId", "inputId", "text", "unsupportedSources"]) ||
+      (exactObject(value.command, [
+        "requestId",
+        "inputId",
+        "text",
+        "unsupportedSources",
+        "continuation",
+      ]) &&
+        exactObject(value.command.continuation, ["sessionId"]))
+    ) ||
     !Array.isArray(value.command.unsupportedSources) ||
     value.command.unsupportedSources.length > 100 ||
     !value.command.unsupportedSources.every((marker: unknown) =>

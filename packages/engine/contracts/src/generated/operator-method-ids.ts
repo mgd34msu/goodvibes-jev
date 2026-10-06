@@ -523,6 +523,7 @@ export const OPERATOR_METHOD_IDS = [
   "workLedger.submission.get",
   "workLedger.submit",
   "workLedger.turn.cancel",
+  "workLedger.turn.session",
   "workLedger.turn.start",
   "workLedger.turn.status",
   "workspaces.registrations.add",

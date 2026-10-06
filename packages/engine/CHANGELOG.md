@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Add source-bound continuation of native-owned hosted sessions, with immutable completed conversation context, exact original intake, durable FIFO dispatch and input-specific cancellation.
+
 - WebUI native conversation admission now reaches the real hosted turn through
   identity-only paired routes, canonical broker inputs, genuine process-local
   permits and strict durable dispatch claims. Lost responses and process

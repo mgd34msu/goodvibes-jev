@@ -7,6 +7,7 @@ interface NativeTurnStatusProps {
   observation?: NativeTurnObservation;
   error?: string;
   busy: string;
+  requestDisabled?: boolean;
   onInspect: () => void;
   onRequest: () => void;
   onCancel: () => void;
@@ -15,6 +16,8 @@ interface NativeTurnStatusProps {
 
 function description(state: NativeHostedTurnSnapshot["state"]): string {
   switch (state) {
+    case "queued":
+      return "The host queued this continuation behind the active turn. It will deliver it in order using the completed transcript captured at submission, excluding the active reply.";
     case "preparing":
       return "The host is preparing the original conversation delivery.";
     case "running":
@@ -35,6 +38,7 @@ export function NativeTurnStatus({
   observation,
   error,
   busy,
+  requestDisabled = false,
   onInspect,
   onRequest,
   onCancel,
@@ -75,7 +79,7 @@ export function NativeTurnStatus({
           Inspect conversation
         </Button>
         {canRequest && (
-          <Button disabled={Boolean(busy)} onClick={onRequest}>
+          <Button disabled={Boolean(busy) || requestDisabled} onClick={onRequest}>
             Continue conversation request
           </Button>
         )}

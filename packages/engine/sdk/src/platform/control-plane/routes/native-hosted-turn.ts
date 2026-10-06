@@ -2,7 +2,7 @@
 import type { GatewayMethodCatalog } from '../method-catalog.js';
 import type { GatewayMethodInvocation } from '../method-catalog-shared.js';
 import { NATIVE_HOSTED_TURN_SCOPES, NativeHostedTurnError, type NativeHostedTurnHost } from '../../hosted-sessions/native-turn-host.js';
-import { nativeHostedTurnRequestSchema, nativeHostedTurnLookupSchema } from '../../hosted-sessions/native-turn-wire.js';
+import { nativeHostedTurnRequestSchema, nativeHostedTurnLookupSchema, nativeHostedSessionRequestSchema, nativeHostedSessionLookupSchema } from '../../hosted-sessions/native-turn-wire.js';
 import { GatewayVerbError } from './gateway-verb-error.js';
 import { readInvocationParams } from './invocation-params.js';
 function authorize(invocation: GatewayMethodInvocation) {
@@ -18,6 +18,24 @@ function authorize(invocation: GatewayMethodInvocation) {
   return authority;
 }
 export function registerNativeHostedTurnGatewayMethods(catalog: GatewayMethodCatalog, host: NativeHostedTurnHost): void {
+  const discovery = catalog.get('workLedger.turn.session');
+  if (!discovery) throw new Error('Missing native hosted session descriptor');
+  catalog.register(discovery, async invocation => {
+    if (invocation.isAuthorized?.(['read:sessions']) !== true) throw new GatewayVerbError('Session discovery requires current read:sessions authority', 'FORBIDDEN', 403);
+    const parsed = nativeHostedSessionRequestSchema.safeParse(readInvocationParams(invocation));
+    if (!parsed.success) throw new GatewayVerbError('Invalid session identity', 'INVALID_ARGUMENT', 400);
+    try {
+      const result = await host.session(parsed.data.sessionId, invocation.nativeExecutionAuthority, { isAuthorized: () => {
+        try { authorize(invocation); return true; } catch { return false; }
+      } });
+      if (invocation.isAuthorized?.(['read:sessions']) !== true) throw new GatewayVerbError('Session discovery authority changed', 'FORBIDDEN', 403);
+      return nativeHostedSessionLookupSchema.parse(result);
+    } catch (error) {
+      if (error instanceof GatewayVerbError) throw error;
+      if (error instanceof NativeHostedTurnError) throw new GatewayVerbError(error.message, `NATIVE_TURN_${error.code.replaceAll('-', '_').toUpperCase()}`, error.code === 'forbidden' ? 403 : 409);
+      throw new GatewayVerbError('Native session ownership is unavailable. No legacy fallback was selected.', 'NATIVE_TURN_UNAVAILABLE', 503);
+    }
+  }, { replace: true });
   for (const operation of ['start', 'status', 'cancel'] as const) {
     const descriptor = catalog.get(`workLedger.turn.${operation}`);
     if (!descriptor) throw new Error('Missing native hosted turn descriptor');

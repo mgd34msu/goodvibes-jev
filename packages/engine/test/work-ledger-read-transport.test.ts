@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { canonicalNativeConversationContinuation } from '../sdk/src/platform/workflow/work-ledger/native-continuation-context.js';
 import { describe, expect, spyOn, test } from 'bun:test';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.js';
 import { registerWorkLedgerGatewayMethods } from '../sdk/src/platform/control-plane/routes/work-ledger.js';
@@ -362,7 +364,7 @@ describe('fresh authorization on every ledger entry point', () => {
   test('ledger read, import and native methods opt into the fresh-auth gate', () => {
     const host = fixture();
     expect(host.catalog.list().filter(method => method.metadata?.requiresFreshOperatorAuth === true).map(method => method.id).sort())
-      .toEqual(['workLedger.execution.cancel', 'workLedger.execution.resume', 'workLedger.execution.start', 'workLedger.execution.status', 'workLedger.history', 'workLedger.importLegacy', 'workLedger.intake.admit', 'workLedger.intake.cancel', 'workLedger.intake.capture', 'workLedger.intake.get', 'workLedger.intake.resume', 'workLedger.prepareLegacyImport', 'workLedger.project', 'workLedger.snapshot', 'workLedger.submission.get', 'workLedger.submit', 'workLedger.turn.cancel', 'workLedger.turn.start', 'workLedger.turn.status']);
+      .toEqual(['workLedger.execution.cancel', 'workLedger.execution.resume', 'workLedger.execution.start', 'workLedger.execution.status', 'workLedger.history', 'workLedger.importLegacy', 'workLedger.intake.admit', 'workLedger.intake.cancel', 'workLedger.intake.capture', 'workLedger.intake.get', 'workLedger.intake.resume', 'workLedger.prepareLegacyImport', 'workLedger.project', 'workLedger.snapshot', 'workLedger.submission.get', 'workLedger.submit', 'workLedger.turn.cancel', 'workLedger.turn.session', 'workLedger.turn.start', 'workLedger.turn.status']);
   });
 });
 
@@ -398,4 +400,23 @@ test('one observer cannot rewrite another observer snapshot', async () => {
   reader.subscribe(snapshot => snapshots.push(snapshot.cursor));
   await waitFor(() => snapshots.length > 0); expect(snapshots).toEqual([1]);
   expect((await reader.readSnapshot()).projectId).toBe('fixture-project'); reader.dispose();
+});
+
+
+test('generic ledger snapshot and history omit hosted transcript without changing authoritative provenance', async () => {
+  const host = fixture(1); const sessionId = 'private-hosted-session';
+  const messages = [{ role: 'assistant' as const, content: 'Private prior hosted conversation evidence.' }];
+  const continuation = { sessionId, revision: createHash('sha256').update(canonicalNativeConversationContinuation(sessionId, messages)).digest('hex'), messages };
+  const work = host.events[0]!.work;
+  work.source = { version: 2, sourceId: 'native-source', sourceRevision: 'bound-source-revision', inputId: 'native-input', sessionId: 'native-project', continuation,
+    extraction: { version: 1, offsetEncoding: 'utf16', spans: [{ partId: 'input', start: 0, end: 1 }], proposalRevision: 'proposal', admissionDecisionId: 'decision', judgmentDecisionIds: ['decision'] } };
+  host.reader.readSnapshot = async () => ({ projectId: 'fixture-project', cursor: 1, revision: 1,
+    works: [{ work, attempt: null, verification: { state: 'unverified', reason: '', evidence: null }, attention: [] }] });
+  const reader = createOperatorWorkLedgerReadClient(host.sdk(), 'fixture-project');
+  const snapshot = await reader.readSnapshot(); const history = await reader.history(0);
+  expect(JSON.stringify(snapshot)).not.toContain(messages[0]!.content); expect(JSON.stringify(history)).not.toContain(messages[0]!.content);
+  expect(JSON.stringify(snapshot)).not.toContain(sessionId); expect(JSON.stringify(history)).not.toContain(sessionId);
+  expect(snapshot.works[0]!.work.source?.sourceRevision).toBe('bound-source-revision');
+  expect(work.source.continuation).toEqual(continuation);
+  reader.dispose();
 });

@@ -112456,6 +112456,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "id": {
                   "type": "string"
                 },
+                "nativeConversation": {
+                  "type": "boolean",
+                  "enum": [
+                    true
+                  ]
+                },
                 "workspaceRoot": {
                   "type": "string"
                 },
@@ -112645,6 +112651,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "id": {
                   "type": "string"
                 },
+                "nativeConversation": {
+                  "type": "boolean",
+                  "enum": [
+                    true
+                  ]
+                },
                 "workspaceRoot": {
                   "type": "string"
                 },
@@ -112789,6 +112801,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "id": {
                   "type": "string"
                 },
+                "nativeConversation": {
+                  "type": "boolean",
+                  "enum": [
+                    true
+                  ]
+                },
                 "workspaceRoot": {
                   "type": "string"
                 },
@@ -112930,6 +112948,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "id": {
                   "type": "string"
                 },
+                "nativeConversation": {
+                  "type": "boolean",
+                  "enum": [
+                    true
+                  ]
+                },
                 "workspaceRoot": {
                   "type": "string"
                 },
@@ -113065,6 +113089,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "properties": {
                   "id": {
                     "type": "string"
+                  },
+                  "nativeConversation": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
                   },
                   "workspaceRoot": {
                     "type": "string"
@@ -127214,6 +127244,54 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                         "minLength": 1,
                                         "maxLength": 200
                                       },
+                                      "continuation": {
+                                        "type": "object",
+                                        "properties": {
+                                          "sessionId": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 200
+                                          },
+                                          "revision": {
+                                            "type": "string",
+                                            "pattern": "^[a-f0-9]{64}$"
+                                          },
+                                          "messages": {
+                                            "readOnly": true,
+                                            "maxItems": 128,
+                                            "type": "array",
+                                            "items": {
+                                              "type": "object",
+                                              "properties": {
+                                                "role": {
+                                                  "type": "string",
+                                                  "enum": [
+                                                    "user",
+                                                    "assistant",
+                                                    "system",
+                                                    "tool"
+                                                  ]
+                                                },
+                                                "content": {
+                                                  "type": "string",
+                                                  "maxLength": 131072
+                                                }
+                                              },
+                                              "required": [
+                                                "role",
+                                                "content"
+                                              ],
+                                              "additionalProperties": false
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "sessionId",
+                                          "revision",
+                                          "messages"
+                                        ],
+                                        "additionalProperties": false
+                                      },
                                       "extraction": {
                                         "type": "object",
                                         "properties": {
@@ -127802,6 +127880,54 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                           "minLength": 1,
                                           "maxLength": 200
                                         },
+                                        "continuation": {
+                                          "type": "object",
+                                          "properties": {
+                                            "sessionId": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            "revision": {
+                                              "type": "string",
+                                              "pattern": "^[a-f0-9]{64}$"
+                                            },
+                                            "messages": {
+                                              "readOnly": true,
+                                              "maxItems": 128,
+                                              "type": "array",
+                                              "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "role": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "user",
+                                                      "assistant",
+                                                      "system",
+                                                      "tool"
+                                                    ]
+                                                  },
+                                                  "content": {
+                                                    "type": "string",
+                                                    "maxLength": 131072
+                                                  }
+                                                },
+                                                "required": [
+                                                  "role",
+                                                  "content"
+                                                ],
+                                                "additionalProperties": false
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "sessionId",
+                                            "revision",
+                                            "messages"
+                                          ],
+                                          "additionalProperties": false
+                                        },
                                         "extraction": {
                                           "type": "object",
                                           "properties": {
@@ -128216,6 +128342,54 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                           "type": "string",
                                           "minLength": 1,
                                           "maxLength": 200
+                                        },
+                                        "continuation": {
+                                          "type": "object",
+                                          "properties": {
+                                            "sessionId": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            "revision": {
+                                              "type": "string",
+                                              "pattern": "^[a-f0-9]{64}$"
+                                            },
+                                            "messages": {
+                                              "readOnly": true,
+                                              "maxItems": 128,
+                                              "type": "array",
+                                              "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "role": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "user",
+                                                      "assistant",
+                                                      "system",
+                                                      "tool"
+                                                    ]
+                                                  },
+                                                  "content": {
+                                                    "type": "string",
+                                                    "maxLength": 131072
+                                                  }
+                                                },
+                                                "required": [
+                                                  "role",
+                                                  "content"
+                                                ],
+                                                "additionalProperties": false
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "sessionId",
+                                            "revision",
+                                            "messages"
+                                          ],
+                                          "additionalProperties": false
                                         },
                                         "extraction": {
                                           "type": "object",
@@ -128798,6 +128972,54 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                             "minLength": 1,
                                             "maxLength": 200
                                           },
+                                          "continuation": {
+                                            "type": "object",
+                                            "properties": {
+                                              "sessionId": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 200
+                                              },
+                                              "revision": {
+                                                "type": "string",
+                                                "pattern": "^[a-f0-9]{64}$"
+                                              },
+                                              "messages": {
+                                                "readOnly": true,
+                                                "maxItems": 128,
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "object",
+                                                  "properties": {
+                                                    "role": {
+                                                      "type": "string",
+                                                      "enum": [
+                                                        "user",
+                                                        "assistant",
+                                                        "system",
+                                                        "tool"
+                                                      ]
+                                                    },
+                                                    "content": {
+                                                      "type": "string",
+                                                      "maxLength": 131072
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "role",
+                                                    "content"
+                                                  ],
+                                                  "additionalProperties": false
+                                                }
+                                              }
+                                            },
+                                            "required": [
+                                              "sessionId",
+                                              "revision",
+                                              "messages"
+                                            ],
+                                            "additionalProperties": false
+                                          },
                                           "extraction": {
                                             "type": "object",
                                             "properties": {
@@ -129139,6 +129361,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -129206,6 +129447,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -129292,6 +129552,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -129315,6 +129594,54 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   "minLength": 1,
                   "maxLength": 20000,
                   "pattern": "\\S"
+                },
+                "continuation": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "messages": {
+                      "readOnly": true,
+                      "maxItems": 128,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "assistant",
+                              "system",
+                              "tool"
+                            ]
+                          },
+                          "content": {
+                            "type": "string",
+                            "maxLength": 131072
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "content"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "revision",
+                    "messages"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -129374,6 +129701,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -129456,6 +129802,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -129531,6 +129896,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -129598,6 +129982,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -129734,6 +130137,54 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             ],
                             "additionalProperties": false
                           }
+                        },
+                        "continuation": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "messages": {
+                              "readOnly": true,
+                              "maxItems": 128,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "role": {
+                                    "type": "string",
+                                    "enum": [
+                                      "user",
+                                      "assistant",
+                                      "system",
+                                      "tool"
+                                    ]
+                                  },
+                                  "content": {
+                                    "type": "string",
+                                    "maxLength": 131072
+                                  }
+                                },
+                                "required": [
+                                  "role",
+                                  "content"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "revision",
+                            "messages"
+                          ],
+                          "additionalProperties": false
                         },
                         "admissionDecisionId": {
                           "type": "string",
@@ -129903,6 +130354,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -129970,6 +130440,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -130056,6 +130545,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -130079,6 +130587,54 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   "minLength": 1,
                   "maxLength": 20000,
                   "pattern": "\\S"
+                },
+                "continuation": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "messages": {
+                      "readOnly": true,
+                      "maxItems": 128,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "assistant",
+                              "system",
+                              "tool"
+                            ]
+                          },
+                          "content": {
+                            "type": "string",
+                            "maxLength": 131072
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "content"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "revision",
+                    "messages"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -130138,6 +130694,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -130220,6 +130795,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -130295,6 +130889,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -130362,6 +130975,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -130498,6 +131130,54 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             ],
                             "additionalProperties": false
                           }
+                        },
+                        "continuation": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "messages": {
+                              "readOnly": true,
+                              "maxItems": 128,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "role": {
+                                    "type": "string",
+                                    "enum": [
+                                      "user",
+                                      "assistant",
+                                      "system",
+                                      "tool"
+                                    ]
+                                  },
+                                  "content": {
+                                    "type": "string",
+                                    "maxLength": 131072
+                                  }
+                                },
+                                "required": [
+                                  "role",
+                                  "content"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "revision",
+                            "messages"
+                          ],
+                          "additionalProperties": false
                         },
                         "admissionDecisionId": {
                           "type": "string",
@@ -130616,6 +131296,20 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
               "maxLength": 20000,
               "pattern": "\\S"
             },
+            "continuation": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [
+                "sessionId"
+              ],
+              "additionalProperties": false
+            },
             "unsupportedSources": {
               "maxItems": 100,
               "type": "array",
@@ -130702,6 +131396,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -130769,6 +131482,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -130855,6 +131587,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -130878,6 +131629,54 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   "minLength": 1,
                   "maxLength": 20000,
                   "pattern": "\\S"
+                },
+                "continuation": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "messages": {
+                      "readOnly": true,
+                      "maxItems": 128,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "assistant",
+                              "system",
+                              "tool"
+                            ]
+                          },
+                          "content": {
+                            "type": "string",
+                            "maxLength": 131072
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "content"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "revision",
+                    "messages"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -130937,6 +131736,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -131019,6 +131837,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -131094,6 +131931,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -131161,6 +132017,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -131297,6 +132172,54 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             ],
                             "additionalProperties": false
                           }
+                        },
+                        "continuation": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "messages": {
+                              "readOnly": true,
+                              "maxItems": 128,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "role": {
+                                    "type": "string",
+                                    "enum": [
+                                      "user",
+                                      "assistant",
+                                      "system",
+                                      "tool"
+                                    ]
+                                  },
+                                  "content": {
+                                    "type": "string",
+                                    "maxLength": 131072
+                                  }
+                                },
+                                "required": [
+                                  "role",
+                                  "content"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "revision",
+                            "messages"
+                          ],
+                          "additionalProperties": false
                         },
                         "admissionDecisionId": {
                           "type": "string",
@@ -131462,6 +132385,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 200
+                        },
+                        "continuation": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "revision"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -131529,6 +132471,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 200
+                        },
+                        "continuation": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "revision"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -131615,6 +132576,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 200
+                        },
+                        "continuation": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "revision"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -131638,6 +132618,54 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "minLength": 1,
                       "maxLength": 20000,
                       "pattern": "\\S"
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "messages": {
+                          "readOnly": true,
+                          "maxItems": 128,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "role": {
+                                "type": "string",
+                                "enum": [
+                                  "user",
+                                  "assistant",
+                                  "system",
+                                  "tool"
+                                ]
+                              },
+                              "content": {
+                                "type": "string",
+                                "maxLength": 131072
+                              }
+                            },
+                            "required": [
+                              "role",
+                              "content"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision",
+                        "messages"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -131697,6 +132725,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 200
+                        },
+                        "continuation": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "revision"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -131779,6 +132826,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 200
+                        },
+                        "continuation": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "revision"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -131854,6 +132920,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 200
+                        },
+                        "continuation": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "revision"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -131921,6 +133006,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 200
+                        },
+                        "continuation": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "revision"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -132057,6 +133161,54 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                 ],
                                 "additionalProperties": false
                               }
+                            },
+                            "continuation": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "messages": {
+                                  "readOnly": true,
+                                  "maxItems": 128,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "role": {
+                                        "type": "string",
+                                        "enum": [
+                                          "user",
+                                          "assistant",
+                                          "system",
+                                          "tool"
+                                        ]
+                                      },
+                                      "content": {
+                                        "type": "string",
+                                        "maxLength": 131072
+                                      }
+                                    },
+                                    "required": [
+                                      "role",
+                                      "content"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "revision",
+                                "messages"
+                              ],
+                              "additionalProperties": false
                             },
                             "admissionDecisionId": {
                               "type": "string",
@@ -132243,6 +133395,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -132310,6 +133481,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -132396,6 +133586,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -132419,6 +133628,54 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   "minLength": 1,
                   "maxLength": 20000,
                   "pattern": "\\S"
+                },
+                "continuation": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "messages": {
+                      "readOnly": true,
+                      "maxItems": 128,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "assistant",
+                              "system",
+                              "tool"
+                            ]
+                          },
+                          "content": {
+                            "type": "string",
+                            "maxLength": 131072
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "content"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "revision",
+                    "messages"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -132478,6 +133735,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -132560,6 +133836,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -132635,6 +133930,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -132702,6 +134016,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "continuation": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "revision"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -132838,6 +134171,54 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             ],
                             "additionalProperties": false
                           }
+                        },
+                        "continuation": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "messages": {
+                              "readOnly": true,
+                              "maxItems": 128,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "role": {
+                                    "type": "string",
+                                    "enum": [
+                                      "user",
+                                      "assistant",
+                                      "system",
+                                      "tool"
+                                    ]
+                                  },
+                                  "content": {
+                                    "type": "string",
+                                    "maxLength": 131072
+                                  }
+                                },
+                                "required": [
+                                  "role",
+                                  "content"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "revision",
+                            "messages"
+                          ],
+                          "additionalProperties": false
                         },
                         "admissionDecisionId": {
                           "type": "string",
@@ -133222,6 +134603,54 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                     "type": "string",
                                     "minLength": 1,
                                     "maxLength": 200
+                                  },
+                                  "continuation": {
+                                    "type": "object",
+                                    "properties": {
+                                      "sessionId": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "revision": {
+                                        "type": "string",
+                                        "pattern": "^[a-f0-9]{64}$"
+                                      },
+                                      "messages": {
+                                        "readOnly": true,
+                                        "maxItems": 128,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "role": {
+                                              "type": "string",
+                                              "enum": [
+                                                "user",
+                                                "assistant",
+                                                "system",
+                                                "tool"
+                                              ]
+                                            },
+                                            "content": {
+                                              "type": "string",
+                                              "maxLength": 131072
+                                            }
+                                          },
+                                          "required": [
+                                            "role",
+                                            "content"
+                                          ],
+                                          "additionalProperties": false
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "sessionId",
+                                      "revision",
+                                      "messages"
+                                    ],
+                                    "additionalProperties": false
                                   },
                                   "extraction": {
                                     "type": "object",
@@ -134206,6 +135635,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   "type": "string",
                   "enum": [
                     "preparing",
+                    "queued",
                     "running",
                     "cancelling",
                     "completed",
@@ -134274,6 +135704,95 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
               },
               "required": [
                 "kind"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
+      },
+      {
+        "id": "workLedger.turn.session",
+        "title": "Inspect Native Hosted Session",
+        "description": "Read authoritative native session ownership. Only an explicit legacy result permits ordinary session ingress. Native sessions additionally require their current paired owner and native delivery scopes.",
+        "category": "work-ledger",
+        "source": "builtin",
+        "access": "authenticated",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "read:sessions"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/work-ledger/turn/session"
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "sessionId"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "legacy"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "native"
+                  ]
+                },
+                "projectId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "busy": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "kind",
+                "projectId",
+                "sessionId",
+                "busy"
               ],
               "additionalProperties": false
             }
@@ -134361,6 +135880,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   "type": "string",
                   "enum": [
                     "preparing",
+                    "queued",
                     "running",
                     "cancelling",
                     "completed",
@@ -134516,6 +136036,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   "type": "string",
                   "enum": [
                     "preparing",
+                    "queued",
                     "running",
                     "cancelling",
                     "completed",
@@ -137026,6 +138547,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "id": {
                   "type": "string"
                 },
+                "nativeConversation": {
+                  "type": "boolean",
+                  "enum": [
+                    true
+                  ]
+                },
                 "workspaceRoot": {
                   "type": "string"
                 },
@@ -137449,10 +138976,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       }
     ],
     "schemaCoverage": {
-      "methods": 533,
-      "typedInputs": 533,
+      "methods": 534,
+      "typedInputs": 534,
       "genericInputs": 0,
-      "typedOutputs": 533,
+      "typedOutputs": 534,
       "genericOutputs": 0
     },
     "eventCoverage": {
@@ -137461,8 +138988,8 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       "withWireEvents": 34
     },
     "validationCoverage": {
-      "methods": 533,
-      "validated": 525,
+      "methods": 534,
+      "validated": 526,
       "skippedGeneric": 0,
       "skippedUntyped": 8
     }

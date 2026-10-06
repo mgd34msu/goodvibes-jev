@@ -10,6 +10,7 @@ interface NativeExecutionStatusProps {
   observation?: NativeExecutionObservation;
   error?: string;
   busy: string;
+  requestDisabled?: boolean;
   onInspect: () => void;
   onRequest: () => void;
   onResume: () => void;
@@ -52,6 +53,7 @@ export function NativeExecutionStatus({
   observation,
   error,
   busy,
+  requestDisabled = false,
   onInspect,
   onRequest,
   onResume,
@@ -203,17 +205,17 @@ export function NativeExecutionStatus({
           Inspect execution
         </Button>
         {canRequest && (
-          <Button disabled={Boolean(busy)} onClick={onRequest}>
+          <Button disabled={Boolean(busy) || requestDisabled} onClick={onRequest}>
             Continue request
           </Button>
         )}
         {resumable && !settlementAction && (
-          <Button disabled={Boolean(busy)} onClick={onResume}>
+          <Button disabled={Boolean(busy) || requestDisabled} onClick={onResume}>
             Resume execution
           </Button>
         )}
         {settlementAction && (
-          <Button disabled={Boolean(busy)} onClick={onResume}>
+          <Button disabled={Boolean(busy) || requestDisabled} onClick={onResume}>
             {settlementAction}
           </Button>
         )}

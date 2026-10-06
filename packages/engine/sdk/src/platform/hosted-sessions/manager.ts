@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { captureNativeConversationContinuation, canonicalNativeConversationContinuation, type NativeConversationContinuation } from '../workflow/work-ledger/native-continuation-context.js';
 import { readNativeConversationTurnPermit, type NativeConversationTurnPermit } from '../workflow/work-ledger/native-intake-client.js';
 /**
  * manager.ts, the hosted-session engine: lifecycle, policy, durability.
@@ -348,7 +350,7 @@ export class HostedSessionManager {
   }
 
   /** Create a hosted session and compose its loop. */
-  async create(input: CreateHostedSessionInput): Promise<HostedSessionRecord> {
+  async create(input: CreateHostedSessionInput, ownership?: { readonly nativeConversation: true }): Promise<HostedSessionRecord> {
     this.assertUsable();
     const workspaceRoot = this.requireWorkspace(input.workspaceRoot);
     const liveCount = this.list().length;
@@ -376,6 +378,7 @@ export class HostedSessionManager {
       });
       record = {
         id: sessionId,
+        ...(ownership?.nativeConversation ? { nativeConversation: true as const } : {}),
         workspaceRoot,
         title: input.title?.trim() || defaultTitle(input, workspaceRoot),
         status: 'idle',
@@ -404,7 +407,14 @@ export class HostedSessionManager {
     }
 
     await this.spine.register(record);
-    await this.persist(record);
+    if (ownership?.nativeConversation) {
+      const live = this.requireLive(sessionId);
+      try { await this.options.store.save(record, live.runtime?.conversation.toJSON() ?? null, { durable: true }); }
+      catch (error) {
+        await this.terminate(live, 'killed', 'Native session initialization durability failed').catch(() => {});
+        throw error;
+      }
+    } else await this.persist(record);
     this.publish('hosted-session-created', record, { ...(input.clientId ? { clientId: input.clientId } : {}) });
 
     if (input.initialPrompt && input.initialPrompt.trim().length > 0) {
@@ -531,16 +541,117 @@ export class HostedSessionManager {
     if (!input || input.state !== 'delivered' || input.body !== source.text || input.correlationId !== `session-input:${inputId}`
       || JSON.stringify(input.metadata?.['nativeConversation']) !== JSON.stringify({ projectId: source.projectId, requestId: source.requestId, sourceRef: source.sourceRef })
       || !live.runtime) throw new Error('Native hosted broker identity mismatch');
+    if (source.continuation) {
+      if (source.continuation.sessionId !== sessionId) throw new Error('Native continuation session mismatch');
+      this.assertNativeContinuation(source.continuation);
+    }
+    if (!this.nativeCheckpoints.has(sessionId)) this.checkpointNative(live);
     await live.runtime.submitNative(permit, input.id, input.correlationId);
     live.record = { ...live.record, messageCount: live.runtime.conversation.getMessageCount(), updatedAt: this.now() };
     // Unlike ordinary best-effort persistence, this failure prevents a completion receipt.
     await this.options.store.save(live.record, live.runtime.conversation.toJSON(), { durable: true });
+    if (!live.runtime.isRunning()) {
+      try { this.checkpointNative(live); }
+      catch { this.nativeCheckpoints.set(sessionId, null); }
+    }
   }
 
   /** Native owner cancellation interrupts only its exact hosted session. */
   cancelNative(sessionId: string, permit: NativeConversationTurnPermit): void { this.sessions.get(sessionId)?.runtime?.cancelNative(permit); }
 
   /** The conversation as a client renders it. Empty for a session with no loop yet. */
+  /** Only completed, durably stored turn checkpoints may become admission context. */
+  private readonly nativeCheckpoints = new Map<string, NativeConversationContinuation | null>();
+  private readonly nativeCheckpointWrites = new Map<string, { readonly context: NativeConversationContinuation; readonly done: Promise<void> }>();
+
+  private snapshotNative(live: LiveSession): NativeConversationContinuation {
+    const messages = this.history(live);
+    const revision = createHash('sha256').update(canonicalNativeConversationContinuation(live.record.id, messages)).digest('hex');
+    const context = captureNativeConversationContinuation({ sessionId: live.record.id, revision, messages });
+    return context;
+  }
+
+  private checkpointNative(live: LiveSession): NativeConversationContinuation {
+    const context = this.snapshotNative(live);
+    this.nativeCheckpoints.set(live.record.id, context);
+    this.nativeCheckpointWrites.delete(live.record.id);
+    return context;
+  }
+
+  /** The terminal event precedes the next queued user append. Snapshot there. */
+  private captureCompletedNativeCheckpoint(live: LiveSession): void {
+    if (!live.runtime || (!live.record.nativeConversation && !this.nativeCheckpoints.has(live.record.id))) return;
+    let context: NativeConversationContinuation;
+    try { context = this.snapshotNative(live); }
+    catch {
+      this.nativeCheckpointWrites.delete(live.record.id);
+      this.nativeCheckpoints.set(live.record.id, null);
+      return;
+    }
+    const sessionId = live.record.id;
+    const transcript: unknown = structuredClone(live.runtime.conversation.toJSON());
+    let checkpoint!: { readonly context: NativeConversationContinuation; readonly done: Promise<void> };
+    const write = this.options.store.save(live.record, transcript, { durable: true }).then(() => {
+      if (this.nativeCheckpointWrites.get(sessionId) === checkpoint) this.nativeCheckpoints.set(sessionId, context);
+    }, error => {
+      if (this.nativeCheckpointWrites.get(sessionId) === checkpoint) this.nativeCheckpoints.set(sessionId, null);
+      throw error;
+    });
+    checkpoint = { context, done: write };
+    this.nativeCheckpointWrites.set(sessionId, checkpoint);
+    void write.catch(() => {});
+  }
+
+  async captureNativeContinuation(sessionId: string): Promise<NativeConversationContinuation> {
+    const live = this.requireLive(sessionId);
+    await this.ensureComposed(live);
+    if (live.runtime?.isRunning()) {
+      const pending = this.nativeCheckpointWrites.get(sessionId);
+      const previous = pending?.context ?? this.nativeCheckpoints.get(sessionId);
+      if (!previous) throw new Error('Native continuation completed checkpoint unavailable');
+      await pending?.done;
+      this.assertNativeContinuation(previous);
+      return captureNativeConversationContinuation(previous);
+    }
+    // Ordinary completed inputs may have appended since the preceding native
+    // checkpoint. Freeze and durably publish the complete idle transcript now;
+    // an appended new turn does not rewrite this submission-time snapshot.
+    const context = this.snapshotNative(live);
+    const completionAtCapture = this.nativeCheckpointWrites.get(sessionId);
+    await this.options.store.save(live.record, live.runtime?.conversation.toJSON() ?? null, { durable: true });
+    this.assertNativeContinuation(context);
+    if (this.nativeCheckpointWrites.get(sessionId) === completionAtCapture) this.nativeCheckpoints.set(sessionId, context);
+    return context;
+  }
+
+  assertNativeContinuation(value: NativeConversationContinuation): void {
+    const context = captureNativeConversationContinuation(value);
+    const live = this.requireLive(context.sessionId);
+    if (!live.runtime || createHash('sha256').update(canonicalNativeConversationContinuation(context.sessionId, context.messages)).digest('hex') !== context.revision) {
+      throw new Error('Native continuation context changed');
+    }
+    const current = this.history(live);
+    if (current.length < context.messages.length || context.messages.some((message, index) =>
+      message.role !== current[index]?.role || message.content !== current[index]?.content)) throw new Error('Native continuation prefix changed');
+  }
+
+  /** Host FIFO waits for actual runtime ownership, never ordinary queue acceptance. */
+  async waitForNativeAvailability(sessionId: string, signal: AbortSignal): Promise<void> {
+    for (;;) {
+      signal.throwIfAborted();
+      const live = this.requireLive(sessionId);
+      await this.ensureComposed(live);
+      signal.throwIfAborted();
+      if (live.runtime && !live.runtime.isRunning() && !live.runtime.orchestrator.isThinking
+        && live.runtime.liveTurnControls.listQueuedMessages().length === 0) return;
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => { clearTimeout(timer); reject(signal.reason); };
+        const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, 20);
+        signal.addEventListener('abort', abort, { once: true });
+      });
+    }
+  }
+
   private history(live: LiveSession): readonly HostedSessionHistoryMessage[] {
     const conversation = live.runtime?.conversation;
     if (!conversation) return [];
@@ -676,6 +787,7 @@ export class HostedSessionManager {
           ? { turnCount: live.record.turnCount + 1, lastTurnAt: this.now(), messageCount: live.runtime?.conversation.getMessageCount() ?? live.record.messageCount }
           : {}),
       };
+      if (status === 'idle' && detail === 'completed') this.captureCompletedNativeCheckpoint(live);
       this.publish(event, live.record, { detail });
       if (status === 'idle') void this.persist(live.record).catch(() => undefined);
     };

@@ -70,6 +70,7 @@ function assertPublication(capture: NativeConversationCapture, event: WorkLedger
   const source = event.work.source, final = capture.decisions.at(-1);
   if (capture.route !== 'contract' || capture.unsupportedSources.length > 0 || event.actorId !== capture.principalId || event.requestId !== capture.requestId || source.version !== 2
     || source.sourceId !== capture.sourceId || source.sourceRevision !== capture.sourceRevision || source.inputId !== capture.inputId || source.sessionId !== capture.sessionId
+    || !isDeepStrictEqual(source.continuation, capture.continuation)
     || event.work.goal !== capture.text || !capture.proposal || !final || final.decision.outcome !== 'act'
     || !isDeepStrictEqual(final.decision.binding, nativeConversationDecisionBinding(capture, 'publish-work'))
     || source.extraction.admissionDecisionId !== final.decision.decisionId

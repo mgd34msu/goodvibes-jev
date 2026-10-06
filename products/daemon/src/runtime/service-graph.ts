@@ -1,6 +1,6 @@
 import { installNativeHostedConversationOwner } from './native-hosted-conversation-composition.js';
 import { createNativeWorkSubmissionHost } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-submission';
-import { createNativeConversationIntakeHost, createNativeRequirementProposer } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake';
+import { createNativeConversationIntakeHost, createNativeRequirementProposer, type NativeConversationContinuationOwner } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake';
 import { createLocalWorkLedgerReadBinding } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
 import { registerWorkLedgerGatewayMethods, registerWorkLedgerImportGatewayMethods, registerNativeWorkExecutionGatewayMethods, registerNativeWorkSubmissionGatewayMethods, registerNativeConversationIntakeGatewayMethods } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import { WorkspaceRegistrationStore, sharedWorkspaceRegisterPath, legacyWorkspaceRegisterPath } from '@goodvibes-jev/engine/sdk/platform/workspace';
@@ -685,13 +685,25 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       sessionId: `native-work:${projectPlanningProjectId}`, service: workLedgerOwner.service, authority: workLedgerOwner.authority, scopes: nativeScopes });
     disposalScope.ownUntilRegistered('native work submission', nativeSubmission.close);
     registerNativeWorkSubmissionGatewayMethods(gatewayMethods, nativeSubmission);
+    let nativeContinuationOwner: NativeConversationContinuationOwner | undefined;
+    const continuationOwner: NativeConversationContinuationOwner = {
+      capture: (sessionId, principalId) => {
+        if (!nativeContinuationOwner) throw new Error('Native hosted continuation owner unavailable');
+        return nativeContinuationOwner.capture(sessionId, principalId);
+      },
+      assertCurrent: (context, principalId) => {
+        if (!nativeContinuationOwner) throw new Error('Native hosted continuation owner unavailable');
+        nativeContinuationOwner.assertCurrent(context, principalId);
+      },
+    };
     const nativeIntake = createNativeConversationIntakeHost({ projectRoot: workingDirectory, projectId: projectPlanningProjectId,
       sessionId: `native-work:${projectPlanningProjectId}`, storage: await knowledgeStore.openNativeConversationStorage(projectPlanningProjectId),
-      scopes: nativeScopes, port: judgment.port, decisionLog: judgment.decisionLog, proposer: createNativeRequirementProposer(providerRegistry) });
+      scopes: nativeScopes, port: judgment.port, decisionLog: judgment.decisionLog, proposer: createNativeRequirementProposer(providerRegistry), continuation: continuationOwner });
     disposalScope.ownUntilRegistered('native conversation intake', nativeIntake.close);
     registerNativeConversationIntakeGatewayMethods(gatewayMethods, nativeIntake);
     const removeHostedOwner = installNativeHostedConversationOwner(gatewayMethods, { projectId: projectPlanningProjectId,
-      projectRoot: workingDirectory, intake: nativeIntake, journalPath: shellPaths.resolveUserPath('native-hosted-turns.json') });
+      projectRoot: workingDirectory, intake: nativeIntake, journalPath: shellPaths.resolveUserPath('native-hosted-turns.json'),
+      installContinuationOwner: owner => { nativeContinuationOwner = owner; } });
     disposalScope.ownUntilRegistered('native hosted conversation binding', removeHostedOwner);
     const nativeWork = createDaemonNativeWorkExecutionActivation({
       runtimeBus: options.runtimeBus, configManager, providerRegistry, runtimeStore: options.runtimeStore,

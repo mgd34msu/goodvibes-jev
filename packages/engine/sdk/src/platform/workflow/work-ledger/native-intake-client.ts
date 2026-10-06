@@ -1,3 +1,4 @@
+import { captureNativeConversationContinuation, type NativeConversationContinuation } from './native-continuation-context.js';
 import type { OperatorRemoteClient } from '@goodvibes-jev/engine/operator-sdk';
 import {
   NATIVE_CONVERSATION_INTAKE_MAX_REQUEST_BYTES, NATIVE_CONVERSATION_INTAKE_MAX_RESPONSE_BYTES,
@@ -13,7 +14,8 @@ export * from './native-intake-wire.js';
 declare const nativeConversationTurnPermitBrand: unique symbol;
 /** Process-local capability. Serialization or copying never transfers it. */
 export interface NativeConversationTurnPermit { readonly [nativeConversationTurnPermitBrand]: true; }
-export type NativeConversationTurnSource = Readonly<Extract<NativeConversationIntakeResult, { kind: 'turn' }> & {
+export type NativeConversationTurnSource = Readonly<Omit<Extract<NativeConversationIntakeResult, { kind: 'turn' }>, 'continuation'> & {
+  readonly continuation?: NativeConversationContinuation | undefined;
   readonly sourceRef: Readonly<NativeConversationIntakeSourceRef>;
 }>;
 const turnPermits = new WeakMap<NativeConversationTurnPermit, { readonly source: NativeConversationTurnSource; readonly revalidate: () => Promise<void> }>();
@@ -69,7 +71,9 @@ export function createOperatorNativeConversationIntakeClient(client: Pick<Operat
   const eligibleTurns = new WeakMap<NativeConversationIntakeResult, NativeConversationTurnSource>();
   const boundTurns = new WeakMap<NativeConversationIntakeResult, NativeConversationTurnPermit>();
   function eligible(result: NativeConversationIntakeResult): void {
-    if (result.kind === 'turn') eligibleTurns.set(result, Object.freeze({ ...result, sourceRef: Object.freeze({ ...result.sourceRef }) }));
+    if (result.kind === 'turn') eligibleTurns.set(result, Object.freeze({ ...result,
+      ...(result.continuation ? { continuation: captureNativeConversationContinuation(result.continuation) } : {}),
+      sourceRef: Object.freeze({ ...result.sourceRef, ...(result.sourceRef.continuation ? { continuation: Object.freeze({ ...result.sourceRef.continuation }) } : {}) }) }));
   }
   function active(signal?: AbortSignal): void {
     if (disposed) throw new NativeConversationIntakeClientError('disposed');
@@ -106,15 +110,17 @@ export function createOperatorNativeConversationIntakeClient(client: Pick<Operat
     if (result.projectId !== projectId || sourceRef.inputId !== identity.inputId
       || ('requestId' in identity && result.requestId !== identity.requestId)
       || ('sourceRevision' in identity && sourceRef.sourceRevision !== identity.sourceRevision)
+      || ('text' in identity && sourceRef.continuation?.sessionId !== identity.continuation?.sessionId)
       || (previous && (result.requestId !== previous.requestId || sourceRef.sourceId !== previous.sourceRef.sourceId
-        || sourceRef.sourceRevision !== previous.sourceRef.sourceRevision || sourceRef.sessionId !== previous.sourceRef.sessionId))) {
+        || sourceRef.sourceRevision !== previous.sourceRef.sourceRevision || sourceRef.sessionId !== previous.sourceRef.sessionId
+        || JSON.stringify(sourceRef.continuation ?? null) !== JSON.stringify(previous.sourceRef.continuation ?? null)))) {
       throw new NativeConversationIntakeClientError('invalid_response');
     }
     const text = 'text' in identity ? identity.text : previous?.text;
     if (text !== undefined && ((result.kind === 'work' && result.receipt.goal !== text)
       || (result.kind === 'turn' && result.text !== text))) throw new NativeConversationIntakeClientError('invalid_response');
     // Detached state: callers cannot mutate the identity used by later responses.
-    sources.set(identity.inputId, { requestId: result.requestId, sourceRef: { ...sourceRef }, ...(text === undefined ? {} : { text }) });
+    sources.set(identity.inputId, { requestId: result.requestId, sourceRef: { ...sourceRef, ...(sourceRef.continuation ? { continuation: { ...sourceRef.continuation } } : {}) }, ...(text === undefined ? {} : { text }) });
   }
   function parseResult(value: unknown): NativeConversationIntakeResult {
     const result = nativeConversationIntakeResultSchema.safeParse(value);

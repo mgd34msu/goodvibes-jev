@@ -188,7 +188,8 @@ export function createNativeWorkExecutionHost(deps: {
     const key = targetKey(target); const work = workFor(current, target, expected.principalId);
     const source = captureNativeContractSource({ sourceId: work.source?.sourceId ?? hash({ projectId: deps.projectId, workId: work.id }), sourceRevision: work.source?.sourceRevision ?? hash({ workId: work.id, workRevision: work.revision }),
       inputRevision: hash({ projectId: deps.projectId, target, goal: work.goal, criteria: work.criteria, ...(work.source ? { source: work.source } : {}) }),
-      criteriaId: key.criteriaId, criteriaRevision: key.criteriaRevision, goal: work.goal, criteria: work.criteria });
+      criteriaId: key.criteriaId, criteriaRevision: key.criteriaRevision, goal: work.goal, criteria: work.criteria,
+      ...(work.source?.version === 2 && work.source.continuation ? { continuation: work.source.continuation } : {}) });
     const binding = { sourceId: source.sourceId, inputRevision: source.inputRevision,
       actionId: hash({ projectId: deps.projectId, key, operation: 'run-native-work' }),
       actionRevision: hash({ projectRoot, sessionId: deps.sessionId, target, authorityScopes: expected.scopes }),
@@ -240,7 +241,7 @@ export function createNativeWorkExecutionHost(deps: {
     const read = await decideAutonomous({ port: deps.port, site: 'work-ledger.native-start',
       instructions: 'Decide whether to start exactly this native work attempt from its complete original goal and ordered criteria. Authentication and scope are fixed host constraints. Do not ask for human approval or invent missing requirements.',
       actionDescription: 'Start the exact bound native work attempt through the durable contract runner.', binding,
-      state: { originalSource: { goal: source.goal, criteria: source.criteria }, revisions: { work: target.workRevision, criteria: target.criteriaRevision, attempt: target.attemptRevision }, operation: { kind: 'start-native-work', projectRoot }, deterministicConstraints: { existingActiveClaim: true } } as unknown as EntryType,
+      state: { originalSource: { goal: source.goal, criteria: source.criteria, ...(source.continuation ? { conversationContext: source.continuation.messages } : {}) }, revisions: { work: target.workRevision, criteria: target.criteriaRevision, attempt: target.attemptRevision }, operation: { kind: 'start-native-work', projectRoot }, deterministicConstraints: { existingActiveClaim: true } } as unknown as EntryType,
       evidence: [{ id: 'native-work-source', revision: source.inputRevision }, { id: 'native-work-attempt', revision: hash(target) }, ...(intent ? [{ id: 'native-intent-evaluation', revision: String(intent.generation) }] : [])],
       continuations: [], conditions: [], allowAct: true, assertCurrent, signal });
     assertCurrent();

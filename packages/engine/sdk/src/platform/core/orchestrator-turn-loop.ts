@@ -1,5 +1,5 @@
-import type { AutonomousToolSource } from '../permissions/autonomous.js';
-import { isNativeConversationTurn, markNativeConversationTurnEffectsPossible } from './native-turn-scope.js';
+import { captureAutonomousSource, type AutonomousToolSource } from '../permissions/autonomous.js';
+import { isNativeConversationTurn, markNativeConversationTurnEffectsPossible, revalidateNativeConversationTurnScope } from './native-turn-scope.js';
 import { publishTurnTerminal } from './turn-cancellation.js';
 import { resolveSystemPrompt } from './orchestrator-system-prompt.js';
 import type { ClassificationResult } from './intent-classifier.js';
@@ -518,6 +518,14 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
     }
     const chatStartedAt = Date.now();
     let chatRetries = 0;
+    const nativeProviderSource = contractSession?.hooks.actionSource?.(contractSession.record);
+    const capturedProviderSource = nativeProviderSource ? captureAutonomousSource(nativeProviderSource) : undefined;
+    const assertNativeProviderSource = () => {
+      assertActiveTurn();
+      const current = contractSession?.hooks.actionSource?.(contractSession.record);
+      if (!current || JSON.stringify(captureAutonomousSource(current)) !== JSON.stringify(capturedProviderSource))
+        throw new Error('Native session source changed before provider attempt');
+    };
     try {
       response = await provider.chat({
         model: model.id,
@@ -532,6 +540,12 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         ),
         signal,
         onDelta,
+        ...(capturedProviderSource || nativeTurn ? { beforeAttempt: async () => {
+          assertActiveTurn();
+          if (capturedProviderSource) assertNativeProviderSource();
+          if (nativeTurn) await revalidateNativeConversationTurnScope();
+          assertActiveTurn();
+        } } : {}),
         onRetry: (attempt, maxAttempts, delayMs, error) => {
           chatRetries = attempt;
           if (context.runtimeBus) {

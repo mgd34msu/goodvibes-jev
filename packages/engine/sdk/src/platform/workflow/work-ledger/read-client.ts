@@ -2,6 +2,7 @@ import {
   WorkLedgerAccessError,
   type WorkLedgerAuthority,
   projectWorkLedgerReadEvent,
+  projectWorkLedgerReadWork,
   type WorkLedgerReadEvent,
   type WorkLedgerService,
   type WorkLedgerSnapshot,
@@ -62,7 +63,7 @@ export function createLocalWorkLedgerReadBinding(options: LocalWorkLedgerReadBin
   }
   function readOnly(snapshot: WorkLedgerSnapshot): WorkLedgerReadSnapshot {
     if (snapshot.projectId !== projectId) throw new WorkLedgerAccessError('forbidden', 'Host ledger project binding mismatch');
-    return { ...snapshot, provenance: allowLegacyProvenance ? 'available' : 'requires_read_knowledge', works: snapshot.works.map(({ allowedActions: _actions, ...view }) => view) };
+    return { ...snapshot, provenance: allowLegacyProvenance ? 'available' : 'requires_read_knowledge', works: snapshot.works.map(({ allowedActions: _actions, ...view }) => ({ ...view, work: projectWorkLedgerReadWork(view.work) })) };
   }
   const client: WorkLedgerReadClient = Object.freeze({
     projectId,

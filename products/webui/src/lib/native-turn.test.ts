@@ -52,7 +52,7 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-function harness() {
+function harness(originalRecord: NativeIntakeBrowserRecord = original) {
   const calls: string[] = [];
   let found: NativeConversationIntakeLookupResult = structuredClone(source);
   let status: unknown = { kind: "not-found" };
@@ -70,11 +70,11 @@ function harness() {
       confirms++;
       calls.push("confirm");
       if (confirms === failConfirmAt) throw new Error("Original journal unavailable");
-      expect(record).toEqual(original);
+      expect(record).toEqual(originalRecord);
     },
     async inspect(record) {
       calls.push("source");
-      expect(record).toEqual(original);
+      expect(record).toEqual(originalRecord);
       return structuredClone(found);
     },
     async invoke(method, input) {
@@ -135,6 +135,7 @@ test("Inspect is read-only even when the host proves delivery absent", async () 
 
 for (const state of [
   "preparing",
+  "queued",
   "running",
   "cancelling",
   "completed",
@@ -290,4 +291,70 @@ test("cancelling remains an in-progress host observation until explicit status c
   });
   expect(writes(h)).toEqual(["workLedger.turn.cancel"]);
   expect(h.calls.filter((call) => call === "workLedger.turn.status")).toHaveLength(2);
+});
+
+const continuationOriginal: NativeIntakeBrowserRecord = {
+  ...original,
+  command: { ...original.command, continuation: { sessionId: "hosted-session" } },
+};
+const continuationSource: NativeConversationIntakeLookupResult = {
+  ...source,
+  sourceRef: {
+    ...source.sourceRef,
+    continuation: { sessionId: "hosted-session", revision: "a".repeat(64) },
+  },
+  continuation: {
+    sessionId: "hosted-session",
+    revision: "a".repeat(64),
+    messages: [
+      { role: "user", content: "Earlier completed source" },
+      { role: "assistant", content: "Earlier completed reply" },
+    ],
+  },
+};
+
+test("continuation sends only source identity, accepts queued state, and never replays after a lost acknowledgement", async () => {
+  const h = harness(continuationOriginal);
+  h.setSource(continuationSource);
+  const queued = { ...running, state: "queued" };
+  h.setResponse(queued);
+  h.hook((method) => {
+    if (method === "workLedger.turn.start") {
+      h.setStatus(queued);
+      throw new Error("Lost queued acknowledgement");
+    }
+  });
+  await expect(h.session.request(continuationOriginal)).rejects.toThrow(
+    "Lost queued acknowledgement"
+  );
+  expect(await h.session.inspect(continuationOriginal)).toMatchObject({
+    kind: "recorded",
+    snapshot: { state: "queued", sessionId: "hosted-session" },
+  });
+  await h.session.request(continuationOriginal);
+  expect(writes(h)).toEqual(["workLedger.turn.start"]);
+});
+
+for (const mismatch of ["source", "snapshot", "revision"] as const)
+  test(`continuation rejects ${mismatch} context substitution before requesting delivery`, async () => {
+    const h = harness(continuationOriginal);
+    const changed = structuredClone(continuationSource);
+    if (mismatch === "source") changed.sourceRef.continuation!.sessionId = "other";
+    if (mismatch === "snapshot") changed.continuation!.sessionId = "other";
+    if (mismatch === "revision") changed.continuation!.revision = "b".repeat(64);
+    h.setSource(changed);
+    await expect(h.session.request(continuationOriginal)).rejects.toThrow(
+      "differs from the saved original"
+    );
+    expect(writes(h)).toHaveLength(0);
+  });
+
+test("continuation refuses another hosted session in a same-input response", async () => {
+  const h = harness(continuationOriginal);
+  h.setSource(continuationSource);
+  h.setStatus({ ...running, sessionId: "other-hosted-session" });
+  await expect(h.session.request(continuationOriginal)).rejects.toThrow(
+    "differs from the saved original"
+  );
+  expect(writes(h)).toHaveLength(0);
 });

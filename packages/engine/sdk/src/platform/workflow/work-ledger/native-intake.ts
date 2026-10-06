@@ -1,4 +1,5 @@
 /** Durable original-input ownership before native work exists. Never starts execution. */
+import { captureNativeConversationContinuation, nativeConversationContinuationSchema, type NativeConversationContinuation } from './native-continuation-context.js';
 import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
@@ -25,6 +26,11 @@ export class NativeConversationIntakeError extends Error {
     super(`Native conversation intake: ${code}`); this.name = 'NativeConversationIntakeError';
   }
 }
+export interface NativeConversationContinuationOwner {
+  capture(sessionId: string, principalId: string): Promise<NativeConversationContinuation>;
+  /** Synchronous publication fence: same owner/workspace and exact captured transcript prefix. */
+  assertCurrent(context: NativeConversationContinuation, principalId: string): void;
+}
 export interface NativeConversationIntakeOptions {
   readonly signal?: AbortSignal;
   readonly isAuthorized?: () => boolean;
@@ -49,6 +55,7 @@ const terminal = (record: NativeConversationCapture) => ['associated', 'turn', '
 
 export function createNativeConversationIntakeHost(deps: {
   readonly projectId: string; readonly projectRoot: string; readonly sessionId: string;
+  readonly continuation?: NativeConversationContinuationOwner;
   readonly storage: NativeConversationStorage; readonly scopes: NativeExecutionScopeOwner;
   readonly port: JudgmentPort; readonly decisionLog: Pick<DecisionLog, 'get' | 'query'>; readonly proposer: NativeRequirementProposer;
 }): NativeConversationIntakeHost {
@@ -75,6 +82,14 @@ export function createNativeConversationIntakeHost(deps: {
     const current = owner(authority, options);
     if (record.projectId !== deps.projectId || record.principalId !== current.identity.principalId || record.sessionId !== deps.sessionId
       || !isDeepStrictEqual(record.owner, current.facts)) throw new NativeConversationIntakeError('stale');
+    if (record.continuation) {
+      if (!current.identity.scopes.includes('*') && !current.identity.scopes.includes('write:sessions')) throw new NativeConversationIntakeError('forbidden');
+    }
+  }
+  function assertContinuation(record: NativeConversationCapture): void {
+    if (!record.continuation) return;
+    if (!deps.continuation) throw new NativeConversationIntakeError('unavailable');
+    deps.continuation.assertCurrent(record.continuation, record.principalId);
   }
   function load(key: NativeConversationKey, authority: NativePairedExecutionAuthority, options: NativeConversationIntakeOptions, revision?: string): NativeConversationCapture {
     const record = deps.storage.current(key);
@@ -112,17 +127,19 @@ export function createNativeConversationIntakeHost(deps: {
       inputId: source.inputId, ledgerRevision: event.sequence, workId: event.workId, attemptId: event.attemptId,
       expectedRevision: { work: event.work.revision, criteria: event.work.criteriaRevision, attempt: attempt.revision },
       source: { version: 2, sourceId: source.sourceId, sourceRevision: source.sourceRevision, sessionId: source.sessionId,
+        ...(source.continuation ? { continuation: source.continuation } : {}),
         offsetEncoding: source.extraction.offsetEncoding, proposalRevision: source.extraction.proposalRevision, spans: source.extraction.spans,
         admissionDecisionId: source.extraction.admissionDecisionId, judgmentDecisionIds: source.extraction.judgmentDecisionIds },
       goal: event.work.goal, criteria: event.work.criteria });
   }
   async function projection(record: NativeConversationCapture): Promise<NativeConversationIntakeResult> {
     const common = { projectId: record.projectId, requestId: record.requestId,
-      sourceRef: { version: 1 as const, inputId: record.inputId, sourceId: record.sourceId, sourceRevision: record.sourceRevision, sessionId: record.sessionId } };
+      sourceRef: { version: 1 as const, inputId: record.inputId, sourceId: record.sourceId, sourceRevision: record.sourceRevision, sessionId: record.sessionId,
+        ...(record.continuation ? { continuation: { sessionId: record.continuation.sessionId, revision: record.continuation.revision } } : {}) } };
     switch (record.state) {
       case 'captured': return { kind: 'captured', ...common };
       case 'processing': return { kind: 'processing', ...common, stage: record.stage ?? 'routing', recovery: deliveries.get(keyId(record))?.generation === record.generation ? 'pending' : 'required' };
-      case 'turn': if (record.route === 'converse' || record.route === 'answer') return { kind: 'turn', ...common, route: record.route, text: record.text }; break;
+      case 'turn': if (record.route === 'converse' || record.route === 'answer') return { kind: 'turn', ...common, route: record.route, text: record.text, ...(record.continuation ? { continuation: nativeConversationContinuationSchema.parse(record.continuation) } : {}) }; break;
       case 'blocked': return { kind: 'blocked', ...common, reason: record.reason === 'unsupported-source' ? 'unsupported-source' : 'missing-context', recovery: 'required' };
       case 'refused': return { kind: 'refused', ...common, reason: record.reason === 'exhausted' ? 'exhausted' : 'semantic' };
       case 'cancelled': return { kind: 'cancelled', ...common };
@@ -142,10 +159,11 @@ export function createNativeConversationIntakeHost(deps: {
     controller: AbortController, resuming: boolean): Promise<NativeConversationIntakeResult> {
     let record = load(key, authority, options, revision);
     if (terminal(record) || record.state === 'blocked' || record.state === 'refused' || (!resuming && record.state !== 'captured')) return projection(record);
+    assertContinuation(record);
     const signal = AbortSignal.any([lifetime.signal, controller.signal, ...(options.signal ? [options.signal] : [])]);
     signal.throwIfAborted();
     record = await withOwners(record, authority, options, assertOwners => deps.storage.transaction(key, original => {
-      assertOwners(); signal.throwIfAborted();
+      assertOwners(); signal.throwIfAborted(); assertContinuation(record);
       if (!original || original.generation !== record.generation || terminal(original)) throw new NativeConversationIntakeError('conflict');
       let current = original;
       if (resuming && current.state === 'processing' && current.stage === 'deciding') {
@@ -176,7 +194,7 @@ export function createNativeConversationIntakeHost(deps: {
     if (record.state !== 'processing') return projection(record);
     const generation = record.generation; const delivery = deliveries.get(keyId(key)); if (delivery) delivery.generation = generation;
     const assertCurrent = () => {
-      signal.throwIfAborted(); const current = load(key, authority, options, revision);
+      signal.throwIfAborted(); const current = load(key, authority, options, revision); assertContinuation(current);
       if (current.generation !== generation || current.state !== 'processing') throw new NativeConversationIntakeError('stale');
     };
     const watch = setInterval(() => { try { assertCurrent(); } catch (error) { controller.abort(error); } }, 50); watch.unref?.();
@@ -188,7 +206,7 @@ export function createNativeConversationIntakeHost(deps: {
       }));
     }
     try {
-      const routeEvidence = await readNativeIntakeRoute({ text: record.text, sourceRevision: record.sourceRevision, sourceIssues: record.unsupportedSources,
+      const routeEvidence = await readNativeIntakeRoute({ text: record.text, sourceRevision: record.sourceRevision, ...(record.continuation ? { continuation: record.continuation } : {}), sourceIssues: record.unsupportedSources,
         port: deps.port, decisionLog: deps.decisionLog, binding: nativeConversationDecisionBinding(record, 'routing'), assertCurrent, signal });
       assertCurrent(); await update({ route: routeEvidence.route });
       let previous: unknown = null;
@@ -202,7 +220,7 @@ export function createNativeConversationIntakeHost(deps: {
             await update({ stage: 'extracting', proposalsSpent: record.proposalsSpent + 1 });
             let proposed: unknown;
             try { proposed = await deps.proposer.propose({ text: record.text, sourceRevision: record.sourceRevision,
-              attempt: record.proposalsSpent, previous, signal, assertCurrent }); }
+              attempt: record.proposalsSpent, previous, ...(record.continuation ? { continuation: record.continuation } : {}), signal, assertCurrent }); }
             catch (error) { assertCurrent(); throw error; }
             assertCurrent();
             try { requirements = validateNativeRequirementProposal(record.text, record.sourceRevision, proposed); }
@@ -213,7 +231,7 @@ export function createNativeConversationIntakeHost(deps: {
         // This durable stage precedes the final reading and owns its recovery lookup.
         await update({ stage: 'deciding' });
         const { repair, resolve, continuations } = nativeIntakeContinuationCatalog(record);
-        const result = await decideNativeIntake({ text: record.text, sourceRevision: record.sourceRevision, routeEvidence,
+        const result = await decideNativeIntake({ text: record.text, sourceRevision: record.sourceRevision, ...(record.continuation ? { continuation: record.continuation } : {}), routeEvidence,
           ...(requirements ? { requirements } : {}), port: deps.port, decisionLog: deps.decisionLog,
           binding: nativeConversationDecisionBinding(record, routeEvidence.route === 'contract' ? 'publish-work' : 'ordinary-turn'), continuations, conditions: [],
           decisionSite: nativeIntakeDecisionSite(record), allowAct: record.unsupportedSources.length === 0, sourceIssues: record.unsupportedSources, assertCurrent, signal });
@@ -256,6 +274,7 @@ export function createNativeConversationIntakeHost(deps: {
     options: NativeConversationIntakeOptions, signal: AbortSignal, assertCurrent: () => void): Promise<void> {
     if (!record.proposal || decision.decision.outcome !== 'act') throw new NativeConversationIntakeError('invalid');
     const source = { version: 2 as const, sourceId: record.sourceId, sourceRevision: record.sourceRevision, inputId: record.inputId, sessionId: record.sessionId,
+      ...(record.continuation ? { continuation: nativeConversationContinuationSchema.parse(record.continuation) } : {}),
       extraction: { version: 1 as const, offsetEncoding: 'utf16' as const, spans: [...record.proposal.spans], proposalRevision: nativeConversationProposalRevision(record.proposal),
         admissionDecisionId: decision.decision.decisionId, judgmentDecisionIds: [...decision.decision.judgmentDecisionIds] } };
     const storage = deps.storage.publicationStorage(record, current => {
@@ -301,7 +320,19 @@ export function createNativeConversationIntakeHost(deps: {
       const parsed = nativeConversationIntakeCaptureRequestSchema.safeParse(input);
       if (!parsed.success) return Promise.reject(new NativeConversationIntakeError('invalid'));
       return track(async () => {
-        options.signal?.throwIfAborted(); const current = owner(authority, options); const source = parsed.data;
+        options.signal?.throwIfAborted(); const current = owner(authority, options); const { continuation: selection, ...original } = parsed.data;
+        if (selection && !current.identity.scopes.includes('*') && !current.identity.scopes.includes('write:sessions')) throw new NativeConversationIntakeError('forbidden');
+        const key = { principalId: current.identity.principalId, inputId: original.inputId };
+        const matches = (existing: NativeConversationCapture) => existing.requestId === original.requestId && existing.text === original.text
+          && isDeepStrictEqual(existing.unsupportedSources, original.unsupportedSources) && existing.continuation?.sessionId === selection?.sessionId;
+        // Replayed capture retains its original checkpoint even when later turns appended.
+        const prior = deps.storage.current(key);
+        if (prior) { inspect(prior, authority, options); if (!matches(prior)) throw new NativeConversationIntakeError('request-conflict'); return projection(prior); }
+        if (selection && !deps.continuation) throw new NativeConversationIntakeError('unavailable');
+        const continuation = selection ? captureNativeConversationContinuation(await deps.continuation!.capture(selection.sessionId, current.identity.principalId)) : undefined;
+        if (continuation && continuation.sessionId !== selection?.sessionId) throw new NativeConversationIntakeError('stale');
+        options.signal?.throwIfAborted();
+        const source = { ...original, ...(continuation ? { continuation } : {}) };
         const record = parseNativeConversationCapture({ version: 1, projectId: deps.projectId, principalId: current.identity.principalId,
           ...source, sourceId: nativeConversationSourceId(deps.projectId, current.identity.principalId, source.inputId), sourceRevision: nativeConversationSourceRevision(source),
           sessionId: deps.sessionId, owner: current.facts, generation: 1, state: 'captured', stage: null, route: null, reason: null,
@@ -310,11 +341,10 @@ export function createNativeConversationIntakeHost(deps: {
           assertCurrent(); options.signal?.throwIfAborted();
           if (existing) {
             inspect(existing, authority, options);
-            if (existing.requestId !== record.requestId || existing.sourceRevision !== record.sourceRevision || existing.text !== record.text
-              || !isDeepStrictEqual(existing.unsupportedSources, record.unsupportedSources)) throw new NativeConversationIntakeError('request-conflict');
+            if (!matches(existing)) throw new NativeConversationIntakeError('request-conflict');
             return { next: null, value: existing };
           }
-          return { next: record, value: record };
+          assertContinuation(record); return { next: record, value: record };
         }));
         inspect(stored, authority, options); return projection(stored);
       });

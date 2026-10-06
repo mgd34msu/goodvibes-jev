@@ -1,3 +1,4 @@
+import { nativeContractTaskSource } from './native-source.js';
 /**
  * Planned-fix groups (docs/design/contract-runner.md section 5.2): the
  * planning model receives a target (a unit, a group or the deliverable), the
@@ -101,7 +102,7 @@ export function buildFixPlannerRequest(brief: FixBrief, repair?: { readonly prob
     '## Its criteria\n' + brief.criteria.map(criterionLine).join('\n'),
     '## Criteria the repair must serve\n' + brief.requiredIds.join(', '),
   ];
-  if (brief.nativeSource !== undefined) sections.push('## Immutable native source\nPreserve this complete goal and ordered criteria; repair only derived work.\n' + JSON.stringify(brief.nativeSource));
+  if (brief.nativeSource !== undefined) sections.push('## Immutable native source\nPreserve this complete goal and ordered criteria; repair only derived work.\n' + JSON.stringify(nativeContractTaskSource(brief.nativeSource)));
   if (brief.conflict !== undefined) {
     sections.push(`## Merge conflict\nThe work on branch ${brief.conflict.branch} conflicts with the contract's branch in: ${brief.conflict.files.join(', ')}. Bring that branch's changes in (git merge ${brief.conflict.branch}) and resolve the conflicts so both sides' behaviour is kept.`);
   }

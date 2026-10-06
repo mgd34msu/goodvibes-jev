@@ -554,7 +554,7 @@ export class OpenAICompatProvider implements LLMProvider {
       });
 
       return response;
-    }, signal ? { signal } : undefined, onRetry), { provider: this.name, model: model ?? this.defaultModel })).result;
+    }, { ...(signal ? { signal } : {}), ...(params.beforeAttempt ? { beforeAttempt: params.beforeAttempt } : {}) }, onRetry), { provider: this.name, model: model ?? this.defaultModel })).result;
   }
 
   async embed(request: ProviderEmbeddingRequest): Promise<ProviderEmbeddingResult> {

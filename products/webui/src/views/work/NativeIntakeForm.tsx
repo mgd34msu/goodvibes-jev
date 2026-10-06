@@ -22,13 +22,31 @@ import { Facts, DetailSection } from "../../components/data-view/DataView";
 interface NativeIntakeFormProps {
   lifetime: ClientLifetime;
   onOpenSession?: (sessionId: string) => void;
+  continuationSessionId?: string;
+  projectId?: string;
+  closed?: boolean;
 }
 export function NativeIntakeForm(props: NativeIntakeFormProps) {
-  return <ScopedNativeIntakeForm key={props.lifetime.revision} {...props} />;
+  return (
+    <ScopedNativeIntakeForm
+      key={JSON.stringify([
+        props.lifetime.revision,
+        props.continuationSessionId ?? null,
+        props.projectId ?? null,
+      ])}
+      {...props}
+    />
+  );
 }
 
 /** Never carry source, receipts or controls across a selected connection change. */
-function ScopedNativeIntakeForm({ lifetime, onOpenSession }: NativeIntakeFormProps) {
+function ScopedNativeIntakeForm({
+  lifetime,
+  onOpenSession,
+  continuationSessionId,
+  projectId,
+  closed = false,
+}: NativeIntakeFormProps) {
   const [text, setText] = useState("");
   const [sources, setSources] = useState<NativeConversationIntakeUnsupportedSource[]>([]);
   const [records, setRecords] = useState<NativeIntakeBrowserRecord[]>([]);
@@ -56,13 +74,25 @@ function ScopedNativeIntakeForm({ lifetime, onOpenSession }: NativeIntakeFormPro
       isClientLifetimeCurrent(lifetime);
     void (async () => {
       try {
-        const connected = await openNativeIntake(lifetime, controller.signal);
+        const connected = await openNativeIntake(
+          lifetime,
+          controller.signal,
+          undefined,
+          undefined,
+          undefined,
+          {
+            continuationSessionId,
+            projectId,
+          }
+        );
         if (!current()) {
           connected.dispose();
           return;
         }
         session.current = connected;
-        const saved = await connected.list();
+        const saved = (await connected.list()).filter(
+          (record) => record.command.continuation?.sessionId === continuationSessionId
+        );
         if (!current()) return;
         setRecords(saved);
         setReady(true);
@@ -115,7 +145,7 @@ function ScopedNativeIntakeForm({ lifetime, onOpenSession }: NativeIntakeFormPro
       session.current?.dispose();
       session.current = undefined;
     };
-  }, [lifetime]);
+  }, [lifetime, continuationSessionId, projectId]);
 
   const run = async (
     label: string,
@@ -241,6 +271,7 @@ function ScopedNativeIntakeForm({ lifetime, onOpenSession }: NativeIntakeFormPro
   const submit = (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (
+      closed ||
       !text.trim() ||
       text.length > 20_000 ||
       sources.some((source) => !source.label.trim() || source.label.length > 200) ||
@@ -270,7 +301,7 @@ function ScopedNativeIntakeForm({ lifetime, onOpenSession }: NativeIntakeFormPro
     });
   };
   const executionAction = (method: "inspect" | "request" | "resume" | "cancel") => {
-    if (!selected) return;
+    if (!selected || (closed && method !== "inspect" && method !== "cancel")) return;
     const labels = {
       inspect: "Inspecting execution",
       request: "Continuing execution request",
@@ -285,7 +316,7 @@ function ScopedNativeIntakeForm({ lifetime, onOpenSession }: NativeIntakeFormPro
     );
   };
   const turnAction = (method: "inspect" | "request" | "cancel") => {
-    if (!selected) return;
+    if (!selected || (closed && method !== "inspect" && method !== "cancel")) return;
     const labels = {
       inspect: "Inspecting conversation",
       request: "Continuing conversation request",
@@ -346,7 +377,8 @@ function ScopedNativeIntakeForm({ lifetime, onOpenSession }: NativeIntakeFormPro
       </p>
       {error && <p role="alert">{error}</p>}
       {busy && <p role="status">{busy}…</p>}
-      {ready && !selected && (
+      {closed && <p role="status">Session closed: reopen to submit a continuation.</p>}
+      {ready && !selected && !closed && (
         <form className="work-form" onSubmit={submit}>
           <Field
             label="Original request"
@@ -453,6 +485,22 @@ function ScopedNativeIntakeForm({ lifetime, onOpenSession }: NativeIntakeFormPro
             items={[
               { label: "Input", value: selected.command.inputId },
               { label: "Request", value: selected.command.requestId },
+              ...(selected.command.continuation
+                ? [
+                    {
+                      label: "Continuation session",
+                      value: selected.command.continuation.sessionId,
+                    },
+                  ]
+                : []),
+              ...(result && result.kind !== "not-found" && result.sourceRef.continuation
+                ? [
+                    {
+                      label: "Completed transcript revision",
+                      value: result.sourceRef.continuation.revision,
+                    },
+                  ]
+                : []),
               ...(result && result.kind !== "not-found"
                 ? [{ label: "Source revision", value: result.sourceRef.sourceRevision }]
                 : []),
@@ -483,7 +531,7 @@ function ScopedNativeIntakeForm({ lifetime, onOpenSession }: NativeIntakeFormPro
             </Button>
             {(result?.kind === "not-found" || result?.kind === "captured") && (
               <Button
-                disabled={Boolean(busy)}
+                disabled={Boolean(busy) || closed}
                 onClick={() =>
                   void run("Retrying submission", async (connected, signal, current) =>
                     continueWork(
@@ -501,7 +549,7 @@ function ScopedNativeIntakeForm({ lifetime, onOpenSession }: NativeIntakeFormPro
             )}
             {result?.kind === "processing" && result.recovery === "required" && (
               <Button
-                disabled={Boolean(busy)}
+                disabled={Boolean(busy) || closed}
                 onClick={() =>
                   void run("Resuming", async (connected, signal, current) =>
                     continueWork(
@@ -548,6 +596,7 @@ function ScopedNativeIntakeForm({ lifetime, onOpenSession }: NativeIntakeFormPro
               error={executionError}
               busy={busy}
               onInspect={() => executionAction("inspect")}
+              requestDisabled={closed}
               onRequest={() => executionAction("request")}
               onResume={() => executionAction("resume")}
               onCancel={() => executionAction("cancel")}
@@ -559,6 +608,7 @@ function ScopedNativeIntakeForm({ lifetime, onOpenSession }: NativeIntakeFormPro
               error={turnError}
               busy={busy}
               onInspect={() => turnAction("inspect")}
+              requestDisabled={closed}
               onRequest={() => turnAction("request")}
               onCancel={() => turnAction("cancel")}
               onOpenSession={

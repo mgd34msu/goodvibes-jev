@@ -272,7 +272,7 @@ export class OpenAIProvider implements LLMProvider {
         ...withProviderStopReason(rawStopReason),
         ...(rateLimit ? { rateLimit } : {}),
       };
-    }, signal ? { signal } : undefined, onRetry);
+    }, { ...(signal ? { signal } : {}), ...(params.beforeAttempt ? { beforeAttempt: params.beforeAttempt } : {}) }, onRetry);
   }
 
   async embed(request: ProviderEmbeddingRequest): Promise<ProviderEmbeddingResult> {

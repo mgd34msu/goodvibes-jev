@@ -102,7 +102,7 @@ export class LMStudioProvider implements LLMProvider {
       }
 
       return this.compatProvider.chat(params);
-    }, params.signal ? { signal: params.signal } : undefined, params.onRetry), { provider: this.name, model: params.model || this.defaultModel })).result;
+    }, { ...(params.signal ? { signal: params.signal } : {}), ...(params.beforeAttempt ? { beforeAttempt: params.beforeAttempt } : {}) }, params.onRetry), { provider: this.name, model: params.model || this.defaultModel })).result;
   }
 
   async embed(request: ProviderEmbeddingRequest): Promise<ProviderEmbeddingResult> {

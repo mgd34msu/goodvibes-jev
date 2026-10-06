@@ -1,3 +1,4 @@
+import { nativeContractSourceData } from '../native-source.js';
 /**
  * `contract.request-shape` (docs/design/contract-runner.md section 3.1): what
  * the person's request says about how the work may be done, read before any
@@ -129,7 +130,7 @@ export async function readRequestShape(
   ask: string,
   options: { readonly signal?: AbortSignal | undefined; readonly nativeSource?: import('../types.js').NativeContractSource | undefined } = {},
 ): Promise<{ readonly shape: RequestShape; readonly usage: { readonly inputTokens: number; readonly outputTokens: number } }> {
-  const run = await requestShape.run(port, { request: ask, ...(options.nativeSource === undefined ? {} : { nativeSource: { ...options.nativeSource, criteria: [...options.nativeSource.criteria] } }) }, {
+  const run = await requestShape.run(port, { request: ask, ...(options.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(options.nativeSource) }) }, {
     site: REQUEST_SHAPE_SITE,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });

@@ -68,3 +68,22 @@ describe('withRetry', () => {
     expect(onRetryCalls).toBe(2);
   });
 });
+
+
+test('beforeAttempt runs after backoff and denial never retries even a retryable-looking error', async () => {
+  const { withRetry } = await import('../sdk/src/platform/utils/retry.js');
+  const { AppError } = await import('../sdk/src/platform/types/errors.js');
+  const order: string[] = []; let admitted = true; let sent = 0;
+  const outcome = withRetry(async () => { order.push('send'); sent++; throw new AppError('transport', 'TRANSIENT', true); }, {
+    initialDelayMs: 0, maxDelayMs: 0, maxRetries: 3,
+    beforeAttempt: async () => { order.push('fence'); if (!admitted) throw new AppError('owner revoked', 'REVOKED', true); },
+  }, () => { order.push('backoff'); admitted = false; });
+  await expect(outcome).rejects.toThrow('owner revoked');
+  expect(sent).toBe(1); expect(order).toEqual(['fence', 'send', 'backoff', 'fence']);
+});
+
+test('beforeAttempt rejection prevents the initial transport entirely', async () => {
+  const { withRetry } = await import('../sdk/src/platform/utils/retry.js'); let sent = 0;
+  await expect(withRetry(async () => { sent++; return 'unexpected'; }, { beforeAttempt() { throw new Error('stale source'); } })).rejects.toThrow('stale source');
+  expect(sent).toBe(0);
+});

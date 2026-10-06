@@ -1,3 +1,4 @@
+import { nativeContractSourceData } from './native-source.js';
 /**
  * The Jev checks on a plan (docs/design/contract-runner.md section 3.4), run
  * after the code checks pass, all concurrently: each criterion traces to the
@@ -199,7 +200,7 @@ async function readCriterionShapes(
   const site = PLAN_CHECK_SITES['criterion-shape'];
   const runs = await Promise.all(plan.criteria.map(async (criterion) => ({
     criterion,
-    run: await criterionShape.run(port, { request: ask, criterion: criterion.text, ...(options.nativeSource === undefined ? {} : { nativeSource: { ...options.nativeSource, criteria: [...options.nativeSource.criteria] } }) }, callOptions(site, options)),
+    run: await criterionShape.run(port, { request: ask, criterion: criterion.text, ...(options.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(options.nativeSource) }) }, callOptions(site, options)),
   })));
   for (const { criterion, run } of runs) {
     record(output, run.result.decisionId, run.result.usage);
@@ -257,7 +258,7 @@ async function checkUnits(port: JudgmentPort, plan: ContractPlan, options: PlanC
   const site = PLAN_CHECK_SITES['unit-shape'];
   const runs = await Promise.all(planUnits(plan).map(async (unit) => ({
     unit,
-    run: await unitShape.read(port, { ...unitShapeState(plan, unit), ...(options.nativeSource === undefined ? {} : { nativeSource: { ...options.nativeSource, criteria: [...options.nativeSource.criteria] } }) }, callOptions(site, options)),
+    run: await unitShape.read(port, { ...unitShapeState(plan, unit), ...(options.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(options.nativeSource) }) }, callOptions(site, options)),
   })));
   for (const { unit, run } of runs) {
     record(output, run.decisionId, run.usage);

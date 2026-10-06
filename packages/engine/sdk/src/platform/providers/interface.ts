@@ -139,7 +139,7 @@ export type ProviderBatchStatus =
 
 export interface ProviderBatchChatRequest {
   readonly customId: string;
-  readonly params: Omit<ChatRequest, 'signal' | 'onDelta' | 'onRetry'>;
+  readonly params: Omit<ChatRequest, 'signal' | 'onDelta' | 'onRetry' | 'beforeAttempt'>;
 }
 
 export interface ProviderBatchCreateInput {
@@ -329,6 +329,8 @@ export interface ChatRequest {
   reasoningEffortSpec?: ReasoningEffortSpec | undefined;
   /** Mercury-2 specific: whether to include a reasoning summary in the response. */
   reasoningSummary?: boolean | undefined;
+  /** Live host fence immediately before each transport attempt, including post-backoff retries. Never serialized. */
+  beforeAttempt?: (() => void | Promise<void>) | undefined;
   /** Called per-chunk during streaming when streaming is enabled. */
   onDelta?: ((delta: StreamDelta) => void) | undefined;
   /**

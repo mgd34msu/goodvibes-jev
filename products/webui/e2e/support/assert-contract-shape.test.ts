@@ -24,6 +24,7 @@ import {
 } from './seed';
 import {
   dispatchOutcome,
+  legacySessionDiscoveryResponse,
   fleetGraphResponse,
   FLEET_GRAPH_WORKSTREAM_ID,
   methodInfoResponse,
@@ -35,6 +36,12 @@ import {
 } from './mock-daemon';
 
 describe('e2e fixtures conform to the SDK operator contract', () => {
+  test('workLedger.turn.session: the base mock explicitly identifies its synthetic legacy sessions', () => {
+    const response = legacySessionDiscoveryResponse();
+    expect(response).toEqual({ kind: 'legacy' });
+    expect(() => assertFixtureMatchesOperatorContract('workLedger.turn.session', response)).not.toThrow();
+  });
+
   test('providers.list: providersResponse() conforms', () => {
     expect(() => assertFixtureMatchesOperatorContract('providers.list', providersResponse())).not.toThrow();
   });

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { canonicalNativeConversationContinuation } from '../../sdk/src/platform/workflow/work-ledger/native-continuation-context.js';
 /**
  * The contracts operator surface (docs/design/contract-runner.md 10.2): the
  * service that reads and acts across the daemon's runner and the hosted
@@ -248,4 +250,28 @@ describe('the contracts.* methods', () => {
     expect((await rest(helper, [], 'GET', '/api/contracts')).status).toBe(403);
     expect(daemon.started).toEqual([]);
   });
+});
+
+
+test('generic contract inspection hides both native and durable-admission transcript copies', async () => {
+  const { service, daemon } = surface(); const sessionId = 'private-hosted-session';
+  const messages = [{ role: 'assistant' as const, content: 'Private hosted context retained for native execution.' }];
+  const continuation = { sessionId, revision: createHash('sha256').update(canonicalNativeConversationContinuation(sessionId, messages)).digest('hex'), messages };
+  const nativeSource = { sourceId: 'native-source', sourceRevision: 'source-revision', inputRevision: 'input-revision', criteriaId: 'criteria', criteriaRevision: '1', goal: 'Do that.', criteria: ['Do that.'], continuation };
+  const contractId = nextContractId();
+  const contract = makeContract({ id: contractId, nativeSource, goal: nativeSource.goal, durableAdmission: { schemaVersion: 1, contractId, ownerAgentId: 'owner', payloadRevision: 'payload',
+    key: { workId: 'work', criteriaId: 'criteria', criteriaRevision: '1', attemptId: 'attempt' },
+    binding: { sourceId: 'source', inputRevision: 'input', actionId: 'action', actionRevision: '1', authorityId: 'authority', authorityRevision: '1', scopeId: 'scope', scopeRevision: '1' },
+    input: { ask: 'Do that.', sessionId: 'native-session', origin: 'external', projectRoot: WORKDIR, nativeSource } } });
+  daemon.contracts.set(contract.id, contract);
+  const catalog = catalogFor(service);
+  for (const value of [service.get(contract.id), service.list(),
+    await catalog.invoke('contracts.get', { query: { contractId: contract.id }, context: { scopes: ['read:fleet'] } }),
+    await catalog.invoke('contracts.list', { query: {}, context: { scopes: ['read:fleet'] } })]) {
+    expect(JSON.stringify(value)).not.toContain(messages[0]!.content);
+    expect(JSON.stringify(value)).not.toContain(sessionId);
+    expect(JSON.stringify(value)).toContain('source-revision');
+  }
+  expect(daemon.contracts.get(contract.id)!.nativeSource!.continuation).toEqual(continuation);
+  expect(daemon.contracts.get(contract.id)!.durableAdmission!.input.nativeSource!.continuation).toEqual(continuation);
 });

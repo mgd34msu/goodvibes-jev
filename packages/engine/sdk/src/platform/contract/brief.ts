@@ -1,3 +1,4 @@
+import { nativeContractTaskSource } from './native-source.js';
 /**
  * The unit brief (docs/design/contract-runner.md section 6.1): the task a
  * unit's agent receives, built in code from the contract tree. Sections, in
@@ -54,7 +55,7 @@ export function buildUnitBrief(
       ...(dependencies.length > 0 ? ['Units this one builds on:', ...dependencies.map(unitLine)] : []),
     ].join('\n'),
   ];
-  if (contract.nativeSource !== undefined) sections.push('Immutable native source (all original requirements remain binding):\n' + JSON.stringify(contract.nativeSource));
+  if (contract.nativeSource !== undefined) sections.push('Immutable native source (all original requirements remain binding):\n' + JSON.stringify(nativeContractTaskSource(contract.nativeSource)));
   if (unit.role === 'integration') {
     const others = contract.units.filter((other) => other.id !== unit.id && other.role !== 'integration');
     sections.push([

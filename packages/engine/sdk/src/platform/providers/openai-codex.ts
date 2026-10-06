@@ -443,7 +443,7 @@ export async function chatWithOpenAICodex(
           phase: 'stream',
         });
       }
-    }, params.signal ? { signal: params.signal } : undefined, params.onRetry);
+    }, { ...(params.signal ? { signal: params.signal } : {}), ...(params.beforeAttempt ? { beforeAttempt: params.beforeAttempt } : {}) }, params.onRetry);
 }
 
 export class OpenAICodexProvider implements LLMProvider {

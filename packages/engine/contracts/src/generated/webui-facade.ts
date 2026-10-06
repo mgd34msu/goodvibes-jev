@@ -10,7 +10,7 @@ import type { OperatorMethodId } from './operator-method-ids.js';
  * call sites) hand-written on top of these generated primitives.
  *
  * Contract product version: 2.0.23
- * Methods: 533 total, 461 REST-routed, 72 ws-only invoke.
+ * Methods: 534 total, 462 REST-routed, 72 ws-only invoke.
  */
 
 export type WebuiHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -1852,6 +1852,10 @@ export const WEBUI_METHOD_ROUTES: Readonly<Record<string, WebuiRouteDefinition>>
     "method": "POST",
     "path": "/api/work-ledger/turn/cancel"
   },
+  "workLedger.turn.session": {
+    "method": "POST",
+    "path": "/api/work-ledger/turn/session"
+  },
   "workLedger.turn.start": {
     "method": "POST",
     "path": "/api/work-ledger/turn/start"
@@ -2488,6 +2492,7 @@ export const WEBUI_METHOD_DISPOSITION: Readonly<Record<string, WebuiMethodDispos
   "workLedger.submission.get": "rest",
   "workLedger.submit": "rest",
   "workLedger.turn.cancel": "rest",
+  "workLedger.turn.session": "rest",
   "workLedger.turn.start": "rest",
   "workLedger.turn.status": "rest",
   "workspaces.registrations.add": "rest",
@@ -23223,6 +23228,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
     "output": {
       "session": {
         "id": "sample",
+        "nativeConversation": true,
         "workspaceRoot": "sample",
         "title": "sample",
         "status": "idle",
@@ -23266,6 +23272,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
     "output": {
       "session": {
         "id": "sample",
+        "nativeConversation": true,
         "workspaceRoot": "sample",
         "title": "sample",
         "status": "idle",
@@ -23298,6 +23305,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
     "output": {
       "session": {
         "id": "sample",
+        "nativeConversation": true,
         "workspaceRoot": "sample",
         "title": "sample",
         "status": "idle",
@@ -23329,6 +23337,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
     "output": {
       "session": {
         "id": "sample",
+        "nativeConversation": true,
         "workspaceRoot": "sample",
         "title": "sample",
         "status": "idle",
@@ -23361,6 +23370,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "sessions": [
         {
           "id": "sample",
+          "nativeConversation": true,
           "workspaceRoot": "sample",
           "title": "sample",
           "status": "idle",
@@ -25898,7 +25908,11 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "inputId": "sample",
         "sourceId": "sample",
         "sourceRevision": "sample",
-        "sessionId": "sample"
+        "sessionId": "sample",
+        "continuation": {
+          "sessionId": "sample",
+          "revision": "sample"
+        }
       }
     }
   },
@@ -25916,7 +25930,11 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "inputId": "sample",
         "sourceId": "sample",
         "sourceRevision": "sample",
-        "sessionId": "sample"
+        "sessionId": "sample",
+        "continuation": {
+          "sessionId": "sample",
+          "revision": "sample"
+        }
       }
     }
   },
@@ -25925,6 +25943,9 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "requestId": "sample",
       "inputId": "sample",
       "text": "sample",
+      "continuation": {
+        "sessionId": "sample"
+      },
       "unsupportedSources": [
         {
           "kind": "image",
@@ -25941,7 +25962,11 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "inputId": "sample",
         "sourceId": "sample",
         "sourceRevision": "sample",
-        "sessionId": "sample"
+        "sessionId": "sample",
+        "continuation": {
+          "sessionId": "sample",
+          "revision": "sample"
+        }
       }
     }
   },
@@ -25958,7 +25983,11 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "inputId": "sample",
         "sourceId": "sample",
         "sourceRevision": "sample",
-        "sessionId": "sample"
+        "sessionId": "sample",
+        "continuation": {
+          "sessionId": "sample",
+          "revision": "sample"
+        }
       }
     }
   },
@@ -25976,7 +26005,11 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "inputId": "sample",
         "sourceId": "sample",
         "sourceRevision": "sample",
-        "sessionId": "sample"
+        "sessionId": "sample",
+        "continuation": {
+          "sessionId": "sample",
+          "revision": "sample"
+        }
       }
     }
   },
@@ -26171,6 +26204,14 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "sessionId": "sample",
       "brokerInputId": "sample",
       "correlationId": "sample"
+    }
+  },
+  "workLedger.turn.session": {
+    "input": {
+      "sessionId": "sample"
+    },
+    "output": {
+      "kind": "legacy"
     }
   },
   "workLedger.turn.start": {

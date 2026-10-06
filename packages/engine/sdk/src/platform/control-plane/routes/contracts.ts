@@ -12,7 +12,7 @@ import type { GatewayMethodCatalog } from '../method-catalog.js';
 import type { GatewayMethodHandler } from '../method-catalog-shared.js';
 import { GatewayVerbError } from './gateway-verb-error.js';
 import { readInvocationParams } from './invocation-params.js';
-import { ContractOperatorError, type ContractOperatorService } from '../../contract/operator-service.js';
+import { ContractOperatorError, projectContractOperatorView, type ContractOperatorService } from '../../contract/operator-service.js';
 
 /** The reason a cancel over the operator surface records when the caller gives none. */
 export const OPERATOR_CANCEL_REASON = 'cancelled by an operator';
@@ -68,7 +68,7 @@ export function createContractsListHandler(service: ContractOperatorService): Ga
       contracts: service.list({
         ...(sessionId === undefined ? {} : { sessionId }),
         ...(includeTerminal === undefined ? {} : { includeTerminal }),
-      }),
+      }).map(projectContractOperatorView),
     };
   };
 }
@@ -78,7 +78,7 @@ export function createContractsGetHandler(service: ContractOperatorService): Gat
     const contractId = requireString(readInvocationParams(invocation), 'contractId');
     const contract = service.get(contractId);
     if (contract === null) throw new GatewayVerbError(`No contract ${contractId} on this daemon.`, 'CONTRACT_NOT_FOUND', 404);
-    return contract;
+    return projectContractOperatorView(contract);
   };
 }
 

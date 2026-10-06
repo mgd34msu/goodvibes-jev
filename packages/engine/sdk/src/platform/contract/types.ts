@@ -1,3 +1,4 @@
+import type { NativeConversationContinuation } from '../workflow/work-ledger/native-continuation-context.js';
 import type { DurableContractAdmission } from './durable-admission.js';
 /**
  * The contract runner's data model (docs/design/contract-runner.md section 2.3):
@@ -135,6 +136,8 @@ export type ContractRouteSelector = (request: {
 
 /** Host-owned immutable native input. Revisions identify exact content; they are not execution authority. */
 export interface NativeContractSource {
+  /** Host-captured prior conversation evidence, never generated requirements or authority. */
+  readonly continuation?: NativeConversationContinuation;
   readonly sourceId: string;
   readonly sourceRevision: string;
   readonly inputRevision: string;

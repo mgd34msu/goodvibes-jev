@@ -1,3 +1,5 @@
+import { array } from 'zod/v4';
+import { nativeConversationContinuationMessageSchema, NATIVE_CONVERSATION_CONTINUATION_MAX_MESSAGES, NATIVE_CONVERSATION_CONTINUATION_MAX_BYTES, type NativeConversationContinuation } from '../workflow/work-ledger/native-continuation-context.js';
 import { types as nodeTypes } from 'node:util';
 /** Recorded Jev tool outcomes. No human callback or transport retry lives here. */
 import {
@@ -15,6 +17,8 @@ import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 export interface AutonomousToolSource {
   readonly goal: string;
   readonly criteria: readonly string[];
+  /** Frozen prior transcript evidence; never adds requirements or grants authority. */
+  readonly conversationContext?: NativeConversationContinuation['messages'];
 }
 
 /** Reject executable views before inspecting borrowed authority metadata. */
@@ -35,9 +39,13 @@ export function captureAutonomousSource(value: unknown): AutonomousToolSource {
   if (!criteria || !('value' in criteria) || !Array.isArray(criteria.value) || nodeTypes.isProxy(criteria.value)) throw new JudgmentError('invalid-request', 'autonomous criteria must be owned data');
   const captured = snapshotJudgmentInput(value) as Partial<AutonomousToolSource> | null;
   if (!captured || typeof captured !== 'object' || Array.isArray(captured)
-    || Object.keys(captured).length !== 2 || typeof captured.goal !== 'string' || !captured.goal.trim()
+    || Object.keys(captured).length !== (Object.hasOwn(captured, 'conversationContext') ? 3 : 2) || typeof captured.goal !== 'string' || !captured.goal.trim()
     || !Array.isArray(captured.criteria) || captured.criteria.some(item => typeof item !== 'string' || !item.trim())) {
     throw new JudgmentError('invalid-request', 'autonomous admission requires a complete host goal and ordered criteria');
+  }
+  if (Object.hasOwn(captured, 'conversationContext')) {
+    const context = array(nativeConversationContinuationMessageSchema).max(NATIVE_CONVERSATION_CONTINUATION_MAX_MESSAGES).safeParse(captured.conversationContext);
+    if (!context.success || new TextEncoder().encode(JSON.stringify(context.data)).byteLength > NATIVE_CONVERSATION_CONTINUATION_MAX_BYTES) throw new JudgmentError('invalid-request', 'autonomous conversation evidence must be complete bounded host data');
   }
   return captured as AutonomousToolSource;
 }

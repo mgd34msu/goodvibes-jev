@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { readNativeConversationTurnPermit, type NativeConversationTurnPermit } from '../workflow/work-ledger/native-intake-client.js';
+import { readNativeConversationTurnPermit, revalidateNativeConversationTurnPermit, type NativeConversationTurnPermit } from '../workflow/work-ledger/native-intake-client.js';
 
 interface NativeTurnScope { readonly permit: NativeConversationTurnPermit; effectsPossible: boolean; }
 const scope = new AsyncLocalStorage<NativeTurnScope>();
@@ -17,3 +17,10 @@ export function markNativeConversationTurnEffectsPossible(): void {
   if (current) current.effectsPossible = true;
 }
 export function nativeConversationTurnCanRetry(): boolean { return scope.getStore()?.effectsPossible === false; }
+
+/** Revalidate the actual process-local source immediately before provider transmission. */
+export async function revalidateNativeConversationTurnScope(): Promise<void> {
+  const current = scope.getStore();
+  if (!current) throw new Error('Native conversation source scope unavailable');
+  await revalidateNativeConversationTurnPermit(current.permit);
+}

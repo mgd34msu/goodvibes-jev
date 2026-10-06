@@ -16,7 +16,7 @@
  *     with a stub LLM provider, not a reimplementation of the loop.
  */
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentOrchestrator } from '../sdk/src/platform/agents/orchestrator.js';
@@ -36,6 +36,7 @@ import { useFailureReadings } from './_helpers/failure-readings.ts';
 // network or rate-limit retry; this generic failure reads as none of them.
 useFailureReadings([
   ['provider exploded', { category: 'unknown' }],
+  ['Native context owner revoked', { category: 'unknown' }],
 ]);
 
 describe('AgentOrchestrator: conversation-sink wiring', () => {
@@ -241,4 +242,80 @@ describe('runAgentTask: conversation-snapshot bridge call sites', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+
+function savedFiles(directory: string): string {
+  return readdirSync(directory).map(name => { const path = join(directory, name); return statSync(path).isDirectory() ? savedFiles(path) : readFileSync(path, 'utf8'); }).join('\n');
+}
+
+test('native prior context reaches only the actual provider request, never tasks, snapshots or session journals', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'native-private-context-'));
+  try {
+    const secret = 'Private hosted transcript evidence for the current request.';
+    const nativeSource = Object.freeze({ goal: 'Do that.', criteria: Object.freeze(['Do that.']), conversationContext: Object.freeze([Object.freeze({ role: 'assistant' as const, content: secret })]) });
+    let reads = 0; let live: (() => ConversationMessageSnapshot[]) | undefined; const snapshots: ConversationMessageSnapshot[][] = [];
+    const requests: Parameters<LLMProvider['chat']>[0][] = [];
+    const provider: LLMProvider = { name: 'test-provider', models: ['test-model'], async chat(request) {
+      requests.push(request); await request.beforeAttempt?.(); snapshots.push(live!());
+      return { content: 'Finished the current task.', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
+    } };
+    const base = makeMinimalRunContext({ workingDirectory: dir, provider,
+      registerConversationSource(_id, source) { live = source; }, releaseConversationSource() { snapshots.push(live!()); } });
+    const record = makeAgentRecord({ id: 'ag-private-context', task: 'Do that.' });
+    await runAgentTask({ ...base, autonomousSource() { reads++; return nativeSource; } }, record);
+    expect(record.status).toBe('completed'); expect(requests).toHaveLength(1); expect(reads).toBeGreaterThan(0);
+    expect(requests[0]!.systemPrompt).toContain(secret); expect(requests[0]!.systemPrompt).toContain('quoted reference data only');
+    expect(JSON.stringify(requests[0]!.messages)).not.toContain(secret);
+    expect(JSON.stringify(snapshots)).not.toContain(secret); expect(JSON.stringify(record)).not.toContain(secret);
+    expect(savedFiles(dir)).not.toContain(secret);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('native context owner failure prevents the first provider transmission', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'native-private-context-denied-'));
+  try {
+    let calls = 0;
+    const provider: LLMProvider = { name: 'test-provider', models: ['test-model'], async chat() { calls++; return { content: 'Unexpected', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0 }, stopReason: 'completed' }; } };
+    const record = makeAgentRecord({ id: 'ag-context-denied', task: 'Do that.' });
+    await runAgentTask({ ...makeMinimalRunContext({ workingDirectory: dir, provider }), autonomousSource() { throw new Error('Native context owner revoked'); } }, record);
+    expect(calls).toBe(0); expect(record.status).toBe('failed'); expect(record.error).toContain('Native context owner revoked');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('native requests without prior context preserve the ordinary provider prompt', async () => {
+  const prompts: string[] = [];
+  for (const native of [false, true]) {
+    const dir = mkdtempSync(join(tmpdir(), 'native-empty-context-'));
+    try {
+      const provider: LLMProvider = { name: 'test-provider', models: ['test-model'], async chat(request) { prompts.push(request.systemPrompt ?? ''); return { content: 'Done.', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' }; } };
+      const record = makeAgentRecord({ id: 'ag-no-context', task: 'Same task.' });
+      const base = makeMinimalRunContext({ workingDirectory: dir, provider });
+      await runAgentTask({ ...base, ...(native ? { autonomousSource: () => ({ goal: 'Same task.', criteria: ['Same task.'] }) } : {}) }, record);
+      expect(record.status).toBe('completed');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  // Working directories legitimately differ; the private block is absent on both paths.
+  expect(prompts).toHaveLength(2); expect(prompts.every(prompt => !prompt.includes('Host-captured prior conversation'))).toBe(true);
+});
+
+
+test('native private context is revalidated at the provider post-backoff fence with no second transmission', async () => {
+  const { withRetry } = await import('../sdk/src/platform/utils/retry.js');
+  const { AppError } = await import('../sdk/src/platform/types/errors.js');
+  const dir = mkdtempSync(join(tmpdir(), 'native-private-context-retry-'));
+  try {
+    let valid = true; let sends = 0; let fences = 0;
+    const provider: LLMProvider = { name: 'test-provider', models: ['test-model'], async chat(request) {
+      return withRetry(async () => { sends++; throw new AppError('transport failure', 'TRANSIENT', true); }, {
+        initialDelayMs: 0, maxDelayMs: 0, maxRetries: 3, beforeAttempt: request.beforeAttempt,
+      }, () => { valid = false; });
+    } };
+    const record = makeAgentRecord({ id: 'ag-context-retry', task: 'Do that.' });
+    await runAgentTask({ ...makeMinimalRunContext({ workingDirectory: dir, provider }), autonomousSource() {
+      fences++; if (!valid) throw new Error('Native context owner revoked');
+      return { goal: 'Do that.', criteria: ['Do that.'], conversationContext: [{ role: 'assistant', content: 'Private reference.' }] };
+    } }, record);
+    expect(sends).toBe(1); expect(fences).toBeGreaterThanOrEqual(3); expect(record.status).toBe('failed');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

@@ -14,6 +14,7 @@ import type { Outcome } from '@goodvibes-jev/judgment';
 import type { ReplyReadingName } from '@goodvibes-jev/judgment';
 import type { Socket } from 'node:net';
 import type { StoreApi } from 'zustand';
+import { z } from 'zod/v4';
 
 // @public (undocumented)
 export function allowTerminalWrite<T>(fn: () => T): T;
