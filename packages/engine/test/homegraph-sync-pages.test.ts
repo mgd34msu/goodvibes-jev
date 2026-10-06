@@ -2,6 +2,11 @@ import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings
 
 const qualityReadings = useKnowledgeAnswerReadings();
 beforeEach(() => { qualityReadings.set({
+  initialEvidenceCandidates: [
+    ['source', 'House', 0.01],
+    ['node', 'House', 0.01], ['node', 'Kitchen', 0.01], ['node', 'Front Door Sensor', 0.01],
+    ['node', 'Front Door', 0.01], ['node', 'Porch Lights', 0.01], ['node', 'Front Door Sensor passport', 0.01],
+  ],
   activation: [['Sensing capabilities', 0.99], ['Garage control', 0.99]],
   homeGraph: [['Front Door Sensor', { batteryApplicable: 0.99, manualApplicable: 0.99 }]],
   quality: [['Amazon affiliate LG listing', 0.03], ['Pending LG candidate source', 0.03], ['LG 86NANO90UNA official specifications', 0.99]],

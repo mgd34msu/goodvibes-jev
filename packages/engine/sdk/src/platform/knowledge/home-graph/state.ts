@@ -125,7 +125,7 @@ function sourceIdsLinkedToNodeThroughFacts(nodeId: string, edges: readonly Knowl
   return sourceIds;
 }
 
-function sourceLinkedObjectIds(source: KnowledgeSourceRecord): string[] {
+export function sourceLinkedObjectIds(source: KnowledgeSourceRecord): string[] {
   const metadata = source.metadata ?? {};
   const discovery = readRecord(metadata.sourceDiscovery);
   return [

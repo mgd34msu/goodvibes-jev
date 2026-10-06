@@ -1,5 +1,7 @@
 # Home Graph answer object scope (THE-21 bounded increment)
 
+> This records the PR151 increment. The subsequent [semantic retrieval follow-on](knowledge-home-graph-search.md) replaces its retained answer-search ranking and excerpt path; the historical proof below remains scoped to PR151.
+
 ## Replaced callers
 
 `HomeGraphService.ask` retains the existing extraction-repair and bounded search

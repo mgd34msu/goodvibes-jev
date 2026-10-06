@@ -3,6 +3,7 @@ const readings = useKnowledgeAnswerReadings();
 beforeEach(() => readings.set({
   initialEvidenceDefault: 0.01,
   initialEvidenceCandidates: [['source', 'LG 86NANO90UNA manual', 0.99]],
+  excerpts: [[`${manualPreface()} Features include HDR10, HDMI eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control.`, 0.99]],
   objectAlignment: [{ query: 'What features does the TV have?', objects: [
     { title: 'Living Room TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 },
   ] }],

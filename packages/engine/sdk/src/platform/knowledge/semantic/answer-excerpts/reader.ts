@@ -35,8 +35,9 @@ function snapshotInputs(inputs: readonly AnswerExcerptInput[]): readonly AnswerE
   if (JSON.stringify(snapshot).length > LIMITS.characters) throw new Held('budget');
   return snapshot as unknown as readonly AnswerExcerptInput[];
 }
-function checkedPort(port: JudgmentPort): JudgmentPort {
+function checkedPort(port: JudgmentPort, beforeAsk: () => void): JudgmentPort {
   return { ...port, model: port.model, async ask(request) {
+    beforeAsk();
     const result = { ...await port.ask(request) };
     if (!result?.answers || typeof result.model !== 'string' || !result.model.trim()
       || typeof result.requestedModel !== 'string' || !result.requestedModel.trim()
@@ -57,6 +58,7 @@ function checkedPort(port: JudgmentPort): JudgmentPort {
 export function prepareAnswerExcerptReadings(inputs: readonly AnswerExcerptInput[], options: {
   readonly signal?: AbortSignal | undefined; readonly timeoutMs?: number | undefined;
   readonly assertCurrent?: (() => void) | undefined;
+  readonly observeModel?: ((model: string, requestedModel: string) => void) | undefined;
 } = {}) {
   if (options.signal?.aborted) throw new Held('aborted');
   const snapshots = snapshotInputs(inputs);
@@ -110,7 +112,7 @@ export function prepareAnswerExcerptReadings(inputs: readonly AnswerExcerptInput
     const check = () => { if (stoppedError) throw stoppedError; assertCurrent(); };
     const run = async () => {
       check(); configured = judgmentPort('engine.knowledge.answer-excerpt-selection'); configuredModel = configured.model;
-      const port = checkedPort(configured);
+      const port = checkedPort(configured, check);
       let model: string | undefined, requestedModel: string | undefined, next = 0;
       const selected: boolean[] = [];
       await Promise.all(Array.from({ length: Math.min(LIMITS.concurrency, selectedJobs.length) }, async () => {
@@ -123,6 +125,7 @@ export function prepareAnswerExcerptReadings(inputs: readonly AnswerExcerptInput
             model = result.result.model; requestedModel = result.result.requestedModel;
             const reading = result.readings.excerptUseful;
             if (reading.outcome !== 'act' || reading.verdict === 'uncertain') throw new Held('unsettled');
+            options.observeModel?.(model, requestedModel);
             selected[index] = reading.verdict === 'yes';
             result.recordAction(`settled exact excerpt ${reading.verdict}; source ranking and write authority are separate`);
           } catch (error) { const failure = error instanceof Held ? error : new Held('unavailable'); stop(failure); throw failure; }
