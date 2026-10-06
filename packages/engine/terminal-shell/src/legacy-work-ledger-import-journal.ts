@@ -116,24 +116,29 @@ export class LegacyImportJournal {
     return this.db.transaction(() => { if (this.readExpected(binding, command)?.state === 'pending') this.db.exec("UPDATE legacy_import SET state='cancelled' WHERE slot=1"); return this.read(binding); }).immediate();
   }
   /** Only call at the authenticated host transport boundary, after real gate admission of this exact command. */
-  dispatch(binding: LegacyImportBinding, command: LegacyImportCommand): LegacyImportEntry {
+  dispatch(binding: LegacyImportBinding, command: LegacyImportCommand, expected?: Pick<LegacyImportEntry, 'state' | 'attempts'>): LegacyImportEntry {
     return this.db.transaction(() => {
       const current = this.readExpected(binding, command);
+      if (expected && (!current || current.state !== expected.state || current.attempts !== expected.attempts)) throw new Error('Import dispatch state changed');
       if (!current || !['pending', 'unknown'].includes(current.state)) throw new Error('Import cannot be dispatched');
       this.db.exec("UPDATE legacy_import SET state='unknown', attempts=attempts+1 WHERE slot=1"); return this.read(binding)!;
     }).immediate();
   }
-  recordDecision(binding: LegacyImportBinding, command: LegacyImportCommand, raw: unknown): LegacyImportEntry {
+  recordDecision(binding: LegacyImportBinding, command: LegacyImportCommand, raw: unknown, settledAttempt?: number): LegacyImportEntry {
     const decision = parseJevDecision(raw);
     return this.db.transaction(() => {
       const current = this.read(binding);
       if (!current || JSON.stringify(current.command) !== JSON.stringify(workLedgerCommandSchema.parse(command))) throw new Error('Decision command mismatch');
       const prior = current.decisions.find(item => item.decisionId === decision.decisionId);
       if (prior) { if (JSON.stringify(prior) !== JSON.stringify(decision)) throw new Error('Decision identity changed'); return current; }
-      this.db.query('UPDATE legacy_import SET decisions=? WHERE slot=1').run(JSON.stringify([...current.decisions, decision])); return this.read(binding)!;
+      this.db.query('UPDATE legacy_import SET decisions=? WHERE slot=1').run(JSON.stringify([...current.decisions, decision]));
+      // Only the matching dispatch from a previously known pending state can
+      // become reconsiderable. Another/earlier unresolved delivery stays unknown.
+      if (settledAttempt !== undefined && decision.outcome !== 'act' && current.state === 'unknown' && current.attempts === settledAttempt) this.db.exec("UPDATE legacy_import SET state='pending' WHERE slot=1");
+      return this.read(binding)!;
     }).immediate();
   }
-  record(binding: LegacyImportBinding, command: LegacyImportCommand, raw: WorkLedgerResult): LegacyImportEntry {
+  record(binding: LegacyImportBinding, command: LegacyImportCommand, raw: WorkLedgerResult, settledAttempt?: number): LegacyImportEntry {
     const result = legacyImportResultSchema.parse(raw);
     return this.db.transaction(() => {
       const current = this.readExpected(binding, command);
@@ -143,7 +148,7 @@ export class LegacyImportJournal {
       if (current.state === 'accepted') return current;
       const actor = result.kind === 'accepted' ? result.event.actorId : result.kind === 'indeterminate' ? result.actorId : current.receiptActorId;
       if (current.receiptActorId && actor !== current.receiptActorId) throw new Error('Receipt actor changed');
-      const state = result.kind === 'accepted' ? 'accepted' : result.kind === 'rejected' && current.attempts === 1 ? 'rejected' : 'unknown';
+      const state = result.kind === 'accepted' ? 'accepted' : result.kind === 'rejected' && current.attempts === (settledAttempt ?? 1) ? 'rejected' : 'unknown';
       this.db.query('UPDATE legacy_import SET state=?, result=?, actor=? WHERE slot=1').run(state, JSON.stringify(result), actor); return this.read(binding)!;
     }).immediate();
   }

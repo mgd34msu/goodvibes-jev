@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Add explicit shared legacy import submission, Jev reconsideration and exact-request recovery. Durable command identity precedes dispatch; live paired authority and workspace generations fence native admission. Historical completion remains reported and unverified, with legacy source records retained.
+
 - Add source-bound continuation of native-owned hosted sessions, with immutable completed conversation context, exact original intake, durable FIFO dispatch and input-specific cancellation.
 
 - WebUI native conversation admission now reaches the real hosted turn through

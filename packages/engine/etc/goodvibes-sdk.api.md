@@ -29311,6 +29311,78 @@ export interface OperatorMethodOutputMap {
         requestId: string;
         actorId: string;
         reason: string;
+    } | {
+        kind: "decision";
+        decision: {
+            schemaVersion: 1;
+            decisionId: string;
+            binding: {
+                sourceId: string;
+                inputRevision: string;
+                actionId: string;
+                actionRevision: string;
+                authorityId: string;
+                authorityRevision: string;
+                scopeId: string;
+                scopeRevision: string;
+            };
+            judgmentDecisionIds: readonly string[];
+            evidence: readonly ({
+                id: string;
+                revision: string;
+            })[];
+            summary: string;
+            outcome: "revise";
+            next: {
+                id: string;
+                revision: string;
+                kind: "gather-evidence" | "reconsider" | "revise-action";
+            };
+        } | {
+            schemaVersion: 1;
+            decisionId: string;
+            binding: {
+                sourceId: string;
+                inputRevision: string;
+                actionId: string;
+                actionRevision: string;
+                authorityId: string;
+                authorityRevision: string;
+                scopeId: string;
+                scopeRevision: string;
+            };
+            judgmentDecisionIds: readonly string[];
+            evidence: readonly ({
+                id: string;
+                revision: string;
+            })[];
+            summary: string;
+            outcome: "defer";
+            until: {
+                id: string;
+                revision: string;
+            };
+        } | {
+            schemaVersion: 1;
+            decisionId: string;
+            binding: {
+                sourceId: string;
+                inputRevision: string;
+                actionId: string;
+                actionRevision: string;
+                authorityId: string;
+                authorityRevision: string;
+                scopeId: string;
+                scopeRevision: string;
+            };
+            judgmentDecisionIds: readonly string[];
+            evidence: readonly ({
+                id: string;
+                revision: string;
+            })[];
+            summary: string;
+            outcome: "reject";
+        };
     };
     // (undocumented)
     "workLedger.intake.admit": {

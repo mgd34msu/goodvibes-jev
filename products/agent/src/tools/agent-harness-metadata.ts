@@ -24,11 +24,11 @@ export function describeCommandPolicy(commandName: string): CommandExecutionPoli
   const confirmation = 'agent_harness mode:"run_command" requires confirm:true and explicitUserRequest for every slash command invocation.';
   if (root === 'work-import') {
     return {
-      effect: 'read-only',
+      effect: 'mixed',
       requiresConfirmation: false,
-      confirmation: 'Preview and status use existing authenticated host read permissions without extra confirmation flags.',
+      confirmation: 'Read operations use existing host read permissions. Explicit submission and recovery use current import authority and a fresh host-owned Jev decision; caller confirmation flags grant no authority.',
       preferredModelTool: `${agentHarnessModes('run_command')} commandName:"work-import"`,
-      boundary: '/work-import preview|status <project-id> reads complete legacy preparation and durable recovery state using the selected authenticated host, admin, read:work-ledger and read:knowledge. It does not submit an import, dispatch native work or grant authority from historical claims. Autonomous mutation remains unavailable until the shared host gate is composed.',
+      boundary: '/work-import preview|status|submit <project-id>; reconsider|recover|cancel|restart <project-id> <request-id>. Submission captures complete persisted legacy sources and saves the exact command before dispatch. Reconsideration asks Jev again; recovery retains the original request and reconciles host receipts. Only a selected definitive rejection or undispatched cancellation permits restart. Imports preserve historical claims without granting execution or verification. Host, principal, workspace and live capability checks remain mandatory.',
     };
   }
   if (root === 'work') {

@@ -1305,7 +1305,7 @@
         "token",
         "workspace"
       ],
-      "text": "export interface LegacyImportHost { readonly baseUrl: string; readonly token: string; readonly workspace: string; }"
+      "text": "export interface LegacyImportHost { readonly baseUrl: string; readonly token: string; readonly workspace: string; readonly selectionIdentity?: string; }"
     },
     {
       "name": "LegacyImportJournal",
@@ -1320,7 +1320,7 @@
         "recordDecision",
         "reserve"
       ],
-      "text": "export declare class LegacyImportJournal { private readonly db; constructor(path: string, directorySync?: (path: string) => void); close(): void; read(binding: LegacyImportBinding): LegacyImportEntry | null; reserve(binding: LegacyImportBinding, makeCommand: () => LegacyImportCommand, replaceRequestId?: string): LegacyImportEntry; private readExpected; cancel(binding: LegacyImportBinding, command: LegacyImportCommand): LegacyImportEntry | null; dispatch(binding: LegacyImportBinding, command: LegacyImportCommand): LegacyImportEntry; recordDecision(binding: LegacyImportBinding, command: LegacyImportCommand, raw: unknown): LegacyImportEntry; record(binding: LegacyImportBinding, command: LegacyImportCommand, raw: WorkLedgerResult): LegacyImportEntry; } ;; via WorkLedgerResult = export type WorkLedgerResult = { readonly kind: 'accepted'; readonly replayed: boolean; readonly event: WorkLedgerEvent; } | { readonly kind: 'rejected'; readonly code: WorkLedgerRejection; readonly reason: string; readonly revision: number | null; } | { readonly kind: 'indeterminate'; readonly requestId: string; readonly actorId: string; readonly reason: string; };"
+      "text": "export declare class LegacyImportJournal { private readonly db; constructor(path: string, directorySync?: (path: string) => void); close(): void; read(binding: LegacyImportBinding): LegacyImportEntry | null; reserve(binding: LegacyImportBinding, makeCommand: () => LegacyImportCommand, replaceRequestId?: string): LegacyImportEntry; private readExpected; cancel(binding: LegacyImportBinding, command: LegacyImportCommand): LegacyImportEntry | null; dispatch(binding: LegacyImportBinding, command: LegacyImportCommand, expected?: Pick<LegacyImportEntry, 'state' | 'attempts'>): LegacyImportEntry; recordDecision(binding: LegacyImportBinding, command: LegacyImportCommand, raw: unknown, settledAttempt?: number): LegacyImportEntry; record(binding: LegacyImportBinding, command: LegacyImportCommand, raw: WorkLedgerResult, settledAttempt?: number): LegacyImportEntry; } ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; WorkLedgerResult = export type WorkLedgerResult = { readonly kind: 'accepted'; readonly replayed: boolean; readonly event: WorkLedgerEvent; } | { readonly kind: 'rejected'; readonly code: WorkLedgerRejection; readonly reason: string; readonly revision: number | null; } | { readonly kind: 'indeterminate'; readonly requestId: string; readonly actorId: string; readonly reason: string; };"
     },
     {
       "name": "LegacyImportOperatorClient",
@@ -1330,7 +1330,7 @@
         "dispose",
         "invoke"
       ],
-      "text": "export interface LegacyImportOperatorClient { currentAuth(): Promise<unknown>; invoke(method: string, input: Record<string, unknown>): Promise<unknown>; dispose(): void; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export interface LegacyImportOperatorClient { currentAuth(signal?: AbortSignal): Promise<unknown>; invoke(method: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>; dispose(): void; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "LegacyImportOperatorOptions",
@@ -1347,11 +1347,16 @@
       "kind": "interface",
       "required": [
         "binding",
+        "cancel",
         "dispose",
         "prepare",
-        "status"
+        "reconsider",
+        "recover",
+        "restart",
+        "status",
+        "submit"
       ],
-      "text": "export interface LegacyImportOperatorSession { readonly binding: LegacyImportBinding; prepare(): Promise<LegacyMigrationPreparation>; status(): Promise<LegacyImportEntry | null>; dispose(): void; } ;; via LegacyMigrationPreparation = export type LegacyMigrationPreparation = { readonly kind: 'prepared'; readonly manifest: LegacyMigrationManifest; } | { readonly kind: 'blocked'; readonly code: 'cancelled' | 'pending-local-changes' | 'invalid-source' | 'limit' | 'identity-conflict' | 'target-conflict' | 'stale-preparation'; readonly reason: string; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export interface LegacyImportOperatorSession { readonly binding: LegacyImportBinding; prepare(): Promise<LegacyMigrationPreparation>; status(): Promise<LegacyImportEntry | null>; submit(): Promise<LegacyImportEntry>; reconsider(requestId: string): Promise<LegacyImportEntry>; recover(requestId: string): Promise<LegacyImportEntry>; cancel(requestId: string): Promise<LegacyImportEntry>; restart(requestId: string): Promise<LegacyImportEntry>; dispose(): void; } ;; via LegacyMigrationPreparation = export type LegacyMigrationPreparation = { readonly kind: 'prepared'; readonly manifest: LegacyMigrationManifest; } | { readonly kind: 'blocked'; readonly code: 'cancelled' | 'pending-local-changes' | 'invalid-source' | 'limit' | 'identity-conflict' | 'target-conflict' | 'stale-preparation'; readonly reason: string; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "bindingKey",

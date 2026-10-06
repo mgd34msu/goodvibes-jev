@@ -1,6 +1,6 @@
 # TUI-owned host pairing
 
-Native `/work`, native headless intake and legacy work-import reads resolve a captured credential from `.goodvibes/tui/connected-host-credentials/credentials.json` under the selected TUI home. Records are keyed by canonical HTTP(S) origin: scheme, host and port. Another origin does not receive this credential. Paths, user information, queries, fragments and ambiguous input are refused.
+Native `/work`, native headless intake and legacy work-import commands resolve a captured credential from `.goodvibes/tui/connected-host-credentials/credentials.json` under the selected TUI home. Records are keyed by canonical HTTP(S) origin: scheme, host and port. Another origin does not receive this credential. Paths, user information, queries, fragments and ambiguous input are refused.
 
 No native path reads the Agent's private store, the daemon-global operator token or an environment credential. Missing, unsafe and indeterminate stores fail closed. Resolution is passive: no directory creation, credential generation, adoption, fallback, repair, rotation or revocation. Reading a saved credential does not grant write/admin authority; live read scopes remain sufficient for supported reads. Native submission/intake separately require the live authenticated non-shared token principal, administrative authority and read/write-work-ledger scopes.
 

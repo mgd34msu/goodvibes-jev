@@ -212,18 +212,18 @@ copied reader authority/type contract is introduced.
 
 ## Bounded legacy import (THE-105)
 
-This is a deterministic storage/transport foundation. Current owner authentication
-and capability checks are host authority boundaries, not human approval prompts.
-Any semantic reconciliation or decision to submit an import belongs to the
-shared autonomous Jev admission path described in
-[`autonomous-jev-decisions.md`](../../../../../../../docs/design/autonomous-jev-decisions.md).
-That production admission/recovery integration remains separate unfinished work;
-this foundation alone does not complete THE-105 or retire the old planning UX.
+Agent and TUI explicitly invoke the shared native import workflow described in
+[`legacy-ledger-migration.md`](../../../../../../../products/agent/docs/legacy-ledger-migration.md).
+The selected daemon composes the shared recorded Jev admission owner over the
+existing deterministic ledger transaction. This storage-only import never starts
+an attempt, grants runner permission, or retires the active planning interview.
 
 The selected daemon exposes `workLedger.prepareLegacyImport` and
 `workLedger.importLegacy` at `POST /api/work-ledger/legacy-import/prepare` and
-`POST /api/work-ledger/legacy-import`. Both require current owner authentication
-and both `write:work-ledger-import` and `read:knowledge`; the ledger read scope grants no import permission.
+`POST /api/work-ledger/legacy-import`. Preparation requires current admin authentication, `read:work-ledger` and
+`read:knowledge`. Import requires a live persisted paired-token owner with
+`write:work-ledger-import` and `read:knowledge`, plus the actual workspace scope
+owner. The ledger read scope grants no import permission.
 Preparation accepts `{projectId, sourceIds}` and captures complete persisted
 KnowledgeSourceRecords and their host-generated generation fingerprints. It
 returns the version-1 canonical preparation manifest. Preparation is read-only.
@@ -235,6 +235,13 @@ Surfacing the host's pending-edit state during remote preparation remains
 follow-on integration work; this endpoint does not currently expose that state.
 The manifest contains source-qualified fragments, original IDs, links and full
 source records; the engine and products share one preparation implementation.
+
+The shared product journal durably captures exact command bytes before dispatch.
+Unknown outcomes cannot be re-prepared or assigned another request ID. Explicit
+reconsideration makes a fresh host reading; a previous decision grants nothing.
+Import responses also include `{kind:"decision", decision}` for a recorded
+non-act outcome, which makes no native ledger change. Accepted exact replay is
+looked up before evaluating Jev or checking current source/host preparation.
 
 Submit `{type:'import_legacy', requestId, expectedRevision, manifest}`. The entire
 serialized command is limited to 256 KiB, without truncation. The host supplies
