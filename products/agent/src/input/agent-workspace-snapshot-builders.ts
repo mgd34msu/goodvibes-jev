@@ -247,7 +247,7 @@ export function buildAgentWorkspaceMcpServerSnapshot(context: CommandContext) {
 
 export function buildAgentWorkspaceCompanionAccessSnapshot(context: CommandContext, runtimeBaseUrl: string) {
   const homeDirectory = context.workspace?.shellPaths?.homeDirectory ?? '';
-  const tokenRecord: ConnectedHostOperatorToken = homeDirectory.length > 0
+  const tokenRecord: Pick<ConnectedHostOperatorToken, 'path' | 'present' | 'token' | 'error'> = homeDirectory.length > 0
     ? readConnectedHostOperatorToken(homeDirectory)
     : { path: '(Agent home unavailable)', present: false, token: null };
   const tokenFingerprint = tokenRecord.token ? connectedHostOperatorTokenFingerprint(tokenRecord.token) : null;

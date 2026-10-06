@@ -1,7 +1,7 @@
-import { readAgentHostPairing } from './connected-host-pairing-store.ts';
+import { canonicalizePairingHost, readAgentHostPairing, type AgentHostPairing } from './connected-host-pairing-store.ts';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -9,6 +9,10 @@ export interface ConnectedHostOperatorToken {
   readonly path: string;
   readonly present: boolean;
   readonly token: string | null;
+  /** Opaque identity of the exact selected credential, including its provenance. */
+  readonly selectionIdentity: string;
+  /** Only private pairing records bind a token to a locally known principal. */
+  readonly expectedPrincipalId?: string;
   readonly error?: string;
 }
 
@@ -21,39 +25,48 @@ export function connectedHostOperatorTokenPath(homeDirectory: string): string {
 }
 
 export function readConnectedHostOperatorToken(homeDirectory: string, hostUrl?: string): ConnectedHostOperatorToken {
+  const selected = (value: Omit<ConnectedHostOperatorToken, 'selectionIdentity'>, pairing?: AgentHostPairing): ConnectedHostOperatorToken => ({
+    ...value,
+    // Only the selected record participates: shadowed credentials cannot change
+    // this authority. Never expose the private record in the returned identity.
+    selectionIdentity: createHash('sha256').update(JSON.stringify([
+      'agent-connected-host-selection:v1', hostUrl === undefined ? null : canonicalizePairingHost(hostUrl) ?? hostUrl,
+      resolve(homeDirectory), value.path, value.token, pairing ?? null,
+    ])).digest('hex'),
+  });
   const connectedHostEnvToken = process.env.GOODVIBES_CONNECTED_HOST_TOKEN?.trim();
   if (connectedHostEnvToken) {
-    return {
+    return selected({
       path: 'env:GOODVIBES_CONNECTED_HOST_TOKEN',
       present: true,
       token: connectedHostEnvToken,
-    };
+    });
   }
   const legacyEnvToken = process.env.GOODVIBES_DAEMON_TOKEN?.trim();
   if (legacyEnvToken) {
-    return {
+    return selected({
       path: 'env:GOODVIBES_DAEMON_TOKEN',
       present: true,
       token: legacyEnvToken,
-    };
+    });
   }
   if (hostUrl !== undefined) {
     const pairing = readAgentHostPairing(homeDirectory, hostUrl);
-    if (pairing.status === 'paired') return { path: 'Agent host-bound pairing store', present: true, token: pairing.token };
-    if (pairing.status === 'unknown') return { path: 'Agent host-bound pairing store', present: true, token: null, error: 'A prior pairing outcome is unknown; no credential fallback or remint is allowed.' };
-    if (pairing.status === 'unavailable') return { path: 'Agent host-bound pairing store', present: true, token: null, error: 'The Agent host-bound pairing store could not be read safely.' };
+    if (pairing.status === 'paired') return selected({ path: 'Agent host-bound pairing store', present: true, token: pairing.token, expectedPrincipalId: `pairing:${pairing.tokenId}` }, pairing);
+    if (pairing.status === 'unknown') return selected({ path: 'Agent host-bound pairing store', present: true, token: null, error: 'A prior pairing outcome is unknown; no credential fallback or remint is allowed.' }, pairing);
+    if (pairing.status === 'unavailable') return selected({ path: 'Agent host-bound pairing store', present: true, token: null, error: 'The Agent host-bound pairing store could not be read safely.' }, pairing);
   }
   const path = connectedHostOperatorTokenPath(homeDirectory);
-  if (!existsSync(path)) return { path, present: false, token: null };
+  if (!existsSync(path)) return selected({ path, present: false, token: null });
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf-8')) as unknown;
     const token = isRecord(parsed) && typeof parsed.token === 'string' && parsed.token.trim().length > 0
       ? parsed.token
       : null;
-    return { path, present: true, token };
+    return selected({ path, present: true, token });
   } catch {
     // Parser diagnostics can quote the secret-bearing source text.
-    return { path, present: true, token: null, error: 'Connected-host token record could not be read.' };
+    return selected({ path, present: true, token: null, error: 'Connected-host token record could not be read.' });
   }
 }
 

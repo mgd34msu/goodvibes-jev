@@ -4,7 +4,7 @@ Generated from the synced GoodVibes operator contract artifact.
 
 ## Summary
 
-- Methods: `534`
+- Methods: `535`
 - Events: `34`
 - Auth modes: `shared-bearer`, `session-login`
 - HTTP status path: `/status`
@@ -143308,13 +143308,168 @@ Read authoritative native session ownership. Only an explicit legacy result perm
 
 #### `workLedger.turn.start`
 
-Deliver an already admitted native conversation input at most once through a host-owned broker identity and durable dispatch claim. Accepts source identity only. Ambiguous dispatch requires inspection and is never replayed.
+Deliver an already admitted native conversation input at most once through a host-owned broker identity and durable dispatch claim bound to the WebUI settings owner. Accepts source identity only. Cross-surface replay is refused. Ambiguous dispatch requires inspection and is never replayed.
 
 - Title: `Start Native Hosted Turn`
 - Source: `builtin`
 - Access: `admin`
 - Transport: `http`, `ws`
 - HTTP: `POST /api/work-ledger/turn/start`
+- Scopes: `read:work-ledger`, `write:work-ledger`, `write:sessions`
+- Emits events: none
+- Dangerous: `no`
+- Invokable: `yes`
+
+##### Input schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "projectId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "inputId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "sourceRevision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  },
+  "required": [
+    "projectId",
+    "inputId",
+    "sourceRevision"
+  ],
+  "additionalProperties": false
+}
+```
+
+##### Output schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "inputId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "preparing",
+            "queued",
+            "running",
+            "cancelling",
+            "completed",
+            "cancelled",
+            "recovery-required"
+          ]
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "brokerInputId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "correlationId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "projectId",
+        "requestId",
+        "inputId",
+        "sourceRevision",
+        "state",
+        "sessionId",
+        "brokerInputId",
+        "correlationId"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "not-found"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}
+```
+
+#### `workLedger.turn.startAgent`
+
+Deliver an already admitted native conversation input at most once through a host-owned broker identity and durable dispatch claim bound to the Agent settings owner. Accepts source identity only. Cross-surface replay is refused. Ambiguous dispatch requires inspection and is never replayed.
+
+- Title: `Start Agent Native Hosted Turn`
+- Source: `builtin`
+- Access: `admin`
+- Transport: `http`, `ws`
+- HTTP: `POST /api/work-ledger/turn/startAgent`
 - Scopes: `read:work-ledger`, `write:work-ledger`, `write:sessions`
 - Emits events: none
 - Dangerous: `no`

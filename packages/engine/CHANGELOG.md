@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Bind native Agent hosted delivery to a server-selected settings owner and a
+  durable source/dispatch claim. Cross-surface replays and continuations cannot
+  switch namespaces. Retain native turn/tool frames in the existing bounded
+  replay ring before the first observer, sharing event IDs across live readers.
+
 - Home Graph answer scoping now reads object/integration identity and result
   relevance through shared typed judgments instead of object/type point guesses.
   Preserve bounded retrieval, keep unknown literal confidence at zero, and bind

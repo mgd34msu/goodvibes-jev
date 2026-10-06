@@ -11,8 +11,10 @@
  * where it used to have one call.
  */
 
-import { createRemoteConversationRouter } from '../runtime/client/remote-conversation.ts';
-import { mirrorHostedSessionToStore, recoverUnmirroredHostedSessions } from '../runtime/client/hosted-session-mirror.ts';
+import type { NativeConversationInput } from '../runtime/native-conversation-input.ts';
+import { nativeConversationIntakeLines, type NativeConversationIntakeActions, type NativeConversationIntakeState } from '../runtime/native-conversation-intake.ts';
+import { createRemoteConversationRouter, sameNativeRemoteConnection, type ConnectedHostResolution } from '../runtime/client/remote-conversation.ts';
+import { mirrorHostedSessionToStore, recoverUnmirroredHostedSessions, type HostedAttachReply } from '../runtime/client/hosted-session-mirror.ts';
 import { persistConversation } from '@/runtime/index.ts';
 import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
 import type { BootstrapContext } from '../runtime/bootstrap.ts';
@@ -56,6 +58,13 @@ export interface RemoteConversationWiring {
   dispose(): void;
 }
 
+export interface NativeRemoteConversationWiring extends RemoteConversationWiring {
+  /** Native admission always precedes delivery; null only when local routing was chosen. */
+  routeNativeOrExplain(source: NativeConversationInput, intake: NativeConversationIntakeActions | undefined): Promise<RoutedTurnHandle | null>;
+  /** Explicit recovery observes the exact saved original without submitting it again. */
+  observeNative(state: NativeConversationIntakeState, intake: NativeConversationIntakeActions): Promise<RoutedTurnHandle>;
+}
+
 /** A turn the daemon accepted, and the way to wait for how it ended. */
 export interface RoutedTurnHandle {
   readonly hostedSessionId: string | null;
@@ -65,10 +74,13 @@ export interface RoutedTurnHandle {
 export function installRemoteConversationRouting(
   ctx: BootstrapContext,
   options: RemoteConversationWiringOptions,
-): RemoteConversationWiring {
+): NativeRemoteConversationWiring {
   const conversation = ctx.conversation;
   let routeSequence = 0;
   let disposed = false;
+  type PendingNativeAdmission = { readonly intake: NativeConversationIntakeActions; readonly sequence: number; request?: { readonly requestId: string; readonly inputId: string } };
+  let nativePending: PendingNativeAdmission | undefined;
+  const nativeMirrored = new Set<string>();
   // The waiting state a hosted turn shows is the orchestrator's own, driven on
   // the orchestrator's own cadence, see hosted-turn-activity.ts. Nothing in
   // the render loop has to know that hosted turns exist.
@@ -84,23 +96,39 @@ export function installRemoteConversationRouting(
    * that answered the person correctly must not look failed because the mirror
    * could not be written.
    */
-  const mirrorHostedSession = async (hostedSessionId: string): Promise<void> => {
+  const mirrorHostedSession = async (
+    hostedSessionId: string, current: () => boolean = () => !disposed,
+    connection?: Extract<ConnectedHostResolution, { readonly baseUrl: string }>,
+  ): Promise<void> => {
+    if (!current()) return;
     const outcome = await mirrorHostedSessionToStore(hostedSessionId, {
-      verbs: ctx.services.daemonVerbs,
+      // A native completion never re-resolves a different host or token while
+      // its asynchronous attachment is in flight.
+      verbs: connection ? { async invoke<T>(method: string): Promise<T> {
+        if (!current() || method !== 'sessions.hosted.attach') throw new Error('Native mirror selection changed');
+        const response = await fetch(`${connection.baseUrl}/api/control-plane/methods/sessions.hosted.attach/invoke`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ body: { sessionId: hostedSessionId, clientId } }),
+        });
+        if (!current() || !response.ok) throw new Error('Native mirror attachment was not confirmed');
+        const reply = await response.json() as HostedAttachReply;
+        if (!current() || reply.session.id !== hostedSessionId) throw new Error('Native mirror identity changed');
+        return reply as T;
+      } } : ctx.services.daemonVerbs,
       clientId,
       persist: (sessionId, snapshot, model, provider, title) => {
+        if (!current()) throw new Error('Hosted mirror selection changed');
         persistConversation(sessionId, snapshot, model, provider, title, { surface: ctx.services.surface }, 'auto');
       },
       fallbackModel: ctx.runtime.model,
       fallbackProvider: ctx.runtime.provider,
     });
-    if (!outcome.mirrored) {
-      logger.warn('[remote-conversation] a hosted conversation was not mirrored into the session store', {
-        hostedSessionId,
-        reason: outcome.reason,
-      });
-    }
+    if (!outcome.mirrored && current()) logger.warn('[remote-conversation] a hosted conversation was not mirrored into the session store', {
+      hostedSessionId, reason: outcome.reason,
+    });
   };
+
   // The crash path, run once at install: a surface that died mid-turn was never
   // handed a completion, so nothing mirrored at turn end. The daemon still has
   // those transcripts. Fire-and-forget, a daemon that is slow or absent at
@@ -173,7 +201,89 @@ export function installRemoteConversationRouting(
       error: 'This surface stopped observing the submission; its remote outcome is unconfirmed.', stopReason: 'observer_detached' }),
   });
 
+  const report = (state: NativeConversationIntakeState | undefined): void => {
+    for (const line of nativeConversationIntakeLines(state)) options.notify(line);
+    options.render();
+  };
+  const observeNative = async (state: NativeConversationIntakeState, intake: NativeConversationIntakeActions): Promise<RoutedTurnHandle> => {
+    const snapshot = state.hostedTurn;
+    if (disposed || !state.hostedCurrent?.() || !snapshot || 'kind' in snapshot || !snapshot.sessionId
+      || !snapshot.correlationId || !snapshot.brokerInputId || snapshot.state === 'preparing' || snapshot.state === 'recovery-required'
+      || state.result?.kind !== 'turn' || !state.request) { activity.end(); return detachedHandle(); }
+    const connection = ctx.services.resolveConnectedHost();
+    if ('reason' in connection) { activity.end(); return detachedHandle(); }
+    const current = () => !disposed && state.hostedCurrent?.() === true
+      && sameNativeRemoteConnection(connection, ctx.services.resolveConnectedHost());
+    const sequence = ++routeSequence;
+    const request = { ...state.request };
+    const key = JSON.stringify([connection, ctx.services.workingDirectory, snapshot.projectId, request.requestId, request.inputId, snapshot.sourceRevision]);
+    // Render the original before opening catch-up. A complete fast reply can
+    // arrive synchronously while the stream opens; it must follow its user.
+    if (!nativeMirrored.has(key)) {
+      nativeMirrored.add(key);
+      conversation.addUserMessage(state.result.text);
+    }
+    activity.begin();
+    if (disposed || sequence !== routeSequence || !current()) { if (sequence === routeSequence) activity.end(); return detachedHandle(); }
+    const outcome = await router.observeNative(snapshot, async () => {
+      if (!current()) throw new Error('Native selection changed');
+      const result = await intake.cancel(request);
+      if (!current() || !result || result.status === 'unknown' || result.status === 'unavailable'
+        || !result.hostedTurn || 'kind' in result.hostedTurn) throw new Error('Native cancellation is unconfirmed');
+      report(result);
+    }, current);
+    if (!outcome.routed) {
+      if (sequence === routeSequence) activity.end();
+      options.notify(outcome.reason); options.render();
+      return detachedHandle();
+    }
+    const finish = (): void => {
+      if (!current()) return;
+      if (sequence === routeSequence) activity.end();
+      if (current()) void mirrorHostedSession(outcome.hostedSessionId, current, connection);
+    };
+    void outcome.completion.then(finish, finish);
+    return { hostedSessionId: outcome.hostedSessionId, completion: outcome.completion };
+  };
+
   return {
+    observeNative,
+    routeNativeOrExplain: async (source, intake) => {
+      if (disposed) return detachedHandle();
+      if (ctx.services.configManager.get('hostedSessions.routeConversationTurns') === false) return null;
+      if (nativePending) {
+        options.notify('A native input is already pending. No second submission was created.');
+        return detachedHandle();
+      }
+      if (!intake) {
+        options.notify('Native conversation intake is unavailable. No legacy turn was started.');
+        return detachedHandle();
+      }
+      const sequence = ++routeSequence;
+      const pending: PendingNativeAdmission = { intake, sequence };
+      nativePending = pending;
+      try {
+        // Own the operation before rendering: render callbacks may reenter
+        // submission, Stop, or disposal synchronously.
+        activity.begin();
+        if (disposed || sequence !== routeSequence || nativePending !== pending) return detachedHandle();
+        // Source was captured before model directives, shell context or file
+        // expansion. The host alone captures a continuation's actual history.
+        const state = await intake.submit(source, { delivery: 'hosted' });
+        if (disposed || sequence !== routeSequence) return detachedHandle();
+        if (state?.request) pending.request = { ...state.request };
+        report(state);
+        if (disposed || sequence !== routeSequence) return detachedHandle();
+        if (state?.hostedTurn) return await observeNative(state, intake);
+        activity.end();
+        return detachedHandle();
+      } catch {
+        if (!disposed && sequence === routeSequence) {
+          activity.end(); options.notify('Native delivery is unconfirmed. Inspect /work intake-status. No legacy turn was started.'); options.render();
+        }
+        return detachedHandle();
+      } finally { if (nativePending === pending) nativePending = undefined; }
+    },
     routeOrExplain: async (text: string, hasAttachments: boolean): Promise<RoutedTurnHandle | null> => {
       // Before the round trip, not after: the waiting state has to appear on
       // the keystroke. Opening or steering a hosted session is a network call,
@@ -227,11 +337,29 @@ export function installRemoteConversationRouting(
     // settled observation, but this controller still owns the shared indicator
     // until routeOrExplain receives that reply. Never abort the local runtime
     // merely because the hosted observer has already reached its terminal.
-    cancelHostedTurn: () => router.cancelTurn() || activity.isActive(),
+    cancelHostedTurn: () => {
+      const pending = nativePending;
+      const intake = pending?.intake;
+      if (intake) {
+        const sequence = ++routeSequence;
+        nativePending = undefined;
+        const cancellation = pending?.request ? intake.cancel(pending.request) : intake.stop ? intake.stop() : (intake.close(), Promise.resolve(undefined));
+        void cancellation.then(async state => {
+          if (disposed || sequence !== routeSequence) return;
+          report(state);
+          if (disposed || sequence !== routeSequence) return;
+          if (state?.hostedTurn) await observeNative(state, intake);
+          else activity.end();
+        }, () => { if (!disposed) { activity.end(); options.notify('Native cancellation is unconfirmed. Inspect /work intake-status.'); options.render(); } });
+        return true;
+      }
+      return router.cancelTurn() || activity.isActive();
+    },
     hostedToolPreview: () => activity.toolPreview(),
     dispose: () => {
       disposed = true;
       routeSequence += 1;
+      nativePending?.intake.close(); nativePending = undefined;
       activity.dispose();
       router.dispose();
     },

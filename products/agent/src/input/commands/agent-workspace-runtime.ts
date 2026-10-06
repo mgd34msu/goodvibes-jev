@@ -27,7 +27,7 @@ export function registerAgentWorkspaceRuntimeCommands(registry: CommandRegistry)
         if (!intake) { ctx.print('Native conversation intake is unavailable in this shell.'); return; }
         const result = await (action === 'intake-status' ? intake.status() : action === 'intake-retry' ? intake.retry() : action === 'intake-resume' ? intake.resume() : intake.cancel());
         ctx.print(nativeConversationIntakeLines(result).join('\n'));
-        if (result?.turnReady) await ctx.dispatchNativeIntakeTurn?.(result);
+        if (result?.turnReady || result?.hostedTurn) await ctx.dispatchNativeIntakeTurn?.(result);
         return;
       }
       if (action === 'submit-file' || action === 'submission-status' || action === 'submission-retry') {

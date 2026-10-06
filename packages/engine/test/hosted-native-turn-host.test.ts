@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
@@ -212,6 +212,8 @@ describe('native hosted owner through real broker, manager and runtime', () => {
     expect(cancelled).toMatchObject({ state: 'cancelled', sessionId: null, brokerInputId: null, correlationId: null });
     expect(await f.host.start(f.request, f.authority, f.access)).toEqual(cancelled);
     expect(await f.newHost().start(f.request, f.authority, f.access)).toEqual(cancelled);
+    expect(await f.host.startAgent(f.request, f.authority, f.access)).toEqual(cancelled);
+    expect(await f.newHost().startAgent(f.request, f.authority, f.access)).toEqual(cancelled);
     expect(await f.status()).toEqual(cancelled);
     expect(f.counts).toMatchObject({ creates: 0, admits: 0, deliveries: 0 });
     expect(f.requests).toHaveLength(0);
@@ -296,14 +298,99 @@ describe('native hosted owner through real broker, manager and runtime', () => {
   });
 });
 
-describe('native hosted authority and input boundaries', () => {
+describe('native hosted server-selected settings ownership', () => {
+  for (const [operation, otherOperation, surface] of [
+    ['startAgent', 'start', 'agent'], ['start', 'startAgent', 'webui'],
+  ] as const) {
+    test(`${operation} routes actual runtime settings to ${surface} and refuses opposite-surface replay`, async () => {
+      const f = await fixture();
+      const stores = Object.fromEntries(['agent', 'webui'].map(name => {
+        const directory = join(f.root, '.goodvibes', name); mkdirSync(directory, { recursive: true });
+        const path = join(directory, 'settings.json'); writeFileSync(path, JSON.stringify({ voice: { wake: { enabled: false } } }));
+        return [name, path];
+      }));
+      const started = snapshot(await f.host[operation](f.request, f.authority, f.access));
+      expect((await f.settled()).state).toBe('completed');
+      expect(f.manager.get(started.sessionId!)?.originSurface).toBe(surface);
+      expect(await f.journal.read(f.identity)).toMatchObject({ originSurface: surface, state: 'completed' });
+      const registry = f.runtime(started.sessionId!).toolRegistry;
+      const written = await registry.execute('owned-settings-write', 'goodvibes_settings', { mode: 'set', key: 'voice.wake.enabled', value: true, confirm: true });
+      expect(written.success).toBe(true);
+      expect(JSON.parse(written.output!)).toMatchObject({ persistedTo: stores[surface], current: true, verifiedInOwningStore: true });
+      const read = await registry.execute('owned-settings-read', 'goodvibes_context', { mode: 'config_get', key: 'voice.wake.enabled' });
+      expect(read.success).toBe(true);
+      expect(JSON.parse(read.output!).settings).toContainEqual(expect.objectContaining({ key: 'voice.wake.enabled', value: true, source: stores[surface] }));
+      expect(JSON.parse(readFileSync(stores[surface]!, 'utf8'))).toEqual({ voice: { wake: { enabled: true } } });
+      expect(JSON.parse(readFileSync(stores[surface === 'agent' ? 'webui' : 'agent']!, 'utf8'))).toEqual({ voice: { wake: { enabled: false } } });
+      const terminal = await f.status();
+      expect(await f.host[operation](f.request, f.authority, f.access)).toEqual(terminal);
+      expect(await f.newHost()[operation](f.request, f.authority, f.access)).toEqual(terminal);
+      const journalBytes = readFileSync(f.journalPath, 'utf8');
+      await expect(f.host[otherOperation](f.request, f.authority, f.access)).rejects.toMatchObject({ code: 'stale' });
+      await expect(f.newHost()[otherOperation](f.request, f.authority, f.access)).rejects.toMatchObject({ code: 'stale' });
+      expect(readFileSync(f.journalPath, 'utf8')).toBe(journalBytes);
+      expect(await f.host.cancel(f.request, f.authority, f.access)).toEqual(terminal);
+      expect(f.counts).toMatchObject({ creates: 1, admits: 1, deliveries: 1 });
+      expect(f.requests).toHaveLength(1);
+    });
+
+    test(`${operation} coalesces only same-surface pending starts`, async () => {
+      const entered = deferred(), gate = deferred();
+      const f = await fixture({ beforeCreate: async () => { entered.resolve(); await gate.promise; } });
+      const first = f.host[operation](f.request, f.authority, f.access);
+      await entered.promise;
+      const duplicate = f.host[operation](f.request, f.authority, f.access);
+      try {
+        await expect(f.host[otherOperation](f.request, f.authority, f.access)).rejects.toMatchObject({ code: 'stale' });
+        await expect(f.newHost()[otherOperation](f.request, f.authority, f.access)).rejects.toMatchObject({ code: 'stale' });
+        f.setSource({ ...f.source, sourceRef: { ...f.source.sourceRef, sourceRevision: 'replacement-revision' } });
+        await expect(f.host[operation]({ ...f.request, sourceRevision: 'replacement-revision' }, f.authority, f.access)).rejects.toMatchObject({ code: 'stale' });
+        f.setSource(f.source);
+        expect(f.counts).toMatchObject({ creates: 1, admits: 1, deliveries: 0 });
+      } finally { f.setSource(f.source); gate.resolve(); }
+      expect(await duplicate).toEqual(await first);
+      expect((await f.settled()).state).toBe('completed');
+      expect(f.counts).toMatchObject({ creates: 1, admits: 1, deliveries: 1 });
+    });
+  }
+
+  test('simultaneous distinct host entries choose one settings owner and one real delivery', async () => {
+    const f = await fixture(), second = f.newHost();
+    const results = await Promise.allSettled([f.host.startAgent(f.request, f.authority, f.access), second.start(f.request, f.authority, f.access)]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(result => result.status === 'rejected' && result.reason.code === 'stale')).toHaveLength(1);
+    await eventually(() => f.journal.read(f.identity), value => value?.state === 'completed');
+    const record = (await f.journal.read(f.identity))!;
+    expect(f.manager.get(record.sessionId!)?.originSurface).toBe(record.originSurface);
+    expect(f.counts).toMatchObject({ creates: 1, admits: 1, deliveries: 1 });
+    expect(f.requests).toHaveLength(1);
+    expect(f.broker.getInputsSince(record.sessionId!)).toHaveLength(1);
+  });
+
+  test('Agent running turns remain cancellable through the common identity-only API', async () => {
+    const entered = deferred(), gate = deferred();
+    const f = await fixture({ chat: async () => { entered.resolve(); await gate.promise; return answer(); } });
+    const started = snapshot(await f.host.startAgent(f.request, f.authority, f.access));
+    await entered.promise;
+    const cancelling = f.host.cancel(f.request, f.authority, f.access);
+    try { await eventually(() => f.counts.cancellations, value => value > 0); }
+    finally { gate.resolve(); }
+    expect(await cancelling).toMatchObject({ state: 'cancelled', sessionId: started.sessionId });
+    expect(await f.journal.read(f.identity)).toMatchObject({ state: 'cancelled', originSurface: 'agent' });
+    expect(await f.host.startAgent(f.request, f.authority, f.access)).toMatchObject({ state: 'cancelled' });
+    await expect(f.host.start(f.request, f.authority, f.access)).rejects.toMatchObject({ code: 'stale' });
+    expect(f.counts.deliveries).toBe(1);
+  });
+});
+
+for (const operation of ['start', 'startAgent'] as const) describe(`native hosted authority and input boundaries (${operation})`, () => {
   test('forged request fields and wrong source identities cause no claim, session or model effects', async () => {
     const f = await fixture();
-    for (const extra of [{ text: 'forged' }, { brokerInputId: 'sin-forged' }, { correlationId: 'forged' }, { sourceRef: f.source.sourceRef }, { permit: {} }]) {
-      await expect(f.host.start({ ...f.request, ...extra }, f.authority, f.access)).rejects.toThrow();
+    for (const extra of [{ text: 'forged' }, { originSurface: 'agent' }, { surface: 'agent' }, { brokerInputId: 'sin-forged' }, { correlationId: 'forged' }, { sourceRef: f.source.sourceRef }, { permit: {} }]) {
+      await expect(f.host[operation]({ ...f.request, ...extra }, f.authority, f.access)).rejects.toThrow();
     }
     for (const changed of [{ projectId: 'another-project' }, { inputId: 'another-input' }, { sourceRevision: 'another-revision' }]) {
-      await expect(f.host.start({ ...f.request, ...changed }, f.authority, f.access)).rejects.toThrow('stale');
+      await expect(f.host[operation]({ ...f.request, ...changed }, f.authority, f.access)).rejects.toThrow('stale');
     }
     for (const changed of [
       { ...f.source, projectId: 'another-project' },
@@ -311,10 +398,10 @@ describe('native hosted authority and input boundaries', () => {
       { ...f.source, sourceRef: { ...f.source.sourceRef, sourceRevision: 'another-revision' } },
     ]) {
       f.setSource(changed);
-      await expect(f.host.start(f.request, f.authority, f.access)).rejects.toThrow('stale');
+      await expect(f.host[operation](f.request, f.authority, f.access)).rejects.toThrow('stale');
     }
     f.setSource({ kind: 'cancelled', projectId: f.source.projectId, requestId: f.source.requestId, sourceRef: f.source.sourceRef });
-    await expect(f.host.start(f.request, f.authority, f.access)).rejects.toThrow('not-turn');
+    await expect(f.host[operation](f.request, f.authority, f.access)).rejects.toThrow('not-turn');
     expect(await f.journal.read(f.identity)).toBeNull();
     expect(f.counts).toMatchObject({ creates: 0, admits: 0, deliveries: 0 });
     expect(f.requests).toHaveLength(0);
@@ -326,12 +413,12 @@ describe('native hosted authority and input boundaries', () => {
     for (const invalid of [null, { ...valid, kind: 'local' }, { ...valid, principalId: 'other' }, { ...valid, authorityRevision: 'other' },
       ...NATIVE_HOSTED_TURN_SCOPES.map(scope => ({ ...valid, scopes: valid.scopes.filter(value => value !== scope) }))]) {
       f.setAuthority(invalid as NativePairedExecutionSnapshot | null);
-      await expect(f.host.start(f.request, f.authority, f.access)).rejects.toThrow('forbidden');
+      await expect(f.host[operation](f.request, f.authority, f.access)).rejects.toThrow('forbidden');
       await expect(f.status()).rejects.toThrow('forbidden');
       await expect(f.host.cancel(f.request, f.authority, f.access)).rejects.toThrow('forbidden');
     }
     f.setAuthority(valid); f.deny();
-    await expect(f.host.start(f.request, f.authority, f.access)).rejects.toThrow('forbidden');
+    await expect(f.host[operation](f.request, f.authority, f.access)).rejects.toThrow('forbidden');
     expect(f.counts).toMatchObject({ gets: 0, creates: 0, admits: 0, deliveries: 0 });
     expect(await f.journal.read(f.identity)).toBeNull();
   });
@@ -343,7 +430,7 @@ describe('native hosted authority and input boundaries', () => {
         if (change === 'revoke') f.revoke();
         else f.setSource({ ...f.source, text: 'Replaced during admission' });
       });
-      await expect(f.host.start(f.request, f.authority, f.access)).rejects.toThrow(change === 'revoke' ? 'forbidden' : 'stale');
+      await expect(f.host[operation](f.request, f.authority, f.access)).rejects.toThrow(change === 'revoke' ? 'forbidden' : 'stale');
       expect(f.counts).toMatchObject({ creates: 0, deliveries: 0 });
       expect(f.requests).toHaveLength(0);
       expect(await f.journal.read(f.identity)).not.toBeNull();
@@ -357,7 +444,7 @@ describe('native hosted authority and input boundaries', () => {
       f.getHooks.push(() => f.setAuthority(change === 'principal'
         ? { ...valid, principalId: 'replacement', authorityId: 'replacement' }
         : { ...valid, tokenId: 'replacement', authorityRevision: 'replacement' }));
-      await expect(f.host.start(f.request, f.authority, f.access)).rejects.toThrow('stale');
+      await expect(f.host[operation](f.request, f.authority, f.access)).rejects.toThrow('stale');
       expect(f.counts.creates).toBe(0); expect(f.requests).toHaveLength(0);
       expect(await f.journal.read(f.identity)).toBeNull();
     }
@@ -370,7 +457,7 @@ describe('native hosted authority and input boundaries', () => {
       f.admitHooks.push(() => f.setAuthority(change === 'principal'
         ? { ...valid, principalId: 'replacement', authorityId: 'replacement' }
         : { ...valid, tokenId: 'replacement', authorityRevision: 'replacement' }));
-      await expect(f.host.start(f.request, f.authority, f.access)).rejects.toThrow();
+      await expect(f.host[operation](f.request, f.authority, f.access)).rejects.toThrow();
       expect(f.counts.creates).toBe(0); expect(f.requests).toHaveLength(0);
     }
   });
@@ -378,7 +465,7 @@ describe('native hosted authority and input boundaries', () => {
   test('manager requires the actual canonical broker input ID; source and correlation metadata cannot substitute', async () => {
     const reached = deferred<NativeConversationTurnPermit>(), gate = deferred();
     const f = await fixture({ beforeDeliver: async permit => { reached.resolve(permit); await gate.promise; } });
-    const started = snapshot(await f.host.start(f.request, f.authority, f.access));
+    const started = snapshot(await f.host[operation](f.request, f.authority, f.access));
     const permit = await reached.promise;
     try {
       for (const forgedId of [f.request.inputId, f.source.sourceRef.sourceId, started.correlationId!, 'sin-forged']) {
@@ -398,7 +485,7 @@ describe('native hosted authority and input boundaries', () => {
     for (const busy of ['isCompacting', 'isThinking', 'turnInFlight'] as const) {
       const reached = deferred(), gate = deferred();
       const f = await fixture({ beforeDeliver: async () => { reached.resolve(); await gate.promise; } });
-      const started = snapshot(await f.host.start(f.request, f.authority, f.access));
+      const started = snapshot(await f.host[operation](f.request, f.authority, f.access));
       await reached.promise;
       const runtime = f.runtime(started.sessionId!);
       const internals = runtime.orchestrator as unknown as Record<typeof busy, boolean>;
@@ -764,6 +851,53 @@ describe('native-owned session continuations', () => {
     f.addSource(next);
     return { source: next, context, request: { projectId: next.projectId, inputId: next.sourceRef.inputId, sourceRevision: next.sourceRef.sourceRevision } };
   }
+  for (const [operation, otherOperation, surface] of [
+    ['startAgent', 'start', 'agent'], ['start', 'startAgent', 'webui'],
+  ] as const) test(`${surface} continuation refuses the other entry without poisoning the source or original session`, async () => {
+    const f = await fixture();
+    const initial = snapshot(await f.host[operation](f.request, f.authority, f.access));
+    await f.settled();
+    const next = await continuation(f, initial.sessionId!, `${surface}-second`);
+    const bytes = readFileSync(f.journalPath, 'utf8');
+    await expect(f.host[otherOperation](next.request, f.authority, f.access)).rejects.toMatchObject({ code: 'stale' });
+    expect(readFileSync(f.journalPath, 'utf8')).toBe(bytes);
+    expect(await f.host.status(next.request, f.authority, f.access)).toEqual({ kind: 'not-found' });
+    expect(f.counts).toMatchObject({ creates: 1, admits: 1, deliveries: 1 });
+    expect(await f.host[operation](next.request, f.authority, f.access)).toMatchObject({ sessionId: initial.sessionId });
+    await eventually(() => f.host.status(next.request, f.authority, f.access), value => !('kind' in value) && value.state === 'completed');
+    expect(f.manager.get(initial.sessionId!)?.originSurface).toBe(surface);
+    expect(await f.host.session(initial.sessionId!, f.authority, f.access)).toMatchObject({ kind: 'native' });
+    expect(f.counts).toMatchObject({ creates: 1, admits: 2, deliveries: 2 });
+  });
+
+  test('an unclaimed common cancellation cannot change Agent session ownership', async () => {
+    const f = await fixture();
+    const initial = snapshot(await f.host.startAgent(f.request, f.authority, f.access));
+    await f.settled();
+    const cancelled = await continuation(f, initial.sessionId!, 'agent-unclaimed');
+    await f.host.cancel(cancelled.request, f.authority, f.access);
+    expect(await f.host.startAgent(cancelled.request, f.authority, f.access)).toMatchObject({ state: 'cancelled' });
+    const next = await continuation(f, initial.sessionId!, 'agent-after-cancel');
+    expect(await f.host.startAgent(next.request, f.authority, f.access)).toMatchObject({ sessionId: initial.sessionId });
+    await eventually(() => f.host.status(next.request, f.authority, f.access), value => !('kind' in value) && value.state === 'completed');
+    expect(f.counts).toMatchObject({ creates: 1, deliveries: 2 });
+  });
+
+  test('a live session surface cannot replace its durable native settings owner', async () => {
+    const f = await fixture();
+    const initial = snapshot(await f.host.startAgent(f.request, f.authority, f.access));
+    await f.settled();
+    const get = f.manager.get.bind(f.manager);
+    const changed = spyOn(f.manager, 'get').mockImplementation(id => {
+      const session = get(id);
+      return session && id === initial.sessionId ? { ...session, originSurface: 'webui' } : session;
+    });
+    try {
+      await expect(f.host.continuation.capture(initial.sessionId!, 'owned-principal')).rejects.toMatchObject({ code: 'stale' });
+      await expect(f.host.session(initial.sessionId!, f.authority, f.access)).rejects.toMatchObject({ code: 'stale' });
+      expect(f.counts.deliveries).toBe(1);
+    } finally { changed.mockRestore(); }
+  });
   test('reuses only the host-owned session with a frozen completed context and fresh canonical input', async () => {
     const f = await fixture();
     const initial = snapshot(await f.host.start(f.request, f.authority, f.access));

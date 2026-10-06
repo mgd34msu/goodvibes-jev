@@ -6,6 +6,7 @@ import { acquireCrossProcessLock, confirmFileDurable, writeJsonFileAtomic } from
 
 export const NATIVE_HOSTED_TURN_JOURNAL_MAX_RECORDS = 4096;
 export const NATIVE_HOSTED_TURN_JOURNAL_MAX_BYTES = 4 * 1024 * 1024;
+export type NativeHostedTurnOriginSurface = 'webui' | 'agent';
 
 export interface NativeHostedTurnIdentity {
   readonly projectId: string;
@@ -21,6 +22,8 @@ export interface NativeHostedTurnIdentity {
 
 export interface NativeHostedTurnDispatch {
   readonly identity: NativeHostedTurnIdentity;
+  /** Selected by the host entry point, never the source body. Absent means historical WebUI. */
+  readonly originSurface?: NativeHostedTurnOriginSurface;
   readonly state: 'preparing' | 'queued' | 'dispatching' | 'completed' | 'cancelled' | 'recovery-required';
   readonly sessionId: string | null;
   readonly brokerInputId: string | null;
@@ -34,14 +37,14 @@ export interface NativeHostedTurnJournalIO {
 }
 
 export class NativeHostedTurnJournalError extends Error {
-  constructor(readonly code: 'invalid-identity' | 'invalid-dispatch' | 'invalid-journal' | 'journal-limit' | 'conflict') {
+  constructor(readonly code: 'invalid-identity' | 'invalid-dispatch' | 'invalid-journal' | 'journal-limit' | 'conflict' | 'surface-conflict') {
     super(`Native hosted turn journal: ${code}`);
     this.name = 'NativeHostedTurnJournalError';
   }
 }
 
 type DispatchState = NativeHostedTurnDispatch['state'];
-type DispatchChange = Omit<NativeHostedTurnDispatch, 'identity'>;
+type DispatchChange = Omit<NativeHostedTurnDispatch, 'identity' | 'originSurface'>;
 interface JournalFile { readonly version: 1; readonly records: NativeHostedTurnDispatch[]; }
 const identityKeys = ['projectId', 'principalId', 'requestId', 'inputId', 'sourceId', 'sourceRevision', 'sourceSessionId'] as const;
 const bindingKeys = ['sessionId', 'brokerInputId', 'correlationId'] as const;
@@ -87,11 +90,13 @@ function copyChange(value: unknown): DispatchChange {
 }
 
 function copyDispatch(value: unknown): NativeHostedTurnDispatch {
-  if (!exact(value, ['identity', ...changeKeys])) throw new NativeHostedTurnJournalError('invalid-dispatch');
+  const hasSurface = value && typeof value === 'object' && !nodeTypes.isProxy(value) && Object.hasOwn(value, 'originSurface');
+  if (!exact(value, ['identity', ...changeKeys, ...(hasSurface ? ['originSurface'] : [])])
+    || (hasSurface && value.originSurface !== 'webui' && value.originSurface !== 'agent')) throw new NativeHostedTurnJournalError('invalid-dispatch');
   const identity = copyIdentity(value.identity);
   const change = copyChange({ state: value.state, sessionId: value.sessionId, brokerInputId: value.brokerInputId, correlationId: value.correlationId });
   if (identity.continuationSessionId && change.sessionId !== null && identity.continuationSessionId !== change.sessionId) throw new NativeHostedTurnJournalError('invalid-dispatch');
-  return { identity, ...change };
+  return { identity, ...change, ...(hasSurface ? { originSurface: value.originSurface as NativeHostedTurnOriginSurface } : {}) };
 }
 
 const keyOf = (identity: NativeHostedTurnIdentity): string => JSON.stringify([identity.projectId, identity.principalId, identity.inputId]);
@@ -211,17 +216,30 @@ export class NativeHostedTurnJournal {
   }
 
   /** Only the call that durably creates the claim may proceed toward dispatch. */
-  async claim(identity: NativeHostedTurnIdentity, locallyOwnedInputs: readonly string[] = []): Promise<boolean> {
+  async claim(identity: NativeHostedTurnIdentity, locallyOwnedInputs: readonly string[] = [], originSurface?: NativeHostedTurnOriginSurface): Promise<boolean> {
     const expected = copyIdentity(identity);
+    if (originSurface !== undefined && originSurface !== 'webui' && originSurface !== 'agent') throw new NativeHostedTurnJournalError('invalid-dispatch');
+    const surface = originSurface ?? 'webui';
     return this.locked(() => {
       const file = readFile(this.path);
-      if (this.find(file, expected)) return false;
+      const existing = this.find(file, expected);
+      if (existing) {
+        if (existing.state === 'cancelled' && existing.sessionId === null && existing.originSurface === undefined) return false;
+        if ((existing.originSurface ?? 'webui') !== surface) throw new NativeHostedTurnJournalError('surface-conflict');
+        return false;
+      }
+      // Bind continuation ownership under the same lock as the input claim.
+      // An unclaimed cancellation tombstone has no session settings ownership.
+      if (expected.continuationSessionId && file.records.some(record =>
+        (record.sessionId === expected.continuationSessionId || record.identity.continuationSessionId === expected.continuationSessionId)
+        && !(record.state === 'cancelled' && record.sessionId === null)
+        && (record.originSurface ?? 'webui') !== surface)) throw new NativeHostedTurnJournalError('surface-conflict');
       if (expected.continuationSessionId && file.records.some(record =>
         (record.sessionId === expected.continuationSessionId || record.identity.continuationSessionId === expected.continuationSessionId)
         && !['completed', 'cancelled'].includes(record.state) && !locallyOwnedInputs.includes(record.identity.inputId))) {
         throw new NativeHostedTurnJournalError('conflict');
       }
-      file.records.push({ identity: expected, state: 'preparing', sessionId: null, brokerInputId: null, correlationId: null });
+      file.records.push({ identity: expected, ...(originSurface ? { originSurface } : {}), state: 'preparing', sessionId: null, brokerInputId: null, correlationId: null });
       this.write(file);
       return true;
     });
@@ -256,7 +274,7 @@ export class NativeHostedTurnJournal {
       }
       if (!transitions[current.state].includes(change.state)
         || (current.state !== 'preparing' && !sameBinding(current, change))) throw new NativeHostedTurnJournalError('conflict');
-      const updated: NativeHostedTurnDispatch = { identity: expected, ...change };
+      const updated: NativeHostedTurnDispatch = { ...current, identity: expected, ...change };
       file.records[file.records.indexOf(current)] = updated;
       this.write(file);
       return updated;

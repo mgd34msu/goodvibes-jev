@@ -1,9 +1,11 @@
+import { nativeHostedTurnLookupSchema } from '@goodvibes-jev/engine/sdk/platform/hosted-sessions/native-turn-client';
+import { nativeHostedTurnLines, type NativeHostedTurnClient, type NativeHostedTurnLookup } from './native-hosted-turn.ts';
 import type { OperatorNativeWorkExecutionClient } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client';
 import { nativeWorkExecutionLines, type NativeWorkExecutionState } from './native-work-execution.ts';
 import { nativeConversationExecutionIntent, sameNativeExecutionIntent, inspectNativeConversationExecution, dispatchNativeConversationExecution } from './native-conversation-execution.ts';
 import {
   nativeConversationIntakeCaptureRequestSchema, nativeConversationIntakeResultSchema,
-  type NativeConversationIntakeCaptureRequest, type NativeConversationIntakeResult,
+  type NativeConversationIntakeCaptureRequest, type NativeConversationIntakeResult, type NativeConversationIntakeSourceRef,
   type OperatorNativeConversationIntakeClient, type NativeConversationTurnPermit,
 } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client';
 import type { NativeConversationInput } from './native-conversation-input.ts';
@@ -12,13 +14,14 @@ import type { NativeIntakeJournalBinding, NativeConversationIntakeJournal } from
 export interface NativeConversationIntakeBinding {
   readonly client: OperatorNativeConversationIntakeClient;
   readonly execution: OperatorNativeWorkExecutionClient;
+  readonly hostedTurn?: NativeHostedTurnClient;
   readonly readPrincipal: (signal: AbortSignal) => Promise<string>;
   readonly dispose: () => void;
 }
 export type NativeConversationIntakeSelection =
   | { readonly available: false; readonly identity: string; readonly reason: string }
   | { readonly available: true; readonly identity: string; readonly endpoint: string; readonly projectId: string; readonly workspace: string;
-      readonly journal: Pick<NativeConversationIntakeJournal, 'read' | 'save' | 'confirm' | 'claimTurn' | 'saveExecutionIntent'>; readonly bind: () => NativeConversationIntakeBinding };
+      readonly journal: Pick<NativeConversationIntakeJournal, 'read' | 'save' | 'confirm' | 'claimTurn' | 'saveExecutionIntent'> & Partial<Pick<NativeConversationIntakeJournal, 'saveHostedSource'>>; readonly bind: () => NativeConversationIntakeBinding };
 export interface NativeConversationIntakeState {
   readonly status: 'pending' | 'recorded' | 'unknown' | 'invalid' | 'unavailable';
   readonly message: string;
@@ -28,13 +31,23 @@ export interface NativeConversationIntakeState {
   readonly turnReady?: boolean;
   readonly turnPermit?: NativeConversationTurnPermit;
   readonly execution?: NativeWorkExecutionState;
+  readonly hostedTurn?: NativeHostedTurnLookup;
+  /** Selection fence survives operation completion, never grants authority. */
+  readonly hostedCurrent?: () => boolean;
 }
+export interface NativeConversationIntakeSubmitOptions {
+  readonly delivery?: 'hosted';
+  readonly continuationSessionId?: string;
+}
+export type NativeConversationIntakeRequestIdentity = Readonly<Pick<NativeConversationIntakeCaptureRequest, 'requestId' | 'inputId'>>;
 export interface NativeConversationIntakeActions {
-  submit(source: NativeConversationInput): Promise<NativeConversationIntakeState | undefined>;
+  submit(source: NativeConversationInput, options?: NativeConversationIntakeSubmitOptions): Promise<NativeConversationIntakeState | undefined>;
   status(): Promise<NativeConversationIntakeState | undefined>;
   retry(): Promise<NativeConversationIntakeState | undefined>;
   resume(): Promise<NativeConversationIntakeState | undefined>;
-  cancel(): Promise<NativeConversationIntakeState | undefined>;
+  cancel(expected?: NativeConversationIntakeRequestIdentity): Promise<NativeConversationIntakeState | undefined>;
+  /** Stop this in-flight operation only; never adopt a newer journal request. */
+  stop?(): Promise<NativeConversationIntakeState | undefined>;
   close(): void;
 }
 type Mode = 'submit' | 'status' | 'retry' | 'resume' | 'cancel';
@@ -44,34 +57,51 @@ const sameCommand = (left: NativeConversationIntakeCaptureRequest, right: Native
 /** Persist exact input first. Interrupted processing requires an explicit resume. */
 export class NativeConversationIntakeControls implements NativeConversationIntakeActions {
   private epoch = 0;
-  private active: { readonly identity: string; readonly detach: () => void } | undefined;
-  private retained: { readonly identity: string; readonly scope: NativeIntakeJournalBinding; readonly command: NativeConversationIntakeCaptureRequest; persisted: boolean; readonly expectedRequestId: string | null } | undefined;
+  private selectionLifetime = 0;
+  private active: { readonly identity: string; readonly detach: () => void; request?: NativeConversationIntakeRequestIdentity } | undefined;
+  private retained: { readonly identity: string; readonly scope: NativeIntakeJournalBinding; readonly command: NativeConversationIntakeCaptureRequest; readonly delivery?: 'hosted'; persisted: boolean; readonly expectedRequestId: string | null } | undefined;
   constructor(private readonly select: () => NativeConversationIntakeSelection, private readonly newId: () => string = () => crypto.randomUUID()) {}
   private selection(): NativeConversationIntakeSelection {
     try { return this.select(); } catch { return { available: false, identity: 'selection-error', reason: 'Native intake host or journal is unavailable.' }; }
   }
-  close(): void { ++this.epoch; this.active?.detach(); this.active = undefined; }
-  submit(source: NativeConversationInput) { return this.run('submit', structuredClone(source)); }
+  close(): void { ++this.selectionLifetime; ++this.epoch; this.active?.detach(); this.active = undefined; }
+  submit(source: NativeConversationInput, options?: NativeConversationIntakeSubmitOptions) { return this.run('submit', structuredClone(source), options ? structuredClone(options) : undefined); }
   status() { return this.run('status'); }
   retry() { return this.run('retry'); }
   resume() { return this.run('resume'); }
-  cancel() { return this.run('cancel'); }
+  cancel(expected?: NativeConversationIntakeRequestIdentity) { return this.run('cancel', undefined, undefined, expected ? { ...expected } : undefined); }
+  /** Process-local identity, established only after this submit's durable save. */
+  currentRequest(): NativeConversationIntakeRequestIdentity | undefined {
+    const selected = this.selection();
+    return selected.available && this.active?.identity === selected.identity && this.active.request ? { ...this.active.request } : undefined;
+  }
+  stop(): Promise<NativeConversationIntakeState | undefined> {
+    const expected = this.currentRequest(); this.close();
+    return expected ? this.cancel(expected) : Promise.resolve(undefined);
+  }
 
-  private async run(mode: Mode, source?: NativeConversationInput): Promise<NativeConversationIntakeState | undefined> {
+  private async run(mode: Mode, source?: NativeConversationInput, options?: NativeConversationIntakeSubmitOptions, expected?: NativeConversationIntakeRequestIdentity): Promise<NativeConversationIntakeState | undefined> {
     const selected = this.selection();
     if (this.active) {
       if (!selected.available || selected.identity !== this.active.identity) { this.close(); return; }
-      if (mode === 'cancel') this.close();
+      if (mode === 'cancel') {
+        if (expected && (!this.active.request || expected.inputId !== this.active.request.inputId || expected.requestId !== this.active.request.requestId)) return { status: 'invalid', message: 'Another input is active. The retained input was not detached or cancelled.' };
+        this.close();
+      }
       else return { status: 'pending', message: 'Native intake is already pending. No second input or dispatch was created.' };
     }
     if (!selected.available) return { status: 'unavailable', message: selected.reason };
     // Validate source before network access or identity allocation.
-    if (source && !nativeConversationIntakeCaptureRequestSchema.safeParse({ requestId: 'validation', inputId: 'validation', text: source.text, unsupportedSources: source.unsupportedSources }).success) {
+    if (source && ((options?.continuationSessionId !== undefined && options.delivery !== 'hosted')
+      || (options?.delivery !== undefined && options.delivery !== 'hosted')
+      || !nativeConversationIntakeCaptureRequestSchema.safeParse({ requestId: 'validation', inputId: 'validation', text: source.text, unsupportedSources: source.unsupportedSources, ...(options?.continuationSessionId !== undefined ? { continuation: { sessionId: options.continuationSessionId } } : {}) }).success)) {
       return { status: 'invalid', message: 'Native intake requires complete bounded original text and at most 100 source references.' };
     }
-    const epoch = ++this.epoch; const controller = new AbortController();
+    const epoch = ++this.epoch; const lifetime = this.selectionLifetime; const controller = new AbortController();
     let binding: NativeConversationIntakeBinding | undefined; let disposed = false;
     let command: NativeConversationIntakeCaptureRequest | undefined; let phase = 'principal';
+    let delivery: 'hosted' | undefined; let observedSource: NativeConversationIntakeSourceRef | undefined;
+    const hostedCurrent = (): boolean => { const now = this.selection(); return lifetime === this.selectionLifetime && now.available && now.identity === selected.identity && now.projectId === selected.projectId && now.workspace === selected.workspace; };
     const current = (): boolean => {
       if (epoch !== this.epoch || controller.signal.aborted) return false;
       const now = this.selection(); return now.available && now.identity === selected.identity;
@@ -84,7 +114,11 @@ export class NativeConversationIntakeControls implements NativeConversationIntak
     const validate = (result: NativeConversationIntakeResult): NativeConversationIntakeResult => {
       const parsed = nativeConversationIntakeResultSchema.parse(result);
       if (!command || parsed.projectId !== selected.projectId || parsed.requestId !== command.requestId || parsed.sourceRef.inputId !== command.inputId
+        || parsed.sourceRef.continuation?.sessionId !== command.continuation?.sessionId
+        || parsed.sourceRef.continuation?.selectedDiff !== undefined || command.continuation?.selectedDiff !== undefined
+        || (observedSource && JSON.stringify(parsed.sourceRef) !== JSON.stringify(observedSource))
         || (parsed.kind === 'turn' && parsed.text !== command.text) || (parsed.kind === 'work' && parsed.receipt.goal !== command.text)) throw new Error('Native intake source identity mismatch');
+      observedSource = structuredClone(parsed.sourceRef);
       return result;
     };
     try {
@@ -96,28 +130,71 @@ export class NativeConversationIntakeControls implements NativeConversationIntak
       const stored = await selected.journal.read(scope); if (!current()) return;
       const retained = this.retained;
       if (retained?.identity === selected.identity && JSON.stringify(retained.scope) === JSON.stringify(scope)) {
-        if (stored?.command.requestId === retained.command.requestId && !sameCommand(stored.command, retained.command)) throw new Error('Retained source changed');
+        if (stored?.command.requestId === retained.command.requestId && (!sameCommand(stored.command, retained.command) || stored.delivery !== retained.delivery)) throw new Error('Retained source changed');
         command = !retained.persisted ? retained.command : stored?.command ?? retained.command;
       } else command = stored?.command;
+      delivery = retained?.identity === selected.identity && !retained.persisted && command && sameCommand(command, retained.command) ? retained.delivery : stored?.delivery;
+      observedSource = stored?.command.requestId === command?.requestId ? stored?.hostedSource : undefined;
+      if (mode !== 'submit') this.active!.request = request();
+      if (expected && (!command || expected.inputId !== command.inputId || expected.requestId !== command.requestId)) return { status: 'invalid', message: 'The retained input changed. The newer input was not cancelled.', request: request() };
+      const confirm = async () => { phase = 'journal-confirm'; await selected.journal.confirm(scope, command!); };
+      const preserveHostedSource = async () => {
+        if (delivery !== 'hosted' || !observedSource) return;
+        if (!selected.journal.saveHostedSource) throw new Error('Hosted intake requires a durable source identity');
+        phase = 'journal-hosted-source'; await selected.journal.saveHostedSource(scope, command!, observedSource);
+      };
+      const hosted = async (action: 'status' | 'request' | 'cancel', source: Extract<NativeConversationIntakeResult, { kind: 'turn' }>): Promise<NativeHostedTurnLookup> => {
+        if (!binding?.hostedTurn || delivery !== 'hosted' || !command) throw new Error('Native hosted delivery is unavailable');
+        validate(source);
+        const original = command;
+        const target = { projectId: selected.projectId, inputId: original.inputId, sourceRevision: source.sourceRef.sourceRevision };
+        const observe = async (operation: 'status' | 'start' | 'cancel') => {
+          if (!current()) throw new Error('Native hosted intake detached');
+          phase = `hosted-${operation}`;
+          const found = nativeHostedTurnLookupSchema.parse(await binding!.hostedTurn![operation](target, { signal: controller.signal }));
+          if (!current()) throw new Error('Native hosted intake detached');
+          if (!('kind' in found) && (found.projectId !== target.projectId || found.requestId !== original.requestId
+            || found.inputId !== target.inputId || found.sourceRevision !== target.sourceRevision
+            || (original.continuation && found.sessionId !== null && found.sessionId !== original.continuation.sessionId))) throw new Error('Native hosted response differs from the original input');
+          return found;
+        };
+        if (action !== 'cancel') {
+          const found = await observe('status');
+          if (action === 'status' || !('kind' in found)) return found;
+        }
+        await preserveHostedSource(); if (!current()) throw new Error('Native hosted intake detached');
+        await confirm(); if (!current()) throw new Error('Native hosted intake detached');
+        return observe(action === 'cancel' ? 'cancel' : 'start');
+      };
       let result: NativeConversationIntakeResult | undefined;
       let eligibleTurn = false;
       if (command) {
         phase = 'get'; const found = await binding.client.get({ inputId: command.inputId }, { signal: controller.signal }); if (!current()) return;
         if (found.kind !== 'not-found') result = validate(found);
       }
+      let nextContinuation = options?.continuationSessionId;
+      if (mode === 'submit' && command && result?.kind === 'turn') {
+        if (delivery === 'hosted') {
+          const hostedTurn = await hosted('status', result); if (!current()) return;
+          if ('kind' in hostedTurn || !['completed', 'cancelled'].includes(hostedTurn.state)) return { status: 'recorded', message: 'The original hosted turn is unresolved. Inspect or cancel it before submitting another input.', request: request(), result, hostedTurn, hostedCurrent };
+          if (options?.delivery === 'hosted' && nextContinuation === undefined && hostedTurn.sessionId) nextContinuation = hostedTurn.sessionId;
+        } else if (options?.delivery === 'hosted') return { status: 'unknown', message: 'The original local turn has no confirmed completion. Hosted delivery cannot replace an unresolved local dispatch.', request: request(), result };
+      }
       if (mode === 'submit' && command && result?.kind === 'work') {
         const intent = nativeConversationExecutionIntent(result.receipt);
         if (stored?.execution && !sameNativeExecutionIntent(stored.execution, intent)) throw new Error('Execution intent differs from recorded work');
         phase = 'execution-status';
         const execution = await inspectNativeConversationExecution(binding.execution, selected.projectId, intent, controller.signal); if (!current()) return;
+        if (delivery !== options?.delivery && execution.snapshot && !['terminal', 'cancelled'].includes(execution.snapshot.recovery)) return { status: 'recorded', message: 'The original work dispatch is unresolved. Delivery mode cannot change until native execution is terminal.', request: request(), result, execution };
         if (!execution.snapshot) return { status: 'recorded', message: 'The original admitted work has an unresolved dispatch. Inspect status or use /work intake-retry before submitting another input.', request: request(), result, execution };
       }
       if (mode === 'submit') {
         if (command && (!result || !terminal(result))) return { status: 'unknown', message: 'An original input is unresolved. Use /work intake-status, intake-retry or intake-resume before submitting another input.', request: request(), ...(result ? { result } : {}) };
-        command = nativeConversationIntakeCaptureRequestSchema.parse({ requestId: this.newId(), inputId: this.newId(), text: source!.text, unsupportedSources: source!.unsupportedSources });
-        this.retained = { identity: selected.identity, scope, command: structuredClone(command), persisted: false, expectedRequestId: stored?.command.requestId ?? null };
-        phase = 'journal-save'; await selected.journal.save(scope, command, stored?.command.requestId ?? null); if (!current()) return;
-        this.retained.persisted = true;
+        command = nativeConversationIntakeCaptureRequestSchema.parse({ requestId: this.newId(), inputId: this.newId(), text: source!.text, unsupportedSources: source!.unsupportedSources, ...(nextContinuation !== undefined ? { continuation: { sessionId: nextContinuation } } : {}) });
+        delivery = options?.delivery; observedSource = undefined;
+        this.retained = { identity: selected.identity, scope, command: structuredClone(command), ...(delivery ? { delivery } : {}), persisted: false, expectedRequestId: stored?.command.requestId ?? null };
+        phase = 'journal-save'; await selected.journal.save(scope, command, stored?.command.requestId ?? null, delivery ? { delivery } : undefined); if (!current()) return;
+        this.retained.persisted = true; this.active!.request = request();
         result = undefined;
       } else if (!command) return { status: 'unavailable', message: 'No retained ordinary input exists for this host, project, workspace and verified principal.' };
       if (!command) throw new Error('Missing original source');
@@ -127,7 +204,7 @@ export class NativeConversationIntakeControls implements NativeConversationIntak
       if (mode === 'retry' && retained && !retained.persisted && sameCommand(command, retained.command)) {
         if (!stored || !sameCommand(stored.command, command)) {
           phase = 'journal-save';
-          await selected.journal.save(scope, command, retained.expectedRequestId); if (!current()) return;
+          await selected.journal.save(scope, command, retained.expectedRequestId, retained.delivery ? { delivery: retained.delivery } : undefined); if (!current()) return;
         }
         phase = 'journal-confirm'; await selected.journal.confirm(scope, command); if (!current()) return;
         retained.persisted = true;
@@ -137,8 +214,8 @@ export class NativeConversationIntakeControls implements NativeConversationIntak
         phase = 'capture'; result = validate(await binding.client.capture(command, { signal: controller.signal })); if (!current()) return; eligibleTurn = result.kind === 'turn';
       }
       if (!result) return { status: 'unknown', message: 'Original input was not found at this lookup. Only intake-retry may replay its exact durable capture.', request: request() };
+      if (mode !== 'status') { await preserveHostedSource(); if (!current()) return; }
       const transition = { inputId: command.inputId, sourceRevision: result.sourceRef.sourceRevision };
-      const confirm = async () => { phase = 'journal-confirm'; await selected.journal.confirm(scope, command!); };
       if (result.kind === 'captured' && (mode === 'submit' || mode === 'retry')) {
         await confirm(); if (!current()) return;
         phase = 'admit'; result = validate(await binding.client.admit(transition, { signal: controller.signal })); if (!current()) return; eligibleTurn = result.kind === 'turn';
@@ -151,14 +228,18 @@ export class NativeConversationIntakeControls implements NativeConversationIntak
       }
       // Lookup cannot authorize a local turn. Explicit recovery may request the
       // same immutable terminal response, provided no dispatch was claimed.
-      if (result.kind === 'turn' && !eligibleTurn && (mode === 'retry' || mode === 'resume') && !stored?.dispatch) {
+      if (delivery !== 'hosted' && result.kind === 'turn' && !eligibleTurn && (mode === 'retry' || mode === 'resume') && !stored?.dispatch) {
         await confirm(); if (!current()) return;
         phase = 'resume'; result = validate(await binding.client.resume(transition, { signal: controller.signal })); if (!current()) return;
         eligibleTurn = result.kind === 'turn';
       }
       let turnReady = false;
-      if (result.kind === 'turn' && eligibleTurn && mode !== 'status' && mode !== 'cancel') {
+      if (delivery !== 'hosted' && result.kind === 'turn' && eligibleTurn && mode !== 'status' && mode !== 'cancel') {
         phase = 'journal-claim'; turnReady = await selected.journal.claimTurn(scope, command, result.sourceRef.sourceRevision); if (!current()) return;
+      }
+      let hostedTurn: NativeHostedTurnLookup | undefined;
+      if (result.kind === 'turn' && delivery === 'hosted') {
+        hostedTurn = await hosted(mode === 'status' ? 'status' : mode === 'cancel' ? 'cancel' : 'request', result); if (!current()) return;
       }
       let execution: NativeWorkExecutionState | undefined;
       if (result.kind === 'work') {
@@ -173,7 +254,7 @@ export class NativeConversationIntakeControls implements NativeConversationIntak
         }
       }
       const turnPermit = turnReady ? binding.client.bindTurn(result) : undefined;
-      return { status: 'recorded', message: describeResult(result, turnReady, Boolean(stored?.dispatch)), request: request(), result, ...(execution ? { execution } : {}), ...(turnReady ? { turnReady: true, turnPermit } : {}) };
+      return { status: 'recorded', message: hostedTurn ? 'Native conversational decision recorded for host-owned delivery.' : describeResult(result, turnReady, Boolean(stored?.dispatch)), request: request(), result, ...(hostedTurn ? { hostedTurn, hostedCurrent } : {}), ...(execution ? { execution } : {}), ...(turnReady ? { turnReady: true, turnPermit } : {}) };
     } catch {
       if (!current()) return;
       return { status: command ? 'unknown' : 'unavailable', request: request(), message: phase.startsWith('journal-')
@@ -202,6 +283,7 @@ export function nativeConversationIntakeLines(state: NativeConversationIntakeSta
     lines.push(`Native target: work ${receipt.workId} · attempt ${receipt.attemptId} · ledger revision ${receipt.ledgerRevision}`,
       `Inspect /work for native status and explicit recovery controls. Source ${receipt.source.sourceId} revision ${receipt.source.sourceRevision}.`);
   }
+  if (state.hostedTurn) lines.push(...nativeHostedTurnLines(state.hostedTurn));
   if (state.execution) lines.push(...nativeWorkExecutionLines(state.execution));
   return lines.map(line => line.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, ' '));
 }

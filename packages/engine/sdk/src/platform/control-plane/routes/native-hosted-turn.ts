@@ -36,7 +36,7 @@ export function registerNativeHostedTurnGatewayMethods(catalog: GatewayMethodCat
       throw new GatewayVerbError('Native session ownership is unavailable. No legacy fallback was selected.', 'NATIVE_TURN_UNAVAILABLE', 503);
     }
   }, { replace: true });
-  for (const operation of ['start', 'status', 'cancel'] as const) {
+  for (const operation of ['start', 'startAgent', 'status', 'cancel'] as const) {
     const descriptor = catalog.get(`workLedger.turn.${operation}`);
     if (!descriptor) throw new Error('Missing native hosted turn descriptor');
     catalog.register(descriptor, async invocation => {

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { logger } from '../utils/logger.js';
 import { createDomainDispatch } from '../runtime/store/index.js';
 import type { DomainDispatch, RuntimeStore } from '../runtime/store/index.js';
-import type { RuntimeEventBus, RuntimeEventDomain } from '../runtime/events/index.js';
+import type { AnyRuntimeEvent, RuntimeEventBus, RuntimeEventDomain, RuntimeEventEnvelope } from '../runtime/events/index.js';
 import type { ControlPlaneClientRecord } from '../runtime/store/domains/control-plane.js';
 import {
   emitControlPlaneAuthGranted,
@@ -108,6 +108,8 @@ export class ControlPlaneGateway {
   private _recentEventsHead = 0;
   private _recentEventsCount = 0;
   private readonly _recentEventsCapacity = 500;
+  /** One replay entry/id per bus emission, shared by its host and live readers. */
+  private readonly runtimeEventRecords = new WeakMap<RuntimeEventEnvelope<AnyRuntimeEvent['type'], AnyRuntimeEvent>, ScopedControlPlaneRecentEvent>();
   /** Materialized newest-first view of the recent event ring buffer. */
   private get recentEvents(): ScopedControlPlaneRecentEvent[] {
     const out: ScopedControlPlaneRecentEvent[] = [];
@@ -278,6 +280,15 @@ export class ControlPlaneGateway {
       if (!clientMayReceiveEventDomain(client.domains, event)) continue;
       client.send(event, payload, record.id);
     }
+  }
+
+  /**
+   * Retain an owned runtime frame before any client subscribes. This does not
+   * broadcast: the existing domain subscriptions remain the sole live path.
+   */
+  retainRuntimeEvent(domain: 'turn' | 'tools', envelope: RuntimeEventEnvelope<AnyRuntimeEvent['type'], AnyRuntimeEvent>): void {
+    if (!this.isEnabled()) return;
+    this.rememberRuntimeEvent(domain, envelope);
   }
 
   recordApiRequest(input: {
@@ -492,9 +503,8 @@ export class ControlPlaneGateway {
       if (wsClient.unsubscribers.has(domain)) continue;
       const unsubscribe = this.runtimeBus.onDomain(domain, (envelope) => {
         this.touchWebSocketClient(clientId, { lastEventType: envelope.type });
-        const serialized = serializeEnvelope(envelope);
-        const record = this.rememberEvent(domain, serialized);
-        liveClient.send(domain, serialized, record.id);
+        const record = this.rememberRuntimeEvent(domain, envelope);
+        liveClient.send(domain, record.payload, record.id);
       });
       wsClient.unsubscribers.set(domain, unsubscribe);
       wsClient.domains.add(domain);
@@ -647,9 +657,8 @@ export class ControlPlaneGateway {
           };
           this.clients.set(clientId, updated);
           this.dispatch?.syncControlPlaneClient(updated, 'control-plane.gateway.heartbeat');
-          const serialized = serializeEnvelope(envelope);
-          const record = this.rememberEvent(domain, serialized);
-          send(domain, serialized, record.id);
+          const record = this.rememberRuntimeEvent(domain, envelope);
+          send(domain, record.payload, record.id);
         }));
         // Opt-in narrowing (null=deliver-all, never the DEFAULT_DOMAINS fallback); reused below for replay.
         const sseLiveDomains = (options.domains?.length ?? 0) > 0 ? new Set(selectedDomains) : null;
@@ -794,6 +803,17 @@ export class ControlPlaneGateway {
       this._recentEventsCount += 1;
     }
     if (this.recentMessages.length > 50) this.recentMessages.length = 50;
+  }
+
+  private rememberRuntimeEvent(
+    domain: RuntimeEventDomain,
+    envelope: RuntimeEventEnvelope<AnyRuntimeEvent['type'], AnyRuntimeEvent>,
+  ): ScopedControlPlaneRecentEvent {
+    const previous = this.runtimeEventRecords.get(envelope);
+    if (previous) return previous;
+    const record = this.rememberEvent(domain, serializeEnvelope(envelope));
+    this.runtimeEventRecords.set(envelope, record);
+    return record;
   }
 
   private rememberEvent(

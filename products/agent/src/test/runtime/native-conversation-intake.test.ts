@@ -1,10 +1,12 @@
+import type { NativeHostedTurnSnapshot } from '@goodvibes-jev/engine/sdk/platform/hosted-sessions/native-turn-client';
+import type { NativeHostedTurnClient } from '../../runtime/native-hosted-turn.ts';
 import type { OperatorNativeWorkExecutionClient, NativeWorkExecutionSnapshot } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client';
 import { expect, test } from 'bun:test';
 import { NativeConversationIntakeControls, type NativeConversationIntakeSelection } from '../../runtime/native-conversation-intake.ts';
 import { captureNativeConversationInput } from '../../runtime/native-conversation-input.ts';
 import { routeNativeConversationInput } from '../../runtime/native-conversation-ingress.ts';
-import type { NativeIntakeJournalBinding, NativeIntakeJournalRecord, NativeIntakeExecutionIntent } from '../../runtime/native-conversation-intake-journal.ts';
-import type { NativeConversationIntakeCaptureRequest, NativeConversationIntakeResult, OperatorNativeConversationIntakeClient, NativeConversationTurnPermit } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client';
+import type { NativeIntakeJournalBinding, NativeIntakeJournalRecord, NativeIntakeExecutionIntent, NativeIntakeJournalOptions } from '../../runtime/native-conversation-intake-journal.ts';
+import type { NativeConversationIntakeCaptureRequest, NativeConversationIntakeResult, NativeConversationIntakeSourceRef, OperatorNativeConversationIntakeClient, NativeConversationTurnPermit } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client';
 
 const original = { text: '  Explain the answer\r\n界 e\u0301 😀  ', unsupportedSources: [] };
 function fixture() {
@@ -13,10 +15,10 @@ function fixture() {
   const server = new Map<string, NativeConversationIntakeResult>();
   let outcome: 'turn' | 'processing' | 'blocked' | 'refused' | 'work' = 'turn';
   const common = (request: NativeConversationIntakeCaptureRequest) => ({ projectId: 'project', requestId: request.requestId,
-    sourceRef: { version: 1 as const, inputId: request.inputId, sourceId: `source-${request.inputId}`, sourceRevision: 'r1', sessionId: 'host-session' } });
+    sourceRef: { version: 1 as const, inputId: request.inputId, sourceId: `source-${request.inputId}`, sourceRevision: 'r1', sessionId: 'host-session', ...(request.continuation ? { continuation: { sessionId: request.continuation.sessionId, revision: 'a'.repeat(64) } } : {}) } });
   const settled = (request: NativeConversationIntakeCaptureRequest): NativeConversationIntakeResult => {
     const c = common(request);
-    if (outcome === 'turn') return { kind: 'turn', ...c, route: 'answer', text: request.text };
+    if (outcome === 'turn') return { kind: 'turn', ...c, route: 'answer', text: request.text, ...(c.sourceRef.continuation ? { continuation: { ...c.sourceRef.continuation, messages: [] } } : {}) };
     if (outcome === 'processing') return { kind: 'processing', ...c, stage: 'routing', recovery: 'required' };
     if (outcome === 'blocked') return { kind: 'blocked', ...c, reason: 'unsupported-source', recovery: 'required' };
     if (outcome === 'refused') return { kind: 'refused', ...c, reason: 'semantic' };
@@ -40,9 +42,9 @@ function fixture() {
   const key = (binding: NativeIntakeJournalBinding) => JSON.stringify(binding);
   const journal = {
     async read(binding: NativeIntakeJournalBinding) { calls.push('read'); return structuredClone(records.get(key(binding))); },
-    async save(binding: NativeIntakeJournalBinding, command: NativeConversationIntakeCaptureRequest, expected: string | null) {
+    async save(binding: NativeIntakeJournalBinding, command: NativeConversationIntakeCaptureRequest, expected: string | null, options?: NativeIntakeJournalOptions) {
       calls.push('save'); if ((records.get(key(binding))?.command.requestId ?? null) !== expected) throw new Error('conflict');
-      records.set(key(binding), structuredClone({ binding, command }));
+      records.set(key(binding), structuredClone({ binding, command, ...(options?.delivery ? { delivery: options.delivery } : {}) }));
     },
     async confirm(binding: NativeIntakeJournalBinding, command: NativeConversationIntakeCaptureRequest) { calls.push('confirm'); if (JSON.stringify(records.get(key(binding))?.command) !== JSON.stringify(command)) throw new Error('conflict'); },
     async saveExecutionIntent(binding: NativeIntakeJournalBinding, command: NativeConversationIntakeCaptureRequest, intent: NativeIntakeExecutionIntent) {
@@ -51,15 +53,36 @@ function fixture() {
       if (record.execution && JSON.stringify(record.execution) !== JSON.stringify(intent)) throw new Error('conflict');
       records.set(key(binding), { ...record, execution: structuredClone(intent) });
     },
+    async saveHostedSource(binding: NativeIntakeJournalBinding, command: NativeConversationIntakeCaptureRequest, source: NativeConversationIntakeSourceRef) {
+      calls.push('hosted-source'); const record = records.get(key(binding));
+      if (!record || record.command.requestId !== command.requestId || record.delivery !== 'hosted' || record.dispatch
+        || (record.hostedSource && JSON.stringify(record.hostedSource) !== JSON.stringify(source))) throw new Error('conflict');
+      records.set(key(binding), { ...record, hostedSource: structuredClone(source) });
+    },
     async claimTurn(binding: NativeIntakeJournalBinding, command: NativeConversationIntakeCaptureRequest, sourceRevision: string) {
       calls.push('claim'); const record = records.get(key(binding)); if (record?.command.requestId !== command.requestId) throw new Error('conflict');
       if (record.dispatch) return false; records.set(key(binding), { ...record, dispatch: { sourceRevision } }); return true;
     },
   };
+  const hostedTurns = new Map<string, NativeHostedTurnSnapshot>();
+  const hostedTurn: NativeHostedTurnClient = {
+    async status(target) { calls.push('hosted-status'); return hostedTurns.get(target.inputId) ?? { kind: 'not-found' }; },
+    async start(target) {
+      calls.push('hosted-start'); const command = captures.find(command => command.inputId === target.inputId)!;
+      const snapshot: NativeHostedTurnSnapshot = { ...target, requestId: command.requestId, state: 'running', sessionId: command.continuation?.sessionId ?? 'hosted-session', brokerInputId: 'broker-input', correlationId: 'correlation' };
+      hostedTurns.set(target.inputId, snapshot); return snapshot;
+    },
+    async cancel(target) {
+      calls.push('hosted-cancel'); const command = captures.find(command => command.inputId === target.inputId)!;
+      const previous = hostedTurns.get(target.inputId);
+      const snapshot: NativeHostedTurnSnapshot = { ...target, requestId: command.requestId, state: 'cancelled', sessionId: previous?.sessionId ?? null, brokerInputId: previous?.brokerInputId ?? null, correlationId: previous?.correlationId ?? null };
+      hostedTurns.set(target.inputId, snapshot); return snapshot;
+    },
+  };
   const select = (): NativeConversationIntakeSelection => ({ available: true, identity, endpoint: 'https://native.invalid', projectId: 'project', workspace: '/workspace', journal,
-    bind: () => ({ client, execution, readPrincipal: async () => { calls.push('principal'); return principal; }, dispose: () => { disposed++; } }) });
+    bind: () => ({ client, execution, hostedTurn, readPrincipal: async () => { calls.push('principal'); return principal; }, dispose: () => { disposed++; } }) });
   const create = () => new NativeConversationIntakeControls(select, () => `id-${++ids}`);
-  return { controls: create(), create, client, execution, executions, journal, calls, captures, records, server, ids: () => ids, disposed: () => disposed,
+  return { controls: create(), create, client, execution, executions, hostedTurn, hostedTurns, journal, calls, captures, records, server, ids: () => ids, disposed: () => disposed,
     setOutcome(value: typeof outcome) { outcome = value; }, replaceHost() { identity = 'different-host'; }, replacePrincipal() { principal = 'different-paired-principal'; } };
 }
 
@@ -190,4 +213,199 @@ test('unresolved dispatch blocks new source; restart status is read-only and exp
   expect(f.calls).not.toContain('execution-intent'); expect(f.calls).not.toContain('failed-start');
   f.execution.start = start; expect((await restarted.retry())?.execution?.snapshot?.kind).toBe('pending-intent');
   expect(f.captures).toHaveLength(1); expect(f.ids()).toBe(2);
+});
+
+
+test('hosted delivery persists its mode before capture and uses status then identity-only start without a local permit', async () => {
+  const f = fixture(); const capture = f.client.capture;
+  f.client.capture = async command => { expect([...f.records.values()][0]?.delivery).toBe('hosted'); return capture(command); };
+  const state = await f.controls.submit(original, { delivery: 'hosted' });
+  expect(state?.hostedTurn).toMatchObject({ state: 'running', inputId: 'id-2', requestId: 'id-1', sourceRevision: 'r1' });
+  expect(state?.result?.kind).toBe('turn'); expect(state?.turnReady).toBeUndefined(); expect(state?.turnPermit).toBeUndefined();
+  expect(f.calls.filter(call => call.startsWith('hosted-'))).toEqual(['hosted-source', 'hosted-status', 'hosted-source', 'hosted-start']);
+  expect(f.calls).not.toContain('claim'); expect(f.calls).not.toContain('bind');
+  expect([...f.records.values()][0]?.hostedSource).toEqual(state?.result?.sourceRef);
+  expect(state?.hostedCurrent?.()).toBe(true); await f.controls.status(); expect(state?.hostedCurrent?.()).toBe(true);
+  f.replaceHost(); expect(state?.hostedCurrent?.()).toBe(false);
+});
+
+test('hosted restart status is read-only and retry/resume never replay a recorded or ambiguous turn', async () => {
+  for (const state of ['preparing', 'queued', 'running', 'cancelling', 'completed', 'cancelled', 'recovery-required'] as const) {
+    const f = fixture(); await f.controls.submit(original, { delivery: 'hosted' });
+    f.hostedTurns.set('id-2', { ...f.hostedTurns.get('id-2')!, state });
+    const restarted = f.create(); f.calls.length = 0;
+    expect((await restarted.status())?.hostedTurn).toMatchObject({ state });
+    expect(f.calls).toEqual(['principal', 'read', 'get', 'hosted-status']);
+    await restarted.retry(); await restarted.resume();
+    expect(f.calls).not.toContain('hosted-start'); expect(f.calls).not.toContain('claim'); expect(f.calls).not.toContain('bind'); expect(f.calls).not.toContain('resume');
+    expect(f.ids()).toBe(2);
+  }
+});
+
+test('a lost hosted start acknowledgement reconciles by original status after restart without a second start', async () => {
+  const f = fixture(); const start = f.hostedTurn.start;
+  f.hostedTurn.start = async target => { await start(target); throw new Error('lost reply'); };
+  expect((await f.controls.submit(original, { delivery: 'hosted' }))?.status).toBe('unknown');
+  const recovered = await f.create().retry(); expect(recovered?.hostedTurn).toMatchObject({ state: 'running' });
+  expect(f.calls.filter(call => call === 'hosted-start')).toHaveLength(1); expect(f.captures).toHaveLength(1);
+});
+
+test('hosted lookup failure or identity mismatch never permits start, cancel, new IDs or source refresh', async () => {
+  for (const change of ['error', 'requestId', 'projectId', 'inputId', 'sourceRevision'] as const) {
+    const f = fixture(); await f.controls.submit(original, { delivery: 'hosted' }); f.calls.length = 0;
+    const previous = f.hostedTurns.get('id-2')!;
+    f.hostedTurn.status = async () => { f.calls.push('hosted-status'); if (change === 'error') throw new Error('unknown'); return { ...previous, [change]: 'different' }; };
+    expect((await f.create().retry())?.status).toBe('unknown');
+    expect((await f.create().submit(original, { delivery: 'hosted' }))?.status).toBe('unknown');
+    expect(f.calls).not.toContain('hosted-start'); expect(f.calls).not.toContain('hosted-cancel'); expect(f.ids()).toBe(2);
+  }
+});
+
+test('hosted source revision and continuation revision stay immutable across process restart', async () => {
+  for (const changed of ['sourceRevision', 'sourceId', 'sessionId', 'continuation'] as const) {
+    const f = fixture(); await f.controls.submit(original, { delivery: 'hosted', continuationSessionId: 'session-a' });
+    const previous = f.server.get('id-2')!;
+    f.server.set('id-2', { ...previous, sourceRef: { ...previous.sourceRef, [changed]: changed === 'continuation' ? { sessionId: 'session-a', revision: 'b'.repeat(64) } : 'changed' } });
+    f.calls.length = 0;
+    expect((await f.create().retry())?.status).toBe('unknown');
+    expect(f.calls).not.toContain('hosted-status'); expect(f.calls).not.toContain('hosted-start'); expect(f.calls).not.toContain('resume');
+    expect([...f.records.values()][0]?.hostedSource).toEqual(previous.sourceRef);
+  }
+});
+
+test('hosted replacement requires completed/cancelled original and infers continuation after restart', async () => {
+  const f = fixture(); await f.controls.submit(original, { delivery: 'hosted' });
+  for (const state of ['preparing', 'queued', 'running', 'cancelling', 'recovery-required'] as const) {
+    f.hostedTurns.set('id-2', { ...f.hostedTurns.get('id-2')!, state });
+    expect((await f.create().submit(original, { delivery: 'hosted' }))?.message).toContain('unresolved'); expect(f.ids()).toBe(2);
+  }
+  f.hostedTurns.set('id-2', { ...f.hostedTurns.get('id-2')!, state: 'completed' });
+  const next = await f.create().submit({ ...original, text: '  Follow-up original  ' }, { delivery: 'hosted' });
+  expect(next?.hostedTurn).toMatchObject({ state: 'running', sessionId: 'hosted-session' });
+  expect(f.captures[1]).toEqual({ requestId: 'id-3', inputId: 'id-4', text: '  Follow-up original  ', unsupportedSources: [], continuation: { sessionId: 'hosted-session' } });
+  expect(Object.keys(f.captures[1]!.continuation!)).toEqual(['sessionId']);
+});
+
+test('explicit continuation is preserved exactly and changed hosted session is refused', async () => {
+  const f = fixture(); await f.controls.submit(original, { delivery: 'hosted', continuationSessionId: 'native-session' });
+  expect(f.captures[0]?.continuation).toEqual({ sessionId: 'native-session' });
+  f.hostedTurns.set('id-2', { ...f.hostedTurns.get('id-2')!, sessionId: 'other-session' }); f.calls.length = 0;
+  expect((await f.create().resume())?.status).toBe('unknown'); expect(f.calls).not.toContain('hosted-start');
+});
+
+test('hosted cancel targets the original before start, persists a tombstone and never cancels a newer input', async () => {
+  const f = fixture(); f.hostedTurn.start = async () => { throw new Error('not sent'); };
+  await f.controls.submit(original, { delivery: 'hosted' });
+  const cancelled = await f.create().cancel({ inputId: 'id-2', requestId: 'id-1' });
+  expect(cancelled?.hostedTurn).toMatchObject({ state: 'cancelled', sessionId: null, inputId: 'id-2' });
+  expect(f.calls).not.toContain('cancel');
+  const starts = f.calls.filter(call => call === 'hosted-start').length;
+  await f.create().retry(); expect(f.calls.filter(call => call === 'hosted-start')).toHaveLength(starts);
+  await f.create().submit(original, { delivery: 'hosted' }); f.calls.length = 0;
+  expect((await f.create().cancel({ inputId: 'id-2', requestId: 'id-1' }))?.status).toBe('invalid');
+  expect(f.calls).not.toContain('cancel'); expect(f.calls).not.toContain('hosted-cancel'); expect(f.calls).not.toContain('get');
+});
+
+test('delivery changes cannot replace unresolved hosted or local turns', async () => {
+  const hosted = fixture(); await hosted.controls.submit(original, { delivery: 'hosted' });
+  expect((await hosted.create().submit(original))?.message).toContain('unresolved'); expect(hosted.ids()).toBe(2);
+  await hosted.create().retry(); expect(hosted.calls).not.toContain('claim');
+  const local = fixture(); await local.controls.submit(original);
+  expect((await local.create().submit(original, { delivery: 'hosted' }))?.message).toContain('unresolved local');
+  expect(local.ids()).toBe(2); expect(local.calls).not.toContain('hosted-start');
+});
+
+test('hosted journal failures prevent admission or hosted requests and explicit retry keeps exact identity', async () => {
+  const f = fixture(); const save = f.journal.saveHostedSource;
+  f.journal.saveHostedSource = async () => { throw new Error('disk failure'); };
+  expect((await f.controls.submit(original, { delivery: 'hosted' }))?.status).toBe('unknown');
+  expect(f.calls).not.toContain('admit'); expect(f.calls).not.toContain('hosted-start');
+  f.journal.saveHostedSource = save;
+  expect((await f.create().retry())?.hostedTurn).toMatchObject({ state: 'running' });
+  expect(f.ids()).toBe(2); expect(f.captures).toHaveLength(1);
+});
+
+test('hosted capture rejection after durable publication retains delivery for explicit retry', async () => {
+  const f = fixture(); const save = f.journal.save; let calls = 0;
+  f.journal.save = async (...args) => { calls++; await save(...args); throw new Error('published-indeterminate'); };
+  await f.controls.submit(original, { delivery: 'hosted', continuationSessionId: 'session-a' });
+  expect(f.captures).toHaveLength(0);
+  expect((await f.controls.retry())?.hostedTurn).toMatchObject({ sessionId: 'session-a' });
+  expect(calls).toBe(1); expect(f.ids()).toBe(2); expect(f.calls).not.toContain('claim');
+});
+
+test('a stale observer cancel cannot detach a newer hosted input still in capture', async () => {
+  const f = fixture(); await f.controls.submit(original, { delivery: 'hosted' });
+  f.hostedTurns.set('id-2', { ...f.hostedTurns.get('id-2')!, state: 'completed' });
+  const capture = f.client.capture; let release!: () => void; let arrived!: () => void;
+  const ready = new Promise<void>(resolve => { arrived = resolve; });
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  f.client.capture = async command => { arrived(); await hold; return capture(command); };
+  const pending = f.controls.submit(original, { delivery: 'hosted' }); await ready;
+  expect((await f.controls.cancel({ inputId: 'id-2', requestId: 'id-1' }))?.status).toBe('invalid');
+  release(); expect((await pending)?.hostedTurn).toMatchObject({ inputId: 'id-4', state: 'running' });
+  expect(f.calls).not.toContain('hosted-cancel');
+});
+
+test('delivery mode change cannot replace an unresolved native work dispatch', async () => {
+  for (const hosted of [true, false]) {
+    const f = fixture(); f.setOutcome('work'); await f.controls.submit(original, hosted ? { delivery: 'hosted' } : undefined);
+    expect((await f.create().submit(original, hosted ? undefined : { delivery: 'hosted' }))?.message).toContain('mode cannot change');
+    expect(f.ids()).toBe(2); expect(f.captures).toHaveLength(1);
+  }
+});
+
+test('Stop pins the in-flight original before a competing process advances the journal during its delayed hosted ACK', async () => {
+  const f = fixture(); const start = f.hostedTurn.start;
+  let release!: () => void; let arrived!: () => void; let first = true;
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { arrived = resolve; });
+  f.hostedTurn.start = async target => {
+    const result = await start(target);
+    if (first) { first = false; arrived(); await hold; }
+    return result;
+  };
+  const pending = f.controls.submit(original, { delivery: 'hosted' }); await ready;
+  expect(f.controls.currentRequest()).toEqual({ inputId: 'id-2', requestId: 'id-1' });
+  f.hostedTurns.set('id-2', { ...f.hostedTurns.get('id-2')!, state: 'completed' });
+  expect((await f.create().submit({ ...original, text: 'A newer original from another process' }, { delivery: 'hosted' }))?.hostedTurn).toMatchObject({ inputId: 'id-4', state: 'running' });
+  expect((await f.controls.stop())?.status).toBe('invalid');
+  expect(f.calls).not.toContain('hosted-cancel'); expect(f.calls).not.toContain('cancel');
+  expect(f.hostedTurns.get('id-4')?.state).toBe('running');
+  release(); expect(await pending).toBeUndefined();
+});
+
+test('Stop during new-submit inspection never adopts the previous journal identity', async () => {
+  const f = fixture(); await f.controls.submit(original, { delivery: 'hosted' });
+  f.hostedTurns.set('id-2', { ...f.hostedTurns.get('id-2')!, state: 'completed' });
+  const status = f.hostedTurn.status; let release!: () => void; let arrived!: () => void;
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { arrived = resolve; });
+  f.hostedTurn.status = async target => { arrived(); await hold; return status(target); };
+  const pending = f.controls.submit({ ...original, text: 'Fresh original not yet allocated' }, { delivery: 'hosted' }); await ready;
+  expect(f.controls.currentRequest()).toBeUndefined();
+  expect(await f.controls.stop()).toBeUndefined(); expect(f.ids()).toBe(2);
+  expect(f.calls).not.toContain('hosted-cancel'); expect(f.calls).not.toContain('cancel');
+  release(); expect(await pending).toBeUndefined();
+});
+
+test('Stop before a new command is durably saved detaches without any cancel request', async () => {
+  const f = fixture(); const save = f.journal.save; let release!: () => void; let arrived!: () => void;
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { arrived = resolve; });
+  f.journal.save = async (...args) => { arrived(); await hold; await save(...args); };
+  const pending = f.controls.submit(original, { delivery: 'hosted' }); await ready;
+  expect(f.controls.currentRequest()).toBeUndefined(); expect(await f.controls.stop()).toBeUndefined();
+  release(); expect(await pending).toBeUndefined();
+  expect(f.captures).toHaveLength(0); expect(f.calls).not.toContain('hosted-cancel'); expect(f.calls).not.toContain('cancel');
+});
+
+test('hosted observer lifetime survives status but cannot resurrect after close with the same selection', async () => {
+  const f = fixture();
+  const first = await f.controls.submit(original, { delivery: 'hosted' });
+  expect(first?.hostedCurrent?.()).toBe(true);
+  await f.controls.status(); expect(first?.hostedCurrent?.()).toBe(true);
+  f.controls.close(); expect(first?.hostedCurrent?.()).toBe(false);
+  const reopened = await f.controls.status();
+  expect(reopened?.hostedCurrent?.()).toBe(true); expect(first?.hostedCurrent?.()).toBe(false);
 });

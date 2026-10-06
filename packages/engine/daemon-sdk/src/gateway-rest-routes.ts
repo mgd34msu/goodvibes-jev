@@ -65,6 +65,7 @@ export const GATEWAY_REST_ROUTES: readonly GatewayRestRoute[] = [
   route('POST', '/api/work-ledger/intake/cancel', 'workLedger.intake.cancel'),
   route('POST', '/api/work-ledger/turn/session', 'workLedger.turn.session'),
   route('POST', '/api/work-ledger/turn/start', 'workLedger.turn.start'),
+  route('POST', '/api/work-ledger/turn/startAgent', 'workLedger.turn.startAgent'),
   route('POST', '/api/work-ledger/turn/status', 'workLedger.turn.status'),
   route('POST', '/api/work-ledger/turn/cancel', 'workLedger.turn.cancel'),
   route('POST', '/api/work-ledger/execution/start', 'workLedger.execution.start'),

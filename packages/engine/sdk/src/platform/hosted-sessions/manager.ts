@@ -29,6 +29,8 @@ import { readNativeConversationTurnPermit, type NativeConversationTurnPermit } f
  * domain a client subscribed to. A client attached to a hosted session watches
  * `turn` and `tools` exactly as it would locally, and filters on the session id
  * it was handed.
+ * Native sessions retain those original envelopes in the gateway's existing
+ * bounded replay ring even before the first client learns their session id.
  *
  * What was genuinely missing is LIFECYCLE: which hosted sessions exist, when
  * one was created, attached, detached or terminated, and why. That is this
@@ -45,7 +47,7 @@ import { readNativeConversationTurnPermit, type NativeConversationTurnPermit } f
 
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
-import type { RuntimeEventBus } from '../runtime/events/index.js';
+import type { AnyRuntimeEvent, RuntimeEventBus, RuntimeEventEnvelope } from '../runtime/events/index.js';
 import type { SessionLiveTurnControls } from '../control-plane/routes/session-runtime.js';
 import { resolveHostedModelDefinition } from './model-route.js';
 import { createHostedSessionRuntime, newHostedSessionId, type HostedSessionContractSink, type HostedSessionRuntime } from './session-runtime.js';
@@ -78,6 +80,8 @@ export const HOSTED_SESSION_WIRE_EVENT = 'hosted-session-update';
 /** The subset of the control-plane gateway this engine publishes through. */
 export interface HostedSessionEventPublisher {
   publishEvent(event: string, payload: unknown, filter?: { clientId?: string }): void;
+  /** Retention only: native turn frames can precede the first attached reader. */
+  retainRuntimeEvent?(domain: 'turn' | 'tools', envelope: RuntimeEventEnvelope<AnyRuntimeEvent['type'], AnyRuntimeEvent>): void;
   /**
    * Live control-plane clients, when the publisher is the gateway. Read as the
    * second renewal signal for an attachment lease, see ./attachments.ts.
@@ -775,6 +779,17 @@ export class HostedSessionManager {
    */
   private observeTurnEvents(): void {
     const bus = this.options.runtimeBus;
+    // A native start can submit its turn before the caller learns the session
+    // id and opens SSE. Keep the original envelopes in the gateway's bounded
+    // replay ring; never re-emit them or invent a render/correlation identity.
+    for (const domain of ['turn', 'tools'] as const) {
+      this.busUnsubscribers.push(bus.onDomain(domain, (envelope) => {
+        if (this.disposed || !envelope.sessionId) return;
+        const live = this.sessions.get(envelope.sessionId);
+        if (!live?.record.nativeConversation || live.record.status === 'terminated') return;
+        this.publisher?.retainRuntimeEvent?.(domain, envelope);
+      }));
+    }
     const mark = (sessionId: string | undefined, status: 'running' | 'idle', event: HostedSessionLifecycleEvent, detail: string): void => {
       if (!sessionId) return;
       const live = this.sessions.get(sessionId);

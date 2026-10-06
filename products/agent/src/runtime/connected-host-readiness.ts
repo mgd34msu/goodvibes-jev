@@ -27,14 +27,15 @@ export async function readConnectedHostReadiness(options: AgentDaemonVerbCallerO
   try {
     operator = createOperatorSdk({ baseUrl: selected.baseUrl, authToken: selected.token, ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) });
     const auth = await operator.invoke('control.auth.current', {}, { signal: AbortSignal.timeout(1500) });
-    result = isNativePairedPrincipal(auth)
+    result = isNativePairedPrincipal(auth, selected.expectedPrincipalId)
       ? { status: 'ready', detail: 'The selected host verified the current credential as a paired owner with native intake scopes.' }
       : { status: 'unsupported-principal', detail: 'The selected host did not verify a paired owner with read:work-ledger and write:work-ledger. A shared token is insufficient.' };
   } catch {
     result = { status: 'unavailable', detail: 'Live connected-host auth could not be verified. Rerun setup status after checking the selected host and credential.' };
   } finally { operator?.dispose(); }
   const current = resolveConnectedHostConnection(options);
-  if ('reason' in current || current.baseUrl !== selected.baseUrl || current.token !== selected.token) {
+  if ('reason' in current || current.baseUrl !== selected.baseUrl || current.token !== selected.token
+    || current.selectionIdentity !== selected.selectionIdentity || current.expectedPrincipalId !== selected.expectedPrincipalId) {
     return { status: 'changed', detail: 'The selected host or effective credential changed during verification. Rerun setup status.' };
   }
   return result;

@@ -7,7 +7,8 @@ import {
   writeJsonFileAtomic,
 } from '@goodvibes-jev/engine/sdk/platform/state/durable-file-io';
 import {
-  nativeConversationIntakeCaptureRequestSchema,
+  nativeConversationIntakeCaptureRequestSchema, nativeConversationIntakeSourceRefSchema,
+  type NativeConversationIntakeSourceRef,
   type NativeConversationIntakeCaptureRequest,
 } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client';
 
@@ -27,9 +28,14 @@ export interface NativeIntakeExecutionIntent {
   readonly target: NativeWorkExecutionIdentity;
 }
 
+export interface NativeIntakeJournalOptions { readonly delivery?: 'hosted'; }
+
 export interface NativeIntakeJournalRecord {
   readonly binding: NativeIntakeJournalBinding;
   readonly command: NativeConversationIntakeCaptureRequest;
+  readonly delivery?: 'hosted';
+  /** First authoritative source identity, never refreshed during recovery. */
+  readonly hostedSource?: NativeConversationIntakeSourceRef;
   readonly dispatch?: { readonly sourceRevision: string };
   readonly execution?: NativeIntakeExecutionIntent;
 }
@@ -72,7 +78,7 @@ function copyBinding(value: unknown): NativeIntakeJournalBinding {
 
 function copyCommand(value: unknown): NativeConversationIntakeCaptureRequest {
   const parsed = nativeConversationIntakeCaptureRequestSchema.safeParse(value);
-  if (!parsed.success) throw new NativeIntakeJournalError('invalid_command');
+  if (!parsed.success || parsed.data.continuation?.selectedDiff !== undefined) throw new NativeIntakeJournalError('invalid_command');
   return parsed.data;
 }
 
@@ -97,10 +103,20 @@ function validateFile(value: unknown): JournalFile {
   if (value.records.length > NATIVE_INTAKE_JOURNAL_MAX_RECORDS) throw new NativeIntakeJournalError('journal_limit');
   const records: NativeIntakeJournalRecord[] = [];
   for (const record of value.records) {
-    if (!ownKeys(record, ['binding', 'command']) && !ownKeys(record, ['binding', 'command', 'dispatch']) && !ownKeys(record, ['binding', 'command', 'execution'])) throw new NativeIntakeJournalError('invalid_journal');
+    if (!record || typeof record !== 'object' || Array.isArray(record)
+      || !Object.hasOwn(record, 'binding') || !Object.hasOwn(record, 'command')
+      || Object.keys(record).some(key => !['binding', 'command', 'delivery', 'hostedSource', 'dispatch', 'execution'].includes(key))) throw new NativeIntakeJournalError('invalid_journal');
+    const value = record as Record<string, unknown>;
+    if (Object.hasOwn(value, 'delivery') && value.delivery !== 'hosted') throw new NativeIntakeJournalError('invalid_journal');
     let parsed: NativeIntakeJournalRecord;
-    try { parsed = { binding: copyBinding(record.binding), command: copyCommand(record.command) }; }
+    try { parsed = { binding: copyBinding(value.binding), command: copyCommand(value.command), ...(value.delivery === 'hosted' ? { delivery: 'hosted' as const } : {}) }; }
     catch { throw new NativeIntakeJournalError('invalid_journal'); }
+    if ('hostedSource' in record) {
+      const source = nativeConversationIntakeSourceRefSchema.safeParse(record.hostedSource);
+      if (parsed.delivery !== 'hosted' || !source.success || source.data.continuation?.selectedDiff !== undefined || source.data.inputId !== parsed.command.inputId
+        || source.data.continuation?.sessionId !== parsed.command.continuation?.sessionId) throw new NativeIntakeJournalError('invalid_journal');
+      parsed = { ...parsed, hostedSource: source.data };
+    }
     if ('dispatch' in record) {
       if (!ownKeys(record.dispatch, ['sourceRevision']) || typeof record.dispatch.sourceRevision !== 'string' || !record.dispatch.sourceRevision.length || record.dispatch.sourceRevision.length > 200) throw new NativeIntakeJournalError('invalid_journal');
       parsed = { ...parsed, dispatch: { sourceRevision: record.dispatch.sourceRevision } };
@@ -109,6 +125,7 @@ function validateFile(value: unknown): JournalFile {
       try { parsed = { ...parsed, execution: copyExecutionIntent(record.execution) }; }
       catch { throw new NativeIntakeJournalError('invalid_journal'); }
     }
+    if ((parsed.dispatch && (parsed.execution || parsed.delivery === 'hosted')) || (parsed.command.continuation && parsed.delivery !== 'hosted')) throw new NativeIntakeJournalError('invalid_journal');
     if (records.some(existing => sameBinding(existing.binding, parsed.binding))) throw new NativeIntakeJournalError('invalid_journal');
     records.push(parsed);
   }
@@ -184,8 +201,10 @@ export class NativeConversationIntakeJournal {
   }
 
   /** null means absent, never an unconditional overwrite. */
-  async save(binding: NativeIntakeJournalBinding, command: NativeConversationIntakeCaptureRequest, expectedRequestId: string | null): Promise<void> {
-    const record = { binding: copyBinding(binding), command: copyCommand(command) };
+  async save(binding: NativeIntakeJournalBinding, command: NativeConversationIntakeCaptureRequest, expectedRequestId: string | null, options: NativeIntakeJournalOptions = {}): Promise<void> {
+    if (Object.keys(options).some(key => key !== 'delivery') || (options.delivery !== undefined && options.delivery !== 'hosted')) throw new NativeIntakeJournalError('invalid_command');
+    const record: NativeIntakeJournalRecord = { binding: copyBinding(binding), command: copyCommand(command), ...(options.delivery ? { delivery: options.delivery } : {}) };
+    if (record.command.continuation && record.delivery !== 'hosted') throw new NativeIntakeJournalError('invalid_command');
     if (expectedRequestId !== null && (typeof expectedRequestId !== 'string' || !expectedRequestId.length)) {
       throw new NativeIntakeJournalError('conflict');
     }
@@ -194,15 +213,35 @@ export class NativeConversationIntakeJournal {
       const index = file.records.findIndex(existing => sameBinding(existing.binding, record.binding));
       const current = file.records[index];
       if ((current?.command.requestId ?? null) !== expectedRequestId) throw new NativeIntakeJournalError('conflict');
-      if (current && current.command.requestId === record.command.requestId && !sameCommand(current.command, record.command)) {
+      if (current && current.command.requestId === record.command.requestId && (!sameCommand(current.command, record.command) || current.delivery !== record.delivery)) {
         throw new NativeIntakeJournalError('conflict');
       }
       if (index < 0) file.records.push(record); else file.records[index] = current?.command.requestId === record.command.requestId
-        ? { ...record, ...(current.dispatch ? { dispatch: current.dispatch } : {}), ...(current.execution ? { execution: current.execution } : {}) } : record;
+        ? { ...record, ...(current.hostedSource ? { hostedSource: current.hostedSource } : {}), ...(current.dispatch ? { dispatch: current.dispatch } : {}), ...(current.execution ? { execution: current.execution } : {}) } : record;
       if (file.records.length > NATIVE_INTAKE_JOURNAL_MAX_RECORDS
         || Buffer.byteLength(JSON.stringify(file), 'utf8') > NATIVE_INTAKE_JOURNAL_MAX_BYTES) {
         throw new NativeIntakeJournalError('journal_limit');
       }
+      this.io.writeJsonFileAtomic(this.path, file, { durable: true, mode: 0o600, indent: null, trailingNewline: false });
+    });
+  }
+
+  /** Record the first authenticated source identity before hosted mutations. */
+  async saveHostedSource(binding: NativeIntakeJournalBinding, command: NativeConversationIntakeCaptureRequest, source: NativeConversationIntakeSourceRef): Promise<void> {
+    const selected = copyBinding(binding); const expected = copyCommand(command);
+    const parsed = nativeConversationIntakeSourceRefSchema.safeParse(source);
+    if (!parsed.success || parsed.data.continuation?.selectedDiff !== undefined || parsed.data.inputId !== expected.inputId || parsed.data.continuation?.sessionId !== expected.continuation?.sessionId) throw new NativeIntakeJournalError('conflict');
+    await this.locked(() => {
+      const file = readFile(this.path);
+      const index = file.records.findIndex(record => sameBinding(record.binding, selected));
+      const current = file.records[index];
+      if (!current || !sameCommand(current.command, expected) || current.delivery !== 'hosted' || current.dispatch) throw new NativeIntakeJournalError('conflict');
+      if (current.hostedSource) {
+        if (JSON.stringify(current.hostedSource) !== JSON.stringify(parsed.data)) throw new NativeIntakeJournalError('conflict');
+        this.io.confirmFileDurable(this.path); return;
+      }
+      file.records[index] = { ...current, hostedSource: parsed.data };
+      if (Buffer.byteLength(JSON.stringify(file), 'utf8') > NATIVE_INTAKE_JOURNAL_MAX_BYTES) throw new NativeIntakeJournalError('journal_limit');
       this.io.writeJsonFileAtomic(this.path, file, { durable: true, mode: 0o600, indent: null, trailingNewline: false });
     });
   }
@@ -216,7 +255,7 @@ export class NativeConversationIntakeJournal {
       const index = file.records.findIndex(record => sameBinding(record.binding, selected));
       const current = file.records[index];
       if (!current || !sameCommand(current.command, expected)) throw new NativeIntakeJournalError('conflict');
-      if (current.execution) throw new NativeIntakeJournalError('conflict');
+      if (current.execution || current.delivery === 'hosted') throw new NativeIntakeJournalError('conflict');
       if (current.dispatch) {
         if (current.dispatch.sourceRevision !== sourceRevision) throw new NativeIntakeJournalError('conflict');
         return false;
