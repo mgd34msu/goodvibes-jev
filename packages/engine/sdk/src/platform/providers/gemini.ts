@@ -1,3 +1,4 @@
+import { ProviderAttemptDeniedError, revalidateProviderAttempt } from './attempt-guard.js';
 import type {
   LLMProvider,
   ChatRequest,
@@ -204,6 +205,7 @@ export class GeminiProvider implements LLMProvider {
     systemPrompt: string | undefined,
     tools: import('./interface.js').ChatRequest['tools'],
     model: string,
+    beforeAttempt?: ChatRequest['beforeAttempt'],
   ): Promise<string | null> {
     // Skip if no system prompt and no tools
     if (!systemPrompt && (!tools || tools.length === 0)) return null;
@@ -257,6 +259,7 @@ export class GeminiProvider implements LLMProvider {
         cacheBody['tools'] = [{ functionDeclarations: toGeminiFunctionDeclarations(tools) }];
       }
 
+      if (beforeAttempt) await revalidateProviderAttempt(beforeAttempt);
       const res = await fetchWithTimeout(`${GEMINI_API_BASE}/cachedContents`, {
         method: 'POST',
         headers: {
@@ -277,6 +280,7 @@ export class GeminiProvider implements LLMProvider {
       }
       rejection = { status: res.status, text: await res.text().catch(() => '') };
     } catch (err) {
+      if (err instanceof ProviderAttemptDeniedError) throw err;
       logger.warn('[Gemini] Cache creation error', { error: summarizeError(err) });
       return null;
     }
@@ -305,7 +309,7 @@ export class GeminiProvider implements LLMProvider {
 
       const body: Record<string, unknown> = { contents };
 
-      const cachedName = await this.ensureCachedContent(systemPrompt, tools, model);
+      const cachedName = await this.ensureCachedContent(systemPrompt, tools, model, params.beforeAttempt);
 
       if (cachedName) {
         // Cached content already contains systemInstruction and tools, do NOT resend them
@@ -342,6 +346,7 @@ export class GeminiProvider implements LLMProvider {
       // Always use streaming endpoint; parse NDJSON chunks
       const url = `${GEMINI_API_BASE}/models/${model}:streamGenerateContent?alt=sse`;
 
+      if (params.beforeAttempt) await revalidateProviderAttempt(params.beforeAttempt);
       let res: Response;
       try {
         res = await instrumentedFetch(url, {
@@ -485,7 +490,7 @@ export class GeminiProvider implements LLMProvider {
         ...(lastFinishReason ? { providerStopReason: lastFinishReason } : {}),
         ...(rateLimit ? { rateLimit } : {}),
       };
-    }, signal ? { signal } : undefined, onRetry), { provider: 'gemini', model: model })).result;
+    }, { ...(signal ? { signal } : {}), ...(params.beforeAttempt ? { beforeAttempt: params.beforeAttempt } : {}) }, onRetry), { provider: 'gemini', model: model })).result;
   }
 
   async embed(request: ProviderEmbeddingRequest): Promise<ProviderEmbeddingResult> {

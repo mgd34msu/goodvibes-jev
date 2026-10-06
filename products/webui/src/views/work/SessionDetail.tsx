@@ -351,7 +351,7 @@ export function SessionDetail({ record, agents, tab, onTabChange, streamPaused, 
             )}
           </DetailSection>
 
-          <DetailSection title={canSteer(record) ? 'Steer' : 'Follow up'}>
+          <DetailSection title="Continue session">
             <SteerComposer sessionId={record.id} canSteer={canSteer(record)} closed={closed} streamPaused={streamPaused} />
           </DetailSection>
         </>

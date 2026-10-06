@@ -1,3 +1,4 @@
+import { nativeConversationContinuationSchema } from './native-continuation-context.js';
 import { array, discriminatedUnion, enum as enumSchema, literal, number, strictObject, string, union, unknown as unknownSchema, type z } from 'zod/v4';
 import { nativeConversationSpanSchema, nativeConversationProposalRevision, validateNativeConversationProposal } from './native-intake-types.js';
 import { NATIVE_WORK_SUBMISSION_MAX_REQUEST_BYTES } from './native-submission-wire.js';
@@ -47,6 +48,7 @@ export const workLedgerExplicitSourceSchema = strictObject({
 });
 export const workLedgerExtractedSourceSchema = strictObject({
   version: literal(2), sourceId: id, sourceRevision: id, inputId: id, sessionId: id,
+  continuation: nativeConversationContinuationSchema.optional(),
   extraction: strictObject({
     version: literal(1), offsetEncoding: literal('utf16'),
     spans: array(nativeConversationSpanSchema).min(1).max(100),
@@ -186,10 +188,18 @@ export const workLedgerReadEventSchema = union([ordinaryLedgerEventSchema,
   ledgerImportEventSchema.extend({ manifest: legacyWorkLedgerManifestSchema.nullable(), provenance: literal('requires_read_knowledge').optional() }),
 ]);
 export type WorkLedgerReadEvent = z.infer<typeof workLedgerReadEventSchema>;
-export function projectWorkLedgerReadEvent(event: WorkLedgerEvent, allowLegacyProvenance: boolean): WorkLedgerReadEvent {
-  if (event.type !== 'import_legacy' || allowLegacyProvenance) return event;
+/** Generic ledger readership never grants access to a captured hosted transcript. */
+export function projectWorkLedgerReadWork(work: LedgerWork): LedgerWork {
+  if (work.source?.version !== 2 || !work.source.continuation) return work;
+  const { continuation: _privateContext, ...source } = work.source;
+  return { ...work, source };
+}
+export function projectWorkLedgerReadEvent(event: WorkLedgerEvent | WorkLedgerReadEvent, allowLegacyProvenance: boolean): WorkLedgerReadEvent {
+  if (event.type !== 'import_legacy') return { ...event, work: projectWorkLedgerReadWork(event.work) };
+  const works = event.works.map(projectWorkLedgerReadWork);
+  if (allowLegacyProvenance) return { ...event, works };
   return { type: event.type, sequence: event.sequence, actorId: event.actorId, requestId: event.requestId, at: event.at,
-    works: event.works, manifest: null, provenance: 'requires_read_knowledge' };
+    works, manifest: null, provenance: 'requires_read_knowledge' };
 }
 
 const receiptSchema = strictObject({

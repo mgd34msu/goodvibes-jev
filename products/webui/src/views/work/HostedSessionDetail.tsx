@@ -362,7 +362,7 @@ export function HostedSessionDetail({
               {attachment.activeToolCalls.map((call) => <li key={call.callId}>Running: {call.tool}</li>)}
             </ul>
           )}
-          <DetailSection title="Steer">
+          <DetailSection title="Continue session">
             <SteerComposer sessionId={session.id} canSteer={!closed} closed={closed} />
           </DetailSection>
         </>

@@ -1126,6 +1126,12 @@ Schema blocks below are emitted directly from the synced contract JSON and may c
         "id": {
           "type": "string"
         },
+        "nativeConversation": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
         "workspaceRoot": {
           "type": "string"
         },

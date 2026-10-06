@@ -1,3 +1,4 @@
+import { nativeContractTaskSource } from './native-source.js';
 import { createContractInputAuthority, bindContractInputAuthority, assertContractInputAdmission, pinContractInputAdmission, authorizeContractInputPath, assertContractInputReadAccess, withContractInputAuthority, type ContractInputAuthority } from './input-authority.js';
 import { bindContractActionSource } from '../tools/agent/contract-binding.js';
 import { nativeContractActionSource } from './native-decisions.js';
@@ -201,7 +202,7 @@ export function buildContractPlannerRequest(input: PlannerRequestInput): string 
   ];
   if (input.nativeSource !== undefined) {
     sections.push('## Immutable native source\nThis is the complete original goal and ordered criteria, with host revisions. Do not summarize, rewrite, drop, add or reorder these roots. Only derive groups and units. The root goal and criteria in every response must exactly equal the following projection.\n'
-      + JSON.stringify(input.nativeSource) + '\nRequired plan roots:\n' + JSON.stringify(nativeSourcePlan(input.nativeSource)));
+      + JSON.stringify(nativeContractTaskSource(input.nativeSource)) + '\nRequired plan roots:\n' + JSON.stringify(nativeSourcePlan(input.nativeSource)));
   }
   if (input.draftPlan !== undefined) sections.push(draftSection(input.draftPlan));
   const proposed = input.proposedUnits ?? [];

@@ -15,11 +15,13 @@ export interface NativeHostedTurnIdentity {
   readonly sourceId: string;
   readonly sourceRevision: string;
   readonly sourceSessionId: string;
+  /** Host-validated continuation target; absent on a session's original dispatch. */
+  readonly continuationSessionId?: string;
 }
 
 export interface NativeHostedTurnDispatch {
   readonly identity: NativeHostedTurnIdentity;
-  readonly state: 'preparing' | 'dispatching' | 'completed' | 'cancelled' | 'recovery-required';
+  readonly state: 'preparing' | 'queued' | 'dispatching' | 'completed' | 'cancelled' | 'recovery-required';
   readonly sessionId: string | null;
   readonly brokerInputId: string | null;
   readonly correlationId: string | null;
@@ -44,9 +46,10 @@ interface JournalFile { readonly version: 1; readonly records: NativeHostedTurnD
 const identityKeys = ['projectId', 'principalId', 'requestId', 'inputId', 'sourceId', 'sourceRevision', 'sourceSessionId'] as const;
 const bindingKeys = ['sessionId', 'brokerInputId', 'correlationId'] as const;
 const changeKeys = ['state', ...bindingKeys] as const;
-const states: readonly DispatchState[] = ['preparing', 'dispatching', 'completed', 'cancelled', 'recovery-required'];
+const states: readonly DispatchState[] = ['preparing', 'queued', 'dispatching', 'completed', 'cancelled', 'recovery-required'];
 const transitions: Record<DispatchState, readonly DispatchState[]> = {
-  preparing: ['dispatching', 'cancelled', 'recovery-required'],
+  preparing: ['queued', 'dispatching', 'cancelled', 'recovery-required'],
+  queued: ['dispatching', 'cancelled', 'recovery-required'],
   dispatching: ['completed', 'cancelled', 'recovery-required'],
   completed: [],
   cancelled: [],
@@ -68,15 +71,16 @@ function exact(value: unknown, keys: readonly string[]): value is Record<string,
 }
 
 function copyIdentity(value: unknown): NativeHostedTurnIdentity {
-  if (!exact(value, identityKeys) || !identityKeys.every(key => validId(value[key]))) throw new NativeHostedTurnJournalError('invalid-identity');
-  return Object.fromEntries(identityKeys.map(key => [key, value[key]])) as unknown as NativeHostedTurnIdentity;
+  const keys = value && typeof value === 'object' && !nodeTypes.isProxy(value) && Object.hasOwn(value, 'continuationSessionId') ? [...identityKeys, 'continuationSessionId'] : identityKeys;
+  if (!exact(value, keys) || !keys.every(key => validId(value[key]))) throw new NativeHostedTurnJournalError('invalid-identity');
+  return Object.fromEntries(keys.map(key => [key, value[key]])) as unknown as NativeHostedTurnIdentity;
 }
 
 function copyChange(value: unknown): DispatchChange {
   if (!exact(value, changeKeys) || !states.includes(value.state as DispatchState)) throw new NativeHostedTurnJournalError('invalid-dispatch');
   const allNull = bindingKeys.every(key => value[key] === null);
   const allBound = bindingKeys.every(key => validId(value[key]));
-  if ((!allNull && !allBound) || (allNull && (value.state === 'dispatching' || value.state === 'completed'))
+  if ((!allNull && !allBound) || (allNull && (value.state === 'queued' || value.state === 'dispatching' || value.state === 'completed'))
     || (allBound && value.state === 'preparing')) throw new NativeHostedTurnJournalError('invalid-dispatch');
   return { state: value.state as DispatchState, sessionId: value.sessionId as string | null,
     brokerInputId: value.brokerInputId as string | null, correlationId: value.correlationId as string | null };
@@ -84,12 +88,14 @@ function copyChange(value: unknown): DispatchChange {
 
 function copyDispatch(value: unknown): NativeHostedTurnDispatch {
   if (!exact(value, ['identity', ...changeKeys])) throw new NativeHostedTurnJournalError('invalid-dispatch');
-  return { identity: copyIdentity(value.identity), ...copyChange({ state: value.state, sessionId: value.sessionId,
-    brokerInputId: value.brokerInputId, correlationId: value.correlationId }) };
+  const identity = copyIdentity(value.identity);
+  const change = copyChange({ state: value.state, sessionId: value.sessionId, brokerInputId: value.brokerInputId, correlationId: value.correlationId });
+  if (identity.continuationSessionId && change.sessionId !== null && identity.continuationSessionId !== change.sessionId) throw new NativeHostedTurnJournalError('invalid-dispatch');
+  return { identity, ...change };
 }
 
 const keyOf = (identity: NativeHostedTurnIdentity): string => JSON.stringify([identity.projectId, identity.principalId, identity.inputId]);
-const sameIdentity = (left: NativeHostedTurnIdentity, right: NativeHostedTurnIdentity): boolean => identityKeys.every(key => left[key] === right[key]);
+const sameIdentity = (left: NativeHostedTurnIdentity, right: NativeHostedTurnIdentity): boolean => identityKeys.every(key => left[key] === right[key]) && left.continuationSessionId === right.continuationSessionId;
 const sameBinding = (left: DispatchChange, right: DispatchChange): boolean => bindingKeys.every(key => left[key] === right[key]);
 
 function parseFile(value: unknown): JournalFile {
@@ -194,21 +200,51 @@ export class NativeHostedTurnJournal {
     });
   }
 
+  /** Durable provenance only. The live host still owns principal/workspace checks. */
+  async sessionRecords(sessionId: string): Promise<readonly NativeHostedTurnDispatch[]> {
+    if (!validId(sessionId)) throw new NativeHostedTurnJournalError('invalid-identity');
+    return this.locked(() => {
+      const records = readFile(this.path).records.filter(record => record.sessionId === sessionId || record.identity.continuationSessionId === sessionId);
+      if (records.length) this.io.confirmFileDurable(this.path);
+      return records;
+    });
+  }
+
   /** Only the call that durably creates the claim may proceed toward dispatch. */
-  async claim(identity: NativeHostedTurnIdentity): Promise<boolean> {
+  async claim(identity: NativeHostedTurnIdentity, locallyOwnedInputs: readonly string[] = []): Promise<boolean> {
     const expected = copyIdentity(identity);
     return this.locked(() => {
       const file = readFile(this.path);
       if (this.find(file, expected)) return false;
+      if (expected.continuationSessionId && file.records.some(record =>
+        (record.sessionId === expected.continuationSessionId || record.identity.continuationSessionId === expected.continuationSessionId)
+        && !['completed', 'cancelled'].includes(record.state) && !locallyOwnedInputs.includes(record.identity.inputId))) {
+        throw new NativeHostedTurnJournalError('conflict');
+      }
       file.records.push({ identity: expected, state: 'preparing', sessionId: null, brokerInputId: null, correlationId: null });
       this.write(file);
       return true;
     });
   }
 
+  /** Prevent an unclaimed input without borrowing ownership of any other turn. */
+  async prevent(identity: NativeHostedTurnIdentity): Promise<NativeHostedTurnDispatch> {
+    const expected = copyIdentity(identity);
+    return this.locked(() => {
+      const file = readFile(this.path);
+      const existing = this.find(file, expected);
+      if (existing) return existing;
+      const record: NativeHostedTurnDispatch = { identity: expected, state: 'cancelled', sessionId: null, brokerInputId: null, correlationId: null };
+      file.records.push(record);
+      this.write(file);
+      return record;
+    });
+  }
+
   async transition(identity: NativeHostedTurnIdentity, expectedState: DispatchState, next: DispatchChange): Promise<NativeHostedTurnDispatch> {
     const expected = copyIdentity(identity);
     const change = copyChange(next);
+    if (expected.continuationSessionId && change.sessionId !== null && expected.continuationSessionId !== change.sessionId) throw new NativeHostedTurnJournalError('invalid-dispatch');
     if (!states.includes(expectedState)) throw new NativeHostedTurnJournalError('invalid-dispatch');
     return this.locked(() => {
       const file = readFile(this.path);

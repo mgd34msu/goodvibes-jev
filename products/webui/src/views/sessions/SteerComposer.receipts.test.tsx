@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { OperatorMethodOutput } from '@goodvibes-jev/engine/contracts';
 import { getClientLifetime, tokenStore, RELAY_PAIRING_STORAGE_KEY } from '../../lib/client-lifetime';
 import { queryKeys } from '../../lib/queries';
-import { SteerComposer } from './SteerComposer';
+import { LegacySteerComposer as SteerComposer } from './SteerComposer';
 
 type Receipt = OperatorMethodOutput<'sessions.inputs.list'>['inputs'][number];
 interface WireRequest { path: string; method: string; body: unknown; auth: string | null; signal: AbortSignal | null | undefined }

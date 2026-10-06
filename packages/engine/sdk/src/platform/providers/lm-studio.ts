@@ -1,3 +1,4 @@
+import { ProviderAttemptDeniedError, revalidateProviderAttempt } from './attempt-guard.js';
 import type { ProviderCapability } from './capabilities.js';
 import type {
   ChatRequest,
@@ -87,6 +88,7 @@ export class LMStudioProvider implements LLMProvider {
         try {
           return await this.chatViaNativeChat(params, model, nativeContext);
         } catch (err: unknown) {
+          if (err instanceof ProviderAttemptDeniedError) throw err;
           if (!(await shouldUseOtherApi(err, 'providers.lm-studio.native-chat'))) {
             throw normalizeProviderError(err, this.name, 'chat', 'request');
           }
@@ -96,13 +98,14 @@ export class LMStudioProvider implements LLMProvider {
       try {
         return await this.chatViaResponses(params, model);
       } catch (err: unknown) {
+        if (err instanceof ProviderAttemptDeniedError) throw err;
         if (!(await shouldUseOtherApi(err, 'providers.lm-studio.responses'))) {
           throw normalizeProviderError(err, this.name, 'chat', 'request');
         }
       }
 
       return this.compatProvider.chat(params);
-    }, params.signal ? { signal: params.signal } : undefined, params.onRetry), { provider: this.name, model: params.model || this.defaultModel })).result;
+    }, { ...(params.signal ? { signal: params.signal } : {}), ...(params.beforeAttempt ? { beforeAttempt: params.beforeAttempt } : {}) }, params.onRetry), { provider: this.name, model: params.model || this.defaultModel })).result;
   }
 
   async embed(request: ProviderEmbeddingRequest): Promise<ProviderEmbeddingResult> {
@@ -219,7 +222,8 @@ export class LMStudioProvider implements LLMProvider {
       ...(context.previousResponseId ? { previous_response_id: context.previousResponseId } : {}),
     };
 
-    let response: Response;
+    if (params.beforeAttempt) await revalidateProviderAttempt(params.beforeAttempt);
+      let response: Response;
     try {
       response = await this.nativeFetch(this.nativeChatUrl, {
         method: 'POST',
@@ -231,6 +235,7 @@ export class LMStudioProvider implements LLMProvider {
         ...(params.signal !== undefined ? { signal: params.signal } : {}),
       } as RequestInit);
     } catch (err: unknown) {
+      if (err instanceof ProviderAttemptDeniedError) throw err;
       throw normalizeProviderError(err, this.name, 'chat', 'request');
     }
 
@@ -348,10 +353,12 @@ export class LMStudioProvider implements LLMProvider {
       ...(reasoning ? { reasoning } : {}),
     };
 
+    if (params.beforeAttempt) await revalidateProviderAttempt(params.beforeAttempt);
     let stream: LMStudioResponsesStream;
     try {
-      stream = await this.responsesClient.create(body, { ...(params.signal !== undefined ? { signal: params.signal } : {}) });
+      stream = await this.responsesClient.create(body, { ...(params.signal !== undefined ? { signal: params.signal } : {}), ...(params.beforeAttempt ? { beforeAttempt: params.beforeAttempt, maxRetries: 0 } : {}) });
     } catch (err: unknown) {
+      if (err instanceof ProviderAttemptDeniedError) throw err;
       throw normalizeProviderError(err, this.name, 'chat', 'request');
     }
 

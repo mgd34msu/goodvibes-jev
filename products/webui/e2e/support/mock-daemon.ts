@@ -959,6 +959,11 @@ export function dispatchOutcome(session: SeedSession | undefined, intent: 'steer
   };
 }
 
+/** The base synthetic fixture owns no native turn journal; native specs override discovery. */
+export function legacySessionDiscoveryResponse(): OperatorMethodOutput<'workLedger.turn.session'> {
+  return { kind: 'legacy' };
+}
+
 export async function installMockDaemon(page: Page, options: MockDaemonOptions = {}): Promise<MockDaemon> {
   const {
     signedIn = true,
@@ -1574,6 +1579,12 @@ export async function installMockDaemon(page: Page, options: MockDaemonOptions =
         return json(route, { error: 'Unknown gateway method' }, 404);
       }
       return json(route, methodInfoResponse(methodId));
+    }
+
+    // All sessions in this base fixture are synthetic legacy sessions. Native
+    // continuation specs install their genuine captured discovery route afterward.
+    if (method === 'POST' && path === '/api/work-ledger/turn/session') {
+      return json(route, legacySessionDiscoveryResponse());
     }
 
     // ── Sessions union ─────────────────────────────────────────────────────

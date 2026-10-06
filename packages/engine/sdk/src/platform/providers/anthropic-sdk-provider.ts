@@ -1,3 +1,4 @@
+import { revalidateProviderAttempt } from './attempt-guard.js';
 import type { MessageStreamEvent } from '@anthropic-ai/sdk/resources/messages';
 import type {
   ChatRequest,
@@ -133,12 +134,13 @@ export class AnthropicSdkProvider implements LLMProvider {
       let rawStopReason: string | undefined;
       let stopReason: ChatStopReason = 'unknown';
 
+      if (params.beforeAttempt) await revalidateProviderAttempt(params.beforeAttempt);
       try {
         const streamFactory = client.messages.stream as (
           body: Record<string, unknown>,
-          options?: { signal?: AbortSignal },
+          options?: { signal?: AbortSignal; maxRetries?: number },
         ) => AnthropicMessageStream;
-        const stream = streamFactory(body, params.signal ? { signal: params.signal } : undefined);
+        const stream = streamFactory.call(client.messages, body, (params.signal || params.beforeAttempt) ? { ...(params.signal ? { signal: params.signal } : {}), ...(params.beforeAttempt ? { maxRetries: 0 } : {}) } : undefined);
         for await (const event of stream as AsyncIterable<MessageStreamEvent>) {
           if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
             const idx = event.index ?? 0;
@@ -205,7 +207,7 @@ export class AnthropicSdkProvider implements LLMProvider {
           phase: 'stream',
         });
       }
-    }, params.signal ? { signal: params.signal } : undefined, params.onRetry);
+    }, { ...(params.signal ? { signal: params.signal } : {}), ...(params.beforeAttempt ? { beforeAttempt: params.beforeAttempt } : {}) }, params.onRetry);
   }
 
   async describeRuntime(deps: ProviderRuntimeMetadataDeps): Promise<ProviderRuntimeMetadata> {

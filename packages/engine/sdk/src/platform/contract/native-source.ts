@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { captureNativeConversationContinuation, canonicalNativeConversationContinuation, type NativeConversationContinuation } from '../workflow/work-ledger/native-continuation-context.js';
 /** Immutable native requirements, independent of every generated plan and correction. */
 import { types as nodeTypes } from 'node:util';
 import type { ContractPlan, PlanProblem } from './plan-schema.js';
@@ -12,7 +14,7 @@ export function captureNativeContractSource(value: unknown): NativeContractSourc
     || Object.getPrototypeOf(value) !== Object.prototype
     || Object.values(Object.getOwnPropertyDescriptors(value)).some(descriptor => !('value' in descriptor))) throw new Error('Invalid native contract source');
   const source = value as Record<string, unknown>;
-  if (Reflect.ownKeys(source).length !== SOURCE_KEYS.length || SOURCE_KEYS.some(key => !Object.hasOwn(source, key))
+  if (Reflect.ownKeys(source).length !== SOURCE_KEYS.length + (Object.hasOwn(source, 'continuation') ? 1 : 0) || SOURCE_KEYS.some(key => !Object.hasOwn(source, key))
     || REFERENCE_KEYS.some(key => typeof source[key] !== 'string' || !/^[\x21-\x7e][\x20-\x7e]{0,255}$/.test(source[key]))
     || typeof source['goal'] !== 'string' || source['goal'].trim().length === 0
     || !Array.isArray(source['criteria']) || nodeTypes.isProxy(source['criteria']) || source['criteria'].length === 0
@@ -28,7 +30,10 @@ export function captureNativeContractSource(value: unknown): NativeContractSourc
     }
     criteria.push(item.value);
   }
+  const continuation = Object.hasOwn(source, 'continuation') ? captureNativeConversationContinuation(source['continuation']) : undefined;
+  if (continuation && continuation.revision !== createHash('sha256').update(canonicalNativeConversationContinuation(continuation.sessionId, continuation.messages)).digest('hex')) throw new Error('Invalid native continuation revision');
   return Object.freeze({
+    ...(continuation ? { continuation } : {}),
     sourceId: source['sourceId'] as string,
     sourceRevision: source['sourceRevision'] as string,
     inputRevision: source['inputRevision'] as string,
@@ -37,6 +42,20 @@ export function captureNativeContractSource(value: unknown): NativeContractSourc
     goal: source['goal'],
     criteria: Object.freeze(criteria),
   });
+}
+
+/** Persisted planner/unit task text excludes private hosted transcript evidence. */
+export function nativeContractTaskSource(source: NativeContractSource): Omit<NativeContractSource, 'continuation'> {
+  const { continuation: _privateContext, ...original } = source;
+  return original;
+}
+
+/** Explicit JSON projection retains frozen context while giving judgment mutable JSON arrays. */
+export function nativeContractSourceData(source: NativeContractSource) {
+  const { continuation, ...original } = source;
+  return { ...original, criteria: [...source.criteria], ...(continuation ? { continuation: {
+    sessionId: continuation.sessionId, revision: continuation.revision, messages: continuation.messages.map(message => ({ ...message })),
+  } } : {}) };
 }
 
 /** Stable positional ids bind derived work to the original ordered native criteria. */
@@ -88,8 +107,9 @@ export function bindNativeContractSource(contract: Contract): void {
 }
 
 /** Admission projection from native authority only. Legacy/generated roots are deliberately refused. */
-export function nativeContractSourceForAdmission(contract: ContractView): Pick<NativeContractSource, 'goal' | 'criteria'> {
+export function nativeContractSourceForAdmission(contract: ContractView): Pick<NativeContractSource, 'goal' | 'criteria'> & { readonly conversationContext?: NativeConversationContinuation['messages'] } {
   assertNativeContractSource(contract);
   if (contract.nativeSource === undefined) throw new Error('Contract has no native source for autonomous admission');
-  return Object.freeze({ goal: contract.nativeSource.goal, criteria: Object.freeze([...contract.nativeSource.criteria]) });
+  return Object.freeze({ goal: contract.nativeSource.goal, criteria: Object.freeze([...contract.nativeSource.criteria]),
+    ...(contract.nativeSource.continuation ? { conversationContext: contract.nativeSource.continuation.messages } : {}) });
 }

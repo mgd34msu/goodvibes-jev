@@ -141,6 +141,9 @@ mock.module('./lib/goodvibes', () => ({
   runBrowserJudgment: () => Promise.reject(new Error('Judgment is not installed in this app fixture.')),
   sdk: {
     operator: {
+      invoke: (method: string) => method === 'workLedger.turn.session'
+        ? Promise.resolve({ kind: 'legacy' })
+        : Promise.reject(new Error(`Unexpected method ${method}`)),
       control: { status: () => Promise.resolve({}), snapshot: () => Promise.resolve({}) },
       accounts: { snapshot: () => Promise.resolve({}) },
       providers: { list: () => Promise.resolve({}) },

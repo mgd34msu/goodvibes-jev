@@ -1,3 +1,4 @@
+import { ProviderAttemptDeniedError, revalidateProviderAttempt } from './attempt-guard.js';
 import type OpenAI from 'openai';
 import { createOpenAIClient, openAIToFile } from './optional-openai.js';
 import type {
@@ -182,6 +183,7 @@ export class OpenAIProvider implements LLMProvider {
         // arrives at the caller as this provider's ordinary chat error, naming
         // the package, rather than as a boot failure.
         const client = await this.client();
+        if (params.beforeAttempt) await revalidateProviderAttempt(params.beforeAttempt);
         // .withResponse() surfaces the raw HTTP Response so rate-limit headers
         // are readable on the SUCCESS path (not only 429s).
         const created = await client.chat.completions.create(
@@ -194,7 +196,7 @@ export class OpenAIProvider implements LLMProvider {
             stream: true,
             stream_options: { include_usage: true },
           } as Parameters<OpenAIChatCreate>[0],
-          signal !== undefined ? { signal } : undefined,
+          (signal !== undefined || params.beforeAttempt) ? { ...(signal !== undefined ? { signal } : {}), ...(params.beforeAttempt ? { maxRetries: 0 } : {}) } : undefined,
         ).withResponse() as unknown as {
           data: AsyncIterable<import('openai/resources/chat/completions.js').ChatCompletionChunk> & { controller: AbortController };
           response: Response;
@@ -237,6 +239,7 @@ export class OpenAIProvider implements LLMProvider {
 
         rawToolCalls = finalizeOpenAIToolCalls(accToolCalls);
       } catch (err: unknown) {
+        if (err instanceof ProviderAttemptDeniedError) throw err;
         const { hasStatus } = await import('../utils/retry.js');
         const status = hasStatus(err) ? err.status : undefined;
         throw toProviderError(err, {
@@ -272,7 +275,7 @@ export class OpenAIProvider implements LLMProvider {
         ...withProviderStopReason(rawStopReason),
         ...(rateLimit ? { rateLimit } : {}),
       };
-    }, signal ? { signal } : undefined, onRetry);
+    }, { ...(signal ? { signal } : {}), ...(params.beforeAttempt ? { beforeAttempt: params.beforeAttempt } : {}) }, onRetry);
   }
 
   async embed(request: ProviderEmbeddingRequest): Promise<ProviderEmbeddingResult> {

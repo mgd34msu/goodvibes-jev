@@ -1,3 +1,4 @@
+import { nativeContractSourceData } from '../native-source.js';
 /**
  * `contract.unit-shape` (docs/design/contract-runner.md section 3.4): what
  * kind of work a planned unit is, and whether it does less than the contract
@@ -415,7 +416,7 @@ export const unitShape: UnitShape = {
     const { unit } = input;
     const state = {
       goal: input.goal,
-      ...(input.nativeSource === undefined ? {} : { nativeSource: { ...input.nativeSource, criteria: [...input.nativeSource.criteria] } }),
+      ...(input.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(input.nativeSource) }),
       unit: { title: unit.title, goal: unit.goal, brief: unit.brief, criteria: [...unit.criteria] },
       otherUnits: input.otherUnits.map((other) => ({ title: other.title, goal: other.goal, criteria: [...other.criteria] })),
     };

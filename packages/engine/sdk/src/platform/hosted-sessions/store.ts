@@ -93,6 +93,7 @@ export function describeInvalidPersistedHostedSession(value: unknown): string | 
     const contractIds = record['contractIds'];
     if (!Array.isArray(contractIds) || !contractIds.every((id) => typeof id === 'string')) return 'the contract id list is missing or not a list of ids';
   }
+  if (record['nativeConversation'] !== undefined && record['nativeConversation'] !== true) return 'invalid native conversation classification';
   const id = record['id'];
   if (typeof id !== 'string' || !SAFE_ID.test(id)) return 'the session id is missing or not a safe file name';
   if (typeof record['workspaceRoot'] !== 'string' || record['workspaceRoot'].length === 0) {

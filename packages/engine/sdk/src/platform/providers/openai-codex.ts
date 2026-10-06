@@ -1,3 +1,4 @@
+import { revalidateProviderAttempt } from './attempt-guard.js';
 import type {
   ChatRequest,
   ChatResponse,
@@ -213,6 +214,7 @@ export async function chatWithOpenAICodex(
           : {}),
       };
 
+      if (params.beforeAttempt) await revalidateProviderAttempt(params.beforeAttempt);
       let response: Response;
       try {
         response = await instrumentedFetch(`${OPENAI_CODEX_BASE_URL}/codex/responses`, {
@@ -443,7 +445,7 @@ export async function chatWithOpenAICodex(
           phase: 'stream',
         });
       }
-    }, params.signal ? { signal: params.signal } : undefined, params.onRetry);
+    }, { ...(params.signal ? { signal: params.signal } : {}), ...(params.beforeAttempt ? { beforeAttempt: params.beforeAttempt } : {}) }, params.onRetry);
 }
 
 export class OpenAICodexProvider implements LLMProvider {

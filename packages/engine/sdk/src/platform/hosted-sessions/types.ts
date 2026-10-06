@@ -63,6 +63,8 @@ export type HostedSessionTerminationReason =
  */
 export interface HostedSessionRecord {
   readonly id: string;
+  /** Host-written classification only; journal and live authority still prove ownership. */
+  readonly nativeConversation?: true;
   /** The absolute workspace root this session's tools operate in. */
   readonly workspaceRoot: string;
   /** A short human label, from the first user message when none was given. */

@@ -48,6 +48,7 @@ const HISTORY_ROLE_SCHEMA: Record<string, unknown> = { type: 'string', enum: ['u
 /** The record every hosted-session verb returns. */
 export const HOSTED_SESSION_RECORD_SCHEMA = objectSchema({
   id: STRING_SCHEMA,
+  nativeConversation: { type: 'boolean', enum: [true] },
   workspaceRoot: STRING_SCHEMA,
   title: STRING_SCHEMA,
   status: HOSTED_SESSION_STATUS_SCHEMA,

@@ -1,3 +1,4 @@
+import { revalidateProviderAttempt } from './attempt-guard.js';
 import type OpenAI from 'openai';
 import { createOpenAIClient } from './optional-openai.js';
 import { ProviderError } from '../types/errors.js';
@@ -45,7 +46,7 @@ export type LMStudioResponsesStream = AsyncIterable<unknown> & {
 export type LMStudioResponsesClient = {
   create(
     params: Record<string, unknown>,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; maxRetries?: number; beforeAttempt?: () => void | Promise<void> },
   ): Promise<LMStudioResponsesStream>;
 };
 
@@ -81,9 +82,12 @@ export function createResponsesClient(
     return client;
   };
   return {
-    create: async (params, options) => (
-      (await resolveClient()).responses.create(params as never, options) as unknown as Promise<LMStudioResponsesStream>
-    ),
+    create: async (params, options) => {
+      const resolved = await resolveClient();
+      if (options?.beforeAttempt) await revalidateProviderAttempt(options.beforeAttempt);
+      const { beforeAttempt: _guard, ...requestOptions } = options ?? {};
+      return resolved.responses.create(params as never, requestOptions) as unknown as Promise<LMStudioResponsesStream>;
+    },
   };
 }
 

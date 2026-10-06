@@ -16,7 +16,7 @@
 import { isAbsolute } from 'node:path';
 import type { OwnerReplyOutcome } from './escalation.js';
 import type { ContractRunner } from './runner.js';
-import { isTerminalContractStatus, type ContractOrigin, type ContractView } from './types.js';
+import { isTerminalContractStatus, type ContractOrigin, type ContractView, type NativeContractSource } from './types.js';
 
 /** The session a contract started over the operator surface without a session belongs to. */
 export const OPERATOR_SESSION_ID = 'operator';
@@ -92,6 +92,23 @@ export interface ContractOperatorServiceDeps {
   readonly workingDirectory: string;
 }
 
+/** Operator inspection does not grant access to an earlier hosted conversation. */
+export function projectContractOperatorView(contract: ContractView): ContractView {
+  const publicSource = (source: NativeContractSource): NativeContractSource => {
+    const { continuation: _privateContext, ...original } = source;
+    return original;
+  };
+  const source = contract.nativeSource;
+  const admission = contract.durableAdmission;
+  if (!source?.continuation && !admission?.input.nativeSource?.continuation) return contract;
+  return { ...contract,
+    ...(source?.continuation ? { nativeSource: publicSource(source) } : {}),
+    ...(admission?.input.nativeSource?.continuation ? { durableAdmission: { ...admission,
+      input: { ...admission.input, nativeSource: publicSource(admission.input.nativeSource) },
+    } } : {}),
+  };
+}
+
 export function createContractOperatorService(deps: ContractOperatorServiceDeps): ContractOperatorService {
   /** Present while this daemon hosts sessions. */
   let hostedRunners: HostedContractRunners | null = null;
@@ -134,7 +151,7 @@ export function createContractOperatorService(deps: ContractOperatorServiceDeps)
       projectRoot: hosted?.workspaceRoot ?? input.workspaceRoot ?? deps.workingDirectory,
       ...(input.isolation === undefined ? {} : { isolation: input.isolation }),
     });
-    return { contract: started.contract, ownerAgentId: started.owner.id };
+    return { contract: projectContractOperatorView(started.contract), ownerAgentId: started.owner.id };
   }
 
   return {
@@ -145,7 +162,7 @@ export function createContractOperatorService(deps: ContractOperatorServiceDeps)
         for (const contract of runner.list(filter)) {
           if (seen.has(contract.id)) continue;
           seen.add(contract.id);
-          contracts.push(contract);
+          contracts.push(projectContractOperatorView(contract));
         }
       }
       return contracts.sort((a, b) => b.createdAt - a.createdAt);
@@ -153,7 +170,7 @@ export function createContractOperatorService(deps: ContractOperatorServiceDeps)
     get(contractId) {
       for (const runner of runners()) {
         const contract = runner.get(contractId);
-        if (contract !== null) return contract;
+        if (contract !== null) return projectContractOperatorView(contract);
       }
       return null;
     },

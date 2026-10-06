@@ -16,7 +16,9 @@ export type NativeTurnObservation =
   | { kind: "recorded"; target: NativeHostedTurnRequest; snapshot: NativeHostedTurnSnapshot };
 
 type NativeTurnMethod =
-  "workLedger.turn.status" | "workLedger.turn.start" | "workLedger.turn.cancel";
+  | "workLedger.turn.status"
+  | "workLedger.turn.start"
+  | "workLedger.turn.cancel";
 
 /**
  * Only the original source identity crosses this boundary. The host owns the
@@ -57,6 +59,9 @@ export function createNativeIntakeTurn(options: {
       source.projectId !== options.binding.projectId ||
       source.requestId !== original.command.requestId ||
       source.sourceRef.inputId !== original.command.inputId ||
+      source.sourceRef.continuation?.sessionId !== original.command.continuation?.sessionId ||
+      source.continuation?.sessionId !== original.command.continuation?.sessionId ||
+      source.continuation?.revision !== source.sourceRef.continuation?.revision ||
       source.text !== original.command.text
     )
       throw new Error(
@@ -78,7 +83,10 @@ export function createNativeIntakeTurn(options: {
         result.projectId !== target.projectId ||
         result.requestId !== original.command.requestId ||
         result.inputId !== target.inputId ||
-        result.sourceRevision !== target.sourceRevision
+        result.sourceRevision !== target.sourceRevision ||
+        (original.command.continuation &&
+          result.sessionId !== null &&
+          result.sessionId !== original.command.continuation.sessionId)
       )
         throw new Error(
           "The conversation response differs from the saved original. No response identity was adopted."

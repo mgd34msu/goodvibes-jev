@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { getClientLifetime, tokenStore } from "./client-lifetime";
-import { openNativeIntake, type NativeIntakeJournal } from "./native-intake";
+import {
+  openNativeIntake,
+  type NativeIntakeJournal,
+  type NativeIntakeScope,
+} from "./native-intake";
 import type { NativeIntakeBrowserRecord } from "./native-intake-journal";
 import type {
   NativeConversationIntakeCaptureRequest,
@@ -32,6 +36,7 @@ function harness() {
   let statusHook: (() => void) | undefined;
   let lostCapture = false;
   let drift = false;
+  let continuationDrift = false;
   let command: NativeConversationIntakeCaptureRequest | undefined;
   let state: NativeConversationIntakeResult | undefined;
   const rows: NativeIntakeBrowserRecord[] = [];
@@ -86,7 +91,7 @@ function harness() {
           ...body,
           requestId: command!.requestId,
           state: "running",
-          sessionId: "hosted-session",
+          sessionId: command!.continuation?.sessionId ?? "hosted-session",
           brokerInputId: "broker-input",
           correlationId: "native-correlation",
         };
@@ -121,6 +126,14 @@ function harness() {
           sourceId: "host-source",
           sourceRevision: "host-revision",
           sessionId: "host-session",
+          ...(command.continuation
+            ? {
+                continuation: {
+                  sessionId: command.continuation.sessionId,
+                  revision: "a".repeat(64),
+                },
+              }
+            : {}),
         },
       };
       if (lostCapture) {
@@ -128,7 +141,24 @@ function harness() {
         throw new TypeError("Lost capture acknowledgement");
       }
     } else if (path === "/api/work-ledger/intake/admit") {
-      state = { ...state!, kind: "turn", route: "answer", text: command!.text };
+      state = {
+        ...state!,
+        kind: "turn",
+        route: "answer",
+        text: command!.text,
+        ...(command!.continuation
+          ? {
+              continuation: {
+                sessionId: command!.continuation.sessionId,
+                revision: "a".repeat(64),
+                messages: [
+                  { role: "user" as const, content: "Prior completed original" },
+                  { role: "assistant" as const, content: "Prior completed reply" },
+                ],
+              },
+            }
+          : {}),
+      };
     } else if (path === "/api/work-ledger/intake/resume") {
       state = { ...state!, kind: "refused", reason: "semantic" } as NativeConversationIntakeResult;
       delete (state as unknown as Record<string, unknown>).stage;
@@ -141,6 +171,15 @@ function harness() {
         sourceRef: state!.sourceRef,
       };
     } else if (path !== "/api/work-ledger/intake/get") throw new Error(`Unexpected route ${path}`);
+    if (continuationDrift && state && state.kind === "turn")
+      state = {
+        ...state,
+        sourceRef: {
+          ...state.sourceRef,
+          continuation: { sessionId: "other-session", revision: "a".repeat(64) },
+        },
+        continuation: { sessionId: "other-session", revision: "a".repeat(64), messages: [] },
+      };
     return Response.json(
       state
         ? { ...state, ...(drift ? { requestId: "another-request" } : {}) }
@@ -148,12 +187,14 @@ function harness() {
     );
   }) as typeof fetch;
   let counter = 0;
-  async function open() {
+  async function open(scope?: NativeIntakeScope) {
     const session = await openNativeIntake(
       getClientLifetime(),
       new AbortController().signal,
       journal,
-      () => `logical-${++counter}`
+      () => `logical-${++counter}`,
+      undefined,
+      scope
     );
     cleanups.push(() => session.dispose());
     return session;
@@ -199,6 +240,9 @@ function harness() {
     },
     loseCapture() {
       lostCapture = true;
+    },
+    driftContinuation() {
+      continuationDrift = true;
     },
     drift() {
       drift = true;
@@ -513,4 +557,78 @@ test("A to B to A sign-in permanently retires the native conversation client", a
   await tokenStore.setToken("synthetic-native-owner");
   await expect(session.turn.request(h.rows[0]!)).rejects.toThrow("connection changed");
   expect(turnCalls(h)).toHaveLength(0);
+});
+
+test("native continuation captures only the exact original plus session identity and retains it on retry", async () => {
+  const h = harness();
+  const scope = { continuationSessionId: "native-session", projectId: "native-project" };
+  const session = await h.open(scope);
+  h.loseCapture();
+  await expect(
+    session.submit({ text: original, unsupportedSources: [] }, () => {})
+  ).rejects.toThrow();
+  expect(h.rows[0]?.command).toEqual({
+    requestId: "logical-1",
+    inputId: "logical-2",
+    text: original,
+    unsupportedSources: [],
+    continuation: { sessionId: "native-session" },
+  });
+  expect(h.writes()[0]?.input).toEqual(h.rows[0]?.command);
+  session.dispose();
+  const reopened = await h.open(scope);
+  expect(await reopened.list()).toEqual(h.rows);
+  expect((await reopened.inspect(h.rows[0]!)).kind).toBe("captured");
+  expect(h.writes()).toHaveLength(1);
+  expect((await reopened.retry(h.rows[0]!)).kind).toBe("turn");
+  expect(h.writes()).toHaveLength(2);
+  expect(h.writes().filter((request) => request.path.endsWith("/capture"))).toHaveLength(1);
+  expect(await reopened.turn.request(h.rows[0]!)).toMatchObject({
+    kind: "recorded",
+    snapshot: { sessionId: "native-session" },
+  });
+  expect(turnCalls(h).map((row) => row.input)).toEqual([
+    { projectId: "native-project", inputId: "logical-2", sourceRevision: "host-revision" },
+    { projectId: "native-project", inputId: "logical-2", sourceRevision: "host-revision" },
+  ]);
+});
+
+test("continuation lists and mutation controls are strictly scoped, and Work/New excludes continuations", async () => {
+  const h = harness();
+  const first = await h.open({ continuationSessionId: "session-a" });
+  await first.submit({ text: original, unsupportedSources: [] }, () => {});
+  const second = await h.open({ continuationSessionId: "session-b" });
+  await second.submit({ text: original, unsupportedSources: [] }, () => {});
+  const fresh = await h.open();
+  await fresh.submit({ text: original, unsupportedSources: [] }, () => {});
+  expect((await first.list()).map((row) => row.command.inputId)).toEqual(["logical-2"]);
+  expect((await second.list()).map((row) => row.command.inputId)).toEqual(["logical-4"]);
+  expect((await fresh.list()).map((row) => row.command.inputId)).toEqual(["logical-6"]);
+  const count = h.requests.length;
+  for (const action of ["inspect", "retry", "resume", "cancel"] as const)
+    await expect(first[action](h.rows[1]!)).rejects.toThrow("different session scope");
+  await expect(fresh.inspect(h.rows[0]!)).rejects.toThrow("different session scope");
+  expect(h.requests).toHaveLength(count);
+});
+
+test("continuation rejects a changed source session instead of adopting it", async () => {
+  const h = harness();
+  const session = await h.open({ continuationSessionId: "native-session" });
+  await session.submit({ text: original, unsupportedSources: [] }, () => {});
+  h.driftContinuation();
+  await expect(session.inspect(h.rows[0]!)).rejects.toThrow();
+  await expect(session.turn.request(h.rows[0]!)).rejects.toThrow();
+  expect(turnCalls(h)).toHaveLength(0);
+});
+
+test("continuation opening requires native turn scopes and the discovered project before source capture", async () => {
+  const h = harness();
+  await expect(
+    h.open({ continuationSessionId: "native-session", projectId: "different-project" })
+  ).rejects.toThrow("project changed");
+  h.setScopes(["read:work-ledger", "write:work-ledger"]);
+  await expect(h.open({ continuationSessionId: "native-session" })).rejects.toThrow(
+    "write:sessions"
+  );
+  expect(h.writes()).toHaveLength(0);
 });

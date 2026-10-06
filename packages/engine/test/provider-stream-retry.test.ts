@@ -122,3 +122,27 @@ describe('provider chat onRetry wiring', () => {
     expect(onRetryCalls).toBe(0);
   });
 });
+
+
+test('Anthropic-compatible transport revalidates after scheduled retry and refuses revoked context', async () => {
+  const { AnthropicCompatProvider } = await import('../sdk/src/platform/providers/anthropic-compat.js');
+  const baseURL = 'https://context-fence.invalid/v1'; let valid = true; let fences = 0;
+  const fetched = installScopedFetch(baseURL, () => new Response('retry me', { status: 503 }));
+  const provider = new AnthropicCompatProvider({ name: 'fenced-compat', baseURL, apiKey: 'test-key', defaultModel: 'claude-test', models: ['claude-test'], retryConfig: { initialDelayMs: 0, maxDelayMs: 0 } });
+  await expect(provider.chat({ model: 'claude-test', messages: [{ role: 'user', content: 'Current task' }],
+    beforeAttempt() { fences++; if (!valid) throw new Error('Native context revoked'); }, onRetry() { valid = false; },
+  })).rejects.toThrow('Native context revoked');
+  expect(fetched.count()).toBe(1); expect(fences).toBe(3);
+});
+
+test('direct SDK and Codex transport refuse the first attempt before creating a client or fetch', async () => {
+  const { AnthropicSdkProvider } = await import('../sdk/src/platform/providers/anthropic-sdk-provider.js');
+  const { chatWithOpenAICodex } = await import('../sdk/src/platform/providers/openai-codex.js');
+  let clients = 0; const fetched = installScopedFetch('https://', () => new Response('unexpected', { status: 400 }));
+  const provider = new AnthropicSdkProvider({ name: 'fenced-sdk', label: 'Fenced SDK', defaultModel: 'claude-test', models: ['claude-test'],
+    createClient() { clients++; throw new Error('Unexpected client'); }, auth: { mode: 'api-key', configured: true, detail: 'test' }, streamProtocol: 'anthropic-sdk-stream' });
+  const request = { model: 'claude-test', messages: [{ role: 'user' as const, content: 'Current task' }], beforeAttempt() { throw new Error('Native context revoked'); } };
+  await expect(provider.chat(request)).rejects.toThrow('Native context revoked');
+  await expect(chatWithOpenAICodex('synthetic-token', { ...request, model: 'gpt-5-codex' })).rejects.toThrow('Native context revoked');
+  expect(clients).toBe(0); expect(fetched.count()).toBe(0);
+});

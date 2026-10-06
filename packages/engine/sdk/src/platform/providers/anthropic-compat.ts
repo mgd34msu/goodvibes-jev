@@ -1,3 +1,4 @@
+import { revalidateProviderAttempt } from './attempt-guard.js';
 import type {
   LLMProvider,
   ChatRequest,
@@ -276,6 +277,7 @@ export class AnthropicCompatProvider implements LLMProvider {
         headers['anthropic-beta'] = 'interleaved-thinking-2025-05-14';
       }
 
+      if (params.beforeAttempt) await revalidateProviderAttempt(params.beforeAttempt);
       let res: Response;
       try {
         res = await instrumentedFetch(`${this.baseURL}/messages`, {
@@ -333,7 +335,7 @@ export class AnthropicCompatProvider implements LLMProvider {
         ...withProviderStopReason(state.rawStopReason),
         ...(rateLimit ? { rateLimit } : {}),
       };
-    }, { ...this.retryConfig, ...(signal ? { signal } : {}) }, onRetry), { provider: this.name, model: model ?? this.defaultModel })).result;
+    }, { ...this.retryConfig, ...(signal ? { signal } : {}), ...(params.beforeAttempt ? { beforeAttempt: params.beforeAttempt } : {}) }, onRetry), { provider: this.name, model: model ?? this.defaultModel })).result;
   }
 
   async describeRuntime(deps: ProviderRuntimeMetadataDeps): Promise<ProviderRuntimeMetadata> {

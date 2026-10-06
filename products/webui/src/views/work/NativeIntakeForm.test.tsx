@@ -243,12 +243,18 @@ async function settle(check: () => boolean) {
   }
   expect(check()).toBe(true);
 }
-async function render(onOpenSession?: (sessionId: string) => void) {
+async function render(
+  onOpenSession?: (sessionId: string) => void,
+  initial: { continuationSessionId?: string; projectId?: string; closed?: boolean } = {}
+) {
+  let scope = initial;
   const el = document.createElement("div");
   document.body.appendChild(el);
   const root = createRoot(el);
   flushSync(() =>
-    root.render(<NativeIntakeForm lifetime={getClientLifetime()} onOpenSession={onOpenSession} />)
+    root.render(
+      <NativeIntakeForm lifetime={getClientLifetime()} onOpenSession={onOpenSession} {...scope} />
+    )
   );
   let mounted = true;
   const unmount = () => {
@@ -257,10 +263,14 @@ async function render(onOpenSession?: (sessionId: string) => void) {
     flushSync(() => root.unmount());
     el.remove();
   };
-  const rerender = () =>
+  const rerender = (next: typeof scope = scope) => {
+    scope = next;
     flushSync(() =>
-      root.render(<NativeIntakeForm lifetime={getClientLifetime()} onOpenSession={onOpenSession} />)
+      root.render(
+        <NativeIntakeForm lifetime={getClientLifetime()} onOpenSession={onOpenSession} {...scope} />
+      )
     );
+  };
   cleanups.push(unmount);
   const button = (label: string) =>
     [...el.querySelectorAll("button")].find((item) => item.textContent === label);
@@ -269,7 +279,9 @@ async function render(onOpenSession?: (sessionId: string) => void) {
     expect(item).toBeDefined();
     flushSync(() => item!.click());
   };
-  await settle(() => Boolean(button("Submit") || button("New request")));
+  await settle(() =>
+    Boolean(button("Submit") || button("New request") || el.textContent?.includes("Session closed"))
+  );
   return { el, button, click, unmount, rerender };
 }
 function submit(el: HTMLElement) {
@@ -957,5 +969,151 @@ describe("Native intake to hosted conversation lifecycle", () => {
     expect(el.textContent).not.toContain("hosted-session-real");
     expect(connected.turn.request).not.toHaveBeenCalled();
     expect(old.turn.cancel).not.toHaveBeenCalled();
+  });
+});
+
+describe("Native session continuation form", () => {
+  const continuationRecord: NativeIntakeBrowserRecord = {
+    ...record,
+    command: { ...record.command, continuation: { sessionId: "native-a" } },
+  };
+  const queued: NativeTurnObservation = {
+    ...turnRunning,
+    snapshot: { ...turnRunning.snapshot, state: "queued", sessionId: "native-a" },
+  };
+  test("same-session reopen inspects all lifecycle targets independently and excludes other saved scopes", async () => {
+    const other = {
+      ...continuationRecord,
+      command: {
+        ...continuationRecord.command,
+        inputId: "other-input",
+        text: "Other session private source",
+        continuation: { sessionId: "native-b" },
+      },
+      createdAt: 3,
+    };
+    connected.list.mockResolvedValue([record, continuationRecord, other]);
+    connected.inspect.mockRejectedValue(new Error("Source temporarily unavailable"));
+    connected.turn.inspect.mockResolvedValue(queued);
+    connected.execution.inspect.mockResolvedValue({ kind: "not-requested" });
+    const { el, button, click } = await render(undefined, {
+      continuationSessionId: "native-a",
+      projectId: "project",
+    });
+    await settle(() => button("Inspect conversation")?.disabled === false);
+    expect(open).toHaveBeenCalledWith(
+      getClientLifetime(),
+      expect.any(AbortSignal),
+      undefined,
+      undefined,
+      undefined,
+      { continuationSessionId: "native-a", projectId: "project" }
+    );
+    expect(connected.inspect.mock.calls[0]?.[0]).toBe(continuationRecord);
+    expect(connected.turn.inspect.mock.calls[0]?.[0]).toBe(continuationRecord);
+    expect(connected.execution.inspect.mock.calls[0]?.[0]).toBe(continuationRecord);
+    expect(el.textContent).toContain("Source temporarily unavailable");
+    expect(el.textContent).toContain("host queued this continuation");
+    expect(el.textContent).toContain("excluding the active reply");
+    expect(el.textContent).not.toContain("Other session private source");
+    expect(el.querySelectorAll(".native-intake__saved li")).toHaveLength(1);
+    expect(connected.submit).not.toHaveBeenCalled();
+    expect(connected.retry).not.toHaveBeenCalled();
+    expect(connected.turn.request).not.toHaveBeenCalled();
+    expect(button("Cancel conversation")?.disabled).toBe(false);
+    connected.turn.cancel.mockResolvedValue({
+      ...queued,
+      snapshot: { ...queued.snapshot, state: "cancelled" },
+    });
+    click("Cancel conversation");
+    await settle(() => el.textContent?.includes("conversation delivery is cancelled") === true);
+    expect(connected.turn.cancel.mock.calls[0]?.[0]).toBe(continuationRecord);
+  });
+
+  test("Work/New never selects or shows continuation originals", async () => {
+    connected.list.mockResolvedValue([continuationRecord]);
+    const { el, button } = await render();
+    expect(button("Submit")).toBeDefined();
+    expect(el.textContent).not.toContain("Saved requests");
+    expect(connected.inspect).not.toHaveBeenCalled();
+    expect(connected.turn.inspect).not.toHaveBeenCalled();
+    expect(connected.execution.inspect).not.toHaveBeenCalled();
+  });
+
+  test("continuation submission preserves the original and automatically queues delivery; new request permits another submission", async () => {
+    connected.submit.mockImplementation(async (_source, saved) => {
+      saved(continuationRecord);
+      return turn;
+    });
+    connected.turn.request.mockResolvedValue(queued);
+    const { el, button, click } = await render(undefined, { continuationSessionId: "native-a" });
+    submit(el);
+    await settle(() => button("Inspect conversation")?.disabled === false);
+    expect(connected.submit.mock.calls[0]?.[0]).toEqual({ text: original, unsupportedSources: [] });
+    expect(connected.turn.request.mock.calls[0]?.[0]).toBe(continuationRecord);
+    expect(el.querySelector("pre")?.textContent).toBe(original);
+    expect(el.textContent).toContain("host queued this continuation");
+    expect(button("Approve")).toBeUndefined();
+    expect(button("Start conversation")).toBeUndefined();
+    expect(button("Continue conversation request")).toBeUndefined();
+    expect(connected.execution.request).not.toHaveBeenCalled();
+    click("New request");
+    expect(button("Submit")).toBeDefined();
+    expect(connected.turn.cancel).not.toHaveBeenCalled();
+    const next = {
+      ...continuationRecord,
+      command: { ...continuationRecord.command, inputId: "next", requestId: "next-request" },
+    };
+    connected.submit.mockImplementation(async (_source, saved) => {
+      saved(next);
+      return turn;
+    });
+    submit(el);
+    await settle(() => connected.turn.request.mock.calls.length === 2);
+    expect(connected.turn.request.mock.calls[1]?.[0]).toBe(next);
+    expect(el.querySelectorAll(".native-intake__saved li")).toHaveLength(2);
+  });
+
+  test("navigating between native sessions retires prior controls and pending delivery", async () => {
+    const pending = deferred<NativeTurnObservation>();
+    connected.submit.mockImplementation(async (_source, saved) => {
+      saved(continuationRecord);
+      return turn;
+    });
+    connected.turn.request.mockImplementation(() => pending.promise);
+    const { el, rerender, button } = await render(undefined, { continuationSessionId: "native-a" });
+    submit(el);
+    await settle(() => connected.turn.request.mock.calls.length === 1);
+    const old = connected;
+    connected = fixture();
+    session = connected;
+    rerender({ continuationSessionId: "native-b" });
+    await settle(() => Boolean(button("Submit")));
+    expect(old.dispose).toHaveBeenCalledTimes(1);
+    expect(old.turn.request.mock.calls[0]?.[1]?.aborted).toBe(true);
+    expect(el.textContent).not.toContain("native-a");
+    pending.resolve(queued);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    flushSync(() => {});
+    expect(el.textContent).not.toContain("host queued this continuation");
+    expect(connected.turn.request).not.toHaveBeenCalled();
+  });
+
+  test("closed native session remains inspectable and cancellable without a new submission gate", async () => {
+    connected.list.mockResolvedValue([continuationRecord]);
+    connected.inspect.mockResolvedValue(turn);
+    connected.turn.inspect.mockResolvedValue(queued);
+    connected.execution.inspect.mockResolvedValue({ kind: "not-requested" });
+    const { el, button, click } = await render(undefined, {
+      continuationSessionId: "native-a",
+      closed: true,
+    });
+    await settle(() => button("Inspect conversation")?.disabled === false);
+    expect(el.textContent).toContain("Session closed");
+    expect(button("Submit")).toBeUndefined();
+    expect(button("Cancel conversation")?.disabled).toBe(false);
+    click("New request");
+    expect(button("Submit")).toBeUndefined();
+    expect(connected.turn.request).not.toHaveBeenCalled();
   });
 });

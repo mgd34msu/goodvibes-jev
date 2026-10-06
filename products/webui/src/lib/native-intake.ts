@@ -32,6 +32,11 @@ export interface NativeIntakeSource {
   text: string;
   unsupportedSources: NativeConversationIntakeUnsupportedSource[];
 }
+export interface NativeIntakeScope {
+  continuationSessionId?: string;
+  /** Verified discovery result. Reopening must not silently adopt a different project. */
+  projectId?: string;
+}
 export type NativeIntakeJournal = ReturnType<typeof createNativeIntakeBrowserJournal>;
 const terminal = (result: NativeIntakeResult) =>
   ["work", "turn", "blocked", "refused", "cancelled"].includes(result.kind);
@@ -44,8 +49,20 @@ export async function openNativeIntake(
   signal: AbortSignal,
   journal: NativeIntakeJournal = createNativeIntakeBrowserJournal(),
   newId: () => string = randomUuid,
-  executionJournal: NativeExecutionBrowserJournal = createNativeExecutionBrowserJournal()
+  executionJournal: NativeExecutionBrowserJournal = createNativeExecutionBrowserJournal(),
+  scope: NativeIntakeScope = {}
 ) {
+  const { continuationSessionId, projectId: expectedProjectId } = scope;
+  const continuation =
+    continuationSessionId === undefined ? undefined : { sessionId: continuationSessionId };
+  if (continuation)
+    nativeConversationIntakeCaptureRequestSchema.parse({
+      requestId: "validation",
+      inputId: "validation",
+      text: "validation",
+      unsupportedSources: [],
+      continuation,
+    });
   let disposed = false;
   const lifetimeAbort = new AbortController();
   const stop = () => lifetimeAbort.abort();
@@ -106,6 +123,8 @@ export async function openNativeIntake(
       project.projectId.length > 200
     )
       throw new Error("The daemon did not identify its native project.");
+    if (expectedProjectId !== undefined && project.projectId !== expectedProjectId)
+      throw new Error("The native session project changed. Reopen the session before submitting.");
     const relay = getActiveRoute() === "relay" ? getStoredRelayPairing() : null;
     if (getActiveRoute() === "relay" && !relay)
       throw new Error("The selected relay connection is unavailable.");
@@ -118,12 +137,15 @@ export async function openNativeIntake(
     };
   };
   try {
-    const binding = await readBinding();
+    const binding = await readBinding(undefined, continuation ? "turn" : "intake");
     const authorize = async (
       operation?: AbortSignal,
       authority: "intake" | "execution" | "turn" = "intake"
     ) => {
-      const current = await readBinding(operation, authority);
+      const current = await readBinding(
+        operation,
+        continuation && authority === "intake" ? "turn" : authority
+      );
       if (!sameBinding(binding, current))
         throw new Error("The native project or paired owner changed. Reopen Native request.");
       check();
@@ -151,6 +173,8 @@ export async function openNativeIntake(
       check();
       if (!sameBinding(binding, record.binding))
         throw new Error("This request belongs to a different native owner.");
+      if (record.command.continuation?.sessionId !== continuationSessionId)
+        throw new Error("This saved request belongs to a different session scope.");
       await journal.confirm(record);
       check();
     };
@@ -163,6 +187,10 @@ export async function openNativeIntake(
         (result.requestId !== record.command.requestId ||
           result.projectId !== binding.projectId ||
           result.sourceRef.inputId !== record.command.inputId ||
+          result.sourceRef.continuation?.sessionId !== record.command.continuation?.sessionId ||
+          (result.kind === "turn" &&
+            (result.continuation?.sessionId !== record.command.continuation?.sessionId ||
+              result.continuation?.revision !== result.sourceRef.continuation?.revision)) ||
           (result.kind === "turn" && result.text !== record.command.text) ||
           (result.kind === "work" && result.receipt.goal !== record.command.text))
       ) {
@@ -233,7 +261,9 @@ export async function openNativeIntake(
         await authorize();
         const records = await journal.list(binding);
         check();
-        return records;
+        return records.filter(
+          (record) => record.command.continuation?.sessionId === continuationSessionId
+        );
       },
       async submit(
         source: NativeIntakeSource,
@@ -245,6 +275,7 @@ export async function openNativeIntake(
           requestId: "validation",
           inputId: "validation",
           ...source,
+          ...(continuation ? { continuation } : {}),
         });
         await authorize(operation);
         const record = {
@@ -254,6 +285,7 @@ export async function openNativeIntake(
             inputId: newId(),
             text: original.text,
             unsupportedSources: original.unsupportedSources,
+            ...(original.continuation ? { continuation: original.continuation } : {}),
           }),
           createdAt: Date.now(),
         };

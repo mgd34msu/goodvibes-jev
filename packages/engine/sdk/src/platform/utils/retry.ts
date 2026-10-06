@@ -5,6 +5,8 @@ import { sleep } from './concurrency.js';
 
 /** Configuration for retry behaviour with exponential backoff. */
 export interface RetryConfig {
+  /** Host-owned admission fence. A failure is final even if its error looks retryable. */
+  beforeAttempt?: (() => void | Promise<void>) | undefined;
   maxRetries: number;
   initialDelayMs: number;
   maxDelayMs: number;
@@ -95,6 +97,8 @@ export async function withRetry<T>(
   let lastError: Error = new Error('Unknown error');
 
   for (let attempt = 0; attempt <= cfg.maxRetries; attempt++) {
+    // Outside the retry catch: denied/stale authority never spends transport retries.
+    if (cfg.beforeAttempt) await cfg.beforeAttempt();
     try {
       return await fn();
     } catch (err: unknown) {

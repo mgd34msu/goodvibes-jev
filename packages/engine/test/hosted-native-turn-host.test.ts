@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
@@ -60,6 +60,7 @@ async function fixture(options: {
     sourceRef: { version: 1, inputId, sourceId: `source-${inputId}`, sourceRevision: 'revision-1', sessionId: 'native-source-session' },
     route: 'answer', text: exactText };
   let current: NativeConversationIntakeResult = structuredClone(source);
+  const additionalSources = new Map<string, NativeConversationIntakeResult>();
   let authoritySnapshot: NativePairedExecutionSnapshot | null = {
     kind: 'pairing-token', principalId: 'owned-principal', authorityId: 'owned-principal', tokenId: 'owned-token', authorityRevision: 'owned-token', scopes: [...NATIVE_HOSTED_TURN_SCOPES],
   };
@@ -107,14 +108,19 @@ async function fixture(options: {
   const admitHooks: (() => void | Promise<void>)[] = [];
   const deps = { projectId, projectRoot: workspace, journalPath, journal, broker,
     intake: {
-      get: async () => { counts.gets++; await getHooks.shift()?.(); return structuredClone(current); },
-      admit: async () => { counts.admits++; await admitHooks.shift()?.(); return structuredClone(current); },
+      get: async ({ inputId }: { inputId: string }) => { counts.gets++; await getHooks.shift()?.(); return structuredClone(additionalSources.get(inputId) ?? current); },
+      admit: async ({ inputId }: { inputId: string }) => { counts.admits++; await admitHooks.shift()?.(); return structuredClone(additionalSources.get(inputId) ?? current); },
     },
     manager: {
-      create: async (input: Parameters<HostedSessionManager['create']>[0]) => { counts.creates++; await options.beforeCreate?.(); return manager.create(input); },
+      get: (sessionId: string) => manager.get(sessionId),
+      captureNativeContinuation: (sessionId: string) => manager.captureNativeContinuation(sessionId),
+      assertNativeContinuation: (context: Parameters<HostedSessionManager['assertNativeContinuation']>[0]) => manager.assertNativeContinuation(context),
+      waitForNativeAvailability: (sessionId: string, signal: AbortSignal) => manager.waitForNativeAvailability(sessionId, signal),
+      create: async (input: Parameters<HostedSessionManager['create']>[0], ownership?: Parameters<HostedSessionManager['create']>[1]) => { counts.creates++; await options.beforeCreate?.(); return manager.create(input, ownership); },
       deliverNative: async (sessionId: string, brokerInputId: string, permit: NativeConversationTurnPermit) => {
         counts.deliveries++;
-        expect(readNativeConversationTurnPermit(permit)).toEqual(source);
+        const permitted = readNativeConversationTurnPermit(permit);
+        expect(JSON.stringify(permitted)).toBe(JSON.stringify(additionalSources.get(permitted.sourceRef.inputId) ?? source));
         await options.beforeDeliver?.(permit);
         await manager.deliverNative(sessionId, brokerInputId, permit);
         await options.afterDeliver?.(permit);
@@ -133,6 +139,7 @@ async function fixture(options: {
   });
   return { root, workspace, brokerPath, journalPath, source, request, authority, access, journal, identity, broker, manager, counts, requests, readings,
     host: hosts[0]!, getHooks, admitHooks,
+    addSource(value: NativeConversationIntakeResult) { additionalSources.set(value.sourceRef.inputId, value); },
     setSource(value: NativeConversationIntakeResult) { current = value; },
     revoke() { authoritySnapshot = null; },
     deny() { authorized = false; },
@@ -744,4 +751,256 @@ test('visible cancelled broker memory cannot certify cancellation while strict t
     expect((await f.journal.read(f.identity))?.state).toBe('dispatching');
     expect(f.requests).toHaveLength(1);
   } finally { store.persist = persist; gate.resolve(); }
+});
+
+
+describe('native-owned session continuations', () => {
+  async function continuation(f: Awaited<ReturnType<typeof fixture>>, sessionId: string, name: string) {
+    const context = await f.host.continuation.capture(sessionId, 'owned-principal');
+    const next: NativeConversationTurnSource = { ...f.source, requestId: `request-${name}`,
+      text: `  ${name} café e\u0301 🧭\nKeep exact whitespace.  `,
+      sourceRef: { ...f.source.sourceRef, inputId: `input-${name}`, sourceId: `source-${name}`, sourceRevision: `revision-${name}`,
+        continuation: { sessionId, revision: context.revision } }, continuation: context };
+    f.addSource(next);
+    return { source: next, context, request: { projectId: next.projectId, inputId: next.sourceRef.inputId, sourceRevision: next.sourceRef.sourceRevision } };
+  }
+  test('reuses only the host-owned session with a frozen completed context and fresh canonical input', async () => {
+    const f = await fixture();
+    const initial = snapshot(await f.host.start(f.request, f.authority, f.access));
+    await f.settled();
+    const next = await continuation(f, initial.sessionId!, 'second');
+    expect(next.context.messages.some(message => message.role === 'assistant' && message.content.includes('Owned synthetic answer'))).toBe(true);
+    const result = snapshot(await f.host.start(next.request, f.authority, f.access));
+    expect(result.sessionId).toBe(initial.sessionId);
+    expect(result.brokerInputId).not.toBe(initial.brokerInputId);
+    expect(result.correlationId).toBe(`session-input:${result.brokerInputId}`);
+    await eventually(() => f.host.status(next.request, f.authority, f.access), value => !('kind' in value) && value.state === 'completed');
+    expect(f.counts.creates).toBe(1);
+    expect(f.counts.deliveries).toBe(2);
+    expect(f.manager.historyOf(initial.sessionId!)).toContainEqual({ role: 'user', content: next.source.text });
+    expect(await f.host.start(next.request, f.authority, f.access)).toMatchObject({ state: 'completed', sessionId: initial.sessionId });
+    expect(f.counts.deliveries).toBe(2);
+    expect(await f.host.session(initial.sessionId!, f.authority, f.access)).toEqual({ kind: 'native', projectId: f.source.projectId, sessionId: initial.sessionId!, busy: false });
+    expect(await f.host.session('ordinary-legacy-session', undefined, f.access)).toEqual({ kind: 'legacy' });
+    await expect(f.host.continuation.capture(initial.sessionId!, 'other-principal')).rejects.toMatchObject({ code: 'forbidden' });
+  });
+  test('missing native dispatch provenance never downgrades a hosted session to legacy', async () => {
+    const f = await fixture();
+    const initial = snapshot(await f.host.start(f.request, f.authority, f.access));
+    await f.settled();
+    expect(f.manager.get(initial.sessionId!)?.nativeConversation).toBe(true);
+    unlinkSync(f.journalPath);
+    await expect(f.host.session(initial.sessionId!, f.authority, f.access)).rejects.toMatchObject({ code: 'recovery-required' });
+    await expect(f.host.continuation.capture(initial.sessionId!, 'owned-principal')).rejects.toMatchObject({ code: 'stale' });
+    expect(f.counts.deliveries).toBe(1);
+  });
+  test('queues genuine permits, excludes an active reply, and cancels only the queued input', async () => {
+    const entered = deferred(), release = deferred();
+    const f = await fixture({ chat: async () => { entered.resolve(); await release.promise; return answer(); } });
+    const initial = snapshot(await f.host.start(f.request, f.authority, f.access));
+    await entered.promise;
+    const second = await continuation(f, initial.sessionId!, 'queued-second');
+    expect(second.context.messages).toEqual([]);
+    const queued = snapshot(await f.host.start(second.request, f.authority, f.access));
+    expect(queued).toMatchObject({ state: 'queued', sessionId: initial.sessionId });
+    expect(f.counts.deliveries).toBe(1);
+    const cancelled = await f.host.cancel(second.request, f.authority, f.access);
+    expect(cancelled).toMatchObject({ state: 'cancelled', sessionId: initial.sessionId });
+    expect(f.runtime(initial.sessionId!).isRunning()).toBe(true);
+    expect(f.counts.deliveries).toBe(1);
+    const third = await continuation(f, initial.sessionId!, 'queued-third');
+    expect(await f.host.start(third.request, f.authority, f.access)).toMatchObject({ state: 'queued' });
+    release.resolve();
+    await f.settled();
+    await eventually(() => f.host.status(third.request, f.authority, f.access), value => !('kind' in value) && value.state === 'completed');
+    expect(f.counts.creates).toBe(1);
+    expect(f.counts.deliveries).toBe(2);
+    expect(f.manager.historyOf(initial.sessionId!).filter(message => message.role === 'user').map(message => message.content)).toEqual([exactText, third.source.text]);
+  });
+  test('concurrent distinct requests retain local FIFO ownership without conflicting claims', async () => {
+    const entered = deferred(), release = deferred();
+    const f = await fixture({ chat: async () => { entered.resolve(); await release.promise; return answer(); } });
+    const initial = snapshot(await f.host.start(f.request, f.authority, f.access));
+    await entered.promise;
+    const second = await continuation(f, initial.sessionId!, 'concurrent-second');
+    const third = await continuation(f, initial.sessionId!, 'concurrent-third');
+    const results = await Promise.all([f.host.start(second.request, f.authority, f.access), f.host.start(third.request, f.authority, f.access)]);
+    expect(results.every(result => !('kind' in result) && result.state === 'queued')).toBe(true);
+    expect(f.counts.deliveries).toBe(1);
+    release.resolve();
+    await eventually(() => f.host.status(second.request, f.authority, f.access), value => !('kind' in value) && value.state === 'completed');
+    await eventually(() => f.host.status(third.request, f.authority, f.access), value => !('kind' in value) && value.state === 'completed');
+    expect(f.counts.deliveries).toBe(3);
+    expect(f.manager.historyOf(initial.sessionId!).filter(message => message.role === 'user').map(message => message.content)).toEqual([exactText, second.source.text, third.source.text]);
+  });
+  for (const existingSuccessor of [false, true]) test(`cancelled intermediate FIFO slot retains preparing predecessor (existing successor: ${existingSuccessor})`, async () => {
+    const f = await fixture();
+    const initial = snapshot(await f.host.start(f.request, f.authority, f.access));
+    await f.settled();
+    const first = await continuation(f, initial.sessionId!, 'preparing-first');
+    const middle = await continuation(f, initial.sessionId!, 'cancel-middle');
+    const third = await continuation(f, initial.sessionId!, 'third-after-middle');
+    const fourth = await continuation(f, initial.sessionId!, 'fourth-after-middle');
+    const entered = deferred(), release = deferred();
+    f.admitHooks.push(async () => { entered.resolve(); await release.promise; });
+    const startingFirst = f.host.start(first.request, f.authority, f.access);
+    await entered.promise;
+    try {
+      await f.host.start(middle.request, f.authority, f.access);
+      if (existingSuccessor) await f.host.start(third.request, f.authority, f.access);
+      expect(await f.host.cancel(middle.request, f.authority, f.access)).toMatchObject({ state: 'cancelled' });
+      if (!existingSuccessor) await f.host.start(third.request, f.authority, f.access);
+      await f.host.start(fourth.request, f.authority, f.access);
+      await Bun.sleep(20);
+      expect(f.counts.deliveries).toBe(1);
+    } finally { release.resolve(); }
+    await startingFirst;
+    await eventually(() => f.host.status(fourth.request, f.authority, f.access), value => !('kind' in value) && value.state === 'completed');
+    expect(f.manager.historyOf(initial.sessionId!).filter(message => message.role === 'user').map(message => message.content)).toEqual([exactText, first.source.text, third.source.text, fourth.source.text]);
+  });
+  test('completed checkpoints include the latest native and ordinary turns while another ordinary turn runs', async () => {
+    const nativeEntered = deferred(), releaseNative = deferred(), firstOrdinaryEntered = deferred(), releaseFirstOrdinary = deferred(), secondOrdinaryEntered = deferred(), releaseSecondOrdinary = deferred();
+    let call = 0;
+    const f = await fixture({ chat: async () => {
+      call++;
+      if (call === 1) { nativeEntered.resolve(); await releaseNative.promise; }
+      if (call === 2) { firstOrdinaryEntered.resolve(); await releaseFirstOrdinary.promise; }
+      if (call === 3) { secondOrdinaryEntered.resolve(); await releaseSecondOrdinary.promise; }
+      return { ...answer(), content: `Checkpoint answer ${call}` };
+    } });
+    const initial = snapshot(await f.host.start(f.request, f.authority, f.access));
+    await nativeEntered.promise;
+    const runtime = f.runtime(initial.sessionId!);
+    await runtime.submit('ordinary-one');
+    releaseNative.resolve();
+    await firstOrdinaryEntered.promise;
+    await f.settled();
+    try {
+      const first = await f.host.continuation.capture(initial.sessionId!, 'owned-principal');
+      expect(first.messages).toContainEqual({ role: 'assistant', content: 'Checkpoint answer 1' });
+      expect(first.messages.some(message => message.content === 'ordinary-one')).toBe(false);
+      await runtime.submit('ordinary-two');
+      releaseFirstOrdinary.resolve();
+      await secondOrdinaryEntered.promise;
+      const second = await f.host.continuation.capture(initial.sessionId!, 'owned-principal');
+      expect(second.messages).toContainEqual({ role: 'user', content: 'ordinary-one' });
+      expect(second.messages).toContainEqual({ role: 'assistant', content: 'Checkpoint answer 2' });
+      expect(second.messages.some(message => message.content === 'ordinary-two')).toBe(false);
+    } finally { releaseNative.resolve(); releaseFirstOrdinary.resolve(); releaseSecondOrdinary.resolve(); }
+    await eventually(() => runtime.isRunning(), value => value === false);
+  });
+  test('busy capture retains its exact completed checkpoint while a newer completion publishes', async () => {
+    const enteredOne = deferred(), releaseOne = deferred(), enteredTwo = deferred(), releaseTwo = deferred(), enteredThree = deferred(), releaseThree = deferred();
+    let call = 0;
+    const f = await fixture({ chat: async () => {
+      const number = ++call;
+      if (number === 2) { enteredOne.resolve(); await releaseOne.promise; }
+      if (number === 3) { enteredTwo.resolve(); await releaseTwo.promise; }
+      if (number === 4) { enteredThree.resolve(); await releaseThree.promise; }
+      return { ...answer(), content: `Overlap answer ${number}` };
+    } });
+    const initial = snapshot(await f.host.start(f.request, f.authority, f.access));
+    await f.settled();
+    const runtime = f.runtime(initial.sessionId!);
+    const store = (f.manager as unknown as { options: { store: HostedSessionStore } }).options.store;
+    const save = store.save.bind(store), completedWrite = deferred(), releaseWrite = deferred();
+    const saving = spyOn(store, 'save').mockImplementation(async (record, conversation, options) => {
+      await save(record, conversation, options);
+      const text = JSON.stringify(conversation);
+      if (options?.durable && text.includes('Overlap answer 2') && !text.includes('ordinary-two')) {
+        completedWrite.resolve(); await releaseWrite.promise;
+      }
+    });
+    const first = runtime.submit('ordinary-one');
+    await enteredOne.promise;
+    await runtime.submit('ordinary-two');
+    await runtime.submit('ordinary-three');
+    releaseOne.resolve();
+    try {
+      await completedWrite.promise;
+      await enteredTwo.promise;
+      let returned = false;
+      const captured = f.manager.captureNativeContinuation(initial.sessionId!).then(value => { returned = true; return value; });
+      // Existing runtime composition yields one microtask before selecting its checkpoint pair.
+      await Promise.resolve();
+      expect(returned).toBe(false);
+      releaseTwo.resolve();
+      await enteredThree.promise;
+      releaseWrite.resolve();
+      const context = await captured;
+      expect(context.messages).toContainEqual({ role: 'assistant', content: 'Overlap answer 2' });
+      expect(context.messages.some(message => message.content === 'ordinary-two' || message.content === 'Overlap answer 3')).toBe(false);
+      const latest = await f.manager.captureNativeContinuation(initial.sessionId!);
+      expect(latest.messages).toContainEqual({ role: 'assistant', content: 'Overlap answer 3' });
+    } finally { releaseOne.resolve(); releaseTwo.resolve(); releaseThree.resolve(); releaseWrite.resolve(); saving.mockRestore(); }
+    await first;
+  });
+  test('refuses replaced prefix without killing existing session and keeps status readable', async () => {
+    const f = await fixture();
+    const initial = snapshot(await f.host.start(f.request, f.authority, f.access));
+    await f.settled();
+    const next = await continuation(f, initial.sessionId!, 'stale-prefix');
+    const conversation = f.runtime(initial.sessionId!).conversation;
+    const data = conversation.toJSON();
+    conversation.fromJSON({ ...data, messages: [] });
+    await expect(f.host.start(next.request, f.authority, f.access)).rejects.toThrow();
+    expect(f.manager.get(initial.sessionId!)?.status).not.toBe('terminated');
+    expect(f.counts.deliveries).toBe(1);
+    expect(await f.host.status(next.request, f.authority, f.access)).toMatchObject({ state: 'recovery-required' });
+    expect(await f.host.cancel(next.request, f.authority, f.access)).toMatchObject({ state: 'cancelled' });
+  });
+  test('an unclaimed continuation can be tombstoned without cancelling another host running turn', async () => {
+    const entered = deferred(), release = deferred();
+    const f = await fixture({ chat: async () => { entered.resolve(); await release.promise; return answer(); } });
+    const initial = snapshot(await f.host.start(f.request, f.authority, f.access));
+    await entered.promise;
+    const next = await continuation(f, initial.sessionId!, 'unclaimed-cancel');
+    try {
+      const foreign = f.newHost();
+      expect(await foreign.cancel(next.request, f.authority, f.access)).toMatchObject({ state: 'cancelled', sessionId: null });
+      expect(await f.host.start(next.request, f.authority, f.access)).toMatchObject({ state: 'cancelled', sessionId: null });
+      expect(f.runtime(initial.sessionId!).isRunning()).toBe(true);
+      expect(f.counts.deliveries).toBe(1);
+    } finally { release.resolve(); }
+    await f.settled();
+  });
+  test('a second host reads queued ambiguity but cannot reuse or cancel another host runtime', async () => {
+    const entered = deferred(), release = deferred();
+    const f = await fixture({ chat: async () => { entered.resolve(); await release.promise; return answer(); } });
+    const initial = snapshot(await f.host.start(f.request, f.authority, f.access));
+    await entered.promise;
+    const next = await continuation(f, initial.sessionId!, 'cross-host');
+    await f.host.start(next.request, f.authority, f.access);
+    const foreign = f.newHost();
+    expect(await foreign.status(next.request, f.authority, f.access)).toMatchObject({ state: 'recovery-required' });
+    expect(await foreign.start(next.request, f.authority, f.access)).toMatchObject({ state: 'recovery-required' });
+    expect(await foreign.cancel(next.request, f.authority, f.access)).toMatchObject({ state: 'recovery-required' });
+    await expect(foreign.continuation.capture(initial.sessionId!, 'owned-principal')).rejects.toMatchObject({ code: 'recovery-required' });
+    expect(f.counts.deliveries).toBe(1);
+    release.resolve();
+    await eventually(() => f.host.status(next.request, f.authority, f.access), value => !('kind' in value) && value.state === 'completed');
+  });
+});
+
+
+test('actual native provider attempts revalidate the retained owner after runtime entry', async () => {
+  const denied = deferred();
+  let transportCalls = 0;
+  let revoke = () => {};
+  const f = await fixture({ chat: async request => {
+    revoke();
+    try {
+      expect(request.beforeAttempt).toBeDefined();
+      await request.beforeAttempt?.();
+    } catch (error) { denied.resolve(); throw error; }
+    transportCalls++;
+    return answer();
+  } });
+  const owner = f.authority.current();
+  revoke = f.revoke;
+  await f.host.start(f.request, f.authority, f.access);
+  await denied.promise;
+  f.setAuthority(owner);
+  expect((await f.settled()).state).toBe('recovery-required');
+  expect(transportCalls).toBe(0);
 });

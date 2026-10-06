@@ -1,3 +1,4 @@
+import { revalidateProviderAttempt } from './attempt-guard.js';
 import { withRetry } from '../utils/retry.js';
 import { instrumentedLlmCall } from '../runtime/llm-observability.js';
 import { ProviderError } from '../types/errors.js';
@@ -96,7 +97,7 @@ export class LlamaCppProvider implements LLMProvider {
         return this.compatProvider.chat(params);
       }
       return this.chatViaNonStreamingCompat(params, params.model || this.defaultModel);
-    }, params.signal ? { signal: params.signal } : undefined, params.onRetry), { provider: this.name, model: params.model || this.defaultModel })).result;
+    }, { ...(params.signal ? { signal: params.signal } : {}), ...(params.beforeAttempt ? { beforeAttempt: params.beforeAttempt } : {}) }, params.onRetry), { provider: this.name, model: params.model || this.defaultModel })).result;
   }
 
   async embed(request: ProviderEmbeddingRequest): Promise<ProviderEmbeddingResult> {
@@ -163,7 +164,8 @@ export class LlamaCppProvider implements LLMProvider {
       ...extraBody,
     };
 
-    let response: Response;
+    if (params.beforeAttempt) await revalidateProviderAttempt(params.beforeAttempt);
+      let response: Response;
     try {
       response = await this.nativeFetch(this.nativeChatUrl, {
         method: 'POST',

@@ -484,3 +484,61 @@ describe("native intake immutable browser source journal", () => {
     }
   });
 });
+
+test("continuation identity survives strict source-journal reload without saving transcript or authority", async () => {
+  const storage = databaseDouble();
+  const original = record();
+  original.command.continuation = { sessionId: "native-session" };
+  await storage.journal().save(original);
+  expect(await storage.journal().list(binding)).toEqual([original]);
+  await storage.journal().confirm(original);
+  const changed = structuredClone(original);
+  changed.command.continuation!.sessionId = "another-session";
+  await expect(storage.journal().confirm(changed)).rejects.toMatchObject({ code: "conflict" });
+  await expect(storage.journal().save(changed)).rejects.toMatchObject({ code: "conflict" });
+});
+
+for (const continuation of [
+  undefined,
+  null,
+  {},
+  { sessionId: "" },
+  { sessionId: "s", transcript: [] },
+  { sessionId: "s", revision: "invented" },
+  { sessionId: "s", permit: {} },
+])
+  test("source journal rejects malformed or authority-bearing continuation records", async () => {
+    const storage = databaseDouble();
+    const original = record();
+    Object.assign(original.command, { continuation });
+    await expect(storage.journal().save(original)).rejects.toMatchObject({
+      code: "invalid-record",
+    });
+    expect(storage.state.opens).toBe(0);
+    storage.state.seed([original]);
+    await expect(storage.journal().list(binding)).rejects.toMatchObject({ code: "corrupt" });
+  });
+
+test("source journal rejects continuation accessors and hidden fields without evaluating them", async () => {
+  const storage = databaseDouble();
+  const original = record();
+  let read = false;
+  const continuation = Object.defineProperty({}, "sessionId", {
+    enumerable: true,
+    get() {
+      read = true;
+      return "native";
+    },
+  });
+  Object.assign(original.command, { continuation });
+  await expect(storage.journal().save(original)).rejects.toMatchObject({ code: "invalid-record" });
+  expect(read).toBe(false);
+  Object.assign(original.command, {
+    continuation: Object.defineProperty({ sessionId: "native" }, "secret", {
+      value: "hidden",
+      enumerable: false,
+    }),
+  });
+  await expect(storage.journal().save(original)).rejects.toMatchObject({ code: "invalid-record" });
+  expect(storage.state.opens).toBe(0);
+});

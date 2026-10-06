@@ -1,7 +1,7 @@
 import type { GatewayMethodCatalog } from '../method-catalog.js';
 import type { GatewayMethodInvocation } from '../method-catalog-shared.js';
 import type { WorkLedgerReadClient } from '../../workflow/work-ledger/index.js';
-import { WorkLedgerAccessError } from '../../workflow/work-ledger/types.js';
+import { WorkLedgerAccessError, projectWorkLedgerReadEvent, projectWorkLedgerReadWork } from '../../workflow/work-ledger/types.js';
 import {
   WORK_LEDGER_READ_SCOPE, WORK_LEDGER_HISTORY_PAGE_SIZE, WORK_LEDGER_READ_MAX_BYTES,
   workLedgerReadSnapshotSchema, type WorkLedgerHistoryPage,
@@ -80,7 +80,7 @@ export function registerWorkLedgerGatewayMethods(catalog: GatewayMethodCatalog, 
       const snapshot = workLedgerReadSnapshotSchema.parse(await reader.readSnapshot());
       if (snapshot.projectId !== reader.projectId) throw new Error('Host reader project mismatch');
       if (invocation.isAuthorized?.() === false) throw new GatewayVerbError('Owner authorization changed', 'FORBIDDEN', 403);
-      return bounded({ ...snapshot, provenance: provenance(invocation) });
+      return bounded({ ...snapshot, works: snapshot.works.map(view => ({ ...view, work: projectWorkLedgerReadWork(view.work) })), provenance: provenance(invocation) });
     });
   });
   attach('workLedger.history', async invocation => {
@@ -101,9 +101,7 @@ export function registerWorkLedgerGatewayMethods(catalog: GatewayMethodCatalog, 
         hasMore: afterSequence < throughSequence, provenance: provenance(invocation), events: [],
       };
       for (const rawEvent of all) {
-        const event = rawEvent.type === 'import_legacy' && page.provenance !== 'available'
-          ? { type: rawEvent.type, sequence: rawEvent.sequence, actorId: rawEvent.actorId, requestId: rawEvent.requestId,
-            at: rawEvent.at, works: rawEvent.works, manifest: null, provenance: 'requires_read_knowledge' as const } : rawEvent;
+        const event = projectWorkLedgerReadEvent(rawEvent, page.provenance === 'available');
         if (event.sequence > throughSequence) break;
         if (invocation.isAuthorized?.() === false) throw new GatewayVerbError('Owner authorization changed', 'FORBIDDEN', 403);
         if (event.sequence !== page.cursor + 1) throw new Error('History cursor is not contiguous');

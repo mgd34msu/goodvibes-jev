@@ -23,6 +23,7 @@ let rejectNextSteerAsClosed = false;
 let rejectNextSteerAsOtherError = false;
 
 mock.module('../../lib/goodvibes', () => ({
+  GOODVIBES_BASE_URL: 'http://localhost/test',
   hasStoredTokenSync: () => Boolean(localStorage.getItem(WEBUI_TOKEN_STORE_KEY)),
   getCurrentAuth: () => Promise.resolve({}),
   invokeMethod: () => Promise.resolve({}),
@@ -51,7 +52,7 @@ mock.module('../../lib/goodvibes', () => ({
   },
 }));
 
-const { SteerComposer } = await import('./SteerComposer');
+const { LegacySteerComposer: SteerComposer } = await import('./SteerComposer');
 const { queryKeys } = await import('../../lib/queries');
 
 function render(): { container: HTMLElement; client: QueryClient; unmount: () => void } {

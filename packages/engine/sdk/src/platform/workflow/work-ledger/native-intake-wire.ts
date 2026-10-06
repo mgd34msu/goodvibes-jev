@@ -1,8 +1,9 @@
 /** Browser-safe conversation data. Capture and admission never grant execution authority. */
+import { nativeConversationContinuationRefSchema, nativeConversationContinuationSchema } from './native-continuation-context.js';
 import { array, enum as enumSchema, literal, number, strictObject, string, union, type z } from 'zod/v4';
 
 export const NATIVE_CONVERSATION_INTAKE_MAX_REQUEST_BYTES = 262_144;
-export const NATIVE_CONVERSATION_INTAKE_MAX_RESPONSE_BYTES = 278_528;
+export const NATIVE_CONVERSATION_INTAKE_MAX_RESPONSE_BYTES = 409_600;
 const id = string().min(1).max(200);
 const revision = number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 // Count UTF-16 units and preserve the exact submitted string.
@@ -13,11 +14,11 @@ const bounded = (value: unknown, limit: number): boolean => {
 };
 export const nativeConversationIntakeUnsupportedSourceSchema = strictObject({ kind: enumSchema(['image', 'file', 'context']), label: id });
 export const nativeConversationIntakeCaptureRequestSchema = strictObject({
-  requestId: id, inputId: id, text, unsupportedSources: array(nativeConversationIntakeUnsupportedSourceSchema).max(100),
+  requestId: id, inputId: id, text, continuation: strictObject({ sessionId: id }).optional(), unsupportedSources: array(nativeConversationIntakeUnsupportedSourceSchema).max(100),
 }).refine(value => bounded(value, NATIVE_CONVERSATION_INTAKE_MAX_REQUEST_BYTES), 'Capture exceeds byte limit');
 export const nativeConversationIntakeLookupRequestSchema = strictObject({ inputId: id });
 export const nativeConversationIntakeTransitionRequestSchema = strictObject({ inputId: id, sourceRevision: id });
-export const nativeConversationIntakeSourceRefSchema = strictObject({ version: literal(1), inputId: id, sourceId: id, sourceRevision: id, sessionId: id });
+export const nativeConversationIntakeSourceRefSchema = strictObject({ version: literal(1), inputId: id, sourceId: id, sourceRevision: id, sessionId: id, continuation: nativeConversationContinuationRefSchema.optional() });
 const spanSchema = strictObject({ partId: literal('input'), start: revision, end: revision });
 /** Immutable admission-event projection, not an execution receipt or client-supplied proof. */
 export const nativeConversationIntakeWorkReceiptSchema = strictObject({
@@ -25,6 +26,7 @@ export const nativeConversationIntakeWorkReceiptSchema = strictObject({
   expectedRevision: strictObject({ work: revision, criteria: revision, attempt: revision }),
   source: strictObject({ version: literal(2), sourceId: id, sourceRevision: id, sessionId: id,
     offsetEncoding: literal('utf16'), proposalRevision: id, spans: array(spanSchema).min(1).max(100),
+    continuation: nativeConversationContinuationSchema.optional(),
     admissionDecisionId: id, judgmentDecisionIds: array(id).min(1).max(128) }),
   goal: text, criteria: array(text).min(1).max(100),
 }).refine(value => {
@@ -38,7 +40,7 @@ const common = { projectId: id, requestId: id, sourceRef: nativeConversationInta
 export const nativeConversationIntakeResultSchema = union([
   strictObject({ kind: literal('captured'), ...common }),
   strictObject({ kind: literal('processing'), ...common, stage: enumSchema(['routing', 'extracting', 'checking', 'deciding', 'waiting']), recovery: enumSchema(['pending', 'required']) }),
-  strictObject({ kind: literal('turn'), ...common, route: enumSchema(['converse', 'answer']), text }),
+  strictObject({ kind: literal('turn'), ...common, route: enumSchema(['converse', 'answer']), text, continuation: nativeConversationContinuationSchema.optional() }),
   strictObject({ kind: literal('blocked'), ...common, reason: enumSchema(['unsupported-source', 'missing-context']), recovery: literal('required') }),
   strictObject({ kind: literal('refused'), ...common, reason: enumSchema(['semantic', 'exhausted']) }),
   strictObject({ kind: literal('cancelled'), ...common }),
@@ -46,6 +48,10 @@ export const nativeConversationIntakeResultSchema = union([
 ]).refine(value => value.kind !== 'work' || (value.receipt.projectId === value.projectId && value.receipt.requestId === value.requestId
   && value.receipt.inputId === value.sourceRef.inputId && value.receipt.source.sourceId === value.sourceRef.sourceId
   && value.receipt.source.sourceRevision === value.sourceRef.sourceRevision && value.receipt.source.sessionId === value.sourceRef.sessionId), 'Receipt source identity mismatch')
+  .refine(value => {
+    const continuation = value.kind === 'turn' ? value.continuation : value.kind === 'work' ? value.receipt.source.continuation : value.sourceRef.continuation;
+    return JSON.stringify(continuation ? { sessionId: continuation.sessionId, revision: continuation.revision } : null) === JSON.stringify(value.sourceRef.continuation ?? null);
+  }, 'Continuation source binding mismatch')
   .refine(value => bounded(value, NATIVE_CONVERSATION_INTAKE_MAX_RESPONSE_BYTES), 'Intake result exceeds byte limit');
 export const nativeConversationIntakeLookupResultSchema = union([
   nativeConversationIntakeResultSchema, strictObject({ kind: literal('not-found') }),

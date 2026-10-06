@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual, types as nodeTypes } from 'node:util';
 import { array, enum as enumSchema, literal, number, strictObject, string } from 'zod/v4';
 import { captureJevDecisionContext, validateJevDecision, type JevDecision, type JevDecisionContext, type JevDecisionBinding } from '@goodvibes-jev/judgment/decisions';
+import { captureNativeConversationContinuation, canonicalNativeConversationContinuation, nativeConversationContinuationSchema, type NativeConversationContinuation } from './native-continuation-context.js';
 import type { WorkLedgerStorage, WorkLedgerSubmission } from './types.js';
 
 export const NATIVE_CONVERSATION_MAX_PROPOSALS = 3;
@@ -20,7 +21,7 @@ export interface NativeConversationDecision { readonly decision: JevDecision; re
 export interface NativeConversationAssociation { readonly workId: string; readonly attemptId: string; readonly ledgerRevision: number; }
 export interface NativeConversationCapture extends NativeConversationKey {
   readonly version: 1; readonly projectId: string; readonly requestId: string;
-  readonly text: string; readonly unsupportedSources: readonly NativeConversationUnsupportedSource[];
+  readonly text: string; readonly continuation?: NativeConversationContinuation | undefined; readonly unsupportedSources: readonly NativeConversationUnsupportedSource[];
   readonly sourceId: string; readonly sourceRevision: string; readonly sessionId: string; readonly owner: NativeConversationOwner;
   readonly generation: number; readonly state: 'captured' | 'processing' | 'turn' | 'blocked' | 'refused' | 'associated' | 'cancelled';
   readonly stage: 'routing' | 'extracting' | 'checking' | 'deciding' | 'waiting' | null;
@@ -46,8 +47,8 @@ export class NativeConversationStorageError extends Error {
 }
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function nativeConversationSourceId(projectId: string, principalId: string, inputId: string): string { return hash({ projectId, principalId, inputId }); }
-export function nativeConversationSourceRevision(value: Pick<NativeConversationCapture, 'inputId' | 'text' | 'unsupportedSources'>): string {
-  return hash({ version: 1, inputId: value.inputId, text: value.text, unsupportedSources: value.unsupportedSources.map(source => ({ kind: source.kind, label: source.label })) });
+export function nativeConversationSourceRevision(value: Pick<NativeConversationCapture, 'inputId' | 'text' | 'unsupportedSources' | 'continuation'>): string {
+  return hash({ version: 1, inputId: value.inputId, text: value.text, ...(value.continuation ? { continuation: value.continuation } : {}), unsupportedSources: value.unsupportedSources.map(source => ({ kind: source.kind, label: source.label })) });
 }
 export function nativeConversationProposalRevision(proposal: NativeConversationProposal): string {
   return hash({ sourceRevision: proposal.sourceRevision, spans: proposal.spans.map(span => ({ partId: span.partId, start: span.start, end: span.end })) });
@@ -101,6 +102,7 @@ export function validateNativeConversationProposal(value: unknown, text: string,
 const captureSchema = strictObject({
   version: literal(1), projectId: id, principalId: id, inputId: id, requestId: id,
   text: string().min(1).max(20_000).refine(value => value.trim().length > 0),
+  continuation: nativeConversationContinuationSchema.optional(),
   unsupportedSources: array(strictObject({ kind: enumSchema(['image', 'file', 'context']), label: string().min(1).max(200) })).max(100),
   sourceId: id, sourceRevision: id, sessionId: id,
   owner: strictObject({ authorityId: id, authorityRevision: id, authorityScopes: array(id).max(100), scopeId: id, scopeRevision: id, projectRoot: string().min(1).max(4096) }),
@@ -119,6 +121,7 @@ export function parseNativeConversationCapture(value: unknown): NativeConversati
       || new Set(parsed.owner.authorityScopes).size !== parsed.owner.authorityScopes.length
       || parsed.sourceId !== nativeConversationSourceId(parsed.projectId, parsed.principalId, parsed.inputId)
       || parsed.sourceRevision !== nativeConversationSourceRevision(parsed)) throw new Error();
+    if (parsed.continuation && parsed.continuation.revision !== createHash('sha256').update(canonicalNativeConversationContinuation(parsed.continuation.sessionId, parsed.continuation.messages)).digest('hex')) throw new Error();
     const retained = decisions.map(entry => {
       if (Object.keys(entry).length !== 2 || !Object.hasOwn(entry, 'decision') || !Object.hasOwn(entry, 'context')) throw new Error();
       const context = captureJevDecisionContext(entry.context); const decision = validateJevDecision(entry.decision, context);
@@ -131,7 +134,7 @@ export function parseNativeConversationCapture(value: unknown): NativeConversati
     if (parsed.proposal) validateNativeConversationProposal(parsed.proposal, parsed.text, parsed.sourceRevision);
     if (parsed.proposal && parsed.proposalsSpent < 1) throw new Error();
     if ((parsed.state === 'associated') !== (parsed.association !== null)) throw new Error();
-    const result = { ...parsed, decisions: retained };
+    const result = { ...parsed, ...(parsed.continuation ? { continuation: captureNativeConversationContinuation(parsed.continuation) } : {}), decisions: retained };
     if (parsed.state === 'turn') {
       const final = retained.at(-1)?.decision;
       if (!['converse', 'answer'].includes(parsed.route ?? '') || parsed.unsupportedSources.length || final?.outcome !== 'act'

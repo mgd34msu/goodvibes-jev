@@ -262,3 +262,26 @@ test('lock failures prevent read, claim and transition and strict ownership is r
   await expect(failing.transition(identity, 'preparing', { state: 'dispatching', ...bound })).rejects.toThrow('lock unavailable');
   expect(readFileSync(path, 'utf8')).toBe(raw);
 }));
+
+
+test('continuation claims fence nonlocal session ownership while retaining local FIFO identities', async () => fixture(async path => {
+  const journal = new NativeHostedTurnJournal(path);
+  await journal.claim(identity);
+  await journal.transition(identity, 'preparing', { state: 'dispatching', ...bound });
+  const second = { ...identity, inputId: 'second', requestId: 'request-second', continuationSessionId: bound.sessionId };
+  await expect(journal.claim(second)).rejects.toThrow('conflict');
+  expect(await journal.claim(second, [identity.inputId])).toBe(true);
+  await expect(journal.transition(second, 'preparing', { state: 'queued', ...bound, sessionId: 'different' })).rejects.toThrow('invalid-dispatch');
+  const queued = await journal.transition(second, 'preparing', { state: 'queued', ...bound, brokerInputId: 'second-broker', correlationId: 'second-correlation' });
+  expect(queued.identity.continuationSessionId).toBe(bound.sessionId);
+  const foreign = new NativeHostedTurnJournal(path);
+  expect(await foreign.sessionRecords(bound.sessionId)).toHaveLength(2);
+  const third = { ...second, inputId: 'third', requestId: 'request-third' };
+  await expect(foreign.claim(third)).rejects.toThrow('conflict');
+  await expect(journal.claim(third, [identity.inputId])).rejects.toThrow('conflict');
+  expect(await journal.claim(third, [identity.inputId, second.inputId])).toBe(true);
+  const { identity: _identity, ...change } = queued;
+  await journal.transition(second, 'queued', { ...change, state: 'dispatching' });
+  await journal.transition(second, 'dispatching', { ...change, state: 'completed' });
+  expect((await foreign.read(second))?.state).toBe('completed');
+}));

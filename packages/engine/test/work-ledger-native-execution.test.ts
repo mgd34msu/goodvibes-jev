@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { createNativeConversationIntakeHost } from '../sdk/src/platform/workflow/work-ledger/native-intake.js';
+import { canonicalNativeConversationContinuation } from '../sdk/src/platform/workflow/work-ledger/native-continuation-context.js';
 import { createNativeWorkSubmissionHost } from '../sdk/src/platform/workflow/work-ledger/native-submission.js';
 import { registerNativeWorkSubmissionGatewayMethods } from '../sdk/src/platform/control-plane/routes/native-work-submission.js';
 import * as nativeFs from 'node:fs';
@@ -10,7 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
 import { SqliteDecisionLog, withDecisionLog, createSystemOnePort, PINNED_MODEL, type JudgmentPort } from '@goodvibes-jev/judgment';
-import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { createWorkLedger } from '../sdk/src/platform/workflow/work-ledger/service.js';
 import { createNativeWorkExecutionHost } from '../sdk/src/platform/workflow/work-ledger/native-execution.js';
@@ -672,4 +675,34 @@ for (const failure of ['before-publication', 'after-rename'] as const) test(`nat
     if (lookup.kind === 'found') expect(replay.receipt).toEqual(lookup.receipt);
     expect(f.harness.runner.list({ includeTerminal: true })).toHaveLength(0);
   } finally { await next.close(); await ledger.service.close(); await reopened.close(); }
+});
+
+
+test('captured continuation survives native execution, planning and final source provenance unchanged', async () => {
+  const executionStates: string[] = [];
+  const f = await fixture({ decoratePort: port => ({ ...port, async ask(request) { executionStates.push(JSON.stringify(request.state)); return port.ask(request); } }) });
+  const sessionId = 'hosted-context'; const messages = [{ role: 'assistant' as const, content: 'The parser change is JSON export while preserving CSV.' }];
+  const continuation = { sessionId, revision: createHash('sha256').update(canonicalNativeConversationContinuation(sessionId, messages)).digest('hex'), messages };
+  const fake = fakePort((name, question) => name.startsWith('part_') ? noulAnswer(0.01)
+    : choiceAnswer(question, name === 'route' ? 'contract' : name === 'relation' ? 'supports' : 'act', 0.99));
+  const intake = createNativeConversationIntakeHost({ projectId: 'project', projectRoot: f.root, sessionId: 'native-fixture',
+    storage: await f.store.openNativeConversationStorage('project'), scopes: f.scopes, port: withDecisionLog(fake.port, f.log), decisionLog: f.log,
+    proposer: { async propose(input) { return { sourceRevision: input.sourceRevision, spans: [{ partId: 'input', start: 0, end: input.text.length }] }; } },
+    continuation: { async capture() { return continuation; }, assertCurrent() {} } });
+  cleanups.push(() => intake.close());
+  const input = { requestId: 'context-request', inputId: 'context-input', text: 'Do that.', unsupportedSources: [], continuation: { sessionId } };
+  const captured = await intake.capture(input, f.authority);
+  const admitted = await intake.admit({ inputId: input.inputId, sourceRevision: captured.sourceRef.sourceRevision }, f.authority);
+  if (admitted.kind !== 'work') throw new Error('Expected contextual work');
+  const receipt = admitted.receipt;
+  f.plan.goal = input.text; f.plan.criteria = [{ id: 'c1', text: input.text, quote: input.text }];
+  f.plan.groups[0]!.units[0]!.criteria = [{ id: 'u1.c1', text: 'The requested change works', serves: ['c1'] }];
+  const started = await f.host.start({ workId: receipt.workId, attemptId: receipt.attemptId, workRevision: receipt.expectedRevision.work,
+    criteriaRevision: receipt.expectedRevision.criteria, attemptRevision: receipt.expectedRevision.attempt }, f.authority);
+  const result = await completed(f.harness, started.admission.contractId);
+  expect(result.status).toBe('passed'); expect(result.goal).toBe(input.text);
+  expect(result.nativeSource?.continuation).toEqual(continuation); expect(result.nativeSource?.criteria).toEqual([input.text]);
+  const request = f.storage.currentByAttempt(receipt.attemptId).record!.request;
+  expect(request.input.nativeSource?.continuation).toEqual(continuation);
+  expect(executionStates.some(state => state.includes(messages[0]!.content))).toBe(true);
 });
