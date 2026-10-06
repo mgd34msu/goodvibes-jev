@@ -1,3 +1,4 @@
+import { ProviderAttemptDeniedError, revalidateProviderAttempt } from './attempt-guard.js';
 import { withRetry } from '../utils/retry.js';
 import { instrumentedLlmCall } from '../runtime/llm-observability.js';
 import { ProviderError } from '../types/errors.js';
@@ -91,6 +92,7 @@ export class OllamaProvider implements LLMProvider {
         try {
           return await this.chatViaNativeOllama(params, model);
         } catch (err: unknown) {
+          if (err instanceof ProviderAttemptDeniedError) throw err;
           if (!(await shouldUseOtherApi(err, 'providers.ollama.native-chat'))) {
             throw normalizeProviderError(err, this.name, 'chat', 'request');
           }
@@ -203,7 +205,8 @@ export class OllamaProvider implements LLMProvider {
       ...(params.maxTokens ? { options: { num_predict: params.maxTokens } } : {}),
     };
 
-    let response: Response;
+    if (params.beforeAttempt) await revalidateProviderAttempt(params.beforeAttempt);
+      let response: Response;
     try {
       response = await this.nativeFetch(this.nativeChatUrl, {
         method: 'POST',

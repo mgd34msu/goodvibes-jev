@@ -329,7 +329,7 @@ export interface ChatRequest {
   reasoningEffortSpec?: ReasoningEffortSpec | undefined;
   /** Mercury-2 specific: whether to include a reasoning summary in the response. */
   reasoningSummary?: boolean | undefined;
-  /** Live host fence immediately before each transport attempt, including post-backoff retries. Never serialized. */
+  /** Side-effect-free live host fence before retry admission and again after asynchronous setup immediately before SDK/fetch dispatch. May run more than once per attempt. Guarded SDK calls disable nested SDK retries; shared retries revalidate. Never serialized. */
   beforeAttempt?: (() => void | Promise<void>) | undefined;
   /** Called per-chunk during streaming when streaming is enabled. */
   onDelta?: ((delta: StreamDelta) => void) | undefined;

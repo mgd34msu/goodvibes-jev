@@ -1,3 +1,4 @@
+import { revalidateProviderAttempt } from './attempt-guard.js';
 import type {
   LLMProvider,
   ChatRequest,
@@ -338,6 +339,7 @@ export class AnthropicProvider implements LLMProvider {
         headers['anthropic-beta'] = betaFeatures.join(',');
       }
 
+      if (params.beforeAttempt) await revalidateProviderAttempt(params.beforeAttempt);
       let res: Response;
       try {
         res = await instrumentedFetch(`${ANTHROPIC_API_BASE}/messages`, {

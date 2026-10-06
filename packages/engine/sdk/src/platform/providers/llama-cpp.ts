@@ -1,3 +1,4 @@
+import { revalidateProviderAttempt } from './attempt-guard.js';
 import { withRetry } from '../utils/retry.js';
 import { instrumentedLlmCall } from '../runtime/llm-observability.js';
 import { ProviderError } from '../types/errors.js';
@@ -163,7 +164,8 @@ export class LlamaCppProvider implements LLMProvider {
       ...extraBody,
     };
 
-    let response: Response;
+    if (params.beforeAttempt) await revalidateProviderAttempt(params.beforeAttempt);
+      let response: Response;
     try {
       response = await this.nativeFetch(this.nativeChatUrl, {
         method: 'POST',

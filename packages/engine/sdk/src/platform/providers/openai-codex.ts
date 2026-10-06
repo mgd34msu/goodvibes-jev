@@ -1,3 +1,4 @@
+import { revalidateProviderAttempt } from './attempt-guard.js';
 import type {
   ChatRequest,
   ChatResponse,
@@ -213,6 +214,7 @@ export async function chatWithOpenAICodex(
           : {}),
       };
 
+      if (params.beforeAttempt) await revalidateProviderAttempt(params.beforeAttempt);
       let response: Response;
       try {
         response = await instrumentedFetch(`${OPENAI_CODEX_BASE_URL}/codex/responses`, {

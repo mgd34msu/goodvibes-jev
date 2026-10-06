@@ -51,11 +51,28 @@ function noLegacyDelivery(fixture: Fixture) {
     fixture.requests.filter((request) => request.path.startsWith("/api/work-ledger/execution/"))
   ).toEqual([]);
 }
-async function screenshot(page: Page, name: string) {
+async function screenshot(page: Page, name: string, includeOriginal = false) {
+  const detail = detailPane(page);
+  if (includeOriginal) {
+    const original = detail.locator("pre.native-intake__source");
+    await original.scrollIntoViewIfNeeded();
+    await expect(original).toBeInViewport({ ratio: 1 });
+    await expectNoHorizontalScroll(page);
+    await test.info().attach(`${name}: exact original source`, {
+      body: await original.screenshot(),
+      contentType: "image/png",
+    });
+  }
+  // The session pane scrolls independently; a full-page shot alone can show
+  // its header while the asserted receipt remains below the visible viewport.
+  const facts = conversation(detail).locator(".dv-facts");
+  await facts.scrollIntoViewIfNeeded();
+  await expect(facts).toBeInViewport({ ratio: 1 });
   await expectNoHorizontalScroll(page);
-  await test
-    .info()
-    .attach(name, { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
+  await test.info().attach(`${name}: visible state and canonical identities`, {
+    body: await page.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  });
 }
 
 test("same-session second and repeated third originals are exact, independently saved and inspect-only after reload", async ({
@@ -119,7 +136,7 @@ test("same-session second and repeated third originals are exact, independently 
   );
   expect(fixture.writes).toHaveLength(6);
   noLegacyDelivery(fixture);
-  await screenshot(page, "Repeated native continuation and immutable original");
+  await screenshot(page, "Repeated native continuation completed receipt", true);
 });
 
 test("double Submit and New request during an unresolved start preserve two exact originals without stale completion", async ({
@@ -294,12 +311,13 @@ test("busy native continuation shows recorded FIFO completion without legacy ste
   const detail = await openRow(page, fixture.title);
   await expect(
     detail.getByText(
-      "Native continuation: the host queues conversation delivery behind the active turn."
+      "Native continuation: the host queues conversation delivery behind any active turn."
     )
   ).toBeVisible();
   await submit(detail, fixture, "queuedDelivery");
   await expect(conversation(detail)).toContainText("queued");
   await expect(conversation(detail)).toContainText("excluding the active reply");
+  await screenshot(page, "Queued native continuation before read-only completion");
   await conversation(detail)
     .getByRole("button", { name: "Inspect conversation", exact: true })
     .click();

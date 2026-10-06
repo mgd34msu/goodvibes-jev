@@ -132,7 +132,7 @@ test('Anthropic-compatible transport revalidates after scheduled retry and refus
   await expect(provider.chat({ model: 'claude-test', messages: [{ role: 'user', content: 'Current task' }],
     beforeAttempt() { fences++; if (!valid) throw new Error('Native context revoked'); }, onRetry() { valid = false; },
   })).rejects.toThrow('Native context revoked');
-  expect(fetched.count()).toBe(1); expect(fences).toBe(2);
+  expect(fetched.count()).toBe(1); expect(fences).toBe(3);
 });
 
 test('direct SDK and Codex transport refuse the first attempt before creating a client or fetch', async () => {

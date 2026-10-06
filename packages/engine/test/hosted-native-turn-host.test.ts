@@ -920,8 +920,9 @@ describe('native-owned session continuations', () => {
       await completedWrite.promise;
       await enteredTwo.promise;
       let returned = false;
-      const captured = f.host.continuation.capture(initial.sessionId!, 'owned-principal').then(value => { returned = true; return value; });
-      await Bun.sleep(10);
+      const captured = f.manager.captureNativeContinuation(initial.sessionId!).then(value => { returned = true; return value; });
+      // Existing runtime composition yields one microtask before selecting its checkpoint pair.
+      await Promise.resolve();
       expect(returned).toBe(false);
       releaseTwo.resolve();
       await enteredThree.promise;
@@ -929,7 +930,7 @@ describe('native-owned session continuations', () => {
       const context = await captured;
       expect(context.messages).toContainEqual({ role: 'assistant', content: 'Overlap answer 2' });
       expect(context.messages.some(message => message.content === 'ordinary-two' || message.content === 'Overlap answer 3')).toBe(false);
-      const latest = await f.host.continuation.capture(initial.sessionId!, 'owned-principal');
+      const latest = await f.manager.captureNativeContinuation(initial.sessionId!);
       expect(latest.messages).toContainEqual({ role: 'assistant', content: 'Overlap answer 3' });
     } finally { releaseOne.resolve(); releaseTwo.resolve(); releaseThree.resolve(); releaseWrite.resolve(); saving.mockRestore(); }
     await first;

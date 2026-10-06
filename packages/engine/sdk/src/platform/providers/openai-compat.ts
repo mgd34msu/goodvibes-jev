@@ -1,3 +1,4 @@
+import { ProviderAttemptDeniedError, revalidateProviderAttempt } from './attempt-guard.js';
 import type OpenAI from 'openai';
 import { createOpenAIClient } from './optional-openai.js';
 import type {
@@ -406,6 +407,7 @@ export class OpenAICompatProvider implements LLMProvider {
         // .withResponse() surfaces the raw HTTP Response alongside the stream so
         // rate-limit headers are readable on the SUCCESS path (not only 429s).
         const client = await this.client();
+        if (params.beforeAttempt) await revalidateProviderAttempt(params.beforeAttempt);
         const created = await client.chat.completions.create(
           {
             model: selectedModel,
@@ -417,9 +419,10 @@ export class OpenAICompatProvider implements LLMProvider {
             ...extraBody,
           } as Parameters<OpenAICompatChatCreate>[0],
           (
-            signal !== undefined || Object.keys(requestHeaders).length > 0
+            signal !== undefined || Object.keys(requestHeaders).length > 0 || params.beforeAttempt
               ? {
                   ...(signal !== undefined ? { signal } : {}),
+                  ...(params.beforeAttempt ? { maxRetries: 0 } : {}),
                   ...(Object.keys(requestHeaders).length > 0 ? { headers: requestHeaders } : {}),
                 }
               : undefined
@@ -479,6 +482,7 @@ export class OpenAICompatProvider implements LLMProvider {
         responseText = streamedText.content;
         rawToolCalls = finalizeOpenAIToolCalls(accToolCalls);
       } catch (err: unknown) {
+        if (err instanceof ProviderAttemptDeniedError) throw err;
         const diagnostic = extractOpenAICompatErrorDiagnostic(err);
         const effortHint = (await describeReasoningRejection(
           diagnostic.status ?? 0,

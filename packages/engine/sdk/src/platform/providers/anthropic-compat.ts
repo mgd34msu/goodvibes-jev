@@ -1,3 +1,4 @@
+import { revalidateProviderAttempt } from './attempt-guard.js';
 import type {
   LLMProvider,
   ChatRequest,
@@ -276,6 +277,7 @@ export class AnthropicCompatProvider implements LLMProvider {
         headers['anthropic-beta'] = 'interleaved-thinking-2025-05-14';
       }
 
+      if (params.beforeAttempt) await revalidateProviderAttempt(params.beforeAttempt);
       let res: Response;
       try {
         res = await instrumentedFetch(`${this.baseURL}/messages`, {
