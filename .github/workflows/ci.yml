@@ -353,8 +353,18 @@ jobs:
           echo "GOODVIBES_E2E_BINARY=$GITHUB_WORKSPACE/products/agent/dist/goodvibes-agent-linux-x64" >> "$GITHUB_ENV"
       - name: Install Agent terminal E2E prerequisite
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y tmux
+          # Hosted runners can already provide tmux. Verify it before touching
+          # package indexes; a stalled unrelated mirror must not spend the test budget.
+          if command -v tmux >/dev/null 2>&1 && timeout --signal=KILL 10s tmux -V; then
+            exit 0
+          fi
+          apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
+          # Transfer timeouts alone do not bound a refresh across many indexes.
+          # KILL the attached group at expiry; TERM can leave a child alive when
+          # its parent exits first. Timeout runs inside sudo to signal elevated children.
+          sudo -n timeout --signal=KILL 120s apt-get "${apt_options[@]}" --error-on=any update
+          sudo -n timeout --signal=KILL 120s apt-get "${apt_options[@]}" install --no-install-recommends -y tmux
+          timeout --signal=KILL 10s tmux -V
       - name: Configure git identity for product worktree tests
         run: |
           git config --global user.email "ci@goodvibes.local"
