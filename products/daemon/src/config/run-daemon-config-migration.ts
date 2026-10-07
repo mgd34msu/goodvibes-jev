@@ -33,14 +33,20 @@ import { GOODVIBES_DAEMON_SURFACE_ROOT } from './surface.ts';
  * migration itself threw (logged as a warning naming the marker path;
  * startup proceeds either way).
  */
-export function runDaemonConfigMigration(homeDir: string, daemonStorePath = daemonConfigPath(homeDir)): DaemonConfigMigrationResult | null {
+export function runDaemonConfigMigration(
+  homeDir: string,
+  daemonStorePath = daemonConfigPath(homeDir),
+  options: { readonly diagnosticMode?: 'default' | 'structural' | undefined } = {},
+): DaemonConfigMigrationResult | null {
   try {
     return migrateDaemonOwnedConfig({ homeDir, primarySurface: GOODVIBES_DAEMON_SURFACE_ROOT, daemonStorePath });
   } catch (error) {
     const markerPath = daemonConfigMovedPath(daemonStorePath);
     logger.warn('daemon-owned config migration failed; continuing with existing config state', {
       markerPath,
-      error: summarizeError(error),
+      ...(options.diagnosticMode === 'structural'
+        ? { reason: 'config-migration-failed' }
+        : { error: summarizeError(error) }),
     });
     return null;
   }

@@ -108,10 +108,10 @@ export class MalformedSecretRefError extends Error {
  */
 export function acceptRefShapedLiteral(
   value: string,
-  options: { readonly configKey?: string | undefined; readonly treatUnparseableRefAsLiteral?: boolean | undefined },
+  options: { readonly configKey?: string | undefined; readonly treatUnparseableRefAsLiteral?: boolean | undefined; readonly diagnosticMode?: 'default' | 'structural' | undefined },
 ): boolean {
   const named = options.configKey === undefined ? {} : { configKey: options.configKey };
-  const shape = describeMalformedSecretRef(value);
+  const shape = options.diagnosticMode === 'structural' ? 'unparseable secret reference' : describeMalformedSecretRef(value);
   if (options.treatUnparseableRefAsLiteral !== true) {
     logger.error('Refusing a malformed secret reference: it will not be used as a credential', {
       ...named,
@@ -138,8 +138,8 @@ export async function resolveSecretInput(
     } catch (error) {
       logger.warn('Secret reference resolution failed', {
         source: ref.source,
-        ref: describeSecretRef(ref),
-        error: summarizeError(error),
+        ...(options.diagnosticMode === 'structural' ? { reason: 'resolution-failed' }
+          : { ref: describeSecretRef(ref), error: summarizeError(error) }),
       });
       return null;
     }

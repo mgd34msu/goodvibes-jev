@@ -1,6 +1,7 @@
 import { ArtifactStore } from '../../artifacts/index.js';
 import { ConfigManager } from '../../config/manager.js';
 import { ServiceRegistry } from '../../config/service-registry.js';
+import type { SecretsManager } from '../../config/secrets.js';
 import type { ChannelDeliveryStrategy } from './types.js';
 import {
   appendAttachmentSummary,
@@ -9,6 +10,7 @@ import {
   normalizeBaseUrl,
   requireOkResponse,
   resolveAttachments,
+  resolveDeliveryCredential,
   resolveChannelDeliverySurfaceKind,
   resolveMSTeamsAccessToken,
   success,
@@ -20,6 +22,7 @@ export function createMSTeamsDeliveryStrategy(
   configManager: ConfigManager,
   serviceRegistry: ServiceRegistry,
   artifactStore: ArtifactStore,
+  secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:msteams',
@@ -49,7 +52,7 @@ export function createMSTeamsDeliveryStrategy(
       const conversationId = threadId && !rawConversationId.includes(';messageid=')
         ? `${rawConversationId};messageid=${threadId}`
         : rawConversationId;
-      const accessToken = await resolveMSTeamsAccessToken(configManager, serviceRegistry);
+      const accessToken = await resolveMSTeamsAccessToken(configManager, serviceRegistry, secretsManager);
       const response = await instrumentedFetch(`${normalizeBaseUrl(serviceUrl)}/v3/conversations/${encodeURIComponent(conversationId)}/activities`, {
         method: 'POST',
         headers: {
@@ -73,6 +76,7 @@ export function createMattermostDeliveryStrategy(
   configManager: ConfigManager,
   serviceRegistry: ServiceRegistry,
   artifactStore: ArtifactStore,
+  secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:mattermost',
@@ -86,11 +90,12 @@ export function createMattermostDeliveryStrategy(
         serviceRegistry.get('mattermost')?.baseUrl,
         process.env.MATTERMOST_BASE_URL,
       );
-      const botToken = firstNonEmpty(
-        await serviceRegistry.resolveSecret('mattermost', 'primary'),
-        String(configManager.get('surfaces.mattermost.botToken') ?? ''),
-        process.env.MATTERMOST_BOT_TOKEN,
-      );
+      const botToken = await resolveDeliveryCredential(configManager, serviceRegistry, secretsManager, {
+        serviceName: 'mattermost',
+        serviceField: 'primary',
+        configKey: 'surfaces.mattermost.botToken',
+        environmentValue: process.env.MATTERMOST_BOT_TOKEN,
+      });
       const channelId = firstNonEmpty(
         request.target.address,
         request.binding?.channelId,
@@ -122,6 +127,7 @@ export function createMatrixDeliveryStrategy(
   configManager: ConfigManager,
   serviceRegistry: ServiceRegistry,
   artifactStore: ArtifactStore,
+  secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:matrix',
@@ -135,11 +141,12 @@ export function createMatrixDeliveryStrategy(
         serviceRegistry.get('matrix')?.baseUrl,
         process.env.MATRIX_HOMESERVER,
       );
-      const accessToken = firstNonEmpty(
-        await serviceRegistry.resolveSecret('matrix', 'primary'),
-        String(configManager.get('surfaces.matrix.accessToken') ?? ''),
-        process.env.MATRIX_ACCESS_TOKEN,
-      );
+      const accessToken = await resolveDeliveryCredential(configManager, serviceRegistry, secretsManager, {
+        serviceName: 'matrix',
+        serviceField: 'primary',
+        configKey: 'surfaces.matrix.accessToken',
+        environmentValue: process.env.MATRIX_ACCESS_TOKEN,
+      });
       const roomId = firstNonEmpty(
         request.target.address,
         request.binding?.channelId,

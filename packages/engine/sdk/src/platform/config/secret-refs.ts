@@ -122,6 +122,8 @@ export type SecretCommandRunner = (
 ) => Promise<SecretCommandRunResult>;
 
 export interface SecretRefResolutionOptions {
+  /** Keep provider/reference failure text private at caller-owned publication boundaries. */
+  readonly diagnosticMode?: 'default' | 'structural' | undefined;
   readonly resolveLocalSecret?: ((key: string) => Promise<string | null>) | undefined;
   readonly runCommand?: SecretCommandRunner | undefined;
   readonly homeDirectory?: string | undefined;
