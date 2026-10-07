@@ -137,6 +137,8 @@ export interface SecretsManagerOptions {
   readonly projectRoot: string;
   readonly globalHome: string;
   readonly surfaceRoot: string;
+  /** Withhold borrowed secret-provider/store failure text from read diagnostics. */
+  readonly diagnosticMode?: 'default' | 'structural' | undefined;
   /**
    * The daemon's state root, holding the daemon-scoped stores. Defaults to
    * `<globalHome>/.goodvibes/daemon`; a caller that honors `--daemon-home` or
@@ -371,7 +373,7 @@ export class SecretsManager {
       logger.warn('SecretsManager: failed to resolve secret reference', {
         key,
         refSource: getSecretRefSource(value) ?? 'unknown',
-        error: summarizeError(error),
+        ...(this.options.diagnosticMode === 'structural' ? { reason: 'resolution-failed' } : { error: summarizeError(error) }),
       });
       return null;
     }
@@ -716,7 +718,7 @@ export class SecretsManager {
     } catch (error) {
       logger.warn('SecretsManager: decrypted legacy store but could not rewrite it under the keyfile', {
         path: filePath,
-        error: summarizeError(error),
+        ...(this.options.diagnosticMode === 'structural' ? { reason: 'store-rewrite-failed' } : { error: summarizeError(error) }),
       });
     }
     return { status: 'ok', secrets };
@@ -739,7 +741,7 @@ export class SecretsManager {
     this.reportedUnreadableStores.add(filePath);
     logger.error('SecretsManager: store exists but cannot be read; its secrets are unavailable and the file will not be overwritten', {
       path: filePath,
-      reason,
+      reason: this.options.diagnosticMode === 'structural' ? 'secret store could not be read' : reason,
     });
   }
 

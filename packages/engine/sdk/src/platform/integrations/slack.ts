@@ -1,3 +1,4 @@
+import { retireDeliveryResponse } from './delivery-diagnostics.js';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
@@ -431,8 +432,8 @@ export class SlackIntegration {
       throw new HttpStatusError(`SlackIntegration.postMessage failed (${res.status}): ${err}`, { status: res.status });
     }
     const data = (await res.json()) as { ok: boolean; error?: string };
-    if (!data.ok) {
-      throw new Error(`SlackIntegration.postMessage API error: ${data.error ?? 'unknown'}`);
+    if (data?.ok !== true) {
+      throw new Error(`SlackIntegration.postMessage API error: ${data?.error ?? 'unknown'}`);
     }
   }
 
@@ -458,6 +459,7 @@ export class SlackIntegration {
       const err = await res.text();
       throw new HttpStatusError(`SlackIntegration.postWebhook failed (${res.status}): ${err}`, { status: res.status });
     }
+    await retireDeliveryResponse(res);
   }
 
   // -------------------------------------------------------------------------

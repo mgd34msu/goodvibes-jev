@@ -57,6 +57,8 @@ export interface ChannelDeliveryRequest {
   readonly sessionId?: string | undefined;
   readonly status?: string | undefined;
   readonly includeLinks: boolean;
+  /** Explicit repeated sends bypass notification deduplication; absent preserves existing behavior. */
+  readonly allowDuplicate?: boolean | undefined;
   readonly attachments?: readonly ArtifactReference[] | undefined;
   readonly binding?: ChannelDeliveryRouteBinding | undefined;
   readonly metadata?: Record<string, unknown> | undefined;

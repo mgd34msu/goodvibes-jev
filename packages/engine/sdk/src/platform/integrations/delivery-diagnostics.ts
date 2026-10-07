@@ -1,4 +1,14 @@
 import type { FailureClass, FailureTransience, TransienceBasis } from '@goodvibes-jev/engine/errors';
+import { logger } from '../utils/logger.js';
+
+/** Await local response retirement without turning acknowledged acceptance into a retry. */
+export async function retireDeliveryResponse(response: Response): Promise<void> {
+  try { await response.body?.cancel(); }
+  catch {
+    try { logger.warn('Delivery response cleanup failed', { reason: 'response-cleanup-failed' }); }
+    catch { /* Diagnostic failure cannot change an already received outcome. */ }
+  }
+}
 
 /** Only actual numeric HTTP status, never arbitrary error text or its cause. */
 export function deliveryHttpStatus(error: unknown): number | undefined {

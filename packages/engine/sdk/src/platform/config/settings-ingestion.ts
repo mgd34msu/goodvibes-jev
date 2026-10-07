@@ -346,6 +346,7 @@ function screenSecretReferences(
   raw: Record<string, unknown>,
   file: string,
   found: SettingsIngestionNotice[],
+  diagnosticMode: 'default' | 'structural',
 ): void {
   for (const key of SECRET_BEARING_CONFIG_PATHS) {
     const hit = readDotPath(raw, key);
@@ -354,7 +355,8 @@ function screenSecretReferences(
     found.push(notice(
       file,
       key,
-      `holds a secret reference that cannot be resolved: ${describeMalformedSecretRef(hit.value)}`,
+      diagnosticMode === 'structural' ? 'holds a secret reference that cannot be resolved'
+        : `holds a secret reference that cannot be resolved: ${describeMalformedSecretRef(hit.value)}`,
       'fix the reference, nothing was sent and the credential was not used',
       // A credential is never in the refusing class: one connector down is a
       // degraded surface, not an open door, and it must not crash-loop.
@@ -415,13 +417,14 @@ export interface SettingsIngestionResult {
 export function screenSettingsForIngestion(
   raw: Record<string, unknown>,
   file: string,
+  diagnosticMode: 'default' | 'structural' = 'default',
 ): SettingsIngestionResult {
   const notices: SettingsIngestionNotice[] = [];
   const unknownKeys: UnknownSettingKey[] = [];
   raw = adaptStoredTerminalTheme(raw);
   screenSectionShapes(raw, file, notices);
   screenSchemaValues(raw, file, notices);
-  screenSecretReferences(raw, file, notices);
+  screenSecretReferences(raw, file, notices, diagnosticMode);
   collectUnknownKeys(raw, unknownKeys);
   return { config: raw, notices, unknownKeys };
 }
@@ -466,6 +469,8 @@ export function describeIngestionNotice(entry: SettingsIngestionNotice): string 
 
 /** Options for {@link ingestSettingsFile}; all seams are injectable for tests. */
 export interface IngestSettingsOptions {
+  /** Withhold malformed credential reference descriptors before diagnostic publication. */
+  readonly diagnosticMode?: 'default' | 'structural' | undefined;
   /** This reader's version, compared against the file's recorded floor. */
   readonly readerVersion?: string | undefined;
   /** Where the loud line goes. Defaults to a synchronous write to fd 2. */
@@ -520,7 +525,7 @@ export function ingestSettingsFile(
     throw new SettingsIngestionRefusal(entry);
   }
 
-  const result = screenSettingsForIngestion(options.migrate ? options.migrate(raw) : raw, file);
+  const result = screenSettingsForIngestion(options.migrate ? options.migrate(raw) : raw, file, options.diagnosticMode);
   for (const entry of result.notices) announce(entry);
   const refusal = result.notices.find((entry) => entry.action === 'refused');
   if (refusal) throw new SettingsIngestionRefusal(refusal);
@@ -533,13 +538,18 @@ export function ingestSettingsFile(
  * A refusal, and the one place the skip-by-default rule does not apply: the
  * reader cannot tell whether the unreadable bytes held a safety-gate key, so it
  * cannot know that carrying on is safe. Names the file and the parse error,
- * which is what turns "the daemon will not start" into a two-minute fix.
+ * unless the caller selects structural publication: parser errors can quote
+ * arbitrary settings-file bytes, including a malformed credential value.
  */
-export function unreadableSettingsFileNotice(file: string, reason: string): SettingsIngestionNotice {
+export function unreadableSettingsFileNotice(
+  file: string,
+  reason: string,
+  diagnosticMode: 'default' | 'structural' = 'default',
+): SettingsIngestionNotice {
   return {
     file,
     key: '(whole file)',
-    reason: `could not be read as JSON: ${reason}`,
+    reason: diagnosticMode === 'structural' ? 'could not be read as JSON' : `could not be read as JSON: ${reason}`,
     remedy: 'fix or move the file; a settings file that cannot be parsed may hold permission or safety settings, so it is not skipped',
     action: 'refused',
   };
