@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { loadPersistedProviders, type DiscoveredServer } from '../sdk/src/platform/discovery/scanner.js';
 import { capturePersistedProviders } from '../sdk/src/platform/discovery/persisted-cache.js';
 import { ProviderRegistry } from '../sdk/src/platform/providers/registry.js';
+import { OpenAICompatProvider } from '../sdk/src/platform/providers/openai-compat.js';
 import { createProviderApi, type ProviderApiDependencies } from '../sdk/src/platform/providers/provider-api.js';
 import { logger } from '../sdk/src/platform/utils/logger.js';
 
@@ -38,7 +39,7 @@ function registryFixture(root: string) {
   };
   const registry = new ProviderRegistry({
     configManager: { get: () => undefined, getCategory: () => ({}), getControlPlaneConfigDir: () => root } as Options['configManager'],
-    subscriptionManager: { get: () => null, getPending: () => null, saveSubscription: async () => {}, resolveAccessToken: async () => null },
+    subscriptionManager: { get: () => null, getPending: () => null, saveSubscription: (subscription) => subscription, resolveAccessToken: async () => null },
     capabilityRegistry: { getCapability: () => ({}), getRouteExplanation: () => ({ accepted: true }), invalidate: () => {} } as unknown as Options['capabilityRegistry'],
     cacheHitTracker: { record: () => {} } as unknown as Options['cacheHitTracker'],
     secretsManager: {} as Options['secretsManager'], serviceRegistry: {} as Options['serviceRegistry'],
@@ -122,7 +123,7 @@ describe('persisted discovery cache boundary', () => {
         { ...server, modelContextWindows: { 'fixture-model': 'fixture-secret-limit' } },
         { ...server, modelOutputLimits: { 'fixture-model': {} } },
       ];
-      const withoutLimits = { name: 'Second fixture', host: 'localhost', port: 2345,
+      const withoutLimits: DiscoveredServer = { name: 'Second fixture', host: 'localhost', port: 2345,
         baseURL: 'http://localhost:2345/prefix/v1?tenant=fixture', models: [], serverType: 'ollama' };
       f.write([server, ...malformed, withoutLimits]);
       expect(loadPersistedProviders(f.roots)).toEqual([server, withoutLimits]);
@@ -138,7 +139,7 @@ describe('persisted discovery cache boundary', () => {
     const warn = spyOn(logger, 'warn').mockImplementation(() => {});
     const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async () => new Response(JSON.stringify({ data: [{ id: 'fixture-model' }] })), { preconnect() {} }));
     try {
-      const sibling = { ...server, name: 'Second fixture', models: ['second-model'], serverType: 'vllm' };
+      const sibling: DiscoveredServer = { ...server, name: 'Second fixture', models: ['second-model'], serverType: 'vllm' };
       f.write([server, { host: server.host, port: server.port, models: server.models }, sibling]);
       const { registry, api } = registryFixture(f.roots.homeDirectory);
       await api.registerDiscoveredProviders(loadPersistedProviders(f.roots));
@@ -157,7 +158,9 @@ describe('persisted discovery cache boundary', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
       // Only this explicit refresh invokes the fixture transport; the adapter
       // still holds the original route bytes, including query and fragment.
-      await registry.require(server.name).refreshModels!(true);
+      const provider = registry.require(server.name);
+      if (!(provider instanceof OpenAICompatProvider)) throw new Error('Expected the discovered compat adapter');
+      await provider.refreshModels(true);
       expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(`${server.baseURL}/models`);
     } finally { fetchSpy.mockRestore(); warn.mockRestore(); f.close(); }
   });
