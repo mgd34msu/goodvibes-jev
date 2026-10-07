@@ -162,6 +162,8 @@ export class HostedSessionManager {
   private busUnsubscribers: (() => void)[] = [];
   private disposed = false;
   private disposal: Promise<void> | null = null;
+  /** Initial registration and persistence must settle before shutdown saves. */
+  private readonly creations = new Set<Promise<HostedSessionRecord>>();
   private lastLoadReport: HostedSessionLoadReport | null = null;
   /** The spine half: registration, heartbeats, and collecting queued inputs. */
   private readonly spine: HostedSessionSpineIntake;
@@ -358,6 +360,19 @@ export class HostedSessionManager {
   /** Create a hosted session and compose its loop. */
   async create(input: CreateHostedSessionInput, ownership?: { readonly nativeConversation: true }): Promise<HostedSessionRecord> {
     this.assertUsable();
+    // Own the operation before a factory, registration, or saver can request
+    // shutdown. Its final write must never land after shutdown's final record.
+    const creation = Promise.resolve().then(() => this.createSession(input, ownership));
+    this.creations.add(creation);
+    try {
+      return await creation;
+    } finally {
+      this.creations.delete(creation);
+    }
+  }
+
+  private async createSession(input: CreateHostedSessionInput, ownership?: { readonly nativeConversation: true }): Promise<HostedSessionRecord> {
+    this.assertUsable();
     const workspaceRoot = this.requireWorkspace(input.workspaceRoot);
     this.assertSessionCapacity();
 
@@ -410,18 +425,23 @@ export class HostedSessionManager {
       throw error;
     }
 
-    await this.spine.register(record);
+    await hostedLifecycleCallbacks.run(this, () => this.spine.register(record));
+    this.assertUsable();
     if (ownership?.nativeConversation) {
       const live = this.requireLive(sessionId);
-      try { await this.options.store.save(record, live.runtime?.conversation.toJSON() ?? null, { durable: true }); }
+      try {
+        await hostedLifecycleCallbacks.run(this, () => this.options.store.save(record, live.runtime?.conversation.toJSON() ?? null, { durable: true }));
+      }
       catch (error) {
-        await this.terminate(live, 'killed', 'Native session initialization durability failed').catch(() => {});
+        await hostedLifecycleCallbacks.run(this, () => this.terminate(live, 'killed', 'Native session initialization durability failed')).catch(() => {});
         throw error;
       }
-    } else await this.persist(record);
+    } else await hostedLifecycleCallbacks.run(this, () => this.persist(record));
+    this.assertUsable();
     this.publish('hosted-session-created', record, { ...(input.clientId ? { clientId: input.clientId } : {}) });
 
     if (input.initialPrompt && input.initialPrompt.trim().length > 0) {
+      this.assertUsable();
       // Not awaited: create returns the record, and the turn's progress is on
       // the event stream. A failure is recorded on the session, never dropped.
       void this.deliver(sessionId, input.initialPrompt).catch(() => undefined);
@@ -946,6 +966,10 @@ export class HostedSessionManager {
       }
     }
     try {
+      // Admission was fenced synchronously by dispose(). A create already
+      // admitted may still be registering or saving its initial idle record;
+      // drain it before policy teardown writes the final shutdown record.
+      await Promise.allSettled([...this.creations]);
       for (const live of [...this.sessions.values()]) {
         if (live.record.status === 'terminated') continue;
         // A survive-policy session is not ended by the daemon stopping. That is
