@@ -92,5 +92,8 @@ its local build/smoke sub-scope recorded separately. The four other outstanding
 upstream rows remain deferred: `.github/workflows/release.yml`,
 `scripts/hosted-session-proof.ts`, `scripts/release-prepare.ts`, and
 `src/test/scripts/release-prepare.test.ts`. Hosted proof still lacks default inbox
-composition, persisted-provider boot registration and explicit Jev setup. Local
-artifact success does not satisfy those missing runtime/release contracts.
+composition and explicit Jev setup. The explicit-host provider-preload increment
+now restores persisted-provider boot registration; see `daemon-provider-preload.md`
+for its source-level HTTP and ownership proof. Complete compiled-hosting acceptance
+remains pending. Local artifact success does not satisfy the remaining
+runtime/release contracts.
