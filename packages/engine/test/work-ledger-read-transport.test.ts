@@ -170,10 +170,50 @@ describe('native ledger reader lifecycle', () => {
       return sdk.invoke<T>(method, input, options);
     };
     const reader = createOperatorWorkLedgerReadClient({ invoke }, 'fixture-project', { pollIntervalMs: 100, onUnavailable: e => errors.push(e) });
-    reader.subscribe(value => snapshots.push(value.cursor)); await pause(30);
-    expect(errors).toHaveLength(1); expect(calls).toBe(1);
-    host.events.push(event(1), event(2)); await pause(90); expect(calls).toBe(1);
-    await pause(120); expect(snapshots).toEqual([2]); expect((await reader.history(0)).map(item => item.sequence)).toEqual([1, 2]); reader.dispose();
+    let now = 0;
+    let onScheduled: (() => void) | undefined;
+    const timers = new Map<ReturnType<typeof setTimeout>, { at: number; run: () => void }>();
+    const realSetTimeout = globalThis.setTimeout; const realClearTimeout = globalThis.clearTimeout;
+    const setTimer = spyOn(globalThis, 'setTimeout').mockImplementation(((callback: (...args: unknown[]) => void, delay = 0, ...args: unknown[]) => {
+      const handle = { unref() {} } as unknown as ReturnType<typeof setTimeout>;
+      timers.set(handle, { at: now + delay, run: () => callback(...args) });
+      const scheduled = onScheduled; onScheduled = undefined; scheduled?.();
+      return handle;
+    }) as typeof setTimeout);
+    const clearTimer = spyOn(globalThis, 'clearTimeout').mockImplementation(handle => { timers.delete(handle as ReturnType<typeof setTimeout>); });
+    async function advance(ms: number): Promise<void> {
+      const target = now + ms;
+      for (;;) {
+        const next = [...timers].filter(([, timer]) => timer.at <= target).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) break;
+        const [handle, timer] = next;
+        now = timer.at; timers.delete(handle); timer.run();
+        // The request deadline is installed synchronously by run(). The next
+        // timer is the poll scheduled after the async read settles; wait for
+        // that barrier without letting wall-clock time advance this clock.
+        await new Promise<void>((resolve, reject) => {
+          // Reject inside the test if rescheduling breaks, so finally restores
+          // the globals instead of relying on the runner's outer timeout.
+          const watchdog = realSetTimeout(() => reject(new Error('Synthetic poll did not settle and reschedule')), 2_000);
+          onScheduled = () => { realClearTimeout(watchdog); resolve(); };
+        });
+      }
+      now = target;
+    }
+    try {
+      reader.subscribe(value => snapshots.push(value.cursor)); await advance(0);
+      expect(errors).toHaveLength(1); expect(errors[0]?.message).toBe('synthetic offline');
+      expect(calls).toBe(1); expect(snapshots).toEqual([]);
+      host.events.push(event(1), event(2));
+      // The first failure doubles the 100 ms polling interval: no retry is
+      // allowed even one millisecond before that backoff expires.
+      await advance(199); expect(calls).toBe(1); expect(snapshots).toEqual([]);
+      await advance(1); expect(calls).toBe(2); expect(snapshots).toEqual([2]);
+      expect(errors).toHaveLength(1);
+      expect((await reader.history(0)).map(item => item.sequence)).toEqual([1, 2]);
+    } finally {
+      reader.dispose(); setTimer.mockRestore(); clearTimer.mockRestore();
+    }
   });
   test('host mismatch, cursor gaps, and truncated pages never resolve as valid history', async () => {
     const invoke: OperatorRemoteClient['invoke'] = async <T>() => ({ projectId: 'fixture-project', afterSequence: 0,
