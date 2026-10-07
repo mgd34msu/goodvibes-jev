@@ -86,17 +86,27 @@ export function runConfiguredDaemonCli(
         });
         const snapshot = await host.start();
         if (closed || (snapshot.state !== 'ready' && snapshot.state !== 'degraded')) return undefined;
-        const actual = { host: host.daemon!.boundHost, port: host.daemon!.boundPort };
+        const daemon = host.daemon;
+        if (!daemon) throw new Error('Daemon listener unavailable after startup');
+        const requireRunning = () => { if (!daemon.isRunning) throw new Error('Daemon listener unavailable after startup'); };
+        // Boot can overlap a config-driven restart; observe its settled listener.
+        await daemon.waitForRestart();
+        if (closed) return undefined;
+        requireRunning();
+        const actual = { host: daemon.boundHost, port: daemon.boundPort };
         stdout(renderDaemonBoundEndpoint(version, actual));
         if (closed) return undefined;
+        requireRunning();
         const clientBinding = readControlPlaneBinding((key) => isKnownConfigKey(key, config.getSchema()) ? config.get(key) : undefined);
         if (describeDerivedBindMismatch(actual, clientBinding) !== null) {
           // The canonical helper decides drift; its raw host/URL prose is private.
           stderr('[goodvibes-daemon] warning: control-plane client binding disagrees with the bound listener (derived-bind-mismatch).');
           if (closed) return undefined;
         }
+        requireRunning();
         stdout(`goodvibes-daemon ${version} host started (${snapshot.state})`);
         if (closed) return undefined;
+        requireRunning();
         return snapshot;
       },
       close() {

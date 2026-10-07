@@ -4,10 +4,12 @@ import * as fs from 'node:fs';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { applyRuntimeConfigValue } from '@goodvibes-jev/engine/terminal-shell';
+import { describeDerivedBindMismatch, readControlPlaneBinding } from '@goodvibes-jev/engine/sdk/platform/config';
 import { DaemonServer } from '@goodvibes-jev/engine/sdk/platform/daemon';
 import { registerInboxSurface } from '@goodvibes-jev/engine/sdk/platform/intake';
 import { BenchmarkStore, ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { UserAuthManager } from '@goodvibes-jev/engine/sdk/platform/security';
+import { isKnownConfigKey } from '../../config/config-key-guard.js';
 import { createDaemonCliConfiguration } from '../../cli/configuration.js';
 import { getPackageVersion } from '../../cli/help.js';
 import { runConfiguredDaemonCli, type DaemonCliRuntime } from '../../cli/serve.js';
@@ -134,6 +136,52 @@ test('held boot cannot publish bound or readiness until the owned start settles'
   expect(f.stderr).toEqual([]);
 });
 
+test('a listener stopped during held boot cannot publish bound or readiness after settlement', async () => {
+  const entered = gate(); const release = gate();
+  const f = await fixture((services) => {
+    const start = services.bootTasks!.start;
+    keep(spyOn(services.bootTasks!, 'start').mockImplementation(async () => { entered.resolve(); await release.promise; return start(); }));
+  });
+  const handle = f.start(); await entered.promise;
+  await f.host!.daemon!.stop();
+  expect(f.host!.daemon!.isRunning).toBe(false);
+  release.resolve();
+  await expect(handle.ready).rejects.toThrow('Daemon startup failed');
+  expect(await handle.finished).toBe(1);
+  expect(f.stdout).toHaveLength(1); expect(f.stdout[0]).toContain('starting:');
+  expect(f.stderr).toEqual([]);
+});
+
+for (const shutdown of [false, true]) {
+  test(`a restart admitted during boot settles before diagnostics${shutdown ? ' and shutdown fences them' : ''}`, async () => {
+    const bootEntered = gate(); const bootRelease = gate(); const restartEntered = gate(); const restartRelease = gate();
+    const f = await fixture((services) => {
+      const start = services.bootTasks!.start;
+      keep(spyOn(services.bootTasks!, 'start').mockImplementation(async () => { bootEntered.resolve(); await bootRelease.promise; return start(); }));
+    });
+    const handle = f.start(); await bootEntered.promise;
+    const daemon = f.host!.daemon!; const stop = daemon.stop.bind(daemon);
+    keep(spyOn(daemon, 'stop').mockImplementationOnce(async () => { restartEntered.resolve(); await restartRelease.promise; await stop(); }));
+    const [newPort] = await availableLoopbackPorts(1);
+    f.configuration.config.set('controlPlane.port', newPort!);
+    await restartEntered.promise;
+    bootRelease.resolve(); await tick();
+    expect(f.stdout).toHaveLength(1);
+    if (shutdown) void handle.shutdown();
+    restartRelease.resolve();
+    if (shutdown) {
+      expect(await handle.ready).toBeUndefined(); expect(await handle.finished).toBe(0);
+      expect(f.stdout).toHaveLength(1); expect(daemon.isRunning).toBe(false);
+    } else {
+      await handle.ready;
+      expect(daemon.isRunning).toBe(true); expect(daemon.boundPort).toBe(newPort!);
+      expect(f.stdout[1]).toContain(`bound: host="127.0.0.1" port=${newPort}`);
+      expect(f.stdout[2]).toContain('host started');
+    }
+    expect(f.stderr).toEqual([]);
+  });
+}
+
 for (const phase of ['bound', 'mismatch', 'ready', 'binding getter'] as const) {
   test(`${phase} failure remains owned until the acquired graph drains`, async () => {
     const closing = gate(); const release = gate();
@@ -173,14 +221,36 @@ for (const phase of ['bound', 'mismatch', 'ready'] as const) {
   });
 }
 
+for (const phase of ['bound', 'mismatch'] as const) {
+  test(`running-state loss from ${phase} output cannot publish readiness`, async () => {
+    const f = await fixture(undefined, phase === 'mismatch' ? { createServer(config) {
+      return new DaemonServer({ ...config, host: '127.0.0.1', port: 0 });
+    } } : {});
+    const unavailable = () => {
+      // Change the borrowed server observation synchronously at the output seam;
+      // the existing owner still performs and awaits the real socket stop.
+      Object.defineProperty(f.host!.daemon!, 'isRunning', { configurable: true, get: () => false });
+    };
+    const handle = f.start((line) => { f.stdout.push(line); if (phase === 'bound' && line.includes(' bound:')) unavailable(); },
+      (line) => { f.stderr.push(line); if (phase === 'mismatch') unavailable(); });
+    await expect(handle.ready).rejects.toThrow('Daemon startup failed');
+    expect(await handle.finished).toBe(1);
+    expect(f.stdout).toHaveLength(2); expect(f.stdout.join('\n')).not.toContain('host started');
+    expect(f.host!.snapshot().state).toBe('closed');
+  });
+}
+
 for (const mode of ['agreement', 'wildcard', 'public URL', 'mismatch'] as const) {
   test(`canonical ${mode} diagnostics use the actual bound endpoint without raw URL disclosure`, async () => {
-    const f = await fixture(undefined, mode === 'mismatch' ? { createServer(config) {
-      return new DaemonServer({ ...config, host: '127.0.0.1', port: 0 });
+    const f = await fixture(undefined, mode === 'mismatch' || mode === 'wildcard' ? { createServer(config) {
+      return new DaemonServer({ ...config, host: '127.0.0.1', ...(mode === 'mismatch' ? { port: 0 } : {}) });
     } } : {});
     if (mode === 'wildcard') {
       applyRuntimeConfigValue(f.configuration.config, 'controlPlane.hostMode', 'network');
       applyRuntimeConfigValue(f.configuration.config, 'controlPlane.host', '0.0.0.0');
+      const config = f.configuration.config;
+      const binding = readControlPlaneBinding((key) => isKnownConfigKey(key, config.getSchema()) ? config.get(key) : undefined);
+      expect(describeDerivedBindMismatch({ host: '0.0.0.0', port: f.port! }, binding)).toBeNull();
     }
     if (mode === 'mismatch') {
       applyRuntimeConfigValue(f.configuration.config, 'controlPlane.hostMode', 'custom');
