@@ -292,6 +292,8 @@ export class ProviderRegistry {
    * for the daemon's agents and invisible to a hosted session on the same box.
    * Returns what was registered, so a caller re-registers the same servers
    * rather than reconstructing them from provider objects.
+   * This privileged in-process getter includes raw routing URLs, which may
+   * contain private data. It is not a redacted catalog or wire projection.
    */
   listDiscoveredServers(): readonly DiscoveredServer[] {
     return this.discoveredServers;
@@ -334,7 +336,7 @@ export class ProviderRegistry {
           provider: server.name,
           registryKey: `${server.name}:${modelId}`,
           displayName: modelId,
-          description: `Discovered local model on ${server.baseURL}`,
+          description: `Discovered local ${server.serverType} model`,
           capabilities: traits.modelCapabilities,
           ...(traits.reasoningEffort ? { reasoningEffort: traits.reasoningEffort } : {}),
           contextWindow: server.modelContextWindows?.[modelId] ?? 8192,
