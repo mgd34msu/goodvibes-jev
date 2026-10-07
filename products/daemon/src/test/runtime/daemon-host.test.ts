@@ -3,6 +3,8 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { DaemonServer, HttpListener } from '@goodvibes-jev/engine/sdk/platform/daemon';
+import type { DiscoveredServer } from '@goodvibes-jev/engine/sdk/platform/discovery';
+import type { HostedWorkspaceFloor } from '@goodvibes-jev/engine/sdk/platform/hosted-sessions';
 import { registerInboxSurface } from '@goodvibes-jev/engine/sdk/platform/intake';
 import { Notifier } from '@goodvibes-jev/engine/sdk/platform/integrations';
 import { BenchmarkStore, ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
@@ -399,4 +401,172 @@ test('one borrowed restart fence failure cannot skip the other fence or accepted
   expect(bootClose).toHaveBeenCalledTimes(1);
   await expect(closing).rejects.toThrow('Daemon host cleanup failed');
   expect(graphClose).toHaveBeenCalledTimes(1);
+});
+
+function cachedServer(model = 'cached-model', name = 'cached-fixture'): DiscoveredServer {
+  return { name, host: '127.0.0.1', port: 9, baseURL: 'http://127.0.0.1:9/v1', models: [model], serverType: 'vllm' };
+}
+function seedCache(homeDirectory: string, servers: unknown, surfaceRoot = 'tui') {
+  const directory = join(homeDirectory, '.goodvibes', surfaceRoot);
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, 'discovered-providers.json'), JSON.stringify(servers));
+}
+function seedCustom(fx: ReturnType<typeof fixture>, name = 'cached-fixture') {
+  const directory = join(fx.options.runtime.configManager.getControlPlaneConfigDir(), 'providers');
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, 'fixture.json'), JSON.stringify({
+    name, displayName: 'Custom fixture', type: 'openai-compat', baseURL: 'http://127.0.0.1:9/v1',
+    models: [{ id: 'custom-model', displayName: 'Custom model', contextWindow: 8192,
+      capabilities: { toolCalling: true, codeEditing: true, reasoning: false, multimodal: false } }],
+  }));
+}
+function holdInitialCustomLoad() {
+  const entered = gate(); const release = gate();
+  const real = ProviderRegistry.prototype.loadCustomProviders;
+  let registry: ProviderRegistry | undefined;
+  keep(spyOn(ProviderRegistry.prototype, 'loadCustomProviders').mockImplementation(async function (this: ProviderRegistry) {
+    registry = this; entered.resolve(); await release.promise; return real.call(this);
+  }));
+  return { entered, release, get registry() { return registry; } };
+}
+
+test('host preloads only its selected home/surface cache before real server and hosted-floor admission', async () => {
+  let requests = 0;
+  const model = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+    expect(new URL(request.url).pathname).toBe('/v1/chat/completions');
+    const body = await request.json() as { model: string };
+    expect(body.model).toBe('cached-model'); requests++;
+    const chunk = { id: 'cached-response', object: 'chat.completion.chunk', created: 1, model: body.model,
+      choices: [{ index: 0, delta: { role: 'assistant', content: 'owned cached route' }, finish_reason: 'stop' }] };
+    return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, { headers: { 'Content-Type': 'text/event-stream' } });
+  } });
+  releases.push(() => { model.stop(true); });
+  const cached = { ...cachedServer(), port: model.port!, baseURL: `http://127.0.0.1:${model.port}/v1` };
+  const floors: HostedWorkspaceFloor[] = [];
+  let constructed = false;
+  const fx = fixture(undefined, { createServer(config) {
+    expect(fx.host.services!.providerRegistry.listDiscoveredServers()).toEqual([cached]);
+    constructed = true;
+    const hosted = config!.hostedSessions!;
+    return new DaemonServer({ ...config, hostedSessions: { ...hosted, async floorFactory(input) {
+      const floor = await hosted.floorFactory(input); floors.push(floor); return floor;
+    } } });
+  } });
+  seedCache(fx.homeDirectory, [cached]);
+  seedCache(fx.homeDirectory, [cachedServer('wrong-surface')], 'daemon');
+  seedCache(fx.workingDir, [cachedServer('wrong-workspace')]);
+  seedCache(fx.options.runtime.daemonHomeDirectory!, [cachedServer('wrong-daemon-home')]);
+  expect((await fx.host.start()).state).toBe('ready'); expect(constructed).toBe(true);
+  expect(requests).toBe(0);
+  const response = await fetch(`${fx.baseUrl}/api/control-plane/methods/sessions.hosted.create/invoke`, {
+    method: 'POST', headers: { Authorization: 'Bearer synthetic-host-token', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body: { workspaceRoot: fx.workingDir, clientId: 'cache-fixture', modelId: 'cached-fixture:cached-model', detachPolicy: 'survive' } }),
+  });
+  expect(response.status).toBe(200);
+  expect(floors).toHaveLength(1);
+  const floor = floors[0]!;
+  expect(floor.services.providerRegistry.listDiscoveredServers()).toEqual([cached]);
+  await floor.services.providerRegistry.ready();
+  const reply = await floor.services.providerRegistry.require(cached.name).chat({ model: 'cached-model', messages: [{ role: 'user', content: 'owned synthetic request' }] });
+  expect(reply.content).toBe('owned cached route'); expect(requests).toBe(1);
+  seedCache(fx.homeDirectory, [cachedServer('later-cache')]);
+  expect(floor.services.providerRegistry.listDiscoveredServers()).toEqual([cached]);
+  expect(fx.host.services!.providerRegistry.listDiscoveredServers()).toEqual([cached]);
+  await fx.host.close();
+});
+
+test.each(['absent', 'empty', 'invalid'] as const)('%s discovery cache preserves an already registered snapshot', async (cache) => {
+  const existing = cachedServer('already-registered');
+  let registrations = 0;
+  const fx = fixture((runtime) => {
+    runtime.providerRegistry.registerDiscoveredProviders([existing]);
+    const register = runtime.providerRegistry.registerDiscoveredProviders.bind(runtime.providerRegistry);
+    keep(spyOn(runtime.providerRegistry, 'registerDiscoveredProviders').mockImplementation((servers) => { registrations++; register(servers); }));
+  });
+  if (cache !== 'absent') seedCache(fx.homeDirectory, cache === 'empty' ? [] : { invalid: true });
+  await fx.host.start();
+  expect(registrations).toBe(0);
+  expect(fx.host.services!.providerRegistry.listDiscoveredServers()).toEqual([existing]);
+});
+
+test('host awaits real custom-provider initialization before cached name collisions are admitted', async () => {
+  const held = holdInitialCustomLoad(); const acquired = gate();
+  const fx = fixture(() => { acquired.resolve(); });
+  seedCustom(fx); seedCache(fx.homeDirectory, [cachedServer()]);
+  const starting = fx.host.start(); await held.entered.promise; await acquired.promise; await tick();
+  expect(fx.host.daemon).toBeUndefined();
+  expect(fx.host.services!.providerRegistry.listDiscoveredServers()).toEqual([]);
+  held.release.resolve(); await starting;
+  const registry = fx.host.services!.providerRegistry;
+  expect(registry.listDiscoveredServers()).toEqual([cachedServer()]);
+  expect(registry.require('cached-fixture').models).toEqual(['custom-model']);
+  expect(registry.listModels().some((model) => model.registryKey === 'cached-fixture:custom-model')).toBe(true);
+  expect(registry.listModels().some((model) => model.registryKey === 'cached-fixture:cached-model')).toBe(false);
+});
+
+test('same provider names in distinct runtime homes keep independent cached models', async () => {
+  const first = fixture(); const second = fixture();
+  seedCache(first.homeDirectory, [cachedServer('first-model')]);
+  seedCache(second.homeDirectory, [cachedServer('second-model')]);
+  await Promise.all([first.host.start(), second.host.start()]);
+  expect(first.host.services!.providerRegistry.require('cached-fixture').models).toEqual(['first-model']);
+  expect(second.host.services!.providerRegistry.require('cached-fixture').models).toEqual(['second-model']);
+  await first.host.close();
+  expect(second.host.services!.providerRegistry.require('cached-fixture').models).toEqual(['second-model']);
+  expect(second.host.daemon!.isRunning).toBe(true);
+});
+
+test('shutdown during initial readiness awaits real loading and prevents registration or server construction', async () => {
+  const held = holdInitialCustomLoad(); const readyEntered = gate();
+  let registrations = 0; let graphClosed = 0; let servers = 0;
+  const fx = fixture((runtime) => {
+    const register = runtime.providerRegistry.registerDiscoveredProviders.bind(runtime.providerRegistry);
+    keep(spyOn(runtime.providerRegistry, 'registerDiscoveredProviders').mockImplementation((servers) => { registrations++; register(servers); }));
+    const close = runtime.close;
+    keep(spyOn(runtime, 'close').mockImplementation(async () => { graphClosed++; await close(); }));
+    const ready = runtime.providerRegistry.ready.bind(runtime.providerRegistry);
+    keep(spyOn(runtime.providerRegistry, 'ready').mockImplementation(() => { readyEntered.resolve(); return ready(); }));
+  }, { createServer(config) { servers++; return new DaemonServer(config); } });
+  seedCustom(fx); seedCache(fx.homeDirectory, [cachedServer()]);
+  const starting = fx.host.start(); await held.entered.promise; await readyEntered.promise;
+  const closing = fx.host.close(); const done = settled(closing); await tick();
+  expect(done()).toBe(false); expect(graphClosed).toBe(0);
+  expect(registrations).toBe(0); expect(servers).toBe(0);
+  held.release.resolve(); await starting; await closing;
+  expect(held.registry!.require('cached-fixture').models).toEqual(['custom-model']);
+  expect(registrations).toBe(0); expect(servers).toBe(0); expect(graphClosed).toBe(1);
+});
+
+test('partial preload registration failure cannot serve and waits for owned graph cleanup without inspecting rejection', async () => {
+  const graphEntered = gate(); const graphRelease = gate(); let touched = false; let servers = 0;
+  const raw = { get message() { touched = true; throw new Error('private'); }, toString() { touched = true; throw new Error('private'); } };
+  const fx = fixture((runtime) => {
+    const register = runtime.providerRegistry.registerDiscoveredProviders.bind(runtime.providerRegistry);
+    keep(spyOn(runtime.providerRegistry, 'registerDiscoveredProviders').mockImplementation((servers) => { register(servers.slice(0, 1)); throw raw; }));
+    const close = runtime.close;
+    keep(spyOn(runtime, 'close').mockImplementation(async () => { graphEntered.resolve(); await graphRelease.promise; await close(); }));
+  }, { createServer(config) { servers++; return new DaemonServer(config); } });
+  seedCache(fx.homeDirectory, [cachedServer(), cachedServer('second-model', 'second-provider')]);
+  await expect(fx.host.start()).rejects.toThrow('Daemon host provider preload failed');
+  const closing = fx.host.close(); const done = settled(closing); await graphEntered.promise;
+  expect(fx.host.services!.providerRegistry.has('cached-fixture')).toBe(true);
+  expect(fx.host.services!.providerRegistry.has('second-provider')).toBe(false);
+  expect(done()).toBe(false); expect(servers).toBe(0); expect(touched).toBe(false);
+  graphRelease.resolve(); await closing;
+  expect(fx.host.snapshot().state).toBe('failed'); expect(touched).toBe(false);
+});
+
+test('base graph acquisition failure drains initial real custom loading before the host can receive a runtime', async () => {
+  const held = holdInitialCustomLoad(); const failed = gate();
+  const fx = fixture(); seedCustom(fx);
+  keep(spyOn(fx.options.runtime.configManager, 'attachHookDispatcher').mockImplementation(() => { failed.resolve(); throw new Error('synthetic graph failure'); }));
+  const starting = fx.host.start(); const startDone = settled(starting);
+  await held.entered.promise; await failed.promise; await tick();
+  const closing = fx.host.close(); const closeDone = settled(closing); await tick();
+  expect(startDone()).toBe(false); expect(closeDone()).toBe(false);
+  expect(fx.host.services).toBeUndefined(); expect(fx.host.daemon).toBeUndefined();
+  held.release.resolve();
+  await expect(starting).rejects.toThrow('Daemon host runtime acquisition failed'); await closing;
+  expect(held.registry!.require('cached-fixture').models).toEqual(['custom-model']);
+  expect(fx.host.services).toBeUndefined();
 });

@@ -34,6 +34,17 @@ empty production inbox, dynamic composition-module loader or detached server.
 The caller remains responsible for complete provider membership and trusted
 preview mapping. No fixture factory is installed in the executable.
 
+Before constructing its server, the explicit host awaits initial custom-provider
+loading and preloads the validated discovery cache from the runtime's selected
+home and surface (`.goodvibes/tui/discovered-providers.json`). In that daemon
+registry, custom providers keep precedence over same-name cached discoveries.
+An absent or empty cache does not clear existing discoveries. Each new hosted workspace floor copies the
+daemon registry's current discovery snapshot. This does not launch a LAN scan or
+watch the cache for updates to existing floors. Cache membership provides no
+protected-source authority. Hosted-floor custom loading remains asynchronous;
+this host preload does not establish floor readiness or hosted custom-provider
+precedence. See `docs/audit/daemon-provider-preload.md`.
+
 Once explicit startup is admitted, the launcher loads or creates the shared
 `operator-tokens.json` in the selected daemon home. The same token authenticates
 HTTP and WebSocket clients, and `status` reads that selected-home record without
