@@ -144,6 +144,7 @@ export class DaemonServer {
     get approvals(): ApprovalBroker;
     get boundHost(): string;
     get boundPort(): number;
+    get boundScheme(): 'http' | 'https';
     cancelAgent(agentId: string): boolean;
     collectDaemonReceipts(): readonly {
         id: string;
