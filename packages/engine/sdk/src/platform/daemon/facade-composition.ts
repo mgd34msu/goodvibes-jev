@@ -1,3 +1,4 @@
+import { createTelegramSourceAccountOwner } from '../channels/telegram/source-account.js';
 import { composeDelegatedTelegramIntake } from './facade-delegated-telegram.js';
 import { AgentManager } from '../tools/agent/index.js';
 import { resolveHostBinding } from './host-resolver.js';
@@ -574,8 +575,9 @@ export function createDaemonFacadeCollaborators(
   runtime.channelPlugins.setIngressAlarm(ingressAlarm);
   const workProposals = createFacadeWorkProposalStore(runtime.configManager);
 
+  const telegramSourceAccounts = createTelegramSourceAccountOwner();
   const surfaceActionHelper = new DaemonSurfaceActionHelper({
-    delegatedTelegram: composeDelegatedTelegramIntake(runtime),
+    delegatedTelegram: composeDelegatedTelegramIntake(runtime, telegramSourceAccounts.reader, options.swapManager),
     paymentReplies: options.paymentReplies,
     ingressAlarm,
     serviceRegistry: runtime.serviceRegistry,
@@ -701,7 +703,7 @@ export function createDaemonFacadeCollaborators(
     ingressAlarm,
   });
   const builtinChannels = createBuiltinChannelRuntime({
-    runtime, options, providerRuntime, surfaceActionHelper, surfaceDeliveryHelper, ingressAlarm,
+    runtime, options, providerRuntime, surfaceActionHelper, surfaceDeliveryHelper, ingressAlarm, telegramSourceAccounts,
   });
 
   return {

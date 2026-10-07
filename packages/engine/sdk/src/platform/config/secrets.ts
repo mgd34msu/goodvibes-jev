@@ -306,6 +306,28 @@ export class SecretsManager {
   }
 
   /**
+   * Synchronous credential-owner fence for a local literal only. This follows
+   * the same local precedence as get(), but never follows references, launches
+   * commands, or contacts a secret provider. Keep the value inside credential
+   * ownership; it is not an identity or provenance snapshot.
+   */
+  resolveLocalSecretSync(key: string):
+    | { readonly state: 'resolved'; readonly value: string }
+    | { readonly state: 'absent' | 'unsupported' } {
+    const capture = (value: unknown): ReturnType<SecretsManager['resolveLocalSecretSync']> =>
+      typeof value !== 'string' || isSecretRefInput(value)
+        ? { state: 'unsupported' }
+        : { state: 'resolved', value };
+    if (process.env[key] !== undefined) return capture(process.env[key]);
+    for (const path of this.getReadOrder()) {
+      const result = path.secure ? this.readEncryptedStore(path.path) : this.readPlaintextStore(path.path);
+      if (result.status === 'unreadable') return { state: 'unsupported' };
+      if (result.status === 'ok' && key in result.secrets) return capture(result.secrets[key]);
+    }
+    return { state: 'absent' };
+  }
+
+  /**
    * Read `key` from ONE tier, ignoring the read order and the environment.
    *
    * `get()` answers "what value would be used", which is the right question

@@ -12483,6 +12483,11 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       }
     },
     "output": {
+      "accountIdentity": {
+        "id": "sample",
+        "username": "sample",
+        "revision": "sample"
+      },
       "outcome": "sample",
       "reason": "sample",
       "ref": {
@@ -12610,6 +12615,11 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "onExpiry": "release-original-and-hold"
     },
     "output": {
+      "accountIdentity": {
+        "id": "sample",
+        "username": "sample",
+        "revision": "sample"
+      },
       "outcome": "sample",
       "reason": "sample",
       "ref": {
@@ -12748,6 +12758,11 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       }
     },
     "output": {
+      "accountIdentity": {
+        "id": "sample",
+        "username": "sample",
+        "revision": "sample"
+      },
       "outcome": "sample",
       "reason": "sample",
       "ref": {
@@ -12867,6 +12882,11 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   "inbound.telegram.list": {
     "input": {},
     "output": {
+      "accountIdentity": {
+        "id": "sample",
+        "username": "sample",
+        "revision": "sample"
+      },
       "outcome": "sample",
       "reason": "sample",
       "ref": {
@@ -12994,6 +13014,11 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       }
     },
     "output": {
+      "accountIdentity": {
+        "id": "sample",
+        "username": "sample",
+        "revision": "sample"
+      },
       "outcome": "sample",
       "reason": "sample",
       "ref": {
@@ -13115,6 +13140,11 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "configurationId": "sample"
     },
     "output": {
+      "accountIdentity": {
+        "id": "sample",
+        "username": "sample",
+        "revision": "sample"
+      },
       "outcome": "sample",
       "reason": "sample",
       "ref": {
@@ -13242,6 +13272,11 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       }
     },
     "output": {
+      "accountIdentity": {
+        "id": "sample",
+        "username": "sample",
+        "revision": "sample"
+      },
       "outcome": "sample",
       "reason": "sample",
       "ref": {

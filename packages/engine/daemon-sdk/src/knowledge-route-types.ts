@@ -79,7 +79,7 @@ export interface KnowledgeServiceLike {
   importBookmarksFromFile(input: Record<string, unknown>): Promise<unknown>;
   importUrlsFromFile(input: Record<string, unknown>): Promise<unknown>;
   ingestConnectorInput(input: Record<string, unknown>): Promise<unknown>;
-  searchScoped(input: Record<string, unknown>): readonly unknown[];
+  searchScoped(input: Record<string, unknown>): Promise<readonly unknown[]>;
   ask(input: Record<string, unknown>): Promise<unknown>;
   buildPacket(
     task: string,

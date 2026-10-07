@@ -222,7 +222,7 @@ export class KnowledgeGraphqlService {
         }
         return this.service.getNeighbors(kind, id, { relation, limit: clampInt(limit, 20) });
       },
-      search: (args: { query: string; limit?: number; knowledgeSpaceId?: string; includeAllSpaces?: boolean }) => (
+      search: async (args: { query: string; limit?: number; knowledgeSpaceId?: string; includeAllSpaces?: boolean }) => (
         this.service.searchScoped({
           query: args.query,
           limit: clampInt(args.limit, 10),

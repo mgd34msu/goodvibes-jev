@@ -22,7 +22,7 @@ import type { LLMProvider, StreamDelta } from '../providers/interface.js';
 import type { ToolResult } from '../types/tools.js';
 import { emitCommunicationConsumed } from '../runtime/emitters/index.js';
 import { maybeCompactAfterModelContextWarning, setAgentProgress, summarizeToolArgs } from './orchestrator-utils.js';
-import { buildLayeredOrchestratorSystemPrompt, buildOrchestratorSystemPrompt, resolveSpawnKnowledgeInjections, withOpenTierProfileBlock } from './orchestrator-prompts.js';
+import { assertOrchestratorKnowledgeCurrent, buildLayeredOrchestratorSystemPrompt, buildOrchestratorSystemPrompt, prepareOrchestratorPromptContext, resolveSpawnKnowledgeInjections, withOpenTierProfileBlock } from './orchestrator-prompts.js';
 import { completeOrRegenerate, recoverEmptyConversationalReply } from './conversational-reply-recovery.js';
 import {
   buildPerTurnKnowledgeInjection,
@@ -35,6 +35,9 @@ import { resolveScopedDirectory } from '../runtime/surface-root.js';
 import { appendGoodVibesRuntimeAwarenessPrompt } from '../tools/goodvibes-runtime/index.js';
 import { gateBackgroundToolCall } from './background-permission-gate.js';
 import { assertPermissionActive } from '../permissions/cancellation.js';
+import { KnowledgeEvidenceRelevanceHeldError } from '../knowledge/semantic/evidence-ranking/reader.js';
+import { JudgmentInputError } from '../gate/judgment-input.js';
+import { ProviderAttemptDeniedError } from '../providers/attempt-guard.js';
 import { resolveTurnBudget, formatTurnLimitError, TURN_BUDGET_EXHAUSTED, type ResolvedTurnBudget } from './turn-budget.js';
 import { toolFormatTelemetry } from '../runtime/telemetry/tool-format-telemetry.js';
 import {
@@ -352,7 +355,14 @@ export async function runAgentTask(
     context.registerConversationSource?.(record.id, () => activeConversation.getMessageSnapshot());
 
     await resolveSpawnKnowledgeInjections(record, context);
-    let systemPrompt = buildOrchestratorSystemPrompt(record, undefined, context);
+    let promptContext = await prepareOrchestratorPromptContext(record, context, context.getCancellationSignal?.(record.id));
+    let systemPrompt = buildOrchestratorSystemPrompt(record, undefined, promptContext);
+    const rebuildSystemPrompt = async (remainingTokens: number): Promise<string> => {
+      // The emergency task-only prompt contains no curated knowledge.
+      promptContext = remainingTokens === 0 ? undefined
+        : await prepareOrchestratorPromptContext(record, context, context.getCancellationSignal?.(record.id));
+      return buildLayeredOrchestratorSystemPrompt(record, remainingTokens, promptContext);
+    };
 
     // Per-turn passive-injection state (see CHANGELOG 0.38.0). `knowledgeIdsAlreadySurfaced` seeds
     // from the spawn-time baseline (record.knowledgeInjections, resolved above) and grows with
@@ -455,7 +465,7 @@ export async function runAgentTask(
       }
 
       if (contextWindowAwarenessEnabled) {
-        systemPrompt = applyContextWindowAwareness(
+        systemPrompt = await applyContextWindowAwareness(
           context,
           record,
           activeRoute.modelId,
@@ -464,6 +474,7 @@ export async function runAgentTask(
           systemPrompt,
           toolTokens,
           turn,
+          rebuildSystemPrompt,
         );
       }
 
@@ -580,6 +591,7 @@ export async function runAgentTask(
           };
 
           await context.beforeProviderRequest?.();
+          assertOrchestratorKnowledgeCurrent(record, promptContext);
           // Read the live construction binding for every attempt. The private
           // transcript and diff exist only on this provider request, never the agent's
           // task, saved conversation, systemPromptAddendum or event metadata.
@@ -595,6 +607,7 @@ export async function runAgentTask(
               : '');
           const assertNativeProviderSource = async () => {
             await context.beforeProviderRequest?.();
+            assertOrchestratorKnowledgeCurrent(record, promptContext);
             if (nativeSource && (!context.autonomousSource || JSON.stringify(captureAutonomousSource(context.autonomousSource())) !== JSON.stringify(nativeSource)))
               throw new Error('Native provider source changed before retry');
           };
@@ -608,13 +621,14 @@ export async function runAgentTask(
               messages: conversation.getMessagesForLLM(),
               tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
               systemPrompt: appendGoodVibesRuntimeAwarenessPrompt(composeTurnSystemPrompt(systemPrompt)) + privateContextBlock,
-              ...(nativeSource ? { beforeAttempt: assertNativeProviderSource } : {}),
+              ...((nativeSource || promptContext?.preparedKnowledgePrompt) ? { beforeAttempt: assertNativeProviderSource } : {}),
               ...(record.reasoningEffort ? { reasoningEffort: record.reasoningEffort } : {}),
               ...(cancelSignal ? { signal: cancelSignal } : {}),
               onDelta,
             });
             break;
           } catch (chatErr) {
+            if (chatErr instanceof ProviderAttemptDeniedError || chatErr instanceof KnowledgeEvidenceRelevanceHeldError || chatErr instanceof JudgmentInputError) throw chatErr;
             if (
               !contextRetried &&
               (context.featureFlagManager?.isEnabled('agent-context-window-awareness') ?? true) &&
@@ -639,7 +653,7 @@ export async function runAgentTask(
                 Math.max(5, Math.floor(currentMessages.length / 3)),
               );
               conversation.replaceMessagesForLLM(compacted);
-              systemPrompt = buildLayeredOrchestratorSystemPrompt(record, 0, context);
+              systemPrompt = await rebuildSystemPrompt(0);
             } else if (fallbackRouteIndex < fallbackRoutes.length) {
               const previousRoute = activeRoute;
               activeRoute = fallbackRoutes[fallbackRouteIndex++]!;

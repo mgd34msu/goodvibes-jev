@@ -1,3 +1,5 @@
+import type { TelegramSourceAccountReader } from '../channels/telegram/source-account.js';
+import type { WorkspaceSwapManagerLike } from './http/system-route-types.js';
 /** Real paired-owner command path and daemon adapter composition; no default grant. */
 import { DelegatedTelegramIntake } from './delegated-telegram-intake.js';
 import type { ResolvedDaemonFacadeRuntime } from './facade-types.js';
@@ -22,14 +24,20 @@ export function registerDelegatedTelegramCommands(catalog: GatewayMethodCatalog,
     if (!descriptor) throw new Error('Missing delegated Telegram command descriptor');
     catalog.register(descriptor, async invocation => {
       const { authority, current } = owner(invocation);
+      const input = readInvocationParams(invocation);
+      if (new TextEncoder().encode(JSON.stringify(input)).byteLength > 16_384) throw new GatewayVerbError('Oversize command', 'DELEGATED_INTAKE_HELD', 409);
+      // Never hold the global paired-owner lock across provider/credential I/O.
+      const configuration = operation === 'configure' ? delegatedTelegramConfigureSchema.parse(input) : null;
+      const selection = configuration ? await authority.withCurrent(current, async check => { check(); const attempt = await host.selectConfiguration(configuration, authority); check(); return attempt; }) : undefined;
+      const needsProof = operation === 'configure' || (operation === 'decide' && delegatedTelegramDecisionSchema.parse(input).approved);
+      const prepared = needsProof ? await host.prepareAccount(invocation.signal).catch(() => { throw new GatewayVerbError('Telegram account proof is unavailable or cancelled.', 'DELEGATED_INTAKE_HELD', 409); }) : null;
+      invocation.signal?.throwIfAborted(); owner(invocation);
       return authority.withCurrent(current, async assertCurrent => {
         try {
           invocation.signal?.throwIfAborted(); assertCurrent();
-          const input = readInvocationParams(invocation);
-          if (new TextEncoder().encode(JSON.stringify(input)).byteLength > 16_384) throw new Error('Oversize command');
           let result: Record<string, unknown>;
-          if (operation === 'configure') result = await host.configure(delegatedTelegramConfigureSchema.parse(input), authority);
-          else if (operation === 'decide') result = await host.decide(delegatedTelegramDecisionSchema.parse(input), authority);
+          if (operation === 'configure') result = await host.configure(delegatedTelegramConfigureSchema.parse(input), authority, prepared, selection);
+          else if (operation === 'decide') result = await host.decide(delegatedTelegramDecisionSchema.parse(input), authority, prepared);
           else if (operation === 'revoke') result = host.revoke(delegatedTelegramRevokeSchema.parse(input).configurationId, authority);
           else if (operation === 'list') { if (Object.keys(input).length) throw new Error('List takes no source payload'); result = await host.list(authority); }
           else { const { ref } = delegatedTelegramLookupSchema.parse(input); result = operation === 'cancel' ? await host.cancel(ref, authority) : await host.status(ref, authority, operation === 'read'); }
@@ -42,9 +50,18 @@ export function registerDelegatedTelegramCommands(catalog: GatewayMethodCatalog,
     }, { replace: true });
   }
 }
-export function composeDelegatedTelegramIntake(runtime: ResolvedDaemonFacadeRuntime): DelegatedTelegramIntake {
+export function composeDelegatedTelegramIntake(runtime: ResolvedDaemonFacadeRuntime, accounts: TelegramSourceAccountReader, swapManager: WorkspaceSwapManagerLike | null = null): DelegatedTelegramIntake {
+  const workspaceRevision = swapManager?.getWorkspaceRevision?.();
   const host = new DelegatedTelegramIntake({ broker: runtime.sessionBroker, approvals: runtime.approvalBroker, routes: runtime.routeBindings,
-    accountId: () => String(runtime.configManager.get('surfaces.telegram.botUsername') ?? ''), workspaceRoot: runtime.runtimeServices.workingDirectory,
+    accounts, workspaceRoot: runtime.runtimeServices.workingDirectory,
+    isWorkspaceCurrent: () => !swapManager || (typeof swapManager.subscribeBeforeSwap === 'function'
+      && typeof swapManager.getWorkspaceRevision === 'function' && swapManager.getWorkspaceRevision() === workspaceRevision
+      && swapManager.getCurrentWorkingDir() === runtime.runtimeServices.workingDirectory),
+    subscribeWorkspaceInvalidation: invalidate => {
+      const beforeSwap = swapManager?.subscribeBeforeSwap?.(invalidate);
+      const notice = runtime.runtimeBus.on('WORKSPACE_SWAP_STARTED', invalidate);
+      return () => { beforeSwap?.(); notice(); };
+    },
     selectionPath: runtime.runtimeServices.shellPaths.resolveProjectPath('goodvibes', 'channels', 'telegram-delegated-selection.json'),
     receiptPath: runtime.runtimeServices.shellPaths.resolveProjectPath('goodvibes', 'channels', 'telegram-delegated-review.json'),
   });

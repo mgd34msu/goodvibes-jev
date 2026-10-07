@@ -58087,6 +58087,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
           "properties": {
+            "accountIdentity": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "username",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
             "outcome": {
               "type": "string"
             },
@@ -58718,6 +58744,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
           "properties": {
+            "accountIdentity": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "username",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
             "outcome": {
               "type": "string"
             },
@@ -59404,6 +59456,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
           "properties": {
+            "accountIdentity": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "username",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
             "outcome": {
               "type": "string"
             },
@@ -59993,6 +60071,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
           "properties": {
+            "accountIdentity": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "username",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
             "outcome": {
               "type": "string"
             },
@@ -60624,6 +60728,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
           "properties": {
+            "accountIdentity": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "username",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
             "outcome": {
               "type": "string"
             },
@@ -61222,6 +61352,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
           "properties": {
+            "accountIdentity": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "username",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
             "outcome": {
               "type": "string"
             },
@@ -61853,6 +62009,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
           "properties": {
+            "accountIdentity": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "username",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
             "outcome": {
               "type": "string"
             },

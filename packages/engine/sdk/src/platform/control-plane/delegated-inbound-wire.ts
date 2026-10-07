@@ -36,6 +36,7 @@ export const delegatedReviewRecordSchema = z.object({
   state: z.enum(['accepted-for-review', 'cancelled']), execution: z.literal('not-started'),
 }).strict();
 export const delegatedTelegramResultSchema = z.object({
+  accountIdentity: z.object({ id, username: id, revision: id }).strict().optional(),
   outcome: z.string().optional(), reason: z.string().optional(), ref: delegatedSourceRefSchema.optional(),
   configurationId: id.optional(), expiresAt: z.number().optional(), pendingRetentionMs: duration.optional(),
   processing: z.string().optional(), restart: z.string().optional(), route: z.string().optional(),

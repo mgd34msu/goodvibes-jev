@@ -7,11 +7,13 @@ qualification. Nonselected Telegram routes keep their existing behavior.
 ## Real entry and owner commands
 
 The daemon facade constructs `DelegatedTelegramIntake`, installs it in the shared
-Telegram adapter used by webhook and polling, and registers these gateway methods
+Telegram adapter, admits delegated originals only from verified polling sessions,
+and registers these gateway methods
 (and corresponding POST `/api/inbound/telegram/{operation}` bindings):
 
 - `inbound.telegram.configure`: select one exact chat/thread for this host account.
-  Requires `accountId` matching the configured bot username, `pendingRetention`
+  Requires `accountId` matching the provider-verified numeric bot ID or current
+  username (never merely a configured username), `pendingRetention`
   equal to `memory-only-until-deadline`, an explicit positive `pendingRetentionMs`,
   explicit positive `configurationLifetimeMs`, and `onExpiry` equal to
   `release-original-and-hold`. There is no default memory grant. Configuration
@@ -38,6 +40,50 @@ reply matching do not supply authority. A paired command is an explicit owner
 operation; approval never originates from Telegram message text. Generic approval
 surfaces can deny/cancel but their plain approve action cannot answer this ask;
 the prompt identifies the exact dedicated decision command and required choices.
+
+Provider/credential verification runs outside the paired-owner critical section,
+with a five-second bound on the command wait and caller cancellation. An
+already-started provider lookup may finish in the background; that completion
+cannot install the cancelled command's grant. Configure first persists its
+deny-only selection under owner authority, then installs a grant only if that
+exact selection attempt, owner and lifecycle remain current after verification.
+A timeout, cancellation, restart or competing configuration never falls back.
+
+## Provider and workspace identity
+
+Polling leases obtain strict Bot API `getMe` evidence and are opaque, host-owned,
+abortable capabilities. The numeric bot ID and account incarnation are bound into
+source provenance before capture. Token rotation for the same verified bot keeps
+that account incarnation; a different bot requires fresh explicit configuration,
+even if its configured username stayed unchanged. Stale polling sessions cannot
+borrow the current session's proof. No token or token-derived secret is persisted
+in delegated approval or receipt metadata. Selected admission supports only
+synchronously fenceable direct literal/environment credentials and one-hop local
+GoodVibes references to literal secrets. External, command, file-provider and
+nested references hold without source acquisition; their descriptor alone is
+not a credential revision. Existing general Telegram credential resolution is
+unchanged for nonselected ingress.
+
+Selected webhook routes hold with zero delegated source acquisition or admission,
+even with a valid existing shared secret. That secret and webhook URL do not prove
+the recipient bot incarnation. Nonselected webhook behavior is unchanged. No new
+webhook credential or persistent permission is introduced.
+
+Selected group/thread messages do not inspect text to infer mentions. Existing
+require-mention channel policy therefore continues to deny those messages, even
+if their unseen text contains a command or mention. Route selection is not a
+mention exemption. This slice is usable in private chats and routes whose
+existing explicit policy permits non-mention ingress; it changes no such policy.
+
+Same-bot transport rotation alone does not revoke already approved originals or extend
+their deadlines. A verified different bot retires old account configurations and
+live originals, while preserving immutable historical receipts and truthful lost-source
+status. Their exact approved lifetime, owner, explicit configuration
+revocation, route, source-edit and workspace fences still apply. Pending approvals
+require current verified account proof before acceptance. Workspace swap start
+retires the host and its originals before stores reroot; failed swaps also require
+fresh host construction. An ordinary same-root daemon restart still loses all
+originals and grants and requires fresh explicit configuration.
 
 ## Retention and provenance
 

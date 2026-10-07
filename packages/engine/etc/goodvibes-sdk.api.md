@@ -18457,6 +18457,11 @@ export interface OperatorMethodOutputMap {
     });
     // (undocumented)
     "inbound.telegram.cancel": {
+        accountIdentity?: {
+            id: string;
+            username: string;
+            revision: string;
+        };
         outcome?: string;
         reason?: string;
         ref?: {
@@ -18568,6 +18573,11 @@ export interface OperatorMethodOutputMap {
     };
     // (undocumented)
     "inbound.telegram.configure": {
+        accountIdentity?: {
+            id: string;
+            username: string;
+            revision: string;
+        };
         outcome?: string;
         reason?: string;
         ref?: {
@@ -18679,6 +18689,11 @@ export interface OperatorMethodOutputMap {
     };
     // (undocumented)
     "inbound.telegram.decide": {
+        accountIdentity?: {
+            id: string;
+            username: string;
+            revision: string;
+        };
         outcome?: string;
         reason?: string;
         ref?: {
@@ -18790,6 +18805,11 @@ export interface OperatorMethodOutputMap {
     };
     // (undocumented)
     "inbound.telegram.list": {
+        accountIdentity?: {
+            id: string;
+            username: string;
+            revision: string;
+        };
         outcome?: string;
         reason?: string;
         ref?: {
@@ -18901,6 +18921,11 @@ export interface OperatorMethodOutputMap {
     };
     // (undocumented)
     "inbound.telegram.read": {
+        accountIdentity?: {
+            id: string;
+            username: string;
+            revision: string;
+        };
         outcome?: string;
         reason?: string;
         ref?: {
@@ -19012,6 +19037,11 @@ export interface OperatorMethodOutputMap {
     };
     // (undocumented)
     "inbound.telegram.revoke": {
+        accountIdentity?: {
+            id: string;
+            username: string;
+            revision: string;
+        };
         outcome?: string;
         reason?: string;
         ref?: {
@@ -19123,6 +19153,11 @@ export interface OperatorMethodOutputMap {
     };
     // (undocumented)
     "inbound.telegram.status": {
+        accountIdentity?: {
+            id: string;
+            username: string;
+            revision: string;
+        };
         outcome?: string;
         reason?: string;
         ref?: {

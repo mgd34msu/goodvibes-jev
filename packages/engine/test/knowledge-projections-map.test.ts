@@ -7,7 +7,7 @@ import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import { listGeneratedKnowledgePages } from '../sdk/src/platform/knowledge/generated-pages.js';
 import { materializeGeneratedKnowledgeProjection } from '../sdk/src/platform/knowledge/generated-projections.js';
 import { renderDevicePassportPage } from '../sdk/src/platform/knowledge/home-graph/rendering.js';
-import { buildKnowledgePacketSync } from '../sdk/src/platform/knowledge/packet.js';
+import { buildKnowledgePacket } from '../sdk/src/platform/knowledge/packet.js';
 import { KnowledgeProjectionService } from '../sdk/src/platform/knowledge/projections.js';
 import { renderKnowledgeMap } from '../sdk/src/platform/knowledge/map.js';
 import { KnowledgeService } from '../sdk/src/platform/knowledge/service.js';
@@ -808,8 +808,8 @@ describe('knowledge generated projections and maps', () => {
       edges: store.listEdges(),
       issues: store.listIssues(20),
     }, { includeSources: true, includeAllSpaces: true });
-    const defaultPacket = buildKnowledgePacketSync(packetContext(store), 'LG webOS Smart TV', [], 10);
-    const allPacket = buildKnowledgePacketSync(packetContext(store), 'LG webOS Smart TV', [], 10, { includeAllSpaces: true });
+    const defaultPacket = await buildKnowledgePacket(packetContext(store), 'LG webOS Smart TV', [], 10);
+    const allPacket = await buildKnowledgePacket(packetContext(store), 'LG webOS Smart TV', [], 10, { includeAllSpaces: true });
 
     expect(defaultTargets.map((target) => target.title)).toContain('Base Knowledge Manual');
     expect(defaultTargets.map((target) => target.title)).not.toContain('Home Assistant LG Passport');
@@ -1266,7 +1266,7 @@ describe('knowledge generated projections and maps', () => {
     expect(service.queryIssues({ limit: 100, includeAllSpaces: true }).items.map((issue) => issue.id)).not.toContain(orphanAnswerIssue.id);
 
     const defaultTargets = await projectionService.listTargets(100);
-    const defaultPacket = buildKnowledgePacketSync(packetContext(store), 'BRAVIA Home Assistant', [], 10);
+    const defaultPacket = await buildKnowledgePacket(packetContext(store), 'BRAVIA Home Assistant', [], 10);
     const defaultMap = renderKnowledgeMap({
       sources: store.listSources(100),
       nodes: store.listNodes(100),
@@ -1367,7 +1367,7 @@ function createStores(): {
   };
 }
 
-function packetContext(store: KnowledgeStore): Parameters<typeof buildKnowledgePacketSync>[0] {
+function packetContext(store: KnowledgeStore): Parameters<typeof buildKnowledgePacket>[0] {
   return {
     store,
     deferUsage: () => {},

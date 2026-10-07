@@ -123,7 +123,12 @@ describe('native semantic and durable admission union', () => {
       expect(record.decision.judgmentDecisionIds.length).toBeGreaterThan(0);
       for (const id of record.decision.judgmentDecisionIds) expect(log.get(id)).toBeDefined();
     }
-    for (const invocation of planner.requests) expect(invocation.userPrompt).toContain(JSON.stringify(source()));
+    for (const invocation of planner.requests) {
+      expect(invocation.userPrompt).toContain(JSON.stringify({ goal: source().goal, criteria: source().criteria }));
+      for (const key of ['sourceId', 'sourceRevision', 'inputRevision', 'criteriaId', 'criteriaRevision']) {
+        expect(invocation.userPrompt).not.toContain(`"${key}"`);
+      }
+    }
     expect(result.escalations).toHaveLength(0);
     expect(h.events.some(event => event.type === 'CONTRACT_ESCALATED' || event.type === 'CONTRACT_OWNER_REPLIED')).toBe(false);
     const replay = await h.runner.startDurable(request(h.root));
@@ -302,7 +307,10 @@ describe('native semantic and durable admission union', () => {
         expect(readFileSync(path, 'utf8')).toBe(original);
         await expect(authorizeContractInputPath(authority!, 'private.ts', filter, invocation.signal)).rejects.toThrow('access-restricted');
         expect(invocation.workingDir).not.toBe(root);
-        expect(invocation.userPrompt).toContain(JSON.stringify(source()));
+        expect(invocation.userPrompt).toContain(JSON.stringify({ goal: source().goal, criteria: source().criteria }));
+        for (const key of ['sourceId', 'sourceRevision', 'inputRevision', 'criteriaId', 'criteriaRevision']) {
+          expect(invocation.userPrompt).not.toContain(`"${key}"`);
+        }
         if (kind === 'plan') writeFileSync(join(root, 'README.md'), 'later owner edit\n');
         else {
           expect(invocation.workingDir).toContain('/contract-planner/');

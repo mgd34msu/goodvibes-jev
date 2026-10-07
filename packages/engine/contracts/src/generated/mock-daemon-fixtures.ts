@@ -10108,6 +10108,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     },
     "status": 200,
     "body": {
+      "accountIdentity": {
+        "id": "sample",
+        "username": "sample",
+        "revision": "sample"
+      },
       "outcome": "sample",
       "reason": "sample",
       "ref": {
@@ -10232,6 +10237,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     },
     "status": 200,
     "body": {
+      "accountIdentity": {
+        "id": "sample",
+        "username": "sample",
+        "revision": "sample"
+      },
       "outcome": "sample",
       "reason": "sample",
       "ref": {
@@ -10356,6 +10366,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     },
     "status": 200,
     "body": {
+      "accountIdentity": {
+        "id": "sample",
+        "username": "sample",
+        "revision": "sample"
+      },
       "outcome": "sample",
       "reason": "sample",
       "ref": {
@@ -10480,6 +10495,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     },
     "status": 200,
     "body": {
+      "accountIdentity": {
+        "id": "sample",
+        "username": "sample",
+        "revision": "sample"
+      },
       "outcome": "sample",
       "reason": "sample",
       "ref": {
@@ -10604,6 +10624,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     },
     "status": 200,
     "body": {
+      "accountIdentity": {
+        "id": "sample",
+        "username": "sample",
+        "revision": "sample"
+      },
       "outcome": "sample",
       "reason": "sample",
       "ref": {
@@ -10728,6 +10753,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     },
     "status": 200,
     "body": {
+      "accountIdentity": {
+        "id": "sample",
+        "username": "sample",
+        "revision": "sample"
+      },
       "outcome": "sample",
       "reason": "sample",
       "ref": {
@@ -10852,6 +10882,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     },
     "status": 200,
     "body": {
+      "accountIdentity": {
+        "id": "sample",
+        "username": "sample",
+        "revision": "sample"
+      },
       "outcome": "sample",
       "reason": "sample",
       "ref": {

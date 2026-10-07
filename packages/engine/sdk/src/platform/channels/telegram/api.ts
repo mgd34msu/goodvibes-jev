@@ -202,6 +202,24 @@ export class TelegramBotApi {
     };
   }
 
+  /**
+   * Recipient provenance for selected intake. Unlike legacy discovery, this
+   * never substitutes a configured handle or token prefix for Telegram proof.
+   */
+  async getVerifiedIdentity(signal?: AbortSignal): Promise<TelegramBotIdentity | null> {
+    const result = readRecord(await this.call('getMe', {}, signal));
+    const id = result?.id;
+    const username = typeof result?.username === 'string' ? result.username.trim() : '';
+    if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0
+      || !/^[1-9]\d*$/.test(this.botId) || String(id) !== this.botId
+      || result?.is_bot !== true || !username || !/^[A-Za-z0-9_]+$/.test(username)) return null;
+    return {
+      id: String(id),
+      username,
+      displayName: typeof result.first_name === 'string' ? result.first_name : '',
+    };
+  }
+
   async getWebhookInfo(): Promise<TelegramWebhookInfo> {
     const result = readRecord(await this.call('getWebhookInfo', {}));
     return {
