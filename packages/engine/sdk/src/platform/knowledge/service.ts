@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { snapshotNodeInput } from './activation/projection.js';
 import {
   type AutomationScheduleDefinition,
 } from '../automation/schedules.js';
@@ -56,9 +57,9 @@ import type {
 } from './types.js';
 import {
   buildKnowledgePacket,
-  buildKnowledgePacketSync,
   buildKnowledgePromptPacket,
-  buildKnowledgePromptPacketSync,
+  prepareKnowledgePromptPacket,
+  type PreparedKnowledgePromptPacket,
   searchKnowledge,
 } from './packet.js';
 import {
@@ -673,17 +674,18 @@ export class KnowledgeService {
     return { status: this.store.status(), issues };
   }
 
-  search(query: string, limit = 10): KnowledgeSearchResult[] {
+  async search(query: string, limit = 10): Promise<KnowledgeSearchResult[]> {
     return searchKnowledge(this.getPacketContext(), query, limit);
   }
 
-  searchScoped(input: {
+  async searchScoped(input: {
     readonly query: string;
     readonly limit?: number | undefined;
     readonly knowledgeSpaceId?: string | undefined;
     readonly includeAllSpaces?: boolean | undefined;
-  }): KnowledgeSearchResult[] {
-    return searchKnowledge(this.getPacketContext(), input.query, input.limit ?? 10, input);
+  }): Promise<KnowledgeSearchResult[]> {
+    const request = snapshotNodeInput(input);
+    return searchKnowledge(this.getPacketContext(), request.query, request.limit ?? 10, input);
   }
 
   async ask(input: {
@@ -702,34 +704,25 @@ export class KnowledgeService {
     task: string,
     writeScope: readonly string[] = [],
     limit = DEFAULT_PACKET_LIMIT,
-    options: { readonly detail?: KnowledgePacketDetail; readonly budgetLimit?: number } & KnowledgeSpaceScopeInput = {},
+    options: { readonly detail?: KnowledgePacketDetail; readonly budgetLimit?: number; readonly signal?: AbortSignal } & KnowledgeSpaceScopeInput = {},
   ): Promise<KnowledgePacket> {
     return buildKnowledgePacket(this.getPacketContext(), task, writeScope, limit, options);
   }
 
-  buildPacketSync(
+  async preparePromptPacket(
     task: string,
     writeScope: readonly string[] = [],
     limit = DEFAULT_PACKET_LIMIT,
-    options: { readonly detail?: KnowledgePacketDetail; readonly budgetLimit?: number } & KnowledgeSpaceScopeInput = {},
-  ): KnowledgePacket | null {
-    return buildKnowledgePacketSync(this.getPacketContext(), task, writeScope, limit, options);
-  }
-
-  buildPromptPacketSync(
-    task: string,
-    writeScope: readonly string[] = [],
-    limit = DEFAULT_PACKET_LIMIT,
-    options: { readonly detail?: KnowledgePacketDetail; readonly budgetLimit?: number } & KnowledgeSpaceScopeInput = {},
-  ): string | null {
-    return buildKnowledgePromptPacketSync(this.getPacketContext(), task, writeScope, limit, options);
+    options: { readonly detail?: KnowledgePacketDetail; readonly budgetLimit?: number; readonly signal?: AbortSignal } & KnowledgeSpaceScopeInput = {},
+  ): Promise<PreparedKnowledgePromptPacket> {
+    return prepareKnowledgePromptPacket(this.getPacketContext(), task, writeScope, limit, options);
   }
 
   async buildPromptPacket(
     task: string,
     writeScope: readonly string[] = [],
     limit = DEFAULT_PACKET_LIMIT,
-    options: { readonly detail?: KnowledgePacketDetail; readonly budgetLimit?: number } & KnowledgeSpaceScopeInput = {},
+    options: { readonly detail?: KnowledgePacketDetail; readonly budgetLimit?: number; readonly signal?: AbortSignal } & KnowledgeSpaceScopeInput = {},
   ): Promise<string | null> {
     return buildKnowledgePromptPacket(this.getPacketContext(), task, writeScope, limit, options);
   }
@@ -918,12 +911,4 @@ export class KnowledgeService {
       source: 'knowledge.service',
     });
   }
-}
-
-export function buildCuratedKnowledgePromptSync(
-  service: Pick<KnowledgeService, 'buildPromptPacketSync'>,
-  task: string,
-  writeScope: readonly string[] = [],
-): string | null {
-  return service.buildPromptPacketSync(task, writeScope);
 }

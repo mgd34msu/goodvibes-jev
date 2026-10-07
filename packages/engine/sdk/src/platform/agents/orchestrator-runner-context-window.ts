@@ -35,7 +35,6 @@ import {
 import { ConversationManager } from '../core/conversation.js';
 import type { AgentRecord } from '../tools/agent/index.js';
 import type { LLMProvider } from '../providers/interface.js';
-import { buildLayeredOrchestratorSystemPrompt } from './orchestrator-prompts.js';
 import type { AgentOrchestratorRunContext } from './orchestrator-runner.js';
 import { setAgentProgress } from './progress-audience.js';
 
@@ -106,7 +105,7 @@ export function resolveContextWindowModelDefinition(
   ) ?? providerRegistry.getCurrentModel();
 }
 
-export function applyContextWindowAwareness(
+export async function applyContextWindowAwareness(
   context: AgentOrchestratorRunContext,
   record: AgentRecord,
   modelId: string,
@@ -115,7 +114,8 @@ export function applyContextWindowAwareness(
   systemPrompt: string,
   toolTokens: number,
   turn: number,
-): string {
+  rebuildSystemPrompt: (remainingTokens: number) => Promise<string>,
+): Promise<string> {
   if (!(context.featureFlagManager?.isEnabled('agent-context-window-awareness') ?? true)) {
     return systemPrompt;
   }
@@ -155,7 +155,7 @@ export function applyContextWindowAwareness(
       `[AgentOrchestrator] context-window awareness: system prompt (${currentSysTokens} tokens) too large for remaining window (${remainingAfterMsgs}) - applying layered trim`,
       { agentId: record.id },
     );
-    return buildLayeredOrchestratorSystemPrompt(record, remainingAfterMsgs, context);
+    return rebuildSystemPrompt(remainingAfterMsgs);
   }
 
   return systemPrompt;

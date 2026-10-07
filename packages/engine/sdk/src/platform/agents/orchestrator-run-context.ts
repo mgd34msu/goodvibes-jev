@@ -70,7 +70,7 @@ export interface AgentOrchestratorRunContext {
   readonly getCancellationSignal?: ((agentId: string) => AbortSignal | undefined) | undefined;
   readonly processManager?: ProcessManager | undefined;
   readonly messageBus: Pick<AgentMessageBus, 'getMessages'>;
-  readonly knowledgeService?: Pick<KnowledgeService, 'buildPromptPacketSync'> | undefined;
+  readonly knowledgeService?: Pick<KnowledgeService, 'preparePromptPacket'> | undefined;
   readonly memoryRegistry?: Pick<import('../state/index.js').MemoryRegistry, 'getAll' | 'semanticCandidates' | 'vectorStats'> | undefined;
   /**
    * Stage B, repo code index for per-turn code injection in a spawned agent run.

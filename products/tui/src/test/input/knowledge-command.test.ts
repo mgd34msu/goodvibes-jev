@@ -8,6 +8,7 @@ import { createKnowledgeApi, KnowledgeService, KnowledgeStore } from '@goodvibes
 import { MemoryRegistry, MemoryStore } from '@goodvibes-jev/engine/sdk/platform/state';
 import { MemoryEmbeddingProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/state';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { withPublicKnowledgeReadings } from '../helpers/public-knowledge-readings.ts';
 
 let server: ReturnType<typeof Bun.serve>;
 let baseUrl = '';
@@ -130,7 +131,7 @@ describe('knowledgeCommand', () => {
     memoryRegistry = new MemoryRegistry(memoryStore);
   });
 
-  test('ingests a URL and renders a packet', async () => {
+  test('retains blocked URL metadata in a packet without claiming fetched HTML', async () => {
     const artifactStore = new ArtifactStore({
       configManager: {
         getControlPlaneConfigDir: () => root,
@@ -151,13 +152,26 @@ describe('knowledgeCommand', () => {
 
     expect(printed.join('\n')).toContain('Ingested');
 
+    const sources = knowledgeStore.listSources(10);
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatchObject({ status: 'failed', sourceUri: `${baseUrl}/docs`, tags: ['example', 'docs'] });
+    expect(sources[0]?.crawlError).toContain('SSRF policy');
+    expect(sources[0]?.title).toBeUndefined();
+    expect(sources[0]?.summary).toBeUndefined();
+    expect(knowledgeStore.getExtractionBySourceId(sources[0]!.id)).toBeNull();
+
     printed = [];
-    await knowledgeCommand.handler(
+    // Authored relevance for this sole metadata-only source. The existing
+    // localhost boundary remains intact and no HTML excerpts were captured.
+    await withPublicKnowledgeReadings(['Untitled source'], [], () => knowledgeCommand.handler(
       ['packet', 'example docs'],
       makeKnowledgeCommandContext(root, printed, knowledgeService, memoryRegistry),
-    );
+    ));
 
     expect(printed.join('\n')).toContain('Curated Project Knowledge');
+    expect(printed.join('\n')).toContain(`${baseUrl}/docs`);
+    expect(printed.join('\n')).not.toContain('Example Page');
+    expect(printed.join('\n')).not.toContain('Knowledge command test page.');
   });
 
   test('reviews a knowledge issue', async () => {
