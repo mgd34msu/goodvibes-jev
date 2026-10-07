@@ -71,7 +71,7 @@ export function createWebhookDeliveryStrategy(
       if (!response.ok) {
         throw new HttpStatusError(`HTTP ${response.status}: ${await response.text().catch(() => '')}`, { status: response.status });
       }
-      return success(validation.url);
+      return success();
     },
   };
 }
@@ -112,12 +112,12 @@ export function createSlackDeliveryStrategy(
             response_type: 'in_channel',
             blocks: slack.formatAgentResult(request.agentId ?? request.runId, request.title, bodyWithAttachments),
           }),
-        });
-        return success(responseUrl);
+        }, 'opaque-url');
+        return success();
       }
       if (request.target.address?.startsWith('https://')) {
         await slack.postWebhook(bodyWithAttachments, undefined, request.target.address);
-        return success(request.target.address);
+        return success();
       }
       const channelId = firstNonEmpty(
         request.target.address,
@@ -130,7 +130,7 @@ export function createSlackDeliveryStrategy(
         return success(channelId);
       }
       await slack.postWebhook(bodyWithAttachments);
-      return success(webhookUrl ?? undefined);
+      return success();
     },
   };
 }
@@ -176,11 +176,11 @@ export function createDiscordDeliveryStrategy(
           '',
           [discord.formatAgentResult(request.agentId ?? request.runId, request.title, bodyWithAttachments)],
         );
-        return success(`${applicationId}:${interactionToken}`);
+        return success();
       }
       if (request.target.address?.startsWith('https://')) {
         await discord.postWebhook(bodyWithAttachments, undefined, request.target.address);
-        return success(request.target.address);
+        return success();
       }
       const channelId = firstNonEmpty(
         request.target.address,
@@ -193,7 +193,7 @@ export function createDiscordDeliveryStrategy(
         return success(channelId);
       }
       await discord.postWebhook(bodyWithAttachments);
-      return success(webhookUrl ?? undefined);
+      return success();
     },
   };
 }
@@ -390,7 +390,7 @@ export function createTelegramDeliveryStrategy(
             ? { message_thread_id: Number(request.binding.threadId) }
             : {}),
         }),
-      });
+      }, 'opaque-url');
       const payload = await requireOkResponse('Telegram delivery failed', response);
       return success(extractResponseId(payload) ?? chatId);
     },
@@ -439,9 +439,9 @@ export function createGoogleChatDeliveryStrategy(
           text: trimForSurface(appendAttachmentSummary(request.body, attachments), 4_000),
           ...(threadKey ? { thread: { threadKey } } : {}),
         }),
-      });
+      }, 'opaque-url');
       const payload = await requireOkResponse('Google Chat delivery failed', response);
-      return success(extractResponseId(payload) ?? webhookUrl);
+      return success(extractResponseId(payload));
     },
   };
 }

@@ -341,7 +341,7 @@ export function createBlueBubblesDeliveryStrategy(
           tempGuid: crypto.randomUUID(),
           message: trimForSurface(appendAttachmentSummary(request.body, attachments), 8_000),
         }),
-      });
+      }, 'opaque-url');
       const payload = await requireOkResponse('BlueBubbles delivery failed', response);
       return success(extractResponseId(payload) ?? chatGuid);
     },

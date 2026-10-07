@@ -64,6 +64,7 @@ export async function postToPublicWebhook(
     trustTierConfig: {},
     localhostApproved: false,
     resolveHost: options.resolveHost,
+    diagnosticMode: 'opaque-url',
   });
-  return pinnedFetch(validation.url, { ...init, redirect: 'manual' }, addresses);
+  return pinnedFetch(validation.url, { ...init, redirect: 'manual' }, addresses, 'opaque-url');
 }
