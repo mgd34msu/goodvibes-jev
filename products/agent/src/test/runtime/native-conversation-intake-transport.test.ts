@@ -20,6 +20,7 @@ function fixture() {
   let principalId = 'paired-principal'; let projectId = 'p'; let scopes = ['read:work-ledger', 'write:work-ledger', 'write:fleet', 'write:sessions'];
   let processing = true; let loseAdmit = false; let turnMode = false; let revoked = false;
   let heldHostedStart: Promise<void> | undefined; let releaseHostedStart = () => {}; let hostedStartArrived = () => {};
+  let heldSnapshot: Promise<void> | undefined; let releaseSnapshot = () => {}; let snapshotArrived = () => {};
   let heldAdmit: Promise<void> | undefined; let releaseAdmit = () => {}; let admitArrived = () => {};
   const common = (command: NativeConversationIntakeCaptureRequest) => ({ projectId: 'p', requestId: command.requestId,
     sourceRef: { version: 1 as const, inputId: command.inputId, sourceId: 'host-source', sourceRevision: 'r1', sessionId: 'host-session', ...(command.continuation ? { continuation: { sessionId: command.continuation.sessionId, revision: 'a'.repeat(64) } } : {}) } });
@@ -35,7 +36,7 @@ function fixture() {
     if (revoked) return Response.json({ error: 'Revoked authority' }, { status: 403 });
     if (path === '/api/control-plane/auth') return Response.json({ authenticated: true, authMode: 'shared-token', tokenPresent: true, authorizationHeaderPresent: true, sessionCookiePresent: false, principalId, principalKind: 'token', admin: true, scopes, roles: [] });
     if (path === '/api/work-ledger/project') return Response.json({ projectId });
-    if (path === '/api/work-ledger/snapshot') return Response.json({ projectId: 'p', cursor: 0, revision: 0, works: [] });
+    if (path === '/api/work-ledger/snapshot') { if (heldSnapshot) { snapshotArrived(); await heldSnapshot; } return Response.json({ projectId: 'p', cursor: 0, revision: 0, works: [] }); }
     if (path === '/api/work-ledger/history') return Response.json({ projectId: 'p', afterSequence: 0, throughSequence: 0, cursor: 0, hasMore: false, events: [] });
     if (path === '/api/work-ledger/intake/capture') {
       const command = await request.json() as NativeConversationIntakeCaptureRequest; captures.push(command);
@@ -99,7 +100,14 @@ function fixture() {
   const printed: string[] = []; let dispatches = 0; const registry = new CommandRegistry();
   registerAgentWorkspaceRuntimeCommands(registry);
   const context = { nativeConversationIntake: intake, dispatchNativeIntakeTurn: async () => { dispatches++; }, print: (line: string) => printed.push(line) } as unknown as CommandContext;
-  return { intake, requests, captures, printed, executionStarts, executions, hostedTurns, hostedBodies,
+  return { view, intake, requests, captures, printed, executionStarts, executions, hostedTurns, hostedBodies,
+    holdInitialSnapshots() {
+      heldSnapshot = new Promise(resolve => { releaseSnapshot = resolve; });
+      // Opening owns an explicit snapshot and the subscriber's initial poll.
+      // Wait for both arrivals so neither can enter the later request window.
+      let arrivals = 0;
+      return { arrived: new Promise<void>(resolve => { snapshotArrived = () => { if (++arrivals === 2) resolve(); }; }), release: () => releaseSnapshot() };
+    },
     newIntake() { const extra = createNativeWorkLedgerView(() => ({ baseUrl, token: 'synthetic-intake-token', workspace: home, journalPath }), () => {}); extraViews.push(extra); return extra.intake!; },
     holdHostedStart() { heldHostedStart = new Promise(resolve => { releaseHostedStart = resolve; }); return { arrived: new Promise<void>(resolve => { hostedStartArrived = resolve; }), release: () => releaseHostedStart() }; },
     setHostedFault(value: typeof hostedFault) { hostedFault = value; }, dispatches: () => dispatches,
@@ -110,7 +118,7 @@ function fixture() {
     settle() { processing = false; }, loseAdmit() { loseAdmit = true; },
     turn() { processing = false; turnMode = true; }, revoke() { revoked = true; },
     holdAdmit() { heldAdmit = new Promise(resolve => { releaseAdmit = resolve; }); return { arrived: new Promise<void>(resolve => { admitArrived = resolve; }), release: () => releaseAdmit() }; },
-    close() { releaseAdmit(); releaseHostedStart(); close(); server.stop(true); rmSync(home, { recursive: true, force: true }); } };
+    close() { releaseSnapshot(); releaseAdmit(); releaseHostedStart(); close(); server.stop(true); rmSync(home, { recursive: true, force: true }); } };
 }
 test('ordinary product transport persists exact source and explicitly recovered admission starts its native target', async () => {
   const f = fixture(); const text = '  Deliver the exact change\r\nkeep 😀 and spaces  ';
@@ -146,7 +154,7 @@ test('unsupported references remain blocked under all recovery commands', async 
 });
 
 test('real turn permit outlives intake transport, preserves exact source and rechecks live authority', async () => {
-  const f = fixture(); f.turn(); const text = '  Original ordinary turn\r\n😀  ';
+  const f = fixture(); const snapshot = f.holdInitialSnapshots(); f.turn(); const text = '  Original ordinary turn\r\n😀  ';
   try {
     const state = await f.intake.submit({ text, unsupportedSources: [] });
     expect(state?.turnReady).toBe(true); expect(state?.turnPermit).toBeDefined();
@@ -158,8 +166,14 @@ test('real turn permit outlives intake transport, preserves exact source and rec
       async handleUserInput(text, content, options) { delivered.push({ text, content, options }); },
     });
     expect(delivered).toEqual(['p', { text, content: undefined, options: { nativeConversationTurnPermit: permit } }]);
-    const before = f.requests.length; await revalidateNativeConversationTurnPermit(permit);
+    // Intake opens an independently polling ledger view. Close that owner while
+    // its snapshots are pending so a late response cannot enter this window.
+    await snapshot.arrived;
+    f.view.close();
+    expect(f.view.state.status).toBe('closed');
+    const before = f.requests.length; snapshot.release(); await revalidateNativeConversationTurnPermit(permit);
     expect(f.requests.slice(before)).toEqual(['/api/work-ledger/intake/get']);
+    expect(f.view.state.status).toBe('closed');
     f.revoke(); await expect(revalidateNativeConversationTurnPermit(permit)).rejects.toThrow();
   } finally { f.close(); }
 });
