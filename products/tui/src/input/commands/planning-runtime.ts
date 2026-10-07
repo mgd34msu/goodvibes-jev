@@ -1,11 +1,7 @@
-import type {
-  ProjectPlanningEvaluation,
-  ProjectPlanningQuestion,
-  ProjectPlanningService,
-  ProjectPlanningState,
-} from '@goodvibes-jev/engine/sdk/platform/knowledge';
-import type { CommandRegistry } from '../command-registry.ts';
-import { openModalCommand, requirePlanManager, requireSessionLineageTracker } from './runtime-services.ts';
+import type { ProjectPlanningQuestion } from '@goodvibes-jev/engine/sdk/platform/knowledge';
+import { directOwnerPlanningInput, type CommandRegistry } from '../command-registry.ts';
+import { routeNativeConversationInput } from '../../runtime/native-conversation-ingress.ts';
+import { openModalCommand, requirePlanManager } from './runtime-services.ts';
 import { togglePlanMode, permissionModeLabel, type PermissionModeValue } from '../../core/permission-mode.ts';
 import { parsePlanningActionTarget } from './planning-action-target.ts';
 
@@ -20,43 +16,11 @@ import { parsePlanningActionTarget } from './planning-action-target.ts';
  */
 const PSEUDO_SUBCOMMAND_VERBS = new Set(['pause', 'stop', 'cancel']);
 
-function recordNextQuestion(
-  state: Partial<ProjectPlanningState>,
-  question: ProjectPlanningQuestion | undefined,
-): Partial<ProjectPlanningState> {
-  if (!question) return state;
-  const answered = new Set((state.answeredQuestions ?? []).map((entry) => entry.id));
-  if (answered.has(question.id)) return state;
-  const openQuestions = [...(state.openQuestions ?? [])];
-  const existingIndex = openQuestions.findIndex((entry) => entry.id === question.id);
-  const normalized = { ...question, status: question.status ?? 'open' } satisfies ProjectPlanningQuestion;
-  if (existingIndex >= 0) openQuestions[existingIndex] = normalized;
-  else openQuestions.unshift(normalized);
-  return { ...state, openQuestions };
-}
-
-async function persistEvaluatedNextQuestion(
-  service: ProjectPlanningService,
-  projectId: string,
-  state: ProjectPlanningState,
-  evaluation: ProjectPlanningEvaluation,
-): Promise<{ state: ProjectPlanningState; evaluation: ProjectPlanningEvaluation }> {
-  if (!evaluation.nextQuestion) return { state, evaluation };
-  if (state.openQuestions.some((question) => question.id === evaluation.nextQuestion?.id)) {
-    return { state, evaluation };
-  }
-  const withQuestion = recordNextQuestion(evaluation.state ?? state, evaluation.nextQuestion);
-  const saved = await service.upsertState({ projectId, state: withQuestion });
-  const nextState = saved.state ?? state;
-  const nextEvaluation = await service.evaluate({ projectId, state: nextState });
-  return { state: nextState, evaluation: nextEvaluation };
-}
-
 function formatNextQuestion(question: ProjectPlanningQuestion | undefined): string {
   if (!question) return 'No next question recorded.';
   const lines = [`Next question: ${question.prompt}`];
   if (question.recommendedAnswer) lines.push(`Recommended answer: ${question.recommendedAnswer}`);
-  lines.push('Answer in the prompt, or open the Planning modal to choose/type an answer.');
+  lines.push('Use /project-plan history to answer this saved historical question.');
   return lines.join('\n');
 }
 
@@ -64,12 +28,10 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
   registry.register({
     name: 'project-plan',
     aliases: ['planning'],
-    description: 'Inspect or seed TUI-owned project planning state',
-    usage: '[panel | approve | dismiss | answer <n> <text> | list | show <id> | mode | explain | override <strategy> | status | clear | <planning goal>]',
-    argsHint: '[panel|approve|status|<goal>]',
+    description: 'Submit a native work request, inspect recovery, or review historical planning',
+    usage: '[panel | history | approve | dismiss | answer <n> <text> | list | show <id> | mode | explain | override <strategy> | status | clear | <planning goal>]',
+    argsHint: '[panel|history|<goal>]',
     async handler(args, ctx) {
-      const planManager = requirePlanManager(ctx);
-      const sessionLineageTracker = requireSessionLineageTracker(ctx);
       const plannerSubs = ['mode', 'explain', 'override', 'status', 'clear'];
       if (args.length > 0 && plannerSubs.includes(args[0].toLowerCase())) {
         const result = ctx.ops.planRuntime
@@ -83,42 +45,15 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
       const projectId = ctx.workspace.projectPlanningProjectId;
       const openProjectPlanningModal = () => openModalCommand(ctx, 'planning-modal');
 
-      if (args.length === 0) {
-        if (projectPlanningService && projectId) {
-          const [status, stateResult] = await Promise.all([
-            projectPlanningService.status({ projectId }),
-            projectPlanningService.getState({ projectId }),
-          ]);
-          const initialEvaluation = await projectPlanningService.evaluate({
-            projectId,
-            ...(stateResult.state ? { state: stateResult.state } : {}),
-          });
-          const { evaluation } = stateResult.state
-            ? await persistEvaluatedNextQuestion(projectPlanningService, projectId, stateResult.state, initialEvaluation)
-            : { evaluation: initialEvaluation };
-          openProjectPlanningModal();
-          ctx.print(
-            `Project planning: ${evaluation.readiness}\n` +
-            `Project: ${status.projectId}\n` +
-            `Knowledge space: ${status.knowledgeSpaceId}\n` +
-            `Artifacts: ${status.counts.states} state, ${status.counts.decisions} decisions, ${status.counts.languageArtifacts} language\n` +
-            formatNextQuestion(evaluation.nextQuestion),
-          );
-          return;
-        }
-        const active = planManager.getActive(ctx.session.runtime.sessionId);
-        if (!active) {
-          ctx.print('No active execution plan.');
-          return;
-        }
-        const summary = planManager.getSummary(active);
-        ctx.print(`Active plan: "${active.title}" [${active.status.toUpperCase()}]\n${summary}`);
+      if (args.length === 0 || args[0] === 'panel') {
+        openModalCommand(ctx, 'native-work-ledger-modal');
+        ctx.print('Opened native work and recovery. Saved historical planning is available with /project-plan history.');
         return;
       }
 
-      if (args[0] === 'panel') {
+      if (args[0] === 'history') {
         openProjectPlanningModal();
-        ctx.print('Opened project planning.');
+        ctx.print('Opened historical project planning. Saved answers and approvals do not authorize native work.');
         return;
       }
 
@@ -140,11 +75,12 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
           return;
         }
         openProjectPlanningModal();
-        ctx.print(`Project planning approved. Readiness: ${result.evaluation.readiness}. State: ${result.state.id}.`);
+        ctx.print(`Historical planning approved; no native work authorized. Readiness: ${result.evaluation.readiness}. State: ${result.state.id}.`);
         return;
       }
 
       if (args[0] === 'list') {
+        const planManager = requirePlanManager(ctx);
         const plans = planManager.list();
         if (plans.length === 0) {
           ctx.print('No plans found.');
@@ -158,6 +94,7 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
       }
 
       if (args[0] === 'show') {
+        const planManager = requirePlanManager(ctx);
         const id = args[1];
         if (!id) {
           ctx.print('Usage: /project-plan show <plan-id>');
@@ -178,6 +115,7 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
       // deactivates the project-planning interview state shown in the modal so a
       // later /project-plan <goal> starts fresh. Mid-execution is refused outright.
       if (args[0] === 'dismiss') {
+        const planManager = requirePlanManager(ctx);
         const dismissal = planManager.dismiss(ctx.session.runtime.sessionId);
         if (dismissal.outcome === 'requires-cancel') {
           ctx.print(
@@ -246,7 +184,7 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
         });
         if (!answerResult.applied) {
           if (answerResult.reason === 'no-state') {
-            ctx.print('No project planning state exists yet. Seed it with /project-plan <goal>.');
+            ctx.print('No historical project planning state exists to answer. New goals use native intake with /project-plan <goal>.');
           } else if (answerResult.reason === 'state-changed') {
             ctx.print('Planning changed. Refresh and choose an answer again.');
           } else if (answerResult.reason === 'question-not-found') {
@@ -279,46 +217,24 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
       if (args.length === 1 && PSEUDO_SUBCOMMAND_VERBS.has(args[0].toLowerCase())) {
         ctx.print(
           `Unknown /project-plan subcommand "${args[0]}": did you mean panel, approve, list, show, or status? ` +
-          `To seed a planning goal, use /project-plan <a real sentence describing the change>.`,
+          `To submit a new native request, use /project-plan <a real sentence describing the change>.`,
         );
         return;
       }
 
-      const taskDescription = args.join(' ');
-      if (!projectPlanningService || !projectId) {
-        ctx.print('Project planning service is not available in this runtime.');
+      const source = directOwnerPlanningInput(ctx);
+      if (!source) {
+        ctx.print('Submit a new request from the terminal with /project-plan <goal> or /planning <goal>. Original owner input is required.');
         return;
       }
-      const result = await projectPlanningService.upsertState({
-        projectId,
-        state: {
-          goal: taskDescription,
-          knownContext: [
-            `Workspace planning was seeded from the TUI /project-plan command.`,
-          ],
-          metadata: {
-            active: true,
-            owner: 'tui',
-            source: 'plan-command',
-            lastPromptAt: Date.now(),
-          },
-        },
-      });
-      const initialEvaluation = await projectPlanningService.evaluate({
-        projectId,
-        ...(result.state ? { state: result.state } : {}),
-      });
-      const { state, evaluation } = result.state
-        ? await persistEvaluatedNextQuestion(projectPlanningService, projectId, result.state, initialEvaluation)
-        : { state: result.state, evaluation: initialEvaluation };
-      sessionLineageTracker.setOriginalTask(taskDescription.slice(0, 200));
-      openProjectPlanningModal();
-
-      ctx.print(
-        `Project planning seeded: "${state?.goal ?? taskDescription}"\n` +
-        `Readiness: ${evaluation.readiness}\n` +
-        formatNextQuestion(evaluation.nextQuestion),
-      );
+      if (!source.text.trim()) { ctx.print('Usage: /project-plan <goal>'); return; }
+      if (!ctx.dispatchNativeIntakeTurn) {
+        ctx.print('Native conversation intake is unavailable. No ordinary turn or historical planning state was started.');
+        return;
+      }
+      await routeNativeConversationInput({ intake: ctx.nativeConversationIntake, source,
+        notify: line => ctx.print(line), dispatch: ctx.dispatchNativeIntakeTurn });
+      ctx.renderRequest();
     },
   });
 

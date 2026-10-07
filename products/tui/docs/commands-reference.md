@@ -387,7 +387,7 @@ GoodVibes ships **161** built-in slash commands across **75** categories. Every 
 | Command | Aliases | Usage | Description |
 | --- | --- | --- | --- |
 | `/plan` | None | `[on \| off \| toggle]` | Enter or exit plan mode, a read-only planning posture where writes, commands, and network calls are blocked |
-| `/project-plan` | `/planning` | `[panel \| approve \| dismiss \| answer <n> <text> \| list \| show <id> \| mode \| explain \| override <strategy> \| status \| clear \| <planning goal>]` | Inspect or seed TUI-owned project planning state |
+| `/project-plan` | `/planning` | `[panel \| history \| approve \| dismiss \| answer <n> <text> \| list \| show <id> \| mode \| explain \| override <strategy> \| status \| clear \| <planning goal>]` | Submit a native work request, inspect recovery, or review historical planning |
 
 ## Platform
 
