@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
   evaluateProjectPlanningReadiness,
-  type ProjectPlanningEvaluation,
   type ProjectPlanningService,
   type ProjectPlanningState,
 } from '@goodvibes-jev/engine/sdk/platform/knowledge';
@@ -60,8 +59,8 @@ function makeService(initial: ProjectPlanningState | null = null): {
       state = evaluateProjectPlanningReadiness(makeState(input.state)).state;
       return { ok: true, projectId: 'proj', knowledgeSpaceId: 'project:proj', state };
     },
-    async evaluate(input?: { state?: Partial<ProjectPlanningState> }): Promise<ProjectPlanningEvaluation> {
-      return evaluateProjectPlanningReadiness(makeState(input?.state ?? state ?? {}));
+    async evaluate(): Promise<never> {
+      throw new Error('Commands must not request a fresh historical evaluation');
     },
   };
   return {
@@ -78,7 +77,7 @@ function makeContext(
 ): CommandContext {
   return {
     print: (message: string) => out.push(message),
-    // /project-plan open now routes to the 'planning' modal via ctx.openModal.
+    // Native entry and the explicit historical view have separate modal routes.
     openModal: (name: string) => { opened.push(name); },
     session: {
       runtime: {
@@ -236,7 +235,7 @@ describe('/project-plan project planning runtime command', () => {
     expect(out.join('\n')).not.toContain('Unknown /project-plan subcommand');
   });
 
-  test('/plan dismiss deactivates an active project-planning interview state', async () => {
+  test('/project-plan dismiss explicitly deactivates a historical planning record', async () => {
     const registry = new CommandRegistry();
     registerPlanningRuntimeCommands(registry);
     const out: string[] = [];
@@ -246,7 +245,7 @@ describe('/project-plan project planning runtime command', () => {
 
     expect(fake.state()?.metadata?.['active']).toBe(false);
     expect(fake.state()?.metadata?.['dismissedFrom']).toBe('plan-command');
-    expect(out.join('\n')).toContain('Project planning interview marked inactive.');
+    expect(out.join('\n')).toContain('Historical project planning record marked inactive.');
   });
 
   test('/project-plan dismiss refuses a mid-execution plan and points at /workstream cancel', async () => {
@@ -260,7 +259,7 @@ describe('/project-plan project planning runtime command', () => {
 
     expect(out.join('\n')).toContain('mid-execution');
     expect(out.join('\n')).toContain('/workstream cancel');
-    // The interview state is left untouched when execution is mid-flight.
+    // Saved historical state is left untouched when execution is mid-flight.
     expect(fake.state()?.metadata?.['active']).toBe(true);
   });
 
@@ -280,7 +279,7 @@ describe('/project-plan project planning runtime command', () => {
           ok: true, projectId: 'proj', knowledgeSpaceId: 'project:proj', applied: true,
           question: { id: 'q1', prompt: 'What scope?', status: 'answered', answer: input.action.answer },
           openQuestions: [], state: fake.state(),
-          evaluation: evaluateProjectPlanningReadiness(makeState({ goal: 'Answer path' })),
+          get evaluation() { throw new Error('Fresh readiness and next-question hints must not be read'); },
         };
       },
     } as unknown as ProjectPlanningService;
@@ -288,8 +287,11 @@ describe('/project-plan project planning runtime command', () => {
     await registry.execute('project-plan', ['answer', '1', 'focused', 'first', 'pass'], makeContext(service, out, opened));
 
     expect(answerCalls).toEqual([{ projectId: 'proj', expected: { kind: 'current' }, action: { kind: 'answer', questionIndex: 0, answer: 'focused first pass' } }]);
-    expect(out.join('\n')).toContain('Recorded answer to: What scope?');
+    expect(out.join('\n')).toContain('Recorded historical answer to: What scope?');
     expect(opened).toContain('planning-modal');
+    expect(out.join(' ')).toContain('The planning interview is retired; no native work authorized.');
+    expect(out.join(' ')).not.toContain('Next question:');
+    expect(out.join(' ')).not.toContain('Readiness:');
   });
 
   test('/project-plan answer with a bad question ref reports honestly (no seed)', async () => {
@@ -348,6 +350,62 @@ for (const name of ['project-plan', 'planning']) {
       await registry.execute(name, args, makeContext(service, out, opened));
       expect(opened).toEqual([args[0] === 'history' ? 'planning-modal' : 'native-work-ledger-modal']);
       expect(out.join(' ')).toContain(args[0] === 'history' ? 'historical' : 'native work');
+    });
+  }
+}
+
+for (const name of ['project-plan', 'planning']) {
+  test(`${name} approve records explicit historical metadata without reading evaluation hints`, async () => {
+    const registry = new CommandRegistry(); registerPlanningRuntimeCommands(registry);
+    const out: string[] = []; const opened: string[] = []; const calls: unknown[] = [];
+    const service = {
+      applyStateAction: async (input: unknown) => {
+        calls.push(input);
+        return { applied: true, state: makeState({ executionApproved: true }),
+          get evaluation() { throw new Error('Fresh evaluation hints must not be read'); } };
+      },
+      evaluate: () => { throw new Error('The interview is retired'); },
+      upsertState: () => { throw new Error('No unguarded historical write'); },
+    } as unknown as ProjectPlanningService;
+    const ctx = makeContext(service, out, opened);
+    ctx.dispatchNativeIntakeTurn = async () => { throw new Error('Historical approval cannot dispatch native work'); };
+    await registry.execute(name, ['approve'], ctx);
+    expect(calls).toEqual([{ projectId: 'proj', expected: { kind: 'current' }, action: { kind: 'approve' } }]);
+    expect(opened).toEqual(['planning-modal']);
+    expect(out.join(' ')).toContain('Historical planning approval recorded; no native work authorized.');
+    expect(out.join(' ')).not.toContain('Readiness:');
+    expect(out.join(' ')).not.toContain('Next question:');
+  });
+
+  for (const action of ['approve', 'answer']) {
+    test(`${name} ${action} rejects malformed revision bindings without legacy fallback`, async () => {
+      const registry = new CommandRegistry(); registerPlanningRuntimeCommands(registry);
+      for (const selection of [[], ['current'], ['current', 'source'], ['current', 'source', 'bad']]) {
+        const out: string[] = []; const opened: string[] = [];
+        const service = new Proxy({}, { get() { throw new Error('Malformed selections must not access the historical service'); } }) as ProjectPlanningService;
+        const args = [action, '--selected-revision', ...selection];
+        const ctx = makeContext(service, out, opened);
+        ctx.dispatchNativeIntakeTurn = async () => { throw new Error('No native fallback'); };
+        await registry.execute(name, args, ctx);
+        expect(out.join(' ')).toContain('Invalid planning selection.');
+        expect(opened).toEqual([]);
+      }
+    });
+
+    test(`${name} ${action} with no saved state does not start an interview or native work`, async () => {
+      const registry = new CommandRegistry(); registerPlanningRuntimeCommands(registry);
+      const out: string[] = []; const opened: string[] = [];
+      const service = {
+        applyStateAction: async () => ({ applied: false, reason: 'no-state', state: null }),
+        evaluate: () => { throw new Error('No fresh interview'); },
+        upsertState: () => { throw new Error('No historical state seeding'); },
+      } as unknown as ProjectPlanningService;
+      const ctx = makeContext(service, out, opened);
+      ctx.dispatchNativeIntakeTurn = async () => { throw new Error('No native fallback'); };
+      await registry.execute(name, action === 'answer' ? [action, '1', 'Answer'] : [action], ctx);
+      expect(out.join(' ')).toContain('No');
+      expect(out.join(' ')).toContain('planning state exists');
+      expect(opened).toEqual([]);
     });
   }
 }

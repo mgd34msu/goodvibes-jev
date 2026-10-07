@@ -1,16 +1,17 @@
-// Original portable probes were run unchanged before repair and archived with their failing log.
-// These fixtures now include the required THE95 stored-revision contract; race schedules are unchanged.
+// The former interview race probes now protect passive history: replacing or
+// refreshing a saved record must never revive semantic evaluation or mutation.
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import type { ProjectPlanningState } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { createPlanningModalSurface, type PlanningModalService } from '../../../views/modals/planning-modal.ts';
 import { ConfigModal } from '../../../input/config-modal.ts';
-import { actionCtx, captureCommands } from './modal-surface-test-helpers.ts';
+import { actionCtx, captureCommands, viewText } from './modal-surface-test-helpers.ts';
 
 let previous: ReturnType<typeof installJudgmentPort>;
-beforeEach(() => { previous = installJudgmentPort(fakePort(name => noulAnswer(name === 'approval' || name === 'scope' ? 0.99 : 0.01)).port); });
-afterEach(() => { installJudgmentPort(previous); });
+let judgment: ReturnType<typeof fakePort>;
+beforeEach(() => { judgment = fakePort(() => noulAnswer(0.99)); previous = installJudgmentPort(judgment.port); });
+afterEach(() => { expect(judgment.requests).toEqual([]); installJudgmentPort(previous); });
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; }
 function state(): ProjectPlanningState { return { id: 'state-1', projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', goal: 'Inspect retry behavior only', knownContext: [], openQuestions: [], answeredQuestions: [], decisions: [], assumptions: [], constraints: [], risks: [], tasks: [], dependencies: [], verificationGates: [], agentAssignments: [], readiness: 'needs-user-input', executionApproved: false, createdAt: 0, updatedAt: 1 }; }
@@ -19,42 +20,55 @@ function serviceFor(saved: ProjectPlanningState): PlanningModalService { return 
   getState: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', state: saved, revision: { sourceId: 'fixture-source', generation: 'a'.repeat(64) } }),
   listDecisions: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', decisions: [] }),
   getLanguage: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', language: null }),
-  evaluate: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', readiness: saved.readiness, gaps: [], state: saved, revision: { sourceId: 'fixture-source', generation: 'a'.repeat(64) } }),
 }; }
 
-test('an approval selected on an old plan cannot approve a newer revision returned by evaluation', async () => {
-  const original = state();
-  const newer = { ...original, goal: 'Change the payment flow instead', updatedAt: 2 };
-  const question = { id: 'unapproved-execution', prompt: 'May this plan proceed to execution?' };
-  let evaluations = 0;
-  const entered = deferred(), gate = deferred();
-  const service: PlanningModalService = { ...serviceFor(original), evaluate: async () => {
-    if (++evaluations > 1) { entered.resolve(); await gate.promise; }
-    return { ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', readiness: 'needs-user-input', gaps: [], nextQuestion: question, state: evaluations > 1 ? newer : original };
-  } };
+test('a stale approval action cannot evaluate or approve a newer saved revision during refresh', async () => {
+  const original = state(); const newer = { ...original, goal: 'Change the payment flow instead', updatedAt: 2 };
+  const retained = structuredClone({ original, newer }); const gate = deferred(); let reads = 0;
+  const capabilities: string[] = [];
+  const service = new Proxy({ ...serviceFor(original), getState: async () => {
+    if (++reads > 1) await gate.promise;
+    return { ok: true as const, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', state: reads > 1 ? newer : original };
+  } }, { get(target, key, receiver) {
+    capabilities.push(String(key));
+    if (!Object.hasOwn(target, key)) throw new Error('Passive history requested an undeclared capability');
+    return Reflect.get(target, key, receiver);
+  } });
   const surface = createPlanningModalSurface({ service, projectId: 'proj-1' });
   surface.onOpen?.(() => {}); await flush();
-  const row = surface.buildView().tabs[0]!.rows.find(r => r.id.endsWith(':approve-execution'))!;
-  const cap = captureCommands(); const statuses: string[] = [];
-  surface.onAction?.('submit', actionCtx(row, { ...cap.extra, setStatus: text => statuses.push(text) }));
-  await entered.promise; gate.resolve(); await flush();
-  expect(cap.calls).toEqual([]);
-  expect(statuses.some(s => s.includes('changed'))).toBe(true);
+  expect(viewText(surface.buildView())).toContain(original.goal);
+  const cap = captureCommands(); const native: string[] = [];
+  const ctx = actionCtx({ id: 'answer:1:approve-execution', label: 'Stale approval' }, { ...cap.extra, submitInput: text => native.push(text) });
+  surface.onAction?.('refresh', ctx);
+  surface.onAction?.('submit', ctx); surface.onAction?.('approve', ctx);
+  expect(reads).toBe(2); expect(cap.calls).toEqual([]);
+  gate.resolve(); await flush();
+  expect(viewText(surface.buildView())).toContain(newer.goal);
+  surface.onAction?.('submit', ctx); surface.onAction?.('approve', ctx); await flush();
+  expect(cap.calls).toEqual([]); expect(native).toEqual([]);
+  expect(capabilities).not.toContain('evaluate'); expect(capabilities).not.toContain('applyStateAction');
+  expect({ original, newer }).toEqual(retained);
   surface.onClose?.();
 });
 
-test('repeated Enter while the source read is pending cannot dispatch the same answer twice', async () => {
-  const saved = { ...state(), openQuestions: [{ id: 'q1', prompt: 'Which components should change?', status: 'open' as const }] };
+test('repeated Enter during and after a passive refresh cannot read or dispatch an answer', async () => {
+  const saved = { ...state(), openQuestions: [{ id: 'q1', prompt: 'Which saved components should change?', status: 'open' as const }] };
   const gate = deferred(); let reads = 0;
-  const service: PlanningModalService = { ...serviceFor(saved), getState: async () => { if (++reads > 1) await gate.promise; return { ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', state: saved, revision: { sourceId: 'fixture-source', generation: 'a'.repeat(64) } }; } };
+  const service: PlanningModalService = { ...serviceFor(saved), getState: async () => {
+    if (++reads > 1) await gate.promise;
+    return { ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', state: saved, revision: { sourceId: 'fixture-source', generation: 'a'.repeat(64) } };
+  } };
   const surface = createPlanningModalSurface({ service, projectId: 'proj-1' });
   const modal = new ConfigModal(); modal.open(surface); await flush(); modal.syncStructure();
-  const row = surface.buildView().tabs[0]!.rows.find(r => r.id.endsWith(':scope-focused-first-pass'))!;
-  modal.jumpToRow('planning', row.id);
-  const cap = captureCommands(); const ctx = { print: () => {}, ...cap.extra };
-  expect(modal.fireAction('enter', ctx)).toBe(true);
-  expect(modal.fireAction('enter', ctx)).toBe(true);
-  gate.resolve(); await flush();
-  expect(cap.calls).toHaveLength(1);
+  const cap = captureCommands(); const native: string[] = [];
+  const ctx = { print: () => {}, ...cap.extra, submitInput: (text: string) => native.push(text) };
+  expect(modal.fireAction('enter', ctx)).toBe(false);
+  expect(modal.fireAction('r', ctx)).toBe(true);
+  for (let count = 0; count < 3; count++) expect(modal.fireAction('enter', ctx)).toBe(false);
+  expect(reads).toBe(2); gate.resolve(); await flush(); modal.syncStructure();
+  expect(viewText(surface.buildView())).toContain(saved.openQuestions[0]!.prompt);
+  for (let count = 0; count < 3; count++) expect(modal.fireAction('enter', ctx)).toBe(false);
+  expect(reads).toBe(2); expect(cap.calls).toEqual([]); expect(native).toEqual([]);
+  expect(saved.openQuestions).toHaveLength(1); expect(saved.executionApproved).toBe(false);
   modal.close();
 });
