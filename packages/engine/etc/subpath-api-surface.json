@@ -31173,6 +31173,27 @@
       "text": "export interface PollerOptions { adapters: Map<string, InboundProviderAdapter>; store: InboxCursorStore; logger: HandlerLogger; perProviderLimit?: number; setIntervalImpl?: typeof setInterval; clearIntervalImpl?: typeof clearInterval; } ;; via Map = interface Map<K, V> { clear(): void; delete(key: K): boolean; forEach(callbackfn: (value: V, key: K, map: Map<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; set(key: K, value: V): this; readonly size: number; }"
     },
     {
+      "name": "ProtectedInboxPreviewFields",
+      "kind": "interface",
+      "required": [
+        "bodyPreview",
+        "fromDigest",
+        "subjectPreview"
+      ],
+      "text": "export interface ProtectedInboxPreviewFields { readonly fromDigest: string; readonly subjectPreview: string; readonly bodyPreview: string; }"
+    },
+    {
+      "name": "ProtectedInboxPreviewInput",
+      "kind": "interface",
+      "required": [
+        "channelId",
+        "senderId",
+        "subject",
+        "text"
+      ],
+      "text": "export interface ProtectedInboxPreviewInput { readonly senderId: string; readonly channelId: string; readonly subject: string; readonly text: string; }"
+    },
+    {
       "name": "ProviderPollOptions",
       "kind": "interface",
       "required": [
@@ -31318,6 +31339,11 @@
       "name": "clearAdapterRegistry",
       "kind": "function",
       "text": "export declare function clearAdapterRegistry(): void;"
+    },
+    {
+      "name": "createProtectedInboxMapper",
+      "kind": "function",
+      "text": "export declare function createProtectedInboxMapper(owner: ProtectedSourceOwner): (input: ProtectedInboxPreviewInput, signal?: AbortSignal) => Promise<ProtectedInboxPreviewFields | null>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ProtectedSourceOwner = export interface ProtectedSourceOwner { capture(parts: readonly string[]): ProtectedSource; screen(source: ProtectedSource): Promise<SourceScreeningResult>; project(receipt: SourceScreeningReceipt): readonly string[]; release(source: ProtectedSource): Promise<void>; close(): Promise<void>; }"
     },
     {
       "name": "decodeIntakeImapHeader",
@@ -65641,6 +65667,18 @@
       "text": "export interface LocalAuthSnapshot { readonly userStorePath: string; readonly bootstrapCredentialPath: string; readonly persisted: boolean; readonly bootstrapCredentialPresent: boolean; readonly userCount: number; readonly sessionCount: number; readonly users: readonly AuthUserRecord[]; readonly sessions: readonly AuthSessionRecord[]; } ;; via AuthSessionRecord = export interface AuthSessionRecord { readonly tokenFingerprint: string; readonly username: string; readonly expiresAt: number; } ;; AuthUserRecord = export interface AuthUserRecord { readonly username: string; readonly roles: readonly string[]; }"
     },
     {
+      "name": "LocalSourceScreeningAuthority",
+      "kind": "interface",
+      "required": [
+        "assertCurrent",
+        "ownerId",
+        "retention",
+        "revision",
+        "signal"
+      ],
+      "text": "export interface LocalSourceScreeningAuthority { readonly ownerId: string; readonly revision: string; readonly retention: 'ephemeral-no-log'; readonly signal: AbortSignal; readonly assertCurrent: () => void; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; }"
+    },
+    {
       "name": "OPERATOR_SESSION_COOKIE_NAME",
       "kind": "const",
       "text": "OPERATOR_SESSION_COOKIE_NAME = \"goodvibes_session\""
@@ -65729,14 +65767,61 @@
       "text": "export interface OwnerRemedy { readonly gesture: string; }"
     },
     {
+      "name": "ProtectedSource",
+      "kind": "interface",
+      "text": "export interface ProtectedSource { readonly [sourceBrand]: true; }"
+    },
+    {
+      "name": "ProtectedSourceOwner",
+      "kind": "interface",
+      "required": [
+        "capture",
+        "close",
+        "project",
+        "release",
+        "screen"
+      ],
+      "text": "export interface ProtectedSourceOwner { capture(parts: readonly string[]): ProtectedSource; screen(source: ProtectedSource): Promise<SourceScreeningResult>; project(receipt: SourceScreeningReceipt): readonly string[]; release(source: ProtectedSource): Promise<void>; close(): Promise<void>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "ProtectedSourceOwnerOptions",
+      "kind": "interface",
+      "required": [
+        "authority",
+        "judgment",
+        "proposal"
+      ],
+      "text": "export interface ProtectedSourceOwnerOptions { readonly authority: LocalSourceScreeningAuthority; readonly proposal: { readonly endpoint: string; readonly model: string; }; readonly judgment: { readonly endpoint: string; readonly model: 'jev-1.13.0'; }; readonly timeoutMs?: number; readonly onRetry?: (progress: JudgmentRetryProgress) => void; } ;; via JudgmentRetryProgress = export interface JudgmentRetryProgress { readonly logicalRequestId: string; readonly attempt: JudgmentAttempt; readonly elapsedMs: number; readonly nextDelayMs: number; }"
+    },
+    {
       "name": "RotationAuditOutcome",
       "kind": "type",
       "text": "export type RotationAuditOutcome = 'ok' | 'warning' | 'overdue';"
     },
     {
+      "name": "SOURCE_SCREENING_LIMITS",
+      "kind": "const",
+      "text": "SOURCE_SCREENING_LIMITS: Readonly<{ parts: 8; characters: 40000; spans: 100; proposalBytes: 32768; sources: 128; unsettledRevisions: 1024; }> ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; };"
+    },
+    {
       "name": "ScopeAuditOutcome",
       "kind": "type",
       "text": "export type ScopeAuditOutcome = 'ok' | 'violation';"
+    },
+    {
+      "name": "SourceScreeningHold",
+      "kind": "type",
+      "text": "export type SourceScreeningHold = 'route-unavailable' | 'protected-input' | 'malformed' | 'unsettled' | 'cancelled' | 'stale' | 'capacity' | 'busy';"
+    },
+    {
+      "name": "SourceScreeningReceipt",
+      "kind": "interface",
+      "text": "export interface SourceScreeningReceipt { readonly [receiptBrand]: true; }"
+    },
+    {
+      "name": "SourceScreeningResult",
+      "kind": "type",
+      "text": "export type SourceScreeningResult = { readonly status: 'settled'; readonly receipt: SourceScreeningReceipt; } | { readonly status: 'held'; readonly reason: SourceScreeningHold; };"
     },
     {
       "name": "SpawnToken",
@@ -65969,6 +66054,11 @@
       "name": "checkOwnerApproval",
       "kind": "function",
       "text": "export declare function checkOwnerApproval(input: { readonly approval: OwnerApproval | null | undefined; readonly action: string; readonly contentInQuestion?: Readonly<Record<string, string | undefined>> | undefined; readonly clearingContentTaint: boolean; readonly now?: () => Date; }): { readonly authorized: boolean; readonly mismatch: ApprovalMismatch; }; ;; via Date = interface Date { toString(): string; toDateString(): string; toTimeString(): string; toLocaleString(): string; toLocaleDateString(): string; toLocaleTimeString(): string; valueOf(): number; getTime(): number; getFullYear(): number; getUTCFullYear(): number; getMonth(): number; getUTCMonth(): number; getDate(): number; getUTCDate(): number; getDay(): number; getUTCDay(): number; getHours(): number; getUTCHours(): number; getMinutes(): number; getUTCMinutes(): number; getSeconds(): number; getUTCSeconds(): number; getMilliseconds(): number; getUTCMilliseconds(): number; getTimezoneOffset(): number; setTime(time: number): number; setMilliseconds(ms: number): number; setUTCMilliseconds(ms: number): number; setSeconds(sec: number, ms?: number): number; setUTCSeconds(sec: number, ms?: number): number; setMinutes(min: number, sec?: number, ms?: number): number; setUTCMinutes(min: number, sec?: number, ms?: number): number; setHours(hours: number, min?: number, sec?: number, ms?: number): number; setUTCHours(hours: number, min?: number, sec?: number, ms?: number): number; setDate(date: number): number; setUTCDate(date: number): number; setMonth(month: number, date?: number): number; setUTCMonth(month: number, date?: number): number; setFullYear(year: number, month?: number, date?: number): number; setUTCFullYear(year: number, month?: number, date?: number): number; toUTCString(): string; toISOString(): string; toJSON(key?: any): string; } ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "createProtectedSourceOwner",
+      "kind": "function",
+      "text": "export declare function createProtectedSourceOwner(options: ProtectedSourceOwnerOptions): ProtectedSourceOwner;"
     },
     {
       "name": "createUntrustedContentPort",
