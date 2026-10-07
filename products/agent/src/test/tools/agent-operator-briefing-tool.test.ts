@@ -18,6 +18,7 @@ type ShellPaths = ShellPathService;
 interface CapturedRequest {
   readonly url: string;
   readonly method: string;
+  readonly authorization: string | null;
 }
 
 function shellPaths(withToken = true): ShellPaths {
@@ -45,6 +46,8 @@ function inputUrl(input: Parameters<typeof fetch>[0]): string {
 }
 
 function routeResponse(url: string): Response {
+  if (url.endsWith('/api/work-ledger/project')) return Response.json({ projectId: 'native-project' });
+  if (new URL(url, 'http://fixture').pathname === '/api/work-ledger/snapshot') return Response.json(nativeSnapshot());
   if (url.endsWith('/api/projects/planning/work-plan')) {
     return Response.json({
       ok: true,
@@ -96,6 +99,7 @@ describe('agent_operator_briefing tool', () => {
       requests.push({
         url: inputUrl(input),
         method: init?.method ?? 'GET',
+        authorization: new Headers(init?.headers).get('authorization'),
       });
       return routeResponse(inputUrl(input));
     });
@@ -105,20 +109,26 @@ describe('agent_operator_briefing tool', () => {
 
       expect(result.success).toBe(true);
       expect(result.output).toContain('Agent operator briefing');
-      expect(result.output).toContain('work plan: total 2');
+      expect(result.output).toContain('historical legacy work plan: total 2');
+      expect(result.output).toContain('native work: total 0; revision 0');
+      expect(result.output).toContain('reportedState: pending 0; in_progress 0; blocked 0; complete 0; cancelled 0');
+      expect(result.output).toContain('verification.state: unverified 0; verified 0; failed 0; unavailable 0; stale 0');
       expect(result.output).toContain('approvals: pending 1');
       expect(result.output).toContain('automation: jobs 3');
       expect(result.output).toContain('schedules: jobs 2');
       expect(result.output).toContain('scheduler: slots 1/4');
       const requestUrls = requests.map((request) => request.url);
       expect(requestUrls).toEqual([
+        'http://127.0.0.1:3421/api/work-ledger/project',
+        'http://127.0.0.1:3421/api/work-ledger/snapshot?projectId=native-project',
         'http://127.0.0.1:3421/api/projects/planning/work-plan',
         'http://127.0.0.1:3421/api/approvals',
         'http://127.0.0.1:3421/api/automation',
         'http://127.0.0.1:3421/api/automation/schedules',
         'http://127.0.0.1:3421/api/runtime/scheduler',
       ]);
-      expect(requests.map((request) => request.method)).toEqual(['GET', 'GET', 'GET', 'GET', 'GET']);
+      expect(requests.map((request) => request.method)).toEqual(Array(7).fill('GET'));
+      expect(requests.every(request => request.authorization === 'Bearer operator-briefing-token')).toBe(true);
       expect(requestUrls.filter((url) => url.includes('/api/knowledge'))).toEqual([]);
       expect(requestUrls.filter((url) => url.includes('homeGraph'))).toEqual([]);
     } finally {
@@ -177,4 +187,157 @@ describe('agent_operator_briefing tool', () => {
 
     expect(registry.has('agent_operator_briefing')).toBe(true);
   });
+});
+
+
+function nativeSnapshot(works: readonly unknown[] = [], revision = 0) {
+  return { projectId: 'native-project', cursor: revision, revision, works };
+}
+
+function nativeWork(index: number, reportedState: string, verificationState: string) {
+  return {
+    work: { id: `work-${index}`, title: 'PRIVATE_SOURCE_TITLE', goal: 'PRIVATE_SOURCE_GOAL',
+      criteria: ['PRIVATE_SOURCE_CRITERION'], source: null, revision: 1, criteriaRevision: 1,
+      reportedState, currentAttemptId: null, createdAt: 1, updatedAt: 1 },
+    attempt: null, verification: { state: verificationState, reason: 'PRIVATE_VERIFICATION_REASON', evidence: null }, attention: [],
+  };
+}
+
+async function withFetch(handler: (url: string, init?: RequestInit) => Promise<Response> | Response, run: () => Promise<void>) {
+  const original = globalThis.fetch;
+  globalThis.fetch = mockFetch(async (input, init) => handler(inputUrl(input), init));
+  try { await run(); } finally { globalThis.fetch = original; }
+}
+
+function expectNoNativeClaims(result: { output?: string; error?: string }) {
+  const text = `${result.output ?? ''} ${result.error ?? ''}`;
+  expect(text).not.toContain('native work: total');
+  expect(text).not.toContain('reportedState:');
+  expect(text).not.toContain('verification.state:');
+  expect(text).not.toContain('PRIVATE_');
+}
+
+describe('native work operator briefing', () => {
+  test('keeps reported completion separate from evidence and emits counts only', async () => {
+    const paths = shellPaths(); const tool = createAgentOperatorBriefingTool(paths, configManager(paths));
+    const states = ['pending', 'in_progress', 'blocked', 'complete', 'cancelled'];
+    const verification = ['verified', 'failed', 'unavailable', 'unverified', 'stale'];
+    await withFetch(url => new URL(url).pathname === '/api/work-ledger/snapshot'
+      ? Response.json(nativeSnapshot(states.map((state, i) => nativeWork(i, state, verification[i]!)), 17)) : routeResponse(url), async () => {
+      const result = await tool.execute({});
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('native work: total 5; revision 17');
+      expect(result.output).toContain('reportedState: pending 1; in_progress 1; blocked 1; complete 1; cancelled 1');
+      expect(result.output).toContain('verification.state: unverified 1; verified 1; failed 1; unavailable 1; stale 1');
+      expect(result.output).toContain('historical legacy work plan: total 2');
+      expect(result.output).not.toContain('PRIVATE_');
+    });
+  });
+
+  for (const discovery of [{}, { projectId: '' }, { projectId: 'x'.repeat(201) }, { projectId: 1 }]) {
+    test(`rejects malformed project discovery ${JSON.stringify(discovery).slice(0, 70)} without snapshot reads`, async () => {
+      const paths = shellPaths(); const calls: string[] = [];
+      await withFetch(url => {
+        calls.push(new URL(url).pathname);
+        return new URL(url).pathname === '/api/work-ledger/project' ? Response.json(discovery) : routeResponse(url);
+      }, async () => {
+        const result = await createAgentOperatorBriefingTool(paths, configManager(paths)).execute({});
+        expect(result.output).toContain('native work: unavailable'); expectNoNativeClaims(result);
+        expect(calls).not.toContain('/api/work-ledger/snapshot');
+      });
+    });
+  }
+
+  const invalidSnapshots: readonly [string, () => unknown][] = [
+    ['malformed', () => ({ ...nativeSnapshot(), works: [{}] })],
+    ['project mismatch', () => ({ ...nativeSnapshot(), projectId: 'other-project' })],
+    ['cursor mismatch', () => ({ ...nativeSnapshot(), revision: 2 })],
+    ['unknown reported state', () => nativeSnapshot([nativeWork(0, 'done', 'verified')])],
+    ['unknown verification state', () => nativeSnapshot([nativeWork(0, 'complete', 'passed')])],
+    ['oversized valid snapshot', () => nativeSnapshot(Array.from({ length: 6000 }, (_, i) => nativeWork(i, 'pending', 'unverified')))],
+  ];
+  for (const [name, snapshot] of invalidSnapshots) test(`fails closed on ${name} without turning native failure into legacy work`, async () => {
+    const paths = shellPaths(); const tool = createAgentOperatorBriefingTool(paths, configManager(paths));
+    await withFetch(url => new URL(url).pathname === '/api/work-ledger/snapshot' ? Response.json(snapshot()) : routeResponse(url), async () => {
+      const result = await tool.execute({});
+      expect(result.output).toContain('native work: unavailable');
+      expect(result.output).toContain('historical legacy work plan: total 2');
+      expectNoNativeClaims(result);
+    });
+  });
+
+  for (const route of ['project', 'snapshot']) for (const status of [401, 403, 404, 500]) {
+    test(`native ${route} HTTP ${status} remains unavailable and does not expose raw errors`, async () => {
+      const paths = shellPaths(); const tool = createAgentOperatorBriefingTool(paths, configManager(paths)); const calls: string[] = [];
+      await withFetch(url => {
+        calls.push(new URL(url).pathname);
+        return new URL(url).pathname === `/api/work-ledger/${route}`
+          ? Response.json({ error: 'PRIVATE_SERVER_ERROR operator-briefing-token' }, { status }) : routeResponse(url);
+      }, async () => {
+        const result = await tool.execute({});
+        expect(result.output).toContain('native work: unavailable'); expectNoNativeClaims(result);
+        expect(result.output).not.toContain('operator-briefing-token');
+        if (route === 'project') expect(calls).not.toContain('/api/work-ledger/snapshot');
+      });
+    });
+  }
+
+  for (const boundary of ['project', 'snapshot', 'approvals']) for (const replacement of ['host', 'token']) {
+    test(`discards native counts after ${replacement} replacement during ${boundary}`, async () => {
+      const paths = shellPaths(); const config = configManager(paths); const tool = createAgentOperatorBriefingTool(paths, config);
+      let replaced = false; let callsAfterReplacement = 0;
+      await withFetch(url => {
+        if (replaced) callsAfterReplacement++;
+        if (new URL(url).pathname.endsWith(`/${boundary}`)) {
+          replaced = true;
+          if (replacement === 'host') config.set('controlPlane.port', 45678);
+          else writeFileSync(join(paths.homeDirectory, '.goodvibes', 'daemon', 'operator-tokens.json'), JSON.stringify({ token: 'replacement-token' }));
+        }
+        return routeResponse(url);
+      }, async () => {
+        const result = await tool.execute({});
+        expect(replaced).toBe(true); expectNoNativeClaims(result); expect(callsAfterReplacement).toBe(0);
+      });
+    });
+  }
+
+  test('an already cancelled invocation performs no requests', async () => {
+    const paths = shellPaths(); const controller = new AbortController(); controller.abort(); let calls = 0;
+    await withFetch(url => { calls++; return routeResponse(url); }, async () => {
+      const result = await createAgentOperatorBriefingTool(paths, configManager(paths)).execute({}, { signal: controller.signal });
+      expectNoNativeClaims(result); expect(calls).toBe(0);
+    });
+  });
+
+  test('cancellation fences an abort-ignoring late snapshot and disposes its request', async () => {
+    const paths = shellPaths(); const controller = new AbortController(); let signal: AbortSignal | null | undefined;
+    let release!: (response: Response) => void; let entered!: () => void;
+    const pending = new Promise<Response>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    await withFetch((url, init) => {
+      if (new URL(url).pathname === '/api/work-ledger/snapshot') { signal = init?.signal; entered(); return pending; }
+      return routeResponse(url);
+    }, async () => {
+      const running = createAgentOperatorBriefingTool(paths, configManager(paths)).execute({}, { signal: controller.signal });
+      await started; controller.abort();
+      const result = await running; expectNoNativeClaims(result); expect(signal?.aborted).toBe(true);
+      release(Response.json(nativeSnapshot([nativeWork(0, 'complete', 'verified')], 1)));
+      await Bun.sleep(10); expectNoNativeClaims(result);
+    });
+  });
+
+  test('bounds stalled native reads at five seconds and ignores their late response', async () => {
+    const paths = shellPaths(); let release!: (response: Response) => void; let signal: AbortSignal | null | undefined;
+    const pending = new Promise<Response>(resolve => { release = resolve; });
+    await withFetch((url, init) => {
+      if (new URL(url).pathname === '/api/work-ledger/snapshot') { signal = init?.signal; return pending; }
+      return routeResponse(url);
+    }, async () => {
+      const start = Date.now(); const result = await createAgentOperatorBriefingTool(paths, configManager(paths)).execute({});
+      expect(Date.now() - start).toBeLessThan(6500); expect(signal?.aborted).toBe(true);
+      expect(result.success).toBe(false); expect(result.error).toContain('briefing_unavailable'); expectNoNativeClaims(result);
+      release(Response.json(nativeSnapshot([nativeWork(0, 'complete', 'verified')], 1)));
+      await Bun.sleep(10); expectNoNativeClaims(result);
+    });
+  }, 8000);
 });
