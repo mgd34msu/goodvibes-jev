@@ -52,7 +52,9 @@ shared owner. The client graph keeps its existing synchronous disposal API.
 The composed shared create owner also drains registration and initial persistence
 before writing shutdown state. Product integration proof holds a real save after
 floor readiness and verifies kill/survive shutdown records without late creation
-publication. Explicit session-kill lifecycle work remains separate.
+publication. The separately proven explicit-kill initialization, registration,
+and shutdown-parking races are now repaired by the [shared session lifecycle
+owner](hosted-session-explicit-kill.md).
 
 Ordinary discovered providers confer no protected-source authority, Jev
 authority or hosted-fallback permission. This work performs no service setup,

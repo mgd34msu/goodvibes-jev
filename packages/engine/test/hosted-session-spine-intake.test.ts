@@ -293,3 +293,63 @@ describe('the tick never rejects into its own interval', () => {
     expect(true).toBe(true);
   });
 });
+
+for (const phase of ['registration', 'close'] as const) {
+  for (const asynchronous of [false, true]) {
+    test(`direct ${phase} ${asynchronous ? 'async' : 'sync'} callback cannot await its own spine close`, async () => {
+      let recursiveError: unknown;
+      let closed = 0;
+      const reenter = async () => {
+        if (asynchronous) await Promise.resolve();
+        try { await intake.close('owned'); }
+        catch (error) { recursiveError = error; }
+      };
+      const intake = new HostedSessionSpineIntake({
+        spine: {
+          register: async () => { if (phase === 'registration') await reenter(); },
+          closeSession: async () => { closed += 1; if (phase === 'close') await reenter(); },
+          getInputsSince: () => [], markInputDelivered: async () => undefined,
+        },
+        liveSessions: () => [], now: () => 1, deliver: async () => undefined,
+      });
+      await intake.register(record('owned'));
+      if (phase === 'registration') expect(closed).toBe(0);
+      await intake.close('owned');
+      expect(String(recursiveError)).toContain('lifecycle callback cannot await its own spine drain');
+      expect(closed).toBe(1);
+    });
+  }
+}
+
+test('a direct intake callback may close an unrelated session', async () => {
+  const closed: string[] = [];
+  const intake = new HostedSessionSpineIntake({
+    spine: {
+      register: async () => { await intake.close('other'); },
+      closeSession: async id => { closed.push(id); },
+      getInputsSince: () => [], markInputDelivered: async () => undefined,
+    },
+    liveSessions: () => [], now: () => 1, deliver: async () => undefined,
+  });
+  await intake.register(record('owned'));
+  expect(closed).toEqual(['other']);
+});
+
+test('a detached continuation after direct registration settles can close its session', async () => {
+  let invoke!: () => void;
+  const gate = new Promise<void>(resolve => { invoke = resolve; });
+  let detached: Promise<void> | undefined;
+  let closed = false;
+  const intake = new HostedSessionSpineIntake({
+    spine: {
+      register: async () => { detached = gate.then(() => intake.close('owned')); },
+      closeSession: async () => { closed = true; },
+      getInputsSince: () => [], markInputDelivered: async () => undefined,
+    },
+    liveSessions: () => [], now: () => 1, deliver: async () => undefined,
+  });
+  await intake.register(record('owned'));
+  invoke();
+  await detached;
+  expect(closed).toBe(true);
+});
