@@ -13,6 +13,12 @@ export const SHARED_SESSION_INPUT_STATES = ['queued', 'delivered', 'spawned', 'c
 export type SharedSessionInputIntent = typeof SHARED_SESSION_INPUT_INTENTS[number];
 export type SharedSessionInputState = typeof SHARED_SESSION_INPUT_STATES[number];
 
+/** Persisted quarantine only. This public value NEVER establishes a source binding. */
+export const SHARED_SESSION_DELEGATED_INPUT_METADATA_KEY = 'delegatedInputQuarantined';
+export function isDelegatedSessionInput(input: { readonly metadata?: Record<string, unknown> | undefined }): boolean {
+  return input.metadata?.[SHARED_SESSION_DELEGATED_INPUT_METADATA_KEY] === true;
+}
+
 export interface SharedSessionHelperModelOverride {
   readonly providerId: string;
   readonly modelId: string;

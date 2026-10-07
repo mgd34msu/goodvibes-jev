@@ -63,7 +63,9 @@ export type WorkspaceSwapResult =
 
 export class WorkspaceSwapManager {
   private currentWorkingDir: string;
-  private swapInProgress: Promise<WorkspaceSwapResult> | null = null;
+  private workspaceRevision = 0;
+  private swapInProgress = false;
+  private readonly beforeSwapListeners = new Set<() => void>();
 
   constructor(
     initialWorkingDir: string,
@@ -76,15 +78,27 @@ export class WorkspaceSwapManager {
     return this.currentWorkingDir;
   }
 
+  /** Every admitted transition retires the old epoch, including failed or same-path reroots. */
+  getWorkspaceRevision(): number {
+    return this.workspaceRevision;
+  }
+
+  /** Synchronous authority fences run before any workspace mutation or async event dispatch. */
+  subscribeBeforeSwap(listener: () => void): () => void {
+    this.beforeSwapListeners.add(listener);
+    return () => { this.beforeSwapListeners.delete(listener); };
+  }
+
   async requestSwap(newWorkingDir: string): Promise<WorkspaceSwapResult> {
     if (this.swapInProgress) {
       return { ok: false, code: 'WORKSPACE_BUSY', reason: 'Another workspace swap is already in progress.', retryAfter: 1 };
     }
-    this.swapInProgress = this._requestSwapInner(newWorkingDir);
+    // Set admission before invoking callbacks, which may themselves request a swap.
+    this.swapInProgress = true;
     try {
-      return await this.swapInProgress;
+      return await this._requestSwapInner(newWorkingDir);
     } finally {
-      this.swapInProgress = null;
+      this.swapInProgress = false;
     }
   }
 
@@ -106,7 +120,19 @@ export class WorkspaceSwapManager {
       return { ok: false, code: 'WORKSPACE_BUSY', reason, retryAfter: 5 };
     }
 
-    // Swap is proceeding, emit STARTED now that busy check passed.
+    // RuntimeEventBus listeners are microtask-dispatched. Authority must be
+    // revoked synchronously before rerootStores can start, not by that notice.
+    // Advance before callbacks so detached consumers also detect this transition.
+    this.workspaceRevision++;
+    try {
+      for (const listener of [...this.beforeSwapListeners]) listener();
+    } catch {
+      const reason = 'Workspace transition fence failed; no workspace stores were re-rooted.';
+      this._emit({ type: 'WORKSPACE_SWAP_FAILED', from, to, code: 'UNKNOWN', reason });
+      return { ok: false, code: 'INVALID_PATH', reason };
+    }
+
+    // Swap is proceeding, emit STARTED now that busy check and fences passed.
     this._emit({ type: 'WORKSPACE_SWAP_STARTED', from, to });
 
     // Validate and create directory

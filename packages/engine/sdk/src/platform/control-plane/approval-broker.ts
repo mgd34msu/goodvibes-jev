@@ -1,16 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { SDKErrorCodes } from '@goodvibes-jev/engine/errors';
 import { PersistentStore } from '../state/persistent-store.js';
 import { StoreWriteQueue } from '../state/store-write-queue.js';
 import type { PermissionPromptDecision, PermissionPromptRequest, PermissionRequestHandler } from '../permissions/prompt.js';
-import { buildDurableRuleForDecision, matchDurableRules, type RememberTier } from '../permissions/approval-rules.js';
+import { buildDurableRuleForDecision, matchDurableRules } from '../permissions/approval-rules.js';
 import type { ControlPlaneSurfaceMessage } from './types.js';
 import { logger } from '../utils/logger.js';
 import { isRecord } from '../utils/record-coerce.js';
 import { resolveApprovalHunkSelection } from './approval-hunk-apply.js';
-import { raiseSharedApproval, type PendingApprovalEntry, type RaisedApproval } from './approval-broker-raise.js';
+import type { PendingApprovalEntry, RaisedApproval } from './approval-broker-raise.js';
+import { OwnerApprovalAuthority, type OwnerApprovalGuard, type OwnerApprovalProof, type RaisedOwnerApproval, type ResolveSharedApprovalInput } from './approval-broker-owner.js';
 import { awaitPermission } from '../permissions/cancellation.js';
-import { approvalDispositionMatches, assertExplicitApprovalDisposition, ordinaryApprovalDecision, type ExplicitApprovalDisposition, type SharedApprovalDecision } from './approval-disposition.js';
+import { approvalDispositionMatches, assertExplicitApprovalDisposition, ordinaryApprovalDecision, type SharedApprovalDecision } from './approval-disposition.js';
 
 export type SharedApprovalStatus = 'pending' | 'claimed' | 'approved' | 'denied' | 'cancelled' | 'expired';
 
@@ -30,6 +30,8 @@ export interface SharedApprovalRecord {
   readonly routeId?: string | undefined;
   readonly status: SharedApprovalStatus;
   readonly request: PermissionPromptRequest;
+  /** Deny-only durable marker; approval also requires an ephemeral host capability. */
+  readonly requiresOwnerDecision?: true | undefined;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly claimedBy?: string | undefined;
@@ -80,6 +82,8 @@ export interface RequestSharedApprovalInput {
   readonly routeId?: string | undefined;
   readonly metadata?: Record<string, unknown> | undefined;
   readonly localPrompt?: PermissionRequestHandler | undefined;
+  /** Host-only guard; never reconstructed from metadata or accepted over the wire. */
+  readonly requireOwnerDecision?: OwnerApprovalGuard | undefined;
   readonly timeoutMs?: number | undefined;
   /**
    * Which surface the local prompt belongs to, for the audit trail.
@@ -213,6 +217,7 @@ function validateApprovalRecord(value: unknown): void {
   validateOptionalNumber(value['resolvedAt']);
   validateOptionalNumber(value['expiresAt']);
   validateOptionalString(value['resolvedBy']);
+  if (value['requiresOwnerDecision'] !== undefined && value['requiresOwnerDecision'] !== true) throwInvalidApprovalSnapshot();
   if (value['decision'] !== undefined) {
     const decision = value['decision'];
     if (!isRecord(decision) || typeof decision['approved'] !== 'boolean') {
@@ -270,6 +275,7 @@ export class ApprovalBroker {
   private readonly store: PersistentStore<SharedApprovalStoreSnapshot>;
   private readonly approvals = new Map<string, SharedApprovalRecord>();
   private readonly pendingResolvers = new Map<string, PendingApprovalEntry>();
+  readonly #ownerApprovals = new OwnerApprovalAuthority();
   private readonly listeners = new Set<ApprovalListener>();
   /** Whole-store writes run one at a time, in call order. See StoreWriteQueue. */
   private readonly writes = new StoreWriteQueue();
@@ -374,54 +380,26 @@ export class ApprovalBroker {
     return this.approvals.get(approvalId) ?? null;
   }
 
-  /**
-   * Raise an ask and hand back BOTH the record it produced and the decision
-   * still to come.
-   *
-   * Two callers want different halves of the same act. The in-process
-   * permission path (`requestApproval`, just below) wants the decision:
-   * it is awaiting a person. The wire path (`approvals.raise`,
-   * routes/approvals-raise.ts) wants the RECORD, immediately, an HTTP request
-   * must not stay open across someone's attention span, and the id returned
-   * here is what ties that caller to the `approval-update` stream where the
-   * decision actually lands. The body lives in approval-broker-raise.ts.
-   *
-   * A `localPrompt` is honoured exactly as before: it runs only for a record
-   * this call actually created (a coalesced ask attaches to a prompt that is
-   * already on screen), after the record is persisted and published, and its
-   * answer resolves the record through the same path a wire decision takes.
-   */
+  /** Raise a shared ask, optionally restricted to its host-owned decision capability. */
   async raiseApproval(input: RequestSharedApprovalInput): Promise<RaisedApproval> {
-    const raised = await raiseSharedApproval(input, {
+    return this.#ownerApprovals.raise(input, {
       start: () => this.start(),
       approvals: this.approvals,
       pendingResolvers: this.pendingResolvers,
       persist: () => this.persist(),
       publish: (approval) => this.publish(approval),
       expire: (approvalId, note) => this.expireApproval(approvalId, note),
-      cancel: async (approvalId) => { await this.cancelApproval(approvalId, 'approval-broker', 'service', 'all requesting consumers cancelled'); },
+      cancel: async (approvalId) => { await this.cancelApproval(approvalId, 'approval-broker', 'service', 'requesting consumer no longer current'); },
       buildAudit,
       coalesceKey: approvalCoalesceKey,
+      resolve: (id, decision, proof) => this.#resolveApproval(id, decision, proof),
     });
-    const pending = this.pendingResolvers.get(raised.approval.id);
-    if (input.localPrompt && !raised.coalesced && !pending?.retired
-      && (raised.approval.status === 'pending' || raised.approval.status === 'claimed')) {
-      void input.localPrompt(input.request, { signal: pending?.promptController?.signal })
-        .then((decision) => this.resolveApproval(raised.approval.id, {
-          approved: decision.approved,
-          remember: decision.remember,
-          rememberTier: decision.rememberTier,
-          reason: decision.reason,
-          modifiedArgs: decision.modifiedArgs,
-          actor: input.localPromptActor ?? 'tui-local',
-          actorSurface: input.localPromptSurface ?? 'tui',
-        }))
-        .catch((error) => logger.warn('Local approval prompt failed', {
-          approvalId: raised.approval.id,
-          error: error instanceof Error ? error.message : String(error),
-        }));
-    }
-    return raised;
+  }
+
+  /** The resolver is an in-process capability, never part of a stored approval. */
+  async raiseOwnerApproval(input: RequestSharedApprovalInput & { readonly requireOwnerDecision: OwnerApprovalGuard }): Promise<RaisedOwnerApproval> {
+    if (!input.requireOwnerDecision) throw new Error('Owner approval requires a host guard.');
+    return await this.raiseApproval(input) as RaisedOwnerApproval;
   }
 
   /** Raise an ask and wait for the answer, the in-process permission path. */
@@ -488,38 +466,11 @@ export class ApprovalBroker {
     return updated;
   }
 
-  async resolveApproval(
-    approvalId: string,
-    input: {
-      readonly approved: boolean;
-      /** Explicit producer evidence. Legacy or automatic callbacks omit it. */
-      readonly disposition?: ExplicitApprovalDisposition | undefined;
-      readonly remember?: boolean | undefined;
-      readonly modifiedArgs?: Record<string, unknown> | undefined;
-      /**
-       * Optional per-hunk selection (edit-tool approvals only). When present and
-       * the approval is being APPROVED, the broker computes the modified args
-       * server-side from THIS approval's own `request.args.edits`, so every
-       * surface (TUI, webui) produces identical results. It supersedes any
-       * `modifiedArgs` passed by the caller. Omitting it is the back-compat
-       * whole-request approve-all path. An out-of-range index or a non-edit
-       * approval throws an INVALID_ARGUMENT (400) error, mirroring the closed-
-       * session guard's honest-4xx shape.
-       */
-      readonly selectedHunks?: readonly number[] | undefined;
-      /**
-       * How far this decision reaches (see PermissionPromptDecision). A
-       * generalizing tier also SWEEPS queued asks the remembered decision
-       * covers, one answer resolves them all.
-       */
-      readonly rememberTier?: RememberTier | undefined;
-      /** Optional user free-text; on deny it rides the structured result. */
-      readonly reason?: string | undefined;
-      readonly actor: string;
-      readonly actorSurface?: string | undefined;
-      readonly note?: string | undefined;
-    },
-  ): Promise<SharedApprovalRecord | null> {
+  async resolveApproval(approvalId: string, input: ResolveSharedApprovalInput): Promise<SharedApprovalRecord | null> {
+    return this.#resolveApproval(approvalId, input);
+  }
+
+  async #resolveApproval(approvalId: string, input: ResolveSharedApprovalInput, proof?: OwnerApprovalProof): Promise<SharedApprovalRecord | null> {
     const approved = input.approved;
     const disposition = input.disposition;
     assertExplicitApprovalDisposition(approved, disposition);
@@ -532,6 +483,11 @@ export class ApprovalBroker {
     }
     const approval = this.approvals.get(approvalId);
     if (!approval) return null;
+    const ownerCheck = this.#ownerApprovals.check(approval, input, proof);
+    const assertOwnerCurrent = ownerCheck ? (): void => {
+      ownerCheck();
+      if (this.approvals.get(approvalId) !== approval) throw new Error('Owner approval changed while resolving.');
+    } : undefined;
     if (approval.status === 'approved' || approval.status === 'denied' || approval.status === 'cancelled' || approval.status === 'expired') {
       return approval;
     }
@@ -571,8 +527,23 @@ export class ApprovalBroker {
     if (this.pendingResolvers.get(approvalId)?.retired) {
       return this.cancelApproval(approvalId, 'approval-broker', 'service', 'all requesting consumers cancelled');
     }
-    this.approvals.set(approvalId, updated);
-    await this.persist();
+    assertOwnerCurrent?.();
+    if (!assertOwnerCurrent) this.approvals.set(approvalId, updated);
+    try {
+      // Keep an owner ask pending in memory while its write is in flight, so
+      // denial/cancel/expiry can still win and no observer sees early approval.
+      await this.persist(assertOwnerCurrent ? updated : undefined);
+      assertOwnerCurrent?.();
+    } catch (error) {
+      if (assertOwnerCurrent) {
+        await this.cancelApproval(approvalId, 'approval-broker', 'service', 'owner decision no longer current');
+        // A signal cancellation may already have queued its corrective write.
+        // Persist the current terminal snapshot before returning the failed owner answer.
+        await this.persist();
+      }
+      throw error;
+    }
+    if (assertOwnerCurrent) this.approvals.set(approvalId, updated);
     this.publish(updated);
 
     this.resolvePending(approvalId, updated.decision ?? { approved });
@@ -592,6 +563,7 @@ export class ApprovalBroker {
         for (const candidate of [...this.approvals.values()]) {
           if (candidate.id === approvalId) continue;
           if (candidate.status !== 'pending' && candidate.status !== 'claimed') continue;
+          if (approved && candidate.requiresOwnerDecision) continue;
           if (this.pendingResolvers.get(candidate.id)?.retired) continue;
           const covered = matchDurableRules([rule], candidate.request.tool, candidate.request.args, {
             projectRoot: candidate.request.workingDirectory,
@@ -627,6 +599,7 @@ export class ApprovalBroker {
 
   /** Resolve every waiter attached to an approval (coalesced asks share one record). */
   private resolvePending(approvalId: string, recorded: SharedApprovalDecision): void {
+    this.#ownerApprovals.retire(approvalId);
     const pending = this.pendingResolvers.get(approvalId);
     if (!pending) return;
     const decision = ordinaryApprovalDecision(recorded);
@@ -741,10 +714,10 @@ export class ApprovalBroker {
    * callers that had not finished yet, including a create still deciding
    * whether it can commit, and that is a wider door than this defect needs.
    */
-  private async persist(): Promise<void> {
+  private async persist(ownerDecision?: SharedApprovalRecord): Promise<void> {
     this.pruneTerminalApprovals();
     const snapshot: SharedApprovalStoreSnapshot = {
-      approvals: sortApprovals(this.approvals.values()),
+      approvals: sortApprovals(this.approvals.values()).map((approval) => ownerDecision?.id === approval.id ? ownerDecision : approval),
     };
     await this.writes.run(() => this.store.persist(snapshot));
   }
