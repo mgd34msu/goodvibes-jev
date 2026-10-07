@@ -1,3 +1,5 @@
+import { createNativeQuestionTable, createNativeQuestionStorage, validateNativeQuestionTable, migrateNativeQuestionTable } from './store-native-question.js';
+import type { NativeQuestionStorage } from '../workflow/work-ledger/native-question.js';
 import { createNativeConversationStorage, validateNativeConversationCaptureTable, migrateNativeConversationCaptureTable } from './store-native-intake.js';
 import type { NativeConversationStorage } from '../workflow/work-ledger/native-intake-types.js';
 import { migrateNativeWorkSettlementTable, validateNativeWorkSettlementTable, createNativeWorkExecutionStorage, createNativeWorkExecutionTable, validateNativeWorkExecutionTable, createNativeWorkExecutionIntentTable, validateNativeWorkExecutionIntentTable } from './store-native-work-execution.js';
@@ -205,6 +207,20 @@ export class KnowledgeStore {
     }
   }
 
+  private readonly nativeQuestionStorage = new Map<string, NativeQuestionStorage>();
+
+  /** Inert host-only question foundation; no product question producer or continuation is installed. */
+  async openNativeQuestionStorage(projectId: string): Promise<NativeQuestionStorage> {
+    await this.init();
+    if (this.closed) throw new Error('KnowledgeStore is closed');
+    let storage = this.nativeQuestionStorage.get(projectId);
+    if (!storage) {
+      storage = createNativeQuestionStorage(this.sqlite, projectId, () => this.refreshSnapshot());
+      this.nativeQuestionStorage.set(projectId, storage);
+    }
+    return storage;
+  }
+
   private readonly nativeExecutionStorage = new Map<string, NativeWorkExecutionStorage>();
 
   /** Trusted native host only. The runtime must not expose this storage capability. */
@@ -246,7 +262,7 @@ export class KnowledgeStore {
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closed = true;
-    const drains = [...this.ledgerStorage.values(), ...this.nativeExecutionStorage.values(), ...this.nativeConversationStorage.values()].map(storage => storage.close());
+    const drains = [...this.ledgerStorage.values(), ...this.nativeExecutionStorage.values(), ...this.nativeQuestionStorage.values(), ...this.nativeConversationStorage.values()].map(storage => storage.close());
     this.closePromise = (async () => {
       await this.initPromise?.catch(() => {});
       await Promise.all(drains);
@@ -1081,9 +1097,9 @@ export class KnowledgeStore {
   }
 
   private async initialize(): Promise<void> {
-    await this.sqlite.init(createSchema, {
-      storeName: 'knowledge store', schemaVersion: 7,
-      validateCurrentSchema: db => { validateWorkLedgerTable(db); validateNativeWorkExecutionTable(db); validateNativeWorkExecutionIntentTable(db); validateNativeConversationCaptureTable(db); validateNativeWorkSettlementTable(db); },
+    await this.sqlite.init(db => { createSchema(db); createNativeQuestionTable(db); }, {
+      storeName: 'knowledge store', schemaVersion: 8,
+      validateCurrentSchema: db => { validateWorkLedgerTable(db); validateNativeWorkExecutionTable(db); validateNativeWorkExecutionIntentTable(db); validateNativeConversationCaptureTable(db); validateNativeWorkSettlementTable(db); validateNativeQuestionTable(db); },
       migrations: [
         { toVersion: 1, migrate: createSchema },
         { toVersion: 2, migrate: createWorkLedgerTable },
@@ -1092,6 +1108,7 @@ export class KnowledgeStore {
         { toVersion: 5, migrate: db => { validateNativeWorkExecutionTable(db); validateNativeWorkExecutionIntentTable(db); migrateWorkLedgerTableToVersion2(db); } },
         { toVersion: 6, migrate: db => { validateWorkLedgerTable(db); validateNativeWorkExecutionTable(db); validateNativeWorkExecutionIntentTable(db); migrateNativeConversationCaptureTable(db); } },
         { toVersion: 7, migrate: db => { validateNativeConversationCaptureTable(db); migrateNativeWorkSettlementTable(db); } },
+        { toVersion: 8, migrate: db => { validateWorkLedgerTable(db); validateNativeWorkExecutionTable(db); validateNativeWorkExecutionIntentTable(db); validateNativeConversationCaptureTable(db); validateNativeWorkSettlementTable(db); migrateNativeQuestionTable(db); } },
       ],
     });
     try {

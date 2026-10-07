@@ -211,14 +211,14 @@ test('schema5 migration preserves exact execution, intent and ledger JSON and cr
   const f = await fixture(); const original = f.storage.current(f.key); await f.store.close();
   const executionJson = JSON.stringify(original.record, null, 2); const intentJson = JSON.stringify(original.intent, null, 2); const ledgerJson = JSON.stringify(original.ledger, null, 2);
   await mutateImage(f.file, db => {
-    db.run('DROP TABLE native_work_execution_settlements'); db.run('PRAGMA user_version = 5');
+    db.run('DROP TABLE native_work_execution_settlements'); db.run('DROP TABLE native_work_questions'); db.run('PRAGMA user_version = 5');
     db.run('UPDATE native_work_executions SET state_json = ?', [executionJson]);
     db.run('UPDATE native_work_execution_intents SET state_json = ?', [intentJson]);
     db.run('UPDATE work_ledgers SET state_json = ?', [ledgerJson]);
   });
   const migrated = await open(f.file); expect(migrated.storage.current(f.key)).toEqual(original);
   await inspectImage(f.file, db => {
-    expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[7]]);
+    expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[8]]);
     expect(db.exec('SELECT state_json FROM native_work_executions')[0]?.values).toEqual([[executionJson]]);
     expect(db.exec('SELECT state_json FROM native_work_execution_intents')[0]?.values).toEqual([[intentJson]]);
     expect(db.exec('SELECT state_json FROM work_ledgers')[0]?.values).toEqual([[ledgerJson]]);
@@ -232,7 +232,7 @@ test('schema5 migration preserves exact execution, intent and ledger JSON and cr
 for (const corruption of ['execution', 'intent', 'history'] as const) test(`schema5 migration refuses corrupt ${corruption} before creating the settlement table`, async () => {
   const f = await fixture(); await f.store.close();
   await mutateImage(f.file, db => {
-    db.run('DROP TABLE native_work_execution_settlements'); db.run('PRAGMA user_version = 5');
+    db.run('DROP TABLE native_work_execution_settlements'); db.run('DROP TABLE native_work_questions'); db.run('PRAGMA user_version = 5');
     if (corruption === 'execution') db.run("UPDATE native_work_executions SET state_json = '{}'");
     else if (corruption === 'intent') db.run("UPDATE native_work_execution_intents SET state_json = '{}'");
     else {
@@ -351,7 +351,7 @@ test('valid pre-intent native records retain settlement support without inventin
   const f = await fixture(); await f.store.close();
   // Schema3 native records predate the intent table. Its migration intentionally
   // preserves their exact nine-field record and leaves their intent absent.
-  await mutateImage(f.file, db => { db.run('DELETE FROM native_work_execution_intents'); db.run('DROP TABLE native_work_execution_settlements'); db.run('PRAGMA user_version = 5'); });
+  await mutateImage(f.file, db => { db.run('DELETE FROM native_work_execution_intents'); db.run('DROP TABLE native_work_execution_settlements'); db.run('DROP TABLE native_work_questions'); db.run('PRAGMA user_version = 5'); });
   const reopened = await open(f.file); expect(reopened.storage.current(f.key).intent).toBeNull();
   const receipt = await settle(reopened.storage, f); expect(receipt.attestation.outcome).toBe('verified');
   expect(reopened.storage.current(f.key).intent).toBeNull(); await assertImage(f.file, 4, 1);

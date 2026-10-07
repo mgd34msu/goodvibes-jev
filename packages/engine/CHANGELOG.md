@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Add an inert native-question acceptance foundation with exact admitted-owner
+  binding, durable immutable answer receipts, and conflict-safe replay in
+  coordinated KnowledgeStore schema 8. No question producer, reply route or
+  runner continuation is enabled; checkpoint consumption remains unresolved.
+
 - Capture registered tool-input projections before conversation/progress
   publication, ordinary repair and autonomous admission, including unselected
   host alternatives. Add an owned framed-reference adapter over the name-only

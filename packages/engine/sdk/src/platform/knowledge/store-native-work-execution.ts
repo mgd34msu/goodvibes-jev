@@ -220,3 +220,6 @@ export function createNativeWorkExecutionStorage(sqlite: SQLiteStore, projectId:
     close() { closed = true; return closing ??= Promise.allSettled([...pending]).then(() => {}); },
   };
 }
+
+/** Internal same-image reader for adjacent native host storage; never opens another database. */
+export { read as readNativeWorkExecutionTransaction };

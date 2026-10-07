@@ -152,7 +152,7 @@ describe('initial answer evidence selection callers', () => {
     const initial = await fixture(); const record = await source(initial, 'kind-reference', 'AC-7 manual', 'AC-7 has four ports.');
     const draft = await initial.upsertNode({ id: 'legacy-kind', kind: 'fact', slug: 'legacy-kind', title: 'AC-7 connections',
       status: 'draft', metadata: { knowledgeSpaceId: spaceId, semanticKind: 'fact', sourceIds: [record.id], factKind: 'Authorization: Bearer synthetic' } });
-    const sqlite = new SQLiteStore(initial.storagePath); await sqlite.init(createSchema, { schemaVersion: 7 });
+    const sqlite = new SQLiteStore(initial.storagePath); await sqlite.init(createSchema, { schemaVersion: 8 });
     writeKnowledgeNodeRow(sqlite, { ...draft, status: 'active' }); await sqlite.save();
     const store = new KnowledgeStore({ dbPath: initial.storagePath }); await store.init();
     const fake = readings({ 'AC-7 manual': 0.99 });
@@ -172,7 +172,7 @@ describe('initial answer evidence selection callers', () => {
       const initial = await fixture(); const record = await source(initial, 'claim-reference', 'AC-7 manual', 'AC-7 has four ports.');
       const draft = await initial.upsertNode({ id: 'legacy-claim', kind: 'fact', slug: 'legacy-claim', title: 'AC-7 connections',
         status: 'draft', aliases: extra.aliases, metadata: { knowledgeSpaceId: spaceId, semanticKind: 'fact', sourceIds: [record.id], ...extra.metadata } });
-      const sqlite = new SQLiteStore(initial.storagePath); await sqlite.init(createSchema, { schemaVersion: 7 });
+      const sqlite = new SQLiteStore(initial.storagePath); await sqlite.init(createSchema, { schemaVersion: 8 });
       writeKnowledgeNodeRow(sqlite, { ...draft, status: 'active' }); await sqlite.save();
       const store = new KnowledgeStore({ dbPath: initial.storagePath }); await store.init();
       const fake = readings({ 'AC-7 manual': 0.99 });
@@ -188,7 +188,7 @@ describe('initial answer evidence selection callers', () => {
     const subject = await initial.upsertNode({ id: 'graph-subject', kind: 'ha_device', slug: 'graph-subject', title: 'AC-7', status: 'draft',
       summary: 'Authorization: Bearer synthetic', metadata: { knowledgeSpaceId: spaceId } });
     await initial.upsertEdge({ fromKind: 'node', fromId: fact.id, toKind: 'node', toId: subject.id, relation: 'describes', metadata: { knowledgeSpaceId: spaceId } });
-    const sqlite = new SQLiteStore(initial.storagePath); await sqlite.init(createSchema, { schemaVersion: 7 });
+    const sqlite = new SQLiteStore(initial.storagePath); await sqlite.init(createSchema, { schemaVersion: 8 });
     writeKnowledgeNodeRow(sqlite, { ...fact, status: 'active' }); writeKnowledgeNodeRow(sqlite, { ...subject, status: 'active' }); await sqlite.save();
     const store = new KnowledgeStore({ dbPath: initial.storagePath }); await store.init();
     const fake = readings({ 'AC-7 manual': 0.99 });

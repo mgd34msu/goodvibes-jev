@@ -62,7 +62,7 @@ function downgradeLedgerRows(db: SqlDatabase): void {
     db.run('UPDATE work_ledgers SET format_version = 1, state_json = ? WHERE project_id = ?', [JSON.stringify(legacy), String(row[0])]);
   }
 }
-async function raw(file: string, version = 7) {
+async function raw(file: string, version = 8) {
   const db = new SQLiteStore(file); await db.init(() => {}, { schemaVersion: version }); return db;
 }
 
@@ -184,13 +184,13 @@ test('schema3 migration preserves exact nine-field execution JSON and leaves int
     db.run('DROP TABLE native_work_execution_intents');
     db.run('INSERT INTO native_work_executions VALUES (?,?,?,?,?)', ['project', durableKeyHash(f.key), 1, stateJson, f.key.attemptId]);
     downgradeLedgerRows(db);
-    db.run('PRAGMA user_version = 3');
+    db.run('DROP TABLE native_work_questions'); db.run('PRAGMA user_version = 3');
   });
   const migrated = await open(f.file); expect(migrated.storage.current(f.key)).toMatchObject({ record: f.record, intent: null });
   const db = await raw(f.file);
   expect(db.exec('SELECT state_json FROM native_work_executions')[0]?.values).toEqual([[stateJson]]);
   expect(db.exec('SELECT COUNT(*) FROM native_work_execution_intents')[0]?.values).toEqual([[0]]);
-  expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[7]]); db.close();
+  expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[8]]); db.close();
   await migrated.storage.transaction(f.key, current => ({ next: { ...current.record!, state: 'cancelled' }, value: undefined }));
   expect(migrated.storage.currentByAttempt(f.key.attemptId)).toMatchObject({ record: { state: 'cancelled' }, intent: null });
 });
@@ -200,7 +200,7 @@ test('schema4 migration preserves exact execution and intent rows while removing
   const executionJson = JSON.stringify(f.record, null, 2); const intentJson = JSON.stringify({ ...f.intent, state: 'associated' }, null, 2);
   await mutateImage(f.file, db => {
     downgradeLedgerRows(db); db.run('UPDATE native_work_executions SET state_json = ?', [executionJson]);
-    db.run('UPDATE native_work_execution_intents SET state_json = ?', [intentJson]); db.run('PRAGMA user_version = 4');
+    db.run('UPDATE native_work_execution_intents SET state_json = ?', [intentJson]); db.run('DROP TABLE native_work_questions'); db.run('PRAGMA user_version = 4');
   });
   const migrated = await open(f.file); const current = migrated.storage.current(f.key);
   expect(current).toMatchObject({ record: f.record, intent: { ...f.intent, state: 'associated' }, ledger: { version: 2, revision: 2 } });
@@ -212,14 +212,14 @@ test('schema4 migration preserves exact execution and intent rows while removing
 
 test('schema2 migration chains through execution and intent creation without inventing rows', async () => {
   const f = await fixture(); await f.store.close();
-  await mutateImage(f.file, db => { db.run('DROP TABLE native_work_executions'); db.run('DROP TABLE native_work_execution_intents'); downgradeLedgerRows(db); db.run('PRAGMA user_version = 2'); });
+  await mutateImage(f.file, db => { db.run('DROP TABLE native_work_executions'); db.run('DROP TABLE native_work_execution_intents'); downgradeLedgerRows(db); db.run('DROP TABLE native_work_questions'); db.run('PRAGMA user_version = 2'); });
   const migrated = await open(f.file); expect(migrated.storage.current(f.key)).toMatchObject({ intent: null, record: null, ledger: { revision: 2 } });
-  const db = await raw(f.file); expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[7]]); db.close();
+  const db = await raw(f.file); expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[8]]); db.close();
 });
 
 for (const table of ['work_ledgers', 'native_work_executions']) test(`schema3 migration validates ${table} before creating any intent table`, async () => {
   const f = await fixture(); await f.store.close();
-  await mutateImage(f.file, db => { db.run('DROP TABLE native_work_execution_intents'); db.run(`DROP TABLE ${table}`); db.run('PRAGMA user_version = 3'); });
+  await mutateImage(f.file, db => { db.run('DROP TABLE native_work_execution_intents'); db.run(`DROP TABLE ${table}`); db.run('DROP TABLE native_work_questions'); db.run('PRAGMA user_version = 3'); });
   const bytes = readFileSync(f.file);
   await expect(open(f.file)).rejects.toThrow(); expect(readFileSync(f.file)).toEqual(bytes);
 });
@@ -253,7 +253,7 @@ test('corrupt intent payload and association mismatch fail closed; a missing exe
 
 test('old binary refuses schema5 and an already-open schema3 writer cannot erase intent rows', async () => {
   const f = await fixture(); await f.store.close();
-  await mutateImage(f.file, db => { db.run('DROP TABLE native_work_execution_intents'); downgradeLedgerRows(db); db.run('PRAGMA user_version = 3'); });
+  await mutateImage(f.file, db => { db.run('DROP TABLE native_work_execution_intents'); downgradeLedgerRows(db); db.run('DROP TABLE native_work_questions'); db.run('PRAGMA user_version = 3'); });
   const old = new SQLiteStore(f.file, { coordinated: true }); await old.init(() => {}, { schemaVersion: 3 });
   const migrated = await open(f.file);
   await migrated.storage.transaction(f.key, () => ({ next: null, nextIntent: f.intent, value: undefined }));

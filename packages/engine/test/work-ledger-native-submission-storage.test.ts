@@ -54,7 +54,7 @@ test('one durable command creates exact source, claimed attempt and actor receip
   expect(readFileSync(f.file)).toEqual(before);
   expect((await reopened.service.readSnapshot(reopened.actor)).works[0]?.attempt?.report).toBe('Display report');
   const SQL = await loadSqlJsEngine(); const db = new SQL.Database(before);
-  expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[7]]); expect(db.exec('SELECT format_version FROM work_ledgers')[0]?.values).toEqual([[2]]);
+  expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[8]]); expect(db.exec('SELECT format_version FROM work_ledgers')[0]?.values).toEqual([[2]]);
   expect(db.exec('SELECT COUNT(*) FROM native_work_executions')[0]?.values).toEqual([[0]]); expect(db.exec('SELECT COUNT(*) FROM native_work_execution_intents')[0]?.values).toEqual([[0]]); db.close();
 });
 
@@ -181,7 +181,7 @@ test('new execution intents for native work must bind persisted source identity 
 test('schema4 migration validates old authority, adds only null provenance and preserves receipt replay', async () => {
   const f = await open(); const oldCommand = { type: 'create', requestId: 'old', expectedRevision: 0, title: 'Old', goal: 'Old goal', criteria: ['First', 'First', 'Second'] };
   event(await f.service.execute(oldCommand, f.actor)); const old = legacyState(await f.storage.read() as WorkLedgerState); await f.store.close();
-  await mutate(f.file, db => { db.run('UPDATE work_ledgers SET format_version = 1, state_json = ?', [JSON.stringify(old)]); db.run('PRAGMA user_version = 4'); });
+  await mutate(f.file, db => { db.run('UPDATE work_ledgers SET format_version = 1, state_json = ?', [JSON.stringify(old)]); db.run('DROP TABLE native_work_questions'); db.run('PRAGMA user_version = 4'); });
   const oldWriter = new SQLiteStore(f.file, { coordinated: true }); await oldWriter.init(() => {}, { schemaVersion: 4 });
   const migrated = await open(f.file); const state = await migrated.storage.read() as WorkLedgerState;
   expect(state.version).toBe(2); expect(state.works[0]!.source).toBeNull(); expect(state.receipts[0]!.signature).toBe(old.receipts[0]!.signature);
@@ -196,6 +196,6 @@ test('malformed legacy history cannot acquire null provenance or publish DB5', a
   const old = legacyState(await f.storage.read() as WorkLedgerState); old.works[0]!.goal = 'forged';
   const history = old.history[0]!; if (history.type === 'import_legacy') throw new Error('fixture'); history.work.goal = 'forged'; old.receipts[0]!.event = structuredClone(history);
   expect(() => migrateLegacyWorkLedgerState(old, 'project')).toThrow(); await f.store.close();
-  await mutate(f.file, db => { db.run('UPDATE work_ledgers SET format_version = 1, state_json = ?', [JSON.stringify(old)]); db.run('PRAGMA user_version = 4'); });
+  await mutate(f.file, db => { db.run('UPDATE work_ledgers SET format_version = 1, state_json = ?', [JSON.stringify(old)]); db.run('DROP TABLE native_work_questions'); db.run('PRAGMA user_version = 4'); });
   const bytes = readFileSync(f.file); await expect(open(f.file)).rejects.toThrow('migration'); expect(readFileSync(f.file)).toEqual(bytes);
 });

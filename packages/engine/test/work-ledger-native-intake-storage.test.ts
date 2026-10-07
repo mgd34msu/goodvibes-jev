@@ -146,12 +146,12 @@ test('DB5 upgrade preserves source1 exactly and old readers/writers fail closed 
   const actor = ledger.authority.issueActor({ projectId: 'project', actorId: 'owner', role: 'coordinator' });
   const explicit = { type: 'submit_native', requestId: 'explicit', expectedRevision: 0, title: 'Explicit', goal: ' Exact goal ', criteria: [' same ', ' same '], source: { version: 1, sourceId: 'old-source', sourceRevision: 'old-revision', inputId: 'explicit-input', sessionId: 'session' } };
   expect(await ledger.service.execute(explicit, actor)).toMatchObject({ kind: 'accepted' }); const original = await storage.read(); await f.store.close();
-  await mutate(f.file, db => { db.run('DROP TABLE native_conversation_captures'); db.run('PRAGMA user_version = 5'); });
+  await mutate(f.file, db => { db.run('DROP TABLE native_conversation_captures'); db.run('DROP TABLE native_work_questions'); db.run('PRAGMA user_version = 5'); });
   const old = new SQLiteStore(f.file, { coordinated: true }); await old.init(() => {}, { schemaVersion: 5 });
   const upgraded = await open(f.file); expect(await (await upgraded.store.openWorkLedgerStorage('project')).read()).toEqual(original);
   old.run('UPDATE work_ledgers SET revision=999'); await expect(old.save()).rejects.toThrow('persisted state changed'); old.close();
   const oldReader = new SQLiteStore(f.file); await expect(oldReader.init(() => {}, { schemaVersion: 5 })).rejects.toThrow('newer version'); oldReader.close();
-  const SQL = await loadSqlJsEngine(), db = new SQL.Database(fs.readFileSync(f.file)); expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[7]]); db.close();
+  const SQL = await loadSqlJsEngine(), db = new SQL.Database(fs.readFileSync(f.file)); expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[8]]); db.close();
 });
 
 test('DB7 never repairs missing capture tables, missing association rows or contradictory source lineage', async () => {
@@ -167,13 +167,13 @@ test('DB6 captured source and extracted work upgrade to DB7 without rewriting ei
   await f.store.close();
   const SQL = await loadSqlJsEngine();
   const old = new SQL.Database(fs.readFileSync(f.file));
-  old.run('DROP TABLE native_work_execution_settlements'); old.run('PRAGMA user_version = 6');
+  old.run('DROP TABLE native_work_execution_settlements'); old.run('DROP TABLE native_work_questions'); old.run('PRAGMA user_version = 6');
   const captures = old.exec('SELECT state_json FROM native_conversation_captures')[0]?.values;
   const ledgers = old.exec('SELECT state_json FROM work_ledgers')[0]?.values;
   fs.writeFileSync(f.file, old.export()); old.close();
   const upgraded = await open(f.file); expect(upgraded.storage.current(key)?.state).toBe('associated');
   const current = new SQL.Database(fs.readFileSync(f.file));
-  expect(current.exec('PRAGMA user_version')[0]?.values).toEqual([[7]]);
+  expect(current.exec('PRAGMA user_version')[0]?.values).toEqual([[8]]);
   expect(current.exec('SELECT state_json FROM native_conversation_captures')[0]?.values).toEqual(captures);
   expect(current.exec('SELECT state_json FROM work_ledgers')[0]?.values).toEqual(ledgers);
   expect(current.exec('SELECT COUNT(*) FROM native_work_execution_settlements')[0]?.values).toEqual([[0]]);
