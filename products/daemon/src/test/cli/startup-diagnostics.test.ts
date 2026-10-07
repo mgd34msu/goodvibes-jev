@@ -176,15 +176,20 @@ for (const phase of ['bound', 'mismatch', 'ready'] as const) {
 for (const mode of ['agreement', 'wildcard', 'public URL', 'mismatch'] as const) {
   test(`canonical ${mode} diagnostics use the actual bound endpoint without raw URL disclosure`, async () => {
     const f = await fixture(undefined, mode === 'mismatch' ? { createServer(config) {
-      return new DaemonServer({ ...config, port: 0 });
+      return new DaemonServer({ ...config, host: '127.0.0.1', port: 0 });
     } } : {});
     if (mode === 'wildcard') {
       applyRuntimeConfigValue(f.configuration.config, 'controlPlane.hostMode', 'network');
       applyRuntimeConfigValue(f.configuration.config, 'controlPlane.host', '0.0.0.0');
     }
+    if (mode === 'mismatch') {
+      applyRuntimeConfigValue(f.configuration.config, 'controlPlane.hostMode', 'custom');
+      applyRuntimeConfigValue(f.configuration.config, 'controlPlane.host', 'user:private-client-password@localhost/path?private-query#private-fragment');
+    }
     if (mode === 'public URL') applyRuntimeConfigValue(f.configuration.config, 'controlPlane.publicBaseUrl', 'https://user:private-public-password@public.example/?private-query#private-fragment');
     const handle = f.start(); await handle.ready;
     expect(f.stdout[0]).toContain(`intended-port=${f.port}`);
+    if (mode === 'mismatch') expect(f.stdout[0]).toContain('intended-host=[withheld]');
     expect(f.stdout[1]).toContain(`port=${f.host!.daemon!.boundPort}`);
     expect(f.stderr).toEqual(mode === 'mismatch' ? ['[goodvibes-daemon] warning: control-plane client binding disagrees with the bound listener (derived-bind-mismatch).'] : []);
     expect([...f.stdout, ...f.stderr, ...f.fatal].join('\n')).not.toContain('private-');
