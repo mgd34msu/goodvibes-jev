@@ -7,7 +7,8 @@
  * shows up on disk: valid JSON with a zero tail (a crash after the file grew
  * but before the bytes landed) and JSON cut off partway (a crash mid-write).
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import * as fs from 'node:fs';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { makeProjectTempDir } from './_helpers/project-temp.ts';
@@ -81,6 +82,25 @@ describe('atomic write', () => {
     const content = readFileSync(path, 'utf-8');
     expect(content).toContain('second');
     expect(content).not.toContain('first');
+    expect(siblings(dir, path, 'tmp-')).toEqual([]);
+  });
+
+  test('default atomic publication rejects a real short write and preserves the previous image', () => {
+    const dir = storeDir();
+    const path = join(dir, 'store.json');
+    writeJsonFileAtomic(path, { version: 1, items: ['previous'] });
+    const previous = readFileSync(path, 'utf8');
+    const actualWrite = fs.writeSync;
+    const write = spyOn(fs, 'writeSync').mockImplementation((fd, contents) => {
+      return actualWrite(fd, String(contents).slice(0, 12), null, 'utf8');
+    });
+    try {
+      expect(() => writeJsonFileAtomic(path, { version: 1, items: ['next'] })).toThrow('Incomplete atomic file write');
+      expect(write).toHaveBeenCalledTimes(1);
+    } finally { write.mockRestore(); }
+
+    expect(readFileSync(path, 'utf8')).toBe(previous);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(siblings(dir, path, 'tmp-')).toEqual([]);
   });
 
