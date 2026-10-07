@@ -60,3 +60,12 @@ Independent review identified a nested copied-context remint path; the private
 asynchronous dispatch scope and regression test close it. Re-review found no
 remaining issue in this bounded change. Live providers, credentials, permissions,
 retention, Jev semantics and settlement behavior were not changed or exercised.
+
+The existing compiled-terminal artifact-provenance CI lane also exercises the
+actual `/workstream start` command in `host-pair-interactive.e2e.test.ts`. An
+isolated real daemon verifies paired authority and captures the exact command
+request. The proxy loses only the successful capture acknowledgement; the TUI
+reports uncertainty, retains the original journal and refuses a replacement.
+A separate unpaired-host case refuses without capture. Both fixtures assert zero
+legacy model requests and no unexpected mutations or external network access.
+The production binary is not given a test-only command or routing branch.
