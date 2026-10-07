@@ -4,7 +4,7 @@ import type { NativeIntakeJournalBinding, NativeIntakeJournalRecord, NativeIntak
 import type { NativeConversationIntakeCaptureRequest, NativeConversationIntakeResult, OperatorNativeConversationIntakeClient, NativeConversationTurnPermit } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client';
 
 export function nativeConversationIntakeFixture() {
-  let identity = 'selected'; let principal = 'paired'; let ids = 0; let disposed = 0;
+  let identity = 'selected'; let principal = 'paired'; let workspace = '/workspace'; let ids = 0; let disposed = 0;
   const records = new Map<string, NativeIntakeJournalRecord>(); const calls: string[] = []; const captures: NativeConversationIntakeCaptureRequest[] = [];
   const server = new Map<string, NativeConversationIntakeResult>();
   let outcome: 'turn' | 'processing' | 'blocked' | 'refused' | 'work' = 'turn';
@@ -52,9 +52,9 @@ export function nativeConversationIntakeFixture() {
       if (record.dispatch) return false; records.set(key(binding), { ...record, dispatch: { sourceRevision } }); return true;
     },
   };
-  const select = (): NativeConversationIntakeSelection => ({ available: true, identity, endpoint: 'https://native.invalid', projectId: 'project', workspace: '/workspace', journal,
+  const select = (): NativeConversationIntakeSelection => ({ available: true, identity, endpoint: 'https://native.invalid', projectId: 'project', workspace, journal,
     bind: () => ({ client, execution, readPrincipal: async () => { calls.push('principal'); return principal; }, dispose: () => { disposed++; } }) });
   const create = () => new NativeConversationIntakeControls(select, () => `id-${++ids}`);
   return { controls: create(), create, client, execution, executions, journal, calls, captures, records, server, ids: () => ids, disposed: () => disposed,
-    setOutcome(value: typeof outcome) { outcome = value; }, replaceHost() { identity = 'different-host'; }, replacePrincipal() { principal = 'different-paired-principal'; } };
+    setOutcome(value: typeof outcome) { outcome = value; }, replaceHost() { identity = 'different-host'; }, replaceWorkspace() { workspace = '/different-workspace'; identity = 'different-workspace'; }, replaceToken() { identity = 'different-token'; }, replacePrincipal() { principal = 'different-paired-principal'; } };
 }

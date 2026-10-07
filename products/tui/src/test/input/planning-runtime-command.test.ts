@@ -206,7 +206,7 @@ describe('submitInput plan-keyword regression (coordinator removed)', () => {
 });
 
 describe('/project-plan project planning runtime command', () => {
-  test('seeding a plan persists the first SDK next question as open state', async () => {
+  test('generic goal dispatch cannot seed historical state or fabricate owner input', async () => {
     const registry = new CommandRegistry();
     registerPlanningRuntimeCommands(registry);
     const out: string[] = [];
@@ -215,10 +215,9 @@ describe('/project-plan project planning runtime command', () => {
 
     await registry.execute('project-plan', ['replace', 'the', 'planning', 'modal'], makeContext(fake.service, out, opened));
 
-    expect(opened).toContain('planning-modal');
-    expect(out.join('\n')).toContain('Answer in the prompt, or open the Planning modal');
-    expect(fake.state()?.metadata?.['active']).toBe(true);
-    expect(fake.state()?.openQuestions.length).toBeGreaterThan(0);
+    expect(opened).toEqual([]);
+    expect(out.join('\n')).toContain('Original owner input is required');
+    expect(fake.state()).toBeNull();
   });
 
   // `dismiss` and `answer` are REAL subcommands now, they must NOT be
@@ -325,7 +324,7 @@ describe('/project-plan project planning runtime command', () => {
     }
   });
 
-  test('a real multi-word goal that merely starts with a verb-looking word still seeds', async () => {
+  test('a multi-word goal never falls back to historical seeding without owner provenance', async () => {
     const registry = new CommandRegistry();
     registerPlanningRuntimeCommands(registry);
     const out: string[] = [];
@@ -334,8 +333,21 @@ describe('/project-plan project planning runtime command', () => {
 
     await registry.execute('project-plan', ['cancel', 'the', 'legacy', 'billing', 'flow'], makeContext(fake.service, out, opened));
 
-    expect(fake.state()?.metadata?.['active']).toBe(true); // multi-word → genuine goal → seeded
-    expect(fake.state()?.goal).toBe('cancel the legacy billing flow');
-    expect(opened).toContain('planning-modal');
+    expect(fake.state()).toBeNull();
+    expect(out.join('\n')).toContain('Original owner input is required');
+    expect(opened).toEqual([]);
   });
 });
+
+for (const name of ['project-plan', 'planning']) {
+  for (const args of [[], ['panel'], ['history']]) {
+    test(`${name} ${args.join(' ')} separates native recovery from historical inspection without legacy writes`, async () => {
+      const registry = new CommandRegistry(); registerPlanningRuntimeCommands(registry);
+      const out: string[] = []; const opened: string[] = [];
+      const service = new Proxy({}, { get() { throw new Error('Opening a view must not evaluate or mutate historical planning'); } }) as ProjectPlanningService;
+      await registry.execute(name, args, makeContext(service, out, opened));
+      expect(opened).toEqual([args[0] === 'history' ? 'planning-modal' : 'native-work-ledger-modal']);
+      expect(out.join(' ')).toContain(args[0] === 'history' ? 'historical' : 'native work');
+    });
+  }
+}

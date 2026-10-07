@@ -51,7 +51,7 @@ describe('planning modal with recorded answer readings', () => {
       submitInput: () => { effects.push('unexpected submission'); },
     });
     expect(modal.active).toBe(false);
-    expect(effects).toEqual(['Type your answer in the chat composer.']);
+    expect(effects).toEqual(['Reopen /project-plan history to review the current saved question. Use /project-plan answer <question-number|question-id> <your answer> for a saved historical question. This targets the current saved plan. Plain text enters native intake as a separate request.']);
   });
 
   test('the actual host exposes custom entry and releases modal focus before the composer guidance', async () => {
@@ -64,6 +64,6 @@ describe('planning modal with recorded answer readings', () => {
       submitInput: () => { effects.push('unexpected automatic submission'); },
     })).toBe(true);
     expect(modal.active).toBe(false);
-    expect(effects).toEqual(['Type your answer in the chat composer.']);
+    expect(effects).toEqual(['Reopen /project-plan history to review the current saved question. Use /project-plan answer <question-number|question-id> <your answer> for a saved historical question. This targets the current saved plan. Plain text enters native intake as a separate request.']);
   });
 });

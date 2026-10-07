@@ -180,7 +180,7 @@ export function registerBuiltinModals(
     projectId: deps.projectPlanningProjectId,
     requestRender: deps.requestRender,
   }));
-  manager.registerModalRedirect('project-planning', 'planning-modal');
+  manager.registerModalRedirect('project-planning', 'native-work-ledger-modal');
 
   // The retired 'sessions' view folds into the EXISTING session-picker modal
   // (no new config-modal surface); the redirect is a plain hand-off, moved here

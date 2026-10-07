@@ -95,7 +95,7 @@ test('a selected numeric question ID reaches the real store as an ID, while manu
   const restored = (await reopened(f.path)).state;
   expect(restored.state!.answeredQuestions.map(question => question.id)).toEqual(['2', 'other']);
   expect(restored.state!.executionApproved).toBe(true);
-  expect(f.output.join('\n')).toContain('Project planning approved.');
+  expect(f.output.join('\n')).toContain('Historical planning approved; no native work authorized.');
   surface.onClose?.();
 });
 

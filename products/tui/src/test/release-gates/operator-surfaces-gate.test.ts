@@ -214,7 +214,7 @@ describe('operator surfaces gate', () => {
       ['marketplace', 'marketplace-modal'], ['plugins', 'plugins-modal'], ['skills', 'skills-modal'],
       ['hooks', 'hooks-modal'], ['policy', 'policy-modal'], ['security', 'security-modal'],
       ['knowledge', 'knowledge-modal'], ['memory', 'memory-modal'], ['docs', 'keybindings-modal'],
-      ['qr-code', 'pairing-modal'], ['work-plan', 'work-plan-modal'], ['project-planning', 'planning-modal'],
+      ['qr-code', 'pairing-modal'], ['work-plan', 'work-plan-modal'], ['project-planning', 'native-work-ledger-modal'],
       ['services', 'services-modal'], ['subscription', 'subscription-modal'], ['remote', 'remote-modal'],
       ['provider-health', 'providers-modal'], ['providers', 'providers-modal'], ['accounts', 'providers-modal'],
       ['settings-sync', 'settings-sync-modal'], ['sandbox', 'sandbox-modal'], ['local-auth', 'local-auth-modal'],

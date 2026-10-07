@@ -303,7 +303,7 @@ export function handlePromptKeyToken(state: KeyRouteState, token: InputToken): {
           const executeCommand = state.commandContext.executeCommand;
           // Only the actual terminal fallback may carry the exact owner source.
           // Keep other fallback commands on their existing generic route.
-          const command = name === 'workstream' && state.commandRegistry.get(name)
+          const command = ['workstream', 'project-plan', 'planning'].includes(name) && state.commandRegistry.get(name)
             ? state.commandRegistry.executeFromOwner(name, args, state.commandContext, originalInput.text)
             : executeCommand(name, args);
           void command.then((handled) => {
