@@ -23,6 +23,9 @@
   },
   "scripts": {
     "build": "bunx tsc -p tsconfig.build.json",
+    "build:binary": "bun scripts/run-toolchain.ts build",
+    "smoke:binary": "bun scripts/run-toolchain.ts smoke",
+    "verify:binary": "node scripts/verify-binary.mjs",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
     "test": "bun run build && bun ../../packages/engine/scripts/test.ts --cwd ../../products/daemon src/test",
     "start": "bun dist/cli/entrypoint.js"

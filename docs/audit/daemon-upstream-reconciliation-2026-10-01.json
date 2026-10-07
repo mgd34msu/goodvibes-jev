@@ -369,7 +369,7 @@
       "oldBlob": "6016baa7f56e90f8f35d9b158586c4a52ed03e8e",
       "newBlob": "d39c1a0d263a738019d45c96b8d7188a298ecae9",
       "ruling": "deferred",
-      "reason": "Upstream release sync no longer runs removed style/coverage gates. Reconcile toolchain at actual Jev executable packaging; no standalone toolchain adopted."
+      "reason": "Local build/smoke and workspace identity are now adapted in products/daemon/toolchain.config.json; four artifact/addon names are preserved and Linux uses the existing captured Bun 1.3.14 contract. Release-cut/publish/per-job-green remain unconfigured under private-monorepo policy. The changed release-prepare sync command and changelog placement are not implemented by the validation-only version check, so this delta remains deferred. Section-by-section accounting: docs/audit/daemon-native-packaging.md."
     }
   ]
 }

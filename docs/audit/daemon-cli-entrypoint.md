@@ -130,3 +130,7 @@ remaining rows cover `.github/workflows/release.yml`,
 `scripts/hosted-session-proof.ts`, `scripts/release-prepare.ts`,
 `src/test/scripts/release-prepare.test.ts`, and `toolchain.config.json`.
 THE-18 and the daemon migration remain partial.
+
+The subsequent local native-packaging increment adapts the toolchain's build,
+smoke and workspace identity sections; see `daemon-native-packaging.md`. Its
+release-sync delta remains deferred, so the five-row count above is unchanged.
