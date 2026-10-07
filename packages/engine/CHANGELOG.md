@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Capture registered tool-input projections before conversation/progress
+  publication, ordinary repair and autonomous admission, including unselected
+  host alternatives. Add an owned framed-reference adapter over the name-only
+  Jev reader, preserving citation positions and private exact originals through
+  normal one-use admission. Free-prose research adoption remains unfinished.
+
 - Own asynchronous hosted workspace-floor construction through shutdown: refuse
   late leases, drain pending factories and retired cleanup, and prevent recursive
   shutdown deadlocks. Recheck hosted-session admission after acquisition and

@@ -85,6 +85,11 @@ export type {
 } from './goodvibes-runtime/config-routing.js';
 
 export { ToolRegistry } from './registry.js';
+export { ToolInputProjectionError } from './input-projection.js';
+export type {
+  ProjectedToolCall, ToolInputProjectionProblem, ToolInputProjectionRequest,
+  ToolInputProjectionResult, ToolInputProjector, ToolRegistrationOptions, ToolInputProjectionOptions,
+} from './input-projection.js';
 export { ProcessManager } from './shared/process-manager.js';
 export type { BackgroundProcess, BgCommandResult, SpawnOptions } from './shared/process-manager.js';
 export { AGENT_TEMPLATES, AgentManager } from './agent/index.js';
