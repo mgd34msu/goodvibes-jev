@@ -157,3 +157,23 @@ test('CRLF command separator is one syntax delimiter; intentionally repeated inp
   expect(f.captures.map(capture => capture.text)).toEqual([original, original]);
   expect(new Set(f.captures.map(capture => capture.inputId)).size).toBe(2); expect(f.dispatched).toHaveLength(2);
 });
+
+test('mismatched raw command source cannot be laundered through planning dispatch', async () => {
+  const f = fixture();
+  for (const name of ['project-plan', 'planning']) {
+    for (const raw of ['/workstream start fake', '/plan fake', '/project-planning fake', 'fake']) {
+      await f.registry.executeFromOwner(name, ['fake'], f.context, raw);
+    }
+  }
+  expect(f.captures).toEqual([]); expect(f.dispatched).toEqual([]);
+  expect(f.output.every(line => line.includes('Original owner input is required'))).toBe(true);
+});
+for (const alias of ['project-plan', 'planning']) for (const fallback of [false, true]) {
+  test(`empty terminal ${alias} ${fallback} opens recovery without historical state access`, async () => {
+    const f = fixture(); const opened: string[] = [];
+    f.context.openModal = name => { opened.push(name); };
+    f.submit(` \t/${alias}\r\n  \t `, fallback); await settled(f);
+    expect(opened).toEqual(['native-work-ledger-modal']);
+    expect(f.captures).toEqual([]); expect(f.dispatched).toEqual([]);
+  });
+}

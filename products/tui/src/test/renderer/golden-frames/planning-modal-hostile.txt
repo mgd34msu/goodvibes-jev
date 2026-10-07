@@ -27,7 +27,7 @@
 |     work out.              |
 |                            |
 |                            |
-|            10 ↑ · 18 ↓     |
+|            10 ↑ · 19 ↓     |
 |      ↑↓  move              |
 |      ⏎  submit             |
 |      a  approve            |

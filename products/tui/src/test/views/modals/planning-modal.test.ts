@@ -131,10 +131,10 @@ describe('planning modal surface', () => {
     expect(args.slice(6).join(' ')).toBe('Use a focused first-pass scope for this goal.');
   });
 
-  // an answer to a SYNTHETIC readiness question (no open-question record
-  // to target) is submitted to chat via submitInput, and the modal CLOSES BEFORE
-  // the turn starts (modal-liveness ordering guard). No /plan command is dispatched.
-  test('an answer to a synthetic question uses submitInput and closes the modal first', async () => {
+  // A synthetic suggestion (no saved question to target) uses source-less
+  // submitInput, which the runtime treats as derived input, not a bound answer
+  // or a guaranteed turn. Close happens before handoff; no command is sent.
+  test('a synthetic suggestion uses derived-input handoff and closes the modal first', async () => {
     const state: ProjectPlanningState = { ...noQuestionState(), readiness: 'needs-user-input', openQuestions: [] };
     const syntheticQuestion = { id: 'missing-scope', prompt: 'What is in scope for this pass?', status: undefined };
     const service: PlanningModalService = {
@@ -142,6 +142,7 @@ describe('planning modal surface', () => {
       evaluate: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', readiness: 'needs-user-input', gaps: [], nextQuestion: syntheticQuestion, state }),
     };
     const surface = await warm(service);
+    expect(tabText(surface.buildView(), 'planning')).toContain('Other suggestions enter native intake as derived input; they may be held and do not save a historical answer.');
     const cap = captureCommands();
     const order: string[] = [];
     // Captured on an object (not a bare `let`) so TS tracks the string | null
@@ -153,20 +154,23 @@ describe('planning modal surface', () => {
       submitInput: (t) => { order.push('submit'); submission.text = t; },
     }));
     await flush();
-    expect(cap.calls).toEqual([]); // no /project-plan command ; this is a real chat turn
+    expect(cap.calls).toEqual([]); // No revision-bound historical write or turn guarantee.
     expect(submission.text).toBe('Use a focused first-pass scope for this goal.');
-    expect(order).toEqual(['close', 'submit']); // close BEFORE the turn starts
+    expect(order).toEqual(['close', 'submit']); // Close before source-less input handoff.
   });
 
-  test('custom answer returns to the existing chat composer without an automatic submission', async () => {
+  test('custom answer returns manual historical-command guidance without submitting or binding the composer', async () => {
     const state: ProjectPlanningState = { ...noQuestionState(), openQuestions: [{ id: 'q1', prompt: 'What is the scope?', status: 'open' }] };
     const surface = await warm(serviceWithState(state));
+    const text = tabText(surface.buildView(), 'planning');
+    expect(text).toContain('Enter records saved-question answers or approval on this historical revision.');
+    expect(text).toContain('Custom shows /project-plan answer guidance. Plain text is a separate native request.');
     const printed: string[] = [];
     const cap = captureCommands();
     const order: string[] = [];
     surface.onAction?.('submit', actionCtx(answerRow(surface, 'custom'), { ...cap.extra, close: () => order.push('close'), print: (m) => { order.push('print'); printed.push(m); }, submitInput: () => order.push('submit') }));
     expect(cap.calls).toEqual([]);
-    expect(printed).toEqual(['Type your answer in the chat composer.']);
+    expect(printed).toEqual(['Reopen /project-plan history to review the current saved question. Use /project-plan answer <question-number|question-id> <your answer> for a saved historical question. This targets the current saved plan. Plain text enters native intake as a separate request.']);
     expect(order).toEqual(['close', 'print']);
   });
 

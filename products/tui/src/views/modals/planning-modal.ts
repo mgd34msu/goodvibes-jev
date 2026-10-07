@@ -27,13 +27,16 @@ import { selectedPlanningTarget } from '../../input/commands/planning-action-tar
 // Historical answers and approval remain revision-bound. Approval here does
 // not create a native execution grant or migrate a historical record.
 // - Canned answers to saved open questions dispatch /project-plan answer.
-// - Custom answers return to chat. Synthetic readiness answers start a real
-//   chat turn only AFTER the modal closes (the modal-liveness ordering guard).
+// - Custom opens manual /project-plan answer guidance; the composer does not
+//   inherit the selected revision. Plain text is a separate native request.
+// - Synthetic suggestions close the modal before source-less submitInput; the
+//   runtime treats them as derived input and may hold them, not start a turn.
 // - Dismiss is a confirmed /project-plan dismiss action; Esc only closes.
 // ---------------------------------------------------------------------------
 
 const HISTORICAL_TITLE = 'Historical planning';
 const HISTORICAL_BOUNDARY = 'Historical approval does not grant native execution or migrate records.';
+const CUSTOM_ANSWER_GUIDANCE = 'Reopen /project-plan history to review the current saved question. Use /project-plan answer <question-number|question-id> <your answer> for a saved historical question. This targets the current saved plan. Plain text enters native intake as a separate request.';
 
 export type PlanningModalService = Pick<ProjectPlanningService, 'status' | 'getState' | 'listDecisions' | 'getLanguage' | 'evaluate'>;
 
@@ -271,12 +274,16 @@ class PlanningModalSurface implements ConfigModalSurface {
       if (this.suggestions === 'unavailable') line({ content: 'Answer suggestions unavailable. You can still answer, approve this historical plan, or dismiss.', fg: MODAL_TONES.dim });
       for (const action of actions) {
         rows.push(action.id === 'custom'
-          ? { id: this.rowId(action), label: 'Type a custom answer - Close history and answer in the chat composer.' }
+          ? { id: this.rowId(action), label: 'Custom historical answer - Close history for /project-plan answer guidance.' }
           : { id: this.rowId(action), label: action.kind === 'approve'
             ? 'Approve historical plan - Record approval for this revision only; no native execution grant.'
             : `${action.label} - ${action.detail}`, ...(action.disabled ? { selectable: false } : {}) });
       }
-      line({ content: 'Enter records a suggested answer; the custom row returns to the chat composer.', fg: undefined });
+      const savedQuestion = state.openQuestions.some((saved) => saved.id === question.id && (saved.status ?? 'open') === 'open');
+      line({ content: savedQuestion
+        ? 'Enter records saved-question answers or approval on this historical revision.'
+        : 'Approval records this historical revision. Other suggestions enter native intake as derived input; they may be held and do not save a historical answer.' });
+      line({ content: 'Custom shows /project-plan answer guidance. Plain text is a separate native request.' });
     }
 
     for (const l of buildGapsLines(evaluation)) line(l);
@@ -344,7 +351,7 @@ class PlanningModalSurface implements ConfigModalSurface {
     const action = ctx.row ? actions.find((a) => this.rowId(a) === ctx.row!.id) : undefined;
     if (action?.id === 'custom') {
       ctx.close();
-      ctx.print('Type your answer in the chat composer.');
+      ctx.print(CUSTOM_ANSWER_GUIDANCE);
       return;
     }
     if (!action || action.disabled) { ctx.print('Choose an answer option.'); return; }
@@ -412,9 +419,10 @@ class PlanningModalSurface implements ConfigModalSurface {
       return;
     }
 
-    // A selected answer to a synthetic readiness question with no open-question
-    // record goes to chat as a real turn.
-    // ORDERING GUARD: close the modal BEFORE the turn starts (modal-liveness).
+    // A synthetic readiness suggestion has no saved question to answer. Source-less
+    // submitInput is derived input to native intake, which may hold it; this
+    // does not write a historical answer or establish direct-owner provenance.
+    // ORDERING GUARD: close the modal BEFORE handing off the suggestion.
     if (ctx.submitInput) {
       ctx.close();
       ctx.submitInput(answerText);
