@@ -156,3 +156,31 @@ test('a gate cannot deadlock close by returning that same promise as its cleanup
   await registration.ready;
   await expect(registration.close()).rejects.toBeInstanceOf(AggregateError);
 });
+
+test('a product account guard withholds stored rows and sanitizes its rejection', async () => {
+  const { ctx } = fixture(); let permitted = true;
+  const registration = registerInboxSurface(ctx, { adapters: new Map([['fixture', adapter()]]),
+    assertReadCurrent() { if (!permitted) throw new Error('private-account-marker'); },
+  });
+  try {
+    await registration.ready; expect(await invoke(ctx)).toMatchObject({ items: [] }); permitted = false;
+    await expect(invoke(ctx)).rejects.toMatchObject({ code: 'INBOX_SCOPE_UNAVAILABLE', message: 'Inbox account scope is unavailable' });
+  } finally { await registration.close(); }
+});
+
+test('account scope is rechecked after the mirror snapshot before returning rows', async () => {
+  const { ctx } = fixture(); let permitted = true; let reads = 0;
+  const original = InboxCursorStore.prototype.listItems;
+  const query = spyOn(InboxCursorStore.prototype, 'listItems').mockImplementation(function (this: InboxCursorStore, ...args) {
+    const result = original.apply(this, args);
+    reads += 1;
+    queueMicrotask(() => { permitted = false; });
+    return result;
+  });
+  const registration = registerInboxSurface(ctx, { adapters: new Map(), assertReadCurrent() { if (!permitted) throw new Error('private'); } });
+  const reading = invoke(ctx); void reading.catch(() => {});
+  try {
+    await expect(reading).rejects.toMatchObject({ code: 'INBOX_SCOPE_UNAVAILABLE' });
+    expect(reads).toBe(1);
+  } finally { await Promise.allSettled([reading, registration.close()]); query.mockRestore(); }
+});

@@ -1,5 +1,11 @@
 # Private Slack inbox adapter (THE-112)
 
+Current adoption: [the explicit Slack composition](daemon-slack-inbox-composition.md)
+now supplies a real HTTP owner, protected content mapper and single-account,
+single-node daemon factory. The original bounded adapter audit below records
+the historical prerequisite and its then-pending callers. Default all-provider
+composition and live proof remain unfinished.
+
 ## Scope and source
 
 - Issue: [THE-112](https://linear.app/the-artificery/issue/THE-112/hoist-private-slack-inbox-adapter), a THE-13 child related to THE-18.
