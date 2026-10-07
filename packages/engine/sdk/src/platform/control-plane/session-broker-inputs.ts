@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SubmitSharedSessionMessageInput } from './session-types.js';
 import type { SharedSessionInputIntent, SharedSessionInputRecord, SharedSessionSurfaceReplyBinding } from './session-intents.js';
+import { isDelegatedSessionInput } from './session-intents.js';
 import type { SharedSessionRecord } from './session-types.js';
 import { countPendingSessionInputs, sortInputs } from './session-broker-state.js';
 import { bindSharedSessionAgent } from './session-broker-sessions.js';
@@ -98,7 +99,7 @@ export function claimNextQueuedSessionInput(
   agentId: string,
 ): SharedSessionInputRecord | null {
   const bucket = store.inputs.get(sessionId) ?? [];
-  const next = bucket.find((entry) => entry.state === 'queued');
+  const next = bucket.find((entry) => entry.state === 'queued' && !isDelegatedSessionInput(entry));
   if (!next) return null;
   const result = updateSharedSessionInput(store, sessionId, next.id, (entry) => ({
     ...entry,
@@ -121,6 +122,8 @@ export function filterSessionInputsSince(
   options: { readonly state?: SharedSessionInputRecord['state'] | undefined; readonly since?: number | undefined; readonly limit?: number | undefined },
 ): SharedSessionInputRecord[] {
   const filtered = bucket.filter((entry) => {
+    // Polling a persisted marker must never recover process-local authority.
+    if (isDelegatedSessionInput(entry)) return false;
     if (options.state !== undefined && entry.state !== options.state) return false;
     if (options.since !== undefined && entry.createdAt <= options.since) return false;
     return true;
@@ -140,6 +143,7 @@ export function markSurfaceInputDelivered(
   inputId: string,
   consumed: boolean,
 ): SharedSessionInputRecord | null {
+  if (store.inputs.get(sessionId)?.some(entry => entry.id === inputId && isDelegatedSessionInput(entry))) return null;
   return updateSharedSessionInput(store, sessionId, inputId, (entry) => {
     if (consumed) {
       if (entry.state !== 'queued' && entry.state !== 'delivered') return entry;
@@ -218,6 +222,7 @@ export function finalizeAgentSessionInputs(
   const updatedInputs: SharedSessionInputRecord[] = [];
   for (let index = 0; index < bucket.length; index += 1) {
     const entry = bucket[index]!;
+    if (isDelegatedSessionInput(entry)) continue;
     if (entry.activeAgentId !== agentId) continue;
     if (entry.state !== 'delivered' && entry.state !== 'spawned') continue;
     bucket[index] = {

@@ -71,6 +71,8 @@ export type TrySpawnAgentFn = (
 ) => TrySpawnAgentResult;
 
 export interface SurfaceAdapterContext {
+  /** Explicit daemon-owned selected lane; absence preserves existing Telegram behavior. */
+  readonly delegatedTelegram?: import('../daemon/delegated-telegram-intake.js').DelegatedTelegramAdapter | undefined;
   readonly serviceRegistry: ServiceRegistry;
   readonly secretsManager?: Pick<SecretsManager, 'get' | 'getGlobalHome'> | undefined;
   readonly configManager: {

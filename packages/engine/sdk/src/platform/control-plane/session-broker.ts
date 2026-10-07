@@ -73,6 +73,8 @@ import {
 import { applyBootOrphanSweep, sweepSharedSessions } from './session-broker-gc.js';
 import { SharedSessionRuntimeBusBridge } from './session-broker-runtime-bus.js';
 import { handleSharedSessionIntent } from './session-broker-intent.js';
+import { isDelegatedSessionInput } from './session-intents.js';
+import { submitDelegatedSessionMessage, type DelegatedSessionInputBinding, type DelegatedSessionSubmission } from './session-broker-delegated.js';
 
 const MAX_PERSISTED_MESSAGES = 2_000;
 const MAX_CONTINUATION_MESSAGES = 16;
@@ -483,6 +485,23 @@ export class SharedSessionBroker {
     return await this.handleIntent('submit', input, true);
   }
 
+  /** Host-private, synchronous original-source binding before message publication.
+   * Supply a safe placeholder body only; original text belongs to the source owner. */
+  async submitDelegatedMessage(input: SubmitSharedSessionMessageInput,
+    onQueued: (input: SharedSessionInputRecord) => DelegatedSessionInputBinding): Promise<DelegatedSessionSubmission> {
+    return submitDelegatedSessionMessage({
+      submit: (message, bind) => this.handleIntent('submit', message, false, bind),
+      read: (sessionId, inputId) => this.inputs.get(sessionId)?.find(entry => entry.id === inputId) ?? null,
+      complete: async (sessionId, inputId) => {
+        const updated = updateSharedSessionInput(this.sessionInputStore(), sessionId, inputId,
+          entry => ({ ...entry, state: 'completed', updatedAt: Date.now() }))!;
+        await this.persist(true);
+        this.publishInputLifecycleEvent('session-input-completed', updated);
+        return updated;
+      },
+    }, input, onQueued);
+  }
+
   async steerMessage(input: SteerSharedSessionMessageInput): Promise<SharedSessionSubmission> {
     return await this.handleIntent('steer', input, input.allowSpawnFallback === true);
   }
@@ -668,10 +687,10 @@ export class SharedSessionBroker {
 
   /** Snapshot now, write in call order, `gcSweep` persists unawaited and would
    * otherwise land a stale view over a `cancelInput`. See StoreWriteQueue. */
-  private async persist(): Promise<void> {
+  private async persist(durable = false): Promise<void> {
     const state = { sessions: this.sessions, messages: this.messages, inputs: this.inputs };
     const snapshot = createSessionBrokerSnapshot(state, MAX_PERSISTED_MESSAGES);
-    await this.writes.run(() => this.store.persist(snapshot));
+    await this.writes.run(() => this.store.persist(snapshot, { durable }));
   }
 
   private publishUpdate(event: string, payload: unknown): void {
@@ -695,6 +714,7 @@ export class SharedSessionBroker {
     intent: SharedSessionInputIntent,
     input: SubmitSharedSessionMessageInput,
     allowSpawnFallback: boolean,
+    onQueued?: (input: SharedSessionInputRecord) => void,
   ): Promise<SharedSessionSubmission> {
     return handleSharedSessionIntent(
       {
@@ -705,10 +725,11 @@ export class SharedSessionBroker {
         createSession: (i) => this.createSession(i),
         attachParticipantAndRoute: (session, i, binding) => this.attachParticipantAndRoute(session, i, binding),
         appendMessage: (sessionId, i) => this.appendMessage(sessionId, i),
+        appendUnpublishedMessage: (sessionId, i) => appendSharedSessionMessage(this.messageStore(), { sessionId, ...i }, MAX_PERSISTED_MESSAGES),
         sessionInputStore: () => this.sessionInputStore(),
         publishInputLifecycleEvent: (event, i, extra) => this.publishInputLifecycleEvent(event, i, extra),
         resolveActiveAgentId: (session) => this.resolveActiveAgentId(session),
-        persist: () => this.persist(),
+        persist: (durable) => this.persist(durable),
         publishUpdate: (event, payload) => this.publishUpdate(event, payload),
         announceSurfaceReply: (binding) => this.announceSurfaceReply(binding),
         ...(this.surfaceNoticeSender ? { sendSurfaceNotice: this.surfaceNoticeSender } : {}),
@@ -718,6 +739,7 @@ export class SharedSessionBroker {
       intent,
       input,
       allowSpawnFallback,
+      onQueued,
     );
   }
 
@@ -817,7 +839,7 @@ export class SharedSessionBroker {
 
   private async runQueuedFollowUp(sessionId: string): Promise<{ input: SharedSessionInputRecord; agentId: string } | null> {
     const bucket = this.inputs.get(sessionId) ?? [];
-    const next = bucket.find((entry) => entry.intent === 'follow-up' && entry.state === 'queued');
+    const next = bucket.find((entry) => entry.intent === 'follow-up' && entry.state === 'queued' && !isDelegatedSessionInput(entry));
     if (!next) return null;
     if (!this.continuationRunner) {
       // A queued follow-up with nobody to run it is a message that will never

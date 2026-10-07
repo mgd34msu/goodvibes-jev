@@ -149,6 +149,7 @@ export async function processTelegramUpdate(
     });
   }
   const threadId = readNumberString(message.message_thread_id);
+  const delegated = await context.delegatedTelegram?.selects(chatId, threadId) ?? false;
   const botUsername = readString(context.configManager.get('surfaces.telegram.botUsername'));
   const botHandle = normalizeBotUsername(botUsername);
   const task = extractTelegramTask(message, botUsername);
@@ -166,7 +167,7 @@ export async function processTelegramUpdate(
     threadId,
     workspaceId: readString(chat?.username),
     conversationKind: telegramConversationKind(readString(chat?.type), threadId),
-    text: task || text,
+    ...(delegated ? {} : { text: task || text }),
     mentioned,
     metadata: {
       updateId: readNumberString(payload.update_id),
@@ -194,6 +195,17 @@ export async function processTelegramUpdate(
       updateId: readNumberString(payload.update_id),
     },
   });
+
+  if (delegated) {
+    // Keep the original exact and lazy. Neither policy audits nor command/reply
+    // matching sees raw selected content; the host owns retention and approval.
+    const result = await context.delegatedTelegram!.accept({ binding, chatId, threadId,
+      edited: Boolean(payload.edited_message || payload.edited_channel_post),
+      senderId: readNumberString(from?.id), providerMessageId: readNumberString(message.message_id) ?? '',
+      readOriginal: () => typeof message.text === 'string' ? message.text : typeof message.caption === 'string' ? message.caption : '',
+    });
+    return Response.json({ ok: true, acknowledged: true, queued: false, ...result });
+  }
 
   // Standard Telegram bot commands are onboarding, not work. This runs AFTER
   // the route binding above (so the reply has a bound conversation to land in)

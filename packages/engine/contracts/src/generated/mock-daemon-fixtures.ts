@@ -10100,6 +10100,874 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "recallIsSyntheticOnly": false
     }
   },
+  "inbound.telegram.cancel": {
+    "methodId": "inbound.telegram.cancel",
+    "http": {
+      "method": "POST",
+      "path": "/api/inbound/telegram/cancel"
+    },
+    "status": 200,
+    "body": {
+      "outcome": "sample",
+      "reason": "sample",
+      "ref": {
+        "sessionId": "sample",
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "requestId": "sample"
+      },
+      "configurationId": "sample",
+      "expiresAt": 0,
+      "pendingRetentionMs": 0,
+      "processing": "sample",
+      "restart": "sample",
+      "route": "sample",
+      "execution": "not-started",
+      "approvalId": "sample",
+      "source": "sample",
+      "recovery": "sample",
+      "record": {
+        "id": "sample",
+        "ref": {
+          "sessionId": "sample",
+          "inputId": "sample",
+          "sourceId": "sample",
+          "sourceRevision": "sample",
+          "requestId": "sample"
+        },
+        "origin": {
+          "kind": "external-original",
+          "accountId": "sample",
+          "accountRevision": "sample",
+          "routeId": "sample",
+          "routeRevision": "sample"
+        },
+        "configurationId": "sample",
+        "ownerRevision": "sample",
+        "workspaceRevision": "sample",
+        "approvalId": "sample",
+        "choices": {
+          "processingPurpose": "accept-external-message-for-owner-review",
+          "sourceRetention": "memory-only-until-review-close-or-deadline",
+          "sourceRetentionMs": 0,
+          "derivedRecord": "external-source-reference-only-v1",
+          "derivedRecordRetentionMs": 0,
+          "execution": "none",
+          "ownerMayReadOriginal": true
+        },
+        "acceptedAt": 0,
+        "sourceExpiresAt": 0,
+        "recordExpiresAt": 0,
+        "state": "accepted-for-review",
+        "execution": "not-started"
+      },
+      "records": [
+        {
+          "id": "sample",
+          "ref": {
+            "sessionId": "sample",
+            "inputId": "sample",
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "requestId": "sample"
+          },
+          "origin": {
+            "kind": "external-original",
+            "accountId": "sample",
+            "accountRevision": "sample",
+            "routeId": "sample",
+            "routeRevision": "sample"
+          },
+          "configurationId": "sample",
+          "ownerRevision": "sample",
+          "workspaceRevision": "sample",
+          "approvalId": "sample",
+          "choices": {
+            "processingPurpose": "accept-external-message-for-owner-review",
+            "sourceRetention": "memory-only-until-review-close-or-deadline",
+            "sourceRetentionMs": 0,
+            "derivedRecord": "external-source-reference-only-v1",
+            "derivedRecordRetentionMs": 0,
+            "execution": "none",
+            "ownerMayReadOriginal": true
+          },
+          "acceptedAt": 0,
+          "sourceExpiresAt": 0,
+          "recordExpiresAt": 0,
+          "state": "accepted-for-review",
+          "execution": "not-started"
+        }
+      ],
+      "pending": [
+        {
+          "ref": {
+            "sessionId": "sample",
+            "inputId": "sample",
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "requestId": "sample"
+          },
+          "approvalId": "sample",
+          "sourceExpiresAt": 0,
+          "outcome": "sample"
+        }
+      ],
+      "original": {
+        "text": "sample",
+        "unsupportedSources": [
+          {
+            "kind": "sample",
+            "label": "sample"
+          }
+        ]
+      }
+    }
+  },
+  "inbound.telegram.configure": {
+    "methodId": "inbound.telegram.configure",
+    "http": {
+      "method": "POST",
+      "path": "/api/inbound/telegram/configure"
+    },
+    "status": 200,
+    "body": {
+      "outcome": "sample",
+      "reason": "sample",
+      "ref": {
+        "sessionId": "sample",
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "requestId": "sample"
+      },
+      "configurationId": "sample",
+      "expiresAt": 0,
+      "pendingRetentionMs": 0,
+      "processing": "sample",
+      "restart": "sample",
+      "route": "sample",
+      "execution": "not-started",
+      "approvalId": "sample",
+      "source": "sample",
+      "recovery": "sample",
+      "record": {
+        "id": "sample",
+        "ref": {
+          "sessionId": "sample",
+          "inputId": "sample",
+          "sourceId": "sample",
+          "sourceRevision": "sample",
+          "requestId": "sample"
+        },
+        "origin": {
+          "kind": "external-original",
+          "accountId": "sample",
+          "accountRevision": "sample",
+          "routeId": "sample",
+          "routeRevision": "sample"
+        },
+        "configurationId": "sample",
+        "ownerRevision": "sample",
+        "workspaceRevision": "sample",
+        "approvalId": "sample",
+        "choices": {
+          "processingPurpose": "accept-external-message-for-owner-review",
+          "sourceRetention": "memory-only-until-review-close-or-deadline",
+          "sourceRetentionMs": 0,
+          "derivedRecord": "external-source-reference-only-v1",
+          "derivedRecordRetentionMs": 0,
+          "execution": "none",
+          "ownerMayReadOriginal": true
+        },
+        "acceptedAt": 0,
+        "sourceExpiresAt": 0,
+        "recordExpiresAt": 0,
+        "state": "accepted-for-review",
+        "execution": "not-started"
+      },
+      "records": [
+        {
+          "id": "sample",
+          "ref": {
+            "sessionId": "sample",
+            "inputId": "sample",
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "requestId": "sample"
+          },
+          "origin": {
+            "kind": "external-original",
+            "accountId": "sample",
+            "accountRevision": "sample",
+            "routeId": "sample",
+            "routeRevision": "sample"
+          },
+          "configurationId": "sample",
+          "ownerRevision": "sample",
+          "workspaceRevision": "sample",
+          "approvalId": "sample",
+          "choices": {
+            "processingPurpose": "accept-external-message-for-owner-review",
+            "sourceRetention": "memory-only-until-review-close-or-deadline",
+            "sourceRetentionMs": 0,
+            "derivedRecord": "external-source-reference-only-v1",
+            "derivedRecordRetentionMs": 0,
+            "execution": "none",
+            "ownerMayReadOriginal": true
+          },
+          "acceptedAt": 0,
+          "sourceExpiresAt": 0,
+          "recordExpiresAt": 0,
+          "state": "accepted-for-review",
+          "execution": "not-started"
+        }
+      ],
+      "pending": [
+        {
+          "ref": {
+            "sessionId": "sample",
+            "inputId": "sample",
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "requestId": "sample"
+          },
+          "approvalId": "sample",
+          "sourceExpiresAt": 0,
+          "outcome": "sample"
+        }
+      ],
+      "original": {
+        "text": "sample",
+        "unsupportedSources": [
+          {
+            "kind": "sample",
+            "label": "sample"
+          }
+        ]
+      }
+    }
+  },
+  "inbound.telegram.decide": {
+    "methodId": "inbound.telegram.decide",
+    "http": {
+      "method": "POST",
+      "path": "/api/inbound/telegram/decide"
+    },
+    "status": 200,
+    "body": {
+      "outcome": "sample",
+      "reason": "sample",
+      "ref": {
+        "sessionId": "sample",
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "requestId": "sample"
+      },
+      "configurationId": "sample",
+      "expiresAt": 0,
+      "pendingRetentionMs": 0,
+      "processing": "sample",
+      "restart": "sample",
+      "route": "sample",
+      "execution": "not-started",
+      "approvalId": "sample",
+      "source": "sample",
+      "recovery": "sample",
+      "record": {
+        "id": "sample",
+        "ref": {
+          "sessionId": "sample",
+          "inputId": "sample",
+          "sourceId": "sample",
+          "sourceRevision": "sample",
+          "requestId": "sample"
+        },
+        "origin": {
+          "kind": "external-original",
+          "accountId": "sample",
+          "accountRevision": "sample",
+          "routeId": "sample",
+          "routeRevision": "sample"
+        },
+        "configurationId": "sample",
+        "ownerRevision": "sample",
+        "workspaceRevision": "sample",
+        "approvalId": "sample",
+        "choices": {
+          "processingPurpose": "accept-external-message-for-owner-review",
+          "sourceRetention": "memory-only-until-review-close-or-deadline",
+          "sourceRetentionMs": 0,
+          "derivedRecord": "external-source-reference-only-v1",
+          "derivedRecordRetentionMs": 0,
+          "execution": "none",
+          "ownerMayReadOriginal": true
+        },
+        "acceptedAt": 0,
+        "sourceExpiresAt": 0,
+        "recordExpiresAt": 0,
+        "state": "accepted-for-review",
+        "execution": "not-started"
+      },
+      "records": [
+        {
+          "id": "sample",
+          "ref": {
+            "sessionId": "sample",
+            "inputId": "sample",
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "requestId": "sample"
+          },
+          "origin": {
+            "kind": "external-original",
+            "accountId": "sample",
+            "accountRevision": "sample",
+            "routeId": "sample",
+            "routeRevision": "sample"
+          },
+          "configurationId": "sample",
+          "ownerRevision": "sample",
+          "workspaceRevision": "sample",
+          "approvalId": "sample",
+          "choices": {
+            "processingPurpose": "accept-external-message-for-owner-review",
+            "sourceRetention": "memory-only-until-review-close-or-deadline",
+            "sourceRetentionMs": 0,
+            "derivedRecord": "external-source-reference-only-v1",
+            "derivedRecordRetentionMs": 0,
+            "execution": "none",
+            "ownerMayReadOriginal": true
+          },
+          "acceptedAt": 0,
+          "sourceExpiresAt": 0,
+          "recordExpiresAt": 0,
+          "state": "accepted-for-review",
+          "execution": "not-started"
+        }
+      ],
+      "pending": [
+        {
+          "ref": {
+            "sessionId": "sample",
+            "inputId": "sample",
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "requestId": "sample"
+          },
+          "approvalId": "sample",
+          "sourceExpiresAt": 0,
+          "outcome": "sample"
+        }
+      ],
+      "original": {
+        "text": "sample",
+        "unsupportedSources": [
+          {
+            "kind": "sample",
+            "label": "sample"
+          }
+        ]
+      }
+    }
+  },
+  "inbound.telegram.list": {
+    "methodId": "inbound.telegram.list",
+    "http": {
+      "method": "POST",
+      "path": "/api/inbound/telegram/list"
+    },
+    "status": 200,
+    "body": {
+      "outcome": "sample",
+      "reason": "sample",
+      "ref": {
+        "sessionId": "sample",
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "requestId": "sample"
+      },
+      "configurationId": "sample",
+      "expiresAt": 0,
+      "pendingRetentionMs": 0,
+      "processing": "sample",
+      "restart": "sample",
+      "route": "sample",
+      "execution": "not-started",
+      "approvalId": "sample",
+      "source": "sample",
+      "recovery": "sample",
+      "record": {
+        "id": "sample",
+        "ref": {
+          "sessionId": "sample",
+          "inputId": "sample",
+          "sourceId": "sample",
+          "sourceRevision": "sample",
+          "requestId": "sample"
+        },
+        "origin": {
+          "kind": "external-original",
+          "accountId": "sample",
+          "accountRevision": "sample",
+          "routeId": "sample",
+          "routeRevision": "sample"
+        },
+        "configurationId": "sample",
+        "ownerRevision": "sample",
+        "workspaceRevision": "sample",
+        "approvalId": "sample",
+        "choices": {
+          "processingPurpose": "accept-external-message-for-owner-review",
+          "sourceRetention": "memory-only-until-review-close-or-deadline",
+          "sourceRetentionMs": 0,
+          "derivedRecord": "external-source-reference-only-v1",
+          "derivedRecordRetentionMs": 0,
+          "execution": "none",
+          "ownerMayReadOriginal": true
+        },
+        "acceptedAt": 0,
+        "sourceExpiresAt": 0,
+        "recordExpiresAt": 0,
+        "state": "accepted-for-review",
+        "execution": "not-started"
+      },
+      "records": [
+        {
+          "id": "sample",
+          "ref": {
+            "sessionId": "sample",
+            "inputId": "sample",
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "requestId": "sample"
+          },
+          "origin": {
+            "kind": "external-original",
+            "accountId": "sample",
+            "accountRevision": "sample",
+            "routeId": "sample",
+            "routeRevision": "sample"
+          },
+          "configurationId": "sample",
+          "ownerRevision": "sample",
+          "workspaceRevision": "sample",
+          "approvalId": "sample",
+          "choices": {
+            "processingPurpose": "accept-external-message-for-owner-review",
+            "sourceRetention": "memory-only-until-review-close-or-deadline",
+            "sourceRetentionMs": 0,
+            "derivedRecord": "external-source-reference-only-v1",
+            "derivedRecordRetentionMs": 0,
+            "execution": "none",
+            "ownerMayReadOriginal": true
+          },
+          "acceptedAt": 0,
+          "sourceExpiresAt": 0,
+          "recordExpiresAt": 0,
+          "state": "accepted-for-review",
+          "execution": "not-started"
+        }
+      ],
+      "pending": [
+        {
+          "ref": {
+            "sessionId": "sample",
+            "inputId": "sample",
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "requestId": "sample"
+          },
+          "approvalId": "sample",
+          "sourceExpiresAt": 0,
+          "outcome": "sample"
+        }
+      ],
+      "original": {
+        "text": "sample",
+        "unsupportedSources": [
+          {
+            "kind": "sample",
+            "label": "sample"
+          }
+        ]
+      }
+    }
+  },
+  "inbound.telegram.read": {
+    "methodId": "inbound.telegram.read",
+    "http": {
+      "method": "POST",
+      "path": "/api/inbound/telegram/read"
+    },
+    "status": 200,
+    "body": {
+      "outcome": "sample",
+      "reason": "sample",
+      "ref": {
+        "sessionId": "sample",
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "requestId": "sample"
+      },
+      "configurationId": "sample",
+      "expiresAt": 0,
+      "pendingRetentionMs": 0,
+      "processing": "sample",
+      "restart": "sample",
+      "route": "sample",
+      "execution": "not-started",
+      "approvalId": "sample",
+      "source": "sample",
+      "recovery": "sample",
+      "record": {
+        "id": "sample",
+        "ref": {
+          "sessionId": "sample",
+          "inputId": "sample",
+          "sourceId": "sample",
+          "sourceRevision": "sample",
+          "requestId": "sample"
+        },
+        "origin": {
+          "kind": "external-original",
+          "accountId": "sample",
+          "accountRevision": "sample",
+          "routeId": "sample",
+          "routeRevision": "sample"
+        },
+        "configurationId": "sample",
+        "ownerRevision": "sample",
+        "workspaceRevision": "sample",
+        "approvalId": "sample",
+        "choices": {
+          "processingPurpose": "accept-external-message-for-owner-review",
+          "sourceRetention": "memory-only-until-review-close-or-deadline",
+          "sourceRetentionMs": 0,
+          "derivedRecord": "external-source-reference-only-v1",
+          "derivedRecordRetentionMs": 0,
+          "execution": "none",
+          "ownerMayReadOriginal": true
+        },
+        "acceptedAt": 0,
+        "sourceExpiresAt": 0,
+        "recordExpiresAt": 0,
+        "state": "accepted-for-review",
+        "execution": "not-started"
+      },
+      "records": [
+        {
+          "id": "sample",
+          "ref": {
+            "sessionId": "sample",
+            "inputId": "sample",
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "requestId": "sample"
+          },
+          "origin": {
+            "kind": "external-original",
+            "accountId": "sample",
+            "accountRevision": "sample",
+            "routeId": "sample",
+            "routeRevision": "sample"
+          },
+          "configurationId": "sample",
+          "ownerRevision": "sample",
+          "workspaceRevision": "sample",
+          "approvalId": "sample",
+          "choices": {
+            "processingPurpose": "accept-external-message-for-owner-review",
+            "sourceRetention": "memory-only-until-review-close-or-deadline",
+            "sourceRetentionMs": 0,
+            "derivedRecord": "external-source-reference-only-v1",
+            "derivedRecordRetentionMs": 0,
+            "execution": "none",
+            "ownerMayReadOriginal": true
+          },
+          "acceptedAt": 0,
+          "sourceExpiresAt": 0,
+          "recordExpiresAt": 0,
+          "state": "accepted-for-review",
+          "execution": "not-started"
+        }
+      ],
+      "pending": [
+        {
+          "ref": {
+            "sessionId": "sample",
+            "inputId": "sample",
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "requestId": "sample"
+          },
+          "approvalId": "sample",
+          "sourceExpiresAt": 0,
+          "outcome": "sample"
+        }
+      ],
+      "original": {
+        "text": "sample",
+        "unsupportedSources": [
+          {
+            "kind": "sample",
+            "label": "sample"
+          }
+        ]
+      }
+    }
+  },
+  "inbound.telegram.revoke": {
+    "methodId": "inbound.telegram.revoke",
+    "http": {
+      "method": "POST",
+      "path": "/api/inbound/telegram/revoke"
+    },
+    "status": 200,
+    "body": {
+      "outcome": "sample",
+      "reason": "sample",
+      "ref": {
+        "sessionId": "sample",
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "requestId": "sample"
+      },
+      "configurationId": "sample",
+      "expiresAt": 0,
+      "pendingRetentionMs": 0,
+      "processing": "sample",
+      "restart": "sample",
+      "route": "sample",
+      "execution": "not-started",
+      "approvalId": "sample",
+      "source": "sample",
+      "recovery": "sample",
+      "record": {
+        "id": "sample",
+        "ref": {
+          "sessionId": "sample",
+          "inputId": "sample",
+          "sourceId": "sample",
+          "sourceRevision": "sample",
+          "requestId": "sample"
+        },
+        "origin": {
+          "kind": "external-original",
+          "accountId": "sample",
+          "accountRevision": "sample",
+          "routeId": "sample",
+          "routeRevision": "sample"
+        },
+        "configurationId": "sample",
+        "ownerRevision": "sample",
+        "workspaceRevision": "sample",
+        "approvalId": "sample",
+        "choices": {
+          "processingPurpose": "accept-external-message-for-owner-review",
+          "sourceRetention": "memory-only-until-review-close-or-deadline",
+          "sourceRetentionMs": 0,
+          "derivedRecord": "external-source-reference-only-v1",
+          "derivedRecordRetentionMs": 0,
+          "execution": "none",
+          "ownerMayReadOriginal": true
+        },
+        "acceptedAt": 0,
+        "sourceExpiresAt": 0,
+        "recordExpiresAt": 0,
+        "state": "accepted-for-review",
+        "execution": "not-started"
+      },
+      "records": [
+        {
+          "id": "sample",
+          "ref": {
+            "sessionId": "sample",
+            "inputId": "sample",
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "requestId": "sample"
+          },
+          "origin": {
+            "kind": "external-original",
+            "accountId": "sample",
+            "accountRevision": "sample",
+            "routeId": "sample",
+            "routeRevision": "sample"
+          },
+          "configurationId": "sample",
+          "ownerRevision": "sample",
+          "workspaceRevision": "sample",
+          "approvalId": "sample",
+          "choices": {
+            "processingPurpose": "accept-external-message-for-owner-review",
+            "sourceRetention": "memory-only-until-review-close-or-deadline",
+            "sourceRetentionMs": 0,
+            "derivedRecord": "external-source-reference-only-v1",
+            "derivedRecordRetentionMs": 0,
+            "execution": "none",
+            "ownerMayReadOriginal": true
+          },
+          "acceptedAt": 0,
+          "sourceExpiresAt": 0,
+          "recordExpiresAt": 0,
+          "state": "accepted-for-review",
+          "execution": "not-started"
+        }
+      ],
+      "pending": [
+        {
+          "ref": {
+            "sessionId": "sample",
+            "inputId": "sample",
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "requestId": "sample"
+          },
+          "approvalId": "sample",
+          "sourceExpiresAt": 0,
+          "outcome": "sample"
+        }
+      ],
+      "original": {
+        "text": "sample",
+        "unsupportedSources": [
+          {
+            "kind": "sample",
+            "label": "sample"
+          }
+        ]
+      }
+    }
+  },
+  "inbound.telegram.status": {
+    "methodId": "inbound.telegram.status",
+    "http": {
+      "method": "POST",
+      "path": "/api/inbound/telegram/status"
+    },
+    "status": 200,
+    "body": {
+      "outcome": "sample",
+      "reason": "sample",
+      "ref": {
+        "sessionId": "sample",
+        "inputId": "sample",
+        "sourceId": "sample",
+        "sourceRevision": "sample",
+        "requestId": "sample"
+      },
+      "configurationId": "sample",
+      "expiresAt": 0,
+      "pendingRetentionMs": 0,
+      "processing": "sample",
+      "restart": "sample",
+      "route": "sample",
+      "execution": "not-started",
+      "approvalId": "sample",
+      "source": "sample",
+      "recovery": "sample",
+      "record": {
+        "id": "sample",
+        "ref": {
+          "sessionId": "sample",
+          "inputId": "sample",
+          "sourceId": "sample",
+          "sourceRevision": "sample",
+          "requestId": "sample"
+        },
+        "origin": {
+          "kind": "external-original",
+          "accountId": "sample",
+          "accountRevision": "sample",
+          "routeId": "sample",
+          "routeRevision": "sample"
+        },
+        "configurationId": "sample",
+        "ownerRevision": "sample",
+        "workspaceRevision": "sample",
+        "approvalId": "sample",
+        "choices": {
+          "processingPurpose": "accept-external-message-for-owner-review",
+          "sourceRetention": "memory-only-until-review-close-or-deadline",
+          "sourceRetentionMs": 0,
+          "derivedRecord": "external-source-reference-only-v1",
+          "derivedRecordRetentionMs": 0,
+          "execution": "none",
+          "ownerMayReadOriginal": true
+        },
+        "acceptedAt": 0,
+        "sourceExpiresAt": 0,
+        "recordExpiresAt": 0,
+        "state": "accepted-for-review",
+        "execution": "not-started"
+      },
+      "records": [
+        {
+          "id": "sample",
+          "ref": {
+            "sessionId": "sample",
+            "inputId": "sample",
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "requestId": "sample"
+          },
+          "origin": {
+            "kind": "external-original",
+            "accountId": "sample",
+            "accountRevision": "sample",
+            "routeId": "sample",
+            "routeRevision": "sample"
+          },
+          "configurationId": "sample",
+          "ownerRevision": "sample",
+          "workspaceRevision": "sample",
+          "approvalId": "sample",
+          "choices": {
+            "processingPurpose": "accept-external-message-for-owner-review",
+            "sourceRetention": "memory-only-until-review-close-or-deadline",
+            "sourceRetentionMs": 0,
+            "derivedRecord": "external-source-reference-only-v1",
+            "derivedRecordRetentionMs": 0,
+            "execution": "none",
+            "ownerMayReadOriginal": true
+          },
+          "acceptedAt": 0,
+          "sourceExpiresAt": 0,
+          "recordExpiresAt": 0,
+          "state": "accepted-for-review",
+          "execution": "not-started"
+        }
+      ],
+      "pending": [
+        {
+          "ref": {
+            "sessionId": "sample",
+            "inputId": "sample",
+            "sourceId": "sample",
+            "sourceRevision": "sample",
+            "requestId": "sample"
+          },
+          "approvalId": "sample",
+          "sourceExpiresAt": 0,
+          "outcome": "sample"
+        }
+      ],
+      "original": {
+        "text": "sample",
+        "unsupportedSources": [
+          {
+            "kind": "sample",
+            "label": "sample"
+          }
+        ]
+      }
+    }
+  },
   "intelligence.snapshot": {
     "methodId": "intelligence.snapshot",
     "http": {

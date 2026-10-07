@@ -45,6 +45,7 @@ interface PendingNtfyChatReply {
 }
 
 interface DaemonSurfaceActionContext {
+  readonly delegatedTelegram?: import('./delegated-telegram-intake.js').DelegatedTelegramIntake | undefined;
   readonly serviceRegistry: ServiceRegistry;
   readonly secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>;
   readonly configManager: ConfigManager;
@@ -128,11 +129,15 @@ export class DaemonSurfaceActionHelper {
     this.paymentReplies = context.paymentReplies ?? new PaymentReplyInbox();
   }
 
+  startDelegatedTelegram(): void { this.context.delegatedTelegram?.startLifecycle(); }
+  closeDelegatedTelegram(): void { this.context.delegatedTelegram?.close(); }
+
   buildSurfaceAdapterContext(): SurfaceAdapterContext {
     // One cell per inbound message (see SurfaceIngressOrigin). authorizeSurfaceIngress
     // fills it; the gated trySpawnAgent below reads it.
     const origin: { current: SurfaceIngressOrigin | null } = { current: null };
     return {
+      delegatedTelegram: this.context.delegatedTelegram,
       serviceRegistry: this.context.serviceRegistry,
       secretsManager: this.context.secretsManager,
       configManager: this.context.configManager,

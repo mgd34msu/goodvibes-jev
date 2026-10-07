@@ -1,3 +1,4 @@
+import { composeDelegatedTelegramIntake } from './facade-delegated-telegram.js';
 import { AgentManager } from '../tools/agent/index.js';
 import { resolveHostBinding } from './host-resolver.js';
 import { composeHostedSessionsForFacade } from './hosted-sessions-composition.js';
@@ -574,6 +575,7 @@ export function createDaemonFacadeCollaborators(
   const workProposals = createFacadeWorkProposalStore(runtime.configManager);
 
   const surfaceActionHelper = new DaemonSurfaceActionHelper({
+    delegatedTelegram: composeDelegatedTelegramIntake(runtime),
     paymentReplies: options.paymentReplies,
     ingressAlarm,
     serviceRegistry: runtime.serviceRegistry,

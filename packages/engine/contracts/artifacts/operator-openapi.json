@@ -3,7 +3,7 @@
   "info": {
     "title": "GoodVibes Operator API",
     "version": "2.0.23",
-    "description": "Generated from the operator contract (packages/contracts/artifacts/operator-contract.json). 535 cataloged methods: 463 with dedicated REST bindings, 72 reachable only through the generic invoke endpoint. 0 methods lack typed SDK client IO and are marked with `x-typed-client-io: false`. They are represented honestly, never omitted. Regenerate with `bun run openapi:generate`; drift fails `contracts:check`."
+    "description": "Generated from the operator contract (packages/contracts/artifacts/operator-contract.json). 542 cataloged methods: 470 with dedicated REST bindings, 72 reachable only through the generic invoke endpoint. 0 methods lack typed SDK client IO and are marked with `x-typed-client-io: false`. They are represented honestly, never omitted. Regenerate with `bun run openapi:generate`; drift fails `contracts:check`."
   },
   "servers": [
     {
@@ -54728,6 +54728,4508 @@
         "x-scopes": [
           "read:health"
         ]
+      }
+    },
+    "/api/inbound/telegram/cancel": {
+      "post": {
+        "operationId": "inbound.telegram.cancel",
+        "summary": "Telegram Delegated Intake cancel",
+        "description": "Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.",
+        "tags": [
+          "inbound"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "inputId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "sourceId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "sourceRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "requestId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "inputId",
+                        "sourceId",
+                        "sourceRevision",
+                        "requestId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "configurationId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "expiresAt": {
+                      "type": "number"
+                    },
+                    "pendingRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "processing": {
+                      "type": "string"
+                    },
+                    "restart": {
+                      "type": "string"
+                    },
+                    "route": {
+                      "type": "string"
+                    },
+                    "execution": {
+                      "type": "string",
+                      "const": "not-started"
+                    },
+                    "approvalId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "recovery": {
+                      "type": "string"
+                    },
+                    "record": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "ref": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "inputId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "sourceId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "sourceRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "requestId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "inputId",
+                            "sourceId",
+                            "sourceRevision",
+                            "requestId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "origin": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "external-original"
+                            },
+                            "accountId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "accountRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "routeId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "routeRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "accountId",
+                            "accountRevision",
+                            "routeId",
+                            "routeRevision"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "configurationId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "ownerRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "workspaceRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "approvalId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "choices": {
+                          "type": "object",
+                          "properties": {
+                            "processingPurpose": {
+                              "type": "string",
+                              "const": "accept-external-message-for-owner-review"
+                            },
+                            "sourceRetention": {
+                              "type": "string",
+                              "const": "memory-only-until-review-close-or-deadline"
+                            },
+                            "sourceRetentionMs": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 2147483647
+                            },
+                            "derivedRecord": {
+                              "type": "string",
+                              "const": "external-source-reference-only-v1"
+                            },
+                            "derivedRecordRetentionMs": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 2147483647
+                            },
+                            "execution": {
+                              "type": "string",
+                              "const": "none"
+                            },
+                            "ownerMayReadOriginal": {
+                              "type": "boolean",
+                              "const": true
+                            }
+                          },
+                          "required": [
+                            "processingPurpose",
+                            "sourceRetention",
+                            "sourceRetentionMs",
+                            "derivedRecord",
+                            "derivedRecordRetentionMs",
+                            "execution",
+                            "ownerMayReadOriginal"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "acceptedAt": {
+                          "type": "number"
+                        },
+                        "sourceExpiresAt": {
+                          "type": "number"
+                        },
+                        "recordExpiresAt": {
+                          "type": "number"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "accepted-for-review",
+                            "cancelled"
+                          ]
+                        },
+                        "execution": {
+                          "type": "string",
+                          "const": "not-started"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "ref",
+                        "origin",
+                        "configurationId",
+                        "ownerRevision",
+                        "workspaceRevision",
+                        "approvalId",
+                        "choices",
+                        "acceptedAt",
+                        "sourceExpiresAt",
+                        "recordExpiresAt",
+                        "state",
+                        "execution"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "records": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "ref": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "inputId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "requestId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "inputId",
+                              "sourceId",
+                              "sourceRevision",
+                              "requestId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "origin": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "external-original"
+                              },
+                              "accountId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "accountRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "routeId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "routeRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "accountId",
+                              "accountRevision",
+                              "routeId",
+                              "routeRevision"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "configurationId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "ownerRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "workspaceRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "approvalId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "choices": {
+                            "type": "object",
+                            "properties": {
+                              "processingPurpose": {
+                                "type": "string",
+                                "const": "accept-external-message-for-owner-review"
+                              },
+                              "sourceRetention": {
+                                "type": "string",
+                                "const": "memory-only-until-review-close-or-deadline"
+                              },
+                              "sourceRetentionMs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2147483647
+                              },
+                              "derivedRecord": {
+                                "type": "string",
+                                "const": "external-source-reference-only-v1"
+                              },
+                              "derivedRecordRetentionMs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2147483647
+                              },
+                              "execution": {
+                                "type": "string",
+                                "const": "none"
+                              },
+                              "ownerMayReadOriginal": {
+                                "type": "boolean",
+                                "const": true
+                              }
+                            },
+                            "required": [
+                              "processingPurpose",
+                              "sourceRetention",
+                              "sourceRetentionMs",
+                              "derivedRecord",
+                              "derivedRecordRetentionMs",
+                              "execution",
+                              "ownerMayReadOriginal"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "acceptedAt": {
+                            "type": "number"
+                          },
+                          "sourceExpiresAt": {
+                            "type": "number"
+                          },
+                          "recordExpiresAt": {
+                            "type": "number"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "accepted-for-review",
+                              "cancelled"
+                            ]
+                          },
+                          "execution": {
+                            "type": "string",
+                            "const": "not-started"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "ref",
+                          "origin",
+                          "configurationId",
+                          "ownerRevision",
+                          "workspaceRevision",
+                          "approvalId",
+                          "choices",
+                          "acceptedAt",
+                          "sourceExpiresAt",
+                          "recordExpiresAt",
+                          "state",
+                          "execution"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "pending": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ref": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "inputId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "requestId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "inputId",
+                              "sourceId",
+                              "sourceRevision",
+                              "requestId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "approvalId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "sourceExpiresAt": {
+                            "type": "number"
+                          },
+                          "outcome": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "ref",
+                          "approvalId",
+                          "sourceExpiresAt",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "original": {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        },
+                        "unsupportedSources": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "label"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "unsupportedSources"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-typed-client-io": true,
+        "x-access": "admin",
+        "x-transport": [
+          "http",
+          "ws"
+        ],
+        "x-scopes": [
+          "read:work-ledger",
+          "write:work-ledger"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "ref"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbound/telegram/configure": {
+      "post": {
+        "operationId": "inbound.telegram.configure",
+        "summary": "Telegram Delegated Intake configure",
+        "description": "Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.",
+        "tags": [
+          "inbound"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "inputId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "sourceId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "sourceRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "requestId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "inputId",
+                        "sourceId",
+                        "sourceRevision",
+                        "requestId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "configurationId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "expiresAt": {
+                      "type": "number"
+                    },
+                    "pendingRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "processing": {
+                      "type": "string"
+                    },
+                    "restart": {
+                      "type": "string"
+                    },
+                    "route": {
+                      "type": "string"
+                    },
+                    "execution": {
+                      "type": "string",
+                      "const": "not-started"
+                    },
+                    "approvalId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "recovery": {
+                      "type": "string"
+                    },
+                    "record": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "ref": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "inputId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "sourceId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "sourceRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "requestId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "inputId",
+                            "sourceId",
+                            "sourceRevision",
+                            "requestId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "origin": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "external-original"
+                            },
+                            "accountId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "accountRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "routeId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "routeRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "accountId",
+                            "accountRevision",
+                            "routeId",
+                            "routeRevision"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "configurationId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "ownerRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "workspaceRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "approvalId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "choices": {
+                          "type": "object",
+                          "properties": {
+                            "processingPurpose": {
+                              "type": "string",
+                              "const": "accept-external-message-for-owner-review"
+                            },
+                            "sourceRetention": {
+                              "type": "string",
+                              "const": "memory-only-until-review-close-or-deadline"
+                            },
+                            "sourceRetentionMs": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 2147483647
+                            },
+                            "derivedRecord": {
+                              "type": "string",
+                              "const": "external-source-reference-only-v1"
+                            },
+                            "derivedRecordRetentionMs": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 2147483647
+                            },
+                            "execution": {
+                              "type": "string",
+                              "const": "none"
+                            },
+                            "ownerMayReadOriginal": {
+                              "type": "boolean",
+                              "const": true
+                            }
+                          },
+                          "required": [
+                            "processingPurpose",
+                            "sourceRetention",
+                            "sourceRetentionMs",
+                            "derivedRecord",
+                            "derivedRecordRetentionMs",
+                            "execution",
+                            "ownerMayReadOriginal"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "acceptedAt": {
+                          "type": "number"
+                        },
+                        "sourceExpiresAt": {
+                          "type": "number"
+                        },
+                        "recordExpiresAt": {
+                          "type": "number"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "accepted-for-review",
+                            "cancelled"
+                          ]
+                        },
+                        "execution": {
+                          "type": "string",
+                          "const": "not-started"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "ref",
+                        "origin",
+                        "configurationId",
+                        "ownerRevision",
+                        "workspaceRevision",
+                        "approvalId",
+                        "choices",
+                        "acceptedAt",
+                        "sourceExpiresAt",
+                        "recordExpiresAt",
+                        "state",
+                        "execution"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "records": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "ref": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "inputId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "requestId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "inputId",
+                              "sourceId",
+                              "sourceRevision",
+                              "requestId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "origin": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "external-original"
+                              },
+                              "accountId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "accountRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "routeId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "routeRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "accountId",
+                              "accountRevision",
+                              "routeId",
+                              "routeRevision"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "configurationId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "ownerRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "workspaceRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "approvalId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "choices": {
+                            "type": "object",
+                            "properties": {
+                              "processingPurpose": {
+                                "type": "string",
+                                "const": "accept-external-message-for-owner-review"
+                              },
+                              "sourceRetention": {
+                                "type": "string",
+                                "const": "memory-only-until-review-close-or-deadline"
+                              },
+                              "sourceRetentionMs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2147483647
+                              },
+                              "derivedRecord": {
+                                "type": "string",
+                                "const": "external-source-reference-only-v1"
+                              },
+                              "derivedRecordRetentionMs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2147483647
+                              },
+                              "execution": {
+                                "type": "string",
+                                "const": "none"
+                              },
+                              "ownerMayReadOriginal": {
+                                "type": "boolean",
+                                "const": true
+                              }
+                            },
+                            "required": [
+                              "processingPurpose",
+                              "sourceRetention",
+                              "sourceRetentionMs",
+                              "derivedRecord",
+                              "derivedRecordRetentionMs",
+                              "execution",
+                              "ownerMayReadOriginal"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "acceptedAt": {
+                            "type": "number"
+                          },
+                          "sourceExpiresAt": {
+                            "type": "number"
+                          },
+                          "recordExpiresAt": {
+                            "type": "number"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "accepted-for-review",
+                              "cancelled"
+                            ]
+                          },
+                          "execution": {
+                            "type": "string",
+                            "const": "not-started"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "ref",
+                          "origin",
+                          "configurationId",
+                          "ownerRevision",
+                          "workspaceRevision",
+                          "approvalId",
+                          "choices",
+                          "acceptedAt",
+                          "sourceExpiresAt",
+                          "recordExpiresAt",
+                          "state",
+                          "execution"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "pending": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ref": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "inputId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "requestId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "inputId",
+                              "sourceId",
+                              "sourceRevision",
+                              "requestId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "approvalId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "sourceExpiresAt": {
+                            "type": "number"
+                          },
+                          "outcome": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "ref",
+                          "approvalId",
+                          "sourceExpiresAt",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "original": {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        },
+                        "unsupportedSources": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "label"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "unsupportedSources"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-typed-client-io": true,
+        "x-access": "admin",
+        "x-transport": [
+          "http",
+          "ws"
+        ],
+        "x-scopes": [
+          "read:work-ledger",
+          "write:work-ledger"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "chatId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "threadId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "accountId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "pendingRetention": {
+                    "type": "string",
+                    "const": "memory-only-until-deadline"
+                  },
+                  "pendingRetentionMs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2147483647
+                  },
+                  "configurationLifetimeMs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2147483647
+                  },
+                  "onExpiry": {
+                    "type": "string",
+                    "const": "release-original-and-hold"
+                  }
+                },
+                "required": [
+                  "chatId",
+                  "accountId",
+                  "pendingRetention",
+                  "pendingRetentionMs",
+                  "configurationLifetimeMs",
+                  "onExpiry"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbound/telegram/decide": {
+      "post": {
+        "operationId": "inbound.telegram.decide",
+        "summary": "Telegram Delegated Intake decide",
+        "description": "Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.",
+        "tags": [
+          "inbound"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "inputId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "sourceId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "sourceRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "requestId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "inputId",
+                        "sourceId",
+                        "sourceRevision",
+                        "requestId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "configurationId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "expiresAt": {
+                      "type": "number"
+                    },
+                    "pendingRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "processing": {
+                      "type": "string"
+                    },
+                    "restart": {
+                      "type": "string"
+                    },
+                    "route": {
+                      "type": "string"
+                    },
+                    "execution": {
+                      "type": "string",
+                      "const": "not-started"
+                    },
+                    "approvalId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "recovery": {
+                      "type": "string"
+                    },
+                    "record": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "ref": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "inputId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "sourceId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "sourceRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "requestId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "inputId",
+                            "sourceId",
+                            "sourceRevision",
+                            "requestId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "origin": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "external-original"
+                            },
+                            "accountId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "accountRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "routeId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "routeRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "accountId",
+                            "accountRevision",
+                            "routeId",
+                            "routeRevision"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "configurationId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "ownerRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "workspaceRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "approvalId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "choices": {
+                          "type": "object",
+                          "properties": {
+                            "processingPurpose": {
+                              "type": "string",
+                              "const": "accept-external-message-for-owner-review"
+                            },
+                            "sourceRetention": {
+                              "type": "string",
+                              "const": "memory-only-until-review-close-or-deadline"
+                            },
+                            "sourceRetentionMs": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 2147483647
+                            },
+                            "derivedRecord": {
+                              "type": "string",
+                              "const": "external-source-reference-only-v1"
+                            },
+                            "derivedRecordRetentionMs": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 2147483647
+                            },
+                            "execution": {
+                              "type": "string",
+                              "const": "none"
+                            },
+                            "ownerMayReadOriginal": {
+                              "type": "boolean",
+                              "const": true
+                            }
+                          },
+                          "required": [
+                            "processingPurpose",
+                            "sourceRetention",
+                            "sourceRetentionMs",
+                            "derivedRecord",
+                            "derivedRecordRetentionMs",
+                            "execution",
+                            "ownerMayReadOriginal"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "acceptedAt": {
+                          "type": "number"
+                        },
+                        "sourceExpiresAt": {
+                          "type": "number"
+                        },
+                        "recordExpiresAt": {
+                          "type": "number"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "accepted-for-review",
+                            "cancelled"
+                          ]
+                        },
+                        "execution": {
+                          "type": "string",
+                          "const": "not-started"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "ref",
+                        "origin",
+                        "configurationId",
+                        "ownerRevision",
+                        "workspaceRevision",
+                        "approvalId",
+                        "choices",
+                        "acceptedAt",
+                        "sourceExpiresAt",
+                        "recordExpiresAt",
+                        "state",
+                        "execution"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "records": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "ref": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "inputId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "requestId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "inputId",
+                              "sourceId",
+                              "sourceRevision",
+                              "requestId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "origin": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "external-original"
+                              },
+                              "accountId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "accountRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "routeId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "routeRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "accountId",
+                              "accountRevision",
+                              "routeId",
+                              "routeRevision"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "configurationId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "ownerRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "workspaceRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "approvalId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "choices": {
+                            "type": "object",
+                            "properties": {
+                              "processingPurpose": {
+                                "type": "string",
+                                "const": "accept-external-message-for-owner-review"
+                              },
+                              "sourceRetention": {
+                                "type": "string",
+                                "const": "memory-only-until-review-close-or-deadline"
+                              },
+                              "sourceRetentionMs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2147483647
+                              },
+                              "derivedRecord": {
+                                "type": "string",
+                                "const": "external-source-reference-only-v1"
+                              },
+                              "derivedRecordRetentionMs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2147483647
+                              },
+                              "execution": {
+                                "type": "string",
+                                "const": "none"
+                              },
+                              "ownerMayReadOriginal": {
+                                "type": "boolean",
+                                "const": true
+                              }
+                            },
+                            "required": [
+                              "processingPurpose",
+                              "sourceRetention",
+                              "sourceRetentionMs",
+                              "derivedRecord",
+                              "derivedRecordRetentionMs",
+                              "execution",
+                              "ownerMayReadOriginal"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "acceptedAt": {
+                            "type": "number"
+                          },
+                          "sourceExpiresAt": {
+                            "type": "number"
+                          },
+                          "recordExpiresAt": {
+                            "type": "number"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "accepted-for-review",
+                              "cancelled"
+                            ]
+                          },
+                          "execution": {
+                            "type": "string",
+                            "const": "not-started"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "ref",
+                          "origin",
+                          "configurationId",
+                          "ownerRevision",
+                          "workspaceRevision",
+                          "approvalId",
+                          "choices",
+                          "acceptedAt",
+                          "sourceExpiresAt",
+                          "recordExpiresAt",
+                          "state",
+                          "execution"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "pending": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ref": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "inputId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "requestId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "inputId",
+                              "sourceId",
+                              "sourceRevision",
+                              "requestId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "approvalId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "sourceExpiresAt": {
+                            "type": "number"
+                          },
+                          "outcome": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "ref",
+                          "approvalId",
+                          "sourceExpiresAt",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "original": {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        },
+                        "unsupportedSources": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "label"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "unsupportedSources"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-typed-client-io": true,
+        "x-access": "admin",
+        "x-transport": [
+          "http",
+          "ws"
+        ],
+        "x-scopes": [
+          "read:work-ledger",
+          "write:work-ledger"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "approved": {
+                    "type": "boolean"
+                  },
+                  "choices": {
+                    "type": "object",
+                    "properties": {
+                      "processingPurpose": {
+                        "type": "string",
+                        "const": "accept-external-message-for-owner-review"
+                      },
+                      "sourceRetention": {
+                        "type": "string",
+                        "const": "memory-only-until-review-close-or-deadline"
+                      },
+                      "sourceRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "derivedRecord": {
+                        "type": "string",
+                        "const": "external-source-reference-only-v1"
+                      },
+                      "derivedRecordRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "execution": {
+                        "type": "string",
+                        "const": "none"
+                      },
+                      "ownerMayReadOriginal": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "processingPurpose",
+                      "sourceRetention",
+                      "sourceRetentionMs",
+                      "derivedRecord",
+                      "derivedRecordRetentionMs",
+                      "execution",
+                      "ownerMayReadOriginal"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "approvalId",
+                  "ref",
+                  "approved"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbound/telegram/list": {
+      "post": {
+        "operationId": "inbound.telegram.list",
+        "summary": "Telegram Delegated Intake list",
+        "description": "Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.",
+        "tags": [
+          "inbound"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "inputId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "sourceId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "sourceRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "requestId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "inputId",
+                        "sourceId",
+                        "sourceRevision",
+                        "requestId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "configurationId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "expiresAt": {
+                      "type": "number"
+                    },
+                    "pendingRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "processing": {
+                      "type": "string"
+                    },
+                    "restart": {
+                      "type": "string"
+                    },
+                    "route": {
+                      "type": "string"
+                    },
+                    "execution": {
+                      "type": "string",
+                      "const": "not-started"
+                    },
+                    "approvalId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "recovery": {
+                      "type": "string"
+                    },
+                    "record": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "ref": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "inputId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "sourceId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "sourceRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "requestId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "inputId",
+                            "sourceId",
+                            "sourceRevision",
+                            "requestId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "origin": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "external-original"
+                            },
+                            "accountId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "accountRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "routeId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "routeRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "accountId",
+                            "accountRevision",
+                            "routeId",
+                            "routeRevision"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "configurationId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "ownerRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "workspaceRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "approvalId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "choices": {
+                          "type": "object",
+                          "properties": {
+                            "processingPurpose": {
+                              "type": "string",
+                              "const": "accept-external-message-for-owner-review"
+                            },
+                            "sourceRetention": {
+                              "type": "string",
+                              "const": "memory-only-until-review-close-or-deadline"
+                            },
+                            "sourceRetentionMs": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 2147483647
+                            },
+                            "derivedRecord": {
+                              "type": "string",
+                              "const": "external-source-reference-only-v1"
+                            },
+                            "derivedRecordRetentionMs": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 2147483647
+                            },
+                            "execution": {
+                              "type": "string",
+                              "const": "none"
+                            },
+                            "ownerMayReadOriginal": {
+                              "type": "boolean",
+                              "const": true
+                            }
+                          },
+                          "required": [
+                            "processingPurpose",
+                            "sourceRetention",
+                            "sourceRetentionMs",
+                            "derivedRecord",
+                            "derivedRecordRetentionMs",
+                            "execution",
+                            "ownerMayReadOriginal"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "acceptedAt": {
+                          "type": "number"
+                        },
+                        "sourceExpiresAt": {
+                          "type": "number"
+                        },
+                        "recordExpiresAt": {
+                          "type": "number"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "accepted-for-review",
+                            "cancelled"
+                          ]
+                        },
+                        "execution": {
+                          "type": "string",
+                          "const": "not-started"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "ref",
+                        "origin",
+                        "configurationId",
+                        "ownerRevision",
+                        "workspaceRevision",
+                        "approvalId",
+                        "choices",
+                        "acceptedAt",
+                        "sourceExpiresAt",
+                        "recordExpiresAt",
+                        "state",
+                        "execution"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "records": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "ref": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "inputId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "requestId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "inputId",
+                              "sourceId",
+                              "sourceRevision",
+                              "requestId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "origin": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "external-original"
+                              },
+                              "accountId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "accountRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "routeId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "routeRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "accountId",
+                              "accountRevision",
+                              "routeId",
+                              "routeRevision"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "configurationId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "ownerRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "workspaceRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "approvalId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "choices": {
+                            "type": "object",
+                            "properties": {
+                              "processingPurpose": {
+                                "type": "string",
+                                "const": "accept-external-message-for-owner-review"
+                              },
+                              "sourceRetention": {
+                                "type": "string",
+                                "const": "memory-only-until-review-close-or-deadline"
+                              },
+                              "sourceRetentionMs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2147483647
+                              },
+                              "derivedRecord": {
+                                "type": "string",
+                                "const": "external-source-reference-only-v1"
+                              },
+                              "derivedRecordRetentionMs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2147483647
+                              },
+                              "execution": {
+                                "type": "string",
+                                "const": "none"
+                              },
+                              "ownerMayReadOriginal": {
+                                "type": "boolean",
+                                "const": true
+                              }
+                            },
+                            "required": [
+                              "processingPurpose",
+                              "sourceRetention",
+                              "sourceRetentionMs",
+                              "derivedRecord",
+                              "derivedRecordRetentionMs",
+                              "execution",
+                              "ownerMayReadOriginal"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "acceptedAt": {
+                            "type": "number"
+                          },
+                          "sourceExpiresAt": {
+                            "type": "number"
+                          },
+                          "recordExpiresAt": {
+                            "type": "number"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "accepted-for-review",
+                              "cancelled"
+                            ]
+                          },
+                          "execution": {
+                            "type": "string",
+                            "const": "not-started"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "ref",
+                          "origin",
+                          "configurationId",
+                          "ownerRevision",
+                          "workspaceRevision",
+                          "approvalId",
+                          "choices",
+                          "acceptedAt",
+                          "sourceExpiresAt",
+                          "recordExpiresAt",
+                          "state",
+                          "execution"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "pending": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ref": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "inputId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "requestId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "inputId",
+                              "sourceId",
+                              "sourceRevision",
+                              "requestId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "approvalId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "sourceExpiresAt": {
+                            "type": "number"
+                          },
+                          "outcome": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "ref",
+                          "approvalId",
+                          "sourceExpiresAt",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "original": {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        },
+                        "unsupportedSources": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "label"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "unsupportedSources"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-typed-client-io": true,
+        "x-access": "admin",
+        "x-transport": [
+          "http",
+          "ws"
+        ],
+        "x-scopes": [
+          "read:work-ledger",
+          "write:work-ledger"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbound/telegram/read": {
+      "post": {
+        "operationId": "inbound.telegram.read",
+        "summary": "Telegram Delegated Intake read",
+        "description": "Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.",
+        "tags": [
+          "inbound"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "inputId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "sourceId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "sourceRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "requestId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "inputId",
+                        "sourceId",
+                        "sourceRevision",
+                        "requestId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "configurationId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "expiresAt": {
+                      "type": "number"
+                    },
+                    "pendingRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "processing": {
+                      "type": "string"
+                    },
+                    "restart": {
+                      "type": "string"
+                    },
+                    "route": {
+                      "type": "string"
+                    },
+                    "execution": {
+                      "type": "string",
+                      "const": "not-started"
+                    },
+                    "approvalId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "recovery": {
+                      "type": "string"
+                    },
+                    "record": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "ref": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "inputId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "sourceId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "sourceRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "requestId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "inputId",
+                            "sourceId",
+                            "sourceRevision",
+                            "requestId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "origin": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "external-original"
+                            },
+                            "accountId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "accountRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "routeId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "routeRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "accountId",
+                            "accountRevision",
+                            "routeId",
+                            "routeRevision"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "configurationId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "ownerRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "workspaceRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "approvalId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "choices": {
+                          "type": "object",
+                          "properties": {
+                            "processingPurpose": {
+                              "type": "string",
+                              "const": "accept-external-message-for-owner-review"
+                            },
+                            "sourceRetention": {
+                              "type": "string",
+                              "const": "memory-only-until-review-close-or-deadline"
+                            },
+                            "sourceRetentionMs": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 2147483647
+                            },
+                            "derivedRecord": {
+                              "type": "string",
+                              "const": "external-source-reference-only-v1"
+                            },
+                            "derivedRecordRetentionMs": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 2147483647
+                            },
+                            "execution": {
+                              "type": "string",
+                              "const": "none"
+                            },
+                            "ownerMayReadOriginal": {
+                              "type": "boolean",
+                              "const": true
+                            }
+                          },
+                          "required": [
+                            "processingPurpose",
+                            "sourceRetention",
+                            "sourceRetentionMs",
+                            "derivedRecord",
+                            "derivedRecordRetentionMs",
+                            "execution",
+                            "ownerMayReadOriginal"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "acceptedAt": {
+                          "type": "number"
+                        },
+                        "sourceExpiresAt": {
+                          "type": "number"
+                        },
+                        "recordExpiresAt": {
+                          "type": "number"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "accepted-for-review",
+                            "cancelled"
+                          ]
+                        },
+                        "execution": {
+                          "type": "string",
+                          "const": "not-started"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "ref",
+                        "origin",
+                        "configurationId",
+                        "ownerRevision",
+                        "workspaceRevision",
+                        "approvalId",
+                        "choices",
+                        "acceptedAt",
+                        "sourceExpiresAt",
+                        "recordExpiresAt",
+                        "state",
+                        "execution"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "records": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "ref": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "inputId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "requestId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "inputId",
+                              "sourceId",
+                              "sourceRevision",
+                              "requestId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "origin": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "external-original"
+                              },
+                              "accountId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "accountRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "routeId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "routeRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "accountId",
+                              "accountRevision",
+                              "routeId",
+                              "routeRevision"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "configurationId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "ownerRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "workspaceRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "approvalId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "choices": {
+                            "type": "object",
+                            "properties": {
+                              "processingPurpose": {
+                                "type": "string",
+                                "const": "accept-external-message-for-owner-review"
+                              },
+                              "sourceRetention": {
+                                "type": "string",
+                                "const": "memory-only-until-review-close-or-deadline"
+                              },
+                              "sourceRetentionMs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2147483647
+                              },
+                              "derivedRecord": {
+                                "type": "string",
+                                "const": "external-source-reference-only-v1"
+                              },
+                              "derivedRecordRetentionMs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2147483647
+                              },
+                              "execution": {
+                                "type": "string",
+                                "const": "none"
+                              },
+                              "ownerMayReadOriginal": {
+                                "type": "boolean",
+                                "const": true
+                              }
+                            },
+                            "required": [
+                              "processingPurpose",
+                              "sourceRetention",
+                              "sourceRetentionMs",
+                              "derivedRecord",
+                              "derivedRecordRetentionMs",
+                              "execution",
+                              "ownerMayReadOriginal"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "acceptedAt": {
+                            "type": "number"
+                          },
+                          "sourceExpiresAt": {
+                            "type": "number"
+                          },
+                          "recordExpiresAt": {
+                            "type": "number"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "accepted-for-review",
+                              "cancelled"
+                            ]
+                          },
+                          "execution": {
+                            "type": "string",
+                            "const": "not-started"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "ref",
+                          "origin",
+                          "configurationId",
+                          "ownerRevision",
+                          "workspaceRevision",
+                          "approvalId",
+                          "choices",
+                          "acceptedAt",
+                          "sourceExpiresAt",
+                          "recordExpiresAt",
+                          "state",
+                          "execution"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "pending": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ref": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "inputId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "requestId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "inputId",
+                              "sourceId",
+                              "sourceRevision",
+                              "requestId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "approvalId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "sourceExpiresAt": {
+                            "type": "number"
+                          },
+                          "outcome": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "ref",
+                          "approvalId",
+                          "sourceExpiresAt",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "original": {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        },
+                        "unsupportedSources": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "label"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "unsupportedSources"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-typed-client-io": true,
+        "x-access": "admin",
+        "x-transport": [
+          "http",
+          "ws"
+        ],
+        "x-scopes": [
+          "read:work-ledger",
+          "write:work-ledger"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "ref"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbound/telegram/revoke": {
+      "post": {
+        "operationId": "inbound.telegram.revoke",
+        "summary": "Telegram Delegated Intake revoke",
+        "description": "Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.",
+        "tags": [
+          "inbound"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "inputId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "sourceId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "sourceRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "requestId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "inputId",
+                        "sourceId",
+                        "sourceRevision",
+                        "requestId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "configurationId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "expiresAt": {
+                      "type": "number"
+                    },
+                    "pendingRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "processing": {
+                      "type": "string"
+                    },
+                    "restart": {
+                      "type": "string"
+                    },
+                    "route": {
+                      "type": "string"
+                    },
+                    "execution": {
+                      "type": "string",
+                      "const": "not-started"
+                    },
+                    "approvalId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "recovery": {
+                      "type": "string"
+                    },
+                    "record": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "ref": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "inputId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "sourceId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "sourceRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "requestId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "inputId",
+                            "sourceId",
+                            "sourceRevision",
+                            "requestId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "origin": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "external-original"
+                            },
+                            "accountId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "accountRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "routeId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "routeRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "accountId",
+                            "accountRevision",
+                            "routeId",
+                            "routeRevision"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "configurationId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "ownerRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "workspaceRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "approvalId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "choices": {
+                          "type": "object",
+                          "properties": {
+                            "processingPurpose": {
+                              "type": "string",
+                              "const": "accept-external-message-for-owner-review"
+                            },
+                            "sourceRetention": {
+                              "type": "string",
+                              "const": "memory-only-until-review-close-or-deadline"
+                            },
+                            "sourceRetentionMs": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 2147483647
+                            },
+                            "derivedRecord": {
+                              "type": "string",
+                              "const": "external-source-reference-only-v1"
+                            },
+                            "derivedRecordRetentionMs": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 2147483647
+                            },
+                            "execution": {
+                              "type": "string",
+                              "const": "none"
+                            },
+                            "ownerMayReadOriginal": {
+                              "type": "boolean",
+                              "const": true
+                            }
+                          },
+                          "required": [
+                            "processingPurpose",
+                            "sourceRetention",
+                            "sourceRetentionMs",
+                            "derivedRecord",
+                            "derivedRecordRetentionMs",
+                            "execution",
+                            "ownerMayReadOriginal"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "acceptedAt": {
+                          "type": "number"
+                        },
+                        "sourceExpiresAt": {
+                          "type": "number"
+                        },
+                        "recordExpiresAt": {
+                          "type": "number"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "accepted-for-review",
+                            "cancelled"
+                          ]
+                        },
+                        "execution": {
+                          "type": "string",
+                          "const": "not-started"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "ref",
+                        "origin",
+                        "configurationId",
+                        "ownerRevision",
+                        "workspaceRevision",
+                        "approvalId",
+                        "choices",
+                        "acceptedAt",
+                        "sourceExpiresAt",
+                        "recordExpiresAt",
+                        "state",
+                        "execution"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "records": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "ref": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "inputId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "requestId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "inputId",
+                              "sourceId",
+                              "sourceRevision",
+                              "requestId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "origin": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "external-original"
+                              },
+                              "accountId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "accountRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "routeId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "routeRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "accountId",
+                              "accountRevision",
+                              "routeId",
+                              "routeRevision"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "configurationId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "ownerRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "workspaceRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "approvalId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "choices": {
+                            "type": "object",
+                            "properties": {
+                              "processingPurpose": {
+                                "type": "string",
+                                "const": "accept-external-message-for-owner-review"
+                              },
+                              "sourceRetention": {
+                                "type": "string",
+                                "const": "memory-only-until-review-close-or-deadline"
+                              },
+                              "sourceRetentionMs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2147483647
+                              },
+                              "derivedRecord": {
+                                "type": "string",
+                                "const": "external-source-reference-only-v1"
+                              },
+                              "derivedRecordRetentionMs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2147483647
+                              },
+                              "execution": {
+                                "type": "string",
+                                "const": "none"
+                              },
+                              "ownerMayReadOriginal": {
+                                "type": "boolean",
+                                "const": true
+                              }
+                            },
+                            "required": [
+                              "processingPurpose",
+                              "sourceRetention",
+                              "sourceRetentionMs",
+                              "derivedRecord",
+                              "derivedRecordRetentionMs",
+                              "execution",
+                              "ownerMayReadOriginal"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "acceptedAt": {
+                            "type": "number"
+                          },
+                          "sourceExpiresAt": {
+                            "type": "number"
+                          },
+                          "recordExpiresAt": {
+                            "type": "number"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "accepted-for-review",
+                              "cancelled"
+                            ]
+                          },
+                          "execution": {
+                            "type": "string",
+                            "const": "not-started"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "ref",
+                          "origin",
+                          "configurationId",
+                          "ownerRevision",
+                          "workspaceRevision",
+                          "approvalId",
+                          "choices",
+                          "acceptedAt",
+                          "sourceExpiresAt",
+                          "recordExpiresAt",
+                          "state",
+                          "execution"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "pending": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ref": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "inputId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "requestId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "inputId",
+                              "sourceId",
+                              "sourceRevision",
+                              "requestId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "approvalId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "sourceExpiresAt": {
+                            "type": "number"
+                          },
+                          "outcome": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "ref",
+                          "approvalId",
+                          "sourceExpiresAt",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "original": {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        },
+                        "unsupportedSources": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "label"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "unsupportedSources"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-typed-client-io": true,
+        "x-access": "admin",
+        "x-transport": [
+          "http",
+          "ws"
+        ],
+        "x-scopes": [
+          "read:work-ledger",
+          "write:work-ledger"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "configurationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                },
+                "required": [
+                  "configurationId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbound/telegram/status": {
+      "post": {
+        "operationId": "inbound.telegram.status",
+        "summary": "Telegram Delegated Intake status",
+        "description": "Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.",
+        "tags": [
+          "inbound"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "inputId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "sourceId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "sourceRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "requestId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "inputId",
+                        "sourceId",
+                        "sourceRevision",
+                        "requestId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "configurationId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "expiresAt": {
+                      "type": "number"
+                    },
+                    "pendingRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "processing": {
+                      "type": "string"
+                    },
+                    "restart": {
+                      "type": "string"
+                    },
+                    "route": {
+                      "type": "string"
+                    },
+                    "execution": {
+                      "type": "string",
+                      "const": "not-started"
+                    },
+                    "approvalId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "recovery": {
+                      "type": "string"
+                    },
+                    "record": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "ref": {
+                          "type": "object",
+                          "properties": {
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "inputId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "sourceId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "sourceRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "requestId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            }
+                          },
+                          "required": [
+                            "sessionId",
+                            "inputId",
+                            "sourceId",
+                            "sourceRevision",
+                            "requestId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "origin": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "external-original"
+                            },
+                            "accountId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "accountRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "routeId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "routeRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "accountId",
+                            "accountRevision",
+                            "routeId",
+                            "routeRevision"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "configurationId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "ownerRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "workspaceRevision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "approvalId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "choices": {
+                          "type": "object",
+                          "properties": {
+                            "processingPurpose": {
+                              "type": "string",
+                              "const": "accept-external-message-for-owner-review"
+                            },
+                            "sourceRetention": {
+                              "type": "string",
+                              "const": "memory-only-until-review-close-or-deadline"
+                            },
+                            "sourceRetentionMs": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 2147483647
+                            },
+                            "derivedRecord": {
+                              "type": "string",
+                              "const": "external-source-reference-only-v1"
+                            },
+                            "derivedRecordRetentionMs": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 2147483647
+                            },
+                            "execution": {
+                              "type": "string",
+                              "const": "none"
+                            },
+                            "ownerMayReadOriginal": {
+                              "type": "boolean",
+                              "const": true
+                            }
+                          },
+                          "required": [
+                            "processingPurpose",
+                            "sourceRetention",
+                            "sourceRetentionMs",
+                            "derivedRecord",
+                            "derivedRecordRetentionMs",
+                            "execution",
+                            "ownerMayReadOriginal"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "acceptedAt": {
+                          "type": "number"
+                        },
+                        "sourceExpiresAt": {
+                          "type": "number"
+                        },
+                        "recordExpiresAt": {
+                          "type": "number"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "accepted-for-review",
+                            "cancelled"
+                          ]
+                        },
+                        "execution": {
+                          "type": "string",
+                          "const": "not-started"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "ref",
+                        "origin",
+                        "configurationId",
+                        "ownerRevision",
+                        "workspaceRevision",
+                        "approvalId",
+                        "choices",
+                        "acceptedAt",
+                        "sourceExpiresAt",
+                        "recordExpiresAt",
+                        "state",
+                        "execution"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "records": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "ref": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "inputId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "requestId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "inputId",
+                              "sourceId",
+                              "sourceRevision",
+                              "requestId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "origin": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "external-original"
+                              },
+                              "accountId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "accountRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "routeId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "routeRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "accountId",
+                              "accountRevision",
+                              "routeId",
+                              "routeRevision"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "configurationId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "ownerRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "workspaceRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "approvalId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "choices": {
+                            "type": "object",
+                            "properties": {
+                              "processingPurpose": {
+                                "type": "string",
+                                "const": "accept-external-message-for-owner-review"
+                              },
+                              "sourceRetention": {
+                                "type": "string",
+                                "const": "memory-only-until-review-close-or-deadline"
+                              },
+                              "sourceRetentionMs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2147483647
+                              },
+                              "derivedRecord": {
+                                "type": "string",
+                                "const": "external-source-reference-only-v1"
+                              },
+                              "derivedRecordRetentionMs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 2147483647
+                              },
+                              "execution": {
+                                "type": "string",
+                                "const": "none"
+                              },
+                              "ownerMayReadOriginal": {
+                                "type": "boolean",
+                                "const": true
+                              }
+                            },
+                            "required": [
+                              "processingPurpose",
+                              "sourceRetention",
+                              "sourceRetentionMs",
+                              "derivedRecord",
+                              "derivedRecordRetentionMs",
+                              "execution",
+                              "ownerMayReadOriginal"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "acceptedAt": {
+                            "type": "number"
+                          },
+                          "sourceExpiresAt": {
+                            "type": "number"
+                          },
+                          "recordExpiresAt": {
+                            "type": "number"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "accepted-for-review",
+                              "cancelled"
+                            ]
+                          },
+                          "execution": {
+                            "type": "string",
+                            "const": "not-started"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "ref",
+                          "origin",
+                          "configurationId",
+                          "ownerRevision",
+                          "workspaceRevision",
+                          "approvalId",
+                          "choices",
+                          "acceptedAt",
+                          "sourceExpiresAt",
+                          "recordExpiresAt",
+                          "state",
+                          "execution"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "pending": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ref": {
+                            "type": "object",
+                            "properties": {
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "inputId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "sourceRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "requestId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "sessionId",
+                              "inputId",
+                              "sourceId",
+                              "sourceRevision",
+                              "requestId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "approvalId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "sourceExpiresAt": {
+                            "type": "number"
+                          },
+                          "outcome": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "ref",
+                          "approvalId",
+                          "sourceExpiresAt",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "original": {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        },
+                        "unsupportedSources": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "label"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "unsupportedSources"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-typed-client-io": true,
+        "x-access": "admin",
+        "x-transport": [
+          "http",
+          "ws"
+        ],
+        "x-scopes": [
+          "read:work-ledger",
+          "write:work-ledger"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "ref"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
       }
     },
     "/api/intelligence": {
@@ -143012,6 +147514,69 @@
       "category": "health",
       "access": "authenticated",
       "rest": "GET /api/voice/wake/status",
+      "typedClientIo": true,
+      "inputSchemaCoverage": "typed",
+      "outputSchemaCoverage": "typed"
+    },
+    {
+      "id": "inbound.telegram.cancel",
+      "category": "inbound",
+      "access": "admin",
+      "rest": "POST /api/inbound/telegram/cancel",
+      "typedClientIo": true,
+      "inputSchemaCoverage": "typed",
+      "outputSchemaCoverage": "typed"
+    },
+    {
+      "id": "inbound.telegram.configure",
+      "category": "inbound",
+      "access": "admin",
+      "rest": "POST /api/inbound/telegram/configure",
+      "typedClientIo": true,
+      "inputSchemaCoverage": "typed",
+      "outputSchemaCoverage": "typed"
+    },
+    {
+      "id": "inbound.telegram.decide",
+      "category": "inbound",
+      "access": "admin",
+      "rest": "POST /api/inbound/telegram/decide",
+      "typedClientIo": true,
+      "inputSchemaCoverage": "typed",
+      "outputSchemaCoverage": "typed"
+    },
+    {
+      "id": "inbound.telegram.list",
+      "category": "inbound",
+      "access": "admin",
+      "rest": "POST /api/inbound/telegram/list",
+      "typedClientIo": true,
+      "inputSchemaCoverage": "typed",
+      "outputSchemaCoverage": "typed"
+    },
+    {
+      "id": "inbound.telegram.read",
+      "category": "inbound",
+      "access": "admin",
+      "rest": "POST /api/inbound/telegram/read",
+      "typedClientIo": true,
+      "inputSchemaCoverage": "typed",
+      "outputSchemaCoverage": "typed"
+    },
+    {
+      "id": "inbound.telegram.revoke",
+      "category": "inbound",
+      "access": "admin",
+      "rest": "POST /api/inbound/telegram/revoke",
+      "typedClientIo": true,
+      "inputSchemaCoverage": "typed",
+      "outputSchemaCoverage": "typed"
+    },
+    {
+      "id": "inbound.telegram.status",
+      "category": "inbound",
+      "access": "admin",
+      "rest": "POST /api/inbound/telegram/status",
       "typedClientIo": true,
       "inputSchemaCoverage": "typed",
       "outputSchemaCoverage": "typed"
