@@ -49,6 +49,8 @@ separate admission/drain repair is a prerequisite: shutdown must await pending
 factories and late disposal without granting a lease or publishing a session.
 The product barrier does not change public factory types or duplicate that
 shared owner. The client graph keeps its existing synchronous disposal API.
+This qualifies pending-floor acquisition and readiness; the broader hosted
+create-persistence/publication failure lifecycle remains separate follow-on work.
 
 Ordinary discovered providers confer no protected-source authority, Jev
 authority or hosted-fallback permission. This work performs no service setup,
