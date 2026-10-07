@@ -53,7 +53,7 @@ An agent or a background process can take over the whole terminal. `Enter` on an
 | `agent_learning_consolidation` | Preview, apply, rollback, or exact-id recreate one confirmed Agent-local duplicate-consolidation phase with receipts. |
 | `agent_local_registry` | Inspect or update Agent-local memory, notes, personas, skills, bundles, and routines. |
 | `agent_work_plan` | Keep the visible Agent-local work plan current and dispatch approved plan items to visible agents with confirmation and receipts. |
-| `agent_operator_briefing` | Read connected work, approvals, automation, schedules, and capacity posture. |
+| `agent_operator_briefing` | Read native reported/verification counts, historical legacy planning, approvals, automation, schedules, and capacity posture. |
 | `schedule` | List, create, edit, run, pause, resume, and delete connected schedules through existing confirmation gates. |
 | `setup` | Inspect first-run setup, choose the next safe setup repair route, show one setup row, inspect/save/clear checkpoints, repair token auth, run setup smoke, finish onboarding, and import GoodVibes settings through existing gates. |
 | `security` | Read security posture/findings and explain why one model action is allowed, denied, or needs confirmation. |
