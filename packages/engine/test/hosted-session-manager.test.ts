@@ -449,6 +449,36 @@ test('floor callbacks can await manager shutdown while external repeated close o
   expect(manager.list({ includeTerminated: true })).toEqual([]);
 });
 
+for (const requester of ['factory', 'disposer'] as const) {
+  test(`callback-only ${requester} shutdown owns failure until a later external caller observes it`, async () => {
+    const nativeError = new Error('owned callback-only native close failed');
+    const manager = buildManager({
+      closeNativeTurns: async () => { throw nativeError; },
+      onFloor: async floor => {
+        if (requester === 'factory') await manager.dispose();
+        return { ...floor, async dispose() {
+          if (requester === 'disposer') await manager.dispose();
+          await floor.dispose();
+        } };
+      },
+    });
+    await manager.init();
+    if (requester === 'factory') {
+      await expect(manager.create({ workspaceRoot: workspace })).rejects.toThrow(/disposed/);
+    } else {
+      const created = await manager.create({ workspaceRoot: workspace });
+      await manager.kill(created.id);
+    }
+    // Deliberately leave the callback as the only shutdown requester for an
+    // event-loop turn. An unowned rejection fails the runner before this check.
+    await settleLifecycle();
+    await settleLifecycle();
+    const closing = manager.dispose();
+    expect(manager.dispose()).toBe(closing);
+    await expect(closing).rejects.toBe(nativeError);
+  });
+}
+
 test('concurrent restored attachments install one runtime and release the extra floor reference', async () => {
   const first = buildManager({ detachPolicy: 'survive' });
   await first.init();
