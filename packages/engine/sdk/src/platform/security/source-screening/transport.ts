@@ -1,3 +1,6 @@
+import { Client, interceptors } from 'undici/index.js';
+import * as directClient from './direct-client.js';
+
 const RESPONSE_LIMIT = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TIMEOUT_MS = 120_000;
@@ -19,9 +22,11 @@ const oversized = () => diagnostic('source-screening response exceeds the byte l
 const routeUnavailable = () => diagnostic('source-screening local route is unavailable');
 
 /**
- * Bun 1.3.14 inherits proxy environment even for proxy:''/false and its
- * node:http Agent hooks. Until direct proxy suppression is supported and
- * verified on the pinned runtime, never let protected source reach that route.
+ * Visible proxy configuration withholds admission even though dispatch uses
+ * an explicitly owned socket client. Bun's native fetch can retain a proxy
+ * after its environment entry is deleted, so absence alone is NOT the direct
+ * routing proof: the fixed-origin Client below never uses native fetch or an
+ * ambient/global dispatcher.
  * NO_PROXY is not an owner grant. Read only a presence bit, never retain or
  * print proxy values (which can themselves contain credentials).
  */
@@ -58,7 +63,7 @@ function captureTargets(endpoints: readonly string[]): Set<string> {
   return targets;
 }
 
-function safeHeaders(response: Response): Headers {
+function safeHeaders(response: { readonly headers: { get(name: string): string | null } }): Headers {
   const headers = new Headers({ 'content-type': 'application/json' });
   const retryAfter = response.headers.get('retry-after');
   if (retryAfter !== null && retryAfter.length <= 32 && /^\d+(?:\.\d+)?$/.test(retryAfter)
@@ -98,7 +103,8 @@ export function createScreeningTransport(options: ScreeningTransportOptions): Sc
   const assertCurrent = options.assertCurrent;
   const sourceSignal = options.signal;
   const lifetime = new AbortController();
-  const actualFetch = globalThis.fetch;
+  const actualFetch = directClient.fetchDirect;
+  const clients = new Map<string, Client>();
   const active = new Set<Promise<Response>>();
   let closed = false;
   let closing: Promise<void> | undefined;
@@ -158,9 +164,19 @@ export function createScreeningTransport(options: ScreeningTransportOptions): Sc
           // No await or owner/caller hook may run between this check and
           // dispatch. Recheck each attempt, including canonical SDK retries.
           requireDirectRoute();
-          const response = await actualFetch(request, {
-            signal: controller.signal, redirect: 'error', verbose: false,
-          });
+          const origin = new URL(request.url).origin;
+          let client = clients.get(origin);
+          if (!client) {
+            // Undici's own HTTP/1.1 implementation connects through net/TLS to
+            // this captured literal origin. Never use EnvHttpProxyAgent,
+            // getGlobalDispatcher, Bun fetch, or caller-supplied connectors.
+            client = new Client(origin, { pipelining: 0, allowH2: false,
+              connect: { rejectUnauthorized: true },
+              maxHeaderSize: 16 * 1024, connectTimeout: timeoutMs,
+              headersTimeout: timeoutMs, bodyTimeout: timeoutMs });
+            clients.set(origin, client);
+          }
+          const response = await actualFetch(client.compose(interceptors.decompress({ maxSize: RESPONSE_LIMIT })), request, controller.signal);
           reader = response.body?.getReader();
           check(controller.signal);
           const chunks: Uint8Array[] = [];
@@ -221,7 +237,10 @@ export function createScreeningTransport(options: ScreeningTransportOptions): Sc
         closed = true;
         stop();
         sourceSignal.removeEventListener('abort', stop);
-        closing = Promise.allSettled([...active]).then(() => {});
+        closing = Promise.allSettled([...active]).then(async () => {
+          await Promise.all([...clients.values()].map((client) => client.destroy()));
+          clients.clear();
+        });
       }
       return closing;
     },

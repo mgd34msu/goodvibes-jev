@@ -29,14 +29,27 @@ receives no tools or credential. System One uses the existing canonical client
 and retry owner with a fixed public local placeholder, not a stored API key.
 Services requiring private credentials are not provisioned by this slice.
 
-On the pinned Bun 1.3.14 runtime, the owner does not assume that a fetch proxy
-override or a Node compatibility agent establishes direct routing. Any configured
-HTTP/HTTPS/ALL proxy environment variable, including case variants, makes this
-route unavailable before dispatch. `NO_PROXY` does not grant an exception. The
-transport rechecks at each actual dispatch and the canonical retry boundary; it
-never rewrites the process environment or silently trusts a proxy. Proxy-free
-owned-loopback tests prove the supported configuration. This is a conservative
-runtime constraint, not a claim about all Node HTTP clients.
+Dispatch uses an owned, fixed-origin HTTP/1.1 `Client` from the explicitly
+pinned `undici/index.js` package entry. Bare `undici` resolves to Bun's
+compatibility shim and is deliberately not used. Each client's standard net/TLS
+connector reaches only the captured literal-loopback origin, with no global
+dispatcher, native fetch, proxy agent, caller connector, redirect, or hosted
+fallback. Header bytes and decoded response bytes are bounded; existing deadline,
+authority, cancellation and drainage rules still apply. Client sockets are
+retired by the owning transport's close. TLS certificate verification is
+explicitly required, even when the surrounding process has a TLS-disable
+environment flag. No custom CA, credential, or persistent TLS setting is created.
+
+Any configured HTTP/HTTPS/ALL proxy environment variable, including case
+variants, keeps admission held. `NO_PROXY` does not grant an exception. The
+transport rechecks at each dispatch and canonical retry boundary; it never
+rewrites the process environment. This presence check is not the routing proof:
+Bun 1.3.14 can retain a native proxy after every environment entry is deleted.
+Owned synthetic counterexamples prove native fetch still reaches that proxy,
+while the fixed-origin client reaches only the local target, both before owner
+creation and between attempts. Proxy-mutating fixtures run in isolated owned
+children, preserving the parent suite's native routing state. These are runtime
+containment proofs, not live service identity or privacy-calibration evidence.
 
 The capability authorizes only the specified local processing. The host must
 establish local service identity, local execution without forwarding, revocation

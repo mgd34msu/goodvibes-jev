@@ -1,4 +1,10 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
+import { rmSync } from 'node:fs';
+import { resolve } from 'node:path';
+import * as directClient from '../sdk/src/platform/security/source-screening/direct-client.ts';
+import { isolatedTestEnvironment } from '../scripts/test-isolation.ts';
+import { makeProjectTempDir } from './_helpers/project-temp.ts';
 import { captureLoopbackEndpoint, createScreeningTransport } from '../sdk/src/platform/security/source-screening/transport.ts';
 
 const cleanups: (() => unknown | Promise<unknown>)[] = [];
@@ -24,11 +30,31 @@ const pause = (ms = 10) => new Promise<void>((resolve) => setTimeout(resolve, ms
 
 /** Test-local response substitution after a real guarded loopback request. */
 function replaceLocalResponse(transform: (response: Response) => Promise<Response>): void {
-  const actualFetch = globalThis.fetch;
-  const replacement: typeof fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
-    transform(await actualFetch(input, init)), { preconnect: actualFetch.preconnect });
-  const stub = spyOn(globalThis, 'fetch').mockImplementation(replacement);
+  const actualFetch = directClient.fetchDirect;
+  const replacement: typeof directClient.fetchDirect = async (client, request, signal) => transform(await actualFetch(client, request, signal));
+  const stub = spyOn(directClient, 'fetchDirect').mockImplementation(replacement);
   cleanups.push(() => stub.mockRestore());
+}
+
+async function isolatedProxyScenario(mode: string, name = 'HTTP_PROXY'): Promise<void> {
+  const root = makeProjectTempDir('source-screening-proxy-child');
+  try {
+    const control = Bun.serve({ port: 0, fetch: () => new Response('parent-localhost') });
+    cleanups.push(() => control.stop(true));
+    const url = `http://localhost:${control.port}`;
+    expect(await (await fetch(url)).text()).toBe('parent-localhost');
+    const result = spawnSync(process.execPath, [
+      '--preload', resolve(import.meta.dir, '../toolchain/src/test-runner/test-network-preload.ts'),
+      resolve(import.meta.dir, 'fixtures/source-screening-proxy-child.ts'), mode, name,
+    ], { env: isolatedTestEnvironment(process.env, root), encoding: 'utf8', timeout: 10_000, killSignal: 'SIGKILL' });
+    expect(result.error?.message ?? null).toBeNull();
+    expect(result.signal).toBeNull();
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ mode, proxyCalls: 0, passed: true });
+    // This control fails with the former in-process set/delete fixture even
+    // though every process.env proxy name reads undefined after its finally.
+    expect(await (await fetch(url)).text()).toBe('parent-localhost');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 }
 
 async function rejection(work: Promise<unknown>): Promise<Error> {
@@ -150,7 +176,7 @@ describe('source-screening exact loopback transport', () => {
     expect(redirectCalls).toBe(0);
   });
 
-  test('ignores nonstandard routing overrides instead of passing them to Bun fetch', async () => {
+  test('ignores nonstandard routing overrides instead of passing them to the fixed client', async () => {
     let calls = 0;
     const local = endpoint(() => { calls++; return Response.json({}); });
     const init = { ...post, proxy: 'http://127.0.0.1:1', unix: '/does-not-exist/source-screening.sock' };
@@ -158,86 +184,41 @@ describe('source-screening exact loopback transport', () => {
     expect(calls).toBe(1);
   });
 
+  // Bun 1.3.14 retains native proxy routing even after process.env restoration.
+  // Own each mutation in a child so neither aliases nor native caches can leak
+  // into another test's localhost requests. The canonical network guard remains.
   test.each(['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'HtTp_PrOxY', 'HtTpS_PrOxY', 'AlL_PrOxY'])(
     'a configured %s refuses dispatch even when NO_PROXY names the target', async (name) => {
-      let proxyCalls = 0;
-      let localCalls = 0;
-      const proxy = endpoint(() => { proxyCalls++; return Response.json({ proxy: true }); });
-      const local = endpoint(() => { localCalls++; return Response.json({ local: true }); });
-      const names = [name, 'NO_PROXY', 'no_proxy'];
-      const original = new Map(names.map((key) => [key, process.env[key]]));
-      try {
-        process.env[name] = proxy.base;
-        process.env.NO_PROXY = '*';
-        process.env.no_proxy = '127.0.0.1';
-        const error = await rejection(transport([local.url]).fetch(local.url, post));
-        expect(error.message).toBe('source-screening local route is unavailable');
-        expect(localCalls).toBe(0);
-        expect(proxyCalls).toBe(0);
-      } finally {
-        for (const [key, value] of original) {
-          if (value === undefined) delete process.env[key]; else process.env[key] = value;
-        }
-      }
+      await isolatedProxyScenario('configured', name);
     },
   );
 
   test('rechecks proxy environment at dispatch after the last authority callback', async () => {
-    let localCalls = 0;
-    let proxyCalls = 0;
-    const proxy = endpoint(() => { proxyCalls++; return Response.json({}); });
-    const local = endpoint(() => { localCalls++; return Response.json({}); });
-    const original = process.env.HTTP_PROXY;
-    let checks = 0;
-    const owned = transport([local.url], { assertCurrent() {
-      if (++checks === 3) process.env.HTTP_PROXY = proxy.base;
-    } });
-    try {
-      expect((await rejection(owned.fetch(local.url, post))).message).toBe('source-screening local route is unavailable');
-      expect(localCalls).toBe(0);
-      expect(proxyCalls).toBe(0);
-    } finally {
-      if (original === undefined) delete process.env.HTTP_PROXY; else process.env.HTTP_PROXY = original;
-    }
+    await isolatedProxyScenario('after-authority');
   });
 
   test('assertUsable checks proxy, authority and admission without creating a network request', async () => {
-    let calls = 0;
-    let current = true;
-    const local = endpoint(() => { calls++; return Response.json({}); });
-    const owned = transport([local.url], { assertCurrent() { if (!current) throw new Error('synthetic-private-authority'); } });
-    owned.assertUsable();
-    const previous = process.env.HTTP_PROXY;
-    try {
-      process.env.HTTP_PROXY = local.base;
-      expect(() => owned.assertUsable()).toThrow('source-screening local route is unavailable');
-    } finally {
-      if (previous === undefined) delete process.env.HTTP_PROXY; else process.env.HTTP_PROXY = previous;
-    }
-    current = false;
-    expect(() => owned.assertUsable()).toThrow('source-screening transport authority is no longer current');
-    current = true;
-    await owned.close();
-    expect(() => owned.assertUsable()).toThrow('source-screening transport was cancelled');
-    expect(calls).toBe(0);
+    await isolatedProxyScenario('assert-usable');
   });
 
   test('refuses a new attempt when proxy configuration appears after a successful dispatch', async () => {
-    let localCalls = 0;
-    let proxyCalls = 0;
-    const proxy = endpoint(() => { proxyCalls++; return Response.json({}); });
-    const local = endpoint(() => { localCalls++; return new Response('{}', { status: 503 }); });
-    const owned = transport([local.url]);
-    expect((await owned.fetch(local.url, post)).status).toBe(503);
-    const original = process.env.HTTPS_PROXY;
-    try {
-      process.env.HTTPS_PROXY = proxy.base;
-      expect((await rejection(owned.fetch(local.url, post))).message).toBe('source-screening local route is unavailable');
-      expect(localCalls).toBe(1);
-      expect(proxyCalls).toBe(0);
-    } finally {
-      if (original === undefined) delete process.env.HTTPS_PROXY; else process.env.HTTPS_PROXY = original;
-    }
+    await isolatedProxyScenario('next-dispatch');
+  });
+
+  test('canonical judgment retry refuses a proxy that appears after the first attempt', async () => {
+    await isolatedProxyScenario('judgment-retry');
+  });
+
+  test('stale native proxy state before owner creation cannot redirect protected dispatch', async () => {
+    await isolatedProxyScenario('stale-before-owner');
+  });
+
+  test('stale native proxy state between dispatches cannot redirect protected dispatch', async () => {
+    await isolatedProxyScenario('stale-between-dispatches');
+  });
+
+  test('ambient TLS-disable state cannot authorize an invalid local certificate', async () => {
+    await isolatedProxyScenario('tls-reject');
   });
 
   test('accepts the byte limit and rejects one byte over using actual received bytes', async () => {
@@ -255,7 +236,7 @@ describe('source-screening exact loopback transport', () => {
     const compressed = Bun.gzipSync(new Uint8Array(256 * 1024 + 1));
     expect(compressed.byteLength).toBeLessThan(1024);
     const local = endpoint(() => new Response(compressed, { headers: { 'content-encoding': 'gzip' } }));
-    expect((await rejection(transport([local.url]).fetch(local.url, post))).message).toContain('exceeds the byte limit');
+    expect((await rejection(transport([local.url]).fetch(local.url, post))).message).toBe('source-screening transport did not return a usable response');
   });
 
   test('checks current authority before sending without leaking a hook error', async () => {
@@ -349,6 +330,36 @@ describe('source-screening exact loopback transport', () => {
     await closed;
     await rejection(owned.fetch(local.url, post));
     expect(calls).toBe(1);
+  });
+
+  test('request-body cancellation cleanup remains owned through drain and close', async () => {
+    const local = endpoint(() => Response.json({}));
+    const started = Promise.withResolvers<void>();
+    const cancellation = Promise.withResolvers<void>();
+    const finishCleanup = Promise.withResolvers<void>();
+    const body = new ReadableStream<Uint8Array>({
+      pull() { started.resolve(); },
+      cancel() { cancellation.resolve(); return finishCleanup.promise; },
+    }, { highWaterMark: 0 });
+    const owned = transport([local.url]);
+    cleanups.push(() => finishCleanup.resolve());
+    const caller = new AbortController();
+    const pending = owned.fetch(local.url, { method: 'POST', body, signal: caller.signal });
+    await started.promise;
+    caller.abort();
+    await rejection(pending);
+    await cancellation.promise;
+    let drained = false;
+    let closed = false;
+    const draining = owned.drain().then(() => { drained = true; });
+    const closing = owned.close().then(() => { closed = true; });
+    await pause();
+    expect(drained).toBe(false);
+    expect(closed).toBe(false);
+    finishCleanup.resolve();
+    await Promise.all([draining, closing]);
+    expect(drained).toBe(true);
+    expect(closed).toBe(true);
   });
 
   test('a cancelled caller returns early but drain and close await actual body cancellation cleanup', async () => {
