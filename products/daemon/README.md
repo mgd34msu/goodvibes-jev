@@ -24,6 +24,28 @@ From this directory:
 - `bun run typecheck` checks source and tests
 - `bun run test` rebuilds and runs the guarded suites, including the emitted CLI
 
+Repository-only, opt-in local native packaging (first run `bun run build` at the
+repository root to build the installed engine toolchain):
+
+- `bun run build:binary` compiles the real CLI for this host into `native/`
+- `bun run build:binary --target linux-x64` selects one of `linux-x64`,
+  `linux-arm64`, `darwin-x64`, or `darwin-arm64`; `--all` selects all four
+- `bun run smoke:binary --binary native/goodvibes-daemon-linux-x64` runs the
+  shared version/banner and emitted-artifact scan (substitute your target)
+- `bun run verify:binary` runs the stronger Linux host proof with ordinary Node
+  and bubblewrap: a copied artifact set, isolated homes and a foreign cwd,
+  no checkout or `node_modules`, real config persistence and synthetic loopback
+  sends through argv and stdin. Missing artifacts or isolation fail the command.
+
+Keep the binary together with its `lib/` addon directory and, on Linux, the
+adjacent `.bun`, `.bun.json` and `.bun.LICENSE.md` runtime files. Linux builds
+require ordinary Bun 1.3.14. Native output is excluded from the script package's
+file allowlist and never goes into `dist/`. The native prebuild validates that
+`package.json` and the baked `src/version.ts` fallback agree; repair both as part
+of an intentional version change. It never bumps or prepares a release.
+These scripts and `toolchain.config.json` are checkout tooling, intentionally
+absent from the packed Bun script package. Run native commands from this repository.
+
 The `@goodvibes-jev/daemon/cli` export provides the parser/catalog and an inert
 `runDaemonCli(argv, options)` dispatcher. An embedding launcher may supply
 `options.runtime.inboxFactory` and explicitly select external-agent observation,
@@ -74,13 +96,14 @@ process environment or cwd. Raw-intercept commands including `send` must be the
 first argument; use the documented environment homes for relocated one-shot sends. Serve's model, endpoint, config and feature flags
 are runtime-only and never saved as settings.
 
-This is a Bun script package, not a published native/self-contained daemon
-release. The package keeps its historical version and remains private. Source
+The package remains a private Bun script package with an opt-in local native
+build. No native release is published. It keeps its historical version. Source
 and emitted modules are included because the existing Bun export condition uses
 source. Use the supported Bun 1.3.14 runtime and built engine workspace.
 
 See `docs/audit/daemon-cli-entrypoint.md` in the repository for exact caller
-mapping, tests and outstanding parity. The strict `migration:complete` gate must
+mapping, tests and outstanding parity, and `docs/audit/daemon-native-packaging.md`
+for local artifact proof and release limitations. The strict `migration:complete` gate must
 continue to reject this partial workspace. The original source is
 `mgd34msu/goodvibes-daemon` at `443e5ee4d6cda0d36d57e2886398d0836074a4a9`,
 reconciled through `254699bf5d834cdca41436211ada1ae32bf89258`.

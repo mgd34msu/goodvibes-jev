@@ -1,0 +1,55 @@
+{
+  "//": "Opt-in local native build only. The daemon is the sole app leg. Release-cut, publish and per-job-green remain owned by private-monorepo policy; see docs/audit/daemon-native-packaging.md. Native outputs are outside the packed dist tree.",
+  "packageName": "@goodvibes-jev/daemon",
+  "sdkPin": {
+    "sdkPackage": "@goodvibes-jev/engine",
+    "pinSource": "dependencies",
+    "lockfile": "../../bun.lock",
+    "sourceRoots": ["src"],
+    "enforceExportsMap": false
+  },
+  "build": {
+    "appEntrypoint": "src/cli/entrypoint.ts",
+    "compileDriver": "scripts/compile.ts",
+    "outDir": "native",
+    "addonOutDir": "native/lib",
+    "prebuild": [["bun", "run", "scripts/check-version.ts"]],
+    "targets": [
+      {
+        "key": "linux-x64",
+        "bunTarget": "bun-linux-x64",
+        "capturedBunRuntime": "1.3.14",
+        "appArtifact": "goodvibes-daemon-linux-x64",
+        "nativeAddonPackage": "sqlite-vec-linux-x64",
+        "nativeAddonFile": "vec0.so"
+      },
+      {
+        "key": "linux-arm64",
+        "bunTarget": "bun-linux-arm64",
+        "capturedBunRuntime": "1.3.14",
+        "appArtifact": "goodvibes-daemon-linux-arm64",
+        "nativeAddonPackage": "sqlite-vec-linux-arm64",
+        "nativeAddonFile": "vec0.so"
+      },
+      {
+        "key": "darwin-x64",
+        "bunTarget": "bun-darwin-x64",
+        "appArtifact": "goodvibes-daemon-macos-x64",
+        "nativeAddonPackage": "sqlite-vec-darwin-x64",
+        "nativeAddonFile": "vec0.dylib"
+      },
+      {
+        "key": "darwin-arm64",
+        "bunTarget": "bun-darwin-arm64",
+        "appArtifact": "goodvibes-daemon-macos-arm64",
+        "nativeAddonPackage": "sqlite-vec-darwin-arm64",
+        "nativeAddonFile": "vec0.dylib"
+      }
+    ]
+  },
+  "smoke": {
+    "bannerPrefix": "goodvibes-daemon ",
+    "forbiddenStrings": ["sqlite-vec", "$bunfs/root"],
+    "binaryDefault": "native/goodvibes-daemon-linux-x64"
+  }
+}
