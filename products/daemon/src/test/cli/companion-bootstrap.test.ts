@@ -105,6 +105,15 @@ test('emitted launcher bootstraps the selected identity for HTTP, WebSocket and 
   try {
     await first.waitFor('host started');
     identity = readIdentity(fx.daemonHome);
+    const output = first.output();
+    expect(output.stdout).toContain(`tree-home=${JSON.stringify(fx.home)}`);
+    expect(output.stdout).toContain(`daemon-home=${JSON.stringify(fx.daemonHome)}`);
+    expect(output.stdout).toContain(`intended-host="127.0.0.1" intended-port=${port}`);
+    expect(output.stdout).toContain(`bound: host="127.0.0.1" port=${port}`);
+    expect(output.stdout.indexOf('starting:')).toBeLessThan(output.stdout.indexOf(' bound:'));
+    expect(output.stdout.indexOf(' bound:')).toBeLessThan(output.stdout.indexOf('host started'));
+    expect(output.stdout + output.stderr).not.toContain(identity.token);
+    expect(readFileSync(join(fx.daemonHome, 'settings.json'), 'utf8')).not.toContain(String(port));
     const response = await fetch(`http://127.0.0.1:${port}/api/channels/inbox`, {
       headers: { Authorization: `Bearer ${identity.token}` }, signal: AbortSignal.timeout(10_000),
     });

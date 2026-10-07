@@ -29,11 +29,14 @@ function fixture() {
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   test(`${signal} before configured startup acquires neither token nor runtime`, async () => {
     const f = fixture();
-    const handle = runConfiguredDaemonCli(f.configuration, f.runtime, f.env, { process: f.target });
+    const output: string[] = [];
+    const write = (line: string) => { output.push(line); };
+    const handle = runConfiguredDaemonCli(f.configuration, f.runtime, f.env, { process: f.target }, write, write);
     f.target.emit(signal);
     expect(await handle.ready).toBeUndefined();
     expect(await handle.finished).toBe(0);
     expect(f.target.exits).toEqual([0]);
+    expect(output).toEqual([]);
     expect(f.acquisitions()).toBe(0);
     expect(existsSync(f.tokenPath)).toBe(false);
     expect(f.target.listenerCount('SIGINT') + f.target.listenerCount('SIGTERM')).toBe(0);
@@ -45,8 +48,11 @@ test('direct shutdown before configured startup preserves an existing identity b
   mkdirSync(f.selected, { recursive: true });
   const bytes = '{ "token": "synthetic-existing", "peerId": "owned-peer", "createdAt": 1 }\n';
   writeFileSync(f.tokenPath, bytes);
-  const handle = runConfiguredDaemonCli(f.configuration, f.runtime, f.env, { process: f.target });
+  const output: string[] = [];
+  const write = (line: string) => { output.push(line); };
+  const handle = runConfiguredDaemonCli(f.configuration, f.runtime, f.env, { process: f.target }, write, write);
   expect(await handle.shutdown()).toBe(0);
+  expect(output).toEqual([]);
   expect(await handle.ready).toBeUndefined();
   expect(readFileSync(f.tokenPath, 'utf8')).toBe(bytes);
   expect(f.acquisitions()).toBe(0);
@@ -88,7 +94,7 @@ test('quarantine reports the changed identity before a reporting-port shutdown f
   handle = runConfiguredDaemonCli(f.configuration, f.runtime, f.env, { process: f.target }, (line) => {
     lines.push(line);
     void handle.shutdown();
-  });
+  }, () => {});
   expect(await handle.ready).toBeUndefined();
   expect(await handle.finished).toBe(0);
   expect(f.acquisitions()).toBe(0);

@@ -30,7 +30,8 @@ export { isPortAvailable, requirePortAvailable } from './port-check.js';
 // barrel already publishes. Both the TUI's and the daemon's endpoint resolution
 // re-implemented the coercion inline because only the daemon-port half was
 // reachable, so one binding was validated by the SDK and its neighbour by a copy.
-export { resolveWebPort } from './host-resolver.js';
+export { resolveHostBinding, resolveWebPort } from './host-resolver.js';
+export type { ResolvedHostBinding } from './host-resolver.js';
 export {
   buildMissingScopeBody,
   resolveAuthenticatedPrincipal,
