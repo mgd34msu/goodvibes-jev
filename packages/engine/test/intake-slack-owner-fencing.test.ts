@@ -125,13 +125,13 @@ test('a received HTTP 401 invalidates old read eligibility while owned body reti
   cleanups.push(() => replacement.mockRestore(), () => finish.resolve());
   const polling = owned.adapter.poll({ limit: 10 });
   await cancelling.promise;
-  let readState: 'pending' | 'accepted' | 'rejected' = 'pending';
-  const reading = owned.assertReadCurrent().then(() => { readState = 'accepted'; }, () => { readState = 'rejected'; });
+  const state: { read: 'pending' | 'accepted' | 'rejected' } = { read: 'pending' };
+  const reading = owned.assertReadCurrent().then(() => { state.read = 'accepted'; }, () => { state.read = 'rejected'; });
   try {
     await new Promise<void>(resolve => setTimeout(resolve, 10));
-    expect(readState).toBe('pending');
+    expect(state.read).toBe('pending');
   } finally { finish.resolve(); await Promise.all([polling, reading]); }
-  expect(readState).toBe('rejected');
+  expect(state.read).toBe('rejected');
   expect(remote.calls).toBe(3);
 });
 
