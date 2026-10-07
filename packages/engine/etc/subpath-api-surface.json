@@ -24661,6 +24661,17 @@
       "text": "export declare class PlatformServiceManager { private readonly configManager; private readonly workingDirectory; private readonly homeDirectory; private readonly definitionOverride?; private readonly actionRunner?; private readonly surfaceRoot?; private readonly binaryBaseName?; private readonly defaultServiceName?; private readonly defaultServiceDescription?; private readonly featureFlags; constructor(configManager: ConfigManager, options: ManagedServiceManagerOptions); private isEnabled; private requireEnabled; private getPaths; status(): ManagedServiceStatus; install(): ManagedServiceStatus; private detectSystemdMajorVersion; private ensureLinger; uninstall(): ManagedServiceStatus; start(): ManagedServiceStatus; stop(): ManagedServiceStatus; restart(): ManagedServiceStatus; private resolveDefinition; private startManual; private stopManual; private runPlatformAction; private queryRunning; private queryPlatformRunning; private runQuery; private readPid; private isPidRunning; } ;; via ManagedServiceManagerOptions = export interface ManagedServiceManagerOptions extends ManagedServicePaths { readonly definitionOverride?: ManagedServiceDefinition | undefined; readonly actionRunner?: ((command: string, args: readonly string[]) => ManagedServiceActionResult) | undefined; readonly surfaceRoot?: string | undefined; readonly binaryBaseName?: string | undefined; readonly defaultServiceName?: string | undefined; readonly defaultServiceDescription?: string | undefined; readonly featureFlags?: FeatureFlagReader | undefined; }"
     },
     {
+      "name": "ResolvedHostBinding",
+      "kind": "interface",
+      "required": [
+        "effectiveMode",
+        "host",
+        "port",
+        "recognized"
+      ],
+      "text": "export interface ResolvedHostBinding { readonly host: string; readonly port: number; readonly recognized: boolean; readonly effectiveMode: 'local' | 'network' | 'custom'; }"
+    },
+    {
       "name": "bootDaemon",
       "kind": "function",
       "text": "export declare function bootDaemon(options: BootDaemonOptions): Promise<BootedDaemon>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
@@ -24749,6 +24760,11 @@
       "name": "resolveAuthenticatedPrincipal",
       "kind": "function",
       "text": "export declare function resolveAuthenticatedPrincipal(req: Request, resolver: AuthenticatedPrincipalResolver): AuthenticatedPrincipal | null; ;; via AuthenticatedPrincipal = export interface AuthenticatedPrincipal { readonly principalId: string; readonly principalKind: AuthenticatedPrincipalKind; readonly admin: boolean; readonly scopes: readonly string[]; } ;; AuthenticatedPrincipalResolver = interface AuthenticatedPrincipalResolver { readonly extractAuthToken: (req: Request) => string; readonly describeAuthenticatedPrincipal: (token: string) => AuthenticatedPrincipal | null; } ;; Request = interface Request extends Body { readonly cache: RequestCache; readonly credentials: RequestCredentials; readonly destination: RequestDestination; readonly headers: Headers; readonly integrity: string; readonly keepalive: boolean; readonly method: string; readonly mode: RequestMode; readonly redirect: RequestRedirect; readonly referrer: string; readonly referrerPolicy: ReferrerPolicy; readonly signal: AbortSignal; readonly url: string; clone(): Request; }"
+    },
+    {
+      "name": "resolveHostBinding",
+      "kind": "function",
+      "text": "export declare function resolveHostBinding(hostMode: string, customHost: string, customPort: number, serverType: 'controlPlane' | 'httpListener' | 'web'): ResolvedHostBinding;"
     },
     {
       "name": "resolvePrivateHostFetchOptions",

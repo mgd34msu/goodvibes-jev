@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VERSION } from '../version.ts';
@@ -35,26 +36,40 @@ export function renderGoodVibesVersion(binary = 'goodvibes-daemon'): string {
   return `${binary} ${getPackageVersion()}`;
 }
 
-/**
- * Honest one-line startup identity for the daemon binary, emitted right as it
- * begins serving, including on a bare (no-arg) systemd launch. It states the
- * RESOLVED version (never a placeholder), the home/host/port it actually bound,
- * and points at the real service-setup command. This replaces the field
- * behavior where a bare launch showed a wrong "v0.0.0" banner and gave an
- * operator nothing to act on. `version` is passed in (never read from the live
- * build here) so callers/tests can pin a sentinel and never compare the live
- * VERSION.
- */
+/** Quote paths and hostnames without permitting terminal-control output. */
+function displayValue(value: string): string {
+  return JSON.stringify(value).replace(/[\u007f-\u009f\u2028-\u202e\u2066-\u2069]/g,
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
+/** Accept only a bare, canonical URL authority with no other URL components. */
+function displayHost(host: string): string {
+  const authority = isIP(host) === 6 ? `[${host}]` : host;
+  try {
+    const parsed = new URL(`http://${authority}`);
+    if (parsed.host !== authority.toLowerCase() || parsed.username || parsed.password
+      || parsed.port || parsed.pathname !== '/' || parsed.search || parsed.hash) return '[withheld]';
+    const name = parsed.hostname;
+    const ip = isIP(name) || (name.startsWith('[') && name.endsWith(']') && isIP(name.slice(1, -1)));
+    const labels = name.endsWith('.') ? name.slice(0, -1).split('.') : name.split('.');
+    if (!ip && (name.length > 253 || labels.some((label) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label)))) return '[withheld]';
+    return displayValue(name);
+  } catch { return '[withheld]'; }
+}
+
+/** Intended identity before token/graph acquisition; not evidence of a bound listener. */
 export function renderDaemonStartupBanner(
   version: string,
-  binding: { readonly homeDir: string; readonly host: string; readonly port: number },
+  binding: { readonly homeDir: string; readonly daemonHomeDir: string; readonly host: string; readonly port: number },
   binary = 'goodvibes-daemon',
 ): string {
-  return (
-    `${binary} ${version} starting: ` +
-    `home=${binding.homeDir} host=${binding.host} port=${binding.port} ` +
-    `(manage as a service: ${binary} install-service)`
-  );
+  return `${binary} ${version} starting: tree-home=${displayValue(binding.homeDir)} `
+    + `daemon-home=${displayValue(binding.daemonHomeDir)} intended-host=${displayHost(binding.host)} intended-port=${binding.port}`;
+}
+
+/** Render only listener-owned binding fields, after host and boot settlement. */
+export function renderDaemonBoundEndpoint(version: string, binding: { readonly host: string; readonly port: number }): string {
+  return `goodvibes-daemon ${version} bound: host=${displayHost(binding.host)} port=${binding.port}`;
 }
 
 /**

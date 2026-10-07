@@ -22,7 +22,7 @@ export interface DaemonHostOptions {
   readonly httpListener?: DaemonHostBinding;
 }
 
-export type DaemonHostServer = Pick<DaemonServer, 'enable' | 'start' | 'stop' | 'fenceRestartAdmission' | 'waitForRestart' | 'isRunning'>;
+export type DaemonHostServer = Pick<DaemonServer, 'enable' | 'start' | 'stop' | 'fenceRestartAdmission' | 'waitForRestart' | 'isRunning' | 'boundHost' | 'boundPort'>;
 export type DaemonHostListener = Pick<HttpListener, 'enable' | 'start' | 'stop' | 'fenceRestartAdmission' | 'waitForRestart' | 'isRunning'>;
 
 /** Narrow construction seams also permit held-acquisition lifecycle tests. */
