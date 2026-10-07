@@ -1,6 +1,7 @@
 import { ArtifactStore } from '../../artifacts/index.js';
 import { ConfigManager } from '../../config/manager.js';
 import { ServiceRegistry } from '../../config/service-registry.js';
+import type { SecretsManager } from '../../config/secrets.js';
 import type { ChannelDeliveryStrategy } from './types.js';
 import {
   appendAttachmentSummary,
@@ -10,6 +11,7 @@ import {
   postBridgePayload,
   requireOkResponse,
   resolveAttachments,
+  resolveDeliveryCredential,
   resolveChannelDeliverySurfaceKind,
   success,
   trimForSurface,
@@ -20,6 +22,7 @@ export function createSignalDeliveryStrategy(
   configManager: ConfigManager,
   serviceRegistry: ServiceRegistry,
   artifactStore: ArtifactStore,
+  secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:signal',
@@ -42,11 +45,12 @@ export function createSignalDeliveryStrategy(
       );
       if (!bridgeUrl) throw new Error('Missing Signal bridge URL');
       if (!recipient) throw new Error('Missing Signal recipient');
-      const token = firstNonEmpty(
-        await serviceRegistry.resolveSecret('signal', 'primary'),
-        String(configManager.get('surfaces.signal.token') ?? ''),
-        process.env.SIGNAL_BRIDGE_TOKEN,
-      );
+      const token = await resolveDeliveryCredential(configManager, serviceRegistry, secretsManager, {
+        serviceName: 'signal',
+        serviceField: 'primary',
+        configKey: 'surfaces.signal.token',
+        environmentValue: process.env.SIGNAL_BRIDGE_TOKEN,
+      });
       const responseId = await postBridgePayload(bridgeUrl, {
         surface: 'signal',
         account: firstNonEmpty(String(configManager.get('surfaces.signal.account') ?? '')),
@@ -71,6 +75,7 @@ export function createWhatsAppDeliveryStrategy(
   configManager: ConfigManager,
   serviceRegistry: ServiceRegistry,
   artifactStore: ArtifactStore,
+  secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:whatsapp',
@@ -94,11 +99,12 @@ export function createWhatsAppDeliveryStrategy(
           process.env.WHATSAPP_BRIDGE_URL,
         );
         if (!bridgeUrl) throw new Error('Missing WhatsApp bridge URL');
-        const token = firstNonEmpty(
-          await serviceRegistry.resolveSecret('whatsapp', 'primary'),
-          String(configManager.get('surfaces.whatsapp.accessToken') ?? ''),
-          process.env.WHATSAPP_ACCESS_TOKEN,
-        );
+        const token = await resolveDeliveryCredential(configManager, serviceRegistry, secretsManager, {
+          serviceName: 'whatsapp',
+          serviceField: 'primary',
+          configKey: 'surfaces.whatsapp.accessToken',
+          environmentValue: process.env.WHATSAPP_ACCESS_TOKEN,
+        });
         const responseId = await postBridgePayload(bridgeUrl, {
           surface: 'whatsapp',
           provider,
@@ -117,11 +123,12 @@ export function createWhatsAppDeliveryStrategy(
       }
 
       const phoneNumberId = firstNonEmpty(String(configManager.get('surfaces.whatsapp.phoneNumberId') ?? ''));
-      const accessToken = firstNonEmpty(
-        await serviceRegistry.resolveSecret('whatsapp', 'primary'),
-        String(configManager.get('surfaces.whatsapp.accessToken') ?? ''),
-        process.env.WHATSAPP_ACCESS_TOKEN,
-      );
+      const accessToken = await resolveDeliveryCredential(configManager, serviceRegistry, secretsManager, {
+        serviceName: 'whatsapp',
+        serviceField: 'primary',
+        configKey: 'surfaces.whatsapp.accessToken',
+        environmentValue: process.env.WHATSAPP_ACCESS_TOKEN,
+      });
       if (!phoneNumberId) throw new Error('Missing WhatsApp phone number id');
       if (!accessToken) throw new Error('Missing WhatsApp access token');
       const apiBaseUrl = firstNonEmpty(process.env.WHATSAPP_BASE_URL, 'https://graph.facebook.com/v17.0')!;
@@ -254,6 +261,7 @@ export function createIMessageDeliveryStrategy(
   configManager: ConfigManager,
   serviceRegistry: ServiceRegistry,
   artifactStore: ArtifactStore,
+  secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:imessage',
@@ -276,11 +284,12 @@ export function createIMessageDeliveryStrategy(
       );
       if (!bridgeUrl) throw new Error('Missing iMessage bridge URL');
       if (!chatId) throw new Error('Missing iMessage chat id');
-      const token = firstNonEmpty(
-        await serviceRegistry.resolveSecret('imessage', 'primary'),
-        String(configManager.get('surfaces.imessage.token') ?? ''),
-        process.env.IMESSAGE_BRIDGE_TOKEN,
-      );
+      const token = await resolveDeliveryCredential(configManager, serviceRegistry, secretsManager, {
+        serviceName: 'imessage',
+        serviceField: 'primary',
+        configKey: 'surfaces.imessage.token',
+        environmentValue: process.env.IMESSAGE_BRIDGE_TOKEN,
+      });
       const responseId = await postBridgePayload(bridgeUrl, {
         surface: 'imessage',
         account: firstNonEmpty(String(configManager.get('surfaces.imessage.account') ?? '')),
@@ -305,6 +314,7 @@ export function createBlueBubblesDeliveryStrategy(
   configManager: ConfigManager,
   serviceRegistry: ServiceRegistry,
   artifactStore: ArtifactStore,
+  secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:bluebubbles',
@@ -318,11 +328,12 @@ export function createBlueBubblesDeliveryStrategy(
         serviceRegistry.get('bluebubbles')?.baseUrl,
         process.env.BLUEBUBBLES_SERVER_URL,
       );
-      const password = firstNonEmpty(
-        await serviceRegistry.resolveSecret('bluebubbles', 'password'),
-        String(configManager.get('surfaces.bluebubbles.password') ?? ''),
-        process.env.BLUEBUBBLES_PASSWORD,
-      );
+      const password = await resolveDeliveryCredential(configManager, serviceRegistry, secretsManager, {
+        serviceName: 'bluebubbles',
+        serviceField: 'password',
+        configKey: 'surfaces.bluebubbles.password',
+        environmentValue: process.env.BLUEBUBBLES_PASSWORD,
+      });
       const chatGuid = firstNonEmpty(
         request.target.address,
         typeof request.binding?.metadata.chatGuid === 'string' ? request.binding.metadata.chatGuid : undefined,
@@ -341,7 +352,7 @@ export function createBlueBubblesDeliveryStrategy(
           tempGuid: crypto.randomUUID(),
           message: trimForSurface(appendAttachmentSummary(request.body, attachments), 8_000),
         }),
-      });
+      }, 'opaque-url');
       const payload = await requireOkResponse('BlueBubbles delivery failed', response);
       return success(extractResponseId(payload) ?? chatGuid);
     },

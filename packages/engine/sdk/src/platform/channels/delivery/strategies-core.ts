@@ -1,3 +1,4 @@
+import { retireDeliveryResponse } from '../../integrations/delivery-diagnostics.js';
 import { ArtifactStore } from '../../artifacts/index.js';
 import { ConfigManager } from '../../config/manager.js';
 import type { SecretsManager } from '../../config/secrets.js';
@@ -14,6 +15,7 @@ import {
   extractResponseId,
   firstNonEmpty,
   requireOkResponse,
+  resolveDeliveryCredential,
   resolveAttachments,
   resolveChannelDeliverySurfaceKind,
   success,
@@ -42,6 +44,7 @@ export function createWebhookDeliveryStrategy(
         // The default target is declared secret-bearing (it can carry its own
         // token), so it may be a secret reference.
         ?? await resolveSecretInput(configManager.get('surfaces.webhook.defaultTarget'), {
+          diagnosticMode: 'structural',
           resolveLocalSecret: (key) => secretsManager.get(key),
           homeDirectory: secretsManager.getGlobalHome?.() ?? undefined,
         })
@@ -71,7 +74,8 @@ export function createWebhookDeliveryStrategy(
       if (!response.ok) {
         throw new HttpStatusError(`HTTP ${response.status}: ${await response.text().catch(() => '')}`, { status: response.status });
       }
-      return success(validation.url);
+      await retireDeliveryResponse(response);
+      return success();
     },
   };
 }
@@ -90,34 +94,28 @@ export function createSlackDeliveryStrategy(
     async deliver(request) {
       const attachments = await resolveAttachments(request, artifactStore, configManager);
       const bodyWithAttachments = appendAttachmentSummary(request.body, attachments);
-      const webhookUrl =
-        await serviceRegistry.resolveSecret('slack', 'webhookUrl')
-        ?? process.env.SLACK_WEBHOOK_URL;
-      const botToken =
-        await serviceRegistry.resolveSecret('slack', 'primary')
-        ?? await resolveSecretInput(configManager.get('surfaces.slack.botToken'), {
-          resolveLocalSecret: (key) => secretsManager.get(key),
-          homeDirectory: secretsManager.getGlobalHome?.() ?? undefined,
-        })
-        ?? process.env.SLACK_BOT_TOKEN;
-      const slack = new SlackIntegration(webhookUrl ?? undefined, botToken ?? undefined);
+      const slack = new SlackIntegration('', '');
       const responseUrl = typeof request.binding?.metadata.responseUrl === 'string'
         ? request.binding.metadata.responseUrl
         : undefined;
       if (responseUrl?.startsWith('https://hooks.slack.com/')) {
-        await instrumentedFetch(responseUrl, {
+        const response = await instrumentedFetch(responseUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             response_type: 'in_channel',
             blocks: slack.formatAgentResult(request.agentId ?? request.runId, request.title, bodyWithAttachments),
           }),
-        });
-        return success(responseUrl);
+        }, 'opaque-url');
+        try { await retireDeliveryResponse(response); }
+        finally {
+          if (!response.ok) throw new HttpStatusError('Slack response URL rejected the request', { status: response.status });
+        }
+        return success();
       }
       if (request.target.address?.startsWith('https://')) {
         await slack.postWebhook(bodyWithAttachments, undefined, request.target.address);
-        return success(request.target.address);
+        return success();
       }
       const channelId = firstNonEmpty(
         request.target.address,
@@ -126,11 +124,16 @@ export function createSlackDeliveryStrategy(
         String(configManager.get('surfaces.slack.defaultChannel') ?? ''),
       );
       if (channelId) {
-        await slack.postMessage(channelId, bodyWithAttachments);
+        const botToken = await resolveDeliveryCredential(configManager, serviceRegistry, secretsManager, {
+          serviceName: 'slack', serviceField: 'primary', configKey: 'surfaces.slack.botToken',
+          environmentValue: process.env.SLACK_BOT_TOKEN,
+        });
+        await new SlackIntegration('', botToken ?? '').postMessage(channelId, bodyWithAttachments);
         return success(channelId);
       }
-      await slack.postWebhook(bodyWithAttachments);
-      return success(webhookUrl ?? undefined);
+      const webhookUrl = await serviceRegistry.resolveSecret('slack', 'webhookUrl') ?? process.env.SLACK_WEBHOOK_URL;
+      await new SlackIntegration(webhookUrl ?? '', '').postWebhook(bodyWithAttachments);
+      return success();
     },
   };
 }
@@ -149,20 +152,7 @@ export function createDiscordDeliveryStrategy(
     async deliver(request) {
       const attachments = await resolveAttachments(request, artifactStore, configManager);
       const bodyWithAttachments = appendAttachmentSummary(request.body, attachments);
-      const webhookUrl =
-        await serviceRegistry.resolveSecret('discord', 'webhookUrl')
-        ?? process.env.DISCORD_WEBHOOK_URL;
-      const botToken =
-        await serviceRegistry.resolveSecret('discord', 'primary')
-        // Resolve secret references the same way ingress does. Reading this key
-        // as a raw string would send the literal "goodvibes://secrets/..." text
-        // as the bot token, the same bug already fixed for telegram.
-        ?? await resolveSecretInput(configManager.get('surfaces.discord.botToken'), {
-          resolveLocalSecret: (key) => secretsManager.get(key),
-          homeDirectory: secretsManager.getGlobalHome?.() ?? undefined,
-        })
-        ?? process.env.DISCORD_BOT_TOKEN;
-      const discord = new DiscordIntegration(webhookUrl ?? undefined, botToken ?? undefined);
+      const discord = new DiscordIntegration('', '');
       const applicationId = typeof request.binding?.metadata.applicationId === 'string'
         ? request.binding.metadata.applicationId
         : undefined;
@@ -176,11 +166,11 @@ export function createDiscordDeliveryStrategy(
           '',
           [discord.formatAgentResult(request.agentId ?? request.runId, request.title, bodyWithAttachments)],
         );
-        return success(`${applicationId}:${interactionToken}`);
+        return success();
       }
       if (request.target.address?.startsWith('https://')) {
         await discord.postWebhook(bodyWithAttachments, undefined, request.target.address);
-        return success(request.target.address);
+        return success();
       }
       const channelId = firstNonEmpty(
         request.target.address,
@@ -189,11 +179,16 @@ export function createDiscordDeliveryStrategy(
         String(configManager.get('surfaces.discord.defaultChannelId') ?? ''),
       );
       if (channelId) {
-        await discord.postMessage(channelId, bodyWithAttachments);
+        const botToken = await resolveDeliveryCredential(configManager, serviceRegistry, secretsManager, {
+          serviceName: 'discord', serviceField: 'primary', configKey: 'surfaces.discord.botToken',
+          environmentValue: process.env.DISCORD_BOT_TOKEN,
+        });
+        await new DiscordIntegration('', botToken ?? '').postMessage(channelId, bodyWithAttachments);
         return success(channelId);
       }
-      await discord.postWebhook(bodyWithAttachments);
-      return success(webhookUrl ?? undefined);
+      const webhookUrl = await serviceRegistry.resolveSecret('discord', 'webhookUrl') ?? process.env.DISCORD_WEBHOOK_URL;
+      await new DiscordIntegration(webhookUrl ?? '', '').postWebhook(bodyWithAttachments);
+      return success();
     },
   };
 }
@@ -202,6 +197,7 @@ export function createNtfyDeliveryStrategy(
   configManager: ConfigManager,
   serviceRegistry: ServiceRegistry,
   artifactStore: ArtifactStore,
+  secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:ntfy',
@@ -211,7 +207,10 @@ export function createNtfyDeliveryStrategy(
     async deliver(request) {
       const attachments = await resolveAttachments(request, artifactStore, configManager);
       const baseUrl = String(configManager.get('surfaces.ntfy.baseUrl') ?? 'https://ntfy.sh');
-      const token = await serviceRegistry.resolveSecret('ntfy', 'primary') ?? process.env.NTFY_ACCESS_TOKEN;
+      const token = await resolveDeliveryCredential(configManager, serviceRegistry, secretsManager, {
+        serviceName: 'ntfy', serviceField: 'primary', configKey: 'surfaces.ntfy.token',
+        environmentValue: process.env.NTFY_ACCESS_TOKEN,
+      });
       const topic = firstNonEmpty(
         request.target.address,
         request.binding?.channelId,
@@ -229,6 +228,7 @@ export function createNtfyDeliveryStrategy(
         ...(request.includeLinks && baseUrlHint ? { click: `${baseUrlHint}/api/control-plane/web` } : {}),
         ...(primaryAttachment?.contentUrl ? { attach: primaryAttachment.contentUrl } : {}),
         markGoodVibesOrigin: true,
+        allowDuplicate: request.allowDuplicate === true,
       });
       return success(topic);
     },
@@ -294,6 +294,7 @@ export function createHomeAssistantDeliveryStrategy(
       const token = firstNonEmpty(
         await serviceRegistry.resolveSecret('homeassistant', 'primary'),
         await resolveSecretInput(configManager.get('surfaces.homeassistant.accessToken'), {
+          diagnosticMode: 'structural',
           resolveLocalSecret: (key) => secretsManager.get(key),
           homeDirectory: secretsManager.getGlobalHome?.() ?? undefined,
         }),
@@ -360,17 +361,10 @@ export function createTelegramDeliveryStrategy(
     },
     async deliver(request) {
       const attachments = await resolveAttachments(request, artifactStore, configManager);
-      const token = firstNonEmpty(
-        await serviceRegistry.resolveSecret('telegram', 'primary'),
-        // Resolve secret references the same way ingress does. Reading this key
-        // as a raw string sent the literal "goodvibes://secrets/..." text as the
-        // bot token, so a setup that could receive messages could not reply.
-        await resolveSecretInput(configManager.get('surfaces.telegram.botToken'), {
-          resolveLocalSecret: (key) => secretsManager.get(key),
-          homeDirectory: secretsManager.getGlobalHome?.() ?? undefined,
-        }),
-        process.env.TELEGRAM_BOT_TOKEN,
-      );
+      const token = await resolveDeliveryCredential(configManager, serviceRegistry, secretsManager, {
+        serviceName: 'telegram', serviceField: 'primary', configKey: 'surfaces.telegram.botToken',
+        environmentValue: process.env.TELEGRAM_BOT_TOKEN,
+      });
       const chatId = firstNonEmpty(
         request.target.address,
         request.binding?.channelId,
@@ -390,9 +384,12 @@ export function createTelegramDeliveryStrategy(
             ? { message_thread_id: Number(request.binding.threadId) }
             : {}),
         }),
-      });
+      }, 'opaque-url');
       const payload = await requireOkResponse('Telegram delivery failed', response);
-      return success(extractResponseId(payload) ?? chatId);
+      if (payload === null || typeof payload !== 'object' || !('ok' in payload) || payload.ok !== true) {
+        throw new Error('Telegram did not acknowledge the send request');
+      }
+      return success(extractResponseId(payload));
     },
   };
 }
@@ -410,24 +407,18 @@ export function createGoogleChatDeliveryStrategy(
     },
     async deliver(request) {
       const attachments = await resolveAttachments(request, artifactStore, configManager);
-      const webhookUrl = firstNonEmpty(
-        request.target.address?.startsWith('https://') ? request.target.address : undefined,
-        // The route binding upserted on ingress is a valid source for the
-        // destination, exactly as it already is for webhook
-        // (metadata.callbackUrl) and slack (metadata.responseUrl) above. This
-        // strategy read the binding only for `threadKey`, so a conversation
-        // bound purely by binding, no target.address, no configured webhook,
-        // threw "Missing Google Chat webhook URL" and the reply went nowhere.
-        readString(request.binding?.metadata.webhookUrl),
-        await serviceRegistry.resolveSecret('google-chat', 'webhookUrl'),
-        serviceRegistry.get('google-chat')?.baseUrl,
-        // Declared secret-bearing: the webhook URL carries its key and token.
-        await resolveSecretInput(configManager.get('surfaces.googleChat.webhookUrl'), {
-          resolveLocalSecret: (key) => secretsManager.get(key),
-          homeDirectory: secretsManager.getGlobalHome?.() ?? undefined,
-        }) ?? '',
-        process.env.GOOGLE_CHAT_WEBHOOK_URL,
-      );
+      const explicitTarget = request.target.address;
+      if (explicitTarget !== undefined) {
+        let valid = false;
+        try { valid = new URL(explicitTarget).protocol === 'https:'; } catch { /* Closed protocol refusal below. */ }
+        if (!valid) throw new Error('Google Chat requires an explicit HTTPS webhook target');
+      }
+      const webhookUrl = firstNonEmpty(explicitTarget, readString(request.binding?.metadata.webhookUrl))
+        ?? await resolveDeliveryCredential(configManager, serviceRegistry, secretsManager, {
+          serviceName: 'google-chat', serviceField: 'webhookUrl', configKey: 'surfaces.googleChat.webhookUrl',
+          serviceDefault: () => serviceRegistry.get('google-chat')?.baseUrl,
+          environmentValue: process.env.GOOGLE_CHAT_WEBHOOK_URL,
+        });
       if (!webhookUrl) {
         throw new Error('Missing Google Chat webhook URL');
       }
@@ -439,9 +430,9 @@ export function createGoogleChatDeliveryStrategy(
           text: trimForSurface(appendAttachmentSummary(request.body, attachments), 4_000),
           ...(threadKey ? { thread: { threadKey } } : {}),
         }),
-      });
+      }, 'opaque-url');
       const payload = await requireOkResponse('Google Chat delivery failed', response);
-      return success(extractResponseId(payload) ?? webhookUrl);
+      return success(extractResponseId(payload));
     },
   };
 }

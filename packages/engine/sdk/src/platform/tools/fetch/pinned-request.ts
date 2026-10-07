@@ -46,7 +46,13 @@ const bareHost = (url: URL): string => url.hostname.replace(/^\[|\]$/g, '');
  */
 export async function resolveCheckedAddresses(
   url: string,
-  options: { readonly trustTierConfig: TrustTierConfig; readonly localhostApproved: boolean; readonly resolveHost?: HostResolver | undefined },
+  options: {
+    readonly trustTierConfig: TrustTierConfig;
+    readonly localhostApproved: boolean;
+    readonly resolveHost?: HostResolver | undefined;
+    /** Diagnostic projection only; every address is still checked unchanged. */
+    readonly diagnosticMode?: 'default' | 'opaque-url';
+  },
 ): Promise<readonly ResolvedAddress[]> {
   const parsed = new URL(url);
   const host = bareHost(parsed);
@@ -67,7 +73,11 @@ export async function resolveCheckedAddresses(
     if (range === null) continue;
     if (range === 'loopback' && writtenLoopback && options.localhostApproved) continue;
     const reason = `host "${host}" resolves to ${answer.address}, a ${range} address, SSRF risk`;
-    emitSsrfDeny(host, url, reason);
+    if (options.diagnosticMode === 'opaque-url') {
+      emitSsrfDeny('[redacted-host]', '[redacted-url]', 'Resolved address is not allowed');
+    } else {
+      emitSsrfDeny(host, url, reason);
+    }
     throw new Error(`Request blocked: ${reason}`);
   }
   return answers;
@@ -80,13 +90,18 @@ export async function resolveCheckedAddresses(
  * and the certificate check use the written host, so the certificate must be
  * valid for the name the caller asked for.
  */
-export async function pinnedFetch(url: string, init: RequestInit, addresses: readonly ResolvedAddress[]): Promise<Response> {
+export async function pinnedFetch(
+  url: string,
+  init: RequestInit,
+  addresses: readonly ResolvedAddress[],
+  diagnosticMode: 'default' | 'opaque-url' = 'default',
+): Promise<Response> {
   const host = bareHost(new URL(url));
-  if (isIP(host)) return instrumentedFetch(url, init);
+  if (isIP(host)) return instrumentedFetch(url, init, diagnosticMode);
   let lastError: unknown;
   for (const address of addresses) {
     try {
-      return await fetchAddress(url, init, host, address);
+      return await fetchAddress(url, init, host, address, diagnosticMode);
     } catch (error) {
       if (init.signal?.aborted) throw error;
       lastError = error;
@@ -95,7 +110,7 @@ export async function pinnedFetch(url: string, init: RequestInit, addresses: rea
   throw lastError;
 }
 
-async function fetchAddress(url: string, init: RequestInit, host: string, address: ResolvedAddress): Promise<Response> {
+async function fetchAddress(url: string, init: RequestInit, host: string, address: ResolvedAddress, diagnosticMode: 'default' | 'opaque-url'): Promise<Response> {
   const parsed = new URL(url);
   const pinned = new URL(url);
   pinned.hostname = address.family === 6 ? `[${address.address}]` : address.address;
@@ -104,5 +119,5 @@ async function fetchAddress(url: string, init: RequestInit, host: string, addres
   const tls = parsed.protocol === 'https:'
     ? { tls: { serverName: host, checkServerIdentity: (_name: string, cert: Parameters<typeof checkServerIdentity>[1]) => checkServerIdentity(host, cert) } }
     : {};
-  return instrumentedFetch(pinned.toString(), { ...init, headers, ...tls } as RequestInit);
+  return instrumentedFetch(pinned.toString(), { ...init, headers, ...tls } as RequestInit, diagnosticMode);
 }

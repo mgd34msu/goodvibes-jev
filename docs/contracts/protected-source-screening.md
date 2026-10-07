@@ -117,6 +117,64 @@ Once the authorized caller obtains a projection, later revocation cannot erase
 that copy. Callers retain downstream authority and effect boundaries. This API
 supplies no publication, transmission, persistence, execution or citation authority.
 
+## Declared research URL query roles
+
+The same explicitly configured owner also exposes a separate bounded route:
+`captureResearchReference`, `screenResearchReference` and
+`projectResearchReference`. The input is one complete, independently framed URL
+cell. It is not an inferred range in prose. The full original faces the same
+structural/issuer-credential floor and size bounds before parsing or model use.
+The original stays private to its opaque `ProtectedResearchReference` handle.
+
+The owner uses WHATWG `URLSearchParams` only to derive at most 100 distinct
+decoded query-parameter names. It preflights every decoded name before any
+request. Each semantic request is exactly `{ parameter: name }` under the
+registered, versioned `engine.security.research-reference-parameter-role`
+battery, pinned to `jev-1.13.0`. It contains no URL, hostname, path, fragment,
+parameter value, surrounding source text or value-derived digest. This route
+never calls the proposal model. It reuses the existing owner-created System One
+port, retry ownership, fixed-origin direct client, authority checks and cleanup.
+
+A confident credential-role reading omits the complete original reference.
+Only confident ordinary readings for every name preserve the exact captured
+URL. Projection returns a typed `{ status: 'omitted' }` or
+`{ status: 'preserved', url }`. It never removes individual parameters, rebuilds
+a query, changes encoding, loses duplicate values, removes an anchor, or treats
+a changed resource as equivalent. Complete declared malformed/control-bearing
+URL cells and userinfo references are omitted without a model request (unless
+the shared input floor already refuses their material). No prose is joined.
+
+The opaque `ResearchReferenceScreeningReceipt` is deliberately distinct from
+`SourceScreeningReceipt`. Both the type surface and runtime reject cross-mode
+handles and receipts. Query-role clearance is **not** complete content-privacy
+clearance: path contents, fragments, the meaning of parameter values, and
+server-specific query delimiters are not semantically screened here. For
+example, fragment text can contain a credential while the URL has no query
+names; zero query names entails zero role requests, not a privacy judgment.
+All downstream source-privacy, retrieval, display and outward-effect authority
+still belongs to the consumer. This capability must not be used as a safe-URL
+predicate, generic redactor or publication approval.
+
+At most 1,024 role digests and typed outcomes are retained per owner, including
+reserved in-flight slots; names and values are not retained in that cache.
+An unsettled name remains held across changed URL values, other source handles,
+and alternate percent-encoded spellings. Concurrent distinct references using
+the same in-flight name get a value-free busy hold. Capacity exhaustion holds
+before another request. There is no cache eviction or lucky-answer resampling.
+Wrong-model responses and transport failures remain operational unavailability.
+Release/close still await owned calls and transport cleanup; close clears the
+role cache. Existing source-handle and unsettled-revision bounds are shared.
+
+This is a further THE-123 prerequisite, not completed consumer adoption.
+Unbound control-split reference boundaries cannot be inferred from URL parsing:
+the same newline can divide an interrupted URL or separate a complete URL from
+ordinary prose. The current editor, prompt and artifact paths remain unchanged.
+Adoption must preserve source IDs and claim bindings, cover all actual report
+text and aliases, await complete preparation before dispatch/persistence, and
+reject stale or cancelled work. The two desired unbound-reference controls
+remain open. Synthetic name-role responses do not qualify a live model or
+establish the configured local services' identity/no-retention behavior.
+
 ## Inbox mapper adoption
 
 `sdk/platform/intake` exposes `createProtectedInboxMapper(owner)`, compatible with
@@ -150,7 +208,7 @@ and the real Slack adapter → registrar → SQLite mirror → wire inbox path.
 Transport tests cover exact routes, redirects, byte bounds, cleanup and proxy refusal.
 
 The local services' identity/no-retention capability and genuine Jev calibration
-need explicit live proof under THE-35. THE-123's separate protected name-only URL
-role interface and unbound research-reference controls remain open; existing
-research consumers are unchanged. The unpublished pre-reset worktree was lost;
-this reconstruction requires its own commit, generated baselines and fresh gates.
+need explicit live proof under THE-35. THE-123's name-only declared-URL role
+capability now has synthetic containment tests, including raw-value absence and
+distinct receipt scopes. Unbound research-reference controls and adoption by
+existing research consumers remain open. No release or deployment is implied.

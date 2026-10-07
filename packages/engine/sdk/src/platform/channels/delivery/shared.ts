@@ -1,6 +1,9 @@
 import { ArtifactStore, type ArtifactAttachment, type ArtifactReference } from '../../artifacts/index.js';
 import { ConfigManager } from '../../config/manager.js';
-import { ServiceRegistry } from '../../config/service-registry.js';
+import type { ConfigKey } from '../../config/schema-types.js';
+import { ServiceRegistry, type ServiceSecretField } from '../../config/service-registry.js';
+import type { SecretsManager } from '../../config/secrets.js';
+import { resolveSecretInput } from '../../config/secret-refs.js';
 import type {
   ChannelDeliveryRequest,
   ChannelDeliveryResult,
@@ -81,21 +84,55 @@ export function normalizeBaseUrl(value: string): string {
   return value.replace(/\/+$/, '');
 }
 
+/** Resolve only the selected credential; a broken configured reference cannot switch accounts. */
+export async function resolveDeliveryCredential(
+  configManager: ConfigManager,
+  serviceRegistry: ServiceRegistry,
+  secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
+  options: {
+    readonly serviceName: string;
+    readonly serviceField: ServiceSecretField;
+    readonly configKey: ConfigKey;
+    readonly serviceDefault?: (() => string | undefined) | undefined;
+    readonly environmentValue: string | undefined;
+  },
+): Promise<string | undefined> {
+  const registered = firstNonEmpty(await serviceRegistry.resolveSecret(options.serviceName, options.serviceField));
+  if (registered) return registered;
+  const serviceDefault = firstNonEmpty(options.serviceDefault?.());
+  if (serviceDefault) return serviceDefault;
+  const configured = configManager.get(options.configKey);
+  if (configured !== undefined && configured !== null
+    && (typeof configured !== 'string' || configured.trim().length > 0)) {
+    const resolved = firstNonEmpty(await resolveSecretInput(configured, {
+      diagnosticMode: 'structural',
+      resolveLocalSecret: (key) => secretsManager.get(key),
+      homeDirectory: secretsManager.getGlobalHome?.() ?? undefined,
+      configKey: options.configKey,
+    }));
+    if (!resolved) throw new Error(`Could not resolve channel delivery credential for ${options.configKey}`);
+    return resolved;
+  }
+  return firstNonEmpty(options.environmentValue);
+}
+
 const msTeamsTokenCache = new Map<string, { readonly token: string; readonly expiresAt: number }>();
 
 export async function resolveMSTeamsAccessToken(
   configManager: ConfigManager,
   serviceRegistry: ServiceRegistry,
+  secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
 ): Promise<string> {
   const appId = firstNonEmpty(
     String(configManager.get('surfaces.msteams.appId') ?? ''),
     process.env.MSTEAMS_APP_ID,
   );
-  const appPassword = firstNonEmpty(
-    await serviceRegistry.resolveSecret('msteams', 'password'),
-    String(configManager.get('surfaces.msteams.appPassword') ?? ''),
-    process.env.MSTEAMS_APP_PASSWORD,
-  );
+  const appPassword = await resolveDeliveryCredential(configManager, serviceRegistry, secretsManager, {
+    serviceName: 'msteams',
+    serviceField: 'password',
+    configKey: 'surfaces.msteams.appPassword',
+    environmentValue: process.env.MSTEAMS_APP_PASSWORD,
+  });
   const tenantId = firstNonEmpty(
     String(configManager.get('surfaces.msteams.tenantId') ?? ''),
     process.env.MSTEAMS_TENANT_ID,

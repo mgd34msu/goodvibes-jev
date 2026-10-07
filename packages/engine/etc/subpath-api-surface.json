@@ -12473,7 +12473,7 @@
         "target",
         "title"
       ],
-      "text": "export interface ChannelDeliveryRequest { readonly target: ChannelDeliveryTarget; readonly body: string; readonly title: string; readonly jobId: string; readonly runId: string; readonly agentId?: string | undefined; readonly sessionId?: string | undefined; readonly status?: string | undefined; readonly includeLinks: boolean; readonly attachments?: readonly ArtifactReference[] | undefined; readonly binding?: ChannelDeliveryRouteBinding | undefined; readonly metadata?: Record<string, unknown> | undefined; } ;; via ArtifactReference = export interface ArtifactReference { readonly artifactId: string; readonly label?: string | undefined; readonly metadata?: Record<string, unknown> | undefined; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export interface ChannelDeliveryRequest { readonly target: ChannelDeliveryTarget; readonly body: string; readonly title: string; readonly jobId: string; readonly runId: string; readonly agentId?: string | undefined; readonly sessionId?: string | undefined; readonly status?: string | undefined; readonly includeLinks: boolean; readonly allowDuplicate?: boolean | undefined; readonly attachments?: readonly ArtifactReference[] | undefined; readonly binding?: ChannelDeliveryRouteBinding | undefined; readonly metadata?: Record<string, unknown> | undefined; } ;; via ArtifactReference = export interface ArtifactReference { readonly artifactId: string; readonly label?: string | undefined; readonly metadata?: Record<string, unknown> | undefined; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "ChannelDeliveryResult",
@@ -15968,7 +15968,7 @@
         "subscribe",
         "watchConfigFiles"
       ],
-      "text": "export declare class ConfigManager { private readonly readOnly; private readonly hostSettings; private hostLoadValues; private config; private readonly configDir; private readonly configPath; private readonly projectConfigPath; private readonly workingDirectory; private readonly homeDirectory; private readonly sharedTierPath; private readonly daemonTierPath; private readonly daemonTierOwner; private readonly sharedKeysPresent; private readonly daemonKeysPresent; private hookDispatcher; private profileFallback; private readonly _listeners; private _fileWatch; private ingestionNotices; private readonly unknownSettingForms; constructor(overrides: ConfigOverrides); getControlPlaneConfigDir(): string; getAutonomousPermissionSnapshot(): Readonly<{ permissions: GoodVibesConfig['permissions']; autoApprove: boolean; directory: string | null; }>; getWorkingDirectory(): string | null; getHomeDirectory(): string | null; getConfigPath(): string; getProjectConfigPath(): string | undefined; attachHookDispatcher(hookDispatcher: Pick<HookDispatcher, 'fire'> | null): () => void; attachProfileFallback(reader: ConfigProfileFallbackReader | null): void; private resolvePath; get<K extends ConfigKey>(key: K): ConfigValue<K>; getHostBooleanSetting(key: string): HostBooleanSettingHandle; set<K extends ConfigKey>(key: K, value: ConfigValue<K>, options?: ConfigSetOptions): void; setDaemonValues(patch: DaemonConfigPatch): void; setProjectValue<K extends ConfigKey>(key: K, value: ConfigValue<K>, options?: ConfigSetOptions): void; subscribe<K extends ConfigKey>(key: K, cb: ConfigChangeCallback<K>): ConfigUnsubscribe; watchConfigFiles(options?: { intervalMs?: number; }): () => void; stopWatchingConfigFiles(): void; private reloadFromDiskAndNotify; private notifyListeners; private emitConfigHook; setDynamic(key: ConfigKey, value: unknown, options?: ConfigSetOptions): void; getAll(): DeepReadonly<GoodVibesConfig>; getCategory<C extends keyof GoodVibesConfig>(category: C): Readonly<GoodVibesConfig[C]>; getRaw(): Readonly<GoodVibesConfig>; getSchema(): ConfigSetting[]; getHostSettingsSchema(): readonly HostBooleanSetting[]; private persistGlobalKey; private writeRawGlobal; save(): void; private withoutDaemonOwned; saveProject(): void; getIngestionQuarantine(): readonly SettingsIngestionNotice[]; announceUnknownSettingForms(): Promise<void>; private ingestionSink; private ingest; private loadFailure; load(): void; private loadDaemonTier; getDaemonTierPath(): string | null; private loadSharedTier; getSharedTierPath(): string | null; describeConfigKeySource(key: ConfigKey): ConfigKeySource; private applyLoadMigrations; private requireWritable; private migrationReceipt; private applyHostValues; private refreshHostSettings; private preserveHostSettingsForBulkSave; private hostSettingHasProjectValue; private resetHostSetting; mergeCategory<C extends keyof GoodVibesConfig>(category: C, patch: Partial<GoodVibesConfig[C]>): void; removeCategoryKey<C extends keyof GoodVibesConfig>(category: C, key: string): void; private categoryIoDeps; reset(key?: ConfigKey): void; } ;; via ConfigChangeCallback = export type ConfigChangeCallback<K extends ConfigKey> = (newValue: ConfigValue<K>, oldValue: ConfigValue<K>) => void; ;; ConfigOverrides = export type ConfigOverrides = ConfigCliOverrides & ({ configDir: string; homeDir?: string | undefined; sharedConfigPath?: string | undefined; sharedTierPath?: string | undefined; daemonTierPath?: string | undefined; } | { homeDir: string; configDir?: string | undefined; sharedConfigPath?: string | undefined; sharedTierPath?: string | undefined; daemonTierPath?: string | undefined; }); ;; ConfigProfileFallbackReader = export type ConfigProfileFallbackReader = (key: string) => unknown; ;; ConfigSetOptions = export interface ConfigSetOptions { bypassManagedLock?: boolean | undefined; } ;; ConfigUnsubscribe = export type ConfigUnsubscribe = () => void; ;; Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; };"
+      "text": "export declare class ConfigManager { private readonly readOnly; private readonly diagnosticMode; private readonly hostSettings; private hostLoadValues; private config; private readonly configDir; private readonly configPath; private readonly projectConfigPath; private readonly workingDirectory; private readonly homeDirectory; private readonly sharedTierPath; private readonly daemonTierPath; private readonly daemonTierOwner; private readonly sharedKeysPresent; private readonly daemonKeysPresent; private hookDispatcher; private profileFallback; private readonly _listeners; private _fileWatch; private ingestionNotices; private readonly unknownSettingForms; constructor(overrides: ConfigOverrides); getControlPlaneConfigDir(): string; getAutonomousPermissionSnapshot(): Readonly<{ permissions: GoodVibesConfig['permissions']; autoApprove: boolean; directory: string | null; }>; getWorkingDirectory(): string | null; getHomeDirectory(): string | null; getConfigPath(): string; getProjectConfigPath(): string | undefined; attachHookDispatcher(hookDispatcher: Pick<HookDispatcher, 'fire'> | null): () => void; attachProfileFallback(reader: ConfigProfileFallbackReader | null): void; private resolvePath; get<K extends ConfigKey>(key: K): ConfigValue<K>; getHostBooleanSetting(key: string): HostBooleanSettingHandle; set<K extends ConfigKey>(key: K, value: ConfigValue<K>, options?: ConfigSetOptions): void; setDaemonValues(patch: DaemonConfigPatch): void; setProjectValue<K extends ConfigKey>(key: K, value: ConfigValue<K>, options?: ConfigSetOptions): void; subscribe<K extends ConfigKey>(key: K, cb: ConfigChangeCallback<K>): ConfigUnsubscribe; watchConfigFiles(options?: { intervalMs?: number; }): () => void; stopWatchingConfigFiles(): void; private reloadFromDiskAndNotify; private notifyListeners; private emitConfigHook; setDynamic(key: ConfigKey, value: unknown, options?: ConfigSetOptions): void; getAll(): DeepReadonly<GoodVibesConfig>; getCategory<C extends keyof GoodVibesConfig>(category: C): Readonly<GoodVibesConfig[C]>; getRaw(): Readonly<GoodVibesConfig>; getSchema(): ConfigSetting[]; getHostSettingsSchema(): readonly HostBooleanSetting[]; private persistGlobalKey; private writeRawGlobal; save(): void; private withoutDaemonOwned; saveProject(): void; getIngestionQuarantine(): readonly SettingsIngestionNotice[]; announceUnknownSettingForms(): Promise<void>; private ingestionSink; private ingest; private loadFailure; load(): void; private loadDaemonTier; getDaemonTierPath(): string | null; private loadSharedTier; getSharedTierPath(): string | null; describeConfigKeySource(key: ConfigKey): ConfigKeySource; private applyLoadMigrations; private requireWritable; private migrationReceipt; private applyHostValues; private refreshHostSettings; private preserveHostSettingsForBulkSave; private hostSettingHasProjectValue; private resetHostSetting; mergeCategory<C extends keyof GoodVibesConfig>(category: C, patch: Partial<GoodVibesConfig[C]>): void; removeCategoryKey<C extends keyof GoodVibesConfig>(category: C, key: string): void; private categoryIoDeps; reset(key?: ConfigKey): void; } ;; via ConfigChangeCallback = export type ConfigChangeCallback<K extends ConfigKey> = (newValue: ConfigValue<K>, oldValue: ConfigValue<K>) => void; ;; ConfigOverrides = export type ConfigOverrides = ConfigCliOverrides & ({ configDir: string; homeDir?: string | undefined; sharedConfigPath?: string | undefined; sharedTierPath?: string | undefined; daemonTierPath?: string | undefined; } | { homeDir: string; configDir?: string | undefined; sharedConfigPath?: string | undefined; sharedTierPath?: string | undefined; daemonTierPath?: string | undefined; }); ;; ConfigProfileFallbackReader = export type ConfigProfileFallbackReader = (key: string) => unknown; ;; ConfigSetOptions = export interface ConfigSetOptions { bypassManagedLock?: boolean | undefined; } ;; ConfigUnsubscribe = export type ConfigUnsubscribe = () => void; ;; Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; };"
     },
     {
       "name": "ConfigReadRoute",
@@ -16540,7 +16540,7 @@
     {
       "name": "IngestSettingsOptions",
       "kind": "interface",
-      "text": "export interface IngestSettingsOptions { readonly readerVersion?: string | undefined; readonly write?: ((line: string) => void) | undefined; readonly onNotice?: ((entry: SettingsIngestionNotice) => void) | undefined; readonly migrate?: ((raw: Record<string, unknown>) => Record<string, unknown>) | undefined; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export interface IngestSettingsOptions { readonly diagnosticMode?: 'default' | 'structural' | undefined; readonly readerVersion?: string | undefined; readonly write?: ((line: string) => void) | undefined; readonly onNotice?: ((entry: SettingsIngestionNotice) => void) | undefined; readonly migrate?: ((raw: Record<string, unknown>) => Record<string, unknown>) | undefined; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "LegacySettingsMigrationResult",
@@ -16918,7 +16918,7 @@
     {
       "name": "SecretRefResolutionOptions",
       "kind": "interface",
-      "text": "export interface SecretRefResolutionOptions { readonly resolveLocalSecret?: ((key: string) => Promise<string | null>) | undefined; readonly runCommand?: SecretCommandRunner | undefined; readonly homeDirectory?: string | undefined; readonly configKey?: string | undefined; readonly treatUnparseableRefAsLiteral?: boolean | undefined; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export interface SecretRefResolutionOptions { readonly diagnosticMode?: 'default' | 'structural' | undefined; readonly resolveLocalSecret?: ((key: string) => Promise<string | null>) | undefined; readonly runCommand?: SecretCommandRunner | undefined; readonly homeDirectory?: string | undefined; readonly configKey?: string | undefined; readonly treatUnparseableRefAsLiteral?: boolean | undefined; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "SecretScope",
@@ -16996,7 +16996,7 @@
         "projectRoot",
         "surfaceRoot"
       ],
-      "text": "export interface SecretsManagerOptions { readonly projectRoot: string; readonly globalHome: string; readonly surfaceRoot: string; readonly daemonHome?: string | undefined; readonly configManager?: Pick<ConfigManager, 'get'> | undefined; readonly policy?: SecretStorageMode | undefined; readonly secureProjectFilePath?: string | undefined; readonly secureUserFilePath?: string | undefined; readonly secureDaemonFilePath?: string | undefined; readonly plaintextProjectFilePath?: string | undefined; readonly plaintextUserFilePath?: string | undefined; readonly plaintextDaemonFilePath?: string | undefined; readonly keyFilePath?: string | undefined; readonly legacyIdentity?: LegacyStoreIdentity | undefined; } ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
+      "text": "export interface SecretsManagerOptions { readonly projectRoot: string; readonly globalHome: string; readonly surfaceRoot: string; readonly diagnosticMode?: 'default' | 'structural' | undefined; readonly daemonHome?: string | undefined; readonly configManager?: Pick<ConfigManager, 'get'> | undefined; readonly policy?: SecretStorageMode | undefined; readonly secureProjectFilePath?: string | undefined; readonly secureUserFilePath?: string | undefined; readonly secureDaemonFilePath?: string | undefined; readonly plaintextProjectFilePath?: string | undefined; readonly plaintextUserFilePath?: string | undefined; readonly plaintextDaemonFilePath?: string | undefined; readonly keyFilePath?: string | undefined; readonly legacyIdentity?: LegacyStoreIdentity | undefined; } ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
     },
     {
       "name": "ServiceConfig",
@@ -17045,7 +17045,7 @@
         "resolveSecret",
         "testConnection"
       ],
-      "text": "export declare class ServiceRegistry { private readonly servicesFilePath; private readonly secretsManager; private readonly subscriptionManager; constructor(servicesFilePath: string, options: ServiceRegistryOptions); getAll(): Record<string, ServiceConfig>; get(serviceName: string): ServiceConfig | null; private resolveConfiguredSecret; resolveAuth(serviceName: string): Promise<Record<string, string> | null>; resolveSecret(serviceName: string, field: ServiceSecretField): Promise<string | null>; inspect(serviceName: string): Promise<ServiceInspection | null>; testConnection(serviceName: string): Promise<ServiceConnectionTestResult>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export declare class ServiceRegistry { private readonly servicesFilePath; private readonly secretsManager; private readonly subscriptionManager; private readonly diagnosticMode; constructor(servicesFilePath: string, options: ServiceRegistryOptions); getAll(): Record<string, ServiceConfig>; get(serviceName: string): ServiceConfig | null; private resolveConfiguredSecret; resolveAuth(serviceName: string): Promise<Record<string, string> | null>; resolveSecret(serviceName: string, field: ServiceSecretField): Promise<string | null>; inspect(serviceName: string): Promise<ServiceInspection | null>; testConnection(serviceName: string): Promise<ServiceConnectionTestResult>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "ServiceRegistryOptions",
@@ -17054,7 +17054,7 @@
         "secretsManager",
         "subscriptionManager"
       ],
-      "text": "export interface ServiceRegistryOptions { readonly secretsManager: SecretsManager; readonly subscriptionManager: SubscriptionManager; }"
+      "text": "export interface ServiceRegistryOptions { readonly secretsManager: SecretsManager; readonly subscriptionManager: SubscriptionManager; readonly diagnosticMode?: 'default' | 'structural' | undefined; }"
     },
     {
       "name": "ServiceSecretField",
@@ -17799,7 +17799,7 @@
     {
       "name": "screenSettingsForIngestion",
       "kind": "function",
-      "text": "export declare function screenSettingsForIngestion(raw: Record<string, unknown>, file: string): SettingsIngestionResult; ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export declare function screenSettingsForIngestion(raw: Record<string, unknown>, file: string, diagnosticMode?: 'default' | 'structural'): SettingsIngestionResult; ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "secretReferenceFor",
@@ -17834,7 +17834,7 @@
     {
       "name": "unreadableSettingsFileNotice",
       "kind": "function",
-      "text": "export declare function unreadableSettingsFileNotice(file: string, reason: string): SettingsIngestionNotice;"
+      "text": "export declare function unreadableSettingsFileNotice(file: string, reason: string, diagnosticMode?: 'default' | 'structural'): SettingsIngestionNotice;"
     },
     {
       "name": "userTierOverlaysSurface",
@@ -31576,7 +31576,7 @@
     {
       "name": "createProtectedInboxMapper",
       "kind": "function",
-      "text": "export declare function createProtectedInboxMapper(owner: ProtectedSourceOwner): (input: ProtectedInboxPreviewInput, signal?: AbortSignal) => Promise<ProtectedInboxPreviewFields | null>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ProtectedSourceOwner = export interface ProtectedSourceOwner { capture(parts: readonly string[]): ProtectedSource; screen(source: ProtectedSource): Promise<SourceScreeningResult>; project(receipt: SourceScreeningReceipt): readonly string[]; release(source: ProtectedSource): Promise<void>; close(): Promise<void>; }"
+      "text": "export declare function createProtectedInboxMapper(owner: ProtectedSourceOwner): (input: ProtectedInboxPreviewInput, signal?: AbortSignal) => Promise<ProtectedInboxPreviewFields | null>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ProtectedSourceOwner = export interface ProtectedSourceOwner { capture(parts: readonly string[]): ProtectedSource; screen(source: ProtectedSource): Promise<SourceScreeningResult>; project(receipt: SourceScreeningReceipt): readonly string[]; captureResearchReference(reference: string): ProtectedResearchReference; screenResearchReference(reference: ProtectedResearchReference): Promise<ResearchReferenceScreeningResult>; projectResearchReference(receipt: ResearchReferenceScreeningReceipt): ResearchReferenceProjection; release(source: ProtectedSource | ProtectedResearchReference): Promise<void>; close(): Promise<void>; }"
     },
     {
       "name": "createSlackInboxOwner",
@@ -32302,6 +32302,11 @@
       "name": "createNtfyLiveSubscriptionSince",
       "kind": "function",
       "text": "export declare function createNtfyLiveSubscriptionSince(nowMs?: number): string;"
+    },
+    {
+      "name": "describeStructuralDeliveryError",
+      "kind": "function",
+      "text": "export declare function describeStructuralDeliveryError(error: unknown): string;"
     },
     {
       "name": "isGoodVibesNtfyDeliveryEcho",
@@ -66009,6 +66014,11 @@
       "text": "export interface OwnerRemedy { readonly gesture: string; }"
     },
     {
+      "name": "ProtectedResearchReference",
+      "kind": "interface",
+      "text": "export interface ProtectedResearchReference { readonly [referenceBrand]: true; }"
+    },
+    {
       "name": "ProtectedSource",
       "kind": "interface",
       "text": "export interface ProtectedSource { readonly [sourceBrand]: true; }"
@@ -66018,12 +66028,15 @@
       "kind": "interface",
       "required": [
         "capture",
+        "captureResearchReference",
         "close",
         "project",
+        "projectResearchReference",
         "release",
-        "screen"
+        "screen",
+        "screenResearchReference"
       ],
-      "text": "export interface ProtectedSourceOwner { capture(parts: readonly string[]): ProtectedSource; screen(source: ProtectedSource): Promise<SourceScreeningResult>; project(receipt: SourceScreeningReceipt): readonly string[]; release(source: ProtectedSource): Promise<void>; close(): Promise<void>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export interface ProtectedSourceOwner { capture(parts: readonly string[]): ProtectedSource; screen(source: ProtectedSource): Promise<SourceScreeningResult>; project(receipt: SourceScreeningReceipt): readonly string[]; captureResearchReference(reference: string): ProtectedResearchReference; screenResearchReference(reference: ProtectedResearchReference): Promise<ResearchReferenceScreeningResult>; projectResearchReference(receipt: ResearchReferenceScreeningReceipt): ResearchReferenceProjection; release(source: ProtectedSource | ProtectedResearchReference): Promise<void>; close(): Promise<void>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "ProtectedSourceOwnerOptions",
@@ -66036,6 +66049,21 @@
       "text": "export interface ProtectedSourceOwnerOptions { readonly authority: LocalSourceScreeningAuthority; readonly proposal: { readonly endpoint: string; readonly model: string; }; readonly judgment: { readonly endpoint: string; readonly model: 'jev-1.13.0'; }; readonly timeoutMs?: number; readonly onRetry?: (progress: JudgmentRetryProgress) => void; } ;; via JudgmentRetryProgress = export interface JudgmentRetryProgress { readonly logicalRequestId: string; readonly attempt: JudgmentAttempt; readonly elapsedMs: number; readonly nextDelayMs: number; }"
     },
     {
+      "name": "ResearchReferenceProjection",
+      "kind": "type",
+      "text": "export type ResearchReferenceProjection = { readonly status: 'preserved'; readonly url: string; } | { readonly status: 'omitted'; };"
+    },
+    {
+      "name": "ResearchReferenceScreeningReceipt",
+      "kind": "interface",
+      "text": "export interface ResearchReferenceScreeningReceipt { readonly [referenceReceiptBrand]: true; }"
+    },
+    {
+      "name": "ResearchReferenceScreeningResult",
+      "kind": "type",
+      "text": "export type ResearchReferenceScreeningResult = { readonly status: 'settled'; readonly receipt: ResearchReferenceScreeningReceipt; } | { readonly status: 'held'; readonly reason: SourceScreeningHold; };"
+    },
+    {
       "name": "RotationAuditOutcome",
       "kind": "type",
       "text": "export type RotationAuditOutcome = 'ok' | 'warning' | 'overdue';"
@@ -66043,7 +66071,7 @@
     {
       "name": "SOURCE_SCREENING_LIMITS",
       "kind": "const",
-      "text": "SOURCE_SCREENING_LIMITS: Readonly<{ parts: 8; characters: 40000; spans: 100; proposalBytes: 32768; sources: 128; unsettledRevisions: 1024; }> ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; };"
+      "text": "SOURCE_SCREENING_LIMITS: Readonly<{ parts: 8; characters: 40000; spans: 100; proposalBytes: 32768; sources: 128; unsettledRevisions: 1024; referenceParameters: 100; referenceRoles: 1024; }> ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; };"
     },
     {
       "name": "ScopeAuditOutcome",
@@ -71390,7 +71418,7 @@
     {
       "name": "instrumentedFetch",
       "kind": "function",
-      "text": "export declare function instrumentedFetch(url: string | URL | Request, init?: RequestInit): Promise<Response>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Request = interface Request extends Body { readonly cache: RequestCache; readonly credentials: RequestCredentials; readonly destination: RequestDestination; readonly headers: Headers; readonly integrity: string; readonly keepalive: boolean; readonly method: string; readonly mode: RequestMode; readonly redirect: RequestRedirect; readonly referrer: string; readonly referrerPolicy: ReferrerPolicy; readonly signal: AbortSignal; readonly url: string; clone(): Request; } ;; RequestInit = interface RequestInit { body?: BodyInit | null; cache?: RequestCache; credentials?: RequestCredentials; headers?: HeadersInit; integrity?: string; keepalive?: boolean; method?: string; mode?: RequestMode; priority?: RequestPriority; redirect?: RequestRedirect; referrer?: string; referrerPolicy?: ReferrerPolicy; signal?: AbortSignal | null; window?: null; } ;; Response = interface Response extends Body { readonly headers: Headers; readonly ok: boolean; readonly redirected: boolean; readonly status: number; readonly statusText: string; readonly type: ResponseType; readonly url: string; clone(): Response; } ;; URL = interface URL { hash: string; host: string; hostname: string; href: string; toString(): string; readonly origin: string; password: string; pathname: string; port: string; protocol: string; search: string; readonly searchParams: URLSearchParams; username: string; toJSON(): string; }"
+      "text": "export declare function instrumentedFetch(url: string | URL | Request, init?: RequestInit, diagnosticMode?: 'default' | 'opaque-url'): Promise<Response>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Request = interface Request extends Body { readonly cache: RequestCache; readonly credentials: RequestCredentials; readonly destination: RequestDestination; readonly headers: Headers; readonly integrity: string; readonly keepalive: boolean; readonly method: string; readonly mode: RequestMode; readonly redirect: RequestRedirect; readonly referrer: string; readonly referrerPolicy: ReferrerPolicy; readonly signal: AbortSignal; readonly url: string; clone(): Request; } ;; RequestInit = interface RequestInit { body?: BodyInit | null; cache?: RequestCache; credentials?: RequestCredentials; headers?: HeadersInit; integrity?: string; keepalive?: boolean; method?: string; mode?: RequestMode; priority?: RequestPriority; redirect?: RequestRedirect; referrer?: string; referrerPolicy?: ReferrerPolicy; signal?: AbortSignal | null; window?: null; } ;; Response = interface Response extends Body { readonly headers: Headers; readonly ok: boolean; readonly redirected: boolean; readonly status: number; readonly statusText: string; readonly type: ResponseType; readonly url: string; clone(): Response; } ;; URL = interface URL { hash: string; host: string; hostname: string; href: string; toString(): string; readonly origin: string; password: string; pathname: string; port: string; protocol: string; search: string; readonly searchParams: URLSearchParams; username: string; toJSON(): string; }"
     },
     {
       "name": "interpolateColor",

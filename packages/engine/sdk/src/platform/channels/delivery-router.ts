@@ -32,7 +32,8 @@ import {
 } from './delivery/strategies-agent.js';
 import { resolveChannelDeliverySurfaceKind } from './delivery/shared.js';
 import { logger } from '../utils/logger.js';
-import { summarizeError } from '../utils/error-display.js';
+import { describeStructuralDeliveryError } from '../integrations/delivery-diagnostics.js';
+import { CHANNEL_DELIVERY_SURFACE_KINDS } from './delivery/types.js';
 import type {
   ChannelDeliveryRequest,
   ChannelDeliveryRouterConfig,
@@ -48,7 +49,26 @@ export type {
   ChannelDeliveryTarget,
   ChannelDeliveryTargetKind,
 } from './delivery/types.js';
-export { CHANNEL_DELIVERY_SURFACE_KINDS } from './delivery/types.js';
+export { CHANNEL_DELIVERY_SURFACE_KINDS };
+
+const DIAGNOSTIC_STRATEGIES = new Set<string>(CHANNEL_DELIVERY_SURFACE_KINDS.map((surface) => `channel-delivery:${surface}`));
+const DIAGNOSTIC_TARGET_KINDS = new Set(['none', 'webhook', 'surface', 'integration', 'link']);
+
+function diagnosticSurface(value: unknown): string {
+  return CHANNEL_DELIVERY_SURFACE_KINDS.some((surface) => surface === value) ? value as string : 'unknown';
+}
+function diagnosticStrategy(strategy: ChannelDeliveryStrategy): string {
+  try { const id = strategy.id; return DIAGNOSTIC_STRATEGIES.has(id) ? id : 'custom'; }
+  catch { return 'custom'; }
+}
+function diagnosticTarget(request: ChannelDeliveryRequest): string {
+  try { const kind = request.target.kind; return DIAGNOSTIC_TARGET_KINDS.has(kind) ? kind : 'unknown'; }
+  catch { return 'unknown'; }
+}
+function publishDiagnostic(message: string, fields: Record<string, unknown>): void {
+  try { logger.error(message, fields); }
+  catch { /* Preserve the delivery's original outcome and retry evidence. */ }
+}
 
 export {
   AGENT_DELIVERY_STRATEGY_ID,
@@ -88,19 +108,19 @@ export function createDefaultChannelDeliveryStrategies(
     createWebhookDeliveryStrategy(configManager, artifactStore, secretsManager),
     createSlackDeliveryStrategy(serviceRegistry, configManager, artifactStore, secretsManager),
     createDiscordDeliveryStrategy(serviceRegistry, configManager, artifactStore, secretsManager),
-    createNtfyDeliveryStrategy(configManager, serviceRegistry, artifactStore),
+    createNtfyDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
     createWebControlPlaneDeliveryStrategy(configManager, artifactStore, getControlPlaneGateway),
     createHomeAssistantDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
     createTelegramDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
     createGoogleChatDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
-    createSignalDeliveryStrategy(configManager, serviceRegistry, artifactStore),
-    createWhatsAppDeliveryStrategy(configManager, serviceRegistry, artifactStore),
+    createSignalDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
+    createWhatsAppDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
     createTelephonyDeliveryStrategy(configManager, serviceRegistry, artifactStore),
-    createIMessageDeliveryStrategy(configManager, serviceRegistry, artifactStore),
-    createMSTeamsDeliveryStrategy(configManager, serviceRegistry, artifactStore),
-    createBlueBubblesDeliveryStrategy(configManager, serviceRegistry, artifactStore),
-    createMattermostDeliveryStrategy(configManager, serviceRegistry, artifactStore),
-    createMatrixDeliveryStrategy(configManager, serviceRegistry, artifactStore),
+    createIMessageDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
+    createMSTeamsDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
+    createBlueBubblesDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
+    createMattermostDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
+    createMatrixDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
   ];
 }
 
@@ -183,30 +203,24 @@ export class ChannelDeliveryRouter {
     if (!strategy) {
       // Silence is the worst failure mode a reply can have: the owner sends a
       // message, the agent answers, and nothing arrives with no trace anywhere.
-      // Every unroutable delivery says which surface, which binding, and why.
-      logger.error('Channel delivery could not resolve a strategy, the reply was dropped', {
-        surface: surfaceKind ?? 'unknown',
-        targetKind: request.target.kind,
-        bindingId: request.binding?.id ?? null,
-        channelId: request.binding?.channelId ?? request.binding?.externalId ?? null,
+      // Publish only closed routing facts; destination capabilities stay private.
+      publishDiagnostic('Channel delivery could not resolve a strategy, the reply was dropped', {
+        surface: diagnosticSurface(surfaceKind),
+        targetKind: diagnosticTarget(request),
         reason: 'no-strategy-handles-this-target',
       });
-      throw new Error(`Unsupported channel delivery target: ${request.target.kind}:${surfaceKind ?? 'unknown'}`);
+      throw new Error('Unsupported channel delivery target');
     }
     try {
       const result = await strategy.deliver(request);
       return result.responseId;
     } catch (error) {
-      // A strategy throwing "Missing <surface> chat id" is the same silence
-      // wearing a different hat, it is normally caught and dropped upstream.
-      // Name it here, where the binding is still in hand, then rethrow.
-      logger.error('Channel delivery failed, the reply did not reach its conversation', {
-        surface: surfaceKind ?? 'unknown',
-        strategy: strategy.id,
-        bindingId: request.binding?.id ?? null,
-        channelId: request.binding?.channelId ?? request.binding?.externalId ?? null,
-        address: request.target.address ?? null,
-        reason: summarizeError(error),
+      // The original failure remains private retry evidence. Published diagnostics
+      // contain only closed routing facts and a validated HTTP status, if present.
+      publishDiagnostic('Channel delivery failed, the reply did not reach its conversation', {
+        surface: diagnosticSurface(surfaceKind),
+        strategy: diagnosticStrategy(strategy),
+        reason: describeStructuralDeliveryError(error),
       });
       throw error;
     }

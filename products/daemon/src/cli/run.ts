@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { writeSync } from 'node:fs';
 import { runClusterCommand, resolveRuntimeEndpointBinding } from '@goodvibes-jev/engine/terminal-shell';
 import { readOperatorTokenFile } from '@goodvibes-jev/engine/sdk/platform/workspace';
+import { isDeclaredSecretBearingConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
 import { runConfigCommand } from '../daemon/config-command.js';
 import { runPairCommand } from '../daemon/pair-command.js';
 import { runSessionsCommand } from '../daemon/sessions-command.js';
@@ -55,7 +56,23 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
     if (cli.flags.version || cli.command === 'version') return result({ exitCode: 0, lines: [renderGoodVibesVersion()] });
     if (cli.command === 'completion') return result(runCompletionCommand(cli.commandArgs));
     if (isRawInterceptCommand(cli.command) && argv[0] !== cli.command) return refuse(`\`${cli.command}\` has to be the first argument: goodvibes-daemon ${cli.command} …`);
-    if (cli.command === 'send') return refuse('The daemon send composition has not been migrated. No message was sent.');
+    if (cli.command === 'send') {
+      const { prepareSendCommand, runPreparedSendCommand } = await import('../daemon/send/command.js');
+      const prepared = prepareSendCommand(cli.commandArgs);
+      if (prepared.kind === 'result') return result(prepared.result);
+      const configuration = createDaemonCliConfiguration(cli.flags, env, options.cwd, { diagnosticMode: 'structural' });
+      const withheld = configuration.config.getIngestionQuarantine()
+        .filter((entry) => isDeclaredSecretBearingConfigKey(entry.key));
+      if (withheld.length) return refuse(`Configured credentials were withheld: ${[...new Set(withheld.map((entry) => entry.key))].join(', ')}. Nothing was sent.`);
+      const { readAllStdin } = await import('../daemon/send/stdin.js');
+      return result(await runPreparedSendCommand(prepared.args, {
+        configManager: configuration.config, readStdin: readAllStdin, stdinIsTty: process.stdin.isTTY === true,
+        deliver: async (request) => {
+          const { createSendStack } = await import('../daemon/send/composition.js');
+          return createSendStack(configuration).deliver(request);
+        },
+      }));
+    }
     if (cli.command === 'serve' && typeof options.runtime?.inboxFactory !== 'function') return refuse(PARTIAL);
     if (['install-service', 'start-service', 'restart-service', 'migrate-service'].includes(cli.command)) {
       if (typeof options.runtime?.inboxFactory !== 'function' || !options.serviceBinaryPath) return refuse(`${PARTIAL} Service activation requires an explicitly composed executable.`);

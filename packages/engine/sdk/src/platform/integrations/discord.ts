@@ -1,3 +1,4 @@
+import { retireDeliveryResponse } from './delivery-diagnostics.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
@@ -321,11 +322,12 @@ export class DiscordIntegration {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-    });
+    }, 'opaque-url');
     if (!res.ok) {
       const err = await res.text();
       throw new HttpStatusError(`DiscordIntegration.postWebhook failed (${res.status}): ${err}`, { status: res.status });
     }
+    await retireDeliveryResponse(res);
   }
 
   /**
@@ -353,6 +355,7 @@ export class DiscordIntegration {
       const err = await res.text();
       throw new HttpStatusError(`DiscordIntegration.postMessage failed (${res.status}): ${err}`, { status: res.status });
     }
+    await retireDeliveryResponse(res);
   }
 
   /**
@@ -376,12 +379,14 @@ export class DiscordIntegration {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       },
+      'opaque-url',
     );
     // 204 No Content is the normal success code
     if (!res.ok && res.status !== 204) {
       const err = await res.text();
       throw new HttpStatusError(`DiscordIntegration.respondToInteraction failed (${res.status}): ${err}`, { status: res.status });
     }
+    await retireDeliveryResponse(res);
   }
 
   /**
@@ -404,6 +409,7 @@ export class DiscordIntegration {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       },
+      'opaque-url',
     );
     if (!res.ok) {
       const err = await res.text();
