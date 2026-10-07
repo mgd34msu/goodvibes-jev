@@ -55,6 +55,7 @@ import { summarizeError } from '../utils/error-display.js';
 import type { ClientRuntimeServices } from '../runtime/client-services.js';
 import type { ContractRunner } from '../contract/runner.js';
 import type { HostedExecPostureDecider } from './exec-posture.js';
+import { hostedLifecycleCallbacks } from './lifecycle-callbacks.js';
 
 /**
  * A composed floor for one workspace, plus whatever the product wired around
@@ -105,6 +106,7 @@ interface FloorEntry {
   readonly workspaceRoot: string;
   readonly floor: HostedWorkspaceFloor;
   refs: number;
+  disposal?: Promise<void>;
 }
 
 /**
@@ -117,7 +119,9 @@ interface FloorEntry {
 export class HostedWorkspaceFloors {
   private readonly entries = new Map<string, FloorEntry>();
   private readonly pending = new Map<string, Promise<FloorEntry>>();
+  private readonly retiring = new Set<Promise<void>>();
   private disposed = false;
+  private disposal: Promise<void> | null = null;
 
   constructor(private readonly factory: HostedWorkspaceFloorFactory) {}
 
@@ -137,10 +141,15 @@ export class HostedWorkspaceFloors {
   }
 
   async acquire(workspaceRoot: string): Promise<HostedWorkspaceFloorLease> {
-    if (this.disposed) {
-      throw new Error('The hosted-session engine has been disposed; no new workspace floor can be composed.');
+    this.assertUsable();
+    let entry: FloorEntry;
+    for (;;) {
+      entry = await this.resolveEntry(workspaceRoot);
+      this.assertUsable();
+      // An existing floor can lose its final lease while this caller yields.
+      // Borrow its replacement, never the floor already queued for disposal.
+      if (this.entries.get(workspaceRoot) === entry) break;
     }
-    const entry = await this.resolveEntry(workspaceRoot);
     entry.refs += 1;
     let released = false;
     return {
@@ -159,12 +168,18 @@ export class HostedWorkspaceFloors {
     if (existing) return existing;
     const inFlight = this.pending.get(workspaceRoot);
     if (inFlight) return await inFlight;
-    const construction = (async (): Promise<FloorEntry> => {
-      const floor = await this.factory({ workspaceRoot });
+    // Publish ownership before entering product code, which may request shutdown.
+    const construction = Promise.resolve().then(async (): Promise<FloorEntry> => {
+      this.assertUsable();
+      const floor = await hostedLifecycleCallbacks.run(this, () => this.factory({ workspaceRoot }));
       const entry: FloorEntry = { workspaceRoot, floor, refs: 0 };
+      if (this.disposed) {
+        await this.disposeEntry(entry);
+        this.assertUsable();
+      }
       this.entries.set(workspaceRoot, entry);
       return entry;
-    })().finally(() => {
+    }).finally(() => {
       this.pending.delete(workspaceRoot);
     });
     this.pending.set(workspaceRoot, construction);
@@ -174,8 +189,13 @@ export class HostedWorkspaceFloors {
   private retire(entry: FloorEntry): void {
     if (this.entries.get(entry.workspaceRoot) !== entry) return;
     this.entries.delete(entry.workspaceRoot);
-    void Promise.resolve()
-      .then(() => entry.floor.dispose())
+    void this.disposeEntry(entry);
+  }
+
+  private disposeEntry(entry: FloorEntry): Promise<void> {
+    if (entry.disposal) return entry.disposal;
+    const disposal = Promise.resolve()
+      .then(() => hostedLifecycleCallbacks.run(this, () => entry.floor.dispose()))
       .catch((error: unknown) => {
         // A floor that fails to release its watchers is a leak worth naming; it
         // must not take down the caller that merely stopped using it.
@@ -183,23 +203,36 @@ export class HostedWorkspaceFloors {
           workspaceRoot: entry.workspaceRoot,
           error: summarizeError(error),
         });
-      });
+      }).finally(() => { this.retiring.delete(disposal); });
+    entry.disposal = disposal;
+    this.retiring.add(disposal);
+    return disposal;
   }
 
-  /** Dispose every floor. Idempotent. */
-  async dispose(): Promise<void> {
-    this.disposed = true;
-    const entries = [...this.entries.values()];
-    this.entries.clear();
-    for (const entry of entries) {
-      try {
-        await entry.floor.dispose();
-      } catch (error) {
-        logger.warn('[hosted-sessions] disposing a workspace floor failed at shutdown', {
-          workspaceRoot: entry.workspaceRoot,
-          error: summarizeError(error),
-        });
-      }
+  private assertUsable(): void {
+    if (this.disposed) {
+      throw new Error('The hosted-session engine has been disposed; no new workspace floor can be composed.');
     }
+  }
+
+  /**
+   * Fence admission and drain every owned construction and disposal. Idempotent.
+   * A factory/disposer may request shutdown, but cannot await its own completion;
+   * that recursive call returns after fencing, while external callers await the drain.
+   */
+  dispose(): Promise<void> {
+    if (!this.disposal) {
+      this.disposed = true;
+      const entries = [...this.entries.values()];
+      this.entries.clear();
+      this.disposal = Promise.resolve().then(async () => {
+        for (const entry of entries) await this.disposeEntry(entry);
+        // Acquisition owns factory errors. Shutdown still owns cleanup of any
+        // floor a pending factory returns, even after admission was fenced.
+        await Promise.allSettled(this.pending.values());
+        await Promise.all(this.retiring);
+      });
+    }
+    return hostedLifecycleCallbacks.active(this) ? Promise.resolve() : this.disposal;
   }
 }

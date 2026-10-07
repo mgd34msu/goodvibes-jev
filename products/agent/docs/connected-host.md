@@ -106,3 +106,27 @@ Camera, screen, location, local device command, and wake-word capabilities count
 Agent Knowledge is its own product segment. Agent uses `/api/goodvibes-agent/knowledge/*` only and must not fall back to default knowledge or other product-specific knowledge routes. Agent normalizes public Agent-route scope aliases and rejects successful-looking responses that carry known non-Agent payload markers.
 
 Normal assistant chat can use local tools, visible Agent jobs, daemon automation, shared sessions, delegation, or remote runners. GoodVibes TUI remains the vibecoding harness; Agent should choose it when that UX is best for the user rather than exposing package ownership as friction.
+
+## Native work in the operator briefing
+
+`agent_operator_briefing` discovers the selected authenticated host's project
+with `workLedger.project`, then reads one validated `workLedger.snapshot`.
+It reports only totals and the snapshot revision, with separate counts for
+`reportedState` (pending, in_progress, blocked, complete, cancelled) and
+`verification.state` (unverified, verified, failed, unavailable, stale).
+Reported completion does not imply verified evidence. Verification states are
+host projections; the briefing does not evaluate evidence.
+
+The previous planning counts remain explicitly historical legacy work. They
+never substitute for unavailable native work. A valid empty snapshot reports
+zero counts; missing authentication, unsupported routes, malformed or mismatched
+snapshots and read failures do not. Native read failure leaves other read-only
+sections available, while cancellation, the five-second briefing deadline or a
+changed host/token discards the whole in-flight result. Re-run against the
+current host after repair; there is no automatic retry or host fallback.
+
+This one-shot briefing does not subscribe, poll, read history or knowledge,
+mutate work, start execution or acquire authority. Output excludes project/work
+identifiers, goals, criteria, reports, evidence text, source manifests and raw
+server errors. Readers are disposed and local requests aborted on completion
+or interruption; this never cancels host execution.
