@@ -2,6 +2,47 @@ import { expect, test } from 'bun:test';
 import { ToolRegistry } from '../sdk/src/platform/tools/registry.js';
 import { projectToolInputBatch } from '../sdk/src/platform/core/tool-input-ingress.js';
 import type { ToolCall } from '../sdk/src/platform/types/tools.js';
+import { hashState, type EntryType } from '@goodvibes-jev/judgment';
+import { autonomousRevision } from '../sdk/src/platform/permissions/autonomous.js';
+import { assertProjectionExecution } from '../sdk/src/platform/tools/input-projection.js';
+
+test('portable registry revisions preserve the judgment canonical JSON and SHA-256 identity', () => {
+  const values: readonly EntryType[] = [{ nested: { z: 'last', a: 'first' }, empty: null }, { references: [{ id: 'S1', url: '[source reference S1]' }] },
+    { punctuation: 'ordinary Unicode é and 😀', value: [false, 0, 1.5, null] }];
+  for (const value of values) {
+    expect(autonomousRevision(value)).toBe(hashState(value));
+  }
+  expect(autonomousRevision({ b: 2, a: 1 })).toBe(autonomousRevision({ a: 1, b: 2 }));
+});
+
+test('shared empty context tokens retain independent exact-argument execution lifetimes', async () => {
+  const registry = new ToolRegistry(); const context = Object.freeze({}); const first = new AbortController();
+  const gates = { one: Promise.withResolvers<void>(), two: Promise.withResolvers<void>() };
+  const ready = { one: Promise.withResolvers<Record<string, unknown>>(), two: Promise.withResolvers<Record<string, unknown>>() };
+  registry.register({ definition: { name: 'shared', description: 'Synthetic shared-context lifetime',
+    parameters: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'] } },
+  async execute(args) {
+    const key = args.value as 'one' | 'two'; assertProjectionExecution(context, args);
+    ready[key].resolve(args); await gates[key].promise; assertProjectionExecution(context, args);
+    return { success: true };
+  } }, { inputProjection: { async project(request) { return { status: 'projected', args: request.args, executionContext: context }; } } });
+  const one = await registry.prepareCall('one', 'shared', { value: 'one' });
+  const two = await registry.prepareCall('two', 'shared', { value: 'two' });
+  const runOne = registry.executePrepared(one, () => {}, { signal: first.signal });
+  const runTwo = registry.executePrepared(two, () => {});
+  void runOne.catch(() => {}); void runTwo.catch(() => {});
+  try {
+    const argsOne = await ready.one.promise; const argsTwo = await ready.two.promise;
+    first.abort();
+    expect(() => assertProjectionExecution(context, argsOne)).toThrow('cancelled');
+    expect(() => assertProjectionExecution(context, argsTwo)).not.toThrow();
+    gates.one.resolve(); await expect(runOne).rejects.toMatchObject({ problem: 'cancelled' });
+    expect(() => assertProjectionExecution(context, argsOne)).toThrow('stale');
+    expect(() => assertProjectionExecution(context, argsTwo)).not.toThrow();
+    gates.two.resolve(); await expect(runTwo).resolves.toMatchObject({ success: true });
+    expect(() => assertProjectionExecution(context, argsTwo)).toThrow('stale');
+  } finally { gates.one.resolve(); gates.two.resolve(); await Promise.allSettled([runOne, runTwo]); }
+});
 
 test('ingress rejects borrowed array methods, species hooks and inherited wrapper getters without invoking them', async () => {
   const registry = new ToolRegistry();

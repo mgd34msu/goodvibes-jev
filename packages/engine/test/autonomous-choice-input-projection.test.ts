@@ -291,10 +291,10 @@ test.each(['definition', 'execute'] as const)('empty-catalog final %s mutation r
   for (const disableFinalPreparedCheck of [false, true]) {
     let frames = 0;
     let replacements = 0;
-    const baselineClaims = log.query({ site: 'engine.gate.autonomous-tool' }).filter(entry => entry.notes.some(note =>
+    const baselineClaims = log.query({ site: 'engine.gate.autonomous-tool' }).filter(entry => entry.status === 'answered' && entry.notes.some(note =>
       note.kind === 'action' && note.action.startsWith('autonomous:claim:'))).length;
     const f = fixture({ onChoices: () => {
-      const claims = log.query({ site: 'engine.gate.autonomous-tool' }).filter(entry => entry.notes.some(note =>
+      const claims = log.query({ site: 'engine.gate.autonomous-tool' }).filter(entry => entry.status === 'answered' && entry.notes.some(note =>
         note.kind === 'action' && note.action.startsWith('autonomous:claim:'))).length;
       if (claims > baselineClaims && ++frames === 2) {
         if (field === 'definition') f.tool.definition.description = 'Revoked at the exact final host frame';

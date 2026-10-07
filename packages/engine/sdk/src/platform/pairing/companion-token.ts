@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, renameSync, unlinkSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { readFileSync, existsSync, renameSync, unlinkSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { writeJsonFileAtomic } from '../utils/atomic-json-store.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -146,18 +147,9 @@ export function getOrCreateCompanionToken(
     createdAt: Date.now(),
   };
 
-  const dir = dirname(tokenPath);
-  mkdirSync(dir, { recursive: true });
-  // Write with mode 0600 (owner read/write only) and enforce after write
-  writeFileSync(tokenPath, JSON.stringify(record, null, 2), { encoding: 'utf-8', mode: 0o600 });
-  try {
-    chmodSync(tokenPath, 0o600);
-  } catch (error) {
-    logger.warn('Companion token chmod failed after write', {
-      path: tokenPath,
-      error: String(error),
-    });
-  }
+  // Publish a complete owner-only record before returning a usable token.
+  // Publication failures must reach the caller instead of reporting success.
+  writeJsonFileAtomic(tokenPath, record, { mode: 0o600, trailingNewline: false });
 
   return {
     token: record.token,

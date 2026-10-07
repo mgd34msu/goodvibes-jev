@@ -688,10 +688,11 @@ test.each([false, true])('tool argument stream fragments wait for owned final pr
   async execute() { throw new Error('The synthetic turn fixture intercepts execution'); } },
   { inputProjection: { async project() { projections++; return held ? { status: 'held' } : { status: 'projected', args: safe }; } } });
   const bus = new RuntimeEventBus(); const events: unknown[] = [];
-  const stop = bus.onDomain('turn', event => { events.push(event.payload); }); context.runtimeBus = bus;
+  const stop = bus.onDomain('turn', event => { events.push(event.payload); });
+  const withBus: OrchestratorTurnLoopContext = { ...context, runtimeBus: bus };
   try {
-    if (held) await expect(executeOrchestratorTurnLoop(context)).rejects.toMatchObject({ problem: 'held' });
-    else await executeOrchestratorTurnLoop(context);
+    if (held) await expect(executeOrchestratorTurnLoop(withBus)).rejects.toMatchObject({ problem: 'held' });
+    else await executeOrchestratorTurnLoop(withBus);
     expect(projections).toBe(1); expect(executions).toBe(held ? 0 : 1);
     expect(JSON.stringify(events)).toContain('ordinary progress');
     for (const secret of [raw, 'PRIVATE_PATH', 'SYNTHETIC_VALUE', 'PRIVATE_ANCHOR']) {
