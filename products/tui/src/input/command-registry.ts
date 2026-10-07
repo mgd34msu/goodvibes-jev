@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { captureNativeConversationInput, type NativeConversationInput } from '../runtime/native-conversation-input.ts';
 import type { ProductInputContext } from '../runtime/native-conversation-input.ts';
 import type { NativeConversationIntakeActions, NativeConversationIntakeState } from '../runtime/native-conversation-intake.ts';
 import type { McpRegistry } from '@goodvibes-jev/engine/sdk/platform/mcp';
@@ -467,10 +469,23 @@ export const COMMON_COMMAND_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /** A private, one-dispatch mark. Copies, model calls and nested execution lose it. */
-const directOwnerCommands = new WeakMap<CommandContext, string>();
+const commandDispatchScope = new AsyncLocalStorage<boolean>();
+const directOwnerCommands = new WeakMap<CommandContext, { readonly name: string; readonly rawInput?: string | undefined }>();
 export function isDirectOwnerCommandContext(context: CommandContext, commandName?: string): boolean {
   return context.invokedByModel !== true && directOwnerCommands.has(context)
-    && (commandName === undefined || directOwnerCommands.get(context) === commandName);
+    && (commandName === undefined || directOwnerCommands.get(context)?.name === commandName);
+}
+
+/** The terminal's exact request span, never reconstructed from tokenized arguments.
+ * One whitespace separator after `start` belongs to command syntax (CRLF is one
+ * separator). All following bytes, including extra leading/trailing whitespace,
+ * are owner source. Command-leading whitespace is syntax, not request text.
+ */
+export function directOwnerWorkstreamInput(context: CommandContext): NativeConversationInput | undefined {
+  if (!isDirectOwnerCommandContext(context, 'workstream')) return undefined;
+  const raw = directOwnerCommands.get(context)?.rawInput;
+  const match = raw?.match(/^\s*\/workstream\s+start(?:(?:\r\n|\s)([\s\S]*))?$/);
+  return match ? captureNativeConversationInput(match[1] ?? '') : undefined;
 }
 
 /**
@@ -602,17 +617,19 @@ export class CommandRegistry {
   async execute(rawName: string, args: string[], context: CommandContext): Promise<boolean> {
     const cmd = this.get(rawName);
     if (!cmd) return false;
-    await cmd.handler(args, directOwnerCommands.has(context) ? { ...context } : context);
+    await commandDispatchScope.run(true, () => cmd.handler(args, directOwnerCommands.has(context) ? { ...context } : context));
     return true;
   }
 
   /** Reserved for the terminal's direct key-input route, not tools or startup. */
-  async executeFromOwner(rawName: string, args: string[], context: CommandContext): Promise<boolean> {
+  async executeFromOwner(rawName: string, args: string[], context: CommandContext, rawInput?: string): Promise<boolean> {
     const cmd = this.get(rawName);
     if (!cmd) return false;
     const owned = { ...context };
-    directOwnerCommands.set(owned, cmd.name);
-    try { await cmd.handler(args, owned); return true; }
+    if (context.invokedByModel !== true && !commandDispatchScope.getStore() && !directOwnerCommands.has(context)) {
+      directOwnerCommands.set(owned, { name: cmd.name, rawInput });
+    }
+    try { await commandDispatchScope.run(true, () => cmd.handler(args, owned)); return true; }
     finally { directOwnerCommands.delete(owned); }
   }
 }

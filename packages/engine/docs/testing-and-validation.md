@@ -37,7 +37,7 @@ them.
 
 ## CI gates
 
-This is the canonical CI-gate reference for the workspace. Every push and PR to `main` runs nine standalone jobs (see `.github/workflows/ci.yml`); a tenth job, `auto-release`, runs only after all nine are green, only on a push to `main`, and only when the repository variable `RELEASE_ARMED` is set to `true`. The documentation, contract-artifact, version, changelog, error, todo, examples, API-surface, and bundle-budget checks are **not** separate jobs. They run as ordered **steps inside the single `validate` job** (see `scripts/validate.ts`).
+This is the canonical CI-gate reference for the workspace. Every push and PR to `main` runs the required jobs in `.github/workflows/ci.yml`; `auto-release` runs only after all of its validation dependencies are green, only on a push to `main`, and only when the repository variable `RELEASE_ARMED` is set to `true`. The documentation, contract-artifact, version, changelog, error, todo, examples, API-surface, and bundle-budget checks are **not** separate jobs. They run as ordered **steps inside the single `validate` job** (see `scripts/validate.ts`).
 
 | Job | Command | Purpose |
 |------|---------|---------|
@@ -45,17 +45,53 @@ This is the canonical CI-gate reference for the workspace. Every push and PR to 
 | `eval-gate` | `bun run eval:baseline:check` then `bun run eval:gate` | Runs the standing eval suite through the production eval paths against the restored build artifact. Checks the checked-in baseline for drift first, then fails on any absolute-floor failure or regression against that baseline |
 | `security-audit` | `bun audit --audit-level high` + gitleaks scan (`gitleaks/gitleaks-action`) | Runs `bun audit --audit-level high` against the workspace dependency tree and a gitleaks secret scan; the CI job invokes these two steps directly (local `bun run security:audit` covers only the dependency-audit half) |
 | `build` | `bun run build` | Builds all workspace package `dist/` output once and uploads it as a single `workspace-build-output` artifact for downstream CI jobs |
-| `platform-matrix` | `bun packages/engine/scripts/test.ts` (bun leg) plus `bun run test:rn`, `bun run test:workers`, `bun run test:workers:wrangler` legs | Restores the shared `build` job artifact (no per-leg rebuild) and runs the full Bun test suite plus the companion-bundle scan and the two Workers runtime lanes as four matrix legs of one job (see legs below) |
+| `platform-matrix` | `bun packages/engine/scripts/test.ts --partition=INDEX/COUNT` (Bun legs), judgment and fake-IMAP sweep once, plus `bun run test:rn`, `bun run test:workers`, `bun run test:workers:wrangler` | Restores the shared `build` artifact without rebuilding. The build-generated matrix covers the complete default engine manifest in four disjoint Bun partitions, plus the three companion runtime legs |
 | `types-resolution-check` | `bun run types:resolution-check` (attw over the release stage of the engine and judgment packages, ignoring `no-resolution` and `cjs-resolves-to-esm`) | Validates the `exports` map resolves cleanly for every published subpath |
 | `publint-check` | `bun run publint:check` | Detects common `package.json` packaging hygiene issues before release |
 | `artifact-lane` | `bun run release:artifact-lane` | Packs every workspace package exactly as publish would, installs the tarballs into a scratch consumer, and runs the shipped conformance kit against a catalog/daemon composed from those packed artifacts, proving the tarballs are internally coherent before publish |
 
-The `platform-matrix` job runs as four matrix legs (one job, not four):
+The `platform-matrix` job has four Bun partitions and three companion runtime legs:
 
-- **bun.** `bun run build && bun run test` runs the full Bun test suite.
-- **rn-bundle.** `bun run build && bun run test:rn` verifies companion dist bundles, including `workers.js`, contain no `Bun.*` identifiers and no `node:*` imports.
+- **bun 1/4, bun 2/4, bun 3/4, bun 4/4.** Each runs one disjoint partition of the complete default engine test manifest through the existing owned runner. The first leg also runs `bun run test:judgment` and `bun run sweep:wake-race` once. Every leg is required; `fail-fast: false` lets the others finish after a failure. The `platform-matrix` dependency includes all seven legs. A lightweight aggregate retains the existing `Platform matrix (bun)` check name and fails if any leg failed, was cancelled, or was skipped.
+- **rn-bundle.** `bun run test:rn` verifies companion dist bundles, including `workers.js`, contain no `Bun.*` identifiers and no `node:*` imports.
 - **workers.** `bun run test:workers` runs the `./web` entry under Miniflare 4 (workerd V8 isolate, in-process). 9 tests validate Worker-runtime support (no `node:*`, no `Bun.*`, no client `EventSource`/`WebSocket` dependence). The dedicated `./workers` bridge is covered by source-level batch bridge tests and the `rn-bundle` companion scan.
 - **workers-wrangler.** `bun run test:workers:wrangler` runs the `./web` entry under `wrangler dev --local`. Exercises wrangler's esbuild bundling pipeline and wrangler.toml config. NOTE: wrangler dev --local shares the Miniflare 4 runtime, so this is **not** a production-workerd verification. See `test/workers/NOTES.md` for runtime coverage boundaries.
+
+## Engine partition discovery and reproduction
+
+`test-discovery.ts` is the single file-selection source for both the ordinary
+local run and CI. It discovers every matching nested test file in stable order,
+excluding only the existing separate runtime areas (`workers`,
+`workers-wrangler`, `hermes`), fixture/type inputs, and generated/dependency
+folders. The partitioner sorts that manifest and distributes files round-robin.
+It never changes test bodies, skips, per-test deadlines, or network/credential
+isolation. Each partition owns one sequential Bun child, one contained temp
+root, and the existing stall/overall watchdogs for its whole lifetime. Tests
+within a file stay together. CI adds process isolation between partitions;
+it does not add per-file isolation or concurrent tests within a child.
+
+The build job emits the complete matrix and uploads `engine-test-manifest`,
+which lists every file and partition with a SHA-256 of the sorted file list.
+Each CI leg recomputes discovery and rejects a different manifest hash before
+starting tests. New test files enter automatically. Empty partitions, duplicate
+files, invalid indices, and combining a partition with file/name filters or
+`--cwd` are errors. The regression gate compares the real matrix's disjoint
+union against both canonical discovery and an independent filesystem inventory.
+
+To inspect or reproduce a partition after building the workspace:
+
+```bash
+bun packages/engine/scripts/test-partitions.ts manifest
+bun packages/engine/scripts/test-partitions.ts matrix
+GOODVIBES_TEST_CEILING_MS=900000 bun packages/engine/scripts/test.ts --partition=1/4
+```
+
+The CI legs retain their existing 900-second total runner ceiling, 180-second
+stall watchdog, 60-second default per-test ceiling and 20-minute job cap.
+Partitioning adds capacity rather than extending or restarting those deadlines.
+The default local `bun run test` remains sequential with its existing lifecycle
+and budgets; no-argument `scripts/test.ts` still selects the full engine suite
+in one child, and explicit file selections retain their existing behavior.
 
 ## Portable validation
 
