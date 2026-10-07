@@ -196,7 +196,12 @@ export class DelegatedTelegramIntake implements DelegatedTelegramAdapter {
       const settled = await pending.approval.resolveOwnerDecision({ decision: { approved: input.approved, ...(input.approved ? { modifiedArgs: input } : {}) }, actor: current.principalId, actorSurface: 'paired-owner-command', assertCurrent: assert });
       assertOwner();
       if (input.approved && (settled?.status !== 'approved' || settled.decision?.disposition !== 'approved' || JSON.stringify(settled.decision.modifiedArgs) !== JSON.stringify(input))) { pending.sourceController.abort(); throw new Error('Exact approval was not durably resolved'); }
-      if (!input.approved) { pending.sourceController.abort(); return { outcome: 'held', reason: 'owner-denied' }; }
+      if (!input.approved) {
+        pending.sourceController.abort();
+        const row = this.deps.broker.getInputs(input.ref.sessionId, 500).find(value => value.id === input.ref.inputId);
+        if (row?.state === 'queued') await this.deps.broker.cancelInput(input.ref.sessionId, input.ref.inputId);
+        return { outcome: 'held', reason: 'owner-denied' };
+      }
       assert();
       for (const timer of pending.timers) clearTimeout(timer); pending.timers.clear();
       pending.sourceExpiresAt.value = pending.grant!.sourceExpiresAt;
@@ -230,6 +235,8 @@ export class DelegatedTelegramIntake implements DelegatedTelegramAdapter {
     else if (pending && sameNativeInboundSourceRef(pending.ref, ref)) this.checkRecordOwner({ ownerRevision: pending.configuration.revision }, authority);
     else return { outcome: 'held', reason: 'missing-source-proof' };
     if (pending) { pending.sourceController.abort(); pending.state = 'cancelled'; await this.deps.approvals.cancelApproval(pending.approval.approval.id, authority.current()!.principalId, 'paired-owner-command'); }
+    const row = this.deps.broker.getInputs(ref.sessionId, 500).find(value => value.id === ref.inputId);
+    if (row?.state === 'queued') await this.deps.broker.cancelInput(ref.sessionId, ref.inputId);
     await this.receiver.cancel(ref); return { outcome: 'cancelled', execution: 'not-started' };
   }
   revoke(configurationId: string, authority: NativeExecutionAuthority): Record<string, unknown> {

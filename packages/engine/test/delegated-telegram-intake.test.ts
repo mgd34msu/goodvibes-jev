@@ -136,6 +136,7 @@ test('explicit denial succeeds and expires original without transfer', async () 
   const f = await fixture(); await f.configure(); const pending = await f.ingress();
   expect(await f.invoke('decide', { ref: pending.ref, approvalId: pending.approvalId, approved: false })).toMatchObject({ outcome: 'held', reason: 'owner-denied' });
   expect(await f.invoke('status', { ref: pending.ref })).toMatchObject({ source: 'expired-or-lost' });
+  expect(f.broker.getInputs(pending.ref.sessionId)[0]?.state).toBe('cancelled');
 });
 
 test('edited Telegram update retires the prior exact original without capturing its replacement', async () => {
@@ -186,4 +187,12 @@ test('pre-restart ingress cannot acquire its original under a replacement config
   const pending = f.host.accept({ binding: f.hostDeps.routes.listBindings()[0]!, chatId: '42', providerMessageId: '2', readOriginal: () => { reads++; return original; } });
   f.host.close(); f.host.startLifecycle(); await f.configure();
   expect(await pending).toMatchObject({ outcome: 'held' }); expect(reads).toBe(0);
+});
+
+test('explicit pre-transfer cancel retires the canonical queue without claiming work completion', async () => {
+  const f = await fixture(); await f.configure(); const pending = await f.ingress();
+  expect(f.broker.countBusySessions()).toBe(1);
+  expect(await f.invoke('cancel', { ref: pending.ref })).toMatchObject({ outcome: 'cancelled', execution: 'not-started' });
+  expect(f.broker.getInputs(pending.ref.sessionId)[0]?.state).toBe('cancelled'); expect(f.broker.countBusySessions()).toBe(0);
+  await expect(f.decide({ ref: pending.ref, approvalId: pending.approvalId })).rejects.toThrow();
 });
