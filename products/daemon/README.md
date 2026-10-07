@@ -33,6 +33,15 @@ empty production inbox, dynamic composition-module loader or detached server.
 The caller remains responsible for complete provider membership and trusted
 preview mapping. No fixture factory is installed in the executable.
 
+Once explicit startup is admitted, the launcher loads or creates the shared
+`operator-tokens.json` in the selected daemon home. The same token authenticates
+HTTP and WebSocket clients, and `status` reads that selected-home record without
+requiring `--token`. `GOODVIBES_DAEMON_TOKEN` overrides the running server token;
+`GOODVIBES_HTTP_TOKEN` overrides the optional HTTP listener token. These overrides
+do not rewrite the shared identity. A corrupt store is preserved beside the
+replacement when possible, with an explicit warning that clients must pair
+again. See `docs/audit/daemon-companion-token-bootstrap.md` for the boundaries.
+
 For an explicitly configured single-node Slack host, the same CLI export now
 provides `createSlackDaemonInboxFactory({ account, screening, timeoutMs? })`.
 Pass its result as `runtime.inboxFactory`. The account supplies the expected

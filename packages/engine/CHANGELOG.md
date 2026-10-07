@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Publish newly created companion-token records atomically at owner-only mode,
+  preserving complete previous records on pre-publication failures. Reject
+  incomplete writes in both default and strict atomic-store modes.
+
 - Keep delivery URL capabilities and private failures out of shared HTTP and
   channel-router diagnostics. Credential-owning transports select opaque URL
   logging, all query material is withheld, and webhook URLs and interaction

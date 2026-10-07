@@ -53,10 +53,14 @@ neither changes these privacy/availability boundaries nor adds a made-up
 "disabled" setting to conceal them. Legacy IMAP work is untouched.
 
 Broader upstream CLI behavior is still unmapped: default intake/triage, send,
-automatic service/update lifecycle, LAN/provider discovery, shared companion
-and pairing startup work, global transport configuration, and release/native
+automatic service/update lifecycle, LAN/provider discovery, remaining pairing
+startup work, global transport configuration, and release/native
 packaging. The strict migration gate and six deferred upstream acceptance items
 remain open. The changed README does not supersede that ledger.
+
+Shared selected-home companion-token bootstrap is now adapted in the admitted
+CLI startup path; see [its bounded source/caller audit](daemon-companion-token-bootstrap.md).
+This does not complete the remaining pairing display, cleanup or adoption work.
 
 ## Verification and live-proof boundary
 
