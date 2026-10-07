@@ -9,7 +9,8 @@ updated inventory rows. All 86 existing mappings remain valid; three added
 mappings cover the landed wire, version and adapted contract-lifecycle tests
 (89 total). The contract test preserves lifecycle intent rather than restoring
 the removed WRFC engine. This is a partial
-migration: the six explicit executable/release deferrals do not count as completed ports.
+migration: five native-binary/release/compiled-hosting deferrals remain open after
+the emitted CLI-dispatch acceptance was mapped on October 7.
 
 The four upstream commits update dependencies to SDK 2.1.0, own the WRFC fix
 engine's disposal, replace coverage/style/source-text gates with behavioral
@@ -58,9 +59,14 @@ intake or binary readiness.
 
 ## Remaining acceptance from this upstream range
 
-- Real executable dispatch of version, invalid commands, per-command help and
-  first-word-only refusal, proving these invocations exit without serving.
-  The daemon executable is still a migration gap.
+The original `src/test/daemon/cli-dispatch.test.ts` acceptance is now mapped to
+`products/daemon/src/test/cli/entrypoint.test.ts`: the emitted dispatcher proves
+package version, misspelled-command exit 2 with help, sessions help, exact
+`Unknown command: doctor`, and `--daemon-home ... send hello` first-word refusal.
+Each child exit has an owned deadline and bounded cleanup; an interrupted
+held-poll child proves forced termination and listener closure. This closes
+only that test row, not the whole `src/daemon/cli.ts` source mapping.
+
 - Compiled binary boot and hosted-session proof, including saved reply text,
   and package/version/release preparation suited to this monorepo.
 First/queued-continuation conversational-tool authority is covered by merged

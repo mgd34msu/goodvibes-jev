@@ -682,7 +682,14 @@
       "targets": [
         "products/daemon/src/cli/surface-catalog.ts"
       ]
+    },
+    {
+      "source": "src/test/daemon/cli-dispatch.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/cli/entrypoint.test.ts"
+      ]
     }
   ],
-  "remaining": "The executable dispatches existing command adapters and explicitly composed hosts. Default serve still requires the built-in inbox provider/privacy-mapper/Discord catalog composition; automatic service/update lifecycle, discovery, remaining pairing display/pruning/adoption behavior, native binary/release packaging and other unmapped modules remain pending. The partial src/daemon/cli.ts adaptation is documented in docs/audit/daemon-cli-entrypoint.md and intentionally is not marked fully migrated. This partial workspace does not satisfy migration:complete; the original six deferred upstream release/entrypoint/packaging acceptance items remain open. Selected-home shared companion-token bootstrap is adapted in docs/audit/daemon-companion-token-bootstrap.md; this does not complete the whole upstream CLI or live acceptance."
+  "remaining": "The executable dispatches existing command adapters and explicitly composed hosts. Default serve still requires the built-in inbox provider/privacy-mapper/Discord catalog composition; automatic service/update lifecycle, discovery, remaining pairing display/pruning/adoption behavior, native binary/release packaging and other unmapped modules remain pending. The partial src/daemon/cli.ts adaptation is documented in docs/audit/daemon-cli-entrypoint.md and intentionally is not marked fully migrated. This partial workspace does not satisfy migration:complete; five upstream native-binary/release/compiled-hosting acceptance items remain deferred; only the emitted CLI-dispatch test acceptance is now mapped. Selected-home shared companion-token bootstrap is adapted in docs/audit/daemon-companion-token-bootstrap.md; this does not complete the whole upstream CLI or live acceptance."
 }
