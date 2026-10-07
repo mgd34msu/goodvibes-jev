@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { DaemonServer, HttpListener } from '@goodvibes-jev/engine/sdk/platform/daemon';
 import type { DiscoveredServer } from '@goodvibes-jev/engine/sdk/platform/discovery';
-import { HostedWorkspaceFloors, type HostedWorkspaceFloor } from '@goodvibes-jev/engine/sdk/platform/hosted-sessions';
+import { HostedSessionManager, HostedSessionStore, HostedWorkspaceFloors, HOSTED_SESSION_WIRE_EVENT, type HostedSessionRecord, type HostedSessionUpdatePayload, type HostedWorkspaceFloor } from '@goodvibes-jev/engine/sdk/platform/hosted-sessions';
 import { registerInboxSurface } from '@goodvibes-jev/engine/sdk/platform/intake';
 import { Notifier } from '@goodvibes-jev/engine/sdk/platform/integrations';
 import { BenchmarkStore, ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
@@ -570,10 +570,10 @@ test('base graph acquisition failure drains initial real custom loading before t
   expect(fx.host.services).toBeUndefined();
 });
 
-function createHosted(fx: ReturnType<typeof fixture>, modelId: string) {
+function createHosted(fx: ReturnType<typeof fixture>, modelId: string, detachPolicy: 'kill' | 'survive' = 'survive') {
   return fetch(`${fx.baseUrl}/api/control-plane/methods/sessions.hosted.create/invoke`, {
     method: 'POST', headers: { Authorization: 'Bearer synthetic-host-token', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ body: { workspaceRoot: fx.workingDir, clientId: 'preload-fixture', modelId, detachPolicy: 'survive' } }),
+    body: JSON.stringify({ body: { workspaceRoot: fx.workingDir, clientId: 'preload-fixture', modelId, detachPolicy } }),
   });
 }
 
@@ -615,7 +615,7 @@ test('hosted HTTP admission awaits its own real custom load before choosing a sa
 });
 
 test('host close drains a held hosted custom load and its late floor disposal before graph cleanup', async () => {
-  const floorClosing = gate(); const floorRelease = gate(); const floorAcquired = gate(); const cacheClosing = gate();
+  const floorClosing = gate(); const floorRelease = gate(); const floorAcquired = gate(); const managerClosing = gate();
   let floorDisposed = 0; let graphClosed = 0; let acquired = 0;
   let returnedFloor: HostedWorkspaceFloor | undefined;
   const fx = fixture((runtime) => {
@@ -634,16 +634,16 @@ test('host close drains a held hosted custom load and its late floor disposal be
   } });
   seedCustom(fx); seedCache(fx.homeDirectory, [cachedServer()]);
   await fx.host.start();
-  const dispose = HostedWorkspaceFloors.prototype.dispose;
-  keep(spyOn(HostedWorkspaceFloors.prototype, 'dispose').mockImplementation(function (this: HostedWorkspaceFloors) {
-    const closing = dispose.call(this); cacheClosing.resolve(); return closing;
+  const dispose = HostedSessionManager.prototype.dispose;
+  keep(spyOn(HostedSessionManager.prototype, 'dispose').mockImplementation(function (this: HostedSessionManager) {
+    const closing = dispose.call(this); managerClosing.resolve(); return closing;
   }));
   const held = holdInitialCustomLoad();
   const request = createHosted(fx, 'cached-fixture:custom-model').then((response) => response.status, () => 0);
   await held.entered.promise;
   const closing = fx.host.close(); const done = settled(closing);
   try {
-    await cacheClosing.promise; await tick();
+    await managerClosing.promise; await tick();
     expect(done()).toBe(false); expect(acquired).toBe(0); expect(graphClosed).toBe(0);
     held.release.resolve();
     expect(await Promise.race([floorClosing.promise.then(() => 'floor'), closing.then(() => 'host')])).toBe('floor');
@@ -682,4 +682,68 @@ test('unexpected partial hosted cache registration failure disposes its real acq
   const retry = await createHosted(fx, 'cached-fixture:cached-model');
   expect(retry.status).toBe(200); expect(watches).toBe(2); expect(stopped).toBe(1);
   await fx.host.close(); expect(stopped).toBe(2); expect(touched).toBe(false);
+});
+
+test.each(['kill', 'survive'] as const)('hosted provider readiness and a held real save drain before %s shutdown persistence', async (policy) => {
+  const saving = gate(); const saveRelease = gate(); const managerClosing = gate();
+  const events: string[] = []; const writes: HostedSessionRecord[] = [];
+  let store: HostedSessionStore | undefined; let floor: HostedWorkspaceFloor | undefined;
+  let floorDisposals = 0; let graphCloses = 0;
+  const setPublisher = HostedSessionManager.prototype.setEventPublisher;
+  keep(spyOn(HostedSessionManager.prototype, 'setEventPublisher').mockImplementation(function (this: HostedSessionManager, publisher) {
+    if (publisher) {
+      const publish = publisher.publishEvent.bind(publisher);
+      keep(spyOn(publisher, 'publishEvent').mockImplementation((event, payload, filter) => {
+        if (event === HOSTED_SESSION_WIRE_EVENT) events.push((payload as HostedSessionUpdatePayload).event);
+        publish(event, payload, filter);
+      }));
+    }
+    setPublisher.call(this, publisher);
+  }));
+  const fx = fixture((runtime) => {
+    const close = runtime.close;
+    keep(spyOn(runtime, 'close').mockImplementation(async () => { graphCloses++; await close(); }));
+  }, { createServer(config) {
+    const hosted = config!.hostedSessions!;
+    return new DaemonServer({ ...config, hostedSessions: { ...hosted, async floorFactory(input) {
+      floor = await hosted.floorFactory(input);
+      const acquired = floor;
+      return { ...acquired, dispose() { floorDisposals++; return acquired.dispose(); } };
+    } } });
+  } });
+  seedCustom(fx); seedCache(fx.homeDirectory, [cachedServer()]); await fx.host.start();
+  const save = HostedSessionStore.prototype.save;
+  keep(spyOn(HostedSessionStore.prototype, 'save').mockImplementation(async function (this: HostedSessionStore, ...args) {
+    store = this; writes.push(structuredClone(args[0]));
+    if (writes.length === 1) { saving.resolve(); await saveRelease.promise; }
+    await save.call(this, ...args);
+  }));
+  const dispose = HostedSessionManager.prototype.dispose;
+  keep(spyOn(HostedSessionManager.prototype, 'dispose').mockImplementation(function (this: HostedSessionManager) {
+    const closing = dispose.call(this); managerClosing.resolve(); return closing;
+  }));
+  const held = holdInitialCustomLoad();
+  const request = createHosted(fx, 'cached-fixture:custom-model', policy).then((response) => response.status, () => 0);
+  let closing: Promise<void> | undefined;
+  try {
+    await held.entered.promise; await tick();
+    expect(writes).toEqual([]); expect(floor).toBeUndefined();
+    held.release.resolve(); await saving.promise;
+    expect(floor!.services.providerRegistry.require('cached-fixture').models).toEqual(['custom-model']);
+    expect(writes).toHaveLength(1); expect(writes[0]!.status).toBe('idle');
+    closing = fx.host.close(); const closed = settled(closing);
+    await managerClosing.promise; await tick();
+    expect(closed()).toBe(false); expect(floorDisposals).toBe(0); expect(graphCloses).toBe(0);
+    expect(writes).toHaveLength(1);
+    saveRelease.resolve(); expect(await request).not.toBe(200); await closing;
+    expect(events).not.toContain('hosted-session-created');
+    expect(floorDisposals).toBe(1); expect(graphCloses).toBe(1);
+    const restored = await store!.load(); const final = restored.restored[0]!.record;
+    expect(final.status).toBe(policy === 'kill' ? 'terminated' : 'idle');
+    expect(final.terminatedReason).toBe(policy === 'kill' ? 'daemon-shutdown' : undefined);
+    expect(final.attachedClients).toEqual([]);
+    expect(writes.at(-1)).toEqual(final);
+  } finally {
+    held.release.resolve(); saveRelease.resolve(); await request; await closing;
+  }
 });
