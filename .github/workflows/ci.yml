@@ -135,6 +135,7 @@ jobs:
     timeout-minutes: 15
     outputs:
       products: ${{ steps.product-matrix.outputs.products }}
+      platforms: ${{ steps.engine-matrix.outputs.platforms }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -146,6 +147,20 @@ jobs:
           set -euo pipefail
           products=$(bun packages/engine/scripts/product-workspaces.ts matrix)
           echo "products=$products" >> "$GITHUB_OUTPUT"
+      - name: Discover complete engine test partitions
+        id: engine-matrix
+        run: |
+          set -euo pipefail
+          platforms=$(bun packages/engine/scripts/test-partitions.ts matrix)
+          echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
+          bun packages/engine/scripts/test-partitions.ts manifest > /tmp/engine-test-manifest.json
+      - name: Upload engine test manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: engine-test-manifest
+          path: /tmp/engine-test-manifest.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Build SDK
         run: bun run build
       - name: Build Agent native E2E artifact
@@ -174,51 +189,20 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # Platform matrix, each platform builds and runs its test suite. Isolated
-  # because rn-bundle, workers, and workers-wrangler each exercise a distinct
-  # runtime target that the consolidated artifact would not cover.
+  # Platform matrix: four disjoint Bun partitions and the companion runtimes.
+  # The build's canonical discovery generates every row. All legs restore its
+  # exact compiled artifacts; none invokes the pretest build lifecycle.
   # ---------------------------------------------------------------------------
   platform-matrix:
-    name: Platform matrix (${{ matrix.platform }})
+    name: Platform matrix (${{ matrix.name }})
     runs-on: ubuntu-latest
-    # The full Bun suite now includes the native-admission contracts. Its
-    # 15-minute runner ceiling below leaves five minutes for setup, judgment,
-    # the wake-race sweep and cleanup; other platform lanes keep their budgets.
+    # Preserve the existing per-leg budgets, test deadlines and stall watchdog.
+    # Partition 1 also owns judgment and the deterministic fake-IMAP sweep.
     timeout-minutes: ${{ matrix.platform == 'bun' && 20 || 15 }}
     needs: [build]
     strategy:
       fail-fast: false
-      matrix:
-        platform:
-          - bun
-          - rn-bundle
-          - workers
-          - workers-wrangler
-        include:
-          # Matrix policy: single Node version (22) per run. Add a second
-          # `include` row targeting Node 24 LTS once it is released to expand
-          # runtime coverage without multiplying CI time unnecessarily.
-          # Each leg restores the single `build` job's artifact (below) and runs
-          # tests against those exact dist bytes, no per-leg rebuild. The bun
-          # leg invokes scripts/test.ts directly (not `bun run test`) so the
-          # `pretest` tsc build does not re-emit over the restored artifact.
-          - platform: bun
-            node-version: "22"
-            # Main's 18,937 tests took 653-678s; native-admission coverage adds
-            # ~115s of progressing tests. CI run 37241755354 reached the old
-            # 720s ceiling with its last test starting just 151ms earlier.
-            # Raise only this complete-suite invocation, keeping the 180s
-            # stall watchdog and every per-test deadline unchanged.
-            test-cmd: GOODVIBES_TEST_CEILING_MS=900000 bun packages/engine/scripts/test.ts
-          - platform: rn-bundle
-            node-version: "22"
-            test-cmd: bun run test:rn
-          - platform: workers
-            node-version: "22"
-            test-cmd: bun run test:workers
-          - platform: workers-wrangler
-            node-version: "22"
-            test-cmd: bun run test:workers:wrangler
+      matrix: ${{ fromJSON(needs.build.outputs.platforms) }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -252,22 +236,38 @@ jobs:
       - name: Run test suite (${{ matrix.platform }})
         run: ${{ matrix.test-cmd }}
       - name: Run judgment suite
-        if: matrix.platform == 'bun'
+        if: matrix.foundation
         # Keep the level-0 foundation in the required Bun lane without invoking
         # the root pretest rebuild over the shared, restored build artifact.
         run: bun run test:judgment
       - name: Sweep the fake-IMAP suites for the lost-wake race
-        # The bun leg only: this re-runs suites the leg has already run, with
+        # Once across all Bun partitions: this re-runs ordinary suites with
         # one wire call delayed so a wake edge that a test pushes at the wrong
         # moment is reliably lost instead of occasionally lost. It is the check
         # that would have caught gate #14 before a 2-vCPU runner did. Cheap,
         # seven small suites, and deterministic; see the script's header.
-        if: matrix.platform == 'bun'
+        if: matrix.foundation
         run: bun run sweep:wake-race
+
+  # Preserve the old full-suite check context. A failed, cancelled or skipped
+  # partition must never look like a green Bun suite to an external consumer.
+  # The release dependency remains platform-matrix itself, which already waits
+  # for every leg; this check is only a stable projection of that same result.
+  engine-tests-complete:
+    name: Platform matrix (bun)
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    needs: [platform-matrix]
+    if: always()
+    steps:
+      - name: Require every platform matrix leg to succeed
+        env:
+          PLATFORM_RESULT: ${{ needs.platform-matrix.result }}
+        run: test "$PLATFORM_RESULT" = success
 
   # Every present product gets its own bounded lane. The inspected catalog from
   # this checkout drives coverage, so newly adopted products cannot be omitted.
-  # Keep engine/foundation suites in the Bun lane with their full existing budget.
+  # Engine partitions and the foundation remain required platform-matrix legs.
   product-tests:
     name: Product tests (${{ matrix.product }})
     runs-on: ubuntu-latest
