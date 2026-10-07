@@ -698,7 +698,7 @@ async function handleKnowledgeSearch(context: DaemonKnowledgeRouteContext, reque
   if (body instanceof Response) return body;
   const input = knowledgeBodySchemas.search.parse(body);
   if (input instanceof Response) return input;
-  return Response.json({ results: context.knowledgeService.searchScoped(input) });
+  return Response.json({ results: await context.knowledgeService.searchScoped(input) });
 }
 
 async function handleKnowledgeAsk(context: DaemonKnowledgeRouteContext, request: Request): Promise<Response> {

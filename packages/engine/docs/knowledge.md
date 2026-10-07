@@ -721,18 +721,33 @@ integration guidance.
 
 ## Retrieval and packets
 
-Knowledge retrieval uses current store state, lexical scoring, graph relations,
-freshness, extraction availability, and usage history. Packet APIs build
+Knowledge retrieval awaits recorded relevance readings over current scoped
+source and node content. Packet APIs select exact evidence spans and build
 token-bounded context bundles for agents:
 
 - `knowledge.search` (operator id)
 - `knowledge.packet` (operator id)
-- `knowledge.packets.build()` and `knowledge.packets.buildSync()` (SDK)
-- `knowledge.packets.buildPrompt()` and `knowledge.packets.buildPromptSync()` (SDK)
-- `buildCuratedKnowledgePromptSync()` (SDK helper)
+- `knowledge.graph.items.search()` (async SDK)
+- `knowledge.packets.build()` and `knowledge.packets.buildPrompt()` (async SDK)
+- `knowledge.packets.preparePrompt()` (async SDK preparation)
+- `readPreparedKnowledgePromptPacket()` (synchronous rendering of the exact prepared handle)
+
+`KnowledgeService.search()` and `searchScoped()` now return promises. The old
+`buildPacketSync()`, `buildPromptPacketSync()`, grouped `buildSync()` /
+`buildPromptSync()`, and `buildCuratedKnowledgePromptSync()` helper are retired.
+Await retrieval directly, or await `preparePromptPacket()` before synchronous
+prompt assembly. Prepared handles are local and opaque, bound to the original
+task, write scope, read-set, and reader configuration. Forged or stale handles
+fail explicitly. A missing reading is never represented as an empty match set.
 
 Packet items include source/node identity, summary, URI, related labels,
 evidence snippets, score, estimated tokens, and metadata.
+The legacy `score` field is zero because no retrieval points were computed;
+shared relevance probabilities order accepted rows internally and are not
+answer confidence. Exact selected spans retain their qualifications. Detail
+changes layout, while whole-item limits and token budgets report omissions.
+See [the public retrieval audit](../../../docs/audit/knowledge-public-retrieval.md)
+for lifecycle, API migration and calibration status.
 
 ## Projections and wiki output
 

@@ -1,5 +1,7 @@
 # Home Graph semantic retrieval (THE-21 follow-on)
 
+> This records the bounded PR154 change. The [public retrieval continuation](knowledge-public-retrieval.md) covers the remaining generic search/packet callers. THE-35 owns live calibration, THE-20 owns extraction/repair ranking, and THE-13 owns the separate broad authority/taint audit; these are not additional THE-21 implementation requirements.
+
 ## Executable replacement
 
 `HomeGraphService.ask` now calls `readHomeGraphSearchSelection` after its existing

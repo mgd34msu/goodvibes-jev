@@ -258,7 +258,9 @@ export type { KnowledgeSourceSnapshot, KnowledgeSourceWriteResult } from './stor
 export type { KnowledgeGuardedNodeIssueWrites } from './store-node-issue-writes.js';
 export { createKnowledgeNodeOperatorMutation, KnowledgeNodeMutationHeldError } from './store-node-authority.js';
 export type { KnowledgeNodeMutationContext, KnowledgeNodeFieldCorrection } from './store-node-authority.js';
-export { KnowledgeService, buildCuratedKnowledgePromptSync } from './service.js';
+export { KnowledgeService } from './service.js';
+export { readPreparedKnowledgePromptPacket } from './packet.js';
+export type { PreparedKnowledgePromptPacket } from './packet.js';
 export type {
   KnowledgeBatchIngestResult,
   KnowledgeBookmarkSeed,

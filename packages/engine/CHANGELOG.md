@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Replace public knowledge search and task-packet token scores and record boosts
+  with shared complete-candidate relevance and exact-span readings. Search now
+  returns promises; synchronous packet retrieval APIs are retired in favor of
+  awaited preparation with opaque, revocation-checked prompt handles. Preserve
+  generic scopes, complete selected qualifications and honest packet budgets.
+
 - Add an explicit protected local source owner and content-bearing inbox mapper prerequisite, with immutable original-span projection, typed Jev verification and awaited cancellation. Default provider composition and live privacy calibration remain open.
 
 - Encode owner-generated native criteria references as canonical digests only

@@ -406,7 +406,7 @@ export const knowledgeCommand: SlashCommand = {
           return;
         }
         const limit = Math.max(1, Number.parseInt(readFlag(rest, '--limit') ?? '10', 10) || 10);
-        const results = knowledge.graph.items.search(query, limit);
+        const results = await knowledge.graph.items.search(query, limit);
         if (results.length === 0) {
           context.print('[knowledge] No results.');
           return;

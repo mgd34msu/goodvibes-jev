@@ -24,6 +24,7 @@ import { trackDisposables } from './_helpers/disposables.ts';
 import type { MemoryRegistry } from '../sdk/src/platform/state/memory-registry.js';
 import type { MemoryStore } from '../sdk/src/platform/state/memory-store.js';
 import { useArtifactKindReadings } from './helpers/artifact-kind-readings.ts';
+import { withPublicKnowledgeReadings } from './_helpers/public-knowledge-readings.ts';
 
 useArtifactKindReadings();
 
@@ -234,7 +235,7 @@ describe('knowledge wiki honesty: review gate (Defect 2)', () => {
     const draft = await store.upsertNode({ kind: 'topic', slug: 'zephyr-draft', title: 'Zephyr draft note', confidence: 10 });
     const proposed = await store.upsertNode({ kind: 'topic', slug: 'zephyr-active', title: 'Zephyr active note', confidence: 90 });
     const active = (await service.reviewNode({ id: proposed.id, decision: 'accept', reviewer: 'test operator' })).node!;
-    const ids = service.search('zephyr', 20).map((hit) => hit.id);
+    const ids = (await withPublicKnowledgeReadings(['Zephyr active note'], [], () => service.search('zephyr', 20))).map((hit) => hit.id);
     expect(ids).toContain(active.id);
     expect(ids).not.toContain(draft.id);
   });
@@ -332,7 +333,9 @@ describe('knowledge wiki honesty: packet truncation disclosure (Defect 9)', () =
     }
     // A generous token budget so the ITEM CAP (not the budget) is what drops
     // candidates, droppedForBudget must be 0 and budgetExhausted false.
-    const truncated = await service.buildPacket('widget', [], 2, { budgetLimit: 100_000 });
+    const titles = Array.from({ length: 8 }, (_, i) => `Widget manual ${i}`);
+    const excerpts = ['widget calibration guide'];
+    const truncated = await withPublicKnowledgeReadings(titles, excerpts, () => service.buildPacket('widget', [], 2, { budgetLimit: 100_000 }));
     expect(truncated.truncated).toBe(true);
     expect(truncated.droppedCount).toBeGreaterThan(0);
     expect(truncated.totalCandidates).toBeGreaterThan(truncated.items.length);
@@ -340,7 +343,7 @@ describe('knowledge wiki honesty: packet truncation disclosure (Defect 9)', () =
     expect(truncated.droppedForBudget).toBe(0);
     expect(truncated.budgetExhausted).toBe(false);
 
-    const complete = await service.buildPacket('widget', [], 50);
+    const complete = await withPublicKnowledgeReadings(titles, excerpts, () => service.buildPacket('widget', [], 50));
     expect(complete.truncated).toBe(false);
     expect(complete.droppedCount).toBe(0);
     expect(complete.droppedForBudget).toBe(0);
@@ -361,7 +364,11 @@ describe('knowledge wiki honesty: packet truncation disclosure (Defect 9)', () =
     // A high item limit but a tiny token budget: the budget is the binding
     // constraint, so at least one candidate is dropped FOR BUDGET, and
     // budgetExhausted is true. The first item always fits (never budget-dropped).
-    const packet = await service.buildPacket('widget', [], 50, { budgetLimit: 90 });
+    const packet = await withPublicKnowledgeReadings(
+      Array.from({ length: 8 }, (_, i) => `Widget manual ${i}`),
+      ['widget calibration guide with a summary long enough to consume token budget when several are combined'],
+      () => service.buildPacket('widget', [], 50, { budgetLimit: 90 }),
+    );
     expect(packet.items.length).toBeGreaterThanOrEqual(1);
     expect(packet.budgetExhausted).toBe(true);
     expect(packet.droppedForBudget).toBeGreaterThan(0);
