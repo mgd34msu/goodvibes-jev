@@ -109,6 +109,9 @@ export type BannedVerb = typeof BANNED_VERBS[number];
  * launch-claimed external effect. Keep that distinction at this one full id.
  */
 const EXACT_METHOD_EXEMPTIONS: Readonly<Record<string, string>> = Object.freeze({
+  // One paired-owner selection of bounded pending-source memory, not a generic
+  // settings mutation, standing processing grant, or namespace-wide alias.
+  'inbound.telegram.configure': 'delegated-telegram-source-retention-selection',
   'workLedger.project': 'native-work-project-discovery',
   'workLedger.execution.resume': 'native-work-durable-recovery',
   // Atomic explicit-source capture, initial work claim and request receipt.

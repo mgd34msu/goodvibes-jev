@@ -1,3 +1,5 @@
+import { createDaemonControlRouteHandlers } from '../daemon-sdk/src/control-routes.js';
+import { dispatchGatewayRestRoutes } from '../daemon-sdk/src/gateway-rest-routes.js';
 import { PairingTokenManager } from '../sdk/src/platform/pairing/pairing-token-store.js';
 import { DaemonControlPlaneHelper, type DaemonControlPlaneContext } from '../sdk/src/platform/daemon/control-plane.js';
 import { afterEach, expect, test } from 'bun:test';
@@ -195,4 +197,41 @@ test('explicit pre-transfer cancel retires the canonical queue without claiming 
   expect(await f.invoke('cancel', { ref: pending.ref })).toMatchObject({ outcome: 'cancelled', execution: 'not-started' });
   expect(f.broker.getInputs(pending.ref.sessionId)[0]?.state).toBe('cancelled'); expect(f.broker.countBusySessions()).toBe(0);
   await expect(f.decide({ ref: pending.ref, approvalId: pending.approvalId })).rejects.toThrow();
+});
+
+test('real HTTP routes authenticate paired owner and expose all seven delegated commands', async () => {
+  const f = await fixture(); const manager = new PairingTokenManager(join(f.directory, 'http-pairing.json'));
+  const paired = manager.mint({ name: 'Offline HTTP fixture only' });
+  const helper = new DaemonControlPlaneHelper({ gatewayMethods: f.catalog, pairingTokens: manager, authToken: () => 'synthetic-shared',
+    userAuth: { validateSession: () => null },
+  } as unknown as DaemonControlPlaneContext);
+  const tokenFrom = (req: Request) => req.headers.get('authorization')?.replace(/^Bearer /, '') ?? '';
+  const resolvePrincipal = (req: Request) => helper.describeAuthenticatedPrincipal(tokenFrom(req));
+  const handlers = createDaemonControlRouteHandlers({
+    gatewayMethods: f.catalog, extractAuthToken: tokenFrom, resolveAuthenticatedPrincipal: resolvePrincipal,
+    requireAdmin: (req: Request) => { const principal = resolvePrincipal(req); return principal?.admin ? null : Response.json({ error: 'Unauthorized' }, { status: principal ? 403 : 401 }); },
+    parseOptionalJsonBody: (req: Request) => req.json(),
+    invokeGatewayMethodCall: (input: Parameters<typeof helper.invokeGatewayMethodCall>[0]) => helper.invokeGatewayMethodCall(input),
+  } as unknown as Parameters<typeof createDaemonControlRouteHandlers>[0]);
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: async request => {
+    return await dispatchGatewayRestRoutes(request, handlers) ?? Response.json({ error: 'Not found' }, { status: 404 });
+  } });
+  cleanups.push(() => server.stop(true));
+  const post = (operation: string, body: Record<string, unknown>, token = paired.token) => fetch(`http://127.0.0.1:${server.port}/api/inbound/telegram/${operation}`, {
+    method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const configuration = { chatId: '42', accountId: 'synthetic_bot', pendingRetention: 'memory-only-until-deadline', pendingRetentionMs: 10_000,
+    configurationLifetimeMs: 60_000, onExpiry: 'release-original-and-hold' };
+  expect((await post('configure', configuration, '')).status).toBe(401);
+  expect((await post('configure', configuration, 'synthetic-shared')).status).toBe(403);
+  const configured = await post('configure', configuration); expect(configured.status).toBe(200); const config = await configured.json() as { configurationId: string };
+  const pending = await f.ingress();
+  expect(await (await post('status', { ref: pending.ref })).json()).toMatchObject({ outcome: 'awaiting-owner' });
+  const decision = await post('decide', { ref: pending.ref, approvalId: pending.approvalId, approved: true, choices });
+  expect(decision.status).toBe(200); expect(await decision.json()).toMatchObject({ outcome: 'transferred', execution: 'not-started' });
+  expect(await (await post('read', { ref: pending.ref })).json()).toMatchObject({ source: 'available-in-memory', original: { text: original } });
+  expect(await (await post('list', {})).json()).toMatchObject({ records: [{ ref: pending.ref }] });
+  expect(await (await post('cancel', { ref: pending.ref })).json()).toMatchObject({ outcome: 'cancelled', execution: 'not-started' });
+  expect(await (await post('revoke', { configurationId: config.configurationId })).json()).toMatchObject({ outcome: 'revoked' });
+  manager.revoke(paired.id); expect((await post('read', { ref: pending.ref })).status).toBe(401);
 });

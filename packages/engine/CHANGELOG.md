@@ -9,6 +9,11 @@
   memory and metadata-only owner review receipts. Selected stale/restarted input
   remains held; ordinary Telegram, owner capture and business execution are unchanged.
 
+- Compose an explicit single-account Slack daemon inbox with protected content
+  previews, account-bound SQLite ownership, credential-rotation read guards and
+  an owned bounded HTTP transport. Default all-provider and clustered serving
+  remain open.
+
 - Add an explicit protected local source owner and content-bearing inbox mapper prerequisite, with immutable original-span projection, typed Jev verification and awaited cancellation. Default provider composition and live privacy calibration remain open.
 
 - Add an injected original-source binding and held/recovery prerequisite for
