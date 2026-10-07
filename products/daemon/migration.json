@@ -1,7 +1,7 @@
 {
   "sourceRevision": "254699bf5d834cdca41436211ada1ae32bf89258",
   "status": "partial",
-  "phase": "command-executable-and-explicit-runtime-launcher",
+  "phase": "standalone-send-and-explicit-runtime-launcher",
   "entrypoints": [
     "src/cli/index.ts",
     "src/cli/entrypoint.ts"
@@ -633,7 +633,56 @@
       "targets": [
         "products/daemon/src/test/cli/version-identity.test.ts"
       ]
+    },
+    {
+      "source": "src/daemon/send/channels.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/send/channels.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/send/command.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/send/command.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/send/composition.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/send/composition.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/send/failure-text.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/daemon/src/daemon/send/failure-text.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/send/inert-text.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/send/inert-text.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/send/stdin.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/send/stdin.ts"
+      ]
+    },
+    {
+      "source": "src/cli/surface-catalog.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/cli/surface-catalog.ts"
+      ]
     }
   ],
-  "remaining": "The executable dispatches existing command adapters and explicitly composed hosts. Default serve still requires the built-in inbox provider/privacy-mapper/Discord catalog composition; send, automatic service/update lifecycle, discovery, remaining pairing display/pruning/adoption behavior, native binary/release packaging and other unmapped modules remain pending. The partial src/daemon/cli.ts adaptation is documented in docs/audit/daemon-cli-entrypoint.md and intentionally is not marked fully migrated. This partial workspace does not satisfy migration:complete; the original six deferred upstream release/entrypoint/packaging acceptance items remain open. Selected-home shared companion-token bootstrap is adapted in docs/audit/daemon-companion-token-bootstrap.md; this does not complete the whole upstream CLI or live acceptance."
+  "remaining": "The executable dispatches existing command adapters and explicitly composed hosts. Default serve still requires the built-in inbox provider/privacy-mapper/Discord catalog composition; automatic service/update lifecycle, discovery, remaining pairing display/pruning/adoption behavior, native binary/release packaging and other unmapped modules remain pending. The partial src/daemon/cli.ts adaptation is documented in docs/audit/daemon-cli-entrypoint.md and intentionally is not marked fully migrated. This partial workspace does not satisfy migration:complete; the original six deferred upstream release/entrypoint/packaging acceptance items remain open. Selected-home shared companion-token bootstrap is adapted in docs/audit/daemon-companion-token-bootstrap.md; this does not complete the whole upstream CLI or live acceptance."
 }

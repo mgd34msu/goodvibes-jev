@@ -88,7 +88,7 @@ for (const args of [['install-servce'], ['serve', '--port'], ['--resume'], ['pro
     expect(result.stdout).toBe(''); expect(existsSync(join(result.home, '.goodvibes'))).toBe(false);
   });
 }
-for (const args of [[], ['serve'], ['install-service'], ['start-service'], ['restart-service'], ['migrate-service', '-y'], ['send', 'fixture', 'text']]) {
+for (const args of [[], ['serve'], ['install-service'], ['start-service'], ['restart-service'], ['migrate-service', '-y']]) {
   test(`uncomposed built CLI refuses ${args.join(' ') || 'bare serve'} before files or service work`, async () => {
     const result = await oneShot(args);
     expect(result.code).toBe(2); expect(result.stderr).toMatch(/composition|not been migrated/);

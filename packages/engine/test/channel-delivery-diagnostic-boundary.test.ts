@@ -181,7 +181,7 @@ describe('credential-owning channel callsites', () => {
     const password = 'synthetic+BlueBubbles/password';
     const delivery = router(createBlueBubblesDeliveryStrategy(
       config({ 'surfaces.bluebubbles.serverUrl': 'https://bluebubbles.example.invalid' }),
-      services({ 'bluebubbles:password': password }), artifacts,
+      services({ 'bluebubbles:password': password }), artifacts, secrets,
     ));
     respond = () => Response.json({ id: 'ordinary-provider-message-id' });
     const receipt = await delivery.deliver(request({ target: { kind: 'surface', surfaceKind: 'bluebubbles', address: 'ordinary-chat-guid' } }));

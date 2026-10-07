@@ -90,7 +90,7 @@ describe('ntfy delivery resolves the topic from the binding (item 1)', () => {
       async () => new Response(null, { status: 200 }),
     ) as Mock<typeof fetchWithTimeoutModule.fetchWithTimeout>;
 
-    const strategy = createNtfyDeliveryStrategy(fakeConfigManager({}), fakeServiceRegistry(), fakeArtifactStore);
+    const strategy = createNtfyDeliveryStrategy(fakeConfigManager({}), fakeServiceRegistry(), fakeArtifactStore, emptySecretsManager());
     const request = baseRequest({
       target: { kind: 'surface', surfaceKind: 'ntfy' },
       binding: {
@@ -115,7 +115,7 @@ describe('ntfy delivery resolves the topic from the binding (item 1)', () => {
       async () => new Response(null, { status: 200 }),
     ) as Mock<typeof fetchWithTimeoutModule.fetchWithTimeout>;
 
-    const strategy = createNtfyDeliveryStrategy(fakeConfigManager({}), fakeServiceRegistry(), fakeArtifactStore);
+    const strategy = createNtfyDeliveryStrategy(fakeConfigManager({}), fakeServiceRegistry(), fakeArtifactStore, emptySecretsManager());
     const request = baseRequest({
       target: { kind: 'surface', surfaceKind: 'ntfy' },
       binding: {
@@ -141,6 +141,7 @@ describe('ntfy delivery resolves the topic from the binding (item 1)', () => {
       fakeConfigManager({ 'surfaces.ntfy.topic': 'configured-default-topic' }),
       fakeServiceRegistry(),
       fakeArtifactStore,
+      emptySecretsManager(),
     );
     const request = baseRequest({ target: { kind: 'surface', surfaceKind: 'ntfy' } });
 
@@ -154,7 +155,7 @@ describe('ntfy delivery resolves the topic from the binding (item 1)', () => {
       async () => new Response(null, { status: 200 }),
     ) as Mock<typeof fetchWithTimeoutModule.fetchWithTimeout>;
 
-    const strategy = createNtfyDeliveryStrategy(fakeConfigManager({}), fakeServiceRegistry(), fakeArtifactStore);
+    const strategy = createNtfyDeliveryStrategy(fakeConfigManager({}), fakeServiceRegistry(), fakeArtifactStore, emptySecretsManager());
     const request = baseRequest({ target: { kind: 'surface', surfaceKind: 'ntfy' } });
 
     // Measured as a DELTA around the call, not as an absolute count.

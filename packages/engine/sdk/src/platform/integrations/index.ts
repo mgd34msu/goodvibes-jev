@@ -1,4 +1,5 @@
 export { SlackIntegration, SlackSocketModeClient } from './slack.js';
+export { describeStructuralDeliveryError } from './delivery-diagnostics.js';
 export type {
   SlackAuthTestResult,
   SlackConversationRecord,

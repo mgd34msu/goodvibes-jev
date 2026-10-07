@@ -8,6 +8,12 @@
   preserving complete previous records on pre-publication failures. Reject
   incomplete writes in both default and strict atomic-store modes.
 
+- Restore standalone daemon send through the canonical channel router, with
+  lazy daemon-tier credential ownership, explicit-repeat delivery, structural
+  receipts and awaited transport completion. Resolve declared bridge and
+  enterprise credential references, require Slack/Telegram acknowledgement,
+  and withhold private parse/provider errors from selected send diagnostics.
+
 - Keep delivery URL capabilities and private failures out of shared HTTP and
   channel-router diagnostics. Credential-owning transports select opaque URL
   logging, all query material is withheld, and webhook URLs and interaction

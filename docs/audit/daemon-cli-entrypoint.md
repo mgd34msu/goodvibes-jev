@@ -33,7 +33,8 @@ migration mapping for that whole file:
   installed executable path. Overridden tree/identity homes refuse because the
   current service builder cannot preserve them. The selected ConfigManager is
   passed through. The uncomposed package refuses before service work.
-  `send` has no migrated composition and refuses without sending.
+  Standalone `send` now has a separate lazy composition; see
+  `docs/audit/daemon-standalone-send.md` for its bounded contract.
 
 The package remains private with its original version. Build emits the actual
 script/shebang and declarations. Package files include source and dist to honor
@@ -52,7 +53,7 @@ currently established. Email adapter composition is absent. This increment
 neither changes these privacy/availability boundaries nor adds a made-up
 "disabled" setting to conceal them. Legacy IMAP work is untouched.
 
-Broader upstream CLI behavior is still unmapped: default intake/triage, send,
+Broader upstream CLI behavior is still unmapped: default intake/triage,
 automatic service/update lifecycle, LAN/provider discovery, remaining pairing
 startup work, global transport configuration, and release/native
 packaging. The strict migration gate and six deferred upstream acceptance items
