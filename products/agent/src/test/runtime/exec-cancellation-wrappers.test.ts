@@ -98,9 +98,11 @@ for (const progress of [false, true]) {
     const script = join(root, 'child.ts');
     // exec replaces the shell: the reported PID is the actual child owned by
     // exec, with no sleeping grandchildren that could escape test cleanup.
+    // Publish only a complete PID; file creation alone is not readiness.
     writeFileSync(script, [
-      "import { writeFileSync } from 'node:fs';",
-      `writeFileSync(${JSON.stringify(ready)}, String(process.pid));`,
+      "import { renameSync, writeFileSync } from 'node:fs';",
+      `writeFileSync(${JSON.stringify(`${ready}.pending`)}, String(process.pid));`,
+      `renameSync(${JSON.stringify(`${ready}.pending`)}, ${JSON.stringify(ready)});`,
       `setTimeout(() => writeFileSync(${JSON.stringify(sentinel)}, 'completed'), 30_000);`,
     ].join('\n'));
     let pid: number | undefined;
@@ -150,9 +152,11 @@ test('Agent-wrapped exec distinguishes a real timeout kill from cancellation', a
   const ready = join(root, 'ready-pid');
   const sentinel = join(root, 'completed');
   const script = join(root, 'child.ts');
+  // Publish only a complete PID; file creation alone is not readiness.
   writeFileSync(script, [
-    "import { writeFileSync } from 'node:fs';",
-    `writeFileSync(${JSON.stringify(ready)}, String(process.pid));`,
+    "import { renameSync, writeFileSync } from 'node:fs';",
+    `writeFileSync(${JSON.stringify(`${ready}.pending`)}, String(process.pid));`,
+    `renameSync(${JSON.stringify(`${ready}.pending`)}, ${JSON.stringify(ready)});`,
     `setTimeout(() => writeFileSync(${JSON.stringify(sentinel)}, 'completed'), 30_000);`,
   ].join('\n'));
   let pid: number | undefined;
