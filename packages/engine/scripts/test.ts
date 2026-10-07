@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import { runOwnedTestChild } from './owned-test-child.ts';
 import { defaultTestArgs } from './test-discovery.ts';
+import { partitionTestArgs } from './test-partitions.ts';
 import { sweepStaleTmpDirs } from './stale-tmp-sweep.ts';
 import {
   makeRunTmpDirName,
@@ -52,7 +53,7 @@ const args = process.argv.slice(2);
 const RUN_TMP_DIR_NAME = makeRunTmpDirName();
 
 function resolveTestArgs(): readonly string[] {
-  return args.length > 0 ? args : defaultTestArgs(SDK_ROOT);
+  return partitionTestArgs(SDK_ROOT, args) ?? (args.length > 0 ? args : defaultTestArgs(SDK_ROOT));
 }
 
 /**
