@@ -936,6 +936,10 @@ export class HostedSessionManager {
       this.disposal = hostedLifecycleCallbacks.outside(this.floors, () => Promise.resolve().then(
         () => hostedLifecycleCallbacks.run(this, () => this.shutdown()),
       ));
+      // A recursive caller only requests the fence, so it cannot observe a
+      // later failure. Keep the original drain rejected for external callers,
+      // while owning its rejection even when the callback was the sole requester.
+      void this.disposal.catch(() => {});
     }
     return hostedLifecycleCallbacks.active(this) || hostedLifecycleCallbacks.active(this.floors)
       ? Promise.resolve()
