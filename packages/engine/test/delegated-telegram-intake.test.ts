@@ -2,7 +2,7 @@ import { createDaemonControlRouteHandlers } from '../daemon-sdk/src/control-rout
 import { dispatchGatewayRestRoutes } from '../daemon-sdk/src/gateway-rest-routes.js';
 import { PairingTokenManager } from '../sdk/src/platform/pairing/pairing-token-store.js';
 import { DaemonControlPlaneHelper, type DaemonControlPlaneContext } from '../sdk/src/platform/daemon/control-plane.js';
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -192,10 +192,48 @@ test('selected webhook cannot borrow polling proof, while an unselected webhook 
 });
 
 test('source expiry denies later decisions without reconstructing broker body', async () => {
-  const f = await fixture(); await f.configure({ pendingRetentionMs: 30 }); const pending = await f.ingress(); await Bun.sleep(45);
-  await expect(f.decide({ ref: pending.ref, approvalId: pending.approvalId })).rejects.toThrow();
-  expect(await f.invoke('status', { ref: pending.ref })).toMatchObject({ outcome: 'held', source: 'expired-or-lost' });
-  expect((await f.invoke('list') as { records: unknown[] }).records).toHaveLength(0); expect(f.spawned()).toBe(0);
+  const f = await fixture(); let now = Date.now();
+  const timers = new Map<ReturnType<typeof setTimeout>, { at: number; run: () => void }>();
+  const clock = spyOn(Date, 'now').mockImplementation(() => now);
+  const setTimer = spyOn(globalThis, 'setTimeout').mockImplementation(((callback: (...args: unknown[]) => void, delay = 0, ...args: unknown[]) => {
+    const handle = { unref() {} } as unknown as ReturnType<typeof setTimeout>;
+    timers.set(handle, { at: now + delay, run: () => callback(...args) });
+    return handle;
+  }) as typeof setTimeout);
+  const clearTimer = spyOn(globalThis, 'clearTimeout').mockImplementation(handle => { timers.delete(handle as ReturnType<typeof setTimeout>); });
+  const raised = spyOn(f.approvals, 'raiseOwnerApproval');
+  function advance(ms: number): void {
+    const target = now + ms;
+    for (;;) {
+      const next = [...timers].filter(([, timer]) => timer.at <= target).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next) break;
+      const [handle, timer] = next;
+      now = timer.at; timers.delete(handle); timer.run();
+    }
+    now = target;
+  }
+  try {
+    // Own both the deadline clock and abort timers so admission cannot consume the pending lifetime.
+    await f.configure({ pendingRetentionMs: 30 });
+    const pending = await f.ingress();
+    expect(pending.ref).toBeDefined(); expect(pending.approvalId).toBeDefined();
+    expect(await f.invoke('status', { ref: pending.ref })).toMatchObject({ source: 'awaiting-owner' });
+    const lifetime = raised.mock.calls[0]?.[0].signal;
+    expect(lifetime).toBeDefined(); expect(lifetime?.aborted).toBe(false);
+    expect(f.sourceReads()).toBe(1);
+    advance(29);
+    expect(lifetime?.aborted).toBe(false);
+    expect(await f.invoke('status', { ref: pending.ref })).toMatchObject({ source: 'awaiting-owner' });
+    advance(2);
+    expect(lifetime?.aborted).toBe(true);
+    await expect(f.decide({ ref: pending.ref, approvalId: pending.approvalId })).rejects.toThrow();
+    expect(await f.invoke('status', { ref: pending.ref })).toMatchObject({ outcome: 'held', source: 'expired-or-lost' });
+    expect((await f.invoke('list') as { records: unknown[] }).records).toHaveLength(0); expect(f.spawned()).toBe(0);
+    expect(f.sourceReads()).toBe(1); expect(f.sent).toEqual([]);
+    expect(f.broker.getInputs(pending.ref.sessionId)[0]?.body).not.toContain('EXTERNAL ORIGINAL');
+  } finally {
+    try { f.host.close(); } finally { raised.mockRestore(); clearTimer.mockRestore(); setTimer.mockRestore(); clock.mockRestore(); }
+  }
 });
 
 test('approval requires explicit exact source/retention/derived-record choices', async () => {
