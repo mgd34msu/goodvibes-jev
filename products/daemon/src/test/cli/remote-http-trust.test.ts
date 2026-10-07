@@ -32,7 +32,7 @@ function httpsFixture() {
   let beforeReply: (() => Promise<void>) | undefined;
   const server = Bun.serve({
     hostname: '127.0.0.1', port: 0, tls: credentials,
-    async fetch(request) {
+    async fetch(request): Promise<Response> {
       const path = new URL(request.url).pathname;
       requests.push({ path, method: request.method, authorization: request.headers.get('authorization') });
       if (request.headers.get('authorization') !== `Bearer ${TOKEN}`) return new Response('Unauthorized', { status: 401 });
@@ -304,6 +304,9 @@ test('strict CLI trust cannot inherit another home custom CA from an installed g
   const f = httpsFixture(); const originalFetch = globalThis.fetch;
   try {
     const previous = configuration(f, 'previous-custom'); const strict = configuration(f, 'selected-bundled', 'bundled');
+    // Preserve the guarded call chain, but own a fresh function without any
+    // installer markers from other tests in this non-isolated runner.
+    globalThis.fetch = originalFetch.bind(globalThis);
     new GlobalNetworkTransportInstaller().install(previous.config.config);
     const installedFetch = globalThis.fetch;
     for (const command of ['update', 'status'] as const) {
