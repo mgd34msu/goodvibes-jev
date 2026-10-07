@@ -47,7 +47,8 @@ three added mappings identify the already-landed wire, version and adapted
 contract-lifecycle tests (89 total). The lifecycle mapping preserves shutdown
 intent without restoring the removed WRFC engine. Neither
 advance marks remaining module mappings or behavioral proof complete. The daemon
-ledger retains six explicit executable/release/packaging deferrals.
+ledger retains five native-binary/release/compiled-hosting deferrals after the
+emitted CLI-dispatch acceptance was mapped to the real entrypoint tests.
 
 ## Workspace boundary
 

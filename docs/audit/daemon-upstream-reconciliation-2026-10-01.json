@@ -209,15 +209,15 @@
       "oldBlob": "9c28e4c0b502402f20143d7ab46df5055463b745",
       "newBlob": null,
       "ruling": "not-ported",
-      "reason": "Deleted source-scraping dispatch test was not ported. Its replacement is the deferred real-entrypoint acceptance."
+      "reason": "Deleted source-scraping dispatch test was not ported. Its real-entrypoint replacement is now mapped to products/daemon/src/test/cli/entrypoint.test.ts."
     },
     {
       "path": "src/test/daemon/cli-dispatch.test.ts",
       "change": "A",
       "oldBlob": null,
       "newBlob": "91d58e75fe413e46439b0dc1c3f779bda027b695",
-      "ruling": "deferred",
-      "reason": "The actual daemon executable is still absent. Preserve the new acceptance: version, unknown command exit2, command help and first-word-only command refusal without foreground serving."
+      "ruling": "reconciled",
+      "reason": "Adapted to products/daemon/src/test/cli/entrypoint.test.ts against the real emitted dispatcher and installed package-bin links: package version, misspelled command with exit 2 and help, sessions help, exact Unknown command: doctor, and send behind --daemon-home refusing before configuration. Every child exit has an owned deadline and bounded kill/reap cleanup; an interrupted held-poll child proves timeout cleanup. Native binary and release acceptance remain separate."
     },
     {
       "path": "src/test/daemon/daemon-wire.test.ts",
