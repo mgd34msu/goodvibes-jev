@@ -7,14 +7,14 @@ import type { AgentRecord } from '../tools/agent/index.js';
 import { logger } from '../utils/logger.js';
 import { openTierContextBlock } from '../owner-profile/context-block.js';
 import { CONVERSATIONAL_DIAGNOSIS_SECTION } from './conversational-contract.js';
+import { readPreparedKnowledgePromptPacket, type PreparedKnowledgePromptPacket } from '../knowledge/packet.js';
+import type { KnowledgeService } from '../knowledge/service.js';
+import { KnowledgeEvidenceRelevanceHeldError } from '../knowledge/semantic/evidence-ranking/reader.js';
 
 type PromptContextDeps = {
   readonly workingDirectory: string;
-  readonly knowledgeService?:
-    | {
-        buildPromptPacketSync(task: string, writeScope?: readonly string[]): string | null;
-      }
-    | undefined;
+  readonly knowledgeService?: Pick<KnowledgeService, 'preparePromptPacket'> | undefined;
+  readonly preparedKnowledgePrompt?: PreparedKnowledgePromptPacket | undefined;
   readonly memoryRegistry?: Pick<MemoryRegistry, 'getAll' | 'semanticCandidates'> | undefined;
   readonly archetypeLoader?:
     | {
@@ -22,6 +22,32 @@ type PromptContextDeps = {
       }
     | undefined;
 };
+
+/** One awaited reading per real prompt rebuild. Synchronous layout alternatives
+ * consume only this exact completed handle, never a process-wide query cache.
+ */
+export async function prepareOrchestratorPromptContext(
+  record: AgentRecord,
+  deps?: PromptContextDeps,
+  signal?: AbortSignal,
+): Promise<PromptContextDeps | undefined> {
+  if (!deps?.knowledgeService) return deps;
+  const preparedKnowledgePrompt = await deps.knowledgeService.preparePromptPacket(
+    record.task, record.writeScope ?? [], undefined, { ...(signal ? { signal } : {}) },
+  );
+  return { ...deps, preparedKnowledgePrompt };
+}
+
+/** Revalidate again after intervening awaits and immediately before provider
+ * transmission. A changed read-set cannot reuse a previously rendered string.
+ */
+export function assertOrchestratorKnowledgeCurrent(record: AgentRecord, deps?: PromptContextDeps): void {
+  if (deps?.preparedKnowledgePrompt) {
+    readPreparedKnowledgePromptPacket(deps.preparedKnowledgePrompt, record.task, record.writeScope ?? []);
+  } else if (deps?.knowledgeService) {
+    throw new KnowledgeEvidenceRelevanceHeldError('malformed');
+  }
+}
 
 function buildProjectContext(workingDirectory: string): string | null {
   const cwd = workingDirectory;
@@ -321,7 +347,10 @@ ${conversational ? `${CONVERSATIONAL_OUTPUT_SECTION}\n\n${CONVERSATIONAL_DIAGNOS
   if (knowledgePrompt) {
     parts.push(knowledgePrompt);
   }
-  const curatedKnowledgePrompt = deps?.knowledgeService?.buildPromptPacketSync(record.task, record.writeScope ?? []) ?? null;
+  assertOrchestratorKnowledgeCurrent(record, deps);
+  const curatedKnowledgePrompt = deps?.preparedKnowledgePrompt
+    ? readPreparedKnowledgePromptPacket(deps.preparedKnowledgePrompt, record.task, record.writeScope ?? [])
+    : null;
   if (curatedKnowledgePrompt) {
     parts.push(curatedKnowledgePrompt);
   }
@@ -363,8 +392,6 @@ export function buildLayeredOrchestratorSystemPrompt(
   remainingTokens: number,
   deps?: PromptContextDeps,
 ): string {
-  // Always include base instructions + archetype + task
-  const base = buildOrchestratorSystemPrompt(record, undefined, deps);
   if (remainingTokens === 0) {
     // Emergency: strip to task-only minimal prompt
     logger.warn('[AgentOrchestrator] context-window awareness: emergency system prompt - base layers only', { agentId: record.id });
@@ -374,6 +401,8 @@ export function buildLayeredOrchestratorSystemPrompt(
     parts.push(`## Task\n${record.task}`);
     return parts.join('\n\n');
   }
+  // All layout alternatives use the same completed retrieval operation.
+  const base = buildOrchestratorSystemPrompt(record, undefined, deps);
   const baseTokens = estimateTokens(base);
   if (baseTokens <= remainingTokens) {
     return base; // Full prompt fits, return as-is

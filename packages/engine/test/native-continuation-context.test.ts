@@ -103,6 +103,11 @@ test('persisted planner, unit and correction task prompts omit captured transcri
   for (const prompt of prompts) {
     expect(prompt).not.toContain(continuation.messages[0]!.content);
     expect(prompt).not.toContain(continuation.sessionId); expect(prompt).not.toContain('continuation');
-    expect(prompt).toContain(source.goal); expect(prompt).toContain(source.sourceRevision);
+    expect(prompt).toContain(JSON.stringify({ goal: source.goal, criteria: source.criteria }));
+    for (const key of ['sourceId', 'sourceRevision', 'inputRevision', 'criteriaId', 'criteriaRevision']) {
+      expect(prompt).not.toContain(`"${key}"`);
+    }
   }
+  expect(source.sourceRevision).toBe('source-revision');
+  expect(source.continuation).toEqual(continuation);
 });

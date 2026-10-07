@@ -111,8 +111,13 @@ test('public planner, unit and fix-plan text omit all private selected diff mate
   ];
   for (const prompt of prompts) {
     for (const privateValue of [privateLine, 'src/private.ts', 'checkpoint-before', 'checkpoint-after', 'hosted-owned', 'selectedDiff', 'Previous discussion.']) expect(prompt).not.toContain(privateValue);
-    expect(prompt).toContain(text.trim()); expect(prompt).toContain(nativeSource.sourceRevision);
+    expect(prompt).toContain(JSON.stringify({ goal: nativeSource.goal, criteria: nativeSource.criteria }));
+    for (const key of ['sourceId', 'sourceRevision', 'inputRevision', 'criteriaId', 'criteriaRevision']) {
+      expect(prompt).not.toContain(`"${key}"`);
+    }
   }
+  expect(nativeSource.sourceRevision).toBe('source-revision');
+  expect(nativeSource.continuation?.selectedDiff).toEqual(selectedDiff());
 });
 
 test('recorded route, fidelity, coverage and final admission retain the exact selected hunk separately from requirements', async () => {

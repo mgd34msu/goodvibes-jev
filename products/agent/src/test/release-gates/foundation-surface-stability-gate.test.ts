@@ -59,6 +59,14 @@ describe('foundation surface stability gate', () => {
         return choiceAnswer(question, 'document', 0.99);
       }
       if (name === 'readable' && facts.sample === note) return noulAnswer(0.99);
+      if (name === 'useful') {
+        const candidate = (state as { candidate?: { title?: string } }).candidate;
+        return noulAnswer(candidate?.title === 'Foundation Surface Note' ? 0.99 : 0.01);
+      }
+      if (name === 'excerptUseful') {
+        const candidate = (state as { candidate?: { text?: string } }).candidate;
+        return noulAnswer([note, note.trimEnd(), 'This note proves the in-process knowledge API remains consumable.'].includes(candidate?.text ?? '') ? 0.99 : 0.01);
+      }
       if (name === 'wanted') {
         const extraction = state as { query: string; subjects: string[]; text: string; source: unknown; extraction: unknown; category: { title: string } };
         expect(extraction.query).toBe('complete features specifications capabilities');
