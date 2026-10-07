@@ -90,6 +90,8 @@ export interface ToolResult {
  */
 export interface ToolExecuteOptions {
   readonly signal?: AbortSignal | undefined;
+  /** Registry-issued opaque projection capability; the creating owner must validate identity. */
+  readonly inputProjectionContext?: object | undefined;
 }
 
 /** A registered tool with its definition and executor. */

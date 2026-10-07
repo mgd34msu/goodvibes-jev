@@ -39,6 +39,11 @@ export type ResearchReferenceScreeningResult =
 export type ResearchReferenceProjection =
   | { readonly status: 'preserved'; readonly url: string }
   | { readonly status: 'omitted' };
+/** Additional operation fences, never a replacement for the source owner's authority. */
+export interface ResearchReferenceOperation {
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
+}
 export interface ProtectedSourceOwner {
   capture(parts: readonly string[]): ProtectedSource;
   screen(source: ProtectedSource): Promise<SourceScreeningResult>;
@@ -46,7 +51,7 @@ export interface ProtectedSourceOwner {
   project(receipt: SourceScreeningReceipt): readonly string[];
   /** Complete declared URL only. Query-role reading receives names, never the original URL or values. */
   captureResearchReference(reference: string): ProtectedResearchReference;
-  screenResearchReference(reference: ProtectedResearchReference): Promise<ResearchReferenceScreeningResult>;
+  screenResearchReference(reference: ProtectedResearchReference, operation?: ResearchReferenceOperation): Promise<ResearchReferenceScreeningResult>;
   /** This is query-role projection only, not complete source privacy or publication authority. */
   projectResearchReference(receipt: ResearchReferenceScreeningReceipt): ResearchReferenceProjection;
   release(source: ProtectedSource | ProtectedResearchReference): Promise<void>;

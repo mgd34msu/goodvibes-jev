@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Capture registered tool-input projections before conversation/progress
+  publication, ordinary repair and autonomous admission, including unselected
+  host alternatives. Add an owned framed-reference adapter over the name-only
+  Jev reader, preserving citation positions and private exact originals through
+  normal one-use admission. Free-prose research adoption remains unfinished.
+
 - Add a protected, name-only research URL query-role reader with distinct
   original handles and query-role receipts. Preserve exact benign references or
   omit the complete declared URL, without sending URL values to either local

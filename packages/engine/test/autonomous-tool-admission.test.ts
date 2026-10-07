@@ -411,8 +411,9 @@ test.each(['directory', 'source', 'definition', 'execute'])('the final host call
     : field === 'definition' ? () => { tool.definition = { ...tool.definition, description: 'new registration metadata' }; }
     : () => { tool.execute = async () => { replacements++; return { success: true }; }; };
   const [result] = await run(deps);
-  expect(frames).toBe(2); expect(result?.success).toBe(false);
+  expect(result?.success).toBe(false);
   expect(executed).toHaveLength(0); expect(replacements).toBe(0);
+  expect(frames).toBe(2);
 });
 
 test('a selected host condition can resume after its actual version changes', async () => {

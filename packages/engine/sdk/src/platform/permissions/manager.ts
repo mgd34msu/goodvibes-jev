@@ -4,6 +4,8 @@ import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { getProcessUntrustedContentLedger } from '../security/untrusted-content.js';
 import { autonomousSourceEvidence, autonomousRevision, assertAutonomousData, captureAutonomousChoices, captureAutonomousSource, decideAutonomousTool, type AutonomousToolChoices, type AutonomousToolRevision, type AutonomousToolSource } from './autonomous.js';
+import { AutonomousChoiceProjectionOwner, type AutonomousChoiceProjection } from './autonomous-input-projection.js';
+import type { ToolRegistry } from '../tools/registry.js';
 import type { JevDecisionBinding, JevVersionRef } from '@goodvibes-jev/judgment/decisions';
 import { bindTurnHookDispatcher, type TurnHookOwner } from '../hooks/turn-ownership.js';
 import { getConfigSnapshot, isAutoApproveEnabled } from '../config/index.js';
@@ -240,6 +242,8 @@ export interface AutonomousPermissionAdmission {
 
 export interface AutonomousPermissionOptions extends PermissionExecutionOptions {
   readonly decoratePort?: ((port: JudgmentPort) => JudgmentPort) | undefined;
+  /** Handle minted by this manager before any logical-call preparation. */
+  readonly choiceProjection?: AutonomousChoiceProjection | undefined;
   readonly sourceOf: () => AutonomousToolSource;
   readonly consumedRevisions?: readonly string[];
   readonly permittedRevisionIds?: readonly string[];
@@ -249,6 +253,7 @@ export interface AutonomousPermissionOptions extends PermissionExecutionOptions 
 }
 
 export class PermissionManager {
+  private readonly autonomousChoiceProjections = new AutonomousChoiceProjectionOwner();
   private readonly autonomousPending = new Set<string>();
   private readonly autonomousEpochs = new Map<string, number>();
   private readonly autonomousClaims = new Set<string>();
@@ -281,7 +286,7 @@ export class PermissionManager {
     this.gate = { surfaceOf: currentTurnSurfaceId, ...gate };
   }
 
-  private autonomousAuthority(sourceId: string, sourceOf: () => AutonomousToolSource): unknown {
+  private autonomousAuthority(sourceId: string, sourceOf: () => AutonomousToolSource, choiceProjection?: AutonomousChoiceProjection) {
     // Stage host callbacks first. The subsequent source/config/store copies are
     // owned data reads, not a sequence interleaving observers with sampled fields.
     const choices = this.gate.autonomousChoices?.(sourceId) ?? {};
@@ -300,16 +305,32 @@ export class PermissionManager {
     assertAutonomousData(frame);
     const capturedSource = captureAutonomousSource(source);
     const ownedFrame = snapshotJudgmentInput({ ...frame, source: autonomousSourceEvidence(capturedSource) }) as Record<string, unknown>;
-    return Object.freeze({ ...ownedFrame, source: capturedSource, autonomousChoices: captureAutonomousChoices(choices) });
+    const captured = Object.freeze({ ...ownedFrame, source: capturedSource, autonomousChoices: captureAutonomousChoices(choices) });
+    return choiceProjection === undefined ? captured : Object.freeze({ ...captured,
+      autonomousChoices: this.autonomousChoiceProjections.choices(choiceProjection, sourceId, captured) });
+  }
+
+  /** Project the complete host catalog before initial preparation or admission. */
+  async projectAutonomousChoices(sourceId: string, callId: string, sourceOf: () => AutonomousToolSource,
+    registry: ToolRegistry, signal?: AbortSignal): Promise<AutonomousChoiceProjection> {
+    assertPermissionActive(signal);
+    if (this.autonomousClaims.has(sourceId)) throw new Error('Autonomous tool source was already claimed');
+    return this.autonomousChoiceProjections.project(sourceId, callId, registry,
+      () => this.autonomousAuthority(sourceId, sourceOf), signal);
+  }
+
+  /** Release every alternative after the entire logical call, including unused alternatives. */
+  releaseAutonomousChoices(projection: AutonomousChoiceProjection): Promise<void> {
+    return this.autonomousChoiceProjections.release(projection);
   }
 
   /** The same live authority owns pre-admission argument-repair judgment. */
-  autonomousPreparation(sourceId: string, sourceOf: () => AutonomousToolSource, signal?: AbortSignal, decoratePort?: (port: JudgmentPort) => JudgmentPort): { readonly port: JudgmentPort; assertCurrent(): void } {
+  autonomousPreparation(sourceId: string, sourceOf: () => AutonomousToolSource, signal?: AbortSignal, decoratePort?: (port: JudgmentPort) => JudgmentPort, choiceProjection?: AutonomousChoiceProjection): { readonly port: JudgmentPort; assertCurrent(): void } {
     assertPermissionActive(signal);
-    const revision = hashState(this.autonomousAuthority(sourceId, sourceOf) as EntryType);
+    const revision = hashState(this.autonomousAuthority(sourceId, sourceOf, choiceProjection) as unknown as EntryType);
     const assertCurrent = () => {
       assertPermissionActive(signal);
-      if (this.autonomousClaims.has(sourceId) || hashState(this.autonomousAuthority(sourceId, sourceOf) as EntryType) !== revision)
+      if (this.autonomousClaims.has(sourceId) || hashState(this.autonomousAuthority(sourceId, sourceOf, choiceProjection) as unknown as EntryType) !== revision)
         throw new Error('Autonomous preparation authority changed or source was claimed');
     };
     const base = judgmentPort('engine.gate.autonomous-preparation');
@@ -356,8 +377,9 @@ export class PermissionManager {
     assertPermissionActive(signal);
     const args = snapshotJudgmentInput(preparedArgs, toolName) as Record<string, unknown>;
     const sourceOf = options.sourceOf;
+    const choiceProjection = options.choiceProjection;
     const ledger = this.gate.ledger ?? getProcessUntrustedContentLedger();
-    const authority = () => this.autonomousAuthority(sourceId, sourceOf);
+    const authority = () => this.autonomousAuthority(sourceId, sourceOf, choiceProjection);
     const capturedAuthority = authority() as { source: AutonomousToolSource; autonomousChoices: AutonomousToolChoices; directory: string | null; permissions: PermissionConfigSnapshot['permissions'] };
     const source = capturedAuthority.source;
     const sourceRevision = hashState(source as unknown as EntryType);
@@ -395,7 +417,7 @@ export class PermissionManager {
       if (this.autonomousEpochs.get(sourceId) !== epoch) throw new Error('Autonomous admission was superseded');
       const current = authority();
       assertPermissionActive(signal);
-      if (hashState(current as EntryType) !== authorityRevision) throw new Error('Autonomous admission authority, source or scope changed');
+      if (hashState(current as unknown as EntryType) !== authorityRevision) throw new Error('Autonomous admission authority, source or scope changed');
       assertPrepared?.();
       if (this.autonomousClaims.has(sourceId)) throw new Error('Autonomous tool source was already claimed');
       const latestDeferral = this.autonomousDeferred.get(sourceId);
@@ -474,8 +496,16 @@ export class PermissionManager {
     });
     this.policyRuntimeState.recordPermissionDecision({ callId: sourceId, tool: toolName, category, result });
     assertCurrent();
+    // The selector returns an inspected copy. Restore only the exact offered
+    // registry-owned input so fresh preparation reuses its captured protection.
+    const selectedRevision = decision.revision;
+    const revision = selectedRevision ? offered.revisions?.find(item =>
+      item.ref.id === selectedRevision.ref.id && item.ref.revision === selectedRevision.ref.revision
+      && item.toolName === selectedRevision.toolName
+      && hashState(item.args as EntryType) === hashState(selectedRevision.args as EntryType)) : undefined;
+    if (selectedRevision && !revision) throw new Error('Autonomous selected revision is no longer offered');
     return {
-      result, revisionIds: Object.freeze(decision.context.continuations.map(item => item.id)), ...(decision.revision ? { revision: decision.revision } : {}),
+      result, revisionIds: Object.freeze(decision.context.continuations.map(item => item.id)), ...(revision ? { revision } : {}),
       claim: () => {
         decision.assertCurrent();
         if (receipt.outcome !== 'act') throw new Error('Only a current Jev act decision can be claimed');

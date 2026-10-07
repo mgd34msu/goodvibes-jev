@@ -322,7 +322,9 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
           content: delta.content ?? '',
           accumulated: streamAccumulated,
           ...(delta.reasoning !== undefined ? { reasoning: delta.reasoning } : {}),
-          ...(delta.toolCalls !== undefined ? { toolCalls: delta.toolCalls } : {}),
+          // Tool identity and argument boundaries are not settled while the
+          // provider emits index-only fragments. Publish only the eventual
+          // owned tool projection, never raw argument bytes through streaming.
         });
       }
       context.requestRender();
@@ -770,6 +772,8 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         reasoningSummary: reasoningSummaryForMsg,
       };
       const results = await handleToolResponseOutcome({
+        toolRegistry: context.toolRegistry,
+        inputProjection: { signal, assertCurrent: assertActiveTurn },
         conversation: context.conversation,
         agentManager: context.agentManager,
         planManager: context.planManager,

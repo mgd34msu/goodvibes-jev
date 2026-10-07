@@ -7,6 +7,8 @@ import { captureAutonomousSource } from '../permissions/autonomous.js';
 // It does not own any state beyond the duration of a single runAgentLoop() call.
 import { ConversationManager } from '../core/conversation.js';
 import { executeToolCalls as executeAutonomousToolCalls } from '../core/orchestrator-tool-runtime.js';
+import { captureToolInputCalls, projectToolInputBatch } from '../core/tool-input-ingress.js';
+import { captureProjectionArgs } from '../tools/input-projection.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import { logger } from '../utils/logger.js';
 import { CIRCUIT_BREAKER_TRIPPED, ConsecutiveErrorBreaker } from '../core/circuit-breaker.js';
@@ -88,24 +90,12 @@ async function executeToolCalls(
   const results: ToolResult[] = [];
 
   for (const originalCall of toolCalls) {
-    const call = { ...originalCall, arguments: { ...originalCall.arguments } };
+    const call = originalCall;
     const argsSummary = summarizeToolArgs(call.arguments as Record<string, unknown>);
     // The tool trace: for the TUI's activity surfaces, never for a channel.
     setAgentProgress(record, `Turn ${turn} · ${call.name}${argsSummary}`, 'operator');
     record.toolCallCount++;
     context.emitAgentProgress(record.id, record.progress ?? '', 'operator');
-
-    if (call.name === 'exec' || call.name === 'precision_exec') {
-      call.arguments = structuredClone(call.arguments);
-      const execArgs = call.arguments as Record<string, unknown>;
-      if (Array.isArray(execArgs.commands)) {
-        for (const cmd of execArgs.commands as Record<string, unknown>[]) {
-          cmd.background = false;
-          if (!cmd.timeout_ms) cmd.timeout_ms = 600_000;
-        }
-      }
-      if (!execArgs.timeout_ms) execArgs.timeout_ms = 600_000;
-    }
 
     const callSig = `${call.name}::${JSON.stringify(call.arguments)}`;
     // Push a result AND log the matching session record, so the denied /
@@ -134,7 +124,9 @@ async function executeToolCalls(
         const [result] = await executeAutonomousToolCalls({
           autonomousSource: context.autonomousSource, autonomousPort: context.autonomousPort, turnSignal: signal, toolRegistry,
           permissionManager: { check: manager.check.bind(manager), checkDetailed: manager.checkDetailed.bind(manager),
-            admitAutonomous: manager.admitAutonomous.bind(manager), autonomousPreparation: manager.autonomousPreparation.bind(manager) },
+            admitAutonomous: manager.admitAutonomous.bind(manager), autonomousPreparation: manager.autonomousPreparation.bind(manager),
+            ...(manager.projectAutonomousChoices ? { projectAutonomousChoices: manager.projectAutonomousChoices.bind(manager) } : {}),
+            ...(manager.releaseAutonomousChoices ? { releaseAutonomousChoices: manager.releaseAutonomousChoices.bind(manager) } : {}) },
           hookDispatcher: null, runtimeBus: context.runtimeBus, sessionId: record.id,
           emitterContext: () => context.emitterContext(record.id),
           onToolExecuted(name, args, success) {
@@ -763,17 +755,32 @@ export async function runAgentTask(
       });
 
       if (response.toolCalls.length > 0) {
-        conversation.addAssistantMessage(response.content, { toolCalls: response.toolCalls, usage: response.usage });
-        const results = await executeToolCalls(
-          response.toolCalls,
-          toolRegistry,
-          session,
-          turn,
-          record,
-          callHistory,
-          CALL_HISTORY_WINDOW,
-          context,
-        );
+        // Apply the existing delegated exec defaults before the immutable
+        // projection, history publication, progress and permission readers.
+        const ingress = captureToolInputCalls(response.toolCalls).map(call => {
+          const args = structuredClone(captureProjectionArgs(call.arguments, call.name));
+          if (call.name === 'exec' || call.name === 'precision_exec') {
+            if (Array.isArray(args.commands)) for (const command of args.commands as Record<string, unknown>[]) {
+              command.background = false;
+              if (!command.timeout_ms) command.timeout_ms = 600_000;
+            }
+            if (!args.timeout_ms) args.timeout_ms = 600_000;
+          }
+          return { id: call.id, name: call.name, arguments: args };
+        });
+        const inputSignal = context.getCancellationSignal?.(record.id);
+        const batch = typeof toolRegistry.projectCall === 'function'
+          ? await projectToolInputBatch(toolRegistry, ingress, { signal: inputSignal, assertCurrent() {
+            inputSignal?.throwIfAborted();
+            if (context.getCancellationSignal?.(record.id) !== inputSignal) throw new Error('Delegated input lifetime changed');
+          } }) : undefined;
+        response = { ...response, toolCalls: batch?.calls ?? ingress };
+        let results: ToolResult[];
+        try {
+          batch?.assertCurrent();
+          conversation.addAssistantMessage(response.content, { toolCalls: response.toolCalls, usage: response.usage });
+          results = await executeToolCalls(response.toolCalls, toolRegistry, session, turn, record, callHistory, CALL_HISTORY_WINDOW, context);
+        } finally { await batch?.release(); }
         conversation.addToolResults(results);
         reportContractTurnEnd(context, record, turn, response, results);
         // Per-model edit-failure + exec-expectation-miss telemetry (measurement only).
