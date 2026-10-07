@@ -187,6 +187,10 @@ export interface ApprovalBrokerLike {
 
 export interface WorkspaceSwapManagerLike {
   getCurrentWorkingDir(): string;
+  /** Optional for older embedders; scoped intake requires this synchronous fence. */
+  subscribeBeforeSwap?(listener: () => void): () => void;
+  /** Monotonic admitted-transition epoch, including failed and same-path swaps. */
+  getWorkspaceRevision?(): number;
   requestSwap(newWorkingDir: string): Promise<
     | { ok: true; previous: string; current: string }
     | { ok: false; code: 'WORKSPACE_BUSY'; reason: string; retryAfter: number }

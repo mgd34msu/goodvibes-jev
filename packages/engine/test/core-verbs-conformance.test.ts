@@ -54,6 +54,12 @@ describe('core-verbs conformance', () => {
     expect(overlap).toEqual([]);
   });
 
+  test('delegated Telegram configuration is an exact retention-selection operation', () => {
+    expect(classifyVerb('inbound.telegram.configure')).toEqual({ kind: 'exempt', verb: 'configure', category: 'delegated-telegram-source-retention-selection' });
+    expect(EXEMPT_VERBS.has('configure')).toBe(false);
+    for (const id of ['inbound.configure', 'inbound.slack.configure', 'inbound.telegram.child.configure', 'tasks.configure']) expect(classifyVerb(id).kind).toBe('unclassified');
+  });
+
   test('native host discovery and durable recovery are exact method-id classifications', () => {
     expect(classifyVerb('workLedger.project')).toEqual({ kind: 'exempt', verb: 'project', category: 'native-work-project-discovery' });
     expect(classifyVerb('workLedger.execution.resume')).toEqual({ kind: 'exempt', verb: 'resume', category: 'native-work-durable-recovery' });

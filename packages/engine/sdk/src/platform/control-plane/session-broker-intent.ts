@@ -24,6 +24,7 @@ import {
 import { SURFACE_ROUTE_FRESHNESS_MS, shouldRouteInputToSurface } from './session-broker-sessions.js';
 import { decideContinuationEscalation } from '../agents/conversation-continuation.js';
 import type { ConversationGateConfigReader } from '../agents/conversation-gate.js';
+import { isDelegatedSessionInput } from './session-intents.js';
 import { logger } from '../utils/logger.js';
 
 /** Max inputs retained per session bucket (moved here with handleIntent, see
@@ -45,6 +46,8 @@ export interface HandleSharedSessionIntentDeps {
     sessionId: string,
     input: Omit<AppendSharedSessionMessageInput, 'sessionId'>,
   ): Promise<SharedSessionMessage>;
+  /** In-memory only: a delegated input binds before its message is published. */
+  appendUnpublishedMessage(sessionId: string, input: Omit<AppendSharedSessionMessageInput, 'sessionId'>): SharedSessionMessage;
   sessionInputStore(): SharedSessionInputStore;
   publishInputLifecycleEvent(
     event: string,
@@ -52,7 +55,7 @@ export interface HandleSharedSessionIntentDeps {
     extra?: Record<string, unknown>,
   ): void;
   resolveActiveAgentId(session: SharedSessionRecord): string | undefined;
-  persist(): Promise<void>;
+  persist(durable?: boolean): Promise<void>;
   publishUpdate(event: string, payload: unknown): void;
   announceSurfaceReply(binding: SharedSessionSurfaceReplyBinding): void;
   /**
@@ -191,6 +194,7 @@ export async function handleSharedSessionIntent(
   intent: SharedSessionInputIntent,
   input: SubmitSharedSessionMessageInput,
   allowSpawnFallback: boolean,
+  onQueued?: (input: SharedSessionInputRecord) => void,
 ): Promise<SharedSessionSubmission> {
   await deps.start();
 
@@ -226,7 +230,9 @@ export async function handleSharedSessionIntent(
       // whose target merely never existed on this node still gets the notice,
       // that is the restored-backup / re-elected-node case, and it is precisely
       // the one that otherwise looks like unexplained amnesia.
-      announceRolloverOnChannel(deps, binding, unusable);
+      // Delegated admission has no outbound delivery authority. Ordinary
+      // channel traffic retains its existing rollover explanation.
+      if (!isDelegatedSessionInput(input)) announceRolloverOnChannel(deps, binding, unusable);
     } else {
       session = bound ?? undefined;
     }
@@ -260,7 +266,7 @@ export async function handleSharedSessionIntent(
   // rolled over above, because no channel sender can act on this error.
   if (session.status === 'closed') throw Object.assign(new Error('Session is closed'), { code: SDKErrorCodes.SESSION_CLOSED, status: 409 });
   const updatedSession = await deps.attachParticipantAndRoute(session, input, binding ?? undefined);
-  const userMessage = await deps.appendMessage(updatedSession.id, {
+  const messageInput: Omit<AppendSharedSessionMessageInput, 'sessionId'> = {
     role: 'user',
     body: input.body,
     surfaceKind: input.surfaceKind,
@@ -272,7 +278,11 @@ export async function handleSharedSessionIntent(
       ...(input.metadata ?? {}),
       sessionIntent: intent,
     },
-  });
+  };
+  const delegated = isDelegatedSessionInput(input);
+  const userMessage = delegated
+    ? deps.appendUnpublishedMessage(updatedSession.id, messageInput)
+    : await deps.appendMessage(updatedSession.id, messageInput);
   const queuedInput = recordSharedSessionInput(deps.sessionInputStore(), {
     sessionId: updatedSession.id,
     intent,
@@ -281,6 +291,26 @@ export async function handleSharedSessionIntent(
     causationId: userMessage.id,
     maxPersistedInputs: MAX_PERSISTED_INPUTS,
   });
+  if (delegated) {
+    try {
+      // No await between canonical row creation and this trusted host binder.
+      // Wire-supplied metadata can only reach this deny-only branch, never bind.
+      onQueued?.(structuredClone(queuedInput));
+      await deps.persist(true);
+    } catch (error) {
+      updateSharedSessionInput(deps.sessionInputStore(), updatedSession.id, queuedInput.id, entry => ({
+        ...entry, state: 'failed', updatedAt: Date.now(), error: 'Delegated input binding or durability failed',
+      }));
+      await deps.persist(true).catch(() => {});
+      throw error;
+    }
+    deps.publishUpdate('session-message-appended', { sessionId: updatedSession.id, message: userMessage });
+    deps.publishInputLifecycleEvent('session-input-queued', queuedInput, { messageId: userMessage.id });
+    // This shape is private to the host submission seam. It offers neither a
+    // task nor a live handover; the deny marker also excludes surface polling.
+    return { session: deps.sessions.get(updatedSession.id)!, userMessage, routeBinding: binding ?? undefined,
+      input: queuedInput, intent, mode: 'queued-for-surface', state: queuedInput.state, created };
+  }
   deps.publishInputLifecycleEvent('session-input-queued', queuedInput, {
     messageId: userMessage.id,
   });

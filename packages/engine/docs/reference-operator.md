@@ -4,7 +4,7 @@ Generated from the synced GoodVibes operator contract artifact.
 
 ## Summary
 
-- Methods: `535`
+- Methods: `542`
 - Events: `34`
 - Auth modes: `shared-bearer`, `session-login`
 - HTTP status path: `/status`
@@ -58737,6 +58737,4587 @@ Whether the pinned wake-word artifacts are on disk and VERIFIED BY CONTENT: the 
     "modelVersion",
     "recallIsSyntheticOnly"
   ],
+  "additionalProperties": false
+}
+```
+
+### inbound
+
+#### `inbound.telegram.cancel`
+
+Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.
+
+- Title: `Telegram Delegated Intake cancel`
+- Source: `builtin`
+- Access: `admin`
+- Transport: `http`, `ws`
+- HTTP: `POST /api/inbound/telegram/cancel`
+- Scopes: `read:work-ledger`, `write:work-ledger`
+- Emits events: none
+- Dangerous: `no`
+- Invokable: `yes`
+
+##### Input schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "ref": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "inputId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "sessionId",
+        "inputId",
+        "sourceId",
+        "sourceRevision",
+        "requestId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "ref"
+  ],
+  "additionalProperties": false
+}
+```
+
+##### Output schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "accountIdentity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "id",
+        "username",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "inputId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "sessionId",
+        "inputId",
+        "sourceId",
+        "sourceRevision",
+        "requestId"
+      ],
+      "additionalProperties": false
+    },
+    "configurationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "expiresAt": {
+      "type": "number"
+    },
+    "pendingRetentionMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "processing": {
+      "type": "string"
+    },
+    "restart": {
+      "type": "string"
+    },
+    "route": {
+      "type": "string"
+    },
+    "execution": {
+      "type": "string",
+      "const": "not-started"
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "source": {
+      "type": "string"
+    },
+    "recovery": {
+      "type": "string"
+    },
+    "record": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ref": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "inputId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "requestId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "sessionId",
+            "inputId",
+            "sourceId",
+            "sourceRevision",
+            "requestId"
+          ],
+          "additionalProperties": false
+        },
+        "origin": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "external-original"
+            },
+            "accountId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "accountRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "routeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "routeRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "kind",
+            "accountId",
+            "accountRevision",
+            "routeId",
+            "routeRevision"
+          ],
+          "additionalProperties": false
+        },
+        "configurationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ownerRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "workspaceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "approvalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "choices": {
+          "type": "object",
+          "properties": {
+            "processingPurpose": {
+              "type": "string",
+              "const": "accept-external-message-for-owner-review"
+            },
+            "sourceRetention": {
+              "type": "string",
+              "const": "memory-only-until-review-close-or-deadline"
+            },
+            "sourceRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "derivedRecord": {
+              "type": "string",
+              "const": "external-source-reference-only-v1"
+            },
+            "derivedRecordRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "execution": {
+              "type": "string",
+              "const": "none"
+            },
+            "ownerMayReadOriginal": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "processingPurpose",
+            "sourceRetention",
+            "sourceRetentionMs",
+            "derivedRecord",
+            "derivedRecordRetentionMs",
+            "execution",
+            "ownerMayReadOriginal"
+          ],
+          "additionalProperties": false
+        },
+        "acceptedAt": {
+          "type": "number"
+        },
+        "sourceExpiresAt": {
+          "type": "number"
+        },
+        "recordExpiresAt": {
+          "type": "number"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "accepted-for-review",
+            "cancelled"
+          ]
+        },
+        "execution": {
+          "type": "string",
+          "const": "not-started"
+        }
+      },
+      "required": [
+        "id",
+        "ref",
+        "origin",
+        "configurationId",
+        "ownerRevision",
+        "workspaceRevision",
+        "approvalId",
+        "choices",
+        "acceptedAt",
+        "sourceExpiresAt",
+        "recordExpiresAt",
+        "state",
+        "execution"
+      ],
+      "additionalProperties": false
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ref": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "sessionId",
+              "inputId",
+              "sourceId",
+              "sourceRevision",
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "origin": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "external-original"
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "accountRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "routeId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "routeRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "kind",
+              "accountId",
+              "accountRevision",
+              "routeId",
+              "routeRevision"
+            ],
+            "additionalProperties": false
+          },
+          "configurationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ownerRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "workspaceRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "approvalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "choices": {
+            "type": "object",
+            "properties": {
+              "processingPurpose": {
+                "type": "string",
+                "const": "accept-external-message-for-owner-review"
+              },
+              "sourceRetention": {
+                "type": "string",
+                "const": "memory-only-until-review-close-or-deadline"
+              },
+              "sourceRetentionMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "derivedRecord": {
+                "type": "string",
+                "const": "external-source-reference-only-v1"
+              },
+              "derivedRecordRetentionMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "execution": {
+                "type": "string",
+                "const": "none"
+              },
+              "ownerMayReadOriginal": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "processingPurpose",
+              "sourceRetention",
+              "sourceRetentionMs",
+              "derivedRecord",
+              "derivedRecordRetentionMs",
+              "execution",
+              "ownerMayReadOriginal"
+            ],
+            "additionalProperties": false
+          },
+          "acceptedAt": {
+            "type": "number"
+          },
+          "sourceExpiresAt": {
+            "type": "number"
+          },
+          "recordExpiresAt": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "accepted-for-review",
+              "cancelled"
+            ]
+          },
+          "execution": {
+            "type": "string",
+            "const": "not-started"
+          }
+        },
+        "required": [
+          "id",
+          "ref",
+          "origin",
+          "configurationId",
+          "ownerRevision",
+          "workspaceRevision",
+          "approvalId",
+          "choices",
+          "acceptedAt",
+          "sourceExpiresAt",
+          "recordExpiresAt",
+          "state",
+          "execution"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "sessionId",
+              "inputId",
+              "sourceId",
+              "sourceRevision",
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "approvalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "sourceExpiresAt": {
+            "type": "number"
+          },
+          "outcome": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "approvalId",
+          "sourceExpiresAt",
+          "outcome"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "original": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "unsupportedSources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "text",
+        "unsupportedSources"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### `inbound.telegram.configure`
+
+Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.
+
+- Title: `Telegram Delegated Intake configure`
+- Source: `builtin`
+- Access: `admin`
+- Transport: `http`, `ws`
+- HTTP: `POST /api/inbound/telegram/configure`
+- Scopes: `read:work-ledger`, `write:work-ledger`
+- Emits events: none
+- Dangerous: `no`
+- Invokable: `yes`
+
+##### Input schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "chatId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "threadId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "accountId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "pendingRetention": {
+      "type": "string",
+      "const": "memory-only-until-deadline"
+    },
+    "pendingRetentionMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "configurationLifetimeMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "onExpiry": {
+      "type": "string",
+      "const": "release-original-and-hold"
+    }
+  },
+  "required": [
+    "chatId",
+    "accountId",
+    "pendingRetention",
+    "pendingRetentionMs",
+    "configurationLifetimeMs",
+    "onExpiry"
+  ],
+  "additionalProperties": false
+}
+```
+
+##### Output schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "accountIdentity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "id",
+        "username",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "inputId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "sessionId",
+        "inputId",
+        "sourceId",
+        "sourceRevision",
+        "requestId"
+      ],
+      "additionalProperties": false
+    },
+    "configurationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "expiresAt": {
+      "type": "number"
+    },
+    "pendingRetentionMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "processing": {
+      "type": "string"
+    },
+    "restart": {
+      "type": "string"
+    },
+    "route": {
+      "type": "string"
+    },
+    "execution": {
+      "type": "string",
+      "const": "not-started"
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "source": {
+      "type": "string"
+    },
+    "recovery": {
+      "type": "string"
+    },
+    "record": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ref": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "inputId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "requestId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "sessionId",
+            "inputId",
+            "sourceId",
+            "sourceRevision",
+            "requestId"
+          ],
+          "additionalProperties": false
+        },
+        "origin": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "external-original"
+            },
+            "accountId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "accountRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "routeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "routeRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "kind",
+            "accountId",
+            "accountRevision",
+            "routeId",
+            "routeRevision"
+          ],
+          "additionalProperties": false
+        },
+        "configurationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ownerRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "workspaceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "approvalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "choices": {
+          "type": "object",
+          "properties": {
+            "processingPurpose": {
+              "type": "string",
+              "const": "accept-external-message-for-owner-review"
+            },
+            "sourceRetention": {
+              "type": "string",
+              "const": "memory-only-until-review-close-or-deadline"
+            },
+            "sourceRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "derivedRecord": {
+              "type": "string",
+              "const": "external-source-reference-only-v1"
+            },
+            "derivedRecordRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "execution": {
+              "type": "string",
+              "const": "none"
+            },
+            "ownerMayReadOriginal": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "processingPurpose",
+            "sourceRetention",
+            "sourceRetentionMs",
+            "derivedRecord",
+            "derivedRecordRetentionMs",
+            "execution",
+            "ownerMayReadOriginal"
+          ],
+          "additionalProperties": false
+        },
+        "acceptedAt": {
+          "type": "number"
+        },
+        "sourceExpiresAt": {
+          "type": "number"
+        },
+        "recordExpiresAt": {
+          "type": "number"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "accepted-for-review",
+            "cancelled"
+          ]
+        },
+        "execution": {
+          "type": "string",
+          "const": "not-started"
+        }
+      },
+      "required": [
+        "id",
+        "ref",
+        "origin",
+        "configurationId",
+        "ownerRevision",
+        "workspaceRevision",
+        "approvalId",
+        "choices",
+        "acceptedAt",
+        "sourceExpiresAt",
+        "recordExpiresAt",
+        "state",
+        "execution"
+      ],
+      "additionalProperties": false
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ref": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "sessionId",
+              "inputId",
+              "sourceId",
+              "sourceRevision",
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "origin": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "external-original"
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "accountRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "routeId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "routeRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "kind",
+              "accountId",
+              "accountRevision",
+              "routeId",
+              "routeRevision"
+            ],
+            "additionalProperties": false
+          },
+          "configurationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ownerRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "workspaceRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "approvalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "choices": {
+            "type": "object",
+            "properties": {
+              "processingPurpose": {
+                "type": "string",
+                "const": "accept-external-message-for-owner-review"
+              },
+              "sourceRetention": {
+                "type": "string",
+                "const": "memory-only-until-review-close-or-deadline"
+              },
+              "sourceRetentionMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "derivedRecord": {
+                "type": "string",
+                "const": "external-source-reference-only-v1"
+              },
+              "derivedRecordRetentionMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "execution": {
+                "type": "string",
+                "const": "none"
+              },
+              "ownerMayReadOriginal": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "processingPurpose",
+              "sourceRetention",
+              "sourceRetentionMs",
+              "derivedRecord",
+              "derivedRecordRetentionMs",
+              "execution",
+              "ownerMayReadOriginal"
+            ],
+            "additionalProperties": false
+          },
+          "acceptedAt": {
+            "type": "number"
+          },
+          "sourceExpiresAt": {
+            "type": "number"
+          },
+          "recordExpiresAt": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "accepted-for-review",
+              "cancelled"
+            ]
+          },
+          "execution": {
+            "type": "string",
+            "const": "not-started"
+          }
+        },
+        "required": [
+          "id",
+          "ref",
+          "origin",
+          "configurationId",
+          "ownerRevision",
+          "workspaceRevision",
+          "approvalId",
+          "choices",
+          "acceptedAt",
+          "sourceExpiresAt",
+          "recordExpiresAt",
+          "state",
+          "execution"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "sessionId",
+              "inputId",
+              "sourceId",
+              "sourceRevision",
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "approvalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "sourceExpiresAt": {
+            "type": "number"
+          },
+          "outcome": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "approvalId",
+          "sourceExpiresAt",
+          "outcome"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "original": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "unsupportedSources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "text",
+        "unsupportedSources"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### `inbound.telegram.decide`
+
+Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.
+
+- Title: `Telegram Delegated Intake decide`
+- Source: `builtin`
+- Access: `admin`
+- Transport: `http`, `ws`
+- HTTP: `POST /api/inbound/telegram/decide`
+- Scopes: `read:work-ledger`, `write:work-ledger`
+- Emits events: none
+- Dangerous: `no`
+- Invokable: `yes`
+
+##### Input schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "ref": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "inputId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "sessionId",
+        "inputId",
+        "sourceId",
+        "sourceRevision",
+        "requestId"
+      ],
+      "additionalProperties": false
+    },
+    "approved": {
+      "type": "boolean"
+    },
+    "choices": {
+      "type": "object",
+      "properties": {
+        "processingPurpose": {
+          "type": "string",
+          "const": "accept-external-message-for-owner-review"
+        },
+        "sourceRetention": {
+          "type": "string",
+          "const": "memory-only-until-review-close-or-deadline"
+        },
+        "sourceRetentionMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "derivedRecord": {
+          "type": "string",
+          "const": "external-source-reference-only-v1"
+        },
+        "derivedRecordRetentionMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "execution": {
+          "type": "string",
+          "const": "none"
+        },
+        "ownerMayReadOriginal": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "processingPurpose",
+        "sourceRetention",
+        "sourceRetentionMs",
+        "derivedRecord",
+        "derivedRecordRetentionMs",
+        "execution",
+        "ownerMayReadOriginal"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "approvalId",
+    "ref",
+    "approved"
+  ],
+  "additionalProperties": false
+}
+```
+
+##### Output schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "accountIdentity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "id",
+        "username",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "inputId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "sessionId",
+        "inputId",
+        "sourceId",
+        "sourceRevision",
+        "requestId"
+      ],
+      "additionalProperties": false
+    },
+    "configurationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "expiresAt": {
+      "type": "number"
+    },
+    "pendingRetentionMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "processing": {
+      "type": "string"
+    },
+    "restart": {
+      "type": "string"
+    },
+    "route": {
+      "type": "string"
+    },
+    "execution": {
+      "type": "string",
+      "const": "not-started"
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "source": {
+      "type": "string"
+    },
+    "recovery": {
+      "type": "string"
+    },
+    "record": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ref": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "inputId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "requestId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "sessionId",
+            "inputId",
+            "sourceId",
+            "sourceRevision",
+            "requestId"
+          ],
+          "additionalProperties": false
+        },
+        "origin": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "external-original"
+            },
+            "accountId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "accountRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "routeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "routeRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "kind",
+            "accountId",
+            "accountRevision",
+            "routeId",
+            "routeRevision"
+          ],
+          "additionalProperties": false
+        },
+        "configurationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ownerRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "workspaceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "approvalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "choices": {
+          "type": "object",
+          "properties": {
+            "processingPurpose": {
+              "type": "string",
+              "const": "accept-external-message-for-owner-review"
+            },
+            "sourceRetention": {
+              "type": "string",
+              "const": "memory-only-until-review-close-or-deadline"
+            },
+            "sourceRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "derivedRecord": {
+              "type": "string",
+              "const": "external-source-reference-only-v1"
+            },
+            "derivedRecordRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "execution": {
+              "type": "string",
+              "const": "none"
+            },
+            "ownerMayReadOriginal": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "processingPurpose",
+            "sourceRetention",
+            "sourceRetentionMs",
+            "derivedRecord",
+            "derivedRecordRetentionMs",
+            "execution",
+            "ownerMayReadOriginal"
+          ],
+          "additionalProperties": false
+        },
+        "acceptedAt": {
+          "type": "number"
+        },
+        "sourceExpiresAt": {
+          "type": "number"
+        },
+        "recordExpiresAt": {
+          "type": "number"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "accepted-for-review",
+            "cancelled"
+          ]
+        },
+        "execution": {
+          "type": "string",
+          "const": "not-started"
+        }
+      },
+      "required": [
+        "id",
+        "ref",
+        "origin",
+        "configurationId",
+        "ownerRevision",
+        "workspaceRevision",
+        "approvalId",
+        "choices",
+        "acceptedAt",
+        "sourceExpiresAt",
+        "recordExpiresAt",
+        "state",
+        "execution"
+      ],
+      "additionalProperties": false
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ref": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "sessionId",
+              "inputId",
+              "sourceId",
+              "sourceRevision",
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "origin": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "external-original"
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "accountRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "routeId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "routeRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "kind",
+              "accountId",
+              "accountRevision",
+              "routeId",
+              "routeRevision"
+            ],
+            "additionalProperties": false
+          },
+          "configurationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ownerRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "workspaceRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "approvalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "choices": {
+            "type": "object",
+            "properties": {
+              "processingPurpose": {
+                "type": "string",
+                "const": "accept-external-message-for-owner-review"
+              },
+              "sourceRetention": {
+                "type": "string",
+                "const": "memory-only-until-review-close-or-deadline"
+              },
+              "sourceRetentionMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "derivedRecord": {
+                "type": "string",
+                "const": "external-source-reference-only-v1"
+              },
+              "derivedRecordRetentionMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "execution": {
+                "type": "string",
+                "const": "none"
+              },
+              "ownerMayReadOriginal": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "processingPurpose",
+              "sourceRetention",
+              "sourceRetentionMs",
+              "derivedRecord",
+              "derivedRecordRetentionMs",
+              "execution",
+              "ownerMayReadOriginal"
+            ],
+            "additionalProperties": false
+          },
+          "acceptedAt": {
+            "type": "number"
+          },
+          "sourceExpiresAt": {
+            "type": "number"
+          },
+          "recordExpiresAt": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "accepted-for-review",
+              "cancelled"
+            ]
+          },
+          "execution": {
+            "type": "string",
+            "const": "not-started"
+          }
+        },
+        "required": [
+          "id",
+          "ref",
+          "origin",
+          "configurationId",
+          "ownerRevision",
+          "workspaceRevision",
+          "approvalId",
+          "choices",
+          "acceptedAt",
+          "sourceExpiresAt",
+          "recordExpiresAt",
+          "state",
+          "execution"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "sessionId",
+              "inputId",
+              "sourceId",
+              "sourceRevision",
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "approvalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "sourceExpiresAt": {
+            "type": "number"
+          },
+          "outcome": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "approvalId",
+          "sourceExpiresAt",
+          "outcome"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "original": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "unsupportedSources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "text",
+        "unsupportedSources"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### `inbound.telegram.list`
+
+Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.
+
+- Title: `Telegram Delegated Intake list`
+- Source: `builtin`
+- Access: `admin`
+- Transport: `http`, `ws`
+- HTTP: `POST /api/inbound/telegram/list`
+- Scopes: `read:work-ledger`, `write:work-ledger`
+- Emits events: none
+- Dangerous: `no`
+- Invokable: `yes`
+
+##### Input schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}
+```
+
+##### Output schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "accountIdentity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "id",
+        "username",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "inputId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "sessionId",
+        "inputId",
+        "sourceId",
+        "sourceRevision",
+        "requestId"
+      ],
+      "additionalProperties": false
+    },
+    "configurationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "expiresAt": {
+      "type": "number"
+    },
+    "pendingRetentionMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "processing": {
+      "type": "string"
+    },
+    "restart": {
+      "type": "string"
+    },
+    "route": {
+      "type": "string"
+    },
+    "execution": {
+      "type": "string",
+      "const": "not-started"
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "source": {
+      "type": "string"
+    },
+    "recovery": {
+      "type": "string"
+    },
+    "record": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ref": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "inputId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "requestId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "sessionId",
+            "inputId",
+            "sourceId",
+            "sourceRevision",
+            "requestId"
+          ],
+          "additionalProperties": false
+        },
+        "origin": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "external-original"
+            },
+            "accountId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "accountRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "routeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "routeRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "kind",
+            "accountId",
+            "accountRevision",
+            "routeId",
+            "routeRevision"
+          ],
+          "additionalProperties": false
+        },
+        "configurationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ownerRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "workspaceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "approvalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "choices": {
+          "type": "object",
+          "properties": {
+            "processingPurpose": {
+              "type": "string",
+              "const": "accept-external-message-for-owner-review"
+            },
+            "sourceRetention": {
+              "type": "string",
+              "const": "memory-only-until-review-close-or-deadline"
+            },
+            "sourceRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "derivedRecord": {
+              "type": "string",
+              "const": "external-source-reference-only-v1"
+            },
+            "derivedRecordRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "execution": {
+              "type": "string",
+              "const": "none"
+            },
+            "ownerMayReadOriginal": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "processingPurpose",
+            "sourceRetention",
+            "sourceRetentionMs",
+            "derivedRecord",
+            "derivedRecordRetentionMs",
+            "execution",
+            "ownerMayReadOriginal"
+          ],
+          "additionalProperties": false
+        },
+        "acceptedAt": {
+          "type": "number"
+        },
+        "sourceExpiresAt": {
+          "type": "number"
+        },
+        "recordExpiresAt": {
+          "type": "number"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "accepted-for-review",
+            "cancelled"
+          ]
+        },
+        "execution": {
+          "type": "string",
+          "const": "not-started"
+        }
+      },
+      "required": [
+        "id",
+        "ref",
+        "origin",
+        "configurationId",
+        "ownerRevision",
+        "workspaceRevision",
+        "approvalId",
+        "choices",
+        "acceptedAt",
+        "sourceExpiresAt",
+        "recordExpiresAt",
+        "state",
+        "execution"
+      ],
+      "additionalProperties": false
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ref": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "sessionId",
+              "inputId",
+              "sourceId",
+              "sourceRevision",
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "origin": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "external-original"
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "accountRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "routeId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "routeRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "kind",
+              "accountId",
+              "accountRevision",
+              "routeId",
+              "routeRevision"
+            ],
+            "additionalProperties": false
+          },
+          "configurationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ownerRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "workspaceRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "approvalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "choices": {
+            "type": "object",
+            "properties": {
+              "processingPurpose": {
+                "type": "string",
+                "const": "accept-external-message-for-owner-review"
+              },
+              "sourceRetention": {
+                "type": "string",
+                "const": "memory-only-until-review-close-or-deadline"
+              },
+              "sourceRetentionMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "derivedRecord": {
+                "type": "string",
+                "const": "external-source-reference-only-v1"
+              },
+              "derivedRecordRetentionMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "execution": {
+                "type": "string",
+                "const": "none"
+              },
+              "ownerMayReadOriginal": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "processingPurpose",
+              "sourceRetention",
+              "sourceRetentionMs",
+              "derivedRecord",
+              "derivedRecordRetentionMs",
+              "execution",
+              "ownerMayReadOriginal"
+            ],
+            "additionalProperties": false
+          },
+          "acceptedAt": {
+            "type": "number"
+          },
+          "sourceExpiresAt": {
+            "type": "number"
+          },
+          "recordExpiresAt": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "accepted-for-review",
+              "cancelled"
+            ]
+          },
+          "execution": {
+            "type": "string",
+            "const": "not-started"
+          }
+        },
+        "required": [
+          "id",
+          "ref",
+          "origin",
+          "configurationId",
+          "ownerRevision",
+          "workspaceRevision",
+          "approvalId",
+          "choices",
+          "acceptedAt",
+          "sourceExpiresAt",
+          "recordExpiresAt",
+          "state",
+          "execution"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "sessionId",
+              "inputId",
+              "sourceId",
+              "sourceRevision",
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "approvalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "sourceExpiresAt": {
+            "type": "number"
+          },
+          "outcome": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "approvalId",
+          "sourceExpiresAt",
+          "outcome"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "original": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "unsupportedSources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "text",
+        "unsupportedSources"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### `inbound.telegram.read`
+
+Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.
+
+- Title: `Telegram Delegated Intake read`
+- Source: `builtin`
+- Access: `admin`
+- Transport: `http`, `ws`
+- HTTP: `POST /api/inbound/telegram/read`
+- Scopes: `read:work-ledger`, `write:work-ledger`
+- Emits events: none
+- Dangerous: `no`
+- Invokable: `yes`
+
+##### Input schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "ref": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "inputId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "sessionId",
+        "inputId",
+        "sourceId",
+        "sourceRevision",
+        "requestId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "ref"
+  ],
+  "additionalProperties": false
+}
+```
+
+##### Output schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "accountIdentity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "id",
+        "username",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "inputId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "sessionId",
+        "inputId",
+        "sourceId",
+        "sourceRevision",
+        "requestId"
+      ],
+      "additionalProperties": false
+    },
+    "configurationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "expiresAt": {
+      "type": "number"
+    },
+    "pendingRetentionMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "processing": {
+      "type": "string"
+    },
+    "restart": {
+      "type": "string"
+    },
+    "route": {
+      "type": "string"
+    },
+    "execution": {
+      "type": "string",
+      "const": "not-started"
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "source": {
+      "type": "string"
+    },
+    "recovery": {
+      "type": "string"
+    },
+    "record": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ref": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "inputId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "requestId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "sessionId",
+            "inputId",
+            "sourceId",
+            "sourceRevision",
+            "requestId"
+          ],
+          "additionalProperties": false
+        },
+        "origin": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "external-original"
+            },
+            "accountId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "accountRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "routeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "routeRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "kind",
+            "accountId",
+            "accountRevision",
+            "routeId",
+            "routeRevision"
+          ],
+          "additionalProperties": false
+        },
+        "configurationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ownerRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "workspaceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "approvalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "choices": {
+          "type": "object",
+          "properties": {
+            "processingPurpose": {
+              "type": "string",
+              "const": "accept-external-message-for-owner-review"
+            },
+            "sourceRetention": {
+              "type": "string",
+              "const": "memory-only-until-review-close-or-deadline"
+            },
+            "sourceRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "derivedRecord": {
+              "type": "string",
+              "const": "external-source-reference-only-v1"
+            },
+            "derivedRecordRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "execution": {
+              "type": "string",
+              "const": "none"
+            },
+            "ownerMayReadOriginal": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "processingPurpose",
+            "sourceRetention",
+            "sourceRetentionMs",
+            "derivedRecord",
+            "derivedRecordRetentionMs",
+            "execution",
+            "ownerMayReadOriginal"
+          ],
+          "additionalProperties": false
+        },
+        "acceptedAt": {
+          "type": "number"
+        },
+        "sourceExpiresAt": {
+          "type": "number"
+        },
+        "recordExpiresAt": {
+          "type": "number"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "accepted-for-review",
+            "cancelled"
+          ]
+        },
+        "execution": {
+          "type": "string",
+          "const": "not-started"
+        }
+      },
+      "required": [
+        "id",
+        "ref",
+        "origin",
+        "configurationId",
+        "ownerRevision",
+        "workspaceRevision",
+        "approvalId",
+        "choices",
+        "acceptedAt",
+        "sourceExpiresAt",
+        "recordExpiresAt",
+        "state",
+        "execution"
+      ],
+      "additionalProperties": false
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ref": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "sessionId",
+              "inputId",
+              "sourceId",
+              "sourceRevision",
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "origin": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "external-original"
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "accountRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "routeId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "routeRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "kind",
+              "accountId",
+              "accountRevision",
+              "routeId",
+              "routeRevision"
+            ],
+            "additionalProperties": false
+          },
+          "configurationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ownerRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "workspaceRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "approvalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "choices": {
+            "type": "object",
+            "properties": {
+              "processingPurpose": {
+                "type": "string",
+                "const": "accept-external-message-for-owner-review"
+              },
+              "sourceRetention": {
+                "type": "string",
+                "const": "memory-only-until-review-close-or-deadline"
+              },
+              "sourceRetentionMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "derivedRecord": {
+                "type": "string",
+                "const": "external-source-reference-only-v1"
+              },
+              "derivedRecordRetentionMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "execution": {
+                "type": "string",
+                "const": "none"
+              },
+              "ownerMayReadOriginal": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "processingPurpose",
+              "sourceRetention",
+              "sourceRetentionMs",
+              "derivedRecord",
+              "derivedRecordRetentionMs",
+              "execution",
+              "ownerMayReadOriginal"
+            ],
+            "additionalProperties": false
+          },
+          "acceptedAt": {
+            "type": "number"
+          },
+          "sourceExpiresAt": {
+            "type": "number"
+          },
+          "recordExpiresAt": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "accepted-for-review",
+              "cancelled"
+            ]
+          },
+          "execution": {
+            "type": "string",
+            "const": "not-started"
+          }
+        },
+        "required": [
+          "id",
+          "ref",
+          "origin",
+          "configurationId",
+          "ownerRevision",
+          "workspaceRevision",
+          "approvalId",
+          "choices",
+          "acceptedAt",
+          "sourceExpiresAt",
+          "recordExpiresAt",
+          "state",
+          "execution"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "sessionId",
+              "inputId",
+              "sourceId",
+              "sourceRevision",
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "approvalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "sourceExpiresAt": {
+            "type": "number"
+          },
+          "outcome": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "approvalId",
+          "sourceExpiresAt",
+          "outcome"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "original": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "unsupportedSources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "text",
+        "unsupportedSources"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### `inbound.telegram.revoke`
+
+Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.
+
+- Title: `Telegram Delegated Intake revoke`
+- Source: `builtin`
+- Access: `admin`
+- Transport: `http`, `ws`
+- HTTP: `POST /api/inbound/telegram/revoke`
+- Scopes: `read:work-ledger`, `write:work-ledger`
+- Emits events: none
+- Dangerous: `no`
+- Invokable: `yes`
+
+##### Input schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "configurationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    }
+  },
+  "required": [
+    "configurationId"
+  ],
+  "additionalProperties": false
+}
+```
+
+##### Output schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "accountIdentity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "id",
+        "username",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "inputId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "sessionId",
+        "inputId",
+        "sourceId",
+        "sourceRevision",
+        "requestId"
+      ],
+      "additionalProperties": false
+    },
+    "configurationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "expiresAt": {
+      "type": "number"
+    },
+    "pendingRetentionMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "processing": {
+      "type": "string"
+    },
+    "restart": {
+      "type": "string"
+    },
+    "route": {
+      "type": "string"
+    },
+    "execution": {
+      "type": "string",
+      "const": "not-started"
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "source": {
+      "type": "string"
+    },
+    "recovery": {
+      "type": "string"
+    },
+    "record": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ref": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "inputId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "requestId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "sessionId",
+            "inputId",
+            "sourceId",
+            "sourceRevision",
+            "requestId"
+          ],
+          "additionalProperties": false
+        },
+        "origin": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "external-original"
+            },
+            "accountId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "accountRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "routeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "routeRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "kind",
+            "accountId",
+            "accountRevision",
+            "routeId",
+            "routeRevision"
+          ],
+          "additionalProperties": false
+        },
+        "configurationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ownerRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "workspaceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "approvalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "choices": {
+          "type": "object",
+          "properties": {
+            "processingPurpose": {
+              "type": "string",
+              "const": "accept-external-message-for-owner-review"
+            },
+            "sourceRetention": {
+              "type": "string",
+              "const": "memory-only-until-review-close-or-deadline"
+            },
+            "sourceRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "derivedRecord": {
+              "type": "string",
+              "const": "external-source-reference-only-v1"
+            },
+            "derivedRecordRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "execution": {
+              "type": "string",
+              "const": "none"
+            },
+            "ownerMayReadOriginal": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "processingPurpose",
+            "sourceRetention",
+            "sourceRetentionMs",
+            "derivedRecord",
+            "derivedRecordRetentionMs",
+            "execution",
+            "ownerMayReadOriginal"
+          ],
+          "additionalProperties": false
+        },
+        "acceptedAt": {
+          "type": "number"
+        },
+        "sourceExpiresAt": {
+          "type": "number"
+        },
+        "recordExpiresAt": {
+          "type": "number"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "accepted-for-review",
+            "cancelled"
+          ]
+        },
+        "execution": {
+          "type": "string",
+          "const": "not-started"
+        }
+      },
+      "required": [
+        "id",
+        "ref",
+        "origin",
+        "configurationId",
+        "ownerRevision",
+        "workspaceRevision",
+        "approvalId",
+        "choices",
+        "acceptedAt",
+        "sourceExpiresAt",
+        "recordExpiresAt",
+        "state",
+        "execution"
+      ],
+      "additionalProperties": false
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ref": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "sessionId",
+              "inputId",
+              "sourceId",
+              "sourceRevision",
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "origin": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "external-original"
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "accountRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "routeId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "routeRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "kind",
+              "accountId",
+              "accountRevision",
+              "routeId",
+              "routeRevision"
+            ],
+            "additionalProperties": false
+          },
+          "configurationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ownerRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "workspaceRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "approvalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "choices": {
+            "type": "object",
+            "properties": {
+              "processingPurpose": {
+                "type": "string",
+                "const": "accept-external-message-for-owner-review"
+              },
+              "sourceRetention": {
+                "type": "string",
+                "const": "memory-only-until-review-close-or-deadline"
+              },
+              "sourceRetentionMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "derivedRecord": {
+                "type": "string",
+                "const": "external-source-reference-only-v1"
+              },
+              "derivedRecordRetentionMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "execution": {
+                "type": "string",
+                "const": "none"
+              },
+              "ownerMayReadOriginal": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "processingPurpose",
+              "sourceRetention",
+              "sourceRetentionMs",
+              "derivedRecord",
+              "derivedRecordRetentionMs",
+              "execution",
+              "ownerMayReadOriginal"
+            ],
+            "additionalProperties": false
+          },
+          "acceptedAt": {
+            "type": "number"
+          },
+          "sourceExpiresAt": {
+            "type": "number"
+          },
+          "recordExpiresAt": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "accepted-for-review",
+              "cancelled"
+            ]
+          },
+          "execution": {
+            "type": "string",
+            "const": "not-started"
+          }
+        },
+        "required": [
+          "id",
+          "ref",
+          "origin",
+          "configurationId",
+          "ownerRevision",
+          "workspaceRevision",
+          "approvalId",
+          "choices",
+          "acceptedAt",
+          "sourceExpiresAt",
+          "recordExpiresAt",
+          "state",
+          "execution"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "sessionId",
+              "inputId",
+              "sourceId",
+              "sourceRevision",
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "approvalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "sourceExpiresAt": {
+            "type": "number"
+          },
+          "outcome": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "approvalId",
+          "sourceExpiresAt",
+          "outcome"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "original": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "unsupportedSources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "text",
+        "unsupportedSources"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### `inbound.telegram.status`
+
+Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.
+
+- Title: `Telegram Delegated Intake status`
+- Source: `builtin`
+- Access: `admin`
+- Transport: `http`, `ws`
+- HTTP: `POST /api/inbound/telegram/status`
+- Scopes: `read:work-ledger`, `write:work-ledger`
+- Emits events: none
+- Dangerous: `no`
+- Invokable: `yes`
+
+##### Input schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "ref": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "inputId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "sessionId",
+        "inputId",
+        "sourceId",
+        "sourceRevision",
+        "requestId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "ref"
+  ],
+  "additionalProperties": false
+}
+```
+
+##### Output schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "accountIdentity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "id",
+        "username",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "inputId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "sessionId",
+        "inputId",
+        "sourceId",
+        "sourceRevision",
+        "requestId"
+      ],
+      "additionalProperties": false
+    },
+    "configurationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "expiresAt": {
+      "type": "number"
+    },
+    "pendingRetentionMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "processing": {
+      "type": "string"
+    },
+    "restart": {
+      "type": "string"
+    },
+    "route": {
+      "type": "string"
+    },
+    "execution": {
+      "type": "string",
+      "const": "not-started"
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "source": {
+      "type": "string"
+    },
+    "recovery": {
+      "type": "string"
+    },
+    "record": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ref": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "inputId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "requestId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "sessionId",
+            "inputId",
+            "sourceId",
+            "sourceRevision",
+            "requestId"
+          ],
+          "additionalProperties": false
+        },
+        "origin": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "external-original"
+            },
+            "accountId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "accountRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "routeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "routeRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "kind",
+            "accountId",
+            "accountRevision",
+            "routeId",
+            "routeRevision"
+          ],
+          "additionalProperties": false
+        },
+        "configurationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ownerRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "workspaceRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "approvalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "choices": {
+          "type": "object",
+          "properties": {
+            "processingPurpose": {
+              "type": "string",
+              "const": "accept-external-message-for-owner-review"
+            },
+            "sourceRetention": {
+              "type": "string",
+              "const": "memory-only-until-review-close-or-deadline"
+            },
+            "sourceRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "derivedRecord": {
+              "type": "string",
+              "const": "external-source-reference-only-v1"
+            },
+            "derivedRecordRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "execution": {
+              "type": "string",
+              "const": "none"
+            },
+            "ownerMayReadOriginal": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "processingPurpose",
+            "sourceRetention",
+            "sourceRetentionMs",
+            "derivedRecord",
+            "derivedRecordRetentionMs",
+            "execution",
+            "ownerMayReadOriginal"
+          ],
+          "additionalProperties": false
+        },
+        "acceptedAt": {
+          "type": "number"
+        },
+        "sourceExpiresAt": {
+          "type": "number"
+        },
+        "recordExpiresAt": {
+          "type": "number"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "accepted-for-review",
+            "cancelled"
+          ]
+        },
+        "execution": {
+          "type": "string",
+          "const": "not-started"
+        }
+      },
+      "required": [
+        "id",
+        "ref",
+        "origin",
+        "configurationId",
+        "ownerRevision",
+        "workspaceRevision",
+        "approvalId",
+        "choices",
+        "acceptedAt",
+        "sourceExpiresAt",
+        "recordExpiresAt",
+        "state",
+        "execution"
+      ],
+      "additionalProperties": false
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ref": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "sessionId",
+              "inputId",
+              "sourceId",
+              "sourceRevision",
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "origin": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "external-original"
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "accountRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "routeId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "routeRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "kind",
+              "accountId",
+              "accountRevision",
+              "routeId",
+              "routeRevision"
+            ],
+            "additionalProperties": false
+          },
+          "configurationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "ownerRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "workspaceRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "approvalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "choices": {
+            "type": "object",
+            "properties": {
+              "processingPurpose": {
+                "type": "string",
+                "const": "accept-external-message-for-owner-review"
+              },
+              "sourceRetention": {
+                "type": "string",
+                "const": "memory-only-until-review-close-or-deadline"
+              },
+              "sourceRetentionMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "derivedRecord": {
+                "type": "string",
+                "const": "external-source-reference-only-v1"
+              },
+              "derivedRecordRetentionMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "execution": {
+                "type": "string",
+                "const": "none"
+              },
+              "ownerMayReadOriginal": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "processingPurpose",
+              "sourceRetention",
+              "sourceRetentionMs",
+              "derivedRecord",
+              "derivedRecordRetentionMs",
+              "execution",
+              "ownerMayReadOriginal"
+            ],
+            "additionalProperties": false
+          },
+          "acceptedAt": {
+            "type": "number"
+          },
+          "sourceExpiresAt": {
+            "type": "number"
+          },
+          "recordExpiresAt": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "accepted-for-review",
+              "cancelled"
+            ]
+          },
+          "execution": {
+            "type": "string",
+            "const": "not-started"
+          }
+        },
+        "required": [
+          "id",
+          "ref",
+          "origin",
+          "configurationId",
+          "ownerRevision",
+          "workspaceRevision",
+          "approvalId",
+          "choices",
+          "acceptedAt",
+          "sourceExpiresAt",
+          "recordExpiresAt",
+          "state",
+          "execution"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "sourceRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "sessionId",
+              "inputId",
+              "sourceId",
+              "sourceRevision",
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "approvalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "sourceExpiresAt": {
+            "type": "number"
+          },
+          "outcome": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "approvalId",
+          "sourceExpiresAt",
+          "outcome"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "original": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "unsupportedSources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "text",
+        "unsupportedSources"
+      ],
+      "additionalProperties": false
+    }
+  },
   "additionalProperties": false
 }
 ```

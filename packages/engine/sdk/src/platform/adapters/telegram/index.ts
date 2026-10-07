@@ -1,3 +1,4 @@
+import type { TelegramSourceAccountHandle } from '../../channels/telegram/source-account.js';
 import type { SurfaceAdapterContext } from '../types.js';
 import { constantTimeEquals, parseJsonRecord, readTextBodyWithinLimit } from '../helpers.js';
 import { resolveSurfaceCredential, surfaceCredentialUnavailable } from '../surface-credential.js';
@@ -13,6 +14,7 @@ import { parseTelegramBotCommand, telegramBotCommandReply } from './commands.js'
  * omits it only where no bot token is resolvable.
  */
 export interface TelegramUpdateDeps {
+  readonly acquireSourceAccount?: (() => Promise<TelegramSourceAccountHandle | null>) | undefined;
   readonly sendMessage?: ((input: {
     readonly chatId: string;
     readonly text: string;
@@ -95,7 +97,9 @@ export async function handleTelegramSurfaceWebhook(
   if (body instanceof Response) return body;
   const payload = readRecord(body);
   if (!payload) return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
-  return processTelegramUpdate(payload, context, deps);
+  // A webhook's shared URL/secret does not prove the recipient bot incarnation.
+  // Never promote an accidentally supplied polling capability through HTTP.
+  return processTelegramUpdate(payload, context, { sendMessage: deps.sendMessage });
 }
 
 /**
@@ -149,10 +153,11 @@ export async function processTelegramUpdate(
     });
   }
   const threadId = readNumberString(message.message_thread_id);
+  const delegated = await context.delegatedTelegram?.selects(chatId, threadId) ?? false;
   const botUsername = readString(context.configManager.get('surfaces.telegram.botUsername'));
   const botHandle = normalizeBotUsername(botUsername);
-  const task = extractTelegramTask(message, botUsername);
-  const text = readString(message.text) ?? readString(message.caption) ?? '';
+  const task = delegated ? '' : extractTelegramTask(message, botUsername);
+  const text = delegated ? '' : readString(message.text) ?? readString(message.caption) ?? '';
   const mentioned = Boolean(
     (chat?.type === 'private')
     || /^\/goodvibes\b/i.test(text)
@@ -166,7 +171,7 @@ export async function processTelegramUpdate(
     threadId,
     workspaceId: readString(chat?.username),
     conversationKind: telegramConversationKind(readString(chat?.type), threadId),
-    text: task || text,
+    ...(delegated ? {} : { text: task || text }),
     mentioned,
     metadata: {
       updateId: readNumberString(payload.update_id),
@@ -194,6 +199,18 @@ export async function processTelegramUpdate(
       updateId: readNumberString(payload.update_id),
     },
   });
+
+  if (delegated) {
+    // Keep the original exact and lazy. Neither policy audits nor command/reply
+    // matching sees raw selected content; the host owns retention and approval.
+    const result = await context.delegatedTelegram!.accept({ binding, chatId, threadId,
+      account: await deps.acquireSourceAccount?.() ?? null,
+      edited: Boolean(payload.edited_message || payload.edited_channel_post),
+      senderId: readNumberString(from?.id), providerMessageId: readNumberString(message.message_id) ?? '',
+      readOriginal: () => typeof message.text === 'string' ? message.text : typeof message.caption === 'string' ? message.caption : '',
+    });
+    return Response.json({ ok: true, acknowledged: true, queued: false, ...result });
+  }
 
   // Standard Telegram bot commands are onboarding, not work. This runs AFTER
   // the route binding above (so the reply has a bound conversation to land in)

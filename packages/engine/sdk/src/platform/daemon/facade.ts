@@ -418,6 +418,7 @@ export class DaemonServer {
     // and hand over to it (facade-lifecycle.ts).
     if (this.lifecycle?.onStarting()) return;
 
+    this.surfaceActionHelper.startDelegatedTelegram();
     new GlobalNetworkTransportInstaller().install(this.configManager);
     if (!this.approvalBrokerUnsubscribe) {
       this.approvalBrokerUnsubscribe = this.approvalBroker.subscribe((approval) => {
@@ -648,6 +649,7 @@ export class DaemonServer {
     this.relayReachability?.stop();
     this.relayReachability = null;
     this.httpRouter.dispose();
+    this.surfaceActionHelper.closeDelegatedTelegram();
     this.releaseBrowserJudgmentChats?.();
     this.releaseBrowserJudgmentChats = undefined;
     this.companionChatManager.dispose();

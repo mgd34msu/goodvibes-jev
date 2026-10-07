@@ -1,3 +1,4 @@
+import type { TelegramSourceAccountOwner } from '../channels/telegram/source-account.js';
 /**
  * facade-builtin-channels.ts, the builtin channel runtime and the inbound
  * surfaces it owns.
@@ -26,6 +27,7 @@ import type {
 import type { PendingSurfaceReply } from './types.js';
 
 export interface BuiltinChannelRuntimeCompositionInput {
+  readonly telegramSourceAccounts?: TelegramSourceAccountOwner | undefined;
   readonly runtime: ResolvedDaemonFacadeRuntime;
   readonly options: CreateDaemonFacadeCollaboratorsOptions;
   readonly providerRuntime: ChannelProviderRuntimeManager;
@@ -79,6 +81,7 @@ export function createBuiltinChannelRuntime(
     }),
   });
   const builtinChannels = new BuiltinChannelRuntime({
+    telegramSourceAccounts: input.telegramSourceAccounts,
     ...(input.ingressAlarm ? { ingressAlarm: input.ingressAlarm } : {}),
     configManager: runtime.configManager,
     secretsManager: runtime.runtimeServices.secretsManager,
