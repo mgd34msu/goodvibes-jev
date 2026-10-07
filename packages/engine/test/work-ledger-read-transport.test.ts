@@ -364,7 +364,7 @@ describe('fresh authorization on every ledger entry point', () => {
   test('ledger read, import and native methods opt into the fresh-auth gate', () => {
     const host = fixture();
     expect(host.catalog.list().filter(method => method.metadata?.requiresFreshOperatorAuth === true).map(method => method.id).sort())
-      .toEqual(['workLedger.execution.cancel', 'workLedger.execution.resume', 'workLedger.execution.start', 'workLedger.execution.status', 'workLedger.history', 'workLedger.importLegacy', 'workLedger.intake.admit', 'workLedger.intake.cancel', 'workLedger.intake.capture', 'workLedger.intake.get', 'workLedger.intake.resume', 'workLedger.prepareLegacyImport', 'workLedger.project', 'workLedger.snapshot', 'workLedger.submission.get', 'workLedger.submit', 'workLedger.turn.cancel', 'workLedger.turn.session', 'workLedger.turn.start', 'workLedger.turn.startAgent', 'workLedger.turn.status']);
+      .toEqual(['inbound.telegram.cancel', 'inbound.telegram.configure', 'inbound.telegram.decide', 'inbound.telegram.list', 'inbound.telegram.read', 'inbound.telegram.revoke', 'inbound.telegram.status', 'workLedger.execution.cancel', 'workLedger.execution.resume', 'workLedger.execution.start', 'workLedger.execution.status', 'workLedger.history', 'workLedger.importLegacy', 'workLedger.intake.admit', 'workLedger.intake.cancel', 'workLedger.intake.capture', 'workLedger.intake.get', 'workLedger.intake.resume', 'workLedger.prepareLegacyImport', 'workLedger.project', 'workLedger.snapshot', 'workLedger.submission.get', 'workLedger.submit', 'workLedger.turn.cancel', 'workLedger.turn.session', 'workLedger.turn.start', 'workLedger.turn.startAgent', 'workLedger.turn.status']);
   });
 });
 

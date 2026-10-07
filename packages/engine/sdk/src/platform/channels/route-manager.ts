@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createDomainDispatch } from '../runtime/store/index.js';
 import type { DomainDispatch, RuntimeStore } from '../runtime/store/index.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
@@ -96,6 +96,7 @@ function deterministicRouteId(input: Pick<UpsertRouteBindingInput, 'surfaceKind'
 
 export class RouteBindingManager {
   private readonly store: AutomationRouteStore;
+  private readonly incarnations = new Map<string, string>();
   private readonly bindings = new Map<string, AutomationRouteBinding>();
   private runtimeDispatch: DomainDispatch | null = null;
   private runtimeBus: RuntimeEventBus | null = null;
@@ -170,6 +171,14 @@ export class RouteBindingManager {
   listBindings(): AutomationRouteBinding[] {
     if (!this.isEnabled()) return [];
     return sortBindings(this.bindings.values());
+  }
+
+  /** Host-private currentness fence; never a grant or a persisted source proof. */
+  getBindingIncarnation(bindingId: string): string | null {
+    if (!this.getBinding(bindingId)) return null;
+    let incarnation = this.incarnations.get(bindingId);
+    if (!incarnation) { incarnation = randomUUID(); this.incarnations.set(bindingId, incarnation); }
+    return incarnation;
   }
 
   getBinding(bindingId: string): AutomationRouteBinding | undefined {
@@ -363,6 +372,7 @@ export class RouteBindingManager {
     const binding = this.bindings.get(bindingId);
     if (!binding) return false;
     this.bindings.delete(bindingId);
+    this.incarnations.delete(bindingId);
     await this.store.save(sortBindings(this.bindings.values()));
     const eventSurfaceKind = toEventSurfaceKind(binding.surfaceKind);
     if (this.runtimeBus) {

@@ -58017,6 +58017,4585 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "invokable": true
       },
       {
+        "id": "inbound.telegram.cancel",
+        "title": "Telegram Delegated Intake cancel",
+        "description": "Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.",
+        "category": "inbound",
+        "source": "builtin",
+        "access": "admin",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "read:work-ledger",
+          "write:work-ledger"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/inbound/telegram/cancel"
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "ref": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "inputId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "sessionId",
+                "inputId",
+                "sourceId",
+                "sourceRevision",
+                "requestId"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "ref"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "accountIdentity": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "username",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "inputId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "sessionId",
+                "inputId",
+                "sourceId",
+                "sourceRevision",
+                "requestId"
+              ],
+              "additionalProperties": false
+            },
+            "configurationId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "expiresAt": {
+              "type": "number"
+            },
+            "pendingRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "processing": {
+              "type": "string"
+            },
+            "restart": {
+              "type": "string"
+            },
+            "route": {
+              "type": "string"
+            },
+            "execution": {
+              "type": "string",
+              "const": "not-started"
+            },
+            "approvalId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "source": {
+              "type": "string"
+            },
+            "recovery": {
+              "type": "string"
+            },
+            "record": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "ref": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "inputId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "sourceId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "sourceRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "inputId",
+                    "sourceId",
+                    "sourceRevision",
+                    "requestId"
+                  ],
+                  "additionalProperties": false
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "external-original"
+                    },
+                    "accountId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "accountRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "routeId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "routeRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "accountId",
+                    "accountRevision",
+                    "routeId",
+                    "routeRevision"
+                  ],
+                  "additionalProperties": false
+                },
+                "configurationId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "ownerRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "workspaceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "approvalId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "choices": {
+                  "type": "object",
+                  "properties": {
+                    "processingPurpose": {
+                      "type": "string",
+                      "const": "accept-external-message-for-owner-review"
+                    },
+                    "sourceRetention": {
+                      "type": "string",
+                      "const": "memory-only-until-review-close-or-deadline"
+                    },
+                    "sourceRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "derivedRecord": {
+                      "type": "string",
+                      "const": "external-source-reference-only-v1"
+                    },
+                    "derivedRecordRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "execution": {
+                      "type": "string",
+                      "const": "none"
+                    },
+                    "ownerMayReadOriginal": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "processingPurpose",
+                    "sourceRetention",
+                    "sourceRetentionMs",
+                    "derivedRecord",
+                    "derivedRecordRetentionMs",
+                    "execution",
+                    "ownerMayReadOriginal"
+                  ],
+                  "additionalProperties": false
+                },
+                "acceptedAt": {
+                  "type": "number"
+                },
+                "sourceExpiresAt": {
+                  "type": "number"
+                },
+                "recordExpiresAt": {
+                  "type": "number"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "accepted-for-review",
+                    "cancelled"
+                  ]
+                },
+                "execution": {
+                  "type": "string",
+                  "const": "not-started"
+                }
+              },
+              "required": [
+                "id",
+                "ref",
+                "origin",
+                "configurationId",
+                "ownerRevision",
+                "workspaceRevision",
+                "approvalId",
+                "choices",
+                "acceptedAt",
+                "sourceExpiresAt",
+                "recordExpiresAt",
+                "state",
+                "execution"
+              ],
+              "additionalProperties": false
+            },
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "origin": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "external-original"
+                      },
+                      "accountId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "accountRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "routeId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "routeRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "accountId",
+                      "accountRevision",
+                      "routeId",
+                      "routeRevision"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "configurationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ownerRevision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "workspaceRevision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "choices": {
+                    "type": "object",
+                    "properties": {
+                      "processingPurpose": {
+                        "type": "string",
+                        "const": "accept-external-message-for-owner-review"
+                      },
+                      "sourceRetention": {
+                        "type": "string",
+                        "const": "memory-only-until-review-close-or-deadline"
+                      },
+                      "sourceRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "derivedRecord": {
+                        "type": "string",
+                        "const": "external-source-reference-only-v1"
+                      },
+                      "derivedRecordRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "execution": {
+                        "type": "string",
+                        "const": "none"
+                      },
+                      "ownerMayReadOriginal": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "processingPurpose",
+                      "sourceRetention",
+                      "sourceRetentionMs",
+                      "derivedRecord",
+                      "derivedRecordRetentionMs",
+                      "execution",
+                      "ownerMayReadOriginal"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "acceptedAt": {
+                    "type": "number"
+                  },
+                  "sourceExpiresAt": {
+                    "type": "number"
+                  },
+                  "recordExpiresAt": {
+                    "type": "number"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "accepted-for-review",
+                      "cancelled"
+                    ]
+                  },
+                  "execution": {
+                    "type": "string",
+                    "const": "not-started"
+                  }
+                },
+                "required": [
+                  "id",
+                  "ref",
+                  "origin",
+                  "configurationId",
+                  "ownerRevision",
+                  "workspaceRevision",
+                  "approvalId",
+                  "choices",
+                  "acceptedAt",
+                  "sourceExpiresAt",
+                  "recordExpiresAt",
+                  "state",
+                  "execution"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "pending": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "sourceExpiresAt": {
+                    "type": "number"
+                  },
+                  "outcome": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "approvalId",
+                  "sourceExpiresAt",
+                  "outcome"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "original": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "unsupportedSources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "text",
+                "unsupportedSources"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
+      },
+      {
+        "id": "inbound.telegram.configure",
+        "title": "Telegram Delegated Intake configure",
+        "description": "Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.",
+        "category": "inbound",
+        "source": "builtin",
+        "access": "admin",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "read:work-ledger",
+          "write:work-ledger"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/inbound/telegram/configure"
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "chatId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "threadId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "accountId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "pendingRetention": {
+              "type": "string",
+              "const": "memory-only-until-deadline"
+            },
+            "pendingRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "configurationLifetimeMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "onExpiry": {
+              "type": "string",
+              "const": "release-original-and-hold"
+            }
+          },
+          "required": [
+            "chatId",
+            "accountId",
+            "pendingRetention",
+            "pendingRetentionMs",
+            "configurationLifetimeMs",
+            "onExpiry"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "accountIdentity": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "username",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "inputId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "sessionId",
+                "inputId",
+                "sourceId",
+                "sourceRevision",
+                "requestId"
+              ],
+              "additionalProperties": false
+            },
+            "configurationId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "expiresAt": {
+              "type": "number"
+            },
+            "pendingRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "processing": {
+              "type": "string"
+            },
+            "restart": {
+              "type": "string"
+            },
+            "route": {
+              "type": "string"
+            },
+            "execution": {
+              "type": "string",
+              "const": "not-started"
+            },
+            "approvalId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "source": {
+              "type": "string"
+            },
+            "recovery": {
+              "type": "string"
+            },
+            "record": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "ref": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "inputId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "sourceId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "sourceRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "inputId",
+                    "sourceId",
+                    "sourceRevision",
+                    "requestId"
+                  ],
+                  "additionalProperties": false
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "external-original"
+                    },
+                    "accountId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "accountRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "routeId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "routeRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "accountId",
+                    "accountRevision",
+                    "routeId",
+                    "routeRevision"
+                  ],
+                  "additionalProperties": false
+                },
+                "configurationId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "ownerRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "workspaceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "approvalId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "choices": {
+                  "type": "object",
+                  "properties": {
+                    "processingPurpose": {
+                      "type": "string",
+                      "const": "accept-external-message-for-owner-review"
+                    },
+                    "sourceRetention": {
+                      "type": "string",
+                      "const": "memory-only-until-review-close-or-deadline"
+                    },
+                    "sourceRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "derivedRecord": {
+                      "type": "string",
+                      "const": "external-source-reference-only-v1"
+                    },
+                    "derivedRecordRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "execution": {
+                      "type": "string",
+                      "const": "none"
+                    },
+                    "ownerMayReadOriginal": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "processingPurpose",
+                    "sourceRetention",
+                    "sourceRetentionMs",
+                    "derivedRecord",
+                    "derivedRecordRetentionMs",
+                    "execution",
+                    "ownerMayReadOriginal"
+                  ],
+                  "additionalProperties": false
+                },
+                "acceptedAt": {
+                  "type": "number"
+                },
+                "sourceExpiresAt": {
+                  "type": "number"
+                },
+                "recordExpiresAt": {
+                  "type": "number"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "accepted-for-review",
+                    "cancelled"
+                  ]
+                },
+                "execution": {
+                  "type": "string",
+                  "const": "not-started"
+                }
+              },
+              "required": [
+                "id",
+                "ref",
+                "origin",
+                "configurationId",
+                "ownerRevision",
+                "workspaceRevision",
+                "approvalId",
+                "choices",
+                "acceptedAt",
+                "sourceExpiresAt",
+                "recordExpiresAt",
+                "state",
+                "execution"
+              ],
+              "additionalProperties": false
+            },
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "origin": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "external-original"
+                      },
+                      "accountId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "accountRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "routeId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "routeRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "accountId",
+                      "accountRevision",
+                      "routeId",
+                      "routeRevision"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "configurationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ownerRevision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "workspaceRevision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "choices": {
+                    "type": "object",
+                    "properties": {
+                      "processingPurpose": {
+                        "type": "string",
+                        "const": "accept-external-message-for-owner-review"
+                      },
+                      "sourceRetention": {
+                        "type": "string",
+                        "const": "memory-only-until-review-close-or-deadline"
+                      },
+                      "sourceRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "derivedRecord": {
+                        "type": "string",
+                        "const": "external-source-reference-only-v1"
+                      },
+                      "derivedRecordRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "execution": {
+                        "type": "string",
+                        "const": "none"
+                      },
+                      "ownerMayReadOriginal": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "processingPurpose",
+                      "sourceRetention",
+                      "sourceRetentionMs",
+                      "derivedRecord",
+                      "derivedRecordRetentionMs",
+                      "execution",
+                      "ownerMayReadOriginal"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "acceptedAt": {
+                    "type": "number"
+                  },
+                  "sourceExpiresAt": {
+                    "type": "number"
+                  },
+                  "recordExpiresAt": {
+                    "type": "number"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "accepted-for-review",
+                      "cancelled"
+                    ]
+                  },
+                  "execution": {
+                    "type": "string",
+                    "const": "not-started"
+                  }
+                },
+                "required": [
+                  "id",
+                  "ref",
+                  "origin",
+                  "configurationId",
+                  "ownerRevision",
+                  "workspaceRevision",
+                  "approvalId",
+                  "choices",
+                  "acceptedAt",
+                  "sourceExpiresAt",
+                  "recordExpiresAt",
+                  "state",
+                  "execution"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "pending": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "sourceExpiresAt": {
+                    "type": "number"
+                  },
+                  "outcome": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "approvalId",
+                  "sourceExpiresAt",
+                  "outcome"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "original": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "unsupportedSources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "text",
+                "unsupportedSources"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
+      },
+      {
+        "id": "inbound.telegram.decide",
+        "title": "Telegram Delegated Intake decide",
+        "description": "Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.",
+        "category": "inbound",
+        "source": "builtin",
+        "access": "admin",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "read:work-ledger",
+          "write:work-ledger"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/inbound/telegram/decide"
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "approvalId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "ref": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "inputId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "sessionId",
+                "inputId",
+                "sourceId",
+                "sourceRevision",
+                "requestId"
+              ],
+              "additionalProperties": false
+            },
+            "approved": {
+              "type": "boolean"
+            },
+            "choices": {
+              "type": "object",
+              "properties": {
+                "processingPurpose": {
+                  "type": "string",
+                  "const": "accept-external-message-for-owner-review"
+                },
+                "sourceRetention": {
+                  "type": "string",
+                  "const": "memory-only-until-review-close-or-deadline"
+                },
+                "sourceRetentionMs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 2147483647
+                },
+                "derivedRecord": {
+                  "type": "string",
+                  "const": "external-source-reference-only-v1"
+                },
+                "derivedRecordRetentionMs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 2147483647
+                },
+                "execution": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "ownerMayReadOriginal": {
+                  "type": "boolean",
+                  "const": true
+                }
+              },
+              "required": [
+                "processingPurpose",
+                "sourceRetention",
+                "sourceRetentionMs",
+                "derivedRecord",
+                "derivedRecordRetentionMs",
+                "execution",
+                "ownerMayReadOriginal"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "approvalId",
+            "ref",
+            "approved"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "accountIdentity": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "username",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "inputId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "sessionId",
+                "inputId",
+                "sourceId",
+                "sourceRevision",
+                "requestId"
+              ],
+              "additionalProperties": false
+            },
+            "configurationId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "expiresAt": {
+              "type": "number"
+            },
+            "pendingRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "processing": {
+              "type": "string"
+            },
+            "restart": {
+              "type": "string"
+            },
+            "route": {
+              "type": "string"
+            },
+            "execution": {
+              "type": "string",
+              "const": "not-started"
+            },
+            "approvalId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "source": {
+              "type": "string"
+            },
+            "recovery": {
+              "type": "string"
+            },
+            "record": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "ref": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "inputId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "sourceId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "sourceRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "inputId",
+                    "sourceId",
+                    "sourceRevision",
+                    "requestId"
+                  ],
+                  "additionalProperties": false
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "external-original"
+                    },
+                    "accountId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "accountRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "routeId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "routeRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "accountId",
+                    "accountRevision",
+                    "routeId",
+                    "routeRevision"
+                  ],
+                  "additionalProperties": false
+                },
+                "configurationId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "ownerRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "workspaceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "approvalId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "choices": {
+                  "type": "object",
+                  "properties": {
+                    "processingPurpose": {
+                      "type": "string",
+                      "const": "accept-external-message-for-owner-review"
+                    },
+                    "sourceRetention": {
+                      "type": "string",
+                      "const": "memory-only-until-review-close-or-deadline"
+                    },
+                    "sourceRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "derivedRecord": {
+                      "type": "string",
+                      "const": "external-source-reference-only-v1"
+                    },
+                    "derivedRecordRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "execution": {
+                      "type": "string",
+                      "const": "none"
+                    },
+                    "ownerMayReadOriginal": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "processingPurpose",
+                    "sourceRetention",
+                    "sourceRetentionMs",
+                    "derivedRecord",
+                    "derivedRecordRetentionMs",
+                    "execution",
+                    "ownerMayReadOriginal"
+                  ],
+                  "additionalProperties": false
+                },
+                "acceptedAt": {
+                  "type": "number"
+                },
+                "sourceExpiresAt": {
+                  "type": "number"
+                },
+                "recordExpiresAt": {
+                  "type": "number"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "accepted-for-review",
+                    "cancelled"
+                  ]
+                },
+                "execution": {
+                  "type": "string",
+                  "const": "not-started"
+                }
+              },
+              "required": [
+                "id",
+                "ref",
+                "origin",
+                "configurationId",
+                "ownerRevision",
+                "workspaceRevision",
+                "approvalId",
+                "choices",
+                "acceptedAt",
+                "sourceExpiresAt",
+                "recordExpiresAt",
+                "state",
+                "execution"
+              ],
+              "additionalProperties": false
+            },
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "origin": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "external-original"
+                      },
+                      "accountId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "accountRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "routeId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "routeRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "accountId",
+                      "accountRevision",
+                      "routeId",
+                      "routeRevision"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "configurationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ownerRevision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "workspaceRevision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "choices": {
+                    "type": "object",
+                    "properties": {
+                      "processingPurpose": {
+                        "type": "string",
+                        "const": "accept-external-message-for-owner-review"
+                      },
+                      "sourceRetention": {
+                        "type": "string",
+                        "const": "memory-only-until-review-close-or-deadline"
+                      },
+                      "sourceRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "derivedRecord": {
+                        "type": "string",
+                        "const": "external-source-reference-only-v1"
+                      },
+                      "derivedRecordRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "execution": {
+                        "type": "string",
+                        "const": "none"
+                      },
+                      "ownerMayReadOriginal": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "processingPurpose",
+                      "sourceRetention",
+                      "sourceRetentionMs",
+                      "derivedRecord",
+                      "derivedRecordRetentionMs",
+                      "execution",
+                      "ownerMayReadOriginal"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "acceptedAt": {
+                    "type": "number"
+                  },
+                  "sourceExpiresAt": {
+                    "type": "number"
+                  },
+                  "recordExpiresAt": {
+                    "type": "number"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "accepted-for-review",
+                      "cancelled"
+                    ]
+                  },
+                  "execution": {
+                    "type": "string",
+                    "const": "not-started"
+                  }
+                },
+                "required": [
+                  "id",
+                  "ref",
+                  "origin",
+                  "configurationId",
+                  "ownerRevision",
+                  "workspaceRevision",
+                  "approvalId",
+                  "choices",
+                  "acceptedAt",
+                  "sourceExpiresAt",
+                  "recordExpiresAt",
+                  "state",
+                  "execution"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "pending": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "sourceExpiresAt": {
+                    "type": "number"
+                  },
+                  "outcome": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "approvalId",
+                  "sourceExpiresAt",
+                  "outcome"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "original": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "unsupportedSources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "text",
+                "unsupportedSources"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
+      },
+      {
+        "id": "inbound.telegram.list",
+        "title": "Telegram Delegated Intake list",
+        "description": "Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.",
+        "category": "inbound",
+        "source": "builtin",
+        "access": "admin",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "read:work-ledger",
+          "write:work-ledger"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/inbound/telegram/list"
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "accountIdentity": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "username",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "inputId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "sessionId",
+                "inputId",
+                "sourceId",
+                "sourceRevision",
+                "requestId"
+              ],
+              "additionalProperties": false
+            },
+            "configurationId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "expiresAt": {
+              "type": "number"
+            },
+            "pendingRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "processing": {
+              "type": "string"
+            },
+            "restart": {
+              "type": "string"
+            },
+            "route": {
+              "type": "string"
+            },
+            "execution": {
+              "type": "string",
+              "const": "not-started"
+            },
+            "approvalId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "source": {
+              "type": "string"
+            },
+            "recovery": {
+              "type": "string"
+            },
+            "record": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "ref": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "inputId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "sourceId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "sourceRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "inputId",
+                    "sourceId",
+                    "sourceRevision",
+                    "requestId"
+                  ],
+                  "additionalProperties": false
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "external-original"
+                    },
+                    "accountId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "accountRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "routeId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "routeRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "accountId",
+                    "accountRevision",
+                    "routeId",
+                    "routeRevision"
+                  ],
+                  "additionalProperties": false
+                },
+                "configurationId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "ownerRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "workspaceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "approvalId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "choices": {
+                  "type": "object",
+                  "properties": {
+                    "processingPurpose": {
+                      "type": "string",
+                      "const": "accept-external-message-for-owner-review"
+                    },
+                    "sourceRetention": {
+                      "type": "string",
+                      "const": "memory-only-until-review-close-or-deadline"
+                    },
+                    "sourceRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "derivedRecord": {
+                      "type": "string",
+                      "const": "external-source-reference-only-v1"
+                    },
+                    "derivedRecordRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "execution": {
+                      "type": "string",
+                      "const": "none"
+                    },
+                    "ownerMayReadOriginal": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "processingPurpose",
+                    "sourceRetention",
+                    "sourceRetentionMs",
+                    "derivedRecord",
+                    "derivedRecordRetentionMs",
+                    "execution",
+                    "ownerMayReadOriginal"
+                  ],
+                  "additionalProperties": false
+                },
+                "acceptedAt": {
+                  "type": "number"
+                },
+                "sourceExpiresAt": {
+                  "type": "number"
+                },
+                "recordExpiresAt": {
+                  "type": "number"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "accepted-for-review",
+                    "cancelled"
+                  ]
+                },
+                "execution": {
+                  "type": "string",
+                  "const": "not-started"
+                }
+              },
+              "required": [
+                "id",
+                "ref",
+                "origin",
+                "configurationId",
+                "ownerRevision",
+                "workspaceRevision",
+                "approvalId",
+                "choices",
+                "acceptedAt",
+                "sourceExpiresAt",
+                "recordExpiresAt",
+                "state",
+                "execution"
+              ],
+              "additionalProperties": false
+            },
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "origin": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "external-original"
+                      },
+                      "accountId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "accountRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "routeId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "routeRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "accountId",
+                      "accountRevision",
+                      "routeId",
+                      "routeRevision"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "configurationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ownerRevision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "workspaceRevision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "choices": {
+                    "type": "object",
+                    "properties": {
+                      "processingPurpose": {
+                        "type": "string",
+                        "const": "accept-external-message-for-owner-review"
+                      },
+                      "sourceRetention": {
+                        "type": "string",
+                        "const": "memory-only-until-review-close-or-deadline"
+                      },
+                      "sourceRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "derivedRecord": {
+                        "type": "string",
+                        "const": "external-source-reference-only-v1"
+                      },
+                      "derivedRecordRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "execution": {
+                        "type": "string",
+                        "const": "none"
+                      },
+                      "ownerMayReadOriginal": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "processingPurpose",
+                      "sourceRetention",
+                      "sourceRetentionMs",
+                      "derivedRecord",
+                      "derivedRecordRetentionMs",
+                      "execution",
+                      "ownerMayReadOriginal"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "acceptedAt": {
+                    "type": "number"
+                  },
+                  "sourceExpiresAt": {
+                    "type": "number"
+                  },
+                  "recordExpiresAt": {
+                    "type": "number"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "accepted-for-review",
+                      "cancelled"
+                    ]
+                  },
+                  "execution": {
+                    "type": "string",
+                    "const": "not-started"
+                  }
+                },
+                "required": [
+                  "id",
+                  "ref",
+                  "origin",
+                  "configurationId",
+                  "ownerRevision",
+                  "workspaceRevision",
+                  "approvalId",
+                  "choices",
+                  "acceptedAt",
+                  "sourceExpiresAt",
+                  "recordExpiresAt",
+                  "state",
+                  "execution"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "pending": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "sourceExpiresAt": {
+                    "type": "number"
+                  },
+                  "outcome": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "approvalId",
+                  "sourceExpiresAt",
+                  "outcome"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "original": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "unsupportedSources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "text",
+                "unsupportedSources"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
+      },
+      {
+        "id": "inbound.telegram.read",
+        "title": "Telegram Delegated Intake read",
+        "description": "Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.",
+        "category": "inbound",
+        "source": "builtin",
+        "access": "admin",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "read:work-ledger",
+          "write:work-ledger"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/inbound/telegram/read"
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "ref": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "inputId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "sessionId",
+                "inputId",
+                "sourceId",
+                "sourceRevision",
+                "requestId"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "ref"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "accountIdentity": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "username",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "inputId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "sessionId",
+                "inputId",
+                "sourceId",
+                "sourceRevision",
+                "requestId"
+              ],
+              "additionalProperties": false
+            },
+            "configurationId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "expiresAt": {
+              "type": "number"
+            },
+            "pendingRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "processing": {
+              "type": "string"
+            },
+            "restart": {
+              "type": "string"
+            },
+            "route": {
+              "type": "string"
+            },
+            "execution": {
+              "type": "string",
+              "const": "not-started"
+            },
+            "approvalId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "source": {
+              "type": "string"
+            },
+            "recovery": {
+              "type": "string"
+            },
+            "record": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "ref": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "inputId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "sourceId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "sourceRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "inputId",
+                    "sourceId",
+                    "sourceRevision",
+                    "requestId"
+                  ],
+                  "additionalProperties": false
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "external-original"
+                    },
+                    "accountId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "accountRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "routeId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "routeRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "accountId",
+                    "accountRevision",
+                    "routeId",
+                    "routeRevision"
+                  ],
+                  "additionalProperties": false
+                },
+                "configurationId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "ownerRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "workspaceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "approvalId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "choices": {
+                  "type": "object",
+                  "properties": {
+                    "processingPurpose": {
+                      "type": "string",
+                      "const": "accept-external-message-for-owner-review"
+                    },
+                    "sourceRetention": {
+                      "type": "string",
+                      "const": "memory-only-until-review-close-or-deadline"
+                    },
+                    "sourceRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "derivedRecord": {
+                      "type": "string",
+                      "const": "external-source-reference-only-v1"
+                    },
+                    "derivedRecordRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "execution": {
+                      "type": "string",
+                      "const": "none"
+                    },
+                    "ownerMayReadOriginal": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "processingPurpose",
+                    "sourceRetention",
+                    "sourceRetentionMs",
+                    "derivedRecord",
+                    "derivedRecordRetentionMs",
+                    "execution",
+                    "ownerMayReadOriginal"
+                  ],
+                  "additionalProperties": false
+                },
+                "acceptedAt": {
+                  "type": "number"
+                },
+                "sourceExpiresAt": {
+                  "type": "number"
+                },
+                "recordExpiresAt": {
+                  "type": "number"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "accepted-for-review",
+                    "cancelled"
+                  ]
+                },
+                "execution": {
+                  "type": "string",
+                  "const": "not-started"
+                }
+              },
+              "required": [
+                "id",
+                "ref",
+                "origin",
+                "configurationId",
+                "ownerRevision",
+                "workspaceRevision",
+                "approvalId",
+                "choices",
+                "acceptedAt",
+                "sourceExpiresAt",
+                "recordExpiresAt",
+                "state",
+                "execution"
+              ],
+              "additionalProperties": false
+            },
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "origin": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "external-original"
+                      },
+                      "accountId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "accountRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "routeId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "routeRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "accountId",
+                      "accountRevision",
+                      "routeId",
+                      "routeRevision"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "configurationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ownerRevision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "workspaceRevision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "choices": {
+                    "type": "object",
+                    "properties": {
+                      "processingPurpose": {
+                        "type": "string",
+                        "const": "accept-external-message-for-owner-review"
+                      },
+                      "sourceRetention": {
+                        "type": "string",
+                        "const": "memory-only-until-review-close-or-deadline"
+                      },
+                      "sourceRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "derivedRecord": {
+                        "type": "string",
+                        "const": "external-source-reference-only-v1"
+                      },
+                      "derivedRecordRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "execution": {
+                        "type": "string",
+                        "const": "none"
+                      },
+                      "ownerMayReadOriginal": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "processingPurpose",
+                      "sourceRetention",
+                      "sourceRetentionMs",
+                      "derivedRecord",
+                      "derivedRecordRetentionMs",
+                      "execution",
+                      "ownerMayReadOriginal"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "acceptedAt": {
+                    "type": "number"
+                  },
+                  "sourceExpiresAt": {
+                    "type": "number"
+                  },
+                  "recordExpiresAt": {
+                    "type": "number"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "accepted-for-review",
+                      "cancelled"
+                    ]
+                  },
+                  "execution": {
+                    "type": "string",
+                    "const": "not-started"
+                  }
+                },
+                "required": [
+                  "id",
+                  "ref",
+                  "origin",
+                  "configurationId",
+                  "ownerRevision",
+                  "workspaceRevision",
+                  "approvalId",
+                  "choices",
+                  "acceptedAt",
+                  "sourceExpiresAt",
+                  "recordExpiresAt",
+                  "state",
+                  "execution"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "pending": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "sourceExpiresAt": {
+                    "type": "number"
+                  },
+                  "outcome": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "approvalId",
+                  "sourceExpiresAt",
+                  "outcome"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "original": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "unsupportedSources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "text",
+                "unsupportedSources"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
+      },
+      {
+        "id": "inbound.telegram.revoke",
+        "title": "Telegram Delegated Intake revoke",
+        "description": "Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.",
+        "category": "inbound",
+        "source": "builtin",
+        "access": "admin",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "read:work-ledger",
+          "write:work-ledger"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/inbound/telegram/revoke"
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "configurationId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "configurationId"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "accountIdentity": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "username",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "inputId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "sessionId",
+                "inputId",
+                "sourceId",
+                "sourceRevision",
+                "requestId"
+              ],
+              "additionalProperties": false
+            },
+            "configurationId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "expiresAt": {
+              "type": "number"
+            },
+            "pendingRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "processing": {
+              "type": "string"
+            },
+            "restart": {
+              "type": "string"
+            },
+            "route": {
+              "type": "string"
+            },
+            "execution": {
+              "type": "string",
+              "const": "not-started"
+            },
+            "approvalId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "source": {
+              "type": "string"
+            },
+            "recovery": {
+              "type": "string"
+            },
+            "record": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "ref": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "inputId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "sourceId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "sourceRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "inputId",
+                    "sourceId",
+                    "sourceRevision",
+                    "requestId"
+                  ],
+                  "additionalProperties": false
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "external-original"
+                    },
+                    "accountId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "accountRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "routeId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "routeRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "accountId",
+                    "accountRevision",
+                    "routeId",
+                    "routeRevision"
+                  ],
+                  "additionalProperties": false
+                },
+                "configurationId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "ownerRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "workspaceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "approvalId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "choices": {
+                  "type": "object",
+                  "properties": {
+                    "processingPurpose": {
+                      "type": "string",
+                      "const": "accept-external-message-for-owner-review"
+                    },
+                    "sourceRetention": {
+                      "type": "string",
+                      "const": "memory-only-until-review-close-or-deadline"
+                    },
+                    "sourceRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "derivedRecord": {
+                      "type": "string",
+                      "const": "external-source-reference-only-v1"
+                    },
+                    "derivedRecordRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "execution": {
+                      "type": "string",
+                      "const": "none"
+                    },
+                    "ownerMayReadOriginal": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "processingPurpose",
+                    "sourceRetention",
+                    "sourceRetentionMs",
+                    "derivedRecord",
+                    "derivedRecordRetentionMs",
+                    "execution",
+                    "ownerMayReadOriginal"
+                  ],
+                  "additionalProperties": false
+                },
+                "acceptedAt": {
+                  "type": "number"
+                },
+                "sourceExpiresAt": {
+                  "type": "number"
+                },
+                "recordExpiresAt": {
+                  "type": "number"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "accepted-for-review",
+                    "cancelled"
+                  ]
+                },
+                "execution": {
+                  "type": "string",
+                  "const": "not-started"
+                }
+              },
+              "required": [
+                "id",
+                "ref",
+                "origin",
+                "configurationId",
+                "ownerRevision",
+                "workspaceRevision",
+                "approvalId",
+                "choices",
+                "acceptedAt",
+                "sourceExpiresAt",
+                "recordExpiresAt",
+                "state",
+                "execution"
+              ],
+              "additionalProperties": false
+            },
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "origin": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "external-original"
+                      },
+                      "accountId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "accountRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "routeId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "routeRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "accountId",
+                      "accountRevision",
+                      "routeId",
+                      "routeRevision"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "configurationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ownerRevision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "workspaceRevision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "choices": {
+                    "type": "object",
+                    "properties": {
+                      "processingPurpose": {
+                        "type": "string",
+                        "const": "accept-external-message-for-owner-review"
+                      },
+                      "sourceRetention": {
+                        "type": "string",
+                        "const": "memory-only-until-review-close-or-deadline"
+                      },
+                      "sourceRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "derivedRecord": {
+                        "type": "string",
+                        "const": "external-source-reference-only-v1"
+                      },
+                      "derivedRecordRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "execution": {
+                        "type": "string",
+                        "const": "none"
+                      },
+                      "ownerMayReadOriginal": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "processingPurpose",
+                      "sourceRetention",
+                      "sourceRetentionMs",
+                      "derivedRecord",
+                      "derivedRecordRetentionMs",
+                      "execution",
+                      "ownerMayReadOriginal"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "acceptedAt": {
+                    "type": "number"
+                  },
+                  "sourceExpiresAt": {
+                    "type": "number"
+                  },
+                  "recordExpiresAt": {
+                    "type": "number"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "accepted-for-review",
+                      "cancelled"
+                    ]
+                  },
+                  "execution": {
+                    "type": "string",
+                    "const": "not-started"
+                  }
+                },
+                "required": [
+                  "id",
+                  "ref",
+                  "origin",
+                  "configurationId",
+                  "ownerRevision",
+                  "workspaceRevision",
+                  "approvalId",
+                  "choices",
+                  "acceptedAt",
+                  "sourceExpiresAt",
+                  "recordExpiresAt",
+                  "state",
+                  "execution"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "pending": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "sourceExpiresAt": {
+                    "type": "number"
+                  },
+                  "outcome": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "approvalId",
+                  "sourceExpiresAt",
+                  "outcome"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "original": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "unsupportedSources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "text",
+                "unsupportedSources"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
+      },
+      {
+        "id": "inbound.telegram.status",
+        "title": "Telegram Delegated Intake status",
+        "description": "Explicit paired-owner command for bounded in-memory original-source intake. Configure chooses the pending source lifetime; decide approves one exact external message and metadata-only review receipt. No execution, standing processing grant, or owner-text capture.",
+        "category": "inbound",
+        "source": "builtin",
+        "access": "admin",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "read:work-ledger",
+          "write:work-ledger"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/inbound/telegram/status"
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "ref": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "inputId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "sessionId",
+                "inputId",
+                "sourceId",
+                "sourceRevision",
+                "requestId"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "ref"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "accountIdentity": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "username": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "username",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "inputId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "sessionId",
+                "inputId",
+                "sourceId",
+                "sourceRevision",
+                "requestId"
+              ],
+              "additionalProperties": false
+            },
+            "configurationId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "expiresAt": {
+              "type": "number"
+            },
+            "pendingRetentionMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "processing": {
+              "type": "string"
+            },
+            "restart": {
+              "type": "string"
+            },
+            "route": {
+              "type": "string"
+            },
+            "execution": {
+              "type": "string",
+              "const": "not-started"
+            },
+            "approvalId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "source": {
+              "type": "string"
+            },
+            "recovery": {
+              "type": "string"
+            },
+            "record": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "ref": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "inputId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "sourceId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "sourceRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "inputId",
+                    "sourceId",
+                    "sourceRevision",
+                    "requestId"
+                  ],
+                  "additionalProperties": false
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "external-original"
+                    },
+                    "accountId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "accountRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "routeId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "routeRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "accountId",
+                    "accountRevision",
+                    "routeId",
+                    "routeRevision"
+                  ],
+                  "additionalProperties": false
+                },
+                "configurationId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "ownerRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "workspaceRevision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "approvalId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "choices": {
+                  "type": "object",
+                  "properties": {
+                    "processingPurpose": {
+                      "type": "string",
+                      "const": "accept-external-message-for-owner-review"
+                    },
+                    "sourceRetention": {
+                      "type": "string",
+                      "const": "memory-only-until-review-close-or-deadline"
+                    },
+                    "sourceRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "derivedRecord": {
+                      "type": "string",
+                      "const": "external-source-reference-only-v1"
+                    },
+                    "derivedRecordRetentionMs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "execution": {
+                      "type": "string",
+                      "const": "none"
+                    },
+                    "ownerMayReadOriginal": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "processingPurpose",
+                    "sourceRetention",
+                    "sourceRetentionMs",
+                    "derivedRecord",
+                    "derivedRecordRetentionMs",
+                    "execution",
+                    "ownerMayReadOriginal"
+                  ],
+                  "additionalProperties": false
+                },
+                "acceptedAt": {
+                  "type": "number"
+                },
+                "sourceExpiresAt": {
+                  "type": "number"
+                },
+                "recordExpiresAt": {
+                  "type": "number"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "accepted-for-review",
+                    "cancelled"
+                  ]
+                },
+                "execution": {
+                  "type": "string",
+                  "const": "not-started"
+                }
+              },
+              "required": [
+                "id",
+                "ref",
+                "origin",
+                "configurationId",
+                "ownerRevision",
+                "workspaceRevision",
+                "approvalId",
+                "choices",
+                "acceptedAt",
+                "sourceExpiresAt",
+                "recordExpiresAt",
+                "state",
+                "execution"
+              ],
+              "additionalProperties": false
+            },
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "origin": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "external-original"
+                      },
+                      "accountId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "accountRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "routeId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "routeRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "accountId",
+                      "accountRevision",
+                      "routeId",
+                      "routeRevision"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "configurationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ownerRevision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "workspaceRevision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "choices": {
+                    "type": "object",
+                    "properties": {
+                      "processingPurpose": {
+                        "type": "string",
+                        "const": "accept-external-message-for-owner-review"
+                      },
+                      "sourceRetention": {
+                        "type": "string",
+                        "const": "memory-only-until-review-close-or-deadline"
+                      },
+                      "sourceRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "derivedRecord": {
+                        "type": "string",
+                        "const": "external-source-reference-only-v1"
+                      },
+                      "derivedRecordRetentionMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2147483647
+                      },
+                      "execution": {
+                        "type": "string",
+                        "const": "none"
+                      },
+                      "ownerMayReadOriginal": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "processingPurpose",
+                      "sourceRetention",
+                      "sourceRetentionMs",
+                      "derivedRecord",
+                      "derivedRecordRetentionMs",
+                      "execution",
+                      "ownerMayReadOriginal"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "acceptedAt": {
+                    "type": "number"
+                  },
+                  "sourceExpiresAt": {
+                    "type": "number"
+                  },
+                  "recordExpiresAt": {
+                    "type": "number"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "accepted-for-review",
+                      "cancelled"
+                    ]
+                  },
+                  "execution": {
+                    "type": "string",
+                    "const": "not-started"
+                  }
+                },
+                "required": [
+                  "id",
+                  "ref",
+                  "origin",
+                  "configurationId",
+                  "ownerRevision",
+                  "workspaceRevision",
+                  "approvalId",
+                  "choices",
+                  "acceptedAt",
+                  "sourceExpiresAt",
+                  "recordExpiresAt",
+                  "state",
+                  "execution"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "pending": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "inputId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "sourceRevision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    },
+                    "required": [
+                      "sessionId",
+                      "inputId",
+                      "sourceId",
+                      "sourceRevision",
+                      "requestId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "sourceExpiresAt": {
+                    "type": "number"
+                  },
+                  "outcome": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "approvalId",
+                  "sourceExpiresAt",
+                  "outcome"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "original": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "unsupportedSources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "text",
+                "unsupportedSources"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
+      },
+      {
         "id": "intelligence.snapshot",
         "title": "Intelligence Snapshot",
         "description": "Return the intelligence integration snapshot.",
@@ -144614,10 +149193,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       }
     ],
     "schemaCoverage": {
-      "methods": 535,
-      "typedInputs": 535,
+      "methods": 542,
+      "typedInputs": 542,
       "genericInputs": 0,
-      "typedOutputs": 535,
+      "typedOutputs": 542,
       "genericOutputs": 0
     },
     "eventCoverage": {
@@ -144626,8 +149205,8 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       "withWireEvents": 34
     },
     "validationCoverage": {
-      "methods": 535,
-      "validated": 527,
+      "methods": 542,
+      "validated": 534,
       "skippedGeneric": 0,
       "skippedUntyped": 8
     }

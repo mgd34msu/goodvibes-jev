@@ -28,13 +28,15 @@ import type { SecretsManager } from '../../config/secrets.js';
 import type { ServiceRegistry } from '../../config/service-registry.js';
 import type { SurfaceAdapterContext } from '../../adapters/types.js';
 import { processTelegramUpdate } from '../../adapters/telegram/index.js';
-import { resolveSecretInput } from '../../config/secret-refs.js';
+import { isSecretRefInput, normalizeSecretRef, resolveSecretInput } from '../../config/secret-refs.js';
+import { looksLikeSecretRef } from '../../config/secret-ref-refusal.js';
 import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { IngressProcessingHealth, type ChannelIngressAlarm } from '../ingress-alarm.js';
 import { TelegramApiError, TelegramBotApi, type TelegramBotIdentity, type TelegramUpdate } from './api.js';
 import { TelegramOffsetStore } from './offset-store.js';
 import { CONFLICT_ESCALATION_ATTEMPTS, classifyTelegramConflict } from './conflict-policy.js';
+import type { TelegramSourceAccountLease, TelegramSourceAccountOwner } from './source-account.js';
 
 /** Telegram holds the request open this long when there is nothing to report. */
 const POLL_TIMEOUT_SECONDS = 25;
@@ -72,6 +74,8 @@ export interface TelegramIngressDeps {
   readonly buildSurfaceAdapterContext: () => SurfaceAdapterContext;
   /** Where the getUpdates cursor lives; surface-scoped by the composition root. */
   readonly offsetFilePath: string;
+  /** No provider I/O until selected intake explicitly asks for provenance. */
+  readonly telegramSourceAccounts?: TelegramSourceAccountOwner | undefined;
   /** Test seam: swap in a client with an injected fetch. */
   readonly createApi?: ((token: string) => TelegramBotApi) | undefined;
   /** Where a skipped message reaches the owner; absent still logs and degrades. */
@@ -133,6 +137,9 @@ export function describeWebhookUrlProblem(rawUrl: string): string | null {
 
 export class TelegramIngressSupervisor {
   private stopped = true;
+  private generation = 0;
+  private credentialRevision = 0;
+  private credentialUnsubscribe: (() => void) | null = null;
   private abort: AbortController | null = null;
   private loop: Promise<void> | null = null;
   /** Who this bot is, per getMe, see resolveBotIdentity. */
@@ -182,11 +189,18 @@ export class TelegramIngressSupervisor {
    * than layering a second loop on top of the first.
    */
   async start(): Promise<TelegramIngressStatus> {
-    await this.stop();
+    const stopping = this.stop();
+    const generation = this.generation;
+    await stopping;
+    if (generation !== this.generation) return this.status;
+    this.watchSourceCredentials();
+    const credentialRevision = this.credentialRevision;
+    const credentialSnapshot = this.sourceCredentialSnapshot();
 
     const config = this.deps.configManager;
     const enabled = Boolean(config.get('surfaces.telegram.enabled'));
     const token = await this.resolveBotToken();
+    if (generation !== this.generation) return this.status;
 
     if (!enabled) {
       // A webhook registered by a previous run is state living on Telegram's
@@ -213,8 +227,9 @@ export class TelegramIngressSupervisor {
     // Learn who this bot is before arming ingress, so the very first message is
     // matched against a real handle rather than an empty string.
     await this.resolveBotIdentity(api, token);
+    if (generation !== this.generation) return this.status;
 
-    if (mode === 'polling') return this.startPolling(api);
+    if (mode === 'polling') return this.startPolling(api, token, generation, credentialRevision, credentialSnapshot);
     if (mode === 'webhook') return this.startWebhook(api);
     return this.settle('inactive', `surfaces.telegram.mode is "${mode}", which is not a supported ingress mode`);
   }
@@ -228,13 +243,18 @@ export class TelegramIngressSupervisor {
    * holding shutdown for up to a minute.
    */
   async stop(): Promise<void> {
+    const generation = ++this.generation;
+    this.deps.telegramSourceAccounts?.invalidate();
+    this.credentialUnsubscribe?.();
+    this.credentialUnsubscribe = null;
     this.stopped = true;
-    this.abort?.abort();
+    const abort = this.abort;
+    abort?.abort();
     const loop = this.loop;
     this.loop = null;
     if (loop) await loop.catch(() => { /* loop reports its own failures */ });
-    this.abort = null;
-    if (this.currentStatus.running) {
+    if (this.abort === abort) this.abort = null;
+    if (generation === this.generation && this.currentStatus.running) {
       this.currentStatus = { ...this.currentStatus, running: false };
     }
   }
@@ -267,7 +287,13 @@ export class TelegramIngressSupervisor {
     return this.settle('webhook', `Telegram updates will be delivered to ${url}`, false);
   }
 
-  private async startPolling(api: TelegramBotApi): Promise<TelegramIngressStatus> {
+  private async startPolling(
+    api: TelegramBotApi,
+    token: string,
+    generation: number,
+    credentialRevision: number,
+    credentialSnapshot: string | null,
+  ): Promise<TelegramIngressStatus> {
     // Deleting first is what makes the two modes mutually exclusive: leaving a
     // stale webhook registered would make every getUpdates return 409.
     try {
@@ -278,33 +304,58 @@ export class TelegramIngressSupervisor {
         detail: 'polling will report a conflict if one is still registered',
       });
     }
+    if (generation !== this.generation) return this.status;
 
     this.stopped = false;
-    this.abort = new AbortController();
+    const lifetime = new AbortController();
+    this.abort = lifetime;
+    const live = (): boolean => generation === this.generation && !this.stopped
+      && this.abort === lifetime && !lifetime.signal.aborted
+      && Boolean(this.deps.configManager.get('surfaces.telegram.enabled'))
+      && this.deps.configManager.get('surfaces.telegram.mode') === 'polling';
+    const sourceAccount = this.deps.telegramSourceAccounts?.attach({
+      lifetime: lifetime.signal,
+      readIdentity: (signal) => api.getVerifiedIdentity(signal),
+      isCurrentSync: () => live() && this.credentialUnsubscribe !== null
+        && this.credentialRevision === credentialRevision && credentialSnapshot !== null
+        && this.sourceCredentialSnapshot() === credentialSnapshot
+        && this.resolveSourceTokenSync() === token,
+      isCurrent: async () => {
+        if (!live()) return false;
+        const currentToken = await this.resolveBotToken();
+        return live() && currentToken === token;
+      },
+    });
     const store = new TelegramOffsetStore(this.deps.offsetFilePath);
-    this.loop = this.runPollLoop(api, store);
+    this.loop = this.runPollLoop(api, store, lifetime.signal, sourceAccount)
+      .finally(() => { lifetime.abort(); });
     return this.settle('polling',
       `long-polling Telegram getUpdates for bot ${api.botId} (no public URL required)`, true);
   }
 
   // ── the poll loop ─────────────────────────────────────────────────────────
 
-  private async runPollLoop(api: TelegramBotApi, store: TelegramOffsetStore): Promise<void> {
+  private async runPollLoop(
+    api: TelegramBotApi,
+    store: TelegramOffsetStore,
+    lifetime: AbortSignal,
+    sourceAccount?: TelegramSourceAccountLease,
+  ): Promise<void> {
     const start = store.load();
     let offset: number | undefined = start.mode === 'resume' ? start.offset : undefined;
     let backoffMs = BACKOFF_MIN_MS;
     let conflictRecoveries = 0;
 
     if (start.mode === 'skip-ahead') {
-      offset = await this.skipAhead(api, store);
+      offset = await this.skipAhead(api, store, sourceAccount);
     }
 
-    while (!this.stopped) {
+    while (!this.stopped && !lifetime.aborted) {
       try {
         const updates = await api.getUpdates({
           offset,
           timeoutSeconds: POLL_TIMEOUT_SECONDS,
-          ...(this.abort ? { signal: this.abort.signal } : {}),
+          signal: lifetime,
         });
         backoffMs = BACKOFF_MIN_MS;
         conflictRecoveries = 0;
@@ -324,7 +375,7 @@ export class TelegramIngressSupervisor {
           };
         }
         if (updates.length > 0) {
-          offset = await this.dispatchBatch(updates, api, offset);
+          offset = await this.dispatchBatch(updates, api, offset, sourceAccount);
           if (offset !== undefined) store.save(offset);
         }
       } catch (error) {
@@ -532,10 +583,14 @@ export class TelegramIngressSupervisor {
    * processed (it is most likely the message the user is waiting on), and
    * everything older is confirmed away rather than replayed.
    */
-  private async skipAhead(api: TelegramBotApi, store: TelegramOffsetStore): Promise<number | undefined> {
+  private async skipAhead(
+    api: TelegramBotApi,
+    store: TelegramOffsetStore,
+    sourceAccount?: TelegramSourceAccountLease,
+  ): Promise<number | undefined> {
     try {
       const latest = await api.getUpdates({ offset: -1, limit: 1, timeoutSeconds: 0 });
-      const next = await this.dispatchBatch(latest, api, undefined);
+      const next = await this.dispatchBatch(latest, api, undefined, sourceAccount);
       if (next !== undefined) {
         store.save(next);
         logger.warn('Telegram ingress: skipped ahead past an unusable cursor', { offset: next });
@@ -559,6 +614,7 @@ export class TelegramIngressSupervisor {
     updates: readonly TelegramUpdate[],
     api: TelegramBotApi,
     current: number | undefined,
+    sourceAccount?: TelegramSourceAccountLease,
   ): Promise<number | undefined> {
     let offset = current;
     const context = this.deps.buildSurfaceAdapterContext();
@@ -568,6 +624,7 @@ export class TelegramIngressSupervisor {
       try {
         await processTelegramUpdate(update, context, {
           sendMessage: (input) => api.sendMessage(input),
+          ...(sourceAccount ? { acquireSourceAccount: sourceAccount.acquire } : {}),
         });
         this.processing.recordSuccess();
       } catch (error) {
@@ -692,6 +749,75 @@ export class TelegramIngressSupervisor {
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────
+
+  /** Owner-mediated writes revoke synchronously, before any await can resume. */
+  private watchSourceCredentials(): void {
+    if (!this.deps.telegramSourceAccounts || this.credentialUnsubscribe) return;
+    if (typeof this.deps.secretsManager.onDidChange !== 'function') return;
+    const descriptor = this.sourceCredentialSnapshot();
+    const token = this.resolveSourceTokenSync();
+    this.credentialUnsubscribe = this.deps.secretsManager.onDidChange(() => {
+      // An unrelated API key in the same store must not strand this poller.
+      if (this.sourceCredentialSnapshot() === descriptor && this.resolveSourceTokenSync() === token) return;
+      this.credentialRevision++;
+      this.deps.telegramSourceAccounts?.invalidate();
+    });
+  }
+
+  /**
+   * Private owner state only, never returned, logged, hashed, or persisted.
+   * Registry.get re-reads services.json synchronously, including external edits.
+   * Actual effective local/env credential bytes are rechecked separately by
+   * resolveSourceTokenSync; neither check lends those bytes to the reader.
+   */
+  private sourceCredentialSnapshot(): string | null {
+    if (!this.deps.telegramSourceAccounts) return null;
+    if (typeof this.deps.serviceRegistry.get !== 'function') return null;
+    try {
+      return JSON.stringify([
+        this.deps.configManager.get('surfaces.telegram.botToken'),
+        this.deps.serviceRegistry.get('telegram'),
+      ]);
+    } catch { return null; }
+  }
+
+  /**
+   * Selected intake supports locally fenceable credentials only. External and
+   * nested secret refs have no synchronous owner revision and must hold; legacy
+   * ingress retains its existing general async resolver below.
+   */
+  private resolveSourceTokenSync(): string | null {
+    type Resolution = ReturnType<SecretsManager['resolveLocalSecretSync']>;
+    const literal = (value: unknown): Resolution => {
+      if (value === undefined || value === null || value === '') return { state: 'absent' };
+      return typeof value !== 'string' || isSecretRefInput(value) || looksLikeSecretRef(value)
+        ? { state: 'unsupported' } : { state: 'resolved', value };
+    };
+    const local = (key: string): Resolution => typeof this.deps.secretsManager.resolveLocalSecretSync === 'function'
+      ? this.deps.secretsManager.resolveLocalSecretSync(key) : { state: 'unsupported' };
+    const reference = (value: unknown): Resolution => {
+      const ref = normalizeSecretRef(value);
+      if (ref?.source === 'env') return literal(process.env[ref.id]);
+      if (ref?.source === 'goodvibes') return local(ref.id);
+      return { state: 'unsupported' };
+    };
+    try {
+      const registry = this.deps.serviceRegistry.get('telegram');
+      if (registry) {
+        const candidate = registry.tokenRef ?? (isSecretRefInput(registry.tokenKey) ? registry.tokenKey : undefined);
+        const fromRegistry = candidate ? reference(candidate) : registry.tokenKey ? local(registry.tokenKey) : { state: 'absent' } as const;
+        if (fromRegistry.state === 'unsupported') return null;
+        if (fromRegistry.state === 'resolved' && fromRegistry.value) return fromRegistry.value;
+      }
+      const configured = this.deps.configManager.get('surfaces.telegram.botToken');
+      const configuredLiteral = typeof configured === 'string' ? configured.trim() : configured;
+      const fromConfig = isSecretRefInput(configured) ? reference(configured) : literal(configuredLiteral);
+      if (fromConfig.state === 'unsupported') return null;
+      if (fromConfig.state === 'resolved' && fromConfig.value) return fromConfig.value;
+      const environment = literal(process.env.TELEGRAM_BOT_TOKEN);
+      return environment.state === 'resolved' ? environment.value : null;
+    } catch { return null; }
+  }
 
   /**
    * The public numeric id of the bot this node can ACTUALLY read, or null when
