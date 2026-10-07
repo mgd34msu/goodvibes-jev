@@ -411,7 +411,7 @@ const BASIC_OWN_COMMAND_EDITOR_SPECS: Readonly<Record<AgentWorkspaceBasicOwnComm
     mode: 'create',
     title: 'Add Work Plan Item',
     selectedFieldIndex: 0,
-    message: 'Create one visible work plan item from the Agent workspace.',
+    message: 'Create a local todo only. This does not submit or execute native work. Use /work submit-file <JSON-path> for original owner source.',
     fields: [
       { id: 'title', label: 'Title', value: '', required: true, multiline: true, hint: 'Task title. Ctrl-J inserts a new line.' },
       { id: 'owner', label: 'Owner', value: '', required: false, multiline: false, hint: 'Optional owner label.' },
@@ -432,7 +432,7 @@ const BASIC_OWN_COMMAND_EDITOR_SPECS: Readonly<Record<AgentWorkspaceBasicOwnComm
     mode: 'update',
     title: 'Update Work Plan Status',
     selectedFieldIndex: 0,
-    message: 'Update one visible work plan item status from the Agent workspace.',
+    message: 'Update local todo status only. Local done is not native verified completion.',
     fields: [
       { id: 'id', label: 'Work item id', value: '', required: true, multiline: false, hint: 'Existing work plan item id.' },
       { id: 'status', label: 'Status', value: '', required: true, multiline: false, hint: 'pending, start, blocked, done, failed, or cancelled.' },

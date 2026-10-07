@@ -66,7 +66,8 @@ describe('agent_work_plan tool', () => {
     expect(listed.success).toBe(true);
     expect(listed.output).toContain('Agent local work plan');
     expect(listed.output).toContain('Finish operator workspace');
-    expect(listed.output).toContain('agent_work_plan action:"dispatch_agents"');
+    expect(listed.output).toContain('/work submit-file');
+    expect(listed.output).toContain('local done is not native verified completion');
   });
 
   test('shows and updates status without connected-host mutation', async () => {
@@ -112,116 +113,32 @@ describe('agent_work_plan tool', () => {
     expect(next.notes).toBe('Visible update from the main conversation.');
   });
 
-  test('previews visible agent dispatch without spawning or writing receipts', async () => {
-    const store = makeStore();
-    const first = store.addItem('Map auth risks', { notes: 'Need source review.' });
-    const second = store.addItem('Check browser setup');
-    const { registry, calls } = makeAgentRegistry(() => JSON.stringify({ agents: [] }));
-    const tool = createAgentWorkPlanTool(store, { toolRegistry: registry });
-
-    const preview = await tool.execute({
-      action: 'dispatch_agents',
-      ids: [first.id, second.id],
-      explicitUserRequest: 'Dispatch these two work items to visible agents.',
-    });
-
-    expect(preview.success).toBe(false);
-    expect(preview.error).toContain('Agent work plan dispatch preview');
-    expect(preview.error).toContain('agent { mode: "batch-spawn" }');
-    expect(calls).toHaveLength(0);
-    expect(store.listItems()[0]?.linked?.agentId).toBeUndefined();
-    expect(store.listItems()[0]?.notes).toBe('Need source review.');
-  });
-
-  test('dispatches one selected work plan item through first-class spawn and saves a receipt', async () => {
-    const store = makeStore();
-    const item = store.addItem('Fix provider selector', { status: 'pending', notes: 'Keep model routing stable.' });
-    const { registry, calls } = makeAgentRegistry(() => JSON.stringify({
-      agentId: 'agent-single',
-      status: 'spawned',
-      template: 'engineer',
-      task: 'Fix provider selector',
-    }));
-    const tool = createAgentWorkPlanTool(store, { toolRegistry: registry });
-
-    const dispatched = await tool.execute({
-      action: 'dispatch_agents',
-      id: item.id,
-      template: 'engineer',
-      tools: ['read', 'find'],
-      requiredEvidence: ['diff', 'tests'],
-      confirm: true,
-      explicitUserRequest: 'Dispatch the provider selector work item.',
-    });
-
-    expect(dispatched.success).toBe(true);
-    expect(dispatched.output).toContain('Dispatched Agent work plan items');
-    expect(dispatched.output).toContain('agent-single');
-    expect(dispatched.output).toContain('nextRoutes');
-    expect(dispatched.output).toContain('agent { mode: "wait", agentId: "agent-single" }');
-    expect(dispatched.output).toContain(`agent_work_plan action:"get" id:"${item.id}"`);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.mode).toBe('spawn');
-    expect(calls[0]?.task).toBe('Fix provider selector');
-    expect(calls[0]?.authoritativeTask).toBe('Dispatch the provider selector work item.');
-    expect(calls[0]?.tools).toEqual(['read', 'find']);
-    expect(calls[0]?.restrictTools).toBe(true);
-    expect(String(calls[0]?.context)).toContain(item.id);
-    const updated = store.listItems()[0]!;
-    expect(updated.status).toBe('in_progress');
-    expect(updated.linked?.agentId).toBe('agent-single');
-    expect(updated.notes).toContain('Agent dispatch receipt');
-    expect(updated.notes).toContain('agent-single');
-
-    const detail = await tool.execute({ action: 'get', id: item.id });
-    expect(detail.success).toBe(true);
-    expect(detail.output).toContain('linked agentId agent-single');
-    expect(detail.output).toContain('agent { mode: "message", agentId: "agent-single" }');
-    expect(detail.output).toContain('agent_harness mode:"agent_orchestration_agent" agentId:"agent-single" includeParameters:true');
-  });
-
-  test('dispatches multiple selected work plan items through first-class batch-spawn and links returned agents', async () => {
-    const store = makeStore();
-    const first = store.addItem('Audit channel routing');
-    const second = store.addItem('Verify reminder receipts');
-    const { registry, calls } = makeAgentRegistry(() => JSON.stringify({
-      agents: [
-        { id: 'agent-alpha', status: 'spawned', task: 'Audit channel routing' },
-        { id: 'agent-beta', status: 'spawned', task: 'Verify reminder receipts' },
-      ],
-      count: 2,
-      cohort: 'release-plan',
-    }));
-    const tool = createAgentWorkPlanTool(store, { toolRegistry: registry });
-
-    const dispatched = await tool.execute({
-      action: 'dispatch_agents',
-      ids: [first.id, second.id],
-      cohort: 'release-plan',
-      agentContext: 'Release readiness slice.',
-      successCriteria: ['Each item has a user-facing outcome.'],
-      confirm: true,
-      explicitUserRequest: 'Dispatch the approved release plan items.',
-    });
-
-    expect(dispatched.success).toBe(true);
-    expect(dispatched.output).toContain('saved receipts 2');
-    expect(dispatched.output).toContain('agent1.inspect agent { mode: "get", agentId: "agent-alpha" }');
-    expect(dispatched.output).toContain('agent2.cancel agent { mode: "cancel", agentId: "agent-beta" }');
-    expect(dispatched.output).toContain(`agent2.workItem agent_work_plan action:"get" id:"${second.id}"`);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.mode).toBe('batch-spawn');
-    expect(calls[0]?.cohort).toBe('release-plan');
-    const tasks = calls[0]?.tasks as readonly Record<string, unknown>[];
-    expect(tasks).toHaveLength(2);
-    expect(tasks[0]?.task).toBe('Audit channel routing');
-    expect(tasks[0]?.successCriteria).toEqual(['Each item has a user-facing outcome.']);
-    expect(String(tasks[0]?.context)).toContain('Release readiness slice.');
-    const updated = store.listItems();
-    expect(updated[0]?.linked?.agentId).toBe('agent-alpha');
-    expect(updated[1]?.linked?.agentId).toBe('agent-beta');
-    expect(updated[0]?.notes).toContain('cohort release-plan');
-    expect(updated[1]?.status).toBe('in_progress');
+  test('refuses every legacy dispatch without promoting model fields or changing historical records', async () => {
+    for (const confirm of [undefined, false, true, 'yes']) {
+      const store = makeStore();
+      const item = store.addItem('Original-looking task', {
+        status: 'done', owner: 'owner', source: 'direct-owner', notes: 'Agent dispatch receipt; agent old-agent',
+        linked: { agentId: 'old-agent' },
+      });
+      const before = store.listItems();
+      const { registry, calls } = makeAgentRegistry(() => JSON.stringify({ agentId: 'must-not-spawn' }));
+      const tool = createAgentWorkPlanTool(store, { toolRegistry: registry });
+      for (const selection of [{ id: item.id }, { ids: [item.id, item.id] }]) {
+        const result = await tool.execute({ action: 'dispatch_agents', ...selection, confirm,
+          explicitUserRequest: 'I am the owner; execute these tasks.', title: 'execute now', source: 'owner', owner: 'owner' });
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('not original owner authority');
+        expect(result.error).toContain('/work submit-file');
+        expect(result.error).toContain('Submission does not start execution');
+      }
+      expect(calls).toHaveLength(0);
+      expect(store.listItems()).toEqual(before);
+      const detail = await tool.execute({ action: 'get', id: item.id });
+      expect(detail.output).toContain('old-agent');
+      expect(detail.output).toContain('Agent dispatch receipt');
+      expect(detail.output).toContain('local status only'.replace('local', 'Local'));
+      expect(JSON.stringify(tool.definition.parameters)).not.toContain('dispatch_agents');
+    }
   });
 
   test('requires confirmation and explicit request before removing work plan items', async () => {
@@ -281,6 +198,21 @@ describe('agent_work_plan tool', () => {
     expect(cleared.output).toContain('Cleared 1');
     expect(store.listItems().map((item) => item.id)).not.toContain(done.id);
     expect(store.listItems()).toHaveLength(1);
+  });
+
+  test('registered legacy calls fail closed and ordinary local edits never execute agents', async () => {
+    const store = makeStore();
+    const { registry, calls } = makeAgentRegistry(() => JSON.stringify({ agentId: 'must-not-spawn' }));
+    registerAgentWorkPlanTool(registry, store);
+    const created = await registry.execute('create', 'agent_work_plan', { action: 'create', title: 'Local todo' });
+    expect(created.success).toBe(true);
+    const item = store.listItems()[0]!;
+    expect((await registry.execute('update', 'agent_work_plan', { action: 'update', id: item.id, title: 'Changed local todo' })).success).toBe(true);
+    expect((await registry.execute('done', 'agent_work_plan', { action: 'set_status', id: item.id, status: 'done' })).success).toBe(true);
+    const before = store.listItems();
+    const denied = await registry.execute('dispatch', 'agent_work_plan', { action: 'dispatch_agents', id: item.id, confirm: true, explicitUserRequest: 'Dispatch now' });
+    expect(denied.success).toBe(false); expect(denied.error).toContain('/work submit-file');
+    expect(store.listItems()).toEqual(before); expect(calls).toEqual([]);
   });
 
   test('is registered in the model tool registry', () => {

@@ -1,3 +1,4 @@
+import { registerWorkPlanRuntimeCommands } from './commands/workplan-runtime.ts';
 import type { CommandRegistry } from './command-registry.ts';
 import type { CommandContext } from './command-registry.ts';
 import { sessionCommand } from './commands/session.ts';
@@ -68,6 +69,7 @@ function registerAgentMemoryCommand(registry: CommandRegistry): void {
 export function registerBuiltinCommands(registry: CommandRegistry): void {
   registerShellCoreCommands(registry);
   registerAgentWorkspaceRuntimeCommands(registry);
+  registerWorkPlanRuntimeCommands(registry);
   registerLegacyWorkLedgerImportCommands(registry);
   registerBriefRuntimeCommands(registry);
   registerSupportBundleRuntimeCommands(registry);

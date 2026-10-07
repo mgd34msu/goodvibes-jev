@@ -2632,7 +2632,7 @@ describe('agent_harness tool', () => {
           readonly managedPlanCard?: { readonly lane: string; readonly reviewGate: { readonly status: string } };
           readonly context?: string | null;
         }[];
-        readonly decisionCards: readonly { readonly id: string; readonly status: string; readonly modelRoute?: string }[];
+        readonly decisionCards: readonly { readonly id: string; readonly status: string; readonly modelRoute?: string; readonly userRoute?: string }[];
         readonly modelAccess: { readonly spawn: string; readonly batchSpawn: string; readonly harness: string };
         readonly policy: string;
       }>(fixture, { mode: 'agent_orchestration', includeParameters: true });
@@ -2758,7 +2758,7 @@ describe('agent_harness tool', () => {
       expect(posture.modelAccess.harness).toBe('agent_harness mode:"agent_orchestration"');
       expect(posture.decisionCards.find((card) => card.id === 'visible-batch-spawn')?.status).toBe('ready');
       expect(posture.decisionCards.find((card) => card.id === 'managed-multi-runner-plan')?.status).toBe('ready');
-      expect(posture.decisionCards.find((card) => card.id === 'managed-multi-runner-plan')?.modelRoute).toContain('dispatch_agents');
+      expect(posture.decisionCards.find((card) => card.id === 'managed-multi-runner-plan')?.userRoute).toContain('/work submit-file');
       expect(posture.decisionCards.find((card) => card.id === 'hidden-fanout-blocked')?.status).toBe('blocked');
       expect(posture.agents[0]?.routes.cancel).toBe('agent { mode: "cancel", agentId: "agent-alpha" }');
       expect(posture.agents[0]?.routes.message).toBe('agent { mode: "message", agentId: "agent-alpha" }');
