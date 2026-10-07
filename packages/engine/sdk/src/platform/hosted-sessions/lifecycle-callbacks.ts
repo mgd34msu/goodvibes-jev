@@ -20,8 +20,12 @@ class HostedLifecycleCallbacks {
   }
 
   outside<T>(owner: object, callback: () => T): T {
+    return this.outsideMany([owner], callback);
+  }
+
+  outsideMany<T>(excluded: Iterable<object>, callback: () => T): T {
     const owners = new Map(this.scope.getStore());
-    owners.delete(owner);
+    for (const owner of excluded) owners.delete(owner);
     return this.scope.run(owners, callback);
   }
 }

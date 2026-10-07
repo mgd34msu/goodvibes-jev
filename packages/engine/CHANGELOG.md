@@ -10,6 +10,11 @@
   refuse unusable startup links, and honor local pair token/port overrides
   without persisting runtime settings or replacing the shared identity.
 
+- Keep explicit hosted-session termination pending through admitted creation,
+  restored composition, spine registration and shutdown parking. Prevent late
+  idle persistence or creation/prompt publication, join repeated kill/shutdown,
+  and refuse recursive same-session lifecycle waits without deadlock.
+
 - Capture registered tool-input projections before conversation/progress
   publication, ordinary repair and autonomous admission, including unselected
   host alternatives. Add an owned framed-reference adapter over the name-only
