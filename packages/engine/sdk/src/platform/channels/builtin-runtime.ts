@@ -120,6 +120,7 @@ export class BuiltinChannelRuntime {
       serviceRegistry: this.deps.serviceRegistry,
       buildSurfaceAdapterContext: this.deps.buildSurfaceAdapterContext,
       offsetFilePath,
+      telegramSourceAccounts: this.deps.telegramSourceAccounts,
       ...(this.deps.ingressAlarm ? { ingressAlarm: this.deps.ingressAlarm } : {}),
       onConcurrentConsumerConflict: (detail) => {
         this.consumerConflictHandler?.(detail);
@@ -162,6 +163,8 @@ export class BuiltinChannelRuntime {
       'web.publicBaseUrl',
     ] as const;
     const restart = (): void => {
+      // Revoke selected intake immediately, before the coalesced restart.
+      this.deps.telegramSourceAccounts?.invalidate();
       // Coalesce: editing several keys in one save must re-decide once, not
       // once per key, or the modes race each other during the transition.
       if (this.telegramRestartTimer) clearTimeout(this.telegramRestartTimer);
@@ -182,6 +185,7 @@ export class BuiltinChannelRuntime {
 
   /** Tear the inbound paths down; the poll loop must not outlive the daemon. */
   async stopIngress(): Promise<void> {
+    this.deps.telegramSourceAccounts?.invalidate();
     if (this.telegramRestartTimer) {
       clearTimeout(this.telegramRestartTimer);
       this.telegramRestartTimer = null;

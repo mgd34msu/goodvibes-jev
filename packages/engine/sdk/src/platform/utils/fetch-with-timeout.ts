@@ -1,27 +1,44 @@
 import { logger } from './logger.js';
 
-/**
- * Sensitive query-parameter keys to strip from logged URLs.
- * Values are replaced with "[redacted]" in OUTBOUND_HTTP log entries.
- */
-const SENSITIVE_PARAMS = new Set([
-  'key', 'api_key', 'apikey', 'token', 'secret',
-  'access_token', 'apiToken', 'api-key',
-]);
+const HTTP_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'TRACE', 'CONNECT']);
+
+function diagnosticMethod(url: string | URL | Request, init?: RequestInit): string {
+  try {
+    const value = init?.method ?? (url instanceof Request ? url.method : 'GET');
+    const method = typeof value === 'string' ? value.toUpperCase() : 'OTHER';
+    return HTTP_METHODS.has(method) ? method : 'OTHER';
+  } catch {
+    return 'OTHER';
+  }
+}
+
+/** Fixed provider protocol positions, not guesses about what arbitrary text means. */
+function diagnosticPath(url: URL): string {
+  const parts = url.pathname.split('/');
+  if (url.hostname === 'api.telegram.org' && parts[1]?.startsWith('bot')) {
+    parts[1] = 'bot[redacted]';
+  }
+  if (url.hostname === 'hooks.slack.com') return '/[redacted]';
+  if ((url.hostname === 'discord.com' || url.hostname === 'discordapp.com') && parts[1] === 'api') {
+    const resource = /^v\d+$/.test(parts[2] ?? '') ? 3 : 2;
+    if ((parts[resource] === 'webhooks' || parts[resource] === 'interactions') && parts.length > resource + 2) {
+      parts[resource + 2] = '[redacted]';
+    }
+  }
+  return parts.join('/');
+}
 
 /**
- * Sanitize a URL for logging: strip query params that might contain secrets.
+ * Project HTTP URL diagnostics without userinfo, fragments or any query material.
+ * Unknown parameter names do not authorize publishing their values. Owners of
+ * opaque credential-bearing URLs must select instrumentedFetch's opaque mode.
  */
 export function sanitizeUrlForLog(url: string | URL | Request): string {
   try {
     const raw = url instanceof Request ? url.url : String(url);
     const parsed = new URL(raw);
-    for (const key of parsed.searchParams.keys()) {
-      if (SENSITIVE_PARAMS.has(key.toLowerCase())) {
-        parsed.searchParams.set(key, '[redacted]');
-      }
-    }
-    return `${parsed.origin}${parsed.pathname}${parsed.search ? parsed.search : ''}`;
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '[non-http-url]';
+    return `${parsed.origin}${diagnosticPath(parsed)}${parsed.search ? '?[redacted]' : ''}`;
   } catch {
     return '[unparseable-url]';
   }
@@ -37,27 +54,29 @@ export function sanitizeUrlForLog(url: string | URL | Request): string {
  *
  * @param url    - The URL or Request to fetch.
  * @param init   - Standard RequestInit (optional).
+ * @param diagnosticMode - Opaque mode is selected by the credential-owning caller;
+ * it withholds the entire diagnostic URL without changing the actual request.
  */
 export async function instrumentedFetch(
   url: string | URL | Request,
   init?: RequestInit,
+  diagnosticMode: 'default' | 'opaque-url' = 'default',
 ): Promise<Response> {
   const startMs = Date.now();
-  const method = init?.method ?? 'GET';
-  const safeUrl = sanitizeUrlForLog(url);
+  const method = diagnosticMethod(url, init);
+  const safeUrl = diagnosticMode === 'default' ? sanitizeUrlForLog(url) : '[redacted-url]';
   let status = -1;
   try {
     const res = await fetch(url, init);
     status = res.status;
     return res;
   } finally {
-    logger.info('OUTBOUND_HTTP', {
-      type: 'OUTBOUND_HTTP',
-      method,
-      url: safeUrl,
-      status,
-      latencyMs: Date.now() - startMs,
-    });
+    try {
+      logger.info('OUTBOUND_HTTP', {
+        type: 'OUTBOUND_HTTP', method, url: safeUrl, status,
+        latencyMs: Date.now() - startMs,
+      });
+    } catch { /* Diagnostics must not turn a completed request into another delivery attempt. */ }
   }
 }
 

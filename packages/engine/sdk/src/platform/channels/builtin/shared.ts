@@ -12,6 +12,7 @@ import type { ChannelProviderRuntimeManager } from '../provider-runtime.js';
 import type { RouteBindingManager } from '../route-manager.js';
 import type { ChannelIngressAlarm } from '../ingress-alarm.js';
 import type { InboundMailSupervisor } from '../../email/inbound/supervisor.js';
+import type { TelegramSourceAccountOwner } from '../telegram/source-account.js';
 
 /**
  * What the channel runtime needs from the inbound-mail supervisor, projected
@@ -68,6 +69,8 @@ export interface BuiltinChannelRuntimeDeps {
    * Telegram polling; the supervisor then reports why it cannot start.
    */
   readonly telegramOffsetPath?: string | undefined;
+  /** Lazy verified identity capabilities for selected Telegram polling intake. */
+  readonly telegramSourceAccounts?: TelegramSourceAccountOwner | undefined;
   /**
    * Telegram answered getUpdates with a 409 naming another consumer. Reported
    * up to the composition root so leadership can stand down; see

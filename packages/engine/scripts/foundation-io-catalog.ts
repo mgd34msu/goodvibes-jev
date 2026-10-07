@@ -1,3 +1,4 @@
+import { builtinDelegatedInboundMethodDescriptors } from '../sdk/src/platform/control-plane/method-catalog-delegated-inbound.js';
 import { builtinGatewayNativeHostedTurnMethodDescriptors } from '../sdk/src/platform/control-plane/method-catalog-native-hosted-turn.ts';
 import { builtinGatewayNativeConversationIntakeMethodDescriptors } from '../sdk/src/platform/control-plane/method-catalog-native-intake.ts';
 import { builtinGatewayNativeWorkSubmissionMethodDescriptors } from '../sdk/src/platform/control-plane/method-catalog-native-work-submission.ts';
@@ -59,6 +60,7 @@ export const ALL_GATEWAY_METHOD_DESCRIPTORS: readonly GatewayMethodDescriptor[] 
   ...builtinGatewayWorkLedgerMethodDescriptors,
   ...builtinGatewayNativeWorkExecutionMethodDescriptors,
   ...builtinGatewayNativeWorkSubmissionMethodDescriptors,
+  ...builtinDelegatedInboundMethodDescriptors,
   ...builtinGatewayNativeConversationIntakeMethodDescriptors,
   ...builtinGatewayNativeHostedTurnMethodDescriptors,
   ...builtinGatewayControlMethodDescriptors,

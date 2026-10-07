@@ -27,15 +27,15 @@ describe('http access log', () => {
     globalThis.fetch = originalFetch;
   });
 
-  test('sanitizeUrlForLog redacts sensitive query parameters', () => {
+  test('sanitizeUrlForLog withholds all query material', () => {
     expect(sanitizeUrlForLog('http://example.com/api?token=secret123&user=alice')).toBe(
-      'http://example.com/api?token=%5Bredacted%5D&user=alice',
+      'http://example.com/api?[redacted]',
     );
     expect(sanitizeUrlForLog('http://example.com/api?api_key=mykey')).toBe(
-      'http://example.com/api?api_key=%5Bredacted%5D',
+      'http://example.com/api?[redacted]',
     );
     expect(sanitizeUrlForLog('http://example.com/api?safe=ok')).toBe(
-      'http://example.com/api?safe=ok',
+      'http://example.com/api?[redacted]',
     );
   });
 

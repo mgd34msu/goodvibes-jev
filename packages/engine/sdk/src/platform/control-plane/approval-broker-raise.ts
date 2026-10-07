@@ -132,8 +132,10 @@ export async function raiseSharedApproval(
 ): Promise<RaisedApproval> {
   const signal = input.signal;
   assertPermissionActive(signal);
+  input.requireOwnerDecision?.assertCurrent();
   await deps.start();
   assertPermissionActive(signal);
+  input.requireOwnerDecision?.assertCurrent();
   const now = Date.now();
 
   // Duplicate in-flight asks coalesce on (session, tool, args): the second
@@ -141,7 +143,8 @@ export async function raiseSharedApproval(
   // one decision resolves both. No second record, no second local prompt.
   const coalesceKey = deps.coalesceKey(input.sessionId, input.request.tool, input.request.args);
   for (const existing of deps.approvals.values()) {
-    if ((existing.status === 'pending' || existing.status === 'claimed')
+    if (!input.requireOwnerDecision && !existing.requiresOwnerDecision
+      && (existing.status === 'pending' || existing.status === 'claimed')
       && deps.coalesceKey(existing.sessionId, existing.request.tool, existing.request.args) === coalesceKey) {
       const pending = deps.pendingResolvers.get(existing.id);
       if (pending && !pending.retired) {
@@ -160,6 +163,7 @@ export async function raiseSharedApproval(
     sessionId: input.sessionId,
     routeId: input.routeId,
     status: 'pending',
+    ...(input.requireOwnerDecision ? { requiresOwnerDecision: true as const } : {}),
     request: input.request,
     createdAt: now,
     updatedAt: now,
@@ -203,6 +207,12 @@ export async function raiseSharedApproval(
     // caller is already being told that by the error below, so its own
     // failure is swallowed rather than replacing the real one.
     await deps.persist().catch(() => undefined);
+    throw error;
+  }
+  try {
+    input.requireOwnerDecision?.assertCurrent();
+  } catch (error) {
+    await deps.cancel(approval.id);
     throw error;
   }
   // Cancellation may have replaced this record during its initial persist.

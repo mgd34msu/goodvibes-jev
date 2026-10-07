@@ -9,6 +9,12 @@
   omit the complete declared URL, without sending URL values to either local
   model. Unbound prose and research-consumer adoption remain open.
 
+- Keep delivery URL capabilities and private failures out of shared HTTP and
+  channel-router diagnostics. Credential-owning transports select opaque URL
+  logging, all query material is withheld, and webhook URLs and interaction
+  tokens are no longer substituted for provider message IDs. Preserve actual
+  requests and original private errors for existing retry decisions.
+
 - Replace public knowledge search and task-packet token scores and record boosts
   with shared complete-candidate relevance and exact-span readings. Search now
   returns promises; synchronous packet retrieval APIs are retired in favor of
@@ -16,6 +22,11 @@
   generic scopes, complete selected qualifications and honest packet budgets.
   Keep native protocol identities in typed local bindings while complete
   original and derived task meaning reaches guarded knowledge queries.
+
+- Add explicitly selected daemon-local Telegram delegated intake with canonical
+  private source binding, exact paired-owner approval commands, bounded source
+  memory and metadata-only owner review receipts. Selected stale/restarted input
+  remains held; ordinary Telegram, owner capture and business execution are unchanged.
 
 - Compose an explicit single-account Slack daemon inbox with protected content
   previews, account-bound SQLite ownership, credential-rotation read guards and
