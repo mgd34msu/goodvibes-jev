@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { availableLoopbackPorts, companionCliFixture } from '../helpers/companion-cli-fixture.js';
 
 function readyFrame(origin: string, token: string): Promise<unknown> {
@@ -25,6 +26,48 @@ function readyFrame(origin: string, token: string): Promise<unknown> {
   });
 }
 
+test('the emitted launcher automatically reveals pairing only when its actual stdout is a terminal', async () => {
+  const f = companionCliFixture(); const [port] = await availableLoopbackPorts(1);
+  const bundle = join(f.root, 'tty-bundle'); mkdirSync(bundle, { recursive: true });
+  writeFileSync(join(bundle, 'index.html'), '<!doctype html><title>Terminal pairing app</title>');
+  mkdirSync(f.daemonHome, { recursive: true });
+  writeFileSync(join(f.daemonHome, 'settings.json'), JSON.stringify({ cluster: { enabled: false }, relay: { enabled: false },
+    controlPlane: { hostMode: 'local', port, webui: { serve: true, bundleDir: bundle } },
+  }));
+  let output = ''; let resolveReady!: () => void;
+  const ready = new Promise<void>((resolve) => { resolveReady = resolve; });
+  const child = Bun.spawn({
+    cmd: [process.execPath, fileURLToPath(new URL('../helpers/daemon-cli-child.ts', import.meta.url)), '--daemon-home', 'selected-daemon', 'serve'],
+    cwd: f.cwd, env: { ...process.env, HOME: f.home, GOODVIBES_HOME: f.home,
+      GOODVIBES_DAEMON_HOME: f.envDaemonHome, GOODVIBES_WORKING_DIR: f.cwd, XDG_CONFIG_HOME: join(f.root, 'xdg'),
+      GOODVIBES_DAEMON_TOKEN: 'synthetic-terminal-token', GOODVIBES_TEST_PAIRING_OUTPUT: '0', NO_COLOR: '1',
+    },
+    terminal: { cols: 160, rows: 60, data(_terminal, bytes) {
+      output += Buffer.from(bytes).toString('utf8');
+      if (output.includes('host started')) resolveReady();
+    } },
+  });
+  async function bounded<T>(promise: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try { return await Promise.race([promise, new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('Terminal CLI fixture timed out')), 15_000);
+    })]); } finally { clearTimeout(timer); }
+  }
+  try {
+    await bounded(Promise.race([ready, child.exited.then(() => { throw new Error('Terminal CLI exited before ready'); })]));
+    expect(output).toContain('FIXTURE_STDOUT_TTY');
+    const link = new URL(output.split(/\r?\n/).find((line) => line.includes('/#pair='))!.trim());
+    expect(link.origin).toBe(`http://127.0.0.1:${port}`);
+    const token = new URLSearchParams(link.hash.slice(1)).get('pair')!;
+    expect(token).toBe('synthetic-terminal-token');
+    const shell = await fetch(link.origin); expect(await shell.text()).toContain('Terminal pairing app');
+    expect(await readyFrame(link.origin, token)).toMatchObject({ type: 'event', event: 'ready' });
+    child.kill('SIGTERM'); expect(await bounded(child.exited)).toBe(0);
+  } finally {
+    child.kill('SIGKILL'); await bounded(child.exited); child.terminal?.close();
+  }
+}, 45_000);
+
 for (const mode of ['stored fallback', 'daemon override', 'headless'] as const) {
   test(`emitted launcher pairing opens its served WebUI and authenticates the existing host: ${mode}`, async () => {
     const f = companionCliFixture();
@@ -32,7 +75,8 @@ for (const mode of ['stored fallback', 'daemon override', 'headless'] as const) 
     const bundle = join(f.root, 'bundle'); mkdirSync(bundle, { recursive: true });
     writeFileSync(join(bundle, 'index.html'), '<!doctype html><title>Emitted pairing WebUI</title>');
     mkdirSync(f.daemonHome, { recursive: true });
-    const settings = JSON.stringify({ cluster: { enabled: false }, relay: { enabled: false },
+    const settings = JSON.stringify({ $goodvibes: { minReaderVersion: '1.20.0', setBy: 'fixture', at: '2026-01-01T00:00:00.000Z' },
+      cluster: { enabled: false }, relay: { enabled: false },
       danger: { httpListener: true }, httpListener: { hostMode: 'local', port: httpPort },
       controlPlane: { hostMode: 'local', port: intendedPort, webui: { serve: true, bundleDir: bundle } },
     });

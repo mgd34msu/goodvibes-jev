@@ -61,7 +61,9 @@ acceptance items remain open. The changed README does not supersede that ledger.
 
 Shared selected-home companion-token bootstrap is now adapted in the admitted
 CLI startup path; see [its bounded source/caller audit](daemon-companion-token-bootstrap.md).
-This does not complete the remaining pairing display, cleanup or adoption work.
+Startup pairing display is subsequently adapted with actual served-origin and
+effective-token proof in [its bounded audit](daemon-functional-pairing-startup.md).
+Token cleanup, public-URL persistence and service adoption remain separate work.
 
 ## Verification and live-proof boundary
 

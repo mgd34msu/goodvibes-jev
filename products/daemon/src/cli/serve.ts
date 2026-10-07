@@ -96,7 +96,7 @@ export function runConfiguredDaemonCli(
         await daemon.waitForRestart();
         if (closed) return undefined;
         requireRunning();
-        const actual = { host: daemon.boundHost, port: daemon.boundPort };
+        const actual = { host: daemon.boundHost, port: daemon.boundPort, scheme: daemon.boundScheme };
         stdout(renderDaemonBoundEndpoint(version, actual));
         if (closed) return undefined;
         requireRunning();

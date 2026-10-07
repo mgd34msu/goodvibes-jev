@@ -31,6 +31,11 @@ const stableProbe = (): StableHostInputs => ({ hostname: 'workshop', gatewayInte
 const unstableProbe = (): StableHostInputs => ({ hostname: 'localhost', gatewayInterfaceIp: '192.168.1.42' });
 
 describe('resolvePairingWebOrigin', () => {
+  test.each(['direct', 'proxy', 'off'])('bundled fallback uses the local listener scheme for TLS mode %s', (mode) => {
+    const cfg = fakeConfig({ 'web.publicBaseUrl': '', 'controlPlane.webui.serve': true, 'controlPlane.tls.mode': mode });
+    expect(resolvePairingWebOrigin(cfg, stableProbe, { host: '127.0.0.1', port: 5678 }).origin)
+      .toBe(`${mode === 'direct' ? 'https' : 'http'}://127.0.0.1:5678`);
+  });
   test.each(['', 'http://127.0.0.1:3423'])('bundled fallback uses its control-plane listener for %s', (publicUrl) => {
     const cfg = fakeConfig({ 'web.publicBaseUrl': publicUrl, 'web.port': 7777,
       'controlPlane.webui.serve': true, 'controlPlane.hostMode': 'network', 'controlPlane.port': 4567 });

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
+import { execFileSync } from 'node:child_process';
+import { get as httpsGet } from 'node:https';
 import * as fs from 'node:fs';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -99,6 +101,53 @@ function enablePairing(f: Awaited<ReturnType<typeof fixture>>) {
   applyRuntimeConfigValue(f.configuration.config, 'controlPlane.webui.bundleDir', bundle);
   return bundle;
 }
+
+test('TLS configuration changed during held boot cannot replace the observed listener scheme', async () => {
+  const entered = gate(); const release = gate();
+  const f = await fixture((services) => {
+    const start = services.bootTasks!.start;
+    keep(spyOn(services.bootTasks!, 'start').mockImplementation(async () => { entered.resolve(); await release.promise; return start(); }));
+  });
+  enablePairing(f); const pairing: string[] = [];
+  const handle = f.start(undefined, undefined, (line) => { pairing.push(line); }); await entered.promise;
+  expect(f.host!.daemon!.boundScheme).toBe('http');
+  f.configuration.config.set('controlPlane.tls.mode', 'direct');
+  release.resolve(); await handle.ready;
+  expect(f.configuration.config.get('controlPlane.tls.mode')).toBe('direct');
+  const link = new URL(pairing[0]!.split('\n').find((line) => line.includes('/#pair='))!.trim());
+  expect(link.protocol).toBe('http:');
+  const shell = await fetch(link.origin); expect(shell.status).toBe(200); expect(await shell.text()).toContain('Synthetic pairing app');
+}, 30_000);
+
+test('direct TLS startup pairing serves and authenticates at its HTTPS origin with fixture-only CA trust', async () => {
+  const f = await fixture(undefined, { createServer(config) { return new DaemonServer({ ...config, port: 0 }); } });
+  enablePairing(f);
+  const cert = join(f.root, 'loopback-cert.pem'); const key = join(f.root, 'loopback-key.pem');
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert,
+    '-days', '1', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1'], { stdio: 'ignore', timeout: 10_000 });
+  applyRuntimeConfigValue(f.configuration.config, 'controlPlane.tls.mode', 'direct');
+  applyRuntimeConfigValue(f.configuration.config, 'controlPlane.tls.certFile', cert);
+  applyRuntimeConfigValue(f.configuration.config, 'controlPlane.tls.keyFile', key);
+  const pairing: string[] = [];
+  const handle = f.start(undefined, undefined, (line) => { pairing.push(line); }); await handle.ready;
+  const link = new URL(pairing[0]!.split('\n').find((line) => line.includes('/#pair='))!.trim());
+  expect(link.origin).toBe(`https://127.0.0.1:${f.host!.daemon!.boundPort}`);
+  const token = new URLSearchParams(link.hash.slice(1)).get('pair')!;
+  function read(path: string, credential?: string): Promise<{ status: number; body: string }> {
+    return new Promise((resolve, reject) => {
+      const request = httpsGet(`${link.origin}${path}`, { ca: readFileSync(cert), rejectUnauthorized: true,
+        headers: credential === undefined ? {} : { Authorization: `Bearer ${credential}` } }, (response) => {
+        let body = ''; response.on('data', (chunk) => { body += String(chunk); });
+        response.on('end', () => resolve({ status: response.statusCode!, body })); response.on('error', reject);
+      });
+      request.on('error', reject); request.setTimeout(10_000, () => request.destroy(new Error('TLS fixture request timed out')));
+    });
+  }
+  expect(await read('/')).toMatchObject({ status: 200, body: '<!doctype html><title>Synthetic pairing app</title>' });
+  expect((await read('/status', token)).status).toBe(200);
+  expect((await read('/status', 'wrong-token')).status).toBe(401);
+  expect([...f.stdout, ...f.stderr, ...f.fatal].join('\n')).not.toContain(token);
+}, 30_000);
 
 for (const mode of ['stored', 'override', 'headless'] as const) {
   test(`actual bound WebUI and effective token are used only by intended pairing output: ${mode}`, async () => {
@@ -222,7 +271,8 @@ for (const shutdown of [false, true]) {
       const start = services.bootTasks!.start;
       keep(spyOn(services.bootTasks!, 'start').mockImplementation(async () => { bootEntered.resolve(); await bootRelease.promise; return start(); }));
     });
-    const handle = f.start(); await bootEntered.promise;
+    enablePairing(f); const pairing: string[] = [];
+    const handle = f.start(undefined, undefined, (line) => { pairing.push(line); }); await bootEntered.promise;
     const daemon = f.host!.daemon!; const stop = daemon.stop.bind(daemon);
     keep(spyOn(daemon, 'stop').mockImplementationOnce(async () => { restartEntered.resolve(); await restartRelease.promise; await stop(); }));
     const [newPort] = await availableLoopbackPorts(1);
@@ -235,11 +285,15 @@ for (const shutdown of [false, true]) {
     if (shutdown) {
       expect(await handle.ready).toBeUndefined(); expect(await handle.finished).toBe(0);
       expect(f.stdout).toHaveLength(1); expect(daemon.isRunning).toBe(false);
+      expect(pairing).toEqual([]);
     } else {
       await handle.ready;
       expect(daemon.isRunning).toBe(true); expect(daemon.boundPort).toBe(newPort!);
       expect(f.stdout[1]).toContain(`bound: host="127.0.0.1" port=${newPort}`);
       expect(f.stdout[2]).toContain('host started');
+      const link = new URL(pairing[0]!.split('\n').find((line) => line.includes('/#pair='))!.trim());
+      expect(link.origin).toBe(`http://127.0.0.1:${newPort}`);
+      const shell = await fetch(link.origin); expect(shell.status).toBe(200); await shell.arrayBuffer();
     }
     expect(f.stderr).toEqual([]);
   });

@@ -355,6 +355,9 @@ export class DaemonServer {
   /** The host the daemon is bound to. */
   get boundHost(): string { return this.host; }
 
+  /** Protocol of the actual local listener; proxy presentation is not local TLS. */
+  get boundScheme(): 'http' | 'https' { return this.tlsState?.tls ? 'https' : 'http'; }
+
   /** The daemon's shared approval broker, the SAME broker the HTTP approvals routes resolve through. Exposed so embedders and boot-factory proof tests can seed/inspect approvals (bridge an external UI, or prove per-hunk approve/deny over the live wire). */
   get approvals(): ApprovalBroker { return this.approvalBroker; }
 

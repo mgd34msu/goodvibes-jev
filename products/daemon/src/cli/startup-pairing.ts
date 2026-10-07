@@ -10,7 +10,7 @@ const SHIPPED_PUBLIC_BASE_URL = 'http://127.0.0.1:3423';
 
 export function renderDaemonStartupPairing(
   config: Pick<ConfigManager, 'get'>,
-  bound: { readonly host: string; readonly port: number },
+  bound: { readonly host: string; readonly port: number; readonly scheme: 'http' | 'https' },
   token: string,
   version: string,
 ): string {
@@ -41,5 +41,5 @@ export function renderDaemonStartupPairing(
   }
   return [...renderPairingBanner({ version, origin, token,
     offers: availablePairingOffers({ relayEnabled: config.get('relay.enabled') === true, stepUpAvailable: true }),
-  }).lines, '(print again with the same process overrides: goodvibes-daemon pair)'].join('\n');
+  }).lines, '(configured reprint: goodvibes-daemon pair; reuse the daemon-token override and nonzero --port)'].join('\n');
 }

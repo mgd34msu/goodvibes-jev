@@ -29,6 +29,11 @@ settled binding lets startup use the actual observed host/port after restart
 settlement, rather than its intended configuration. The pre-bind diagnostic and
 bound receipt retain their separate meanings. Explicit public URLs remain
 authoritative, including separately hosted WebUIs with local serving disabled.
+Direct TLS uses HTTPS at the actual listener port; proxy mode retains the plain
+local HTTP binding unless an external public URL is explicitly configured.
+Startup reads the listener owner's captured `boundScheme`, so a TLS setting
+changed during held boot cannot relabel a socket that already bound. This adds
+no TLS live-restart policy. Offline pair uses the declared configuration.
 The exact shipped `http://127.0.0.1:3423` placeholder follows the webui command's
 existing equality rule; this is not evidence about who set a stored value.
 
@@ -66,11 +71,16 @@ non-disclosure and held graph drainage after pairing-output failure, shutdown
 or listener loss. Resolver and adapter regressions cover configured/bound IPv6,
 public URL precedence, missing bundles, malformed and empty query/fragment
 delimiters, literal JSON-shaped overrides, and invalid local ports.
+An owned direct-TLS host serves the printed HTTPS link and authenticates its
+token using a generated loopback certificate trusted only by that test client;
+certificate verification stays enabled and no system trust is changed.
 
 The emitted launcher fixture uses the real composition port, a synthetic inbox,
 and a synthetic static bundle. It checks HTTP and WebSocket authentication with
 the printed token, rejects wrong token classes, compares explicit `pair` output,
 and verifies exact settings/identity bytes survive runtime overrides and exit.
+An actual Bun pseudo-terminal proves default TTY admission without injecting
+the pairing-output port; ordinary redirected output is checked independently.
 This proves served origin and authentication, not browser rendering, camera QR
 scanning, remote CORS/reverse proxy configuration, or real device registration.
 No account, persistent device grant, service/security/network setting, release,

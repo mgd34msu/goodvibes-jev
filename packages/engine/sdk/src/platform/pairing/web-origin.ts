@@ -64,7 +64,7 @@ export function resolvePairingWebOrigin(
   configManager: Pick<ConfigManager, 'get'>,
   probe?: () => StableHostInputs,
   /** Settled listener observation, only used for bundled serving fallback. */
-  boundControlPlane?: { readonly host: string; readonly port: number },
+  boundControlPlane?: { readonly host: string; readonly port: number; readonly scheme?: 'http' | 'https' },
 ): PairingWebOrigin {
   const publicBaseUrl = trimTrailingSlash(String(configManager.get('web.publicBaseUrl') ?? '').trim());
   const bundled = configManager.get('controlPlane.webui.serve') === true;
@@ -82,7 +82,12 @@ export function resolvePairingWebOrigin(
     Number(configManager.get('controlPlane.port')), 'controlPlane',
   ) : { host: webBindHost(configManager), port: resolveWebPort(configManager.get('web.port')) };
   const resolvedHost = stableUrlHostForBindHost(binding.host, probe);
-  const origin = formatHttpOrigin(resolvedHost.host, binding.port);
+  const httpOrigin = formatHttpOrigin(resolvedHost.host, binding.port);
+  // Only direct mode passes TLS material to the bound listener. Proxy mode's
+  // external HTTPS endpoint must be supplied as an explicit public URL.
+  const scheme = boundControlPlane?.scheme ?? (configManager.get('controlPlane.tls.mode') === 'direct' ? 'https' : 'http');
+  const origin = bundled && scheme === 'https'
+    ? httpOrigin.replace('http://', 'https://') : httpOrigin;
   return { origin, resolvedHost, httpOnLan: isHttpOnLan(origin), fromPublicBaseUrl: false };
 }
 

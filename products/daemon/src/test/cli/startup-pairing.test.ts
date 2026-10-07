@@ -5,7 +5,7 @@ import { renderDaemonStartupPairing } from '../../cli/startup-pairing.js';
 function config(values: Record<string, unknown>): Pick<ConfigManager, 'get'> {
   return { get: ((key: string) => values[key]) as ConfigManager['get'] };
 }
-const bound = { host: '127.0.0.1', port: 54321 };
+const bound = { host: '127.0.0.1', port: 54321, scheme: 'http' as const };
 const token = 'synthetic-private-pairing-token';
 
 test('an explicitly configured external WebUI remains usable without a local bundle', () => {
