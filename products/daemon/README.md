@@ -76,6 +76,13 @@ do not rewrite the shared identity. A corrupt store is preserved beside the
 replacement when possible, with an explicit warning that clients must pair
 again. See `docs/audit/daemon-companion-token-bootstrap.md` for the boundaries.
 
+`status` and `update` use the selected configuration's `network.outboundTls.*`
+policy for HTTPS requests. Relative custom CA paths resolve beneath that
+configuration's control-plane directory. These commands do not replace the
+embedding process's global transport. Status reports its separate WebSocket
+session query independently; this HTTPS policy does not configure WSS trust.
+See `docs/audit/daemon-cli-http-trust.md`.
+
 After the listener settles, an interactive terminal receives the shared pairing
 QR and copyable link using the effective daemon token. Redirected/service stdout
 stays credential-free; a composed launcher may explicitly supply a trusted local
