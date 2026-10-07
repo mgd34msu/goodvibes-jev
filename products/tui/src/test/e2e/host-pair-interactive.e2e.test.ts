@@ -1,4 +1,6 @@
-/** Compiled TUI, real owner PTY, and owned production pairing handlers only. */
+import { WorkspaceRegistrationStore, sharedWorkspaceRegisterPath, legacyWorkspaceRegisterPath } from '@goodvibes-jev/engine/sdk/platform/workspace';
+import { WEBUI_METHOD_ROUTES } from '@goodvibes-jev/engine/contracts/generated/webui-facade';
+/** Compiled TUI, real owner PTY, and owned production pairing/native-capture handlers. */
 import { describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -7,7 +9,7 @@ import { registerInboxSurface } from '@goodvibes-jev/engine/sdk/platform/intake'
 import { BenchmarkStore, getProviderModelsCachePath } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { startDaemonFixture } from '@goodvibes-jev/daemon/testing';
 import { TuiConfigManager } from '../../config/host-settings.ts';
-import { tuiHostPairingStorePath, readTuiHostPairing } from '../../runtime/tui-host-credential-store.ts';
+import { beginTuiHostPairing, completeTuiHostPairing, tuiHostPairingStorePath, readTuiHostPairing } from '../../runtime/tui-host-credential-store.ts';
 import { seedProviderMetadataCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
 import { isolatedEnv, makeHome, resolveBinary, startStubModel, waitFor } from './harness.ts';
 
@@ -111,7 +113,7 @@ function deferred() {
   return { promise, release };
 }
 
-async function fixture() {
+async function fixture(nativeCaptureFailure = false) {
   const model = startStubModel(() => ({ text: 'Unexpected pairing model request' }));
   const home = await makeHome(model).catch(error => { model.stop(); throw error; });
   mkdirSync(join(home.root, 'tmp'), { recursive: true });
@@ -157,6 +159,9 @@ async function fixture() {
     let held = false;
     const authTokens: Array<string | null> = [];
     const unexpectedMutations: string[] = [];
+    const nativeCaptures: Array<{ status: number; body: unknown }> = [];
+    const nativeRoutes = new Set([WEBUI_METHOD_ROUTES['workLedger.project'].path,
+      WEBUI_METHOD_ROUTES['workLedger.intake.capture'].path, WEBUI_METHOD_ROUTES['workLedger.intake.get'].path]);
     // Reserve the configured daemon port before launching the TUI as well as
     // setting its explicit origin, so even legacy background discovery can only
     // reach this owned front door. No process can occupy the selected port.
@@ -164,26 +169,34 @@ async function fixture() {
       const url = new URL(request.url);
       const path = url.pathname;
       // Startup discovery/event routes are deliberately absent: this owned
-      // front door exposes only real pairing auth/migration handlers. No
-      // revoke/delete/cleanup mutation can pass.
-      if (request.method !== 'GET' && request.method !== 'HEAD' && path !== MIGRATE && !BACKGROUND_ROUTES.has(path) && !/^\/api\/sessions\/[^/]+\/close$/.test(path)) {
+      // front door exposes real pairing handlers and, only for the workstream
+      // cases, native project/capture/get. No admission, execution, revoke,
+      // delete or cleanup mutation can pass.
+      if (request.method !== 'GET' && request.method !== 'HEAD' && path !== MIGRATE && !(nativeCaptureFailure && nativeRoutes.has(path)) && !BACKGROUND_ROUTES.has(path) && !/^\/api\/sessions\/[^/]+\/close$/.test(path)) {
         unexpectedMutations.push(`${request.method} ${path}`);
         return new Response('Unexpected test mutation', { status: 403 });
       }
-      if (path !== AUTH && path !== MIGRATE) return new Response('Not part of the pairing fixture', { status: 404 });
+      if (path !== AUTH && path !== MIGRATE && !(nativeCaptureFailure && nativeRoutes.has(path))) return new Response('Not part of the pairing fixture', { status: 404 });
       const authOrdinal = path === AUTH ? ++pairingAuthCalls : 0;
       if (path === AUTH) {
         authTokens.push(request.headers.get('authorization'));
       }
       if (path === MIGRATE) migrations++;
+      const requestBody = request.method === 'POST' ? await request.arrayBuffer() : undefined;
       const response = await fetch(`${daemon.baseUrl}${path}${url.search}`, {
         method: request.method, headers: request.headers,
-        body: request.method === 'POST' ? await request.arrayBuffer() : undefined,
+        body: requestBody,
         redirect: 'error', signal: AbortSignal.any([requests.signal, request.signal]),
       });
       // Hold only after the production handler has finished. A withheld POST
       // reply therefore means the real daemon has already issued one secret.
       const body = await response.arrayBuffer();
+      if (nativeCaptureFailure && path === WEBUI_METHOD_ROUTES['workLedger.intake.capture'].path) {
+        nativeCaptures.push({ status: response.status, body: JSON.parse(new TextDecoder().decode(requestBody)) });
+        // Lose only the acknowledgement, after the real production capture
+        // handler ran. No semantic endpoint or alternate source route exists.
+        return new Response('Owned fixture lost capture acknowledgement', { status: 503 });
+      }
       if (!held && ((hold === 'preview' && path === AUTH && authOrdinal === 1)
         || (hold === 'revalidation' && path === AUTH && authOrdinal === 2)
         || (hold === 'migration' && path === MIGRATE)
@@ -196,6 +209,18 @@ async function fixture() {
     } });
     stopProxy = async () => { requests.abort(); gate.release(); await proxy.stop(true); };
     const host = proxy.url.origin;
+    if (nativeCaptureFailure) {
+      const paths = daemon.services.shellPaths;
+      const scopes = new WorkspaceRegistrationStore({ path: sharedWorkspaceRegisterPath(paths), fallbackReadPath: legacyWorkspaceRegisterPath(paths),
+        homeDir: daemon.homeDirectory, daemonStateDir: paths.resolveUserPath() });
+      await scopes.add(daemon.workingDirectory);
+      const paired = daemon.services.pairingTokens.mint({ name: 'Owned workstream PTY fixture' });
+      const attempt = { attemptId: 'owned-workstream-pairing', name: paired.name, startedAt: Date.now() };
+      expect((await beginTuiHostPairing(home.home, host, attempt)).status).toBe('begun');
+      expect((await completeTuiHostPairing(home.home, host, attempt.attemptId, {
+        token: paired.token, tokenId: paired.id, name: paired.name, createdAt: paired.createdAt,
+      })).status).toBe('paired');
+    }
     const env = isolatedEnv(home, { PATH: '/usr/bin:/bin', GOODVIBES_TEST_NETWORK_VIOLATIONS: networkViolations });
     const argv = [resolveBinary(), '--config', `controlPlane.publicBaseUrl=${host}`, '--config', 'daemon.enabled=true'];
     const sessions: Array<{ stop(): Promise<void>; assertOutput(): void }> = [];
@@ -271,7 +296,7 @@ async function fixture() {
       await session.find('empty live owner composer', text => text.includes('Ask anything, or type / for commands') && !text.includes('┃  x'), cleared);
       return session;
     }
-    return { home, host, daemon, launch, release: gate.release,
+    return { home, host, daemon, launch, nativeCaptures, release: gate.release,
       arm(value: Hold) { hold = value; pairingAuthCalls = 0; },
       held: () => held,
       migrations: () => migrations,
@@ -551,4 +576,44 @@ describe('compiled interactive TUI owner pairing', () => {
     } finally { await f.stop(); }
   }, 45_000);
 
+});
+
+
+describe('compiled interactive TUI native workstream start', () => {
+  test('real owner command preserves exact source through production capture and survives a lost acknowledgement without legacy fallback', async () => {
+    const f = await fixture(true);
+    try {
+      const session = await f.launch();
+      const original = '  Repair  界 e\u0301 😀 @source.ts  ';
+      const since = session.command(`/workstream start ${original}`);
+      await session.find('native capture uncertainty', text => text.includes('Native intake outcome is unknown'), since);
+      expect(f.nativeCaptures).toHaveLength(1);
+      expect(f.nativeCaptures[0]).toMatchObject({ status: 200, body: {
+        text: original, unsupportedSources: [{ kind: 'context', label: '@source.ts' }],
+      } });
+      const retained = readFileSync(join(f.home.home, '.goodvibes/tui/native-work-submission.json.intake'), 'utf8');
+      expect(retained).toContain(JSON.stringify(original));
+      const again = session.command('/workstream start replacement must not become source');
+      await session.find('original source remains unresolved', text => text.includes('An original input is unresolved'), again);
+      expect(f.nativeCaptures).toHaveLength(1);
+      expect(readFileSync(join(f.home.home, '.goodvibes/tui/native-work-submission.json.intake'), 'utf8')).toBe(retained);
+      expect(session.child.exitCode).toBeNull();
+      expect(session.text()).not.toContain('new-contract');
+    } finally { await f.stop(); }
+  }, 30_000);
+
+  test('unpaired native host refuses a real owner start without invoking the legacy model', async () => {
+    const f = await fixture();
+    try {
+      const session = await f.launch();
+      const refusal = 'No TUI credential is bound to this exact daemon origin';
+      expect(session.screen()).not.toContain(refusal);
+      const since = session.command('/workstream start repair the owned fixture');
+      await session.find('unpaired native start is unavailable', text => text.includes(refusal), since);
+      expect(session.text(since)).toContain(refusal);
+      expect(f.nativeCaptures).toEqual([]);
+      expect(existsSync(join(f.home.home, '.goodvibes/tui/native-work-submission.json.intake'))).toBe(false);
+      expect(session.child.exitCode).toBeNull();
+    } finally { await f.stop(); }
+  }, 30_000);
 });

@@ -21,7 +21,7 @@ attempt targeted by status/cancel; execution progress paints without a new key.
 
 Start/resume require an existing active attempt and the daemon's current paired
 operator authority. Execution controls do not create work or edit original criteria. Explicit source
-submission is described below; conversational intake is not implemented. Opening a view never starts or resumes
+submission and conversational intake are described below. Opening a view never starts or resumes
 execution. Status/cancel retain the last observed attempt across a handoff within
 that view; older attempts cannot be rediscovered after reopening this surface.
 
@@ -34,6 +34,33 @@ execution receipt or progress. They display requested revisions, separately from
 admitted executions. Refused/interrupted admission recovery requires explicit
 resume; a cancelled intent requires a new native attempt.
 No control asks for owner approval or automatically retries/resumes execution.
+
+## Terminal workstream intake
+
+`/workstream start <request>` uses the same native conversation intake as ordinary
+terminal input. Jev determines the native outcome; the command name does not force
+work admission. Admitted work enters the existing native execution flow, while an
+ordinary turn requires its durable dispatch claim and native turn permit. There is
+no legacy runner fallback when native intake, the paired host or the journal is
+unavailable.
+
+The terminal captures the command before trimming, splitting or source expansion.
+The command tokens and one whitespace separator after `start` are syntax (CRLF
+counts as one separator). Everything after that separator is the exact request,
+including extra leading spaces, trailing whitespace, line breaks and Unicode.
+File/context references and folded paste/image markers remain declared unsupported
+sources; they are not expanded into replacement owner authority. Generic, model
+and nested command invocations cannot submit a new owner request.
+
+Use `/work intake-status`, `/work intake-retry`, `/work intake-resume` and
+`/work intake-cancel` to inspect or recover the retained native input. Uncertain
+writes retain the original request IDs and source; repeated submission while
+pending cannot replace them. Host/principal changes and late cancelled results
+cannot dispatch stale local turns.
+
+`/workstream list`, `status`, `cancel` and `reply` continue to address historical
+legacy contract IDs. They do not inspect or cancel newly admitted native work;
+use `/work` for native execution status and cancellation.
 
 ## Explicit native source submission
 

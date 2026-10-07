@@ -6,6 +6,8 @@ All notable changes to GoodVibes TUI.
 
 ## Unreleased
 
+- Route owner-terminal `/workstream start` through native conversation intake and execution, preserving the exact request and source references before parsing. Keep historical contract controls separate; generic, model and nested command calls cannot mint owner input.
+
 - Add explicit shared legacy import submission, Jev reconsideration and exact-request recovery. Durable command identity precedes dispatch; live paired authority and workspace generations fence native admission. Historical completion remains reported and unverified, with legacy source records retained.
 
 - Bind native TUI credentials to exact daemon origins in a private, durable TUI store; remove implicit daemon-global and environment-token fallback from native consumers.
