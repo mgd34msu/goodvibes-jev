@@ -12,6 +12,7 @@ import { readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { platformTestMatrix } from '../scripts/test-partitions.ts';
 
 // The workflows live at the monorepo root, two levels above packages/engine.
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -23,7 +24,7 @@ type Job = Record<string, unknown> & {
   'timeout-minutes'?: number | string;
   uses?: string;
   steps?: Array<Record<string, unknown>>;
-  strategy?: { matrix?: Record<string, unknown>; 'fail-fast'?: boolean };
+  strategy?: { matrix?: Record<string, unknown> | string; 'fail-fast'?: boolean };
   permissions?: Record<string, string>;
   environment?: unknown;
 };
@@ -224,8 +225,7 @@ describe('ci.yml: build once, restore everywhere', () => {
   });
 
   test('the Bun matrix leg uses the isolated runner without the package pretest lifecycle', () => {
-    const matrix = ci.jobs!['platform-matrix']!;
-    const include = (matrix.strategy?.matrix as { include?: Array<{ platform: string; 'test-cmd': string }> })?.include ?? [];
+    const include = platformTestMatrix(resolve(ROOT, 'packages/engine')).include;
     const bun = include.find((row) => row.platform === 'bun');
     // The runner owns isolation; `bun run test` would first rebuild over the
     // restored artifact. Flags and environment settings need not be frozen.
@@ -244,7 +244,7 @@ describe('ci.yml: build once, restore everywhere', () => {
     expect(products['timeout-minutes']).toBe(15);
     expect(products.strategy?.['fail-fast']).toBe(false);
     expect(products.strategy?.matrix).toEqual({ product: '${{ fromJSON(needs.build.outputs.products) }}' });
-    expect(build.outputs).toEqual({ products: '${{ steps.product-matrix.outputs.products }}' });
+    expect(build.outputs).toMatchObject({ products: '${{ steps.product-matrix.outputs.products }}' });
     const discovery = steps(build).find((step) => step.id === 'product-matrix');
     expect(discovery?.if).toBeUndefined();
     expect(discovery?.['continue-on-error']).toBeUndefined();
@@ -261,25 +261,65 @@ describe('ci.yml: build once, restore everywhere', () => {
     expect(rootPackage.scripts.test).toContain('bun run products:test');
   });
 
-  test('only the complete Bun suite gets a bounded aggregate budget with cleanup headroom', () => {
+  test('all engine partitions are catalog-driven required legs with unchanged caps', () => {
     const platform = ci.jobs!['platform-matrix']!;
+    const build = ci.jobs!['build']!;
     expect(platform['timeout-minutes']).toBe("${{ matrix.platform == 'bun' && 20 || 15 }}");
-    const include = (platform.strategy?.matrix as { include?: Array<{ platform: string; 'test-cmd': string }> })?.include ?? [];
-    expect(include.find((row) => row.platform === 'bun')?.['test-cmd'])
-      .toBe('GOODVIBES_TEST_CEILING_MS=900000 bun packages/engine/scripts/test.ts');
+    expect(platform.strategy?.matrix).toBe('${{ fromJSON(needs.build.outputs.platforms) }}');
+    expect(build.outputs).toMatchObject({ platforms: '${{ steps.engine-matrix.outputs.platforms }}' });
+    const discovery = steps(build).find((step) => step.id === 'engine-matrix');
+    expect(discovery?.run).toContain('set -euo pipefail');
+    expect(discovery?.run).toContain('platforms=$(bun packages/engine/scripts/test-partitions.ts matrix)');
+    expect(discovery?.run).toContain('echo "platforms=$platforms" >> "$GITHUB_OUTPUT"');
+    expect(discovery?.run).toContain('bun packages/engine/scripts/test-partitions.ts manifest > /tmp/engine-test-manifest.json');
+    expect(discovery?.if).toBeUndefined();
+    expect(discovery?.['continue-on-error']).toBeUndefined();
+    const manifest = steps(build).find((step) => (step.with as { name?: string })?.name === 'engine-test-manifest');
+    expect(manifest?.with).toMatchObject({ path: '/tmp/engine-test-manifest.json', 'if-no-files-found': 'error' });
+    const include = platformTestMatrix(resolve(ROOT, 'packages/engine')).include;
+    const bun = include.filter((row) => row.platform === 'bun');
+    expect(bun).toHaveLength(4);
+    expect(bun.map((row) => /--partition=([^ ]+)/.exec(row['test-cmd'])?.[1])).toEqual(['1/4', '2/4', '3/4', '4/4']);
+    for (const row of bun) {
+      expect(row['test-cmd']).toStartWith('GOODVIBES_TEST_CEILING_MS=900000 bun packages/engine/scripts/test.ts --partition=');
+      expect(row['test-cmd']).toMatch(/ --manifest-sha256=[a-f0-9]{64}$/);
+    }
+    expect(include.filter((row) => row.foundation).map((row) => row.name)).toEqual(['bun 1/4']);
+    expect(new Set(include.map((row) => row.name)).size).toBe(include.length);
+    expect(platform.name).toBe('Platform matrix (${{ matrix.name }})');
     for (const row of include.filter((row) => row.platform !== 'bun')) {
       expect(row['test-cmd']).not.toContain('GOODVIBES_TEST_CEILING_MS');
     }
-    // This is one invocation's total budget, never a global default or a
-    // relaxation of the deadlock watchdog or individual test deadlines.
+    expect(include.filter((row) => row.platform !== 'bun').map((row) => row['test-cmd']))
+      .toEqual(['bun run test:rn', 'bun run test:workers', 'bun run test:workers:wrangler']);
+    // Each leg owns a single child; no watchdog reset or argument/filter bypass.
     expect(stepText(platform)).not.toMatch(/GOODVIBES_TEST_(?:STALL|TIMEOUT)_MS|--timeout/);
     expect(platform.env).toBeUndefined();
     for (const step of steps(platform)) {
       expect(step.env).toBeUndefined();
       expect(step['continue-on-error']).toBeUndefined();
     }
+    expect(platform.if).toBeUndefined();
     expect(platform['continue-on-error']).toBeUndefined();
     expect(platform.strategy?.['fail-fast']).toBe(false);
+    expect(needsOf(ci.jobs!['auto-release']!)).toContain('platform-matrix');
+  });
+
+  test('the existing full-suite check context aggregates every partition and cannot pass skipped work', () => {
+    const aggregate = ci.jobs!['engine-tests-complete']!;
+    expect(aggregate.name).toBe('Platform matrix (bun)');
+    expect(needsOf(aggregate)).toEqual(['platform-matrix']);
+    expect(aggregate.if).toBe('always()');
+    expect(aggregate['continue-on-error']).toBeUndefined();
+    expect(steps(aggregate)).toHaveLength(1);
+    const gate = steps(aggregate)[0]!;
+    expect(gate.env).toEqual({ PLATFORM_RESULT: '${{ needs.platform-matrix.result }}' });
+    expect(gate.if).toBeUndefined();
+    expect(gate['continue-on-error']).toBeUndefined();
+    for (const result of ['success', 'failure', 'cancelled', 'skipped']) {
+      const check = spawnSync('bash', ['-c', String(gate.run)], { env: { PATH: process.env.PATH, PLATFORM_RESULT: result } });
+      expect(check.status === 0, result).toBe(result === 'success');
+    }
   });
 
   test('the Agent lane verifies its exact native artifact and owns its terminal prerequisites', () => {
@@ -310,7 +350,7 @@ describe('ci.yml: build once, restore everywhere', () => {
   test('the Bun lane retains the deterministic fake-IMAP race sweep', () => {
     const sweep = steps(ci.jobs!['platform-matrix']!).find((step) => step.run === 'bun run sweep:wake-race');
     expect(sweep).toBeDefined();
-    expect(sweep?.if).toBe("matrix.platform == 'bun'");
+    expect(sweep?.if).toBe('matrix.foundation');
     expect(sweep?.['continue-on-error']).toBeUndefined();
   });
 
@@ -318,7 +358,7 @@ describe('ci.yml: build once, restore everywhere', () => {
     const matrix = ci.jobs!['platform-matrix']!;
     const judgment = steps(matrix).find((step) => step.run === 'bun run test:judgment');
     expect(judgment).toBeDefined();
-    expect(judgment?.if).toBe("matrix.platform == 'bun'");
+    expect(judgment?.if).toBe('matrix.foundation');
     expect(judgment?.['continue-on-error']).not.toBe(true);
     expect(needsOf(ci.jobs!['auto-release']!)).toContain('platform-matrix');
   });
