@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Publish newly created companion-token records atomically at owner-only mode,
+  preserving complete previous records on pre-publication failures. Reject
+  incomplete writes in both default and strict atomic-store modes.
+
 - Add a protected, name-only research URL query-role reader with distinct
   original handles and query-role receipts. Preserve exact benign references or
   omit the complete declared URL, without sending URL values to either local

@@ -270,8 +270,8 @@ export function writeFileAtomic(filePath: string, contents: string, options: Ato
     const fd = openSync(tmpPath, 'w', mode);
     try {
       const written = writeSync(fd, contents, null, 'utf-8');
-      if (options.durable === true && written !== Buffer.byteLength(contents, 'utf-8')) {
-        throw new Error('Incomplete strict atomic file write');
+      if (written !== Buffer.byteLength(contents, 'utf-8')) {
+        throw new Error('Incomplete atomic file write');
       }
       fsyncSync(fd);
     } finally { closeSync(fd); }
