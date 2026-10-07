@@ -9,6 +9,7 @@ import type { ShellPathService } from '../runtime/shell-paths.js';
 import { resolveSurfaceDirectory } from '../runtime/surface-root.js';
 import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
 import { summarizeError } from '../utils/error-display.js';
+import { capturePersistedProviders } from './persisted-cache.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,23 +57,14 @@ export function loadPersistedProviders(roots: DiscoveryRoots): DiscoveredServer[
   try {
     if (!existsSync(persistedPath)) return [];
     const raw = readFileSync(persistedPath, 'utf-8');
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      logger.warn('[Scanner] loadPersistedProviders ignored invalid discovery cache', { path: persistedPath });
-      return [];
+    const captured = capturePersistedProviders(JSON.parse(raw) as unknown);
+    if (captured.invalid) {
+      logger.warn('[Scanner] loadPersistedProviders ignored invalid discovery cache');
     }
-    // Filter to only valid-shaped entries before trusting persisted data
-    return parsed.filter((item): item is DiscoveredServer =>
-      typeof item === 'object' && item !== null &&
-      typeof (item as Record<string, unknown>).host === 'string' &&
-      typeof (item as Record<string, unknown>).port === 'number' &&
-      Array.isArray((item as Record<string, unknown>).models)
-    );
-  } catch (err: unknown) {
-    logger.warn('[Scanner] loadPersistedProviders failed; using empty discovery cache', {
-      path: persistedPath,
-      error: summarizeError(err),
-    });
+    return captured.servers;
+  } catch {
+    // JSON parse and filesystem errors can include private cache bytes or paths.
+    logger.warn('[Scanner] loadPersistedProviders failed; using empty discovery cache');
     return [];
   }
 }
@@ -97,16 +89,11 @@ export function persistProviders(roots: DiscoveryRoots, servers: DiscoveredServe
               Array.isArray((item as Record<string, unknown>).models)
           );
         } else {
-          logger.warn('[Scanner] persistProviders ignored invalid existing discovery cache; overwriting with current scan results', {
-            path: persistedPath,
-          });
+          logger.warn('[Scanner] persistProviders ignored invalid existing discovery cache; overwriting with current scan results');
         }
-      } catch (err: unknown) {
+      } catch {
         existing = [];
-        logger.warn('[Scanner] persistProviders could not read existing discovery cache; overwriting with current scan results', {
-          path: persistedPath,
-          error: summarizeError(err),
-        });
+        logger.warn('[Scanner] persistProviders could not read existing discovery cache; overwriting with current scan results');
       }
     }
     // Merge: update existing entries, add new ones
@@ -116,13 +103,9 @@ export function persistProviders(roots: DiscoveryRoots, servers: DiscoveredServe
     }
     mkdirSync(dirname(persistedPath), { recursive: true });
     writeFileSync(persistedPath, JSON.stringify([...byKey.values()], null, 2) + '\n', 'utf-8');
-  } catch (err: unknown) {
+  } catch {
     // Discovery still returns live results, but the cache was not updated.
-    logger.warn('[Scanner] persistProviders failed; discovery cache was not updated', {
-      path: persistedPath,
-      serverCount: servers.length,
-      error: summarizeError(err),
-    });
+    logger.warn('[Scanner] persistProviders failed; discovery cache was not updated');
   }
 }
 
@@ -135,20 +118,16 @@ export function removePersistedProviders(roots: DiscoveryRoots, toRemove: Array<
     const raw = readFileSync(persistedPath, 'utf-8');
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) {
-      logger.warn('[Scanner] removePersistedProviders skipped invalid discovery cache', { path: persistedPath });
+      logger.warn('[Scanner] removePersistedProviders skipped invalid discovery cache');
       return;
     }
     const current = parsed as PersistedServer[];
     const removeKeys = new Set(toRemove.map(s => `${s.host}:${s.port}`));
     const filtered = current.filter(s => !removeKeys.has(`${s.host}:${s.port}`));
     writeFileSync(persistedPath, JSON.stringify(filtered, null, 2) + '\n', 'utf-8');
-  } catch (err: unknown) {
+  } catch {
     // Discovery cleanup should not block the caller, but stale cache entries remain.
-    logger.warn('[Scanner] removePersistedProviders failed; discovery cache was not cleaned up', {
-      path: persistedPath,
-      removeCount: toRemove.length,
-      error: summarizeError(err),
-    });
+    logger.warn('[Scanner] removePersistedProviders failed; discovery cache was not cleaned up');
   }
 }
 

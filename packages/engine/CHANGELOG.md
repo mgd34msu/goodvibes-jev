@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Own asynchronous hosted workspace-floor construction through shutdown: refuse
+  late leases, drain pending factories and retired cleanup, and prevent recursive
+  shutdown deadlocks. Recheck hosted-session admission after acquisition and
+  retain one runtime across concurrent restored-session attachments.
+
 - Publish newly created companion-token records atomically at owner-only mode,
   preserving complete previous records on pre-publication failures. Reject
   incomplete writes in both default and strict atomic-store modes.
