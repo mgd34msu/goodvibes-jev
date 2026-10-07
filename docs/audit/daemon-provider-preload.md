@@ -18,8 +18,7 @@ not the daemon identity tier, workspace or ambient `HOME`.
 Readiness means the established tolerant initial custom load has settled. It
 does not attest that every custom configuration succeeded. It lets successfully
 loaded custom providers retain their existing precedence over cached names in
-the primary daemon registry.
-The shared loader supplies fresh structural records, filters invalid entries,
+the primary daemon registry. The shared loader supplies fresh structural records, filters invalid entries,
 preserves functional URL bytes and uses fixed diagnostics; this caller adds no
 parsing, route redaction or semantic secret guesses. An absent, empty or wholly
 invalid cache does not erase already registered discoveries.
@@ -34,20 +33,22 @@ host can receive the graph. Provider watcher ownership is unchanged.
 
 ## Hosted scope
 
-The existing hosted composition copies the daemon registry's discovery snapshot
-when constructing a workspace floor. No automatic LAN scan, background model
+The hosted composition awaits each new floor's own tolerant initial custom load
+before copying the daemon registry's discovery snapshot or admitting hosted
+model selection. Successfully loaded custom providers therefore retain name
+precedence in the floor as well as the daemon. No automatic LAN scan, background model
 fallback mutation or discovery-cache watcher is added. Rewriting the cache does
 not update the running daemon or its existing floors. A later explicit registry
 change can affect a new floor; it is not broadcast into existing floors.
 
-Hosted floors start their own asynchronous custom load. Their existing admission
-path does not await it before model resolution, so primary readiness does not
-establish hosted custom-provider precedence. A held-load probe confirms that a
-floor can admit a same-name cached model before the custom provider replaces it.
-Repairing that floor acquisition/readiness lifecycle is separate work. The
-synthetic route proof here explicitly awaits its captured floor's readiness
-before making the ordinary provider request; it does not claim this wait is
-already present in hosted admission.
+The already-supported asynchronous floor-factory contract carries this wait.
+The factory owns its acquired client graph until it returns a floor; unexpected
+readiness or cache-copy failure disposes that graph and exposes only a fixed
+phase error. Once returned, the shared pending-floor owner owns cleanup. Its
+separate admission/drain repair is a prerequisite: shutdown must await pending
+factories and late disposal without granting a lease or publishing a session.
+The product barrier does not change public factory types or duplicate that
+shared owner. The client graph keeps its existing synchronous disposal API.
 
 Ordinary discovered providers confer no protected-source authority, Jev
 authority or hosted-fallback permission. This work performs no service setup,
@@ -59,11 +60,16 @@ Independent settlement-security review remains separate.
 The real host fixture seeds an owned selected-home cache and decoys at other
 roots. It observes the selected provider before real `DaemonServer`
 construction, creates a hosted session through authenticated loopback HTTP,
-and uses that actual floor's provider for one owned synthetic loopback request.
+and uses that actual floor's provider for one owned synthetic loopback request,
+without a test-only readiness wait.
 No direct discovery registration seeds this success path. Other cases prove
 absent/empty/invalid cache preservation, real custom-load precedence, distinct
 homes with the same provider name, shutdown during held initial readiness,
 partial-registration failure with held graph close, and base acquisition
-failure while real custom loading is held. These are source-level lifecycle and
+failure while real custom loading is held. Controlled concurrent HTTP creates
+stay pending during floor custom loading, then admit the custom model and refuse
+the colliding cache-only model. Further cases hold shutdown through real floor
+initialization and late disposal, and prove a partial cache-copy failure cleans
+the acquired floor once before a fresh retry. These are source-level lifecycle and
 routing proofs, not live account, model-quality or complete compiled-hosting
 proofs.
