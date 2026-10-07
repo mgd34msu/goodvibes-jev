@@ -150,6 +150,8 @@ test('emitted launcher reports failed bind, drains its graph and leaves the exis
   try {
     expect(await fx.done).toBe(1);
     expect(fx.output().stderr).toContain('Daemon startup failed');
+    expect(fx.output().stdout).toContain(`intended-port=${lease.port}`);
+    expect(fx.output().stdout).not.toContain(' bound:');
     expect(fx.output().stdout).not.toContain('host started');
     expect(await (await fetch(`http://127.0.0.1:${lease.port}`)).text()).toBe('existing-owner');
   } finally { await fx.close(); await lease.stop(true); }

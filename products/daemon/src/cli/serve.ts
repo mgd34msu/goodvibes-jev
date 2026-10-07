@@ -4,10 +4,14 @@ import {
   applyRuntimeConfigOverrides, applyRuntimeConfigValue, applyRuntimeEndpointFlagOverrides,
   applyRuntimeFeatureFlagOverrides, resolveRuntimeEndpointBinding,
 } from '@goodvibes-jev/engine/terminal-shell';
+import { describeDerivedBindMismatch, readControlPlaneBinding } from '@goodvibes-jev/engine/sdk/platform/config';
+import { resolveHostBinding } from '@goodvibes-jev/engine/sdk/platform/daemon';
 import { getModelIdFromProviderModel, getProviderIdFromModel } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { createRuntimeStore } from '@goodvibes-jev/engine/sdk/platform/runtime/store';
 import { getOrCreateCompanionToken } from '@goodvibes-jev/engine/sdk/platform/pairing';
 import { RuntimeEventBus, runtimeEventBusOptionsFrom } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
+import { isKnownConfigKey } from '../config/config-key-guard.js';
+import { getPackageVersion, renderDaemonBoundEndpoint, renderDaemonStartupBanner } from './help.js';
 import { createDaemonHost } from '../runtime/daemon-host.js';
 import type { RuntimeServicesOptions } from '../runtime/services.js';
 import { runDaemonProcess, type DaemonProcessOptions } from '../daemon/process-lifecycle.js';
@@ -46,7 +50,8 @@ export function runConfiguredDaemonCli(
   runtime: DaemonCliRuntime,
   env: NodeJS.ProcessEnv,
   processOptions?: DaemonProcessOptions,
-  reportTokenReset: (message: string) => void = (message) => { writeSync(2, `${message}\n`); },
+  stderr: (message: string) => void = (message) => { writeSync(2, `${message}\n`); },
+  stdout: (message: string) => void = (message) => { writeSync(1, `${message}\n`); },
 ) {
   const { config, homeDirectory, daemonHomeDirectory, workingDirectory } = configuration;
   // runDaemonProcess constructs its owner even when shutdown won admission.
@@ -57,9 +62,14 @@ export function runConfiguredDaemonCli(
     return {
       async start() {
         if (closed) return undefined;
+        const version = getPackageVersion();
+        const intended = resolveHostBinding(config.get('controlPlane.hostMode'), config.get('controlPlane.host'),
+          config.get('controlPlane.port'), 'controlPlane');
+        stdout(renderDaemonStartupBanner(version, { homeDir: homeDirectory, daemonHomeDir: daemonHomeDirectory, ...intended }));
+        if (closed) return undefined;
         const companion = getOrCreateCompanionToken('tui', { daemonHomeDir: daemonHomeDirectory });
         if (companion.quarantined) {
-          reportTokenReset('The selected daemon operator token store was unreadable. A new shared token was created; paired clients must pair again. '
+          stderr('The selected daemon operator token store was unreadable. A new shared token was created; paired clients must pair again. '
             + (companion.quarantined.to ? 'The previous file was preserved beside the token store.' : 'The previous file could not be preserved.'));
         }
         // An injected reporting port can synchronously request shutdown.
@@ -74,7 +84,20 @@ export function runConfiguredDaemonCli(
           daemon: { token },
           ...(config.get('danger.httpListener') ? { httpListener: { token: env.GOODVIBES_HTTP_TOKEN ?? token } } : {}),
         });
-        return host.start();
+        const snapshot = await host.start();
+        if (closed || (snapshot.state !== 'ready' && snapshot.state !== 'degraded')) return undefined;
+        const actual = { host: host.daemon!.boundHost, port: host.daemon!.boundPort };
+        stdout(renderDaemonBoundEndpoint(version, actual));
+        if (closed) return undefined;
+        const clientBinding = readControlPlaneBinding((key) => isKnownConfigKey(key, config.getSchema()) ? config.get(key) : undefined);
+        if (describeDerivedBindMismatch(actual, clientBinding) !== null) {
+          // The canonical helper decides drift; its raw host/URL prose is private.
+          stderr('[goodvibes-daemon] warning: control-plane client binding disagrees with the bound listener (derived-bind-mismatch).');
+          if (closed) return undefined;
+        }
+        stdout(`goodvibes-daemon ${version} host started (${snapshot.state})`);
+        if (closed) return undefined;
+        return snapshot;
       },
       close() {
         closed = true;
