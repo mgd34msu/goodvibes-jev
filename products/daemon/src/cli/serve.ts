@@ -1,10 +1,12 @@
 /** Explicit serving composition. There is deliberately no substitute inbox. */
+import { writeSync } from 'node:fs';
 import {
   applyRuntimeConfigOverrides, applyRuntimeConfigValue, applyRuntimeEndpointFlagOverrides,
   applyRuntimeFeatureFlagOverrides, resolveRuntimeEndpointBinding,
 } from '@goodvibes-jev/engine/terminal-shell';
 import { getModelIdFromProviderModel, getProviderIdFromModel } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { createRuntimeStore } from '@goodvibes-jev/engine/sdk/platform/runtime/store';
+import { getOrCreateCompanionToken } from '@goodvibes-jev/engine/sdk/platform/pairing';
 import { RuntimeEventBus, runtimeEventBusOptionsFrom } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
 import { createDaemonHost } from '../runtime/daemon-host.js';
 import type { RuntimeServicesOptions } from '../runtime/services.js';
@@ -44,16 +46,40 @@ export function runConfiguredDaemonCli(
   runtime: DaemonCliRuntime,
   env: NodeJS.ProcessEnv,
   processOptions?: DaemonProcessOptions,
+  reportTokenReset: (message: string) => void = (message) => { writeSync(2, `${message}\n`); },
 ) {
   const { config, homeDirectory, daemonHomeDirectory, workingDirectory } = configuration;
-  // The process installs signal ownership before constructing the host or graph.
-  return runDaemonProcess(() => createDaemonHost({
-    runtime: {
-      ...runtime, configManager: config, homeDirectory, daemonHomeDirectory, workingDir: workingDirectory,
-      runtimeBus: new RuntimeEventBus(runtimeEventBusOptionsFrom((key) => config.get(key))),
-      runtimeStore: createRuntimeStore(),
-    },
-    daemon: { token: env.GOODVIBES_DAEMON_TOKEN },
-    ...(config.get('danger.httpListener') ? { httpListener: { token: env.GOODVIBES_HTTP_TOKEN ?? env.GOODVIBES_DAEMON_TOKEN } } : {}),
-  }), processOptions);
+  // runDaemonProcess constructs its owner even when shutdown won admission.
+  // Keep token and graph acquisition inside start, after that admission fence.
+  return runDaemonProcess(() => {
+    let host: ReturnType<typeof createDaemonHost> | undefined;
+    let closed = false;
+    return {
+      async start() {
+        if (closed) return undefined;
+        const companion = getOrCreateCompanionToken('tui', { daemonHomeDir: daemonHomeDirectory });
+        if (companion.quarantined) {
+          reportTokenReset('The selected daemon operator token store was unreadable. A new shared token was created; paired clients must pair again. '
+            + (companion.quarantined.to ? 'The previous file was preserved beside the token store.' : 'The previous file could not be preserved.'));
+        }
+        // An injected reporting port can synchronously request shutdown.
+        if (closed) return undefined;
+        const token = env.GOODVIBES_DAEMON_TOKEN ?? companion.token;
+        host = createDaemonHost({
+          runtime: {
+            ...runtime, configManager: config, homeDirectory, daemonHomeDirectory, workingDir: workingDirectory,
+            runtimeBus: new RuntimeEventBus(runtimeEventBusOptionsFrom((key) => config.get(key))),
+            runtimeStore: createRuntimeStore(),
+          },
+          daemon: { token },
+          ...(config.get('danger.httpListener') ? { httpListener: { token: env.GOODVIBES_HTTP_TOKEN ?? token } } : {}),
+        });
+        return host.start();
+      },
+      close() {
+        closed = true;
+        return host?.close() ?? Promise.resolve();
+      },
+    };
+  }, processOptions);
 }
