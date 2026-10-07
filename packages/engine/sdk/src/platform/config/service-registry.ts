@@ -104,6 +104,8 @@ export interface ServiceConnectionTestResult {
 export interface ServiceRegistryOptions {
   readonly secretsManager: SecretsManager;
   readonly subscriptionManager: SubscriptionManager;
+  /** Withhold private provider errors and reference descriptors from resolution logs. */
+  readonly diagnosticMode?: 'default' | 'structural' | undefined;
 }
 
 function readServicesFile(filePath: string): Record<string, ServiceConfig> {
@@ -129,11 +131,13 @@ export class ServiceRegistry {
   private readonly servicesFilePath: string;
   private readonly secretsManager: SecretsManager;
   private readonly subscriptionManager: SubscriptionManager;
+  private readonly diagnosticMode: 'default' | 'structural';
 
   constructor(servicesFilePath: string, options: ServiceRegistryOptions) {
     this.servicesFilePath = servicesFilePath;
     this.secretsManager = options.secretsManager;
     this.subscriptionManager = options.subscriptionManager;
+    this.diagnosticMode = options.diagnosticMode ?? 'default';
   }
 
   /**
@@ -169,8 +173,8 @@ export class ServiceRegistry {
         logger.warn('ServiceRegistry: failed to resolve secret reference', {
           serviceName,
           field,
-          ref: describeSecretRef(candidate),
-          error: summarizeError(error),
+          ...(this.diagnosticMode === 'structural' ? { reason: 'resolution-failed' }
+            : { ref: describeSecretRef(candidate), error: summarizeError(error) }),
         });
         return null;
       }

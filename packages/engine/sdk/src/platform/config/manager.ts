@@ -57,6 +57,8 @@ interface ConfigCliOverrides {
   hostSettings?: readonly HostBooleanSetting[] | undefined;
   /** Read without creating files, persisting migrations or receipts; mutators refuse. */
   readOnly?: boolean | undefined;
+  /** Withhold borrowed parse-error text from unreadable-settings diagnostics; private errors retain it. */
+  diagnosticMode?: 'default' | 'structural' | undefined;
   model?: string | undefined;
   autoApprove?: boolean | undefined;
   systemPromptFile?: string | undefined;
@@ -123,6 +125,7 @@ export type ConfigUnsubscribe = () => void;
  */
 export class ConfigManager {
   private readonly readOnly: boolean;
+  private readonly diagnosticMode: 'default' | 'structural';
   private readonly hostSettings: HostSettings;
   private hostLoadValues: HostSettingValues | null = null;
   private config: GoodVibesConfig;
@@ -153,6 +156,7 @@ export class ConfigManager {
 
   constructor(overrides: ConfigOverrides) {
     this.readOnly = overrides.readOnly ?? false;
+    this.diagnosticMode = overrides.diagnosticMode ?? 'default';
     this.hostSettings = new HostSettings(overrides.hostSettings);
     const roots = overrides as ConfigRoots;
     const configDir = requireAbsoluteOwnedPath(roots.configDir, 'configDir');
@@ -660,6 +664,7 @@ export class ConfigManager {
   /** Where an ingestion notice is filed; see ./manager-ingestion.ts. */
   private ingestionSink(): IngestionNoticeSink {
     return {
+      diagnosticMode: this.diagnosticMode,
       record: (entry) => { this.ingestionNotices.push(entry); },
       receipt: (id, text) => { this.migrationReceipt(id, text); },
       unknown: (file, keys) => { this.unknownSettingForms.keep(file, keys, this.ingestionSink()); },

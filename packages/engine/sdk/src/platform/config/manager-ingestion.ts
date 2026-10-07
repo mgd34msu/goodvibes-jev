@@ -27,6 +27,8 @@ export type { SettingsIngestionNotice };
 
 /** Where a manager files an ingestion notice so an operator can find it. */
 export interface IngestionNoticeSink {
+  /** Publication policy for unreadable-file errors, selected before the manager loads settings. */
+  readonly diagnosticMode?: 'default' | 'structural' | undefined;
   /** Kept for `ConfigManager.getIngestionQuarantine()`. */
   record(entry: SettingsIngestionNotice): void;
   /**
@@ -50,7 +52,7 @@ export function ingestManagerSettings(
   migrate?: ((raw: Record<string, unknown>) => Record<string, unknown>) | undefined,
   knownHostKeys?: ReadonlySet<string>,
 ): Record<string, unknown> {
-  const result = ingestSettingsFile(parsed, file, { ...(migrate ? { migrate } : {}), onNotice: (entry) => { noticeTo(sink, entry); } });
+  const result = ingestSettingsFile(parsed, file, { diagnosticMode: sink.diagnosticMode, ...(migrate ? { migrate } : {}), onNotice: (entry) => { noticeTo(sink, entry); } });
   const unknownKeys = knownHostKeys ? result.unknownKeys.filter((entry) => !knownHostKeys.has(entry.key)) : result.unknownKeys;
   if (unknownKeys.length > 0) sink.unknown(file, unknownKeys);
   return result.config;
@@ -126,7 +128,7 @@ export function toConfigLoadFailure(
   sink: IngestionNoticeSink,
 ): ConfigError {
   if (!(err instanceof SettingsIngestionRefusal)) {
-    const entry = unreadableSettingsFileNotice(file, summarizeError(err));
+    const entry = unreadableSettingsFileNotice(file, summarizeError(err), sink.diagnosticMode);
     announceIngestionNotice(entry);
     sink.record(entry);
   }

@@ -1,3 +1,4 @@
+import { retireDeliveryResponse } from './delivery-diagnostics.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
@@ -326,6 +327,7 @@ export class DiscordIntegration {
       const err = await res.text();
       throw new HttpStatusError(`DiscordIntegration.postWebhook failed (${res.status}): ${err}`, { status: res.status });
     }
+    await retireDeliveryResponse(res);
   }
 
   /**
@@ -353,6 +355,7 @@ export class DiscordIntegration {
       const err = await res.text();
       throw new HttpStatusError(`DiscordIntegration.postMessage failed (${res.status}): ${err}`, { status: res.status });
     }
+    await retireDeliveryResponse(res);
   }
 
   /**
@@ -383,6 +386,7 @@ export class DiscordIntegration {
       const err = await res.text();
       throw new HttpStatusError(`DiscordIntegration.respondToInteraction failed (${res.status}): ${err}`, { status: res.status });
     }
+    await retireDeliveryResponse(res);
   }
 
   /**
