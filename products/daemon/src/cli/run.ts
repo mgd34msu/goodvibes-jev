@@ -108,12 +108,7 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
         const { prepareDaemonCliServe, runConfiguredDaemonCli } = await import('./serve.js');
         const errors = prepareDaemonCliServe(config, cli.flags);
         if (errors.length) return result({ exitCode: 2, lines: errors });
-        const processHandle = runConfiguredDaemonCli(configuration, options.runtime!, env, options.process, stderr);
-        // Readiness is printed only after the owned real host and boot have settled.
-        void processHandle.ready.then((snapshot) => {
-          if (typeof snapshot === 'object' && snapshot !== null && 'state' in snapshot
-            && (snapshot.state === 'ready' || snapshot.state === 'degraded')) stdout(`goodvibes-daemon ${VERSION} host started (${snapshot.state})`);
-        }, () => {}).catch(() => { void processHandle.shutdown(); });
+        const processHandle = runConfiguredDaemonCli(configuration, options.runtime!, env, options.process, stderr, stdout);
         return await processHandle.finished;
       }
       default: {
