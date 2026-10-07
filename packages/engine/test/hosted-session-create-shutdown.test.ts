@@ -111,6 +111,10 @@ for (const policy of ['kill', 'survive'] as const) {
       try {
         await held.entered.promise;
         const record = held.writes[0]![0];
+        const live = (manager as unknown as { sessions: Map<string, { runtime: { dispose(): void } }> }).sessions.get(record.id)!;
+        const disposeRuntime = live.runtime.dispose.bind(live.runtime);
+        let runtimeDisposals = 0;
+        live.runtime.dispose = () => { runtimeDisposals += 1; disposeRuntime(); };
         closing = manager.dispose();
         expect(manager.dispose()).toBe(closing);
         void closing.then(() => { closed = true; });
@@ -126,6 +130,7 @@ for (const policy of ['kill', 'survive'] as const) {
         expect(events.some(event => event.event === 'hosted-session-created')).toBe(false);
         expect(prompts).toEqual([]);
         expect(cleanup.count).toBe(1);
+        expect(runtimeDisposals).toBe(1);
         expect(liveTurns.hasSession(record.id)).toBe(false);
         expect(held.writes[0]![2]?.durable).toBe(native ? true : undefined);
         const final = manager.get(record.id)!;
@@ -153,42 +158,44 @@ for (const policy of ['kill', 'survive'] as const) {
 }
 
 for (const native of [false, true]) {
-  test(`${native ? 'native' : 'ordinary'} create stops after a registration held across shutdown`, async () => {
-    const entered = deferred();
-    const release = deferred();
-    const registered = new Set<string>();
-    const { manager, store, events, cleanup } = buildManager({ spine: {
-      register: async ({ sessionId }) => { entered.resolve(); await release.promise; registered.add(sessionId); },
-      closeSession: async sessionId => { registered.delete(sessionId); },
-      getInputsSince: () => [],
-      markInputDelivered: async () => undefined,
-    } });
-    await manager.init();
-    const writes: Parameters<HostedSessionStore['save']>[] = [];
-    const save = store.save.bind(store);
-    store.save = async (...args) => { writes.push(args); await save(...args); };
-    const creating = Promise.allSettled([manager.create({ workspaceRoot: workspace }, native ? { nativeConversation: true } : undefined)]);
-    let closing: Promise<void> | undefined;
-    let closed = false;
-    try {
-      await entered.promise;
-      closing = manager.dispose();
-      void closing.then(() => { closed = true; });
-      await settle();
-      expect(closed).toBe(false);
-      release.resolve();
-      expect((await creating)[0]?.status).toBe('rejected');
-      await closing;
-      expect(writes.map(([record]) => record.status)).toEqual(['terminated']);
-      expect(registered.size).toBe(0);
-      expect(events.map(event => event.event)).toEqual(['hosted-session-terminated']);
-      expect(cleanup.count).toBe(1);
-    } finally {
-      release.resolve();
-      await creating;
-      await closing;
-    }
-  });
+  for (const policy of ['kill', 'survive'] as const) {
+    test(`${native ? 'native' : 'ordinary'} create stops after a registration held across ${policy} shutdown`, async () => {
+      const entered = deferred();
+      const release = deferred();
+      const registered = new Set<string>();
+      const { manager, store, events, cleanup } = buildManager({ policy, spine: {
+        register: async ({ sessionId }) => { entered.resolve(); await release.promise; registered.add(sessionId); },
+        closeSession: async sessionId => { registered.delete(sessionId); },
+        getInputsSince: () => [],
+        markInputDelivered: async () => undefined,
+      } });
+      await manager.init();
+      const writes: Parameters<HostedSessionStore['save']>[] = [];
+      const save = store.save.bind(store);
+      store.save = async (...args) => { writes.push(args); await save(...args); };
+      const creating = Promise.allSettled([manager.create({ workspaceRoot: workspace }, native ? { nativeConversation: true } : undefined)]);
+      let closing: Promise<void> | undefined;
+      let closed = false;
+      try {
+        await entered.promise;
+        closing = manager.dispose();
+        void closing.then(() => { closed = true; });
+        await settle();
+        expect(closed).toBe(false);
+        release.resolve();
+        expect((await creating)[0]?.status).toBe('rejected');
+        await closing;
+        expect(writes.map(([record]) => record.status)).toEqual([policy === 'kill' ? 'terminated' : 'idle']);
+        expect(registered.size).toBe(policy === 'kill' ? 0 : 1);
+        expect(events.map(event => event.event)).toEqual([policy === 'kill' ? 'hosted-session-terminated' : 'hosted-session-detached']);
+        expect(cleanup.count).toBe(1);
+      } finally {
+        release.resolve();
+        await creating;
+        await closing;
+      }
+    });
+  }
 
   test(`${native ? 'native' : 'ordinary'} save rejection during shutdown cannot abandon cleanup or publish creation`, async () => {
     const { manager, store, events, cleanup } = buildManager();
