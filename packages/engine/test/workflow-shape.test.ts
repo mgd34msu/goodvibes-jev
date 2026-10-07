@@ -214,8 +214,8 @@ describe('ci.yml: build once, restore everywhere', () => {
     }
   });
 
-  test('eval-gate, platform-matrix and product-tests restore the artifact instead of rebuilding', () => {
-    for (const name of ['eval-gate', 'platform-matrix', 'product-tests']) {
+  test('eval-gate, platform-matrix and all product lanes restore the artifact instead of rebuilding', () => {
+    for (const name of ['eval-gate', 'platform-matrix', 'product-tests', 'agent-tests']) {
       const job = ci.jobs![name]!;
       expect(needsOf(job)).toContain('build');
       expect(stepText(job)).toContain('workspace-build-output');
@@ -248,7 +248,7 @@ describe('ci.yml: build once, restore everywhere', () => {
     const discovery = steps(build).find((step) => step.id === 'product-matrix');
     expect(discovery?.if).toBeUndefined();
     expect(discovery?.['continue-on-error']).toBeUndefined();
-    expect(discovery?.run).toBe('set -euo pipefail\nproducts=$(bun packages/engine/scripts/product-workspaces.ts matrix)\necho "products=$products" >> "$GITHUB_OUTPUT"\n');
+    expect(discovery?.run).toBe('set -euo pipefail\nproducts=$(bun packages/engine/scripts/product-workspaces.ts matrix-without-agent)\necho "products=$products" >> "$GITHUB_OUTPUT"\n');
     const run = steps(products).find((step) => step.run === 'bun run products:test "$PRODUCT"');
     expect(run).toBeDefined();
     expect(run?.env).toEqual({ PRODUCT: '${{ matrix.product }}' });
@@ -324,8 +324,25 @@ describe('ci.yml: build once, restore everywhere', () => {
 
   test('the Agent lane verifies its exact native artifact and owns its terminal prerequisites', () => {
     const build = ci.jobs!['build']!;
-    const product = ci.jobs!['product-tests']!;
+    const product = ci.jobs!['agent-tests']!;
     expect(build['timeout-minutes']).toBe(15);
+    expect(product['timeout-minutes']).toBe(15);
+    expect(product.if).toBeUndefined();
+    expect(product['continue-on-error']).toBeUndefined();
+    expect(product.strategy?.['fail-fast']).toBe(false);
+    expect(product.strategy?.matrix).toBe('${{ fromJSON(needs.build.outputs.agents) }}');
+    expect(build.outputs).toMatchObject({ agents: '${{ steps.agent-matrix.outputs.agents }}' });
+    const discovery = steps(build).find((step) => step.id === 'agent-matrix');
+    expect(discovery?.if).toBeUndefined();
+    expect(discovery?.['continue-on-error']).toBeUndefined();
+    expect(discovery?.run).toContain('agents=$(bun packages/engine/scripts/agent-test-partitions.ts matrix)');
+    expect(discovery?.run).toContain('bun packages/engine/scripts/agent-test-partitions.ts manifest > /tmp/agent-test-manifest.json');
+    const manifest = steps(build).find((step) => (step.with as { name?: string })?.name === 'agent-test-manifest');
+    expect(manifest?.with).toMatchObject({ path: '/tmp/agent-test-manifest.json', 'if-no-files-found': 'error' });
+    for (const step of steps(product)) expect(step['continue-on-error']).toBeUndefined();
+    expect(stepText(product)).not.toMatch(/GOODVIBES_TEST_(?:CEILING|STALL|TIMEOUT)_MS|--timeout|--pass-with-no-tests|--test-name-pattern/);
+    expect(needsOf(ci.jobs!['auto-release']!)).toContain('agent-tests');
+    expect(needsOf(ci.jobs!['auto-release']!)).toContain('agent-tests-complete');
     expect(runText(ci, 'build')).toContain('bun run --cwd products/agent build:binary --target linux-x64');
     expect(runText(ci, 'build')).toContain('bun products/agent/scripts/ci-artifact.ts record "$GITHUB_SHA"');
     for (const path of ['products/agent/dist/goodvibes-agent-linux-x64', 'products/agent/dist/lib', 'products/agent/dist/ci-artifact.json']) {
@@ -333,10 +350,16 @@ describe('ci.yml: build once, restore everywhere', () => {
     }
     const verify = steps(product).find((step) => step.name === 'Verify restored Agent native artifact');
     const terminal = steps(product).find((step) => step.name === 'Install Agent terminal E2E prerequisite');
-    const run = steps(product).find((step) => step.name === 'Run complete declared product test suite');
+    const run = steps(product).find((step) => step.name === 'Run complete Agent test group through the owned runner');
     const restore = steps(product).find((step) => step.name === 'Restore workspace package output');
-    expect(verify?.if).toBe("matrix.product == 'agent'");
-    expect(terminal?.if).toBe("matrix.product == 'agent'");
+    expect(verify).toBeDefined();
+    expect(verify?.if).toBeUndefined();
+    expect(terminal).toBeDefined();
+    expect(terminal?.if).toBeUndefined();
+    expect(run).toBeDefined();
+    expect(run?.if).toBeUndefined();
+    expect(run?.env).toEqual({ AGENT_GROUP: '${{ matrix.group }}', AGENT_MANIFEST_SHA256: '${{ matrix.manifest-sha256 }}' });
+    expect(run?.run).toBe('bun packages/engine/scripts/agent-test-partitions.ts run --group="$AGENT_GROUP" --manifest-sha256="$AGENT_MANIFEST_SHA256"');
     expect(verify?.run).toContain('bun products/agent/scripts/ci-artifact.ts verify "$GITHUB_SHA"');
     expect(verify?.run).toContain('products/agent/dist/goodvibes-agent-linux-x64 --version');
     expect(verify?.run).toContain('echo "GOODVIBES_E2E_BINARY=$GITHUB_WORKSPACE/products/agent/dist/goodvibes-agent-linux-x64" >> "$GITHUB_ENV"');
