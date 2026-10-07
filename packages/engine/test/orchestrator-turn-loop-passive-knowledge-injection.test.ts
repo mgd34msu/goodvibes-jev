@@ -38,6 +38,7 @@ import {
   type OrchestratorTurnLoopContext,
 } from '../sdk/src/platform/core/orchestrator-turn-loop.js';
 import { ConversationManager } from '../sdk/src/platform/core/conversation.js';
+import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { ToolRegistry } from '../sdk/src/platform/tools/registry.js';
 import { appendGoodVibesRuntimeAwarenessPrompt } from '../sdk/src/platform/tools/goodvibes-runtime/index.js';
 import type { LLMProvider, ChatResponse } from '../sdk/src/platform/providers/interface.js';
@@ -661,4 +662,42 @@ describe('orchestrator-turn-loop: awaited system prompts', () => {
     expect(reads).toBe(1);
     expect(capturedSystemPrompts).toHaveLength(1);
   });
+});
+
+test.each([false, true])('tool argument stream fragments wait for owned final projection; held = %s', async held => {
+  const raw = 'https://synthetic.example/PRIVATE_PATH?ordinary=SYNTHETIC_VALUE#PRIVATE_ANCHOR';
+  const args = { references: [{ id: 'S1', url: raw }] };
+  const safe = { references: [{ id: 'S1', url: '[source reference S1]' }] };
+  let chats = 0, projections = 0, executions = 0;
+  const provider: LLMProvider = { name: 'fake', models: ['fake-model'], async chat(request) {
+    if (++chats > 1) return { content: 'done', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
+    request.onDelta?.({ content: 'ordinary progress' });
+    request.onDelta?.({ toolCalls: [{ index: 0, id: 'synthetic-call', name: 'protected_reader' }] });
+    request.onDelta?.({ toolCalls: [{ index: 0, arguments: JSON.stringify(args) }] });
+    return { content: '', toolCalls: [{ id: 'synthetic-call', name: 'protected_reader', arguments: args }],
+      usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'tool_call' };
+  } };
+  const { context } = makeContext({ text: 'Read the framed synthetic reference', provider, enabled: false,
+    executeToolCalls: async (_turn, calls) => {
+      executions++; expect(calls[0]!.arguments).toEqual(safe);
+      return calls.map(call => ({ callId: call.id, success: true, output: 'intercepted' }));
+    },
+  });
+  context.toolRegistry.register({ definition: { name: 'protected_reader', description: 'Synthetic projected reader',
+    parameters: { type: 'object', properties: { references: { type: 'array' } }, required: ['references'] } },
+  async execute() { throw new Error('The synthetic turn fixture intercepts execution'); } },
+  { inputProjection: { async project() { projections++; return held ? { status: 'held' } : { status: 'projected', args: safe }; } } });
+  const bus = new RuntimeEventBus(); const events: unknown[] = [];
+  const stop = bus.onDomain('turn', event => { events.push(event.payload); });
+  const withBus: OrchestratorTurnLoopContext = { ...context, runtimeBus: bus };
+  try {
+    if (held) await expect(executeOrchestratorTurnLoop(withBus)).rejects.toMatchObject({ problem: 'held' });
+    else await executeOrchestratorTurnLoop(withBus);
+    expect(projections).toBe(1); expect(executions).toBe(held ? 0 : 1);
+    expect(JSON.stringify(events)).toContain('ordinary progress');
+    for (const secret of [raw, 'PRIVATE_PATH', 'SYNTHETIC_VALUE', 'PRIVATE_ANCHOR']) {
+      expect(JSON.stringify(events)).not.toContain(secret);
+      expect(JSON.stringify(context.conversation.getMessageSnapshot())).not.toContain(secret);
+    }
+  } finally { stop(); }
 });

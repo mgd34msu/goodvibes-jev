@@ -166,6 +166,9 @@ Release/close still await owned calls and transport cleanup; close clears the
 role cache. Existing source-handle and unsettled-revision bounds are shared.
 
 This is a further THE-123 prerequisite, not completed consumer adoption.
+The [owned tool-input projection prerequisite](protected-tool-input-projection.md)
+adds an explicit framed-reference adapter and earlier registered-tool ingress;
+it does not turn this query-role receipt into full source-privacy clearance.
 Unbound control-split reference boundaries cannot be inferred from URL parsing:
 the same newline can divide an interrupted URL or separate a complete URL from
 ordinary prose. The current editor, prompt and artifact paths remain unchanged.
