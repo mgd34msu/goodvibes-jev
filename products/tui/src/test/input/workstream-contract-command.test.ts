@@ -27,13 +27,11 @@ function fixture(records: ContractView[], overrides: Partial<OperatorContractRun
 }
 
 describe('workstream commands use the public contract operator', () => {
-  test('explicit start preserves the whole request and current session', async () => {
+  test('generic start cannot enter the legacy runner', async () => {
     const f = fixture([]);
     await f.run(['start', 'Repair', 'the', 'retry', 'cap']);
-    expect(f.actions).toHaveLength(1);
-    expect(f.actions[0]?.[0]).toBe('start');
-    expect(f.actions[0]?.[1]).toMatchObject({ ask: 'Repair the retry cap', sessionId: 'test-session', projectRoot: '/synthetic/project' });
-    expect(f.output.join('\n')).toContain('new-contract: queued');
+    expect(f.actions).toEqual([]);
+    expect(f.output.join('\n')).toContain('Original owner input is required');
   });
   test('ambiguous or other-session references never cancel', async () => {
     const f = fixture([contractFixture({ id: 'contract-a' }), contractFixture({ id: 'contract-b' }), contractFixture({ id: 'outside', sessionId: 'other' })]);
@@ -66,15 +64,15 @@ describe('workstream commands use the public contract operator', () => {
     registerWorkstreamRuntimeCommands(registry);
     const output: string[] = [];
     const context = { session: { runtime: { sessionId: 'test-session' } }, print: (text: string) => output.push(text) } as unknown as CommandContext;
-    for (const action of ['start', 'list', 'status', 'cancel', 'reply']) await registry.execute('workstream', [action], context);
-    expect(output).toEqual(Array(5).fill('Workstreams are not available in this session.'));
+    for (const action of ['list', 'status', 'cancel', 'reply']) await registry.execute('workstream', [action], context);
+    expect(output).toEqual(Array(4).fill('Workstreams are not available in this session.'));
   });
 
   test('empty start refuses without calling the runner', async () => {
     const f = fixture([]);
     await f.run(['start']);
     expect(f.actions).toEqual([]);
-    expect(f.output).toEqual(['Usage: /workstream start <request>']);
+    expect(f.output.join('\n')).toContain('Original owner input is required');
   });
 
   test('list is honest when empty and isolates the current session', async () => {
@@ -142,8 +140,8 @@ describe('workstream commands use the public contract operator', () => {
   });
 
   test('runner failures are reported rather than claiming success', async () => {
-    const f = fixture([], { start: () => { throw new Error('Synthetic runner failed'); } });
-    await f.run(['start', 'Repair']);
+    const f = fixture([contractFixture({ id: 'contract-a', status: 'running' })], { cancel: () => { throw new Error('Synthetic runner failed'); } });
+    await f.run(['cancel', 'contract-a']);
     expect(f.actions).toEqual([]);
     expect(f.output.join('\n')).toContain('Workstream action failed: Synthetic runner failed');
   });

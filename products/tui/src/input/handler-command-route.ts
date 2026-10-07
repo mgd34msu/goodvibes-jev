@@ -81,7 +81,8 @@ export function handleCommandModeToken(state: CommandModeRouteState, token: Inpu
   }
   if (token.logicalName === 'enter') {
     const selectedCmd = state.autocomplete?.isActive ? state.autocomplete.getSelected() : undefined;
-    const raw = selectedCmd ? `/${selectedCmd.name}` : state.prompt.trim();
+    const originalCommand = selectedCmd ? `/${selectedCmd.name}` : state.prompt;
+    const raw = originalCommand.trim();
     if (raw.startsWith('/') && state.commandRegistry && state.commandContext) {
       closeCommandMode();
       // Submitting a command is a submission: the splash yields to command
@@ -93,7 +94,7 @@ export function handleCommandModeToken(state: CommandModeRouteState, token: Inpu
       const args = parts.slice(1);
       const ctx = withComposerBindings(state.commandContext, state);
       const commandPromise = state.commandRegistry.get(name)
-        ? state.commandRegistry.executeFromOwner(name, args, ctx)
+        ? state.commandRegistry.executeFromOwner(name, args, ctx, originalCommand)
         : (ctx.executeCommand?.(name, args) ?? Promise.resolve(false));
       commandPromise
         .then((handled) => {
