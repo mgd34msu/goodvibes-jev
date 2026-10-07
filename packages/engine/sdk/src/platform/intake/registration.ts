@@ -35,6 +35,8 @@ export interface RegisterInboxSurfaceOptions {
   readonly skipInitialPoll?: boolean;
   /** Host registration may return its own awaitable unregister callback. */
   readonly gatePolling?: (providerId: string, control: InboxPollingControl) => void | (() => void | Promise<void>);
+  /** Recheck a product-owned account/workspace scope around every mirror read. */
+  readonly assertReadCurrent?: () => void | Promise<void>;
 }
 
 export interface InboxSurfaceRegistration {
@@ -153,11 +155,19 @@ export function registerInboxSurface(
   } catch { setupFailed = true; }
 
   let unregisterMethod: (() => void) | undefined;
+  const assertReadCurrent = options.assertReadCurrent;
+  const checkRead = async (): Promise<void> => {
+    try { await assertReadCurrent?.(); }
+    catch { throw new HandlerError('Inbox account scope is unavailable', 'INBOX_SCOPE_UNAVAILABLE', 503); }
+  };
   try {
     unregisterMethod = registerCatalogHandler<InboxListInput, InboxListOutput>(ctx.catalog, INBOX_LIST_METHOD_ID,
       (invocation) => own(async () => {
         await ready;
-        return aggregateInbox({ store, poller }, normalizeInboxQuery(invocation.body, invocation.query));
+        await checkRead();
+        const result = await aggregateInbox({ store, poller }, normalizeInboxQuery(invocation.body, invocation.query));
+        await checkRead();
+        return result;
       }));
   } catch { setupFailed = true; }
 

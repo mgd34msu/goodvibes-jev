@@ -6,6 +6,8 @@
 export type { IntakeCredentialStore, IntakeLogger } from './context.js';
 export { createProtectedInboxMapper } from './protected-preview.js';
 export type { ProtectedInboxPreviewInput, ProtectedInboxPreviewFields } from './protected-preview.js';
+export { createSlackInboxOwner } from './providers/slack-owner.js';
+export type { SlackInboxAccount, SlackInboxOwnerOptions, SlackInboxOwnerFactories, SlackInboxOwner } from './providers/slack-owner.js';
 export { sha256First, digestSender, stripMarkup, normalizeWhitespace } from './text-normalization.js';
 export type {
   InboundChannelItem, ProviderState, ProviderPollResult, ProviderPollOptions,

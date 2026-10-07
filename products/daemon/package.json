@@ -31,7 +31,8 @@
     "@goodvibes-jev/engine": "workspace:*"
   },
   "devDependencies": {
-    "@goodvibes-jev/judgment": "workspace:*"
+    "@goodvibes-jev/judgment": "workspace:*",
+    "undici": "7.30.0"
   },
   "bin": {
     "goodvibes-daemon": "./bin/goodvibes-daemon"
