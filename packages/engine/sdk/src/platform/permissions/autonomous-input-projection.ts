@@ -29,6 +29,7 @@ interface CapturedCatalog {
 
 const authorityRevision = (authority: CatalogAuthority): string => hashState(authority as unknown as EntryType);
 function stale(): never { throw new Error('Autonomous choice projection is stale or belongs to another source or manager'); }
+function authorityChanged(): never { throw new Error('Autonomous admission authority, source or scope changed'); }
 
 /** Each PermissionManager owns one instance; only its own handles can select a catalog. */
 export class AutonomousChoiceProjectionOwner {
@@ -45,7 +46,8 @@ export class AutonomousChoiceProjectionOwner {
       assertPermissionActive(signal);
       if (released) stale();
       const currentRevision = authorityRevision(authorityOf());
-      if (released || currentRevision !== rawRevision) stale();
+      if (released) stale();
+      if (currentRevision !== rawRevision) authorityChanged();
       assertPermissionActive(signal);
     };
     try {
@@ -89,7 +91,8 @@ export class AutonomousChoiceProjectionOwner {
 
   choices(handle: AutonomousChoiceProjection, sourceId: string, authority: CatalogAuthority): AutonomousToolChoices {
     const capture = this.captures.get(handle);
-    if (!capture || capture.released || capture.sourceId !== sourceId || authorityRevision(authority) !== capture.rawRevision) stale();
+    if (!capture || capture.released || capture.sourceId !== sourceId) stale();
+    if (authorityRevision(authority) !== capture.rawRevision) authorityChanged();
     assertPermissionActive(capture.signal);
     // The manager just captured this coherent host frame. An empty catalog has
     // no projector callbacks to stage, so that checked frame is already final.

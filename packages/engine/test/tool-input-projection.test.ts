@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { expect, test } from 'bun:test';
 import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
@@ -386,4 +387,45 @@ test('cancellation added during preparation stays bound when execution omits opt
   expect(() => registry.assertPrepared(prepared)).toThrow(ToolInputProjectionError);
   await expect(registry.executePrepared(prepared, () => { claims++; })).rejects.toMatchObject({ problem: 'cancelled' });
   expect(claims).toBe(0); expect(bodies).toHaveLength(0);
+});
+
+
+test('DOM-realm imports are harmless while missing native signal intrinsics fail closed', () => {
+  const projectionUrl = new URL('../sdk/src/platform/tools/input-projection.ts', import.meta.url).href;
+  const registryUrl = new URL('../sdk/src/platform/tools/registry.ts', import.meta.url).href;
+  const script = `
+    const native = new AbortController();
+    globalThis.AbortSignal = class UnsupportedSignal {};
+    const projection = await import(${JSON.stringify(projectionUrl)});
+    projection.assertProjectionSignal(undefined);
+    if (projection.combineProjectionSignals(undefined) !== undefined) throw new Error('empty signal changed');
+    let reads = 0;
+    for (const signal of [native.signal, { get aborted() { reads++; return false; } }]) {
+      for (const check of [projection.projectionSignal, projection.assertProjectionSignal]) {
+        let refused = false;
+        try { check(signal); } catch (error) { refused = error instanceof projection.ToolInputProjectionError; }
+        if (!refused) throw new Error('unavailable signal validation passed');
+      }
+    }
+    if (reads !== 0) throw new Error('signal accessor ran');
+    const { ToolRegistry } = await import(${JSON.stringify(registryUrl)});
+    const registry = new ToolRegistry();
+    const args = { value: 'ordinary' };
+    registry.register({ definition: { name: 'ordinary', description: 'ordinary fixture', parameters: { type: 'object' } },
+      async execute(received) { if (received !== args) throw new Error('legacy identity changed'); return { success: true }; } });
+    if (!(await registry.execute('ordinary-call', 'ordinary', args)).success) throw new Error('ordinary execution failed');
+  `;
+  const child = spawnSync(process.execPath, ['--eval', script], { encoding: 'utf8', timeout: 20_000 });
+  expect(child.error).toBeUndefined();
+  expect(child.status, child.stderr).toBe(0);
+});
+
+test('ordinary legacy execution preserves input and option identity without a projection capability', async () => {
+  const { registry, tool, bodies } = fixture();
+  registry.register(tool);
+  const args = raw(); const options = { signal: new AbortController().signal };
+  expect(await registry.execute('legacy-identity', tool.definition.name, args, options)).toMatchObject({ success: true });
+  expect(bodies[0]?.args).toBe(args);
+  expect(bodies[0]?.opts).toBe(options);
+  expect(Object.isFrozen(args)).toBe(false);
 });

@@ -269,7 +269,7 @@ test('empty catalogs preserve one coherent host read per preparation check and r
   preparation.assertCurrent();
   expect(reads - capturedReads).toBe(2);
   f.source.criteria.push('Changed host criterion');
-  expect(() => preparation.assertCurrent()).toThrow('stale');
+  expect(() => preparation.assertCurrent()).toThrow('Autonomous admission authority, source or scope changed');
   expect(reads - capturedReads).toBe(3);
   await f.manager.releaseAutonomousChoices(handle);
   expect(f.projected).toHaveLength(0); expect(requests).toHaveLength(0);

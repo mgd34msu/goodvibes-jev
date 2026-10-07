@@ -497,6 +497,13 @@ export class ToolRegistry {
       };
     }
 
+    // Omitted protection retains the legacy direct-execution contract: its
+    // existing wrappers own their refusal/result shape and original arguments.
+    // prepareCall and owned ingress still use immutable captures for admission.
+    if (this.registrations.get(name)?.projector === undefined) {
+      return this.executeOrdinary(callId, name, tool, args, opts);
+    }
+
     let record: CapturedProjection | undefined;
     let retireExecution: (() => void) | undefined;
     try {
@@ -538,6 +545,30 @@ export class ToolRegistry {
       const message = summarizeError(err);
       throw new ToolError(message, name, err instanceof Error ? { cause: err } : undefined);
     } finally { retireExecution?.(); if (record) await this.releaseCapture(record); }
+  }
+
+  /** Original non-projected execute path; never used by a required projector. */
+  private async executeOrdinary(callId: string, name: string, tool: Tool,
+    args: Record<string, unknown>, opts?: ToolExecuteOptions): Promise<ToolResult> {
+    const signal = opts?.signal;
+    try {
+      const repair = await repairToolCall(name, args, tool.definition, signal);
+      if (signal?.aborted) throw new JudgmentError('aborted', 'the judgment call was cancelled');
+      const effectiveArgs = repair.repaired ? repair.fixed : args;
+      // The new projection-context field is owner-only, even on a legacy call.
+      const executionOptions = opts === undefined || projectionProperty(opts, 'inputProjectionContext') === undefined
+        ? opts : Object.freeze({ signal });
+      const result = await tool.execute(effectiveArgs, executionOptions);
+      const toolResult = { ...result, callId };
+      if (repair.warnings?.length) toolResult.warnings = [...(toolResult.warnings ?? []), ...repair.warnings];
+      if (repair.repaired && !toolResult.cancelled && !signal?.aborted) {
+        const note = `[Auto-repaired: ${repair.repairs.join(', ')}]`;
+        toolResult.output = typeof toolResult.output === 'string' ? `${note}\n${toolResult.output}` : note;
+      }
+      return toolResult;
+    } catch (error) {
+      throw new ToolError(summarizeError(error), name, error instanceof Error ? { cause: error } : undefined);
+    }
   }
 
   /**

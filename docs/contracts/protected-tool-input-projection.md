@@ -49,7 +49,11 @@ publishing an earlier successful prefix. Unknown tools retain their existing
 recoverable failure path after local input preflight.
 
 `prepareCall` also enforces the registered projector before repair. The direct
-registry execution route enforces it before its own repair/body path. Old
+registry execution route enforces it before its own repair/body path for a
+protected registration. Ordinary direct execution retains its original
+argument/options identity and wrapper refusal results. A realm without native
+signal intrinsics can import the registry, but cannot validate a protected
+signal through a property-access fallback. Old
 duck-typed embeddings without the new owner, raw calls to a tool body, the
 separate phased executor and model/provider text outside these argument paths
 are not certified by this prerequisite.

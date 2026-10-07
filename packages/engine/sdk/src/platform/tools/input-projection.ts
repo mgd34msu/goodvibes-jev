@@ -109,24 +109,31 @@ export function projectionFunction<T extends (...args: never[]) => unknown>(valu
 }
 
 const applyIntrinsic = Reflect.apply;
-const abortedIntrinsic = Object.getOwnPropertyDescriptor(AbortSignal.prototype, 'aborted')!.get!;
-const anyIntrinsic = AbortSignal.any;
+// Browser-test realms can install a non-native AbortSignal. Importing the
+// registry must remain harmless there; native signal use still fails closed.
+const signalConstructor = typeof AbortSignal === 'function' ? AbortSignal : undefined;
+const abortedIntrinsic = signalConstructor && Object.getOwnPropertyDescriptor(signalConstructor.prototype, 'aborted')?.get;
+const anyIntrinsic = signalConstructor?.any;
 
 export function projectionSignal(value: unknown): AbortSignal | undefined {
   if (value === undefined) return undefined;
-  if (!value || typeof value !== 'object' || nodeTypes.isProxy(value)) throw new ToolInputProjectionError('invalid');
+  if (!value || typeof value !== 'object' || nodeTypes.isProxy(value) || !abortedIntrinsic) throw new ToolInputProjectionError('invalid');
   try { applyIntrinsic(abortedIntrinsic, value, []); }
   catch { throw new ToolInputProjectionError('invalid'); }
   return value as AbortSignal;
 }
 
 export function assertProjectionSignal(signal: AbortSignal | undefined): void {
-  if (signal && applyIntrinsic(abortedIntrinsic, signal, [])) throw new ToolInputProjectionError('cancelled');
+  if (!signal) return;
+  if (!abortedIntrinsic) throw new ToolInputProjectionError('invalid');
+  if (applyIntrinsic(abortedIntrinsic, signal, [])) throw new ToolInputProjectionError('cancelled');
 }
 
 export function combineProjectionSignals(...signals: (AbortSignal | undefined)[]): AbortSignal | undefined {
   const present = [...new Set(signals.filter((signal): signal is AbortSignal => signal !== undefined))];
-  return present.length === 0 ? undefined : present.length === 1 ? present[0] : applyIntrinsic(anyIntrinsic, AbortSignal, [present]) as AbortSignal;
+  if (present.length < 2) return present[0];
+  if (!anyIntrinsic || !signalConstructor) throw new ToolInputProjectionError('invalid');
+  return applyIntrinsic(anyIntrinsic, signalConstructor, [present]) as AbortSignal;
 }
 
 export function projectionContext(value: unknown): object | undefined {
