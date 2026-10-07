@@ -141,7 +141,7 @@ export function createHostedSessionOptions(services: RuntimeServices): DaemonHos
 
   return {
     nativeConversation: nativeHostedConversationOwner(services.gatewayMethods),
-    floorFactory: ({ workspaceRoot }): HostedWorkspaceFloor => {
+    floorFactory: async ({ workspaceRoot }): Promise<HostedWorkspaceFloor> => {
       const floor = createClientRuntimeServices({
         configManager: services.configManager,
         // The daemon's own bus: a hosted turn's stream events reach the
@@ -160,22 +160,31 @@ export function createHostedSessionOptions(services: RuntimeServices): DaemonHos
         // not take the daemon down on a create call.
         providerRegistryFactory: createLaunchTolerantProviderRegistry,
       });
-      // The machine's own local models. The daemon's registry learned them at
-      // boot (the persisted discovery cache) and from the LAN scan; a floor
-      // builds its own registry and would otherwise be the only place on this
-      // box where they are not routable. Servers found by a scan that finishes
-      // AFTER a floor is built reach the next floor, not this one, stated
-      // rather than hidden, because a wrong claim here would look like a model
-      // that exists everywhere except in hosted sessions.
-      const discovered = services.providerRegistry.listDiscoveredServers();
-      if (discovered.length > 0) floor.providerRegistry.registerDiscoveredProviders([...discovered]);
-      return {
-        services: floor,
-        // Each workspace floor owns its own contract store and runner.
-        contractRunner: floor.contractRunner,
-        execPosture: hostedExecPosture,
-        dispose: (): void => floor.dispose(),
-      };
+      try {
+        // The floor's own tolerant custom load must settle before cached names
+        // can be copied or a hosted model can be selected. The shared floor
+        // owner drains this async acquisition and refuses late shutdown leases.
+        await floor.providerRegistry.ready();
+        // Copy the daemon registry's discovery snapshot into this floor. The
+        // explicit host preloads its home/surface cache before server admission;
+        // it does not launch a LAN scan. Later explicit registry changes reach
+        // new floors only; existing floors do not watch the persisted cache.
+        const discovered = services.providerRegistry.listDiscoveredServers();
+        if (discovered.length > 0) floor.providerRegistry.registerDiscoveredProviders([...discovered]);
+        return {
+          services: floor,
+          // Each workspace floor owns its own contract store and runner.
+          contractRunner: floor.contractRunner,
+          execPosture: hostedExecPosture,
+          dispose: (): void => floor.dispose(),
+        };
+      } catch {
+        // Until publication, this factory owns its returned client graph.
+        // Never inspect or expose external readiness/registration failures.
+        try { floor.dispose(); }
+        catch { throw new Error('Daemon hosted workspace provider preload cleanup failed'); }
+        throw new Error('Daemon hosted workspace provider preload failed');
+      }
     },
     systemPrompt: hostedSystemPrompt,
   };

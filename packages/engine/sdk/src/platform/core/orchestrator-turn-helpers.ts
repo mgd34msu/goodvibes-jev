@@ -14,6 +14,9 @@ import { emitCommunicationConsumed, emitPlanStrategySelected, emitToolReconciled
 import { buildSyntheticResult } from './tool-reconciliation.js';
 import { autoSpawnPendingItems } from './orchestrator-tool-runtime.js';
 import type { ToolCall, ToolResult } from '../types/tools.js';
+import type { ToolRegistry } from '../tools/registry.js';
+import type { ToolInputProjectionOptions } from '../tools/input-projection.js';
+import { captureToolInputCalls, projectToolInputBatch } from './tool-input-ingress.js';
 import type { AgentManager, AgentRecord } from '../tools/agent/index.js';
 import type { ContractSessionHooks } from '../contract/agent-hooks.js';
 import { toolResultStartedContract } from '../contract/intake-route.js';
@@ -249,7 +252,10 @@ function attachAuthoritativeTaskToAgentCalls(toolCalls: readonly ToolCall[], use
   });
 }
 
-export async function handleToolResponseOutcome(args: {
+type ToolResponseOutcomeArgs = {
+  /** Production ingress supplies the real registry before publishing tool input. */
+  toolRegistry?: ToolRegistry | undefined;
+  inputProjection?: ToolInputProjectionOptions | undefined;
   onTurnTerminal?: ((publish: () => void) => void) | undefined;
   conversation: ConversationManager;
   agentManager: Pick<AgentManager, 'list' | 'spawn'>;
@@ -270,8 +276,19 @@ export async function handleToolResponseOutcome(args: {
   memoryRecordIds?: readonly string[] | undefined;
   /** The session-mode contract unit this turn works on, when there is one. */
   contractSession?: ContractSessionTurn | undefined;
-}): Promise<{ continueLoop: boolean; results: ToolResult[] }> {
-  const toolCalls = attachAuthoritativeTaskToAgentCalls(args.response.toolCalls, args.userText);
+};
+
+export async function handleToolResponseOutcome(args: ToolResponseOutcomeArgs): Promise<{ continueLoop: boolean; results: ToolResult[] }> {
+  const originalCalls = attachAuthoritativeTaskToAgentCalls(captureToolInputCalls(args.response.toolCalls), args.userText);
+  const batch = args.toolRegistry ? await projectToolInputBatch(args.toolRegistry, originalCalls, args.inputProjection) : undefined;
+  try {
+    batch?.assertCurrent();
+    return await handleOwnedToolResponseOutcome({ ...args, response: { ...args.response, toolCalls: batch?.calls ?? originalCalls } });
+  } finally { await batch?.release(); }
+}
+
+async function handleOwnedToolResponseOutcome(args: ToolResponseOutcomeArgs): Promise<{ continueLoop: boolean; results: ToolResult[] }> {
+  const toolCalls = args.response.toolCalls;
   args.setPendingToolCalls(toolCalls);
   args.conversation.addAssistantMessage(args.response.content, {
     toolCalls,

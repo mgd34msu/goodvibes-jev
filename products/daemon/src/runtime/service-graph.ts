@@ -178,7 +178,9 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       featureFlags,
       runtimeBus: options.runtimeBus,
     });
-    disposalScope.registry.add('provider metadata startup', async () => { await Promise.all([providerRegistry.modelDiscoverySettled(), benchmarkStore.benchmarksSettled()]); });
+    // Also own initial custom loading if graph acquisition fails before a host
+    // can receive the registry and await readiness itself.
+    disposalScope.registry.add('provider metadata startup', async () => { await Promise.all([providerRegistry.ready(), providerRegistry.modelDiscoverySettled(), benchmarkStore.benchmarksSettled()]); });
     ensureConfiguredModelIsRoutable(providerRegistry, configManager);
     providerRegistry.initCustomProviders();
     // Background, TTL-respecting live model discovery so provider model lists

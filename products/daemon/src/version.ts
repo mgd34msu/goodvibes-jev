@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 // Read version from package.json at runtime (eliminates build-time sync issues).
 // Fallback for compiled binaries where package.json may not be present.
-// The prebuild script updates the fallback value before compilation.
+// The native prebuild check requires this fallback to match the current manifest.
 // Uses import.meta.dir (Bun) to locate package.json relative to this file,
 // which is correct regardless of the process working directory.
 let _version = '1.28.25';
