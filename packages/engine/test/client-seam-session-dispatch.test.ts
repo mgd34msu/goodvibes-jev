@@ -19,6 +19,7 @@
  * surface products inherit the pins rather than each writing their own.
  */
 import { describe, expect, test } from 'bun:test';
+import type { SharedSessionContinuationResult } from '../sdk/src/platform/control-plane/session-intents.ts';
 import { createWireSessionDispatch, readSurfaceAgentOutcome } from '../sdk/src/platform/runtime/client/session-dispatch.ts';
 import type { SessionInputsWireClient, SurfaceAgentOutcome } from '../sdk/src/platform/runtime/client/session-dispatch.ts';
 
@@ -258,4 +259,50 @@ describe('the reply half: what the surface reports back about the run it started
     expect(readSurfaceAgentOutcome({ status: 'failed', error: 'boom' }))
       .toEqual({ status: 'failed', answer: 'boom' });
   });
+});
+
+describe('explicit native continuation dispositions', () => {
+  test.each(['held', 'unknown'] as const)('%s never consumes or binds a broker input', async disposition => {
+    const wire = fakeInputs([{ id: 'held', intent: 'submit', body: 'ignored' }]);
+    const dispatch = createWireSessionDispatch({ hostedSessionIds: () => ['s1'], intervalMs: 5 });
+    dispatch.setContinuationRunner(() => ({ disposition, reason: 'recovery required' }));
+    dispatch.activate(wire.client); await tick(); dispatch.stop(); expect(wire.delivered).toEqual([]);
+  });
+  test('verified transfer consumes the exact input without inventing a local runner', async () => {
+    const wire = fakeInputs([{ id: 'transferred', intent: 'submit', body: 'ignored' }]);
+    const dispatch = createWireSessionDispatch({ hostedSessionIds: () => ['s1'], intervalMs: 5 });
+    dispatch.setContinuationRunner(() => ({ disposition: 'transferred', requestId: 'same-original-request' }));
+    dispatch.activate(wire.client); await tick(); dispatch.stop(); expect(wire.delivered).toEqual(['transferred']);
+  });
+  test('a held newest tail cannot starve an older eligible input', async () => {
+    const rows = Array.from({ length: 21 }, (_, index) => ({ id: `i${index}`, intent: 'submit', body: 'ignored' }));
+    const delivered: string[] = [];
+    const dispatch = createWireSessionDispatch({ hostedSessionIds: () => ['s1'], intervalMs: 5 });
+    dispatch.setContinuationRunner(({ input }) => input.id === 'i0' ? { disposition: 'transferred', requestId: 'original' } : { disposition: 'held', reason: 'no source' });
+    dispatch.activate({ listInputs: async (_session, options) => ({ inputs: rows.filter(row => !delivered.includes(row.id)).slice(-(options.limit ?? 100)) }) as never,
+      deliverInput: async (_session, id) => { delivered.push(id); } });
+    await tick(); dispatch.stop(); expect(delivered).toEqual(['i0']);
+  });
+  test('detaching while a continuation is pending never acknowledges into the old connection', async () => {
+    const wire = fakeInputs([{ id: 'i', intent: 'submit', body: 'ignored' }]);
+    let finish!: () => void;
+    const dispatch = createWireSessionDispatch({ hostedSessionIds: () => ['s1'], intervalMs: 5 });
+    dispatch.setContinuationRunner(async () => { await new Promise<void>(resolve => { finish = resolve; }); return { disposition: 'transferred', requestId: 'same' }; });
+    dispatch.activate(wire.client); while (!finish) await Bun.sleep(1);
+    dispatch.deactivate('host changed'); finish(); await tick(); dispatch.stop(); expect(wire.delivered).toEqual([]);
+  });
+});
+
+test('an explicit started disposition with no real runner stays unconsumed', async () => {
+  const wire = fakeInputs([{ id: 'i', intent: 'submit', body: 'ignored' }]);
+  const dispatch = createWireSessionDispatch({ hostedSessionIds: () => ['s1'], intervalMs: 5 });
+  dispatch.setContinuationRunner(() => ({ disposition: 'started', agentId: ' ' }));
+  dispatch.activate(wire.client); await tick(); dispatch.stop(); expect(wire.delivered).toEqual([]);
+});
+
+// Public embedders have historically extended this interface. Keep it extendable.
+interface LegacyContinuationResult extends SharedSessionContinuationResult { readonly legacy: true; }
+test('legacy continuation result interface remains structurally compatible', () => {
+  const legacy: LegacyContinuationResult = { agentId: 'legacy-agent', legacy: true };
+  expect(legacy.agentId).toBe('legacy-agent');
 });

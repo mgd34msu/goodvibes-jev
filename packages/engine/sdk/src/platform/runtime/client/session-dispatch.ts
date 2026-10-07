@@ -170,6 +170,7 @@ export function createWireSessionDispatch(options: WireSessionDispatchOptions): 
   let client: SessionInputsWireClient | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
   let inFlight = false;
+  let generation = 0;
   /** agentId -> the input it is answering. Insertion-ordered, so the oldest is first. */
   const awaitingAnswers = new Map<string, AwaitedAnswer>();
 
@@ -187,10 +188,14 @@ export function createWireSessionDispatch(options: WireSessionDispatchOptions): 
   };
 
   const drainSession = async (active: SessionInputsWireClient, sessionId: string): Promise<void> => {
-    const bound = runner;
+    const bound = runner; const selectedGeneration = generation;
+    const current = () => client === active && runner === bound && generation === selectedGeneration;
     if (!bound) return;
-    const { inputs } = await active.listInputs(sessionId, { state: 'queued', limit: 20 });
+    const { inputs } = await active.listInputs(sessionId, { state: 'queued', limit: 500 });
+    // The broker retains at most 500 inputs. Read the whole bounded queue so
+    // a held tail never starves older eligible inputs.
     for (const input of inputs) {
+      if (!current()) return;
       // A `submit` is the continuation case: a message posted into a session
       // THIS surface hosts, which the surface's loop must answer. `steer` and
       // `follow-up` are the live-turn path and belong to the inbound steer
@@ -200,7 +205,16 @@ export function createWireSessionDispatch(options: WireSessionDispatchOptions): 
       let agentId: string | undefined;
       try {
         const spawned = await bound({ sessionId, task: input.body, input });
+        if (!current()) return;
+        // Explicit native outcomes never use null as an ambiguous acknowledgment.
+        if (spawned?.disposition === 'held' || spawned?.disposition === 'unknown') continue;
+        if (spawned?.disposition === 'transferred') {
+          if (!spawned.requestId.trim()) continue;
+          await active.deliverInput(sessionId, input.id, { consumed: true });
+          continue;
+        }
         const claimed = spawned?.agentId?.trim();
+        if (spawned?.disposition === 'started' && !claimed) continue;
         if (claimed) agentId = claimed;
       } catch (error) {
         log.warn('[session dispatch] the bound runner rejected a continuation', {
@@ -292,21 +306,21 @@ export function createWireSessionDispatch(options: WireSessionDispatchOptions): 
 
   return {
     setContinuationRunner(next) {
-      runner = next;
+      ++generation; runner = next;
       if (next !== null && client !== null) ensureTimer();
     },
     activate(next) {
-      client = next;
+      ++generation; client = next;
       if (runner !== null) ensureTimer();
       log.info('[session dispatch] adopted the daemon\'s session inputs for continuation dispatch');
     },
     deactivate(reason) {
-      client = null;
+      ++generation; client = null;
       log.info(`[session dispatch] detached: ${reason}`);
     },
     stop() {
       if (timer !== null) { clearInterval(timer); timer = null; }
-      client = null;
+      ++generation; client = null;
       awaitingAnswers.clear();
     },
   };
