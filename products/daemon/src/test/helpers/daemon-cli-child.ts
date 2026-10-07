@@ -22,6 +22,7 @@ input.on('line', (line) => {
 });
 const root = process.env.HOME!;
 process.exitCode = await runDaemonCli(process.argv.slice(2), {
+  pairingOutput: process.env.GOODVIBES_TEST_PAIRING_OUTPUT === '1' ? emit : undefined,
   runtime: {
     localUserAuthManager: new UserAuthManager({
       bootstrapFilePath: join(root, 'fixture-users.json'), bootstrapCredentialPath: join(root, 'fixture-bootstrap.txt'),

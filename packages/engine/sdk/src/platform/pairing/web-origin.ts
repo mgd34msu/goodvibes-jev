@@ -2,19 +2,14 @@
  * web-origin.ts, the web-app origin a pairing deep link points at, and the
  * one-time write of `web.publicBaseUrl` from the stable-name resolution.
  *
- * The origin is the WEB endpoint's public URL (the surface a `#pair=<token>`
- * link opens), not the control-plane daemon URL. A user-set `web.publicBaseUrl`
- * is authoritative and is never re-derived or clobbered; only when it is empty
- * does this fall back to `http://<stable-host>:<web-port>` using the same ladder
- * (stable-host.ts) the printed/QR link uses, so the link and the persisted
- * origin always agree.
- *
- * The web endpoint's host is resolved from the three stored `web.*` keys and its
- * port through {@link resolveWebPort}, which is what actually binds the
- * listener, so a printed origin can never name a port the daemon is not on.
+ * An explicit public URL is authoritative. The bundled WebUI shares the
+ * control-plane listener: its fallback must use that binding, not the declared
+ * web port, which has no separate bundle listener. Other web surfaces retain
+ * their declared endpoint fallback. The bundled case treats the exact shipped
+ * public URL placeholder like an empty value, as the daemon webui command does.
  */
 import type { ConfigManager } from '../config/manager.js';
-import { resolveWebPort } from '../daemon/host-resolver.js';
+import { resolveHostBinding, resolveWebPort } from '../daemon/host-resolver.js';
 import { isLoopbackHost } from './origin-posture.js';
 import { stableUrlHostForBindHost, type ResolvedStableHost, type StableHostInputs } from './stable-host.js';
 
@@ -68,9 +63,12 @@ function webBindHost(config: Pick<ConfigManager, 'get'>): string {
 export function resolvePairingWebOrigin(
   configManager: Pick<ConfigManager, 'get'>,
   probe?: () => StableHostInputs,
+  /** Settled listener observation, only used for bundled serving fallback. */
+  boundControlPlane?: { readonly host: string; readonly port: number },
 ): PairingWebOrigin {
   const publicBaseUrl = trimTrailingSlash(String(configManager.get('web.publicBaseUrl') ?? '').trim());
-  if (publicBaseUrl) {
+  const bundled = configManager.get('controlPlane.webui.serve') === true;
+  if (publicBaseUrl && !(bundled && publicBaseUrl === 'http://127.0.0.1:3423')) {
     return {
       origin: publicBaseUrl,
       resolvedHost: { host: hostnameOf(publicBaseUrl), kind: 'gateway-interface', stable: true },
@@ -78,9 +76,13 @@ export function resolvePairingWebOrigin(
       fromPublicBaseUrl: true,
     };
   }
-  const port = resolveWebPort(configManager.get('web.port'));
-  const resolvedHost = stableUrlHostForBindHost(webBindHost(configManager), probe);
-  const origin = formatHttpOrigin(resolvedHost.host, port);
+  const binding = bundled ? boundControlPlane ?? resolveHostBinding(
+    String(configManager.get('controlPlane.hostMode') ?? 'local'),
+    String(configManager.get('controlPlane.host') ?? '127.0.0.1'),
+    Number(configManager.get('controlPlane.port')), 'controlPlane',
+  ) : { host: webBindHost(configManager), port: resolveWebPort(configManager.get('web.port')) };
+  const resolvedHost = stableUrlHostForBindHost(binding.host, probe);
+  const origin = formatHttpOrigin(resolvedHost.host, binding.port);
   return { origin, resolvedHost, httpOnLan: isHttpOnLan(origin), fromPublicBaseUrl: false };
 }
 
@@ -103,7 +105,7 @@ export function ensurePublicBaseUrl(
   probe?: () => StableHostInputs,
 ): PairingWebOrigin {
   const resolved = resolvePairingWebOrigin(configManager, probe);
-  if (!resolved.fromPublicBaseUrl && resolved.resolvedHost.stable) {
+  if (!String(configManager.get('web.publicBaseUrl') ?? '').trim() && !resolved.fromPublicBaseUrl && resolved.resolvedHost.stable) {
     configManager.setDynamic('web.publicBaseUrl', resolved.origin);
     return { ...resolved, fromPublicBaseUrl: true };
   }

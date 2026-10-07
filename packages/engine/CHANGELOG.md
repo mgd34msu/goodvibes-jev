@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Render daemon startup pairing from the settled bundled WebUI listener and
+  effective daemon token, only in an interactive terminal or an explicitly
+  selected local pairing sink. Preserve explicit external WebUI origins,
+  refuse unusable startup links, and honor local pair token/port overrides
+  without persisting runtime settings or replacing the shared identity.
+
 - Capture registered tool-input projections before conversation/progress
   publication, ordinary repair and autonomous admission, including unselected
   host alternatives. Add an owned framed-reference adapter over the name-only

@@ -73,6 +73,8 @@ export function renderPairingBanner(input: PairingBannerInput): PairingBanner {
       '',
       `  ${input.origin}`,
       '',
+      `  ${deepLink}`,
+      '',
       ...(input.offers.length > 0 ? ['Offers (each declinable in the web app):', ...formatPairingOffers(input.offers), ''] : []),
       ...(capabilities.length > 0 ? ['This device will get:', ...capabilities, ''] : []),
       ...(notice ? [notice, ''] : []),

@@ -40,6 +40,7 @@ import { renderPairingBanner } from '../core/pairing-banner.js';
 import {
   extractOperatorToken,
   resolveRemoteDaemonTarget,
+  resolveRuntimeEndpointBinding,
   type RemoteDaemonTarget,
 } from '@goodvibes-jev/engine/terminal-shell';
 import { callDaemonWsVerb, type DaemonWebSocketFactory } from '@goodvibes-jev/engine/terminal-shell';
@@ -51,6 +52,8 @@ export interface PairCommandDeps {
   readonly version: string;
   /** Injected in tests so nothing reads a real token file. */
   readonly readToken: (daemonHomeDir: string) => string | undefined;
+  /** Process-local override, never adopted into the stored companion identity. */
+  readonly operatorToken?: string | undefined;
   /** Injected in tests so the remote mint path never opens a real socket. */
   readonly socketFactory?: DaemonWebSocketFactory | undefined;
 }
@@ -122,8 +125,11 @@ interface PairingHandoffCreateResult {
 /** `goodvibes-daemon pair` with no `--host`, or one naming this machine. */
 function runLocalReprint(input: RunPairCommandInput): DaemonCommandResult {
   const { flags } = input;
+  if (flags.port !== undefined && (!Number.isInteger(flags.port) || flags.port < 1 || flags.port > 65535)) {
+    return failure('the local pairing port must identify a concrete listener', 'use the nonzero port reported by the running daemon', flags.json);
+  }
 
-  const token = extractOperatorToken(input.readToken(input.daemonHomeDir));
+  const token = flags.token ?? input.operatorToken ?? extractOperatorToken(input.readToken(input.daemonHomeDir));
   if (token === undefined) {
     return failure(
       'no operator token was found for this machine, so there is no link to print',
@@ -132,10 +138,12 @@ function runLocalReprint(input: RunPairCommandInput): DaemonCommandResult {
     );
   }
 
-  // The non-writing read: `ensurePublicBaseUrl` (which the boot path uses)
-  // freezes a resolved origin into settings, and a command that only PRINTS a
-  // link has no business writing configuration as a side effect.
-  const origin = resolvePairingWebOrigin(input.configManager);
+  // A local reprint is a non-writing configured view. It cannot observe an
+  // unrelated process's runtime overrides; an explicit --port carries that
+  // choice through for the bundled control-plane surface.
+  const binding = flags.port === undefined ? undefined
+    : { ...resolveRuntimeEndpointBinding(input.configManager, 'controlPlane'), port: flags.port };
+  const origin = resolvePairingWebOrigin(input.configManager, undefined, binding);
   const offers = availablePairingOffers({
     relayEnabled: input.configManager.get('relay.enabled') === true,
     stepUpAvailable: true,

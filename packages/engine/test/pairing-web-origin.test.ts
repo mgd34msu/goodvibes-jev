@@ -31,6 +31,22 @@ const stableProbe = (): StableHostInputs => ({ hostname: 'workshop', gatewayInte
 const unstableProbe = (): StableHostInputs => ({ hostname: 'localhost', gatewayInterfaceIp: '192.168.1.42' });
 
 describe('resolvePairingWebOrigin', () => {
+  test.each(['', 'http://127.0.0.1:3423'])('bundled fallback uses its control-plane listener for %s', (publicUrl) => {
+    const cfg = fakeConfig({ 'web.publicBaseUrl': publicUrl, 'web.port': 7777,
+      'controlPlane.webui.serve': true, 'controlPlane.hostMode': 'network', 'controlPlane.port': 4567 });
+    expect(resolvePairingWebOrigin(cfg, stableProbe).origin).toBe('http://workshop.local:4567');
+    expect(resolvePairingWebOrigin(cfg, stableProbe, { host: '::1', port: 5678 }).origin).toBe('http://[::1]:5678');
+    expect(cfg.writes).toEqual([]);
+  });
+
+  test('an explicit public URL remains authoritative over a bundled bound observation', () => {
+    const cfg = fakeConfig({ 'web.publicBaseUrl': 'https://vibes.example/app/', 'controlPlane.webui.serve': true });
+    expect(resolvePairingWebOrigin(cfg, stableProbe, { host: '127.0.0.1', port: 5678 })).toMatchObject({
+      origin: 'https://vibes.example/app', fromPublicBaseUrl: true,
+    });
+    expect(cfg.writes).toEqual([]);
+  });
+
   test('a user-set web.publicBaseUrl is authoritative and never re-derived', () => {
     const cfg = fakeConfig({ 'web.publicBaseUrl': 'https://vibes.example/' });
     const resolved = resolvePairingWebOrigin(cfg, stableProbe);
@@ -61,6 +77,12 @@ describe('resolvePairingWebOrigin', () => {
 });
 
 describe('ensurePublicBaseUrl', () => {
+  test('bundled placeholder resolution does not authorize overwriting a stored URL', () => {
+    const cfg = fakeConfig({ 'web.publicBaseUrl': 'http://127.0.0.1:3423',
+      'controlPlane.webui.serve': true, 'controlPlane.hostMode': 'network', 'controlPlane.port': 4567 });
+    expect(ensurePublicBaseUrl(cfg, stableProbe).origin).toBe('http://workshop.local:4567');
+    expect(cfg.writes).toEqual([]);
+  });
   test('persists the derived origin once when a stable name exists', () => {
     const cfg = fakeConfig({ 'web.publicBaseUrl': '', 'web.hostMode': 'network', 'web.port': 3141 });
     const resolved = ensurePublicBaseUrl(cfg, stableProbe);

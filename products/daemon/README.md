@@ -76,6 +76,17 @@ do not rewrite the shared identity. A corrupt store is preserved beside the
 replacement when possible, with an explicit warning that clients must pair
 again. See `docs/audit/daemon-companion-token-bootstrap.md` for the boundaries.
 
+After the listener settles, an interactive terminal receives the shared pairing
+QR and copyable link using the effective daemon token. Redirected/service stdout
+stays credential-free; a composed launcher may explicitly supply a trusted local
+`pairingOutput` sink. Bundled WebUI links use the actual control-plane listener,
+while a configured external WebUI URL remains authoritative. Missing local
+bundles and unusable URLs produce a value-free notice instead of a dead QR.
+`pair` is an explicit credential reveal: pass the same daemon-token environment
+override (or `--token`) and any overridden nonzero `--port` to reproduce the link.
+A separate command cannot discover an unrelated process's ephemeral binding.
+See `docs/audit/daemon-functional-pairing-startup.md`.
+
 `goodvibes-daemon send "message" --channel ntfy` sends through one of the thirteen
 configured channels; omit the message to read stdin. `send --list` shows enabled
 channels and configured destinations, withholding declared credential-bearing

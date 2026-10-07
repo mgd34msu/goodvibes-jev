@@ -17,6 +17,7 @@ import type { RuntimeServicesOptions } from '../runtime/services.js';
 import { runDaemonProcess, type DaemonProcessOptions } from '../daemon/process-lifecycle.js';
 import type { DaemonCliConfiguration } from './configuration.js';
 import type { DaemonCliFlags } from './types.js';
+import { renderDaemonStartupPairing } from './startup-pairing.js';
 
 /** The launcher supplies real inbox composition and explicitly chooses host-only capabilities. */
 export type DaemonCliRuntime = Pick<RuntimeServicesOptions,
@@ -52,6 +53,8 @@ export function runConfiguredDaemonCli(
   processOptions?: DaemonProcessOptions,
   stderr: (message: string) => void = (message) => { writeSync(2, `${message}\n`); },
   stdout: (message: string) => void = (message) => { writeSync(1, `${message}\n`); },
+  pairingOutput: ((message: string) => void) | undefined = process.stdout.isTTY === true
+    ? (message) => { writeSync(1, `${message}\n`); } : undefined,
 ) {
   const { config, homeDirectory, daemonHomeDirectory, workingDirectory } = configuration;
   // runDaemonProcess constructs its owner even when shutdown won admission.
@@ -104,6 +107,13 @@ export function runConfiguredDaemonCli(
           if (closed) return undefined;
         }
         requireRunning();
+        if (pairingOutput) {
+          // Only an interactive terminal or an explicitly supplied local sink
+          // receives credentials. Service/redirected diagnostics stay private.
+          pairingOutput(renderDaemonStartupPairing(config, actual, token, version));
+          if (closed) return undefined;
+          requireRunning();
+        }
         stdout(`goodvibes-daemon ${version} host started (${snapshot.state})`);
         if (closed) return undefined;
         requireRunning();
