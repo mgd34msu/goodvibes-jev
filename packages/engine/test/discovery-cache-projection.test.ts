@@ -145,12 +145,12 @@ describe('persisted discovery cache boundary', () => {
       expect(registry.has(server.name)).toBe(true);
       expect(registry.has(sibling.name)).toBe(true);
       expect(registry.listDiscoveredServers()).toEqual([server, sibling]);
-      expect(registry.listModels().find((model) => model.provider === server.name)?.description).toBe('Discovered local unknown model');
+      expect(registry.listModels().find((model) => model.provider === server.name)?.description).toBe('Discovered unknown model');
       const records = await api.listModels({ providerId: server.name });
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({ modelId: 'fixture-model', providerId: server.name,
         registryKey: `${server.name}:fixture-model`, displayName: 'fixture-model',
-        description: 'Discovered local unknown model', contextWindow: 16384 });
+        description: 'Discovered unknown model', contextWindow: 16384 });
       expect(JSON.stringify(records)).not.toContain('fixture-password');
       expect(JSON.stringify(records)).not.toContain('fixture-token');
       expect(JSON.stringify(records)).not.toContain('private%2Froute');

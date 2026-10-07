@@ -336,7 +336,7 @@ export class ProviderRegistry {
           provider: server.name,
           registryKey: `${server.name}:${modelId}`,
           displayName: modelId,
-          description: `Discovered local ${server.serverType} model`,
+          description: `Discovered ${server.serverType} model`,
           capabilities: traits.modelCapabilities,
           ...(traits.reasoningEffort ? { reasoningEffort: traits.reasoningEffort } : {}),
           contextWindow: server.modelContextWindows?.[modelId] ?? 8192,
