@@ -234,7 +234,7 @@ if ((researchRunnerLike(lower) || visualResearchReportLike(lower) || hasAny(lowe
       missingFields: delegated ? ['task scope', 'workspace or worktree target', 'success criteria', 'review expectation'] : undefined,
       supportingRoutes: delegated
         ? [
-          'agent_work_plan action:"dispatch_agents" confirm:true explicitUserRequest:"..."',
+          'Owner: /work submit-file <JSON-path> (submission only; no execution)',
           'delegation action:"route" target:"tui handoff"',
           'agent_harness mode:"agent_orchestration"',
         ]

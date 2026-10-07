@@ -560,7 +560,7 @@ function managedExecutionPlan(
         label: 'Intake and lane selection',
         status: 'ready',
         purpose: 'Choose serial chat, one visible agent, batch agents, delegated review, or remote inspection based on user outcome.',
-        routes: ['delegation action:"status"', 'execution action:"status"', 'agent_harness mode:"agent_orchestration"', 'agent_work_plan action:"dispatch_agents" ids:["..."] confirm:true explicitUserRequest:"..."'],
+        routes: ['delegation action:"status"', 'execution action:"status"', 'agent_harness mode:"agent_orchestration"', 'Owner: /work submit-file <JSON-path> (submission only; no execution)'],
       },
       {
         id: 'visible-agent-work',

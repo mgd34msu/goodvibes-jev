@@ -89,7 +89,7 @@ export function buildAgentWorkspaceWorkPlanEditorSubmission(
       parts.join(' '),
       'Opening work plan item creation',
       'Opening work plan item creation.',
-      'The workspace handed a visible work plan item creation command to the shell-owned command router.',
+      'The workspace handed a local todo creation command to the shell-owned command router. No native work is submitted or executed.',
       'safe',
     );
   }
@@ -121,7 +121,7 @@ export function buildAgentWorkspaceWorkPlanEditorSubmission(
       command,
       'Opening work plan status update',
       'Opening work plan status update.',
-      'The workspace handed a visible work plan status update command to the shell-owned command router.',
+      'The workspace handed a local todo status update to the shell-owned command router. Local done is not native verified completion.',
       'safe',
     );
   }
