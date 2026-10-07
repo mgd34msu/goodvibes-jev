@@ -32,6 +32,9 @@ The adoption helper `resolveDaemonCompanionToken` is not used: it deliberately
 persists explicit overrides, which would change this upstream boot contract.
 Token pruning, QR/pairing display, public-URL persistence and service adoption
 are not implemented by this slice.
+The subsequent [functional startup pairing slice](daemon-functional-pairing-startup.md)
+adds display using the effective token, with a separate trusted local output
+boundary; it does not add pruning, public-URL persistence or service adoption.
 
 ## Publication and recovery
 

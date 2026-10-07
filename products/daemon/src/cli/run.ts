@@ -30,6 +30,8 @@ export interface DaemonCliOptions {
   readonly process?: DaemonProcessOptions;
   readonly stdout?: (line: string) => void;
   readonly stderr?: (line: string) => void;
+  /** Explicit local credential-bearing output; automatic startup otherwise requires a TTY. */
+  readonly pairingOutput?: (line: string) => void;
 }
 
 const PARTIAL = 'This partial daemon package requires an explicit inbox composition for serving. Built-in provider wiring is not complete.';
@@ -97,7 +99,8 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
       case 'update': return result(await runUpdateCommand({ ...remote, flags: { ...remoteFlags, check: cli.flags.check } }));
       case 'sessions': return result(await runSessionsCommand({ ...remote, flags: { ...remoteFlags, all: cli.flags.all }, args: cli.commandArgs }));
       case 'pair': return result(await runPairCommand({ configManager: config, daemonHomeDir: daemonHomeDirectory,
-        version: VERSION, readToken: readOperatorTokenFile, flags: { ...remoteFlags, yes: cli.flags.yes } }));
+        version: VERSION, readToken: readOperatorTokenFile, operatorToken: env.GOODVIBES_DAEMON_TOKEN,
+        flags: { ...remoteFlags, yes: cli.flags.yes } }));
       case 'webui': return result(runWebuiCommand(cli.commandArgs, { configManager: config, baseDirectory: workingDirectory }));
       case 'cluster': {
         const answer = await runClusterCommand({ argv: cli.commandArgs, configManager: config, daemonHomeDir: daemonHomeDirectory });
@@ -108,7 +111,7 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
         const { prepareDaemonCliServe, runConfiguredDaemonCli } = await import('./serve.js');
         const errors = prepareDaemonCliServe(config, cli.flags);
         if (errors.length) return result({ exitCode: 2, lines: errors });
-        const processHandle = runConfiguredDaemonCli(configuration, options.runtime!, env, options.process, stderr, stdout);
+        const processHandle = runConfiguredDaemonCli(configuration, options.runtime!, env, options.process, stderr, stdout, options.pairingOutput);
         return await processHandle.finished;
       }
       default: {

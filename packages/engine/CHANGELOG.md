@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Render daemon startup pairing from the settled bundled WebUI listener and
+  effective daemon token, only in an interactive terminal or an explicitly
+  selected local pairing sink. Preserve explicit external WebUI origins,
+  refuse unusable startup links, and honor local pair token/port overrides
+  without persisting runtime settings or replacing the shared identity.
+
 - Keep explicit hosted-session termination pending through admitted creation,
   restored composition, spine registration and shutdown parking. Prevent late
   idle persistence or creation/prompt publication, join repeated kill/shutdown,

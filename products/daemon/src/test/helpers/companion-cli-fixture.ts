@@ -15,7 +15,7 @@ export function companionCliFixture() {
   mkdirSync(home, { recursive: true });
   mkdirSync(cwd, { recursive: true });
 
-  function launch(args: string[], options: { composed?: boolean; env?: NodeJS.ProcessEnv } = {}) {
+  function launch(args: string[], options: { composed?: boolean; pairingOutput?: boolean; env?: NodeJS.ProcessEnv } = {}) {
     const env: NodeJS.ProcessEnv = {
       ...process.env, HOME: home, GOODVIBES_HOME: home,
       GOODVIBES_DAEMON_HOME: envDaemonHome, GOODVIBES_WORKING_DIR: cwd,
@@ -25,6 +25,8 @@ export function companionCliFixture() {
     delete env.GOODVIBES_DAEMON_TOKEN;
     delete env.GOODVIBES_HTTP_TOKEN;
     Object.assign(env, options.env);
+    // Test launcher selection only; the production CLI has no reveal flag/env.
+    env.GOODVIBES_TEST_PAIRING_OUTPUT = options.pairingOutput ? '1' : '0';
     const entry = options.composed
       ? new URL('./daemon-cli-child.ts', import.meta.url)
       : new URL('../../../dist/cli/entrypoint.js', import.meta.url);

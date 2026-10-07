@@ -98,6 +98,34 @@ const MINTED_NO_ORIGIN = {
 };
 
 describe('pair reprints the block the daemon prints at startup (local form)', () => {
+  test.each([0, -1, 65536, NaN])('local reprint refuses unknown or invalid listener port %s', async (port) => {
+    const result = await runPairCommand(baseInput({
+      readToken: () => { throw new Error('Identity must remain unread'); },
+      flags: { host: undefined, port, token: undefined, json: true, yes: false },
+    }));
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.lines[0]!)).toMatchObject({ ok: false, error: 'the local pairing port must identify a concrete listener' });
+  });
+  test.each([undefined, 'explicit-token'])('local reprint honors token overrides without reading or writing identity: %s', async (token) => {
+    const result = await runPairCommand(baseInput({ operatorToken: 'process-token',
+      readToken: () => { throw new Error('Stored identity must not be read'); },
+      flags: { host: undefined, port: undefined, token, json: true, yes: false },
+      configManager: config({ 'controlPlane.webui.serve': true }),
+    }));
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.lines[0]!);
+    const link = new URL(parsed.data.deepLink);
+    expect(link.origin).toBe('http://127.0.0.1:3421');
+    expect(new URLSearchParams(link.hash.slice(1)).get('pair')).toBe(token ?? 'process-token');
+  });
+  test('a JSON-shaped effective override is a literal credential, not a stored-file record', async () => {
+    const token = '{"token":"synthetic-inner-token"}';
+    const result = await runPairCommand(baseInput({ operatorToken: token,
+      flags: { host: undefined, port: undefined, token: undefined, json: true, yes: false },
+    }));
+    const link = new URL(JSON.parse(result.lines[0]!).data.deepLink);
+    expect(new URLSearchParams(link.hash.slice(1)).get('pair')).toBe(token);
+  });
   test('the lines are the shared banner, byte for byte', async () => {
     const result = await runPairCommand(baseInput());
     expect(result.exitCode).toBe(0);

@@ -10,6 +10,7 @@ import { UserAuthManager } from '@goodvibes-jev/engine/sdk/platform/security';
 if (process.env.GOODVIBES_SDK_TEST_RUNNER !== '1') throw new Error('Guarded CLI fixture required');
 const { runDaemonCli } = await import(new URL('../../../dist/cli/run.js', import.meta.url).href) as typeof import('../../cli/run.js');
 const emit = (line: string) => { writeSync(1, `${line}\n`); };
+if (process.stdout.isTTY === true) emit('FIXTURE_STDOUT_TTY');
 spyOn(ProviderRegistry.prototype, 'refreshLiveModelDiscovery').mockResolvedValue([]);
 spyOn(BenchmarkStore.prototype, 'refreshBenchmarks').mockResolvedValue();
 let held = false;
@@ -22,6 +23,7 @@ input.on('line', (line) => {
 });
 const root = process.env.HOME!;
 process.exitCode = await runDaemonCli(process.argv.slice(2), {
+  pairingOutput: process.env.GOODVIBES_TEST_PAIRING_OUTPUT === '1' ? emit : undefined,
   runtime: {
     localUserAuthManager: new UserAuthManager({
       bootstrapFilePath: join(root, 'fixture-users.json'), bootstrapCredentialPath: join(root, 'fixture-bootstrap.txt'),
