@@ -53,6 +53,7 @@ import { resolveHostedModelDefinition } from './model-route.js';
 import { createHostedSessionRuntime, newHostedSessionId, type HostedSessionContractSink, type HostedSessionRuntime } from './session-runtime.js';
 import type { HostedContractRunners } from '../contract/operator-service.js';
 import { HostedWorkspaceFloors, type HostedWorkspaceFloorFactory, type HostedWorkspaceFloorLease } from './workspace-floor.js';
+import { hostedLifecycleCallbacks } from './lifecycle-callbacks.js';
 import { HostedSessionStore, type HostedSessionLoadReport } from './store.js';
 import { HostedSessionSpineIntake, type HostedSessionSpine } from './spine-intake.js';
 import {
@@ -160,6 +161,7 @@ export class HostedSessionManager {
   private alerter: ((text: string) => void) | null = null;
   private busUnsubscribers: (() => void)[] = [];
   private disposed = false;
+  private disposal: Promise<void> | null = null;
   private lastLoadReport: HostedSessionLoadReport | null = null;
   /** The spine half: registration, heartbeats, and collecting queued inputs. */
   private readonly spine: HostedSessionSpineIntake;
@@ -357,18 +359,16 @@ export class HostedSessionManager {
   async create(input: CreateHostedSessionInput, ownership?: { readonly nativeConversation: true }): Promise<HostedSessionRecord> {
     this.assertUsable();
     const workspaceRoot = this.requireWorkspace(input.workspaceRoot);
-    const liveCount = this.list().length;
-    const maxSessions = this.options.settings.maxSessions();
-    if (liveCount >= maxSessions) {
-      throw new HostedSessionLimitError(
-        `This daemon already hosts ${liveCount} sessions, the configured maximum (hostedSessions.maxSessions). Kill one, or raise the setting.`,
-      );
-    }
+    this.assertSessionCapacity();
 
     const sessionId = newHostedSessionId();
     const lease = await this.floors.acquire(workspaceRoot);
     let record: HostedSessionRecord;
     try {
+      // A factory may await provider readiness while shutdown or another create
+      // changes admission. The lease alone does not authorize a new session.
+      this.assertUsable();
+      this.assertSessionCapacity();
       const model = input.modelId
         ? resolveHostedModelDefinition(lease.floor.services.providerRegistry, input.modelId)
         : undefined;
@@ -427,6 +427,16 @@ export class HostedSessionManager {
       void this.deliver(sessionId, input.initialPrompt).catch(() => undefined);
     }
     return record;
+  }
+
+  private assertSessionCapacity(): void {
+    const liveCount = this.list().length;
+    const maxSessions = this.options.settings.maxSessions();
+    if (liveCount >= maxSessions) {
+      throw new HostedSessionLimitError(
+        `This daemon already hosts ${liveCount} sessions, the configured maximum (hostedSessions.maxSessions). Kill one, or raise the setting.`,
+      );
+    }
   }
 
   /**
@@ -673,6 +683,7 @@ export class HostedSessionManager {
 
   /** Compose a restored session's loop on first use, replaying its transcript. */
   private async ensureComposed(live: LiveSession): Promise<void> {
+    this.assertUsable();
     if (live.runtime) return;
     if (live.record.status === 'terminated') {
       throw new HostedSessionUnavailableError(live.record.id, `it is terminated (${live.record.terminatedReason ?? 'no reason recorded'})`);
@@ -680,6 +691,14 @@ export class HostedSessionManager {
     const workspaceRoot = live.record.workspaceRoot;
     const lease = await this.floors.acquire(workspaceRoot);
     try {
+      this.assertUsable();
+      this.requireLive(live.record.id);
+      // Another restored caller may have finished while this lease was pending.
+      // Keep its runtime and return this caller's extra reference.
+      if (live.runtime) {
+        lease.release();
+        return;
+      }
       const model = live.record.modelId
         ? resolveHostedModelDefinition(lease.floor.services.providerRegistry, live.record.modelId)
         : undefined;
@@ -705,7 +724,9 @@ export class HostedSessionManager {
       lease.release();
       // A session whose loop cannot be rebuilt is terminated with that reason,
       // not left in a state that looks alive and answers nothing.
-      await this.terminate(live, 'restart-unresumable', `its loop could not be rebuilt: ${summarizeError(error)}`);
+      if (!this.disposed && live.record.status !== 'terminated') {
+        await this.terminate(live, 'restart-unresumable', `its loop could not be rebuilt: ${summarizeError(error)}`);
+      }
       throw error;
     }
   }
@@ -887,11 +908,32 @@ export class HostedSessionManager {
    * persisted, so the next start reconciles from a record that says what
    * happened rather than from one that claims it is still running.
    */
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
-    this.disposed = true;
+  dispose(): Promise<void> {
+    if (!this.disposal) {
+      this.disposed = true;
+      // Publish before invoking callbacks. A factory/disposer can request this
+      // shutdown, but the actual drain must not inherit its reentry shortcut.
+      this.disposal = hostedLifecycleCallbacks.outside(this.floors, () => Promise.resolve().then(
+        () => hostedLifecycleCallbacks.run(this, () => this.shutdown()),
+      ));
+    }
+    return hostedLifecycleCallbacks.active(this) || hostedLifecycleCallbacks.active(this.floors)
+      ? Promise.resolve()
+      : this.disposal;
+  }
+
+  private async shutdown(): Promise<void> {
     this.spine.stop();
-    await this.options.closeNativeTurns?.();
+    try {
+      await this.options.closeNativeTurns?.();
+    } finally {
+      // Native close failure remains the caller's error, but cannot abandon
+      // workspace factories, runtimes, or floor cleanup already owned here.
+      await this.shutdownSessions();
+    }
+  }
+
+  private async shutdownSessions(): Promise<void> {
     if (this.attachmentTimer) {
       clearInterval(this.attachmentTimer);
       this.attachmentTimer = null;
@@ -903,22 +945,25 @@ export class HostedSessionManager {
         // A listener that will not detach must not block shutdown.
       }
     }
-    for (const live of [...this.sessions.values()]) {
-      if (live.record.status === 'terminated') continue;
-      // A survive-policy session is not ended by the daemon stopping. That is
-      // the whole claim `survive` makes: outliving the client is the small half,
-      // outliving a restart (an update swapping the binary, a reboot) is the
-      // half that makes it worth having. Its loop comes down, its transcript is
-      // written, and the next start restores it idle with an honest line about
-      // the turn that did not finish. A kill-policy session ends here, with the
-      // reason that actually applies.
-      if (this.effectivePolicy(live.record.detachPolicy) === 'survive') {
-        await this.parkForShutdown(live).catch(() => undefined);
-        continue;
+    try {
+      for (const live of [...this.sessions.values()]) {
+        if (live.record.status === 'terminated') continue;
+        // A survive-policy session is not ended by the daemon stopping. That is
+        // the whole claim `survive` makes: outliving the client is the small half,
+        // outliving a restart (an update swapping the binary, a reboot) is the
+        // half that makes it worth having. Its loop comes down, its transcript is
+        // written, and the next start restores it idle with an honest line about
+        // the turn that did not finish. A kill-policy session ends here, with the
+        // reason that actually applies.
+        if (this.effectivePolicy(live.record.detachPolicy) === 'survive') {
+          await this.parkForShutdown(live).catch(() => undefined);
+          continue;
+        }
+        await this.terminate(live, 'daemon-shutdown', 'the daemon is stopping').catch(() => undefined);
       }
-      await this.terminate(live, 'daemon-shutdown', 'the daemon is stopping').catch(() => undefined);
+    } finally {
+      await this.floors.dispose();
     }
-    await this.floors.dispose();
   }
 
   /**

@@ -55,6 +55,8 @@ function buildManager(options?: {
   readonly attachmentTtlMs?: number | undefined;
   readonly now?: (() => number) | undefined;
   readonly listClients?: (() => readonly { readonly id: string }[]) | undefined;
+  readonly onFloor?: ((floor: HostedWorkspaceFloor) => HostedWorkspaceFloor | Promise<HostedWorkspaceFloor>) | undefined;
+  readonly closeNativeTurns?: (() => Promise<void>) | undefined;
 }): HostedSessionManager {
   const runtimeBus = new RuntimeEventBus();
   const configManager = new ConfigManager({
@@ -64,7 +66,7 @@ function buildManager(options?: {
     homeDir: root,
   });
   const manager = new HostedSessionManager({
-    floorFactory: ({ workspaceRoot }): HostedWorkspaceFloor => {
+    floorFactory: ({ workspaceRoot }): HostedWorkspaceFloor | Promise<HostedWorkspaceFloor> => {
       const services = createClientRuntimeServices({
         configManager,
         runtimeBus,
@@ -77,7 +79,8 @@ function buildManager(options?: {
         modelDiscovery: 'skip',
       });
       disposals.push(() => services.dispose());
-      return { services, contractRunner: services.contractRunner, dispose: (): void => services.dispose() };
+      const floor = { services, contractRunner: services.contractRunner, dispose: (): void => services.dispose() };
+      return options?.onFloor?.(floor) ?? floor;
     },
     store: new HostedSessionStore(stateDir, {
       maxSessions: 20,
@@ -94,6 +97,7 @@ function buildManager(options?: {
     liveTurns,
     isWorkspaceUsable: () => true,
     ...(options?.now === undefined ? {} : { now: options.now }),
+    ...(options?.closeNativeTurns === undefined ? {} : { closeNativeTurns: options.closeNativeTurns }),
   });
   manager.setEventPublisher({
     publishEvent: (_event, payload) => { published.push(payload as HostedSessionUpdatePayload); },
@@ -262,6 +266,259 @@ test('the session cap is enforced and the refusal names the setting', async () =
   await expect(manager.create({ workspaceRoot: workspace })).rejects.toThrow(/hostedSessions.maxSessions/);
   await manager.dispose();
 });
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+async function settleLifecycle(): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, 0));
+}
+
+test('concurrent creates recheck the session cap after a held floor and release refused leases', async () => {
+  const entered = deferred();
+  const gate = deferred();
+  let cleaned = 0;
+  const manager = buildManager({ maxSessions: 1, onFloor: async floor => {
+    entered.resolve();
+    await gate.promise;
+    return { ...floor, dispose() { cleaned += 1; return floor.dispose(); } };
+  } });
+  await manager.init();
+  const creating = Promise.allSettled([
+    manager.create({ workspaceRoot: workspace }),
+    manager.create({ workspaceRoot: workspace }),
+  ]);
+  await entered.promise;
+  gate.resolve();
+  try {
+    const results = await creating;
+    expect(results.map(result => result.status)).toEqual(['fulfilled', 'rejected']);
+    const refused = results[1];
+    expect(refused?.status === 'rejected' ? String(refused.reason) : '').toContain('hostedSessions.maxSessions');
+    expect(manager.list()).toHaveLength(1);
+    expect(cleaned).toBe(0);
+    await manager.kill(manager.list()[0]!.id);
+    await settleLifecycle();
+    expect(cleaned).toBe(1);
+  } finally {
+    gate.resolve();
+    await manager.dispose();
+  }
+  expect(cleaned).toBe(1);
+});
+
+test('create refuses a late acquired floor while native close holds shutdown, and repeated close drains cleanup', async () => {
+  const entered = deferred();
+  const factoryGate = deferred();
+  const nativeClosing = deferred();
+  const nativeGate = deferred();
+  const cleanupEntered = deferred();
+  const cleanupGate = deferred();
+  let cleaned = 0;
+  const manager = buildManager({
+    closeNativeTurns: async () => { nativeClosing.resolve(); await nativeGate.promise; },
+    onFloor: async floor => {
+      entered.resolve();
+      await factoryGate.promise;
+      return { ...floor, async dispose() {
+        cleanupEntered.resolve();
+        await cleanupGate.promise;
+        cleaned += 1;
+        await floor.dispose();
+      } };
+    },
+  });
+  await manager.init();
+  const creating = Promise.allSettled([manager.create({ workspaceRoot: workspace })]);
+  await entered.promise;
+  const closing = manager.dispose();
+  expect(manager.dispose()).toBe(closing);
+  let closed = false;
+  const done = closing.then(() => { closed = true; });
+  try {
+    await nativeClosing.promise;
+    factoryGate.resolve();
+    expect((await creating)[0]?.status).toBe('rejected');
+    await cleanupEntered.promise;
+    expect(manager.list({ includeTerminated: true })).toEqual([]);
+    expect(published.some(event => event.event === 'hosted-session-created')).toBe(false);
+    nativeGate.resolve();
+    await settleLifecycle();
+    expect(closed).toBe(false);
+  } finally {
+    factoryGate.resolve();
+    nativeGate.resolve();
+    cleanupGate.resolve();
+    await done;
+  }
+  expect(cleaned).toBe(1);
+  expect(manager.list()).toEqual([]);
+});
+
+test('native-close rejection still drains a pending factory and its floor before rejecting every close caller', async () => {
+  const entered = deferred();
+  const factoryGate = deferred();
+  const cleanupEntered = deferred();
+  const cleanupGate = deferred();
+  const nativeError = new Error('owned native close failed');
+  let cleaned = 0;
+  const manager = buildManager({
+    closeNativeTurns: async () => { await manager.dispose(); throw nativeError; },
+    onFloor: async floor => {
+      entered.resolve();
+      await factoryGate.promise;
+      return { ...floor, async dispose() {
+        cleanupEntered.resolve();
+        await cleanupGate.promise;
+        cleaned += 1;
+        await floor.dispose();
+      } };
+    },
+  });
+  await manager.init();
+  const creating = Promise.allSettled([manager.create({ workspaceRoot: workspace })]);
+  await entered.promise;
+  let closed = false;
+  const closing = Promise.allSettled([manager.dispose(), manager.dispose()]).then(results => {
+    closed = true;
+    return results;
+  });
+  try {
+    await settleLifecycle();
+    expect(closed).toBe(false);
+    factoryGate.resolve();
+    await cleanupEntered.promise;
+    await settleLifecycle();
+    expect(closed).toBe(false);
+  } finally {
+    factoryGate.resolve();
+    cleanupGate.resolve();
+  }
+  const results = await closing;
+  expect(results.map(result => result.status)).toEqual(['rejected', 'rejected']);
+  for (const result of results) if (result.status === 'rejected') expect(result.reason).toBe(nativeError);
+  expect((await creating)[0]?.status).toBe('rejected');
+  expect(cleaned).toBe(1);
+  expect(manager.list({ includeTerminated: true })).toEqual([]);
+});
+
+test('floor callbacks can await manager shutdown while external repeated close owns the entire drain', async () => {
+  const requested = deferred();
+  const factoryGate = deferred();
+  const cleanupEntered = deferred();
+  const cleanupGate = deferred();
+  let cleaned = 0;
+  const manager = buildManager({ onFloor: async floor => {
+    await Promise.resolve();
+    await manager.dispose();
+    requested.resolve();
+    await factoryGate.promise;
+    return { ...floor, async dispose() {
+      await Promise.resolve();
+      await manager.dispose();
+      cleanupEntered.resolve();
+      await cleanupGate.promise;
+      cleaned += 1;
+      await floor.dispose();
+    } };
+  } });
+  await manager.init();
+  const creating = Promise.allSettled([manager.create({ workspaceRoot: workspace })]);
+  await requested.promise;
+  let closed = false;
+  const closing = manager.dispose();
+  expect(manager.dispose()).toBe(closing);
+  const done = closing.then(() => { closed = true; });
+  try {
+    await settleLifecycle();
+    expect(closed).toBe(false);
+    factoryGate.resolve();
+    await cleanupEntered.promise;
+    await settleLifecycle();
+    expect(closed).toBe(false);
+  } finally {
+    factoryGate.resolve();
+    cleanupGate.resolve();
+    await done;
+  }
+  expect((await creating)[0]?.status).toBe('rejected');
+  expect(cleaned).toBe(1);
+  expect(manager.list({ includeTerminated: true })).toEqual([]);
+});
+
+test('concurrent restored attachments install one runtime and release the extra floor reference', async () => {
+  const first = buildManager({ detachPolicy: 'survive' });
+  await first.init();
+  const created = await first.create({ workspaceRoot: workspace });
+  await first.dispose();
+  const entered = deferred();
+  const gate = deferred();
+  let cleaned = 0;
+  const second = buildManager({ detachPolicy: 'survive', onFloor: async floor => {
+    entered.resolve();
+    await gate.promise;
+    return { ...floor, dispose() { cleaned += 1; return floor.dispose(); } };
+  } });
+  await second.init();
+  let bound = 0;
+  const bind = liveTurns.bindSession.bind(liveTurns);
+  liveTurns.bindSession = (id, controls) => { bound += 1; bind(id, controls); };
+  const attaching = Promise.all([second.attach(created.id, 'a'), second.attach(created.id, 'b')]);
+  await entered.promise;
+  gate.resolve();
+  try {
+    await attaching;
+    expect(bound).toBe(1);
+    expect(second.get(created.id)?.attachedClients).toEqual(['a', 'b']);
+    await second.kill(created.id);
+    await settleLifecycle();
+    expect(cleaned).toBe(1);
+    expect(liveTurns.hasSession(created.id)).toBe(false);
+  } finally {
+    gate.resolve();
+    await second.dispose();
+  }
+  expect(cleaned).toBe(1);
+});
+
+for (const action of ['kill', 'shutdown'] as const) {
+  test(`restored acquisition cannot recreate a runtime after ${action} or replace its lifecycle reason`, async () => {
+    const first = buildManager({ detachPolicy: 'survive' });
+    await first.init();
+    const created = await first.create({ workspaceRoot: workspace });
+    await first.dispose();
+    const entered = deferred();
+    const gate = deferred();
+    let cleaned = 0;
+    const second = buildManager({ detachPolicy: 'survive', onFloor: async floor => {
+      entered.resolve();
+      await gate.promise;
+      return { ...floor, dispose() { cleaned += 1; return floor.dispose(); } };
+    } });
+    await second.init();
+    const attaching = Promise.allSettled([second.attach(created.id, 'late-client')]);
+    await entered.promise;
+    const stopping = action === 'kill' ? second.kill(created.id) : second.dispose();
+    gate.resolve();
+    try {
+      await stopping;
+      expect((await attaching)[0]?.status).toBe('rejected');
+      await settleLifecycle();
+      expect(cleaned).toBe(1);
+      expect(liveTurns.hasSession(created.id)).toBe(false);
+      expect(second.get(created.id)?.attachedClients).toEqual([]);
+      expect(second.get(created.id)?.terminatedReason).toBe(action === 'kill' ? 'killed' : undefined);
+      expect(second.get(created.id)?.status).toBe(action === 'kill' ? 'terminated' : 'idle');
+      expect(published.filter(event => event.session.id === created.id && event.event === 'hosted-session-attached')).toEqual([]);
+    } finally {
+      gate.resolve();
+      await second.dispose();
+    }
+  });
+}
 
 test('a relative workspace root is refused rather than resolved against the daemon', async () => {
   const manager = buildManager();
