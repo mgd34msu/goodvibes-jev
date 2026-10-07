@@ -1,5 +1,6 @@
 /** Owned source host for an explicitly configured daemon, not a CLI/default inbox. */
 import { DaemonServer, HttpListener, createSafeHostServeFactory } from '@goodvibes-jev/engine/sdk/platform/daemon';
+import { loadPersistedProviders } from '@goodvibes-jev/engine/sdk/platform/discovery';
 import { createAsyncDisposalScope } from '@goodvibes-jev/engine/sdk/platform/runtime/disposal';
 import { createDaemonBootOperations } from './boot-composition.js';
 import type { DaemonBootSnapshot } from './boot-tasks.js';
@@ -117,6 +118,15 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
       scope.registry.add('runtime graph', () => bounded('runtime graph close', () => runtime.close()));
       if (closed) { closeBoot(); fence(); }
       if (!runtime.bootTasks) throw new Error('Daemon boot owner missing');
+
+      phase = 'provider preload';
+      // Custom providers finish their tolerant initial load first, so cached
+      // discoveries cannot take their names. Host work owns this admission wait.
+      await runtime.providerRegistry.ready();
+      fence();
+      const discovered = loadPersistedProviders({ homeDirectory: runtime.homeDirectory, surfaceRoot: runtime.surfaceRoot });
+      if (discovered.length > 0) runtime.providerRegistry.registerDiscoveredProviders(discovered);
+      fence();
 
       phase = 'server construction';
       const binding = options.daemon;
