@@ -146,7 +146,7 @@ for (const native of [false, true]) {
         expect((await creating)[0]?.status).toBe('rejected');
         await killing;
         expect(manager.get(id)?.status).toBe('terminated');
-        expect((await store.load()).restored[0]?.record).toEqual(manager.get(id));
+        expect((await store.load()).restored[0]?.record).toEqual(manager.get(id)!);
         expect(events.map(event => event.event)).toEqual(['hosted-session-terminated']);
         expect(prompts).toEqual([]);
         expect(registered.size).toBe(0);
@@ -190,7 +190,7 @@ for (const policy of ['kill', 'survive'] as const) {
         held?.release.resolve(); release.resolve();
         await joined;
         expect(manager.get(record.id)?.terminatedReason).toBe('killed');
-        expect((await store.load()).restored[0]?.record).toEqual(manager.get(record.id));
+        expect((await store.load()).restored[0]?.record).toEqual(manager.get(record.id)!);
         expect(events.map(event => event.event)).toEqual(['hosted-session-created', 'hosted-session-terminated']);
         expect(closes).toBe(1);
         expect(cleanup.count).toBe(1);
@@ -490,7 +490,7 @@ test('explicit kill during shutdown of held restored composition keeps its reaso
   await Promise.all([attaching, killing, closing]);
   expect((await attaching)[0]?.status).toBe('rejected');
   expect(manager.get(record.id)?.terminatedReason).toBe('killed');
-  expect((await store.load()).restored[0]?.record).toEqual(manager.get(record.id));
+  expect((await store.load()).restored[0]?.record).toEqual(manager.get(record.id)!);
   expect(events.filter(event => event.event === 'hosted-session-terminated')).toHaveLength(1);
   expect(events.some(event => event.event === 'hosted-session-detached')).toBe(false);
 });
@@ -513,7 +513,7 @@ test('explicit kill drains a survive shutdown parking save before final persiste
     expect(events.map(event => event.event)).toEqual(['hosted-session-created']);
   } finally { held.release.resolve(); await closing; await killing; }
   expect(manager.get(record.id)?.terminatedReason).toBe('killed');
-  expect((await store.load()).restored[0]?.record).toEqual(manager.get(record.id));
+  expect((await store.load()).restored[0]?.record).toEqual(manager.get(record.id)!);
   expect(events.map(event => event.event)).toEqual(['hosted-session-created', 'hosted-session-terminated']);
   expect(held.writes.map(([record]) => record.status)).toEqual(['idle', 'terminated']);
 });
@@ -533,6 +533,6 @@ test('survive parking unbind callback cannot recursively kill its own session', 
   expect(results[0]?.status).toBe('rejected');
   if (results[0]?.status === 'rejected') expect(String(results[0].reason)).toContain('lifecycle callback cannot await its own termination');
   expect(manager.get(record.id)?.status).toBe('idle');
-  expect((await store.load()).restored[0]?.record).toEqual(manager.get(record.id));
+  expect((await store.load()).restored[0]?.record).toEqual(manager.get(record.id)!);
   expect(events.map(event => event.event)).toEqual(['hosted-session-created', 'hosted-session-detached']);
 });
