@@ -841,6 +841,10 @@ export class SharedSessionBroker {
       task,
       routeBinding,
     });
+    if (spawned?.disposition === 'transferred') {
+      if (spawned.requestId.trim()) await this.markInputDelivered(sessionId, next.id, { consumed: true });
+      return null;
+    }
     if (!spawned?.agentId) return null;
     await this.bindAgent(sessionId, spawned.agentId);
     const claimed = this.inputs.get(sessionId)?.find((entry) => entry.activeAgentId === spawned.agentId && entry.state === 'spawned') ?? null;

@@ -60,13 +60,16 @@ export interface SharedSessionContinuationRequest {
   readonly routeBinding?: AutomationRouteBinding | undefined;
 }
 
-export interface SharedSessionContinuationResult {
-  readonly agentId: string;
-}
+/** Legacy callers may still return an agent id or null. Native callers must be explicit. */
+export interface SharedSessionContinuationResult { readonly agentId: string; readonly disposition?: 'started'; }
+export type SharedSessionContinuationOutcome =
+  | SharedSessionContinuationResult
+  | { readonly disposition: 'held' | 'unknown'; readonly reason: string; readonly agentId?: never }
+  | { readonly disposition: 'transferred'; readonly requestId: string; readonly agentId?: never };
 
 export type SharedSessionContinuationRunner = (
   input: SharedSessionContinuationRequest,
-) => SharedSessionContinuationResult | Promise<SharedSessionContinuationResult | null> | null;
+) => SharedSessionContinuationOutcome | Promise<SharedSessionContinuationOutcome | null> | null;
 
 /**
  * "This agent is going to answer THIS message, and the message came in over a

@@ -62,6 +62,7 @@ export type {
   SharedSessionCompletion,
   SharedSessionContinuationRequest,
   SharedSessionContinuationResult,
+  SharedSessionContinuationOutcome,
   // The runner shape a host binds into the dispatch seam. Nine of its siblings
   // were already public and this one was not, so a client naming the seam it
   // implements had to re-declare the runner structurally instead of importing it.
@@ -201,3 +202,6 @@ export { registerNativeWorkSubmissionGatewayMethods } from './routes/native-work
 export { registerWorkLedgerImportGatewayMethods } from './routes/work-ledger-import.js';
 
 export { registerNativeConversationIntakeGatewayMethods } from './routes/native-intake.js';
+
+export { createNativeInboundSourceOwner, NativeInboundSourceError, sameNativeInboundSourceRef } from './native-inbound-source.js';
+export type { NativeInboundBrokerIdentity, NativeInboundSourceRef, NativeInboundOrigin, NativeInboundOriginal, NativeInboundSourceHandle, NativeInboundResolvedSource, NativeInboundSourceResolver } from './native-inbound-source.js';
