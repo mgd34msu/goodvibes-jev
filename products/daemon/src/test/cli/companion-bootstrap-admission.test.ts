@@ -18,7 +18,7 @@ function fixture() {
   const root = makeOwnedTempDir('daemon-token-admission');
   const selected = join(root, 'selected');
   const env = { HOME: root, GOODVIBES_HOME: join(root, 'tree'), GOODVIBES_DAEMON_HOME: selected };
-  const configuration = createDaemonCliConfiguration({}, env, root);
+  const configuration = createDaemonCliConfiguration({ daemonHome: undefined, workingDir: undefined }, env, root);
   const target = new ProcessFixture();
   let acquisitions = 0;
   const runtime = { inboxFactory() { acquisitions++; throw new Error('No runtime admission expected'); } };

@@ -80,7 +80,7 @@ describe('companion token atomic publication', () => {
 
     expect(result.token).not.toBe(previousRecord.token);
     expect(publishedBytes).toBe(JSON.stringify(result, null, 2));
-    expect(fs.readFileSync(file, 'utf8')).toBe(publishedBytes);
+    expect(fs.readFileSync(file, 'utf8')).toBe(JSON.stringify(result, null, 2));
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(fs.readdirSync(root)).toEqual(['operator-tokens.json']);
   });
