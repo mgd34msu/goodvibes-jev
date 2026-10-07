@@ -4,18 +4,25 @@ import { JudgmentInputError } from '../../gate/judgment-input.js';
 import { captureScreeningSource, isMalformedScreeningProposal, proposeScreeningSpans, type ScreeningSource, type ScreeningSpan } from './proposal.js';
 import { captureLoopbackEndpoint, createScreeningTransport } from './transport.js';
 import { verifyScreeningSpans } from './verification.js';
+import { captureResearchReference, createResearchReferenceReader, WITHHELD_RESEARCH_REFERENCE, type CapturedResearchReference } from './reference.js';
 import { SOURCE_SCREENING_LIMITS as LIMITS, type ProtectedSource, type ProtectedSourceOwner, type ProtectedSourceOwnerOptions,
-  type SourceScreeningReceipt, type SourceScreeningResult } from './types.js';
+  type SourceScreeningReceipt, type SourceScreeningResult, type ProtectedResearchReference,
+  type ResearchReferenceScreeningReceipt, type ResearchReferenceScreeningResult } from './types.js';
+
+type Handle = ProtectedSource | ProtectedResearchReference;
+type Receipt = SourceScreeningReceipt | ResearchReferenceScreeningReceipt;
+type Result = { readonly status: 'settled'; readonly receipt: Receipt } | Extract<SourceScreeningResult, { status: 'held' }>;
 
 interface OwnedSource {
   readonly source: ScreeningSource;
+  readonly reference?: CapturedResearchReference;
   readonly lifetime: AbortController;
   released: boolean;
-  pending?: Promise<SourceScreeningResult>;
-  result?: SourceScreeningResult;
+  pending?: Promise<Result>;
+  result?: Result;
 }
 interface OwnedProjection { readonly source: OwnedSource; readonly parts: readonly string[]; }
-const held = (reason: Extract<SourceScreeningResult, { status: 'held' }>['reason']): SourceScreeningResult => Object.freeze({ status: 'held', reason });
+const held = (reason: Extract<SourceScreeningResult, { status: 'held' }>['reason']): Extract<SourceScreeningResult, { status: 'held' }> => Object.freeze({ status: 'held', reason });
 const invalid = (): never => { throw new Error('Protected source owner is unavailable or the handle is not current'); };
 function reference(value: unknown): value is string { return typeof value === 'string' && /^[\x21-\x7e]{1,128}$/.test(value); }
 function project(source: ScreeningSource, spans: readonly ScreeningSpan[]): readonly string[] {
@@ -47,8 +54,9 @@ export function createProtectedSourceOwner(options: ProtectedSourceOwnerOptions)
     || (options.onRetry !== undefined && typeof options.onRetry !== 'function')) return invalid();
   const lifetime = new AbortController();
   const signal = AbortSignal.any([parentSignal, lifetime.signal]);
-  const sources = new Map<ProtectedSource, OwnedSource>();
-  const projections = new Map<SourceScreeningReceipt, OwnedProjection>();
+  const sources = new Map<Handle, OwnedSource>();
+  const projections = new Map<Receipt, OwnedProjection>();
+  const referenceReader = createResearchReferenceReader();
   // Refusal-only fingerprints survive mapper-handle release, without raw text.
   const unsettled = new Set<string>();
   const screening = new Set<string>();
@@ -78,7 +86,7 @@ export function createProtectedSourceOwner(options: ProtectedSourceOwnerOptions)
     work.add(pending); void pending.then(() => work.delete(pending), () => work.delete(pending)); return pending;
   };
   const current = (source: OwnedSource) => { active(); if (source.released || source.lifetime.signal.aborted) return invalid(); };
-  const run = async (source: OwnedSource): Promise<SourceScreeningResult> => {
+  const run = async (source: OwnedSource): Promise<Result> => {
     const requestSignal = AbortSignal.any([signal, source.lifetime.signal]);
     const assertCurrent = () => current(source);
     let transport: ReturnType<typeof createScreeningTransport> | undefined;
@@ -90,12 +98,23 @@ export function createProtectedSourceOwner(options: ProtectedSourceOwnerOptions)
       const assertRoute = () => { current(source); ownedTransport.assertUsable(); };
       const port = createSystemOnePort({ endpoint: { kind: 'local', baseURL: judgment.endpoint, apiKey: 'source-screening-local' },
         model: judgment.model, timeoutMs, retry: {}, fetch: ownedTransport.fetch });
-      const spans = await proposeScreeningSpans(source.source, { ...proposal, fetch: transport.fetch, signal: requestSignal, assertCurrent });
-      const settled = await verifyScreeningSpans(source.source, spans, { port, signal: requestSignal, assertCurrent: assertRoute, onRetry });
+      let parts: readonly string[];
+      if (source.reference) {
+        const result = await referenceReader.read(source.reference, { port, signal: requestSignal, assertCurrent: assertRoute, onRetry });
+        if (result.status === 'held') {
+          if (result.reason === 'unsettled') unsettled.add(source.source.revision);
+          return result.reason === 'unsettled' ? source.result = held(result.reason) : held(result.reason);
+        }
+        parts = Object.freeze([result.value]);
+      } else {
+        const spans = await proposeScreeningSpans(source.source, { ...proposal, fetch: transport.fetch, signal: requestSignal, assertCurrent });
+        const settled = await verifyScreeningSpans(source.source, spans, { port, signal: requestSignal, assertCurrent: assertRoute, onRetry });
+        if (!settled) { unsettled.add(source.source.revision); return source.result = held('unsettled'); }
+        parts = project(source.source, spans);
+      }
       current(source);
-      if (!settled) { unsettled.add(source.source.revision); return source.result = held('unsettled'); }
-      const receipt = Object.freeze({}) as SourceScreeningReceipt;
-      projections.set(receipt, { source, parts: project(source.source, spans) });
+      const receipt = Object.freeze({}) as Receipt;
+      projections.set(receipt, { source, parts });
       return source.result = Object.freeze({ status: 'settled', receipt });
     } catch (error) {
       if (requestSignal.aborted) return held('cancelled');
@@ -106,6 +125,21 @@ export function createProtectedSourceOwner(options: ProtectedSourceOwnerOptions)
       return held(protectedInput ? 'protected-input' : 'route-unavailable');
     } finally { await transport?.close(); }
   };
+  const screen = (source: OwnedSource): Promise<Result> => {
+    try { current(source); } catch { return Promise.resolve(held(signal.aborted ? 'cancelled' : 'stale')); }
+    if (source.pending) return source.pending;
+    if (unsettled.has(source.source.revision)) return Promise.resolve(held('unsettled'));
+    if (source.result) return Promise.resolve(source.result);
+    if (screening.has(source.source.revision)) return Promise.resolve(held('busy'));
+    // Reserve future refusal slots before admitting any asynchronous work.
+    if (unsettled.size + screening.size >= LIMITS.unsettledRevisions) return Promise.resolve(held('capacity'));
+    screening.add(source.source.revision);
+    const pending = own(Promise.resolve().then(() => run(source)));
+    source.pending = pending;
+    const finished = () => { screening.delete(source.source.revision); if (source.pending === pending) delete source.pending; };
+    void pending.then(finished, finished);
+    return pending;
+  };
   return {
     capture(parts) {
       active(); const source = captureScreeningSource(parts); active();
@@ -113,27 +147,39 @@ export function createProtectedSourceOwner(options: ProtectedSourceOwnerOptions)
       const handle = Object.freeze({}) as ProtectedSource;
       sources.set(handle, { source, lifetime: new AbortController(), released: false }); return handle;
     },
+    captureResearchReference(value) {
+      active();
+      // Capture the complete actual original before parsing, bounds or hashing.
+      const captured = captureScreeningSource([value]);
+      const reference = captureResearchReference(captured.parts[0]!);
+      active();
+      if (sources.size >= LIMITS.sources) return invalid();
+      // Equal text in display-preview mode cannot borrow reference authority.
+      const source = Object.freeze({ ...captured, revision: `reference:${captured.revision}` });
+      const handle = Object.freeze({}) as ProtectedResearchReference;
+      sources.set(handle, { source, reference, lifetime: new AbortController(), released: false }); return handle;
+    },
     screen(handle) {
       const source = sources.get(handle);
-      if (!source) return Promise.resolve(held('stale'));
-      try { current(source); } catch { return Promise.resolve(held(signal.aborted ? 'cancelled' : 'stale')); }
-      if (source.pending) return source.pending;
-      if (unsettled.has(source.source.revision)) return Promise.resolve(held('unsettled'));
-      if (source.result) return Promise.resolve(source.result);
-      if (screening.has(source.source.revision)) return Promise.resolve(held('busy'));
-      // Reserve future refusal slots before admitting any asynchronous work.
-      if (unsettled.size + screening.size >= LIMITS.unsettledRevisions) return Promise.resolve(held('capacity'));
-      screening.add(source.source.revision);
-      const pending = own(Promise.resolve().then(() => run(source)));
-      source.pending = pending;
-      const finished = () => { screening.delete(source.source.revision); if (source.pending === pending) delete source.pending; };
-      void pending.then(finished, finished);
-      return pending;
+      if (!source || source.reference) return Promise.resolve(held('stale'));
+      return screen(source) as Promise<SourceScreeningResult>;
+    },
+    screenResearchReference(handle) {
+      const source = sources.get(handle);
+      if (!source?.reference) return Promise.resolve(held('stale'));
+      return screen(source) as Promise<ResearchReferenceScreeningResult>;
     },
     project(receipt) {
       const entry = projections.get(receipt);
-      if (!entry || unsettled.has(entry.source.source.revision)) return invalid();
+      if (!entry || entry.source.reference || unsettled.has(entry.source.source.revision)) return invalid();
       current(entry.source); return entry.parts;
+    },
+    projectResearchReference(receipt) {
+      const entry = projections.get(receipt);
+      if (!entry?.source.reference || unsettled.has(entry.source.source.revision)) return invalid();
+      current(entry.source);
+      return entry.parts[0] === WITHHELD_RESEARCH_REFERENCE ? Object.freeze({ status: 'omitted' })
+        : Object.freeze({ status: 'preserved', url: entry.parts[0]! });
     },
     release(handle) {
       const source = sources.get(handle); if (!source) return Promise.resolve();
@@ -147,7 +193,7 @@ export function createProtectedSourceOwner(options: ProtectedSourceOwnerOptions)
       if (closing) return closing;
       const finish = Promise.withResolvers<void>(); closing = finish.promise;
       lifetime.abort();
-      void Promise.allSettled([...work]).then(() => { sources.clear(); projections.clear(); unsettled.clear(); screening.clear(); finish.resolve(); });
+      void Promise.allSettled([...work]).then(() => { sources.clear(); projections.clear(); unsettled.clear(); screening.clear(); referenceReader.clear(); finish.resolve(); });
       return closing;
     },
   };
