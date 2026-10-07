@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Add an explicit protected local source owner and content-bearing inbox mapper prerequisite, with immutable original-span projection, typed Jev verification and awaited cancellation. Default provider composition and live privacy calibration remain open.
+
 - Encode owner-generated native criteria references as canonical digests only
   after checking their exact durable work/source binding. Keep arbitrary
   references and original task content under the existing privacy guard.

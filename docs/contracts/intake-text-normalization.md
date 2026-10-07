@@ -74,3 +74,8 @@ data and phone-number extraction, `stripPii`, `toBodyPreview`, `toSubjectPreview
 preview length budgets, full adapters and daemon wiring remain outside THE-111.
 Existing triage API approval and legacy IMAP framing are unchanged. No approval
 to upload message text, release, merge or deploy is implied by this module.
+
+The additive [protected local source owner](protected-source-screening.md) now
+provides an explicit local-only proposal/verification mapper prerequisite. It
+does not make these structural helpers privacy redactors, install default
+providers, or establish live semantic accuracy.

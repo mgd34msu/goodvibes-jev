@@ -97,3 +97,6 @@ registry.register(healAcceptance);
 
 import { inboxTriage } from '../intake/triage/battery.js';
 registry.register(inboxTriage);
+
+import { sourceScreeningVerification } from '../security/source-screening/verification.js';
+registry.register(sourceScreeningVerification);

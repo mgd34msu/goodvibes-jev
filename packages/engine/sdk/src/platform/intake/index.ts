@@ -4,6 +4,8 @@
  * remain read-only ports; semantic mapping and triage are separate layers.
  */
 export type { IntakeCredentialStore, IntakeLogger } from './context.js';
+export { createProtectedInboxMapper } from './protected-preview.js';
+export type { ProtectedInboxPreviewInput, ProtectedInboxPreviewFields } from './protected-preview.js';
 export { sha256First, digestSender, stripMarkup, normalizeWhitespace } from './text-normalization.js';
 export type {
   InboundChannelItem, ProviderState, ProviderPollResult, ProviderPollOptions,

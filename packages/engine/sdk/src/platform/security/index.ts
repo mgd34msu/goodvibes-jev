@@ -79,3 +79,9 @@ export {
   splitRecipients,
 } from './owner-identity.js';
 export type { OwnerConfigReader } from './owner-identity.js';
+export { createProtectedSourceOwner } from './source-screening/owner.js';
+export { SOURCE_SCREENING_LIMITS } from './source-screening/types.js';
+export type {
+  LocalSourceScreeningAuthority, ProtectedSourceOwnerOptions, ProtectedSource,
+  ProtectedSourceOwner, SourceScreeningReceipt, SourceScreeningResult, SourceScreeningHold,
+} from './source-screening/types.js';
