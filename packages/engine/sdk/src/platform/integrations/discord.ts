@@ -321,7 +321,7 @@ export class DiscordIntegration {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-    });
+    }, 'opaque-url');
     if (!res.ok) {
       const err = await res.text();
       throw new HttpStatusError(`DiscordIntegration.postWebhook failed (${res.status}): ${err}`, { status: res.status });
@@ -376,6 +376,7 @@ export class DiscordIntegration {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       },
+      'opaque-url',
     );
     // 204 No Content is the normal success code
     if (!res.ok && res.status !== 204) {
@@ -404,6 +405,7 @@ export class DiscordIntegration {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       },
+      'opaque-url',
     );
     if (!res.ok) {
       const err = await res.text();

@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Keep delivery URL capabilities and private failures out of shared HTTP and
+  channel-router diagnostics. Credential-owning transports select opaque URL
+  logging, all query material is withheld, and webhook URLs and interaction
+  tokens are no longer substituted for provider message IDs. Preserve actual
+  requests and original private errors for existing retry decisions.
+
 - Replace public knowledge search and task-packet token scores and record boosts
   with shared complete-candidate relevance and exact-span readings. Search now
   returns promises; synchronous packet retrieval APIs are retired in favor of
