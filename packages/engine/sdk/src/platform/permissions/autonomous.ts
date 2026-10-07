@@ -3,9 +3,10 @@ import { nativeSelectedDiffEvidence } from '../workflow/work-ledger/native-diff-
 import { captureNativeSelectedDiffContext, type NativeSelectedDiffContext } from '../workflow/work-ledger/native-diff-context.js';
 import { nativeConversationContinuationMessageSchema, NATIVE_CONVERSATION_CONTINUATION_MAX_MESSAGES, NATIVE_CONVERSATION_CONTINUATION_MAX_BYTES, type NativeConversationContinuation } from '../workflow/work-ledger/native-continuation-context.js';
 import { types as nodeTypes } from 'node:util';
+import { createHash } from 'node:crypto';
 /** Recorded Jev tool outcomes. No human callback or transport retry lives here. */
 import {
-  hashState, JudgmentError,
+  canonicalJson, JudgmentError,
   type EntryType, type JudgmentPort, type JudgmentRetryProgress,
 } from '@goodvibes-jev/judgment';
 import {
@@ -149,5 +150,7 @@ export async function decideAutonomousTool(input: AutonomousToolDecisionInput): 
 
 /** Hash inspected, owned data only; arbitrary borrowed objects never reach canonicalization. */
 export function autonomousRevision(value: unknown): string {
-  return hashState(snapshotJudgmentInput(value) as EntryType);
+  // Keep the judgment package's exact canonical bytes and SHA-256 identity,
+  // without making ordinary SDK registry capture require a Bun global.
+  return createHash('sha256').update(canonicalJson(snapshotJudgmentInput(value) as EntryType)).digest('hex');
 }

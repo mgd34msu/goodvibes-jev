@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { createProtectedSourceOwner } from '../sdk/src/platform/security/source-screening/owner.js';
 import type { ProtectedSourceOwnerOptions, ResearchReferenceScreeningReceipt, ProtectedSource, ProtectedResearchReference, SourceScreeningReceipt } from '../sdk/src/platform/security/source-screening/types.js';
+import type { ResearchReferenceOperation } from '../sdk/src/platform/security/source-screening/types.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
@@ -43,6 +44,26 @@ function fixture(options: {
   };
   return { owner, config, calls, lifetime, project };
 }
+
+test('reference operation fences reject executable metadata and async guards before any request', async () => {
+  const f = fixture();
+  const handle = f.owner.captureResearchReference('https://example.test/document?id=synthetic-value');
+  let traps = 0;
+  const getter = Object.defineProperty({}, 'assertCurrent', { get() { traps++; return () => {}; } });
+  const proxy = new Proxy({}, { ownKeys() { traps++; return []; }, getPrototypeOf() { traps++; return Object.prototype; } });
+  const signal = new Proxy(new AbortController().signal, { getPrototypeOf() { traps++; return AbortSignal.prototype; } });
+  const guard = new Proxy(() => {}, { apply() { traps++; } });
+  for (const operation of [getter, proxy, { signal }, { assertCurrent: guard }, { extra: true }]) {
+    expect(await f.owner.screenResearchReference(handle, operation as ResearchReferenceOperation)).toEqual({ status: 'held', reason: 'malformed' });
+  }
+  expect(await f.owner.screenResearchReference(handle, { assertCurrent: async () => {} })).toEqual({ status: 'held', reason: 'stale' });
+  expect(traps).toBe(0);
+  expect(f.calls).toHaveLength(0);
+  const aborted = new AbortController(); aborted.abort();
+  expect(await f.owner.screenResearchReference(handle, { signal: aborted.signal })).toEqual({ status: 'held', reason: 'cancelled' });
+  expect(f.calls).toHaveLength(0);
+  await f.owner.release(handle);
+});
 
 test('name-only Jev preserves the exact benign reference, duplicate fields, query encoding and anchor', async () => {
   const f = fixture();

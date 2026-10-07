@@ -2,6 +2,8 @@ import { hashState } from '@goodvibes-jev/judgment';
 import { captureAutonomousChoices, type AutonomousToolSource } from '../permissions/autonomous.js';
 import { UnknownPreparedToolError } from '../tools/preparation-error.js';
 import type { PreparedToolCall } from '../tools/registry.js';
+import type { ProjectedToolCall } from '../tools/input-projection.js';
+import type { AutonomousChoiceProjection } from '../permissions/autonomous-input-projection.js';
 import type { AutonomousPermissionAdmission } from '../permissions/manager.js';
 import type { TurnHookOwner } from '../hooks/turn-ownership.js';
 import { ToolError, PermissionError } from '../types/errors.js';
@@ -85,7 +87,8 @@ export type ToolExecutionDeps = {
   /** This execution's immutable whole-turn signal, never a later turn's controller. */
   turnSignal?: AbortSignal | undefined;
   toolRegistry: ToolRegistry;
-  permissionManager: Pick<PermissionManager, 'checkDetailed' | 'check' | 'admitAutonomous' | 'autonomousPreparation'>;
+  permissionManager: Pick<PermissionManager, 'checkDetailed' | 'check' | 'admitAutonomous' | 'autonomousPreparation'>
+    & Partial<Pick<PermissionManager, 'projectAutonomousChoices' | 'releaseAutonomousChoices'>>;
   hookDispatcher: HookDispatcherLike | null;
   runtimeBus: RuntimeEventBus | null;
   sessionId: string;
@@ -146,6 +149,8 @@ export async function executeToolCalls(
     let call = { id: originalCall.id, name: originalCall.name, arguments: originalCall.arguments };
     let prepared: PreparedToolCall | undefined;
     let admission: AutonomousPermissionAdmission | undefined;
+    let inputProjection: ProjectedToolCall | undefined;
+    let choiceProjection: AutonomousChoiceProjection | undefined;
     // Production managers/registries use the migrated path. The boolean seam is
     // retained only for pre-existing duck-typed test/embedding implementations.
     const autonomous = typeof deps.permissionManager.admitAutonomous === 'function'
@@ -165,15 +170,29 @@ export async function executeToolCalls(
     const admissionSignal = turnSignal && earlyCallSignal ? AbortSignal.any([turnSignal, earlyCallSignal]) : turnSignal ?? earlyCallSignal;
     try {
       if (autonomous) {
-        const preparation = deps.permissionManager.autonomousPreparation(sourceId, sourceOf!, admissionSignal, deps.autonomousPort);
+        const originalPreparation = deps.permissionManager.autonomousPreparation(sourceId, sourceOf!, admissionSignal, deps.autonomousPort);
         try {
-          prepared = await deps.toolRegistry.prepareCall(call.id, call.name, call.arguments, { ...(admissionSignal ? { signal: admissionSignal } : {}), port: preparation.port });
+          if (typeof deps.toolRegistry.projectCall === 'function') {
+            inputProjection = await deps.toolRegistry.projectCall(call.id, call.name, call.arguments,
+              { signal: admissionSignal, assertCurrent: originalPreparation.assertCurrent });
+            call = { id: inputProjection.callId, name: inputProjection.name, arguments: inputProjection.args };
+          }
+          if (deps.permissionManager.projectAutonomousChoices && deps.permissionManager.releaseAutonomousChoices) {
+            choiceProjection = await deps.permissionManager.projectAutonomousChoices(sourceId, call.id, sourceOf!, deps.toolRegistry, admissionSignal);
+          }
+          originalPreparation.assertCurrent();
+          const preparation = choiceProjection
+            ? deps.permissionManager.autonomousPreparation(sourceId, sourceOf!, admissionSignal, deps.autonomousPort, choiceProjection)
+            : originalPreparation;
+          prepared = await deps.toolRegistry.prepareCall(call.id, call.name, call.arguments, { signal: admissionSignal,
+            port: preparation.port, assertCurrent: preparation.assertCurrent });
+          preparation.assertCurrent();
         } catch (error) {
           // A hallucinated tool remains a failed call so the model can recover
           // and repeated failures still reach the turn-loop circuit breaker.
           // Authority, privacy, schema and judgment failures are not converted.
           if (!(error instanceof UnknownPreparedToolError)) throw error;
-          preparation.assertCurrent();
+          originalPreparation.assertCurrent();
           const result: ToolResult = { callId: call.id, success: false, error: error.message };
           if (deps.runtimeBus) emitToolFailed(deps.runtimeBus, deps.emitterContext(turnId), {
             callId: call.id, turnId, tool: call.name, error: error.message,
@@ -182,8 +201,10 @@ export async function executeToolCalls(
           results.push(result);
           continue;
         }
-        preparation.assertCurrent();
         call = { id: prepared.callId, name: prepared.name, arguments: prepared.args };
+      } else if (typeof deps.toolRegistry.projectCall === 'function' && deps.toolRegistry.has(call.name)) {
+        inputProjection = await deps.toolRegistry.projectCall(call.id, call.name, call.arguments, { signal: admissionSignal, assertCurrent: assertTurnActive });
+        call = { id: inputProjection.callId, name: inputProjection.name, arguments: inputProjection.args };
       }
       if (deps.runtimeBus) {
         emitToolReceived(deps.runtimeBus, deps.emitterContext(turnId), {
@@ -202,7 +223,7 @@ export async function executeToolCalls(
         let permittedRevisionIds: readonly string[] | undefined;
         while (true) {
           const currentPrepared = prepared;
-          admission = await deps.permissionManager.admitAutonomous(sourceId, currentPrepared.name, currentPrepared.args, { sourceOf: sourceOf!, decoratePort: deps.autonomousPort, signal: admissionSignal, hookOwner: deps.hookOwner, consumedRevisions, ...(permittedRevisionIds ? { permittedRevisionIds } : {}), schemaRevision: currentPrepared.schemaRevision, preparationDecisionIds: currentPrepared.judgmentDecisionIds, assertPrepared: () => deps.toolRegistry.assertPrepared(currentPrepared) });
+          admission = await deps.permissionManager.admitAutonomous(sourceId, currentPrepared.name, currentPrepared.args, { sourceOf: sourceOf!, decoratePort: deps.autonomousPort, signal: admissionSignal, hookOwner: deps.hookOwner, consumedRevisions, ...(permittedRevisionIds ? { permittedRevisionIds } : {}), ...(choiceProjection ? { choiceProjection } : {}), schemaRevision: currentPrepared.schemaRevision, preparationDecisionIds: currentPrepared.judgmentDecisionIds, assertPrepared: () => deps.toolRegistry.assertPrepared(currentPrepared) });
           assertTurnActive();
           permittedRevisionIds ??= admission.revisionIds;
           checkResult = admission.result;
@@ -210,8 +231,8 @@ export async function executeToolCalls(
           const revision = admission.revision;
           if (consumedRevisions.includes(revision.ref.id)) throw new Error('Autonomous revision was already consumed');
           consumedRevisions.push(revision.ref.id);
-          const preparation = deps.permissionManager.autonomousPreparation(sourceId, sourceOf!, admissionSignal, deps.autonomousPort);
-          prepared = await deps.toolRegistry.prepareCall(call.id, revision.toolName, revision.args, { ...(admissionSignal ? { signal: admissionSignal } : {}), port: preparation.port });
+          const preparation = deps.permissionManager.autonomousPreparation(sourceId, sourceOf!, admissionSignal, deps.autonomousPort, choiceProjection);
+          prepared = await deps.toolRegistry.prepareCall(call.id, revision.toolName, revision.args, { signal: admissionSignal, port: preparation.port, assertCurrent: preparation.assertCurrent });
           preparation.assertCurrent();
           call = { id: prepared.callId, name: prepared.name, arguments: prepared.args };
         }
@@ -482,6 +503,13 @@ export async function executeToolCalls(
       else throw error;
     } finally {
       if (earlyCallSignal) deps.toolCallSignals?.close(call.id);
+      const choicesToRelease = choiceProjection;
+      const inputToRelease = inputProjection;
+      const cleanup = await Promise.allSettled([
+        ...(choicesToRelease ? [Promise.resolve().then(() => deps.permissionManager.releaseAutonomousChoices!(choicesToRelease))] : []),
+        ...(inputToRelease ? [Promise.resolve().then(() => deps.toolRegistry.releaseProjected(inputToRelease))] : []),
+      ]);
+      if (cleanup.some(result => result.status === 'rejected')) throw new Error('Tool input projection cleanup failed');
     }
   }
 

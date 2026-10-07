@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test, type Mock } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -31,21 +31,38 @@ function sampleServer(): DiscoveredServer {
   };
 }
 
-function warningMessages(warnSpy: Mock<typeof logger.warn>): string[] {
-  return warnSpy.mock.calls.map((call) => String(call[0]));
-}
-
 describe('discovery persistence observability', () => {
-  test('loadPersistedProviders warns when the discovery cache cannot be parsed', () => {
+  test('persist and remove cache-read warnings never include private text or paths', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'gv-discovery-observe-'));
-    const warnSpy = spyOn(logger, 'warn') as Mock<typeof logger.warn>;
+    const warnSpy = spyOn(logger, 'warn').mockImplementation(() => {});
     try {
       const path = persistedPath(tmp);
       mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, '{ bad json', 'utf-8');
+      for (const raw of ['synthetic-private-cache-value', '{"private":"synthetic-secret"}']) {
+        writeFileSync(path, raw, 'utf-8');
+        persistProviders(roots(tmp), [sampleServer()]);
+        writeFileSync(path, raw, 'utf-8');
+        removePersistedProviders(roots(tmp), [{ host: '127.0.0.1', port: 1234 }]);
+      }
+      expect(warnSpy.mock.calls).toEqual([
+        ['[Scanner] persistProviders could not read existing discovery cache; overwriting with current scan results'],
+        ['[Scanner] removePersistedProviders failed; discovery cache was not cleaned up'],
+        ['[Scanner] persistProviders ignored invalid existing discovery cache; overwriting with current scan results'],
+        ['[Scanner] removePersistedProviders skipped invalid discovery cache'],
+      ]);
+    } finally { warnSpy.mockRestore(); rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  test('loadPersistedProviders warns when the discovery cache cannot be parsed', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'gv-discovery-observe-'));
+    const warnSpy = spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const path = persistedPath(tmp);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, 'synthetic-private-cache-value', 'utf-8');
 
       expect(loadPersistedProviders(roots(tmp))).toEqual([]);
-      expect(warningMessages(warnSpy).some((message) => message.includes('loadPersistedProviders failed'))).toBe(true);
+      expect(warnSpy.mock.calls).toEqual([['[Scanner] loadPersistedProviders failed; using empty discovery cache']]);
     } finally {
       warnSpy.mockRestore();
       rmSync(tmp, { recursive: true, force: true });
@@ -54,13 +71,13 @@ describe('discovery persistence observability', () => {
 
   test('persistProviders warns when the discovery cache cannot be written', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'gv-discovery-observe-'));
-    const warnSpy = spyOn(logger, 'warn') as Mock<typeof logger.warn>;
+    const warnSpy = spyOn(logger, 'warn').mockImplementation(() => {});
     try {
       mkdirSync(join(tmp, '.goodvibes'), { recursive: true });
       writeFileSync(join(tmp, '.goodvibes', surfaceRoot), 'not a directory', 'utf-8');
 
       expect(() => persistProviders(roots(tmp), [sampleServer()])).not.toThrow();
-      expect(warningMessages(warnSpy).some((message) => message.includes('persistProviders failed'))).toBe(true);
+      expect(warnSpy.mock.calls).toEqual([['[Scanner] persistProviders failed; discovery cache was not updated']]);
     } finally {
       warnSpy.mockRestore();
       rmSync(tmp, { recursive: true, force: true });
@@ -69,14 +86,14 @@ describe('discovery persistence observability', () => {
 
   test('removePersistedProviders warns when the discovery cache cannot be parsed', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'gv-discovery-observe-'));
-    const warnSpy = spyOn(logger, 'warn') as Mock<typeof logger.warn>;
+    const warnSpy = spyOn(logger, 'warn').mockImplementation(() => {});
     try {
       const path = persistedPath(tmp);
       mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, '{ bad json', 'utf-8');
+      writeFileSync(path, 'synthetic-private-cache-value', 'utf-8');
 
       expect(() => removePersistedProviders(roots(tmp), [{ host: '127.0.0.1', port: 1234 }])).not.toThrow();
-      expect(warningMessages(warnSpy).some((message) => message.includes('removePersistedProviders failed'))).toBe(true);
+      expect(warnSpy.mock.calls).toEqual([['[Scanner] removePersistedProviders failed; discovery cache was not cleaned up']]);
     } finally {
       warnSpy.mockRestore();
       rmSync(tmp, { recursive: true, force: true });
