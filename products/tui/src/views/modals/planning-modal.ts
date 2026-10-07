@@ -20,21 +20,20 @@ import { buildAnswerActions, readProjectPlanningAnswerActions, type PlanningAnsw
 import { selectedPlanningTarget } from '../../input/commands/planning-action-target.ts';
 
 // ---------------------------------------------------------------------------
-// Project Planning → 'planning' config-modal surface (group-B port). Shows
-// readiness/questions/decisions/task-graph/handoff, read-only except choosing
-// an answer to the current open question, approving execution, dismissing the
-// plan, or refreshing.
+// Historical Project Planning → 'planning' config-modal surface. Explicit
+// /project-plan history opens this retained record view; native intake and the
+// default planning entry use the native work ledger instead.
 //
-//, the seams are now real:
-//   - A CANNED answer to a real open question dispatches `/plan answer <id> <text>`
-//     (records it; the open-question gap clears on the next refine).
-//   - CUSTOM returns to the existing chat composer. A selected answer to a
-//     synthetic readiness question uses `submitInput` for a real model turn. ORDERING GUARD: the modal closes
-//     BEFORE the turn starts (a turn under a live modal is the modal-liveness
-//     hazard). No more `/plan <text>` reseed approximation.
-//   - Dismiss is a first-class CONFIRMED action (`d`) dispatching `/plan dismiss`,
-//     plus the plain Esc close (planning unchanged).
+// Historical answers and approval remain revision-bound. Approval here does
+// not create a native execution grant or migrate a historical record.
+// - Canned answers to saved open questions dispatch /project-plan answer.
+// - Custom answers return to chat. Synthetic readiness answers start a real
+//   chat turn only AFTER the modal closes (the modal-liveness ordering guard).
+// - Dismiss is a confirmed /project-plan dismiss action; Esc only closes.
 // ---------------------------------------------------------------------------
+
+const HISTORICAL_TITLE = 'Historical planning';
+const HISTORICAL_BOUNDARY = 'Historical approval does not grant native execution or migrate records.';
 
 export type PlanningModalService = Pick<ProjectPlanningService, 'status' | 'getState' | 'listDecisions' | 'getLanguage' | 'evaluate'>;
 
@@ -70,8 +69,8 @@ function buildStateLines(state: ProjectPlanningState, evaluation: ProjectPlannin
   const readinessColor = readiness === 'executable' ? MODAL_TONES.good : readiness === 'needs-user-input' ? MODAL_TONES.warn : undefined;
   const blockingGaps = evaluation?.gaps.filter((gap) => gap.severity === 'blocking').length ?? 'unknown';
   const lines: TextLine[] = [
-    { content: `readiness ${readiness}  approved ${state.executionApproved ? 'yes' : 'no'}  questions ${state.openQuestions.length} open / ${state.answeredQuestions.length} answered`, ...(readinessColor ? { fg: readinessColor } : {}) },
-    { content: `blocking gaps ${blockingGaps}  tasks ${state.tasks.length}  gates ${state.verificationGates.length}` },
+    { content: `readiness ${readiness}  historical approval ${state.executionApproved ? 'yes' : 'no'}`, ...(readinessColor ? { fg: readinessColor } : {}) },
+    { content: `questions ${state.openQuestions.length} open / ${state.answeredQuestions.length} answered  blocking gaps ${blockingGaps}  tasks ${state.tasks.length}  gates ${state.verificationGates.length}` },
     { content: `goal: ${state.goal || '(not set)'}` },
   ];
   if (state.scope) lines.push({ content: `scope: ${state.scope}` });
@@ -130,7 +129,7 @@ function buildLanguageLines(language: ProjectPlanningLanguageArtifact | null): T
 
 class PlanningModalSurface implements ConfigModalSurface {
   readonly name = 'planning-modal';
-  readonly title = 'Planning';
+  readonly title = HISTORICAL_TITLE;
   private snapshot: PlanningModalSnapshot | null = null;
   private loading = false;
   private generation = 0;
@@ -144,8 +143,8 @@ class PlanningModalSurface implements ConfigModalSurface {
 
   readonly actions = [
     { key: 'enter', id: 'submit', label: 'submit', enabledFor: () => this.currentAnswerActions().actions.length > 0 },
-    { key: 'a', id: 'approve', label: 'approve execution' },
-    { key: 'd', id: 'dismiss', label: 'dismiss planning', confirm: true },
+    { key: 'a', id: 'approve', label: 'approve historical plan' },
+    { key: 'd', id: 'dismiss', label: 'dismiss historical plan', confirm: true },
     { key: 'r', id: 'refresh', label: 'refresh' },
   ];
 
@@ -242,35 +241,40 @@ class PlanningModalSurface implements ConfigModalSurface {
 
   buildView(): ConfigModalView {
     if (!this.snapshot) {
-      return { title: 'Planning', tabs: [{ id: 'planning', label: 'Planning', rows: [infoRow('load', this.loading ? 'Loading project planning state...' : 'Project planning state unavailable.', { fg: MODAL_TONES.dim })] }], hints: ['r refresh'] };
+      return { title: HISTORICAL_TITLE, tabs: [{ id: 'planning', label: 'History', header: [HISTORICAL_BOUNDARY], rows: [infoRow('load', this.loading ? 'Loading historical planning records...' : 'Historical planning records unavailable.', { fg: MODAL_TONES.dim })] }], hints: ['r refresh'] };
     }
 
     const { status, state, evaluation, decisions, language } = this.snapshot;
-    const header = [`project ${this.deps.projectId}  space ${status?.knowledgeSpaceId ?? `project:${this.deps.projectId}`}`];
+    const header = [
+      `project ${this.deps.projectId}  space ${status?.knowledgeSpaceId ?? `project:${this.deps.projectId}`}`,
+      HISTORICAL_BOUNDARY,
+    ];
     const rows: ConfigModalRow[] = [];
     let n = 0;
     const line = (l: TextLine): void => { rows.push({ id: `p:${n++}`, label: l.content, selectable: false, ...(l.fg ? { style: { fg: l.fg } } : {}) }); };
 
     if (!state) {
-      line({ content: 'No project planning state has been saved for this workspace.' });
-      line({ content: 'Describe the intended change in normal chat to start the planning interview.', fg: undefined });
-      return { title: 'Planning', tabs: [{ id: 'planning', label: 'Planning', header, rows, emptyText: '' }], hints: ['r refresh'] };
+      line({ content: 'No historical planning state has been saved for this workspace.' });
+      line({ content: 'Start native work with /project-plan <goal>; /project-plan opens the native work ledger.', fg: undefined });
+      return { title: HISTORICAL_TITLE, tabs: [{ id: 'planning', label: 'History', header, rows, emptyText: '' }], hints: ['r refresh'] };
     }
 
     for (const l of buildStateLines(state, evaluation)) line(l);
 
     const { question, actions } = this.currentAnswerActions();
     if (question) {
-      line({ content: 'Answer Current Question' });
+      line({ content: 'Answer Historical Question' });
       line({ content: question.prompt, fg: MODAL_TONES.info });
       if (question.whyItMatters) line({ content: `Why this matters: ${question.whyItMatters}` });
       if (this.reading?.recommendation && questionBinding(question) === questionBinding(this.reading.question)) line({ content: `Recommendation: ${this.reading.recommendation}`, fg: MODAL_TONES.good });
       if (this.suggestions === 'loading') line({ content: 'Reading answer suggestions…', fg: MODAL_TONES.dim });
-      if (this.suggestions === 'unavailable') line({ content: 'Answer suggestions unavailable. You can still answer, approve, or dismiss.', fg: MODAL_TONES.dim });
+      if (this.suggestions === 'unavailable') line({ content: 'Answer suggestions unavailable. You can still answer, approve this historical plan, or dismiss.', fg: MODAL_TONES.dim });
       for (const action of actions) {
         rows.push(action.id === 'custom'
-          ? { id: this.rowId(action), label: 'Type a custom answer - Close planning and answer in the chat composer.' }
-          : { id: this.rowId(action), label: `${action.label} - ${action.detail}`, ...(action.disabled ? { selectable: false } : {}) });
+          ? { id: this.rowId(action), label: 'Type a custom answer - Close history and answer in the chat composer.' }
+          : { id: this.rowId(action), label: action.kind === 'approve'
+            ? 'Approve historical plan - Record approval for this revision only; no native execution grant.'
+            : `${action.label} - ${action.detail}`, ...(action.disabled ? { selectable: false } : {}) });
       }
       line({ content: 'Enter records a suggested answer; the custom row returns to the chat composer.', fg: undefined });
     }
@@ -281,18 +285,18 @@ class PlanningModalSurface implements ConfigModalSurface {
     for (const l of buildLanguageLines(language)) line(l);
 
     return {
-      title: 'Planning',
-      tabs: [{ id: 'planning', label: 'Planning', header, rows }],
+      title: HISTORICAL_TITLE,
+      tabs: [{ id: 'planning', label: 'History', header, rows }],
     };
   }
 
   onAction(id: string, ctx: ConfigModalActionContext): void {
-    if (id === 'refresh') { this.refresh(); ctx.setStatus('Reloading project planning state…'); return; }
+    if (id === 'refresh') { this.refresh(); ctx.setStatus('Reloading historical planning records…'); return; }
     if (id === 'approve') { void this.submit(ctx, true); return; }
     if (id === 'dismiss') {
       // First-class, confirmed (host two-press) mutating dismiss.
       void ctx.executeCommand?.('project-plan', ['dismiss']);
-      ctx.setStatus('Dispatched /project-plan dismiss.');
+      ctx.setStatus('Dispatched /project-plan dismiss for historical planning.');
       ctx.close();
       return;
     }
@@ -331,7 +335,7 @@ class PlanningModalSurface implements ConfigModalSurface {
     if (!ctx.executeCommand) { ctx.setStatus('Planning commands are unavailable in this view.'); return; }
     const generation = this.generation;
     await ctx.executeCommand('project-plan', ['approve', ...selected.args]);
-    if (generation === this.generation) ctx.setStatus('Dispatched approval for the selected planning revision.');
+    if (generation === this.generation) ctx.setStatus('Dispatched historical revision approval; no native execution grant.');
   }
 
   private async submitCurrent(ctx: ConfigModalActionContext): Promise<void> {
@@ -389,7 +393,7 @@ class PlanningModalSurface implements ConfigModalSurface {
     if (action.kind === 'approve') {
       if (!ctx.executeCommand) { ctx.setStatus('Planning commands are unavailable in this view.'); return; }
       await ctx.executeCommand('project-plan', ['approve', ...selected.args]);
-      if (generation === this.generation) ctx.setStatus('Dispatched /project-plan approve.');
+      if (generation === this.generation) ctx.setStatus('Dispatched historical revision approval; no native execution grant.');
       return;
     }
 
@@ -404,7 +408,7 @@ class PlanningModalSurface implements ConfigModalSurface {
       if (!ctx.executeCommand) { ctx.setStatus('Planning commands are unavailable in this view.'); return; }
       await ctx.executeCommand('project-plan', ['answer', ...selected.args, question.id, answerText]);
       if (generation !== this.generation) return;
-      ctx.setStatus('Dispatched /project-plan answer for the current question.');
+      ctx.setStatus('Dispatched /project-plan answer for the historical question.');
       return;
     }
 

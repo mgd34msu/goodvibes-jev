@@ -488,6 +488,17 @@ export function directOwnerWorkstreamInput(context: CommandContext): NativeConve
   return match ? captureNativeConversationInput(match[1] ?? '') : undefined;
 }
 
+/** New planning goals share the terminal-only capture boundary with workstream starts.
+ * Exactly one separator is syntax; the remaining source is retained verbatim.
+ * Aliases resolve to project-plan in the private dispatch mark, never in source.
+ */
+export function directOwnerPlanningInput(context: CommandContext): NativeConversationInput | undefined {
+  if (!isDirectOwnerCommandContext(context, 'project-plan')) return undefined;
+  const raw = directOwnerCommands.get(context)?.rawInput;
+  const match = raw?.match(/^\s*\/(?:project-plan|planning)(?:(?:\r\n|\s)([\s\S]*))?$/);
+  return match ? captureNativeConversationInput(match[1] ?? '') : undefined;
+}
+
 /**
  * SlashCommand - A single slash command definition.
  */

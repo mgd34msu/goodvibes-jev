@@ -579,13 +579,14 @@ describe('compiled interactive TUI owner pairing', () => {
 });
 
 
-describe('compiled interactive TUI native workstream start', () => {
+for (const command of ['/workstream start', '/project-plan', '/planning']) {
+describe(`compiled interactive TUI native ${command === '/workstream start' ? 'workstream start' : 'planning entry ' + command}`, () => {
   test('real owner command preserves exact source through production capture and survives a lost acknowledgement without legacy fallback', async () => {
     const f = await fixture(true);
     try {
       const session = await f.launch();
       const original = '  Repair  界 e\u0301 😀 @source.ts  ';
-      const since = session.command(`/workstream start ${original}`);
+      const since = session.command(`${command} ${original}`);
       await session.find('native capture uncertainty', text => text.includes('Native intake outcome is unknown'), since);
       expect(f.nativeCaptures).toHaveLength(1);
       expect(f.nativeCaptures[0]).toMatchObject({ status: 200, body: {
@@ -593,7 +594,7 @@ describe('compiled interactive TUI native workstream start', () => {
       } });
       const retained = readFileSync(join(f.home.home, '.goodvibes/tui/native-work-submission.json.intake'), 'utf8');
       expect(retained).toContain(JSON.stringify(original));
-      const again = session.command('/workstream start replacement must not become source');
+      const again = session.command(`${command} replacement must not become source`);
       await session.find('original source remains unresolved', text => text.includes('An original input is unresolved'), again);
       expect(f.nativeCaptures).toHaveLength(1);
       expect(readFileSync(join(f.home.home, '.goodvibes/tui/native-work-submission.json.intake'), 'utf8')).toBe(retained);
@@ -608,7 +609,7 @@ describe('compiled interactive TUI native workstream start', () => {
       const session = await f.launch();
       const refusal = 'No TUI credential is bound to this exact daemon origin';
       expect(session.screen()).not.toContain(refusal);
-      const since = session.command('/workstream start repair the owned fixture');
+      const since = session.command(`${command} repair the owned fixture`);
       await session.find('unpaired native start is unavailable', text => text.includes(refusal), since);
       expect(session.text(since)).toContain(refusal);
       expect(f.nativeCaptures).toEqual([]);
@@ -617,3 +618,5 @@ describe('compiled interactive TUI native workstream start', () => {
     } finally { await f.stop(); }
   }, 30_000);
 });
+
+}

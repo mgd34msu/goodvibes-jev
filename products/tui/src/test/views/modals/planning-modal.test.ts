@@ -48,23 +48,52 @@ async function warm(service: PlanningModalService) {
 }
 
 describe('planning modal surface', () => {
-  test('surface identity matches the project-planning -> planning-modal redirect target', () => {
-    expect(createPlanningModalSurface({ service: serviceWithState(null), projectId: 'proj-1' }).name).toBe('planning-modal');
+  test('historical entry keeps its modal identity', () => {
+    const surface = createPlanningModalSurface({ service: serviceWithState(null), projectId: 'proj-1' });
+    expect(surface.name).toBe('planning-modal');
+    expect(surface.title).toBe('Historical planning');
   });
 
   test('loading placeholder before the async load resolves, then the real state after', async () => {
     const surface = createPlanningModalSurface({ service: serviceWithState(noQuestionState()), projectId: 'proj-1' });
     surface.onOpen?.(() => {});
-    expect(tabText(surface.buildView(), 'planning').toLowerCase()).toContain('loading');
+    const loading = surface.buildView();
+    expect(loading.title).toBe('Historical planning');
+    expect(loading.tabs[0]!.label).toBe('History');
+    expect(tabText(loading, 'planning')).toContain('Loading historical planning records');
+    expect(tabText(loading, 'planning')).toContain('Historical approval does not grant native execution or migrate records.');
     await flush();
     const loaded = tabText(surface.buildView(), 'planning');
+    expect(surface.buildView().title).toBe('Historical planning');
     expect(loaded).toContain('readiness executable');
+    expect(loaded).toContain('historical approval no');
     expect(loaded).toContain('Fixture goal');
   });
 
   test('no-state case names the gap honestly instead of showing empty artifact sections', async () => {
     const text = tabText((await warm(serviceWithState(null))).buildView(), 'planning');
-    expect(text).toContain('No project planning state has been saved for this workspace.');
+    expect(text).toContain('No historical planning state has been saved for this workspace.');
+    expect(text).toContain('/project-plan <goal>');
+    expect(text).toContain('/project-plan opens the native work ledger');
+    expect(text).not.toContain('start the planning interview');
+  });
+
+  test('saved historical approval is displayed without native authority or migration', async () => {
+    const surface = await warm(serviceWithState({ ...noQuestionState(), executionApproved: true }));
+    const text = tabText(surface.buildView(), 'planning');
+    expect(text).toContain('historical approval yes');
+    expect(text).toContain('Historical approval does not grant native execution or migrate records.');
+    surface.onClose?.();
+  });
+
+  test('failed historical reads retain the boundary and a refresh route', async () => {
+    const surface = await warm({ ...serviceWithState(null), getState: async () => { throw new Error('unavailable'); } });
+    const view = surface.buildView();
+    expect(view.title).toBe('Historical planning');
+    expect(tabText(view, 'planning')).toContain('Historical planning records unavailable.');
+    expect(tabText(view, 'planning')).toContain('Historical approval does not grant native execution or migrate records.');
+    expect(view.hints).toContain('r refresh');
+    surface.onClose?.();
   });
 
   test('an open question renders answer actions; approve row routes to /project-plan approve', async () => {
@@ -73,7 +102,8 @@ describe('planning modal surface', () => {
     const view = surface.buildView();
     const text = tabText(view, 'planning');
     expect(text).toContain('Is execution approved?');
-    expect(text).toContain('Approve execution');
+    expect(text).toContain('Approve historical plan');
+    expect(text).toContain('no native execution grant');
     // no more reseed approximation note; the answer paths are real now.
     expect(text).not.toContain('reseeds the plan goal');
     expect(view.tabs[0]!.rows.some((r) => r.id.endsWith(':approve-execution'))).toBe(true);
@@ -143,9 +173,12 @@ describe('planning modal surface', () => {
   test('top-level approve action (no open question) routes to /project-plan approve', async () => {
     const surface = await warm(serviceWithState(noQuestionState()));
     const cap = captureCommands();
-    surface.onAction?.('approve', actionCtx(null, cap.extra));
+    const statuses: string[] = [];
+    expect(findAction(surface, 'approve')?.label).toBe('approve historical plan');
+    surface.onAction?.('approve', actionCtx(null, { ...cap.extra, setStatus: (message) => statuses.push(message) }));
     await flush();
     expect(cap.calls).toEqual([['project-plan', ['approve', ...TARGET]]]);
+    expect(statuses).toEqual(['Dispatched historical revision approval; no native execution grant.']);
   });
 
   // dismiss is now a first-class CONFIRMED action ('d') that dispatches
