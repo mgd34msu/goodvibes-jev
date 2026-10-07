@@ -33,6 +33,19 @@ empty production inbox, dynamic composition-module loader or detached server.
 The caller remains responsible for complete provider membership and trusted
 preview mapping. No fixture factory is installed in the executable.
 
+For an explicitly configured single-node Slack host, the same CLI export now
+provides `createSlackDaemonInboxFactory({ account, screening, timeoutMs? })`.
+Pass its result as `runtime.inboxFactory`. The account supplies the expected
+workspace and user/bot identity; `screening` supplies the established local
+source-service authority and proposal/Jev endpoints. Existing canonical settings
+must enable Slack, select that workspace and disable cluster mode; credentials
+come from the existing daemon credential resolver. This factory owns real Slack
+history polling, protected content previews, an account-specific SQLite mirror
+and authenticated reads, including token rotation and awaited shutdown. See
+`docs/audit/daemon-slack-inbox-composition.md` for the exact trusted inputs,
+transport and live-proof requirements. It does not compose other providers or
+claim clustered startup support.
+
 `GOODVIBES_HOME` relocates the state-tree home. `--daemon-home` or
 `GOODVIBES_DAEMON_HOME` relocates only the daemon identity/settings tier;
 `--working-dir` selects the workspace. CLI flags do not mutate the embedding

@@ -39,7 +39,7 @@ async function retire(body: Readable): Promise<void> {
   await done;
 }
 
-function responseStream(body: Readable): ReadableStream<Uint8Array> {
+export function responseStream(body: Readable): ReadableStream<Uint8Array> {
   const done = finished(body, { cleanup: true }).then(() => {}, () => {});
   const iterator = body[Symbol.asyncIterator]();
   let cancelled = false;
