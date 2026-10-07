@@ -67,8 +67,8 @@ accounts for seven added, seven deleted and 27 modified paths, while preserving
 86 valid existing mappings and adding three mappings to already-landed wire,
 version and adapted contract-lifecycle tests (89 total). The latter preserves
 shutdown intent, not a legacy WRFC implementation. Real wire/streaming behavior and channel tool
-authority have separate landed evidence. Six executable/release/packaging
-acceptance items remain deferred; this accounting advance is not full migration.
+authority have separate landed evidence. Five native-binary/release/compiled-hosting
+acceptance items remain deferred after the emitted CLI-dispatch test was mapped; this accounting advance is not full migration.
 
 ### WebUI
 

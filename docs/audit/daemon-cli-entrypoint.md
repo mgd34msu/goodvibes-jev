@@ -56,8 +56,8 @@ neither changes these privacy/availability boundaries nor adds a made-up
 Broader upstream CLI behavior is still unmapped: default intake/triage,
 automatic service/update lifecycle, LAN/provider discovery, remaining pairing
 startup work, global transport configuration, and release/native
-packaging. The strict migration gate and six deferred upstream acceptance items
-remain open. The changed README does not supersede that ledger.
+packaging. The strict migration gate and five native-binary/release/compiled-hosting
+acceptance items remain open. The changed README does not supersede that ledger.
 
 Shared selected-home companion-token bootstrap is now adapted in the admitted
 CLI startup path; see [its bounded source/caller audit](daemon-companion-token-bootstrap.md).
@@ -105,3 +105,28 @@ In particular, `service-status --json` remains consumable from stdout for both
 exit 3 (installed but stopped) and exit 4 (not installed); the exit status does
 not silently reroute that ordinary state document to stderr. Dispatcher-level
 fixtures cover this without invoking any real service or download.
+
+## Original CLI-dispatch acceptance
+
+The original `src/test/daemon/cli-dispatch.test.ts` at the reviewed daemon commit
+above, blob `91d58e75fe413e46439b0dc1c3f779bda027b695`, is mapped to
+`products/daemon/src/test/cli/entrypoint.test.ts`. The emitted dispatcher exits
+with the package-manifest version, refuses `install-servce` with exit 2 and
+usage, renders the sessions help page, returns exact `Unknown command: doctor`,
+and refuses `--daemon-home ... send hello` because send must be the first word.
+These commands create neither a daemon tier nor ordinary user configuration.
+The installed Agent and TUI package-bin links also print the manifest version.
+
+One-shot exit waits now own a 20-second ceiling and kill/reap cleanup with its
+own 5-second bound. Timers are cleared on every result; cleanup also closes the
+child pipes. A cleanup failure retains the original exit failure. The existing
+real-host fixture deliberately holds an admitted poll across SIGTERM; a short
+test-owned exit deadline must kill and reap it and close its listener without
+claiming successful drainage. Ordinary SIGINT/SIGTERM drainage assertions and
+production shutdown deadlines are unchanged. No runtime source changed.
+
+Only the stale absent-executable deferral for this test is retired. The five
+remaining rows cover `.github/workflows/release.yml`,
+`scripts/hosted-session-proof.ts`, `scripts/release-prepare.ts`,
+`src/test/scripts/release-prepare.test.ts`, and `toolchain.config.json`.
+THE-18 and the daemon migration remain partial.

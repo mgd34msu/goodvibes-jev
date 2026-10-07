@@ -391,7 +391,7 @@ These rows account for newly tracked target files. Deferred acceptance remains o
 |---|---|---|
 | `daemon/docs/testing-and-validation.md` | PORT | Use real behavior, isolated hosts and outcome-driven tests. Record executable/wire/binary acceptance below; preserve Jev guarded runner and real containment proof. |
 | `daemon/scripts/release-prepare.ts` | PORT | Version-stamp/changelog generation must be reconciled with the monorepo release model at product packaging; no standalone release side effects added now. |
-| `daemon/src/test/daemon/cli-dispatch.test.ts` | PORT | The actual daemon executable is still absent. Preserve the new acceptance: version, unknown command exit2, command help and first-word-only command refusal without foreground serving. |
+| `daemon/src/test/daemon/cli-dispatch.test.ts` | PORT | Mapped to `products/daemon/src/test/cli/entrypoint.test.ts`: the emitted dispatcher proves package version, misspelled-command exit 2 with help, sessions help, exact doctor refusal, and send first-word refusal without serving or creating configuration. Owned subprocess deadlines kill and reap a hung child, proven with the interrupted held-poll fixture; native binary/release acceptance remains deferred. |
 | `daemon/src/test/daemon/daemon-wire.test.ts` | PORT | Adapted to products/daemon/src/test/daemon/daemon-wire.test.ts against the real configured graph: wrong/missing-token WebSocket refusal, exact Last-Event-ID replay, and hosted streaming turn/detach/reattach with saved reply text. Inbox, metadata and Jev inputs are explicit offline fixtures; production default intake and binary proof remain separate. |
 | `daemon/src/test/runtime/wrfc-fix-engine-disposal.test.ts` | PORT | Mapped to `products/daemon/src/test/runtime/daemon-fixture-boot.test.ts`: adapt lifecycle intent to the real Jev contract owner, including held reading cancellation, delayed store flush and post-close admission refusal. This does not restore or claim implementation equivalence with the WRFC engine. |
 | `daemon/src/test/scripts/release-prepare.test.ts` | PORT | Test actual stamping behavior with the future chosen product release implementation, not the unused upstream script. |
@@ -401,7 +401,7 @@ These rows account for newly tracked target files. Deferred acceptance remains o
 
 The following seven paths were deleted upstream between 443e5ee4 and 254699bf. They are removed from current tracked-file accounting; their deletion does not waive real behavior covered by retained tests.
 
-- `src/test/daemon/cli-dispatch-wiring.test.ts`: Deleted source-scraping dispatch test was not ported. Its replacement is the deferred real-entrypoint acceptance.
+- `src/test/daemon/cli-dispatch-wiring.test.ts`: Deleted source-scraping dispatch test was not ported. Its real-entrypoint replacement is now mapped to `products/daemon/src/test/cli/entrypoint.test.ts`.
 - `src/test/scripts/workflow-shape.test.ts`: Deleted standalone source-text workflow expectations were not imported; retain only meaningful monorepo release safety proof.
 - `scripts/check-changelog.ts`: Deleted upstream per-push changelog gate was never a daemon-product gate here; do not restore it.
 - `scripts/coverage-gate.ts`: Deleted upstream coverage quota was never ported into the product; do not restore it.
