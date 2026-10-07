@@ -8,7 +8,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -363,11 +363,142 @@ describe('ci.yml: build once, restore everywhere', () => {
     expect(verify?.run).toContain('bun products/agent/scripts/ci-artifact.ts verify "$GITHUB_SHA"');
     expect(verify?.run).toContain('products/agent/dist/goodvibes-agent-linux-x64 --version');
     expect(verify?.run).toContain('echo "GOODVIBES_E2E_BINARY=$GITHUB_WORKSPACE/products/agent/dist/goodvibes-agent-linux-x64" >> "$GITHUB_ENV"');
-    expect(terminal?.run).toContain('sudo apt-get install --no-install-recommends -y tmux');
+    expect(terminal?.run).toContain('install --no-install-recommends -y tmux');
     expect(steps(product).indexOf(verify!)).toBeGreaterThan(steps(product).indexOf(restore!));
     expect(steps(product).indexOf(run!)).toBeGreaterThan(steps(product).indexOf(verify!));
     expect(steps(product).indexOf(run!)).toBeGreaterThan(steps(product).indexOf(terminal!));
     expect(stepText(ci.jobs!['platform-matrix']!)).not.toMatch(/GOODVIBES_E2E_BINARY|ci-artifact\.ts verify|apt-get install.*tmux/);
+  });
+
+  // This Ubuntu workflow's process proof requires GNU timeout and Linux /proc.
+  // Keep it required on every CI runner; the shape assertions above are portable.
+  test.skipIf(process.platform !== 'linux')('the Agent prerequisite executes bounded acquisition only when tmux is unusable and fails closed', async () => {
+    const terminal = steps(ci.jobs!['agent-tests']!).find((step) => step.name === 'Install Agent terminal E2E prerequisite');
+    const script = String(terminal?.run);
+    // Run the actual workflow body with an isolated PATH: no real sudo/apt can
+    // execute. Owned hanging fixtures reach the real GNU timeout; trigger its
+    // deadline alarm only after atomic parent/child readiness, avoiding a race
+    // between a short fixture deadline and a loaded runner starting the child.
+    for (const scenario of ['installed', 'missing', 'broken', 'update-fails', 'install-fails', 'verify-fails', 'update-hangs', 'install-hangs', 'probe-hangs', 'verify-hangs']) {
+      const root = mkdtempSync(join(tmpdir(), 'agent-prerequisite-'));
+      const bin = join(root, 'bin');
+      mkdirSync(bin);
+      const log = join(root, 'commands');
+      const pids = join(root, 'pids');
+      writeFileSync(log, '');
+      const step = join(root, 'step.sh');
+      writeFileSync(step, script);
+      const executable = (name: string, body: string) => writeFileSync(join(bin, name), `#!/bin/bash\nset -euo pipefail\n${body}\n`, { mode: 0o755 });
+      const hang = `
+        trap '' TERM
+        # Regress the case where timeout's direct child exits on TERM but its
+        # descendant ignores TERM: kill-after alone never reaches that child.
+        [[ "$SCENARIO" != update-hangs ]] || trap 'exit 0' TERM
+        export FIXTURE_PARENT_PID=$BASHPID
+        /bin/bash -c 'trap "" TERM; printf "%s\\n%s\\n" "$FIXTURE_PARENT_PID" "$BASHPID" > "$PIDS.pending"; /bin/mv "$PIDS.pending" "$PIDS"; exec /bin/sleep 30' &
+        wait
+      `;
+      const liveFixture = (pid: number) => {
+        try { return !/[)] [ZX] /.test(readFileSync(`/proc/${pid}/stat`, 'utf8')); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+          throw error;
+        }
+      };
+      try {
+        executable('sudo', 'printf "sudo %s\\n" "$*" >> "$LOG"\n[[ "$1" == -n ]]\nshift\nexec "$@"');
+        executable('timeout', `
+          printf 'timeout %s\\n' "$*" >> "$LOG"
+          [[ "$1" == --signal=* ]]
+          [[ "$2" == 10s || "$2" == 120s ]]
+          signal_option=$1
+          operation=none
+          if [[ "$3" == apt-get ]]; then
+            operation=install
+            [[ "\${!#}" != update ]] || operation=update
+          elif [[ "$3" == tmux ]]; then
+            operation=verify
+            [[ -e "$BIN/installed" ]] || operation=probe
+          fi
+          shift 2
+          if [[ "$SCENARIO" == "$operation-hangs" ]]; then
+            /usr/bin/timeout "$signal_option" 5s "$@" &
+            owned=$!
+            deadline=$((SECONDS + 3))
+            while [[ ! -s "$PIDS" ]]; do
+              if (( SECONDS >= deadline )); then
+                kill -KILL -- -"$owned" 2>/dev/null || true
+                wait "$owned" || true
+                printf 'fixture did not publish complete PID readiness\\n' >&2
+                exit 70
+              fi
+              /bin/sleep 0.01
+            done
+            kill -ALRM "$owned"
+            set +e
+            wait "$owned"
+            exit $?
+          fi
+          exec "$@"
+        `);
+        executable('apt-get', `
+          printf 'apt-get %s\\n' "$*" >> "$LOG"
+          operation=install
+          [[ "\${!#}" != update ]] || operation=update
+          [[ "$SCENARIO" != "$operation-fails" ]] || exit 100
+          if [[ "$SCENARIO" == "$operation-hangs" ]]; then
+            ${hang}
+          fi
+          if [[ "$operation" == install ]]; then
+            /bin/cp "$BIN/installed-tmux" "$BIN/tmux"
+            /bin/chmod +x "$BIN/tmux"
+            : > "$BIN/installed"
+          fi
+        `);
+        executable('installed-tmux', `printf 'tmux -V\\n' >> "$LOG"\n[[ "$SCENARIO" != verify-fails ]]\nif [[ "$SCENARIO" == verify-hangs ]]; then\n${hang}\nfi`);
+        if (scenario === 'installed' || scenario === 'broken') {
+          executable('tmux', 'printf "tmux -V\\n" >> "$LOG"\n[[ "$SCENARIO" == installed ]]');
+        } else if (scenario === 'probe-hangs') executable('tmux', `printf 'tmux -V\\n' >> "$LOG"\n${hang}`);
+        const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-eo', 'pipefail', step], {
+          env: { PATH: bin, BIN: bin, LOG: log, PIDS: pids, SCENARIO: scenario },
+          encoding: 'utf8', timeout: 5000,
+        });
+        const commands = readFileSync(log, 'utf8').trim().split('\n');
+        expect(result.error, `${scenario}: ${result.stderr}`).toBeUndefined();
+        expect(result.status, `${scenario}: ${result.stderr}`).toBe(
+          ['installed', 'missing', 'broken', 'probe-hangs'].includes(scenario) ? 0 : scenario.endsWith('-hangs') ? 137 : scenario === 'verify-fails' ? 1 : 100,
+        );
+        if (scenario === 'installed') {
+          expect(commands).toEqual(['timeout --signal=KILL 10s tmux -V', 'tmux -V']);
+          continue;
+        }
+        const update = 'apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 --error-on=any update';
+        const install = 'apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install --no-install-recommends -y tmux';
+        const expected = ['broken', 'probe-hangs'].includes(scenario) ? ['timeout --signal=KILL 10s tmux -V', 'tmux -V'] : [];
+        for (const operation of scenario.startsWith('update-') ? [update] : [update, install]) {
+          expected.push(`sudo -n timeout --signal=KILL 120s ${operation}`, `timeout --signal=KILL 120s ${operation}`, operation);
+        }
+        if (['missing', 'broken', 'verify-fails', 'probe-hangs', 'verify-hangs'].includes(scenario)) expected.push('timeout --signal=KILL 10s tmux -V', 'tmux -V');
+        expect(commands, scenario).toEqual(expected);
+        if (scenario.endsWith('-hangs')) {
+          const children = readFileSync(pids, 'utf8').trim().split('\n').map(Number);
+          expect(children).toHaveLength(2);
+          for (const pid of children) expect(Number.isSafeInteger(pid) && pid > 1).toBe(true);
+          const deadline = Date.now() + 1000;
+          while (children.some(liveFixture) && Date.now() < deadline) await Bun.sleep(10);
+          for (const pid of children) expect(liveFixture(pid), `${scenario} left live child ${pid}`).toBe(false);
+        }
+      } finally {
+        // If timeout handling regresses, cleanup stays restricted to these
+        // fixture PIDs; never leave a synthetic installer running after a test.
+        if (existsSync(pids)) for (const pid of readFileSync(pids, 'utf8').trim().split('\n').map(Number)) {
+          if (Number.isSafeInteger(pid) && pid > 1 && liveFixture(pid)) {
+            try { process.kill(pid, 'SIGKILL'); } catch { /* already stopped */ }
+          }
+        }
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
   });
 
   test('the Bun lane retains the deterministic fake-IMAP race sweep', () => {
