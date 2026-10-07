@@ -103,6 +103,7 @@ export async function createSlackInboxOwner(
   try {
     httpOwner = createSlackInboxHttpOwner({
       signal, assertCurrent: current, ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      onAuthenticationDenied: invalidateIdentity,
       ...(factories.createHttpClient === undefined ? {} : { createClient: factories.createHttpClient }),
     });
   } catch {

@@ -68,7 +68,10 @@ mirror. An unchanged, previously verified token may read its redacted historical
 mirror during a provider outage; a restart must establish identity again. The
 receipt is invalidated by decoded authentication denial or identity mismatch;
 an older in-flight mapping cannot restore proof after that invalidation. The
-read guard returns only a fixed scope-unavailable diagnostic. Credential
+HTTP owner also invalidates on received `auth.test` 401/403 headers immediately,
+so an overlapping read cannot use cached proof while body retirement is pending.
+Transport failures and 5xx responses remain distinct from authentication denial.
+The read guard returns only a fixed scope-unavailable diagnostic. Credential
 fingerprints are process-local and do not appear in logs or stored rows.
 
 Canonical configuration is rechecked around owned asynchronous work. Disabling

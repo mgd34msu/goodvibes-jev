@@ -90,6 +90,8 @@ interface SlackInboxHttpOwnerOptions {
   readonly signal: AbortSignal;
   readonly assertCurrent: () => void;
   readonly timeoutMs?: number;
+  /** Fence cached identity immediately on received auth denial, before drainage. */
+  readonly onAuthenticationDenied?: () => void;
   /** Private constructor seam for owned loopback tests; production omits it. */
   readonly createClient?: (origin: typeof ORIGIN, options: Client.Options) => Client;
 }
@@ -100,14 +102,15 @@ interface SlackInboxHttpOwnerOptions {
  * HTTP settlement and close both await actual work and cancellation cleanup.
  */
 export function createSlackInboxHttpOwner(options: SlackInboxHttpOwnerOptions): { http: SlackInboxHttp; close(): Promise<void> } {
-  const { timeoutMs, sourceSignal, assertCurrent, createClient } = (() => {
+  const { timeoutMs, sourceSignal, assertCurrent, createClient, onAuthenticationDenied } = (() => {
     try {
-      const { signal, assertCurrent, timeoutMs = DEFAULT_TIMEOUT_MS, createClient } = options;
+      const { signal, assertCurrent, timeoutMs = DEFAULT_TIMEOUT_MS, createClient, onAuthenticationDenied } = options;
       if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS
         || !(signal instanceof AbortSignal) || typeof assertCurrent !== 'function'
-        || (createClient !== undefined && typeof createClient !== 'function')) throw invalid();
+        || (createClient !== undefined && typeof createClient !== 'function')
+        || (onAuthenticationDenied !== undefined && typeof onAuthenticationDenied !== 'function')) throw invalid();
       isAborted(signal);
-      return { timeoutMs, sourceSignal: signal, assertCurrent,
+      return { timeoutMs, sourceSignal: signal, assertCurrent, onAuthenticationDenied,
         createClient: createClient ?? ((origin: typeof ORIGIN, settings: Client.Options) => new Client(origin, settings)) };
     } catch { throw invalid(); }
   })();
@@ -187,6 +190,12 @@ export function createSlackInboxHttpOwner(options: SlackInboxHttpOwnerOptions): 
           if (response.statusCode === 429) {
             cooldowns.set(captured.method, performance.now() + cooldownMs(response.headers['retry-after']));
             throw rateLimited();
+          }
+          // A received auth denial is a known fact even if cancellation wins
+          // next. Fence cached reads while this body's retirement is awaited.
+          if (captured.method === 'auth.test' && (response.statusCode === 401 || response.statusCode === 403)) {
+            onAuthenticationDenied?.();
+            throw failed();
           }
           ensureCurrent();
           // No redirect interceptor exists; all non-success bodies are retired

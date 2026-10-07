@@ -1,5 +1,6 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
 import { Client } from 'undici/index.js';
+import * as directClient from '../sdk/src/platform/security/source-screening/direct-client.ts';
 import { createSlackInboxOwner } from '../sdk/src/platform/intake/providers/slack-owner.ts';
 import { createSlackInboxHttpOwner } from '../sdk/src/platform/intake/providers/slack-http.ts';
 import type { ProtectedSourceOwnerOptions } from '../sdk/src/platform/security/source-screening/types.ts';
@@ -91,6 +92,47 @@ test('a transport HTTP 503 outage preserves unchanged previously verified creden
   const calls = remote.calls;
   await owned.assertReadCurrent();
   expect(remote.calls).toBe(calls);
+});
+
+test.each([401, 403])('an auth.test HTTP %s denial retires previously verified credential proof', async status => {
+  const remote = endpoint();
+  const owned = await owner(remote.base);
+  expect((await owned.adapter.poll({ limit: 10 })).state).toBe('empty');
+  remote.respond({ synthetic: 'private-denial-body' }, status);
+  expect((await owned.adapter.poll({ limit: 10 })).state).toBe('unavailable');
+  expect(remote.calls).toBe(2);
+  await expect(owned.assertReadCurrent()).rejects.toThrow('scope is unavailable');
+  expect(remote.calls).toBe(3);
+});
+
+test('a received HTTP 401 invalidates old read eligibility while owned body retirement is still pending', async () => {
+  const remote = endpoint();
+  const owned = await owner(remote.base);
+  expect((await owned.adapter.poll({ limit: 10 })).state).toBe('empty');
+  remote.respond({ synthetic: 'private-denial-body' }, 401);
+  const cancelling = Promise.withResolvers<void>();
+  const finish = Promise.withResolvers<void>();
+  const actual = directClient.responseStream;
+  const replacement = spyOn(directClient, 'responseStream').mockImplementation(body => {
+    // The genuine owned response is retired before synthetic delay begins.
+    const retired = actual(body).cancel();
+    return new ReadableStream<Uint8Array>({ async cancel() {
+      await retired;
+      cancelling.resolve();
+      await finish.promise;
+    } });
+  });
+  cleanups.push(() => replacement.mockRestore(), () => finish.resolve());
+  const polling = owned.adapter.poll({ limit: 10 });
+  await cancelling.promise;
+  let readState: 'pending' | 'accepted' | 'rejected' = 'pending';
+  const reading = owned.assertReadCurrent().then(() => { readState = 'accepted'; }, () => { readState = 'rejected'; });
+  try {
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+    expect(readState).toBe('pending');
+  } finally { finish.resolve(); await Promise.all([polling, reading]); }
+  expect(readState).toBe('rejected');
+  expect(remote.calls).toBe(3);
 });
 
 test('an older held mapping cannot restore credential proof after a concurrent authentication denial', async () => {
