@@ -1,6 +1,7 @@
+import { routeNativeConversationInput } from '../../runtime/native-conversation-ingress.ts';
 import { isTerminalContractStatus, type ContractOperatorService, type ContractView } from '@goodvibes-jev/engine/sdk/platform/contract';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
-import type { CommandContext, CommandRegistry } from '../command-registry.ts';
+import { directOwnerWorkstreamInput, type CommandContext, type CommandRegistry } from '../command-registry.ts';
 
 const USAGE = 'start <request> | list | status <id> | cancel <id> | reply <id> <escalation-id> <answer>';
 
@@ -28,7 +29,7 @@ export function renderContractStatus(contract: ContractView): string {
   return lines.join('\n');
 }
 
-/** Explicit operator actions use the same runner as conversation intake and the work tree. */
+/** New starts use native intake; historical contract controls retain their recorded IDs. */
 export function registerWorkstreamRuntimeCommands(registry: CommandRegistry): void {
   registry.register({
     name: 'workstream',
@@ -36,22 +37,24 @@ export function registerWorkstreamRuntimeCommands(registry: CommandRegistry): vo
     usage: USAGE,
     argsHint: USAGE,
     handler: async (args, ctx: CommandContext) => {
+      const action = args[0] ?? 'list';
+      if (action === 'start') {
+        const source = directOwnerWorkstreamInput(ctx);
+        if (!source) { ctx.print('Start work from the terminal with /workstream start <request>. Original owner input is required.'); return; }
+        if (!source.text.trim()) { ctx.print('Usage: /workstream start <request>'); return; }
+        if (!ctx.dispatchNativeIntakeTurn) { ctx.print('Native conversation intake is unavailable. No ordinary turn was started.'); return; }
+        await routeNativeConversationInput({ intake: ctx.nativeConversationIntake, source,
+          notify: line => ctx.print(line), dispatch: ctx.dispatchNativeIntakeTurn });
+        ctx.renderRequest();
+        return;
+      }
       const service = ctx.session.contractOperator;
       if (!service) { ctx.print('Workstreams are not available in this session.'); return; }
-      const action = args[0] ?? 'list';
       const sessionId = ctx.session.runtime.sessionId;
       try {
         if (action === 'list') {
           const records = service.list({ sessionId, includeTerminal: true });
           ctx.print(records.length ? records.map(record => `${record.id}: ${record.status} — ${record.ask}`).join('\n') : 'No workstreams in this session.');
-          return;
-        }
-        if (action === 'start') {
-          const ask = args.slice(1).join(' ').trim();
-          if (!ask) { ctx.print('Usage: /workstream start <request>'); return; }
-          const result = await service.start({ ask, sessionId });
-          ctx.print(renderContractStatus(result.contract));
-          ctx.renderRequest();
           return;
         }
         if (action !== 'status' && action !== 'cancel' && action !== 'reply') {

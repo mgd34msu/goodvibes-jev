@@ -301,7 +301,12 @@ export function handlePromptKeyToken(state: KeyRouteState, token: InputToken): {
         if (name) {
           state.conversationManager?.dismissSplash(); // command input retires the splash, same as text input
           const executeCommand = state.commandContext.executeCommand;
-          void executeCommand(name, args).then((handled) => {
+          // Only the actual terminal fallback may carry the exact owner source.
+          // Keep other fallback commands on their existing generic route.
+          const command = name === 'workstream' && state.commandRegistry.get(name)
+            ? state.commandRegistry.executeFromOwner(name, args, state.commandContext, originalInput.text)
+            : executeCommand(name, args);
+          void command.then((handled) => {
             if (!handled) {
               state.commandContext?.submitInput?.(text, undefined, { source: originalInput });
             }
