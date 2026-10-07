@@ -1,4 +1,5 @@
 import { useMemoryReadings } from '../helpers/memory-readings.ts';
+import { withPublicKnowledgeReadings } from '../helpers/public-knowledge-readings.ts';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { createKnowledgeApi } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { resetTestRuntimeServices, getTestRuntimeServices } from '../helpers/runtime-services.ts';
@@ -80,7 +81,8 @@ describe('KnowledgeApi', () => {
       },
     });
 
-    const packet = await api.packets.build('knowledge api artifact', [], 5, { budgetLimit: 2_000 });
+    const packet = await withPublicKnowledgeReadings(['Knowledge API Artifact'], ['GoodVibes knowledge api artifact body'],
+      () => api.packets.build('knowledge api artifact', [], 5, { budgetLimit: 2_000 }));
     expect(packet.items.length).toBeGreaterThan(0);
 
     const targets = await api.projections.listTargets(10);

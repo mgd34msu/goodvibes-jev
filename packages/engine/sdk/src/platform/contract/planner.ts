@@ -201,7 +201,7 @@ export function buildContractPlannerRequest(input: PlannerRequestInput): string 
     '## How the user wants the work done\n' + shapeLines(input.shape, input.config).join('\n'),
   ];
   if (input.nativeSource !== undefined) {
-    sections.push('## Immutable native source\nThis is the complete original goal and ordered criteria, with host revisions. Do not summarize, rewrite, drop, add or reorder these roots. Only derive groups and units. The root goal and criteria in every response must exactly equal the following projection.\n'
+    sections.push('## Immutable native source\nThis is the complete original goal and ordered criteria. Host identity and revisions remain in the local source binding. Do not summarize, rewrite, drop, add or reorder these roots. Only derive groups and units. The root goal and criteria in every response must exactly equal the following projection.\n'
       + JSON.stringify(nativeContractTaskSource(input.nativeSource)) + '\nRequired plan roots:\n' + JSON.stringify(nativeSourcePlan(input.nativeSource)));
   }
   if (input.draftPlan !== undefined) sections.push(draftSection(input.draftPlan));

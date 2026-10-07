@@ -218,24 +218,18 @@ export interface KnowledgeApi {
       limit?: PacketLimit,
       options?: PacketOptions,
     ): ReturnType<KnowledgeService['buildPacket']>;
-    buildSync(
+    preparePrompt(
       task: PacketTask,
       writeScope?: PacketWriteScope,
       limit?: PacketLimit,
       options?: PacketOptions,
-    ): ReturnType<KnowledgeService['buildPacketSync']>;
+    ): ReturnType<KnowledgeService['preparePromptPacket']>;
     buildPrompt(
       task: PacketTask,
       writeScope?: PacketWriteScope,
       limit?: PacketLimit,
       options?: PacketOptions,
     ): ReturnType<KnowledgeService['buildPromptPacket']>;
-    buildPromptSync(
-      task: PacketTask,
-      writeScope?: PacketWriteScope,
-      limit?: PacketLimit,
-      options?: PacketOptions,
-    ): ReturnType<KnowledgeService['buildPromptPacketSync']>;
   };
   readonly projections: {
     listTargets(limit?: number): ReturnType<KnowledgeService['listProjectionTargets']>;
@@ -435,24 +429,18 @@ export function createKnowledgeApi(
         limit: PacketLimit = 10,
         options: PacketOptions = {},
       ) => knowledgeService.buildPacket(task, writeScope, limit, options),
-      buildSync: (
+      preparePrompt: (
         task: PacketTask,
         writeScope: PacketWriteScope = [],
         limit: PacketLimit = 10,
         options: PacketOptions = {},
-      ) => knowledgeService.buildPacketSync(task, writeScope, limit, options),
+      ) => knowledgeService.preparePromptPacket(task, writeScope, limit, options),
       buildPrompt: (
         task: PacketTask,
         writeScope: PacketWriteScope = [],
         limit: PacketLimit = 10,
         options: PacketOptions = {},
       ) => knowledgeService.buildPromptPacket(task, writeScope, limit, options),
-      buildPromptSync: (
-        task: PacketTask,
-        writeScope: PacketWriteScope = [],
-        limit: PacketLimit = 10,
-        options: PacketOptions = {},
-      ) => knowledgeService.buildPromptPacketSync(task, writeScope, limit, options),
     }),
     projections: Object.freeze({
       listTargets: (limit = 25) => knowledgeService.listProjectionTargets(limit),

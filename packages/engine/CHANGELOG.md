@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- Replace public knowledge search and task-packet token scores and record boosts
+  with shared complete-candidate relevance and exact-span readings. Search now
+  returns promises; synchronous packet retrieval APIs are retired in favor of
+  awaited preparation with opaque, revocation-checked prompt handles. Preserve
+  generic scopes, complete selected qualifications and honest packet budgets.
+  Keep native protocol identities in typed local bindings while complete
+  original and derived task meaning reaches guarded knowledge queries.
+
 - Compose an explicit single-account Slack daemon inbox with protected content
   previews, account-bound SQLite ownership, credential-rotation read guards and
   an owned bounded HTTP transport. Default all-provider and clustered serving
