@@ -9,6 +9,8 @@
   returns promises; synchronous packet retrieval APIs are retired in favor of
   awaited preparation with opaque, revocation-checked prompt handles. Preserve
   generic scopes, complete selected qualifications and honest packet budgets.
+  Keep native protocol identities in typed local bindings while complete
+  original and derived task meaning reaches guarded knowledge queries.
 
 - Add an explicit protected local source owner and content-bearing inbox mapper prerequisite, with immutable original-span projection, typed Jev verification and awaited cancellation. Default provider composition and live privacy calibration remain open.
 

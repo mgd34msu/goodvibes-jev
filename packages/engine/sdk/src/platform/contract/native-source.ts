@@ -45,10 +45,13 @@ export function captureNativeContractSource(value: unknown): NativeContractSourc
   });
 }
 
-/** Persisted planner/unit task text excludes private hosted transcript and selected-diff evidence. */
-export function nativeContractTaskSource(source: NativeContractSource): Omit<NativeContractSource, 'continuation'> {
-  const { continuation: _privateContext, ...original } = source;
-  return original;
+/** Complete semantic requirements for planner/unit/fix task prose. Protocol
+ * identity stays in the typed source/admission binding, and private context is
+ * supplied only at its existing guarded provider boundary. Neither belongs in
+ * the raw text subsequently read as a knowledge query.
+ */
+export function nativeContractTaskSource(source: NativeContractSource): Pick<NativeContractSource, 'goal' | 'criteria'> {
+  return { goal: source.goal, criteria: source.criteria };
 }
 
 /** Explicit JSON projection retains frozen context while giving judgment mutable JSON arrays. */

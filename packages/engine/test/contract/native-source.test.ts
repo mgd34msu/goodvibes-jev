@@ -19,6 +19,12 @@ function source(): NativeContractSource {
     goal: '  The complete native goal.\nDo every part, preserving unicode \u2603 and trailing space. ',
     criteria: [' Keep exact spaces. ', 'Preserve the second criterion.\nAnd its second line.'] };
 }
+function expectTaskSource(prompt: string | undefined): void {
+  expect(prompt).toContain(JSON.stringify({ goal: source().goal, criteria: source().criteria }));
+  for (const key of ['sourceId', 'sourceRevision', 'inputRevision', 'criteriaId', 'criteriaRevision']) {
+    expect(prompt).not.toContain(`"${key}"`);
+  }
+}
 function nativePlan(): DraftPlan {
   const plan = oneUnitPlan();
   return { ...plan, ...nativeSourcePlan(source()), criteria: [...nativeSourcePlan(source()).criteria], groups: [{ ...plan.groups[0]!, units: [{ ...plan.groups[0]!.units[0]!, criteria: [
@@ -87,7 +93,7 @@ describe('native contract source', () => {
     expect(h.requests[1]!.userPrompt).toContain('native-source-changed');
     for (const request of h.requests) {
       expect(request.goal).toBe(source().goal);
-      expect(request.userPrompt).toContain(JSON.stringify(source()));
+      expectTaskSource(request.userPrompt);
       expect(request.userPrompt).not.toContain('rewording or dropping criteria as it says');
     }
     expect(nativeContractSourceForAdmission(contract)).toEqual({ goal: source().goal, criteria: source().criteria });
@@ -153,7 +159,7 @@ describe('native contract source', () => {
     expect(done.nativeSource).toEqual(source());
     expect(done.criteria.map(item => item.text)).toEqual([...source().criteria]);
     expect(done.criteria.map(item => item.readings.map(reading => reading.verdict))).toEqual([['unmet', 'met'], ['unmet', 'met']]);
-    expect(scripted.of('fix')[0]!.userPrompt).toContain(JSON.stringify(source()));
+    expectTaskSource(scripted.of('fix')[0]!.userPrompt);
     expect(scripted.of('fix')[0]!.goal).toBe(source().goal);
   }, 20_000);
 
@@ -201,7 +207,7 @@ describe('native contract source', () => {
     expect(seenGoals).toContain(source().goal);
     expect(sources.length).toBeGreaterThan(1);
     expect(sources.every(item => JSON.stringify(item) === JSON.stringify(source()))).toBe(true);
-    expect(prompts[0]).toContain(JSON.stringify(source()));
-    expect(second.manager.list().find(record => record.contractUnitId === 'u1')?.task).toContain(JSON.stringify(source()));
+    expectTaskSource(prompts[0]);
+    expectTaskSource(second.manager.list().find(record => record.contractUnitId === 'u1')?.task);
   }, 20_000);
 });

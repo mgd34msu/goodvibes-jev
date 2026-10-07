@@ -20,6 +20,8 @@ import { ToolRegistry } from '../sdk/src/platform/tools/registry.js';
 import type { LLMProvider } from '../sdk/src/platform/providers/interface.js';
 import type { ModelDefinition } from '../sdk/src/platform/providers/registry-types.js';
 import { revalidateProviderAttempt } from '../sdk/src/platform/providers/attempt-guard.js';
+import { buildContractPlannerRequest } from '../sdk/src/platform/contract/planner.js';
+import { shapeOf } from './contract/plan-support.js';
 
 const roots: string[] = [];
 const stores: KnowledgeStore[] = [];
@@ -75,7 +77,52 @@ function readings(probability = 0.99) {
   });
 }
 
+const nativeCriteriaId = 'criteria:d6b72d9f28026994604091a0bbac8dfa87467c68300f6960922429de420bbdfb';
+function nativePlannerTask(field?: 'goal' | 'criterion' | 'unit' | 'repair', value = '') {
+  const nativeSource = { sourceId: 'owned-native-source', sourceRevision: '1', inputRevision: 'owned-input',
+    criteriaId: nativeCriteriaId, criteriaRevision: '1', goal: field === 'goal' ? value : 'Deploy the exact release.',
+    criteria: [field === 'criterion' ? value : 'Preserve the release qualification.', 'Preserve the release qualification.'] };
+  return buildContractPlannerRequest({ ask: 'Displayed request', nativeSource, shape: shapeOf(),
+    config: { defaultAttempts: 1, maxUnits: 3 }, repositoryMap: 'Repository context: release package',
+    proposedUnits: [{ task: field === 'unit' ? value : 'Keep the derived deployment instructions.', template: 'engineer' }],
+    repair: { problems: [{ code: 'native-source-changed', message: field === 'repair' ? value : 'Restore the missing qualification.' }],
+      previousPlan: 'Previous plan retained the staging requirement.' } });
+}
+
 describe('orchestrator prepared curated knowledge', () => {
+  test('native planner knowledge reads preserve roots and derived repair context while protocol identity stays local', async () => {
+    const { deps } = await fixture(); const agent = { ...record(), task: nativePlannerTask() }; const fake = readings();
+    const previous = installJudgmentPort(fake.port);
+    try {
+      const prepared = await prepareOrchestratorPromptContext(agent, deps);
+      const prompt = buildOrchestratorSystemPrompt(agent, undefined, prepared);
+      for (const text of ['Deploy the exact release.', 'Preserve the release qualification.',
+        'Keep the derived deployment instructions.', 'Restore the missing qualification.',
+        'Previous plan retained the staging requirement.', 'Repository context: release package']) {
+        expect(agent.task).toContain(text); expect(prompt).toContain(text);
+        expect(JSON.stringify(fake.requests)).toContain(text);
+      }
+      expect(agent.task).toContain(JSON.stringify(['Preserve the release qualification.', 'Preserve the release qualification.']));
+      expect(agent.task).not.toContain(nativeCriteriaId);
+      for (const key of ['sourceId', 'sourceRevision', 'inputRevision', 'criteriaId', 'criteriaRevision']) {
+        expect(agent.task).not.toContain(`"${key}"`);
+      }
+    } finally { installJudgmentPort(previous); }
+  });
+
+  for (const field of ['goal', 'criterion', 'unit', 'repair'] as const) {
+    test(`native ${field} text remains protected before any knowledge reading`, async () => {
+      const { deps } = await fixture(); const fake = readings(); const previous = installJudgmentPort(fake.port);
+      try {
+        for (const value of ['4111111111111111', nativeCriteriaId, 'password=owned-synthetic-secret']) {
+          await expect(prepareOrchestratorPromptContext({ ...record(), task: nativePlannerTask(field, value) }, deps))
+            .rejects.toMatchObject({ problem: value.startsWith('password=') ? 'credential-material' : 'card-material' });
+          expect(fake.requests).toHaveLength(0);
+        }
+      } finally { installJudgmentPort(previous); }
+    });
+  }
+
   test('awaits one real preparation, then shares its handle across synchronous layout alternatives', async () => {
     const { deps, preparations } = await fixture(); const agent = record(); const fake = readings();
     const previous = installJudgmentPort(fake.port);

@@ -62,6 +62,15 @@ emergency layout performs no unnecessary retrieval. Consumer type tests pin
 the new async contract and opaque preparation instead of hiding the change
 behind a promise/array union.
 
+Native planner, unit and corrective task text renders the complete original
+goal and ordered criteria, including duplicates, while host source/revision and
+criteria identifiers remain in the existing typed local source, admission and
+receipt bindings. Those protocol identifiers are not flattened into a raw
+knowledge query. Derived unit instructions, repair errors, prior plans and
+repository context remain in the task and pass through the ordinary input
+guard. Sensitive text in any semantic field still refuses before dispatch,
+including text that merely resembles a generated criteria identifier.
+
 Search and packet `score` remain numeric for payload compatibility, with zero
 meaning no legacy retrieval points were computed. The reason says this
 explicitly. Internal relevance probabilities order accepted rows; they are not
