@@ -100,3 +100,6 @@ registry.register(inboxTriage);
 
 import { sourceScreeningVerification } from '../security/source-screening/verification.js';
 registry.register(sourceScreeningVerification);
+
+import { researchReferenceParameterRole } from '../security/source-screening/reference.js';
+registry.register(researchReferenceParameterRole);
