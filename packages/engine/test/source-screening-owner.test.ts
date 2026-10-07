@@ -91,6 +91,13 @@ test('foreign/forged/released receipts cannot be used as privacy authority', asy
   expect(await a.owner.screen(handle)).toEqual({ status: 'held', reason: 'stale' });
 });
 
+test('a genuine display-preview receipt is not query-role authority', async () => {
+  const { owner } = fixture();
+  const result = await projected(owner, ['Ordinary source.']);
+  expect(() => owner.projectResearchReference(result.receipt as unknown as Parameters<typeof owner.projectResearchReference>[0])).toThrow();
+  expect(owner.project(result.receipt)).toEqual(['Ordinary source.']);
+});
+
 test.each([
   { revision: 'stale', spans: [] }, { spans: [{ part: 0, start: 0, end: 100 }] },
   { spans: [{ part: 0, start: 0, end: 5 }, { part: 0, start: 4, end: 8 }] },

@@ -31470,7 +31470,7 @@
     {
       "name": "createProtectedInboxMapper",
       "kind": "function",
-      "text": "export declare function createProtectedInboxMapper(owner: ProtectedSourceOwner): (input: ProtectedInboxPreviewInput, signal?: AbortSignal) => Promise<ProtectedInboxPreviewFields | null>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ProtectedSourceOwner = export interface ProtectedSourceOwner { capture(parts: readonly string[]): ProtectedSource; screen(source: ProtectedSource): Promise<SourceScreeningResult>; project(receipt: SourceScreeningReceipt): readonly string[]; release(source: ProtectedSource): Promise<void>; close(): Promise<void>; }"
+      "text": "export declare function createProtectedInboxMapper(owner: ProtectedSourceOwner): (input: ProtectedInboxPreviewInput, signal?: AbortSignal) => Promise<ProtectedInboxPreviewFields | null>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ProtectedSourceOwner = export interface ProtectedSourceOwner { capture(parts: readonly string[]): ProtectedSource; screen(source: ProtectedSource): Promise<SourceScreeningResult>; project(receipt: SourceScreeningReceipt): readonly string[]; captureResearchReference(reference: string): ProtectedResearchReference; screenResearchReference(reference: ProtectedResearchReference): Promise<ResearchReferenceScreeningResult>; projectResearchReference(receipt: ResearchReferenceScreeningReceipt): ResearchReferenceProjection; release(source: ProtectedSource | ProtectedResearchReference): Promise<void>; close(): Promise<void>; }"
     },
     {
       "name": "createSlackInboxOwner",
@@ -65903,6 +65903,11 @@
       "text": "export interface OwnerRemedy { readonly gesture: string; }"
     },
     {
+      "name": "ProtectedResearchReference",
+      "kind": "interface",
+      "text": "export interface ProtectedResearchReference { readonly [referenceBrand]: true; }"
+    },
+    {
       "name": "ProtectedSource",
       "kind": "interface",
       "text": "export interface ProtectedSource { readonly [sourceBrand]: true; }"
@@ -65912,12 +65917,15 @@
       "kind": "interface",
       "required": [
         "capture",
+        "captureResearchReference",
         "close",
         "project",
+        "projectResearchReference",
         "release",
-        "screen"
+        "screen",
+        "screenResearchReference"
       ],
-      "text": "export interface ProtectedSourceOwner { capture(parts: readonly string[]): ProtectedSource; screen(source: ProtectedSource): Promise<SourceScreeningResult>; project(receipt: SourceScreeningReceipt): readonly string[]; release(source: ProtectedSource): Promise<void>; close(): Promise<void>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export interface ProtectedSourceOwner { capture(parts: readonly string[]): ProtectedSource; screen(source: ProtectedSource): Promise<SourceScreeningResult>; project(receipt: SourceScreeningReceipt): readonly string[]; captureResearchReference(reference: string): ProtectedResearchReference; screenResearchReference(reference: ProtectedResearchReference): Promise<ResearchReferenceScreeningResult>; projectResearchReference(receipt: ResearchReferenceScreeningReceipt): ResearchReferenceProjection; release(source: ProtectedSource | ProtectedResearchReference): Promise<void>; close(): Promise<void>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "ProtectedSourceOwnerOptions",
@@ -65930,6 +65938,21 @@
       "text": "export interface ProtectedSourceOwnerOptions { readonly authority: LocalSourceScreeningAuthority; readonly proposal: { readonly endpoint: string; readonly model: string; }; readonly judgment: { readonly endpoint: string; readonly model: 'jev-1.13.0'; }; readonly timeoutMs?: number; readonly onRetry?: (progress: JudgmentRetryProgress) => void; } ;; via JudgmentRetryProgress = export interface JudgmentRetryProgress { readonly logicalRequestId: string; readonly attempt: JudgmentAttempt; readonly elapsedMs: number; readonly nextDelayMs: number; }"
     },
     {
+      "name": "ResearchReferenceProjection",
+      "kind": "type",
+      "text": "export type ResearchReferenceProjection = { readonly status: 'preserved'; readonly url: string; } | { readonly status: 'omitted'; };"
+    },
+    {
+      "name": "ResearchReferenceScreeningReceipt",
+      "kind": "interface",
+      "text": "export interface ResearchReferenceScreeningReceipt { readonly [referenceReceiptBrand]: true; }"
+    },
+    {
+      "name": "ResearchReferenceScreeningResult",
+      "kind": "type",
+      "text": "export type ResearchReferenceScreeningResult = { readonly status: 'settled'; readonly receipt: ResearchReferenceScreeningReceipt; } | { readonly status: 'held'; readonly reason: SourceScreeningHold; };"
+    },
+    {
       "name": "RotationAuditOutcome",
       "kind": "type",
       "text": "export type RotationAuditOutcome = 'ok' | 'warning' | 'overdue';"
@@ -65937,7 +65960,7 @@
     {
       "name": "SOURCE_SCREENING_LIMITS",
       "kind": "const",
-      "text": "SOURCE_SCREENING_LIMITS: Readonly<{ parts: 8; characters: 40000; spans: 100; proposalBytes: 32768; sources: 128; unsettledRevisions: 1024; }> ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; };"
+      "text": "SOURCE_SCREENING_LIMITS: Readonly<{ parts: 8; characters: 40000; spans: 100; proposalBytes: 32768; sources: 128; unsettledRevisions: 1024; referenceParameters: 100; referenceRoles: 1024; }> ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; };"
     },
     {
       "name": "ScopeAuditOutcome",

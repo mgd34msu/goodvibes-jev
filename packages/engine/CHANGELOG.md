@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Add a protected, name-only research URL query-role reader with distinct
+  original handles and query-role receipts. Preserve exact benign references or
+  omit the complete declared URL, without sending URL values to either local
+  model. Unbound prose and research-consumer adoption remain open.
+
 - Replace public knowledge search and task-packet token scores and record boosts
   with shared complete-candidate relevance and exact-span readings. Search now
   returns promises; synchronous packet retrieval APIs are retired in favor of

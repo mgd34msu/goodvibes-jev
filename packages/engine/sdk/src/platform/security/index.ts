@@ -84,4 +84,5 @@ export { SOURCE_SCREENING_LIMITS } from './source-screening/types.js';
 export type {
   LocalSourceScreeningAuthority, ProtectedSourceOwnerOptions, ProtectedSource,
   ProtectedSourceOwner, SourceScreeningReceipt, SourceScreeningResult, SourceScreeningHold,
+  ProtectedResearchReference, ResearchReferenceScreeningReceipt, ResearchReferenceScreeningResult, ResearchReferenceProjection,
 } from './source-screening/types.js';
