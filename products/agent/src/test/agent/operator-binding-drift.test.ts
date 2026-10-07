@@ -72,6 +72,8 @@ const EXPECTED_BRIEFING_IDS = [
   'automation.schedules.list',
   'projectPlanning.workPlan.snapshot',
   'scheduler.capacity',
+  'workLedger.project',
+  'workLedger.snapshot',
 ] as const;
 
 describe('operator action bindings', () => {
