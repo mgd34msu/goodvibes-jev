@@ -148,7 +148,7 @@ function formatWorkPlan(body: unknown): string {
 function formatApprovals(body: unknown): string {
   const approvals = readArray(body, 'approvals');
   const pending = approvals.filter((entry) => readString(entry, 'status') === 'pending').length;
-  return `  approvals: pending ${pending}; total ${approvals.length}; mode ${['default', 'strict', 'autonomous'].includes(readString(body, 'mode') ?? '') ? readString(body, 'mode') : 'unknown'}; awaiting decision ${Boolean(isRecord(body) && body.awaitingDecision === true)}`;
+  return `  approvals: pending ${pending}; total ${approvals.length}; mode ${['allow-all', 'background-restricted', 'custom', 'default', 'plan'].includes(readString(body, 'mode') ?? '') ? readString(body, 'mode') : 'unknown'}; awaiting decision ${Boolean(isRecord(body) && body.awaitingDecision === true)}`;
 }
 
 function formatAutomation(body: unknown): string {
@@ -260,7 +260,7 @@ export function createAgentOperatorBriefingTool(
         // SDK instance owns no persistent resources; its requests are aborted
         // below, and the snapshot reader is always disposed.
         const sdk = createBrowserGoodVibesSdk({ baseUrl: connection.baseUrl,
-          authToken: connection.token, retry: { maxAttempts: 1 },
+          getAuthToken: () => { current(); return connection.token; }, retry: { maxAttempts: 1 },
           fetch: async (input, init) => {
             current();
             const response = await fetch(input, init);

@@ -341,3 +341,48 @@ describe('native work operator briefing', () => {
     });
   }, 8000);
 });
+
+
+describe('operator briefing approval metadata', () => {
+  for (const mode of ['allow-all', 'background-restricted', 'custom', 'default', 'plan']) {
+    test(`preserves contract approval mode ${mode} without reflecting arbitrary strings`, async () => {
+      const paths = shellPaths();
+      await withFetch(url => new URL(url).pathname === '/api/approvals'
+        ? Response.json({ approvals: [], mode, awaitingDecision: 'PRIVATE-DECISION' }) : routeResponse(url), async () => {
+        const result = await createAgentOperatorBriefingTool(paths, configManager(paths)).execute({});
+        expect(result.output).toContain(`mode ${mode}; awaiting decision false`);
+        expect(result.output).not.toContain('PRIVATE-DECISION');
+      });
+    });
+  }
+  test('does not reflect unknown approval mode or raw error text', async () => {
+    const paths = shellPaths();
+    await withFetch(url => new URL(url).pathname === '/api/approvals'
+      ? Response.json({ approvals: [], mode: 'PRIVATE-MODE' }) : routeResponse(url), async () => {
+      const result = await createAgentOperatorBriefingTool(paths, configManager(paths)).execute({});
+      expect(result.output).toContain('mode unknown'); expect(result.output).not.toContain('PRIVATE-MODE');
+    });
+    await withFetch(url => new URL(url).pathname === '/api/approvals'
+      ? Response.json({ error: 'PRIVATE-ERROR' }, { status: 500 }) : routeResponse(url), async () => {
+      const result = await createAgentOperatorBriefingTool(paths, configManager(paths)).execute({});
+      expect(result.output).toContain('HTTP 500'); expect(result.output).not.toContain('PRIVATE-ERROR');
+    });
+  });
+});
+
+
+for (const deniedRoute of ['/api/work-ledger/project', '/api/work-ledger/snapshot']) {
+  test(`native 401 at ${deniedRoute} performs no refresh or retry`, async () => {
+    const paths = shellPaths(); const calls: string[] = [];
+    await withFetch(url => {
+      const path = new URL(url).pathname; calls.push(path);
+      return path === deniedRoute ? Response.json({ error: 'PRIVATE-AUTH' }, { status: 401 }) : routeResponse(url);
+    }, async () => {
+      const result = await createAgentOperatorBriefingTool(paths, configManager(paths)).execute({});
+      expect(result.output).toContain('native work: unavailable');
+      expect(calls.filter(path => path === deniedRoute)).toHaveLength(1);
+      expect(calls.some(path => path.includes('refresh') || path.includes('/auth'))).toBe(false);
+      expect(result.output).not.toContain('PRIVATE-AUTH');
+    });
+  });
+}
