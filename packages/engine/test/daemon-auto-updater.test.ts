@@ -5,7 +5,7 @@
  * network, filesystem, activity, service actions, and exit all mocked.
  */
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -14,6 +14,7 @@ import {
   type AutoUpdateServiceActions,
 } from '../sdk/src/platform/daemon/auto-updater.js';
 import { DaemonReceiptStore } from '../sdk/src/platform/daemon/receipts.js';
+import type { ServiceHandoverOutcome } from '../sdk/src/platform/daemon/service-handover.js';
 import {
   BOOT_SETTLE_CHECK_DELAY_MS,
   PREVIOUS_FILE_SUFFIX,
@@ -105,6 +106,9 @@ function makeHarness(options: {
   fetchOverride?: UpdateFetchLike;
   /** A movable clock, so the alert quiet window is provable without real time. */
   clock?: () => number;
+  /** Synthetic service-manager results; these never invoke a real service. */
+  serviceActions?: Partial<AutoUpdateServiceActions>;
+  stopGracefully?: () => void | Promise<void>;
 } ): Harness {
   const scratch = mkdtempSync(join(tmpdir(), 'auto-updater-'));
   const { files, io } = memoryIo({ '/opt/gv/goodvibes-daemon': Buffer.from('daemon-v1') });
@@ -113,9 +117,21 @@ function makeHarness(options: {
   const actions = { supervised: options.supervised ?? true, adopted: 0, restarted: 0 };
   const sequence: string[] = [];
   const serviceActions: AutoUpdateServiceActions = {
-    isSupervised: () => actions.supervised,
-    adoptIntoService: () => { actions.adopted += 1; sequence.push('adopt'); },
-    restartService: () => { actions.restarted += 1; sequence.push('restart'); },
+    isSupervised: options.serviceActions?.isSupervised ?? (() => actions.supervised),
+    adoptIntoService: (signal) => {
+      actions.adopted += 1;
+      sequence.push('adopt');
+      return options.serviceActions?.adoptIntoService
+        ? options.serviceActions.adoptIntoService(signal)
+        : { status: 'accepted' as const };
+    },
+    restartService: (signal) => {
+      actions.restarted += 1;
+      sequence.push('restart');
+      return options.serviceActions?.restartService
+        ? options.serviceActions.restartService(signal)
+        : { status: 'accepted' as const };
+    },
   };
   const exits: number[] = [];
   const timers: Array<{ fn: () => void; ms: number }> = [];
@@ -134,7 +150,7 @@ function makeHarness(options: {
     fetchImpl: options.fetchOverride ?? fetchImpl,
     io,
     exitProcess: (code) => { exits.push(code); sequence.push('exit'); },
-    stopGracefully: () => { sequence.push('stop'); },
+    stopGracefully: () => { sequence.push('stop'); return options.stopGracefully?.(); },
     now: options.clock ?? (() => new Date(2026, 6, 12, 14, 30).getTime()),
     alertOwner: (text) => void alerts.push(text),
     ...(options.rejectedVersion ? { rejectedVersion: options.rejectedVersion } : {}),
@@ -487,6 +503,461 @@ describe('repeated update-check failures reach the owner', () => {
       await h.updater.tick();
       expect(h.alerts).toEqual([]);
       expect(h.updater.failedCheckCount).toBe(2);
+    } finally {
+      rmSync(h.scratch, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('post-swap service handover', () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+  }
+
+  test('external stop drains scheduled release lookup and prevents download, disk swap, and handover', async () => {
+    const lookupStarted = deferred<void>();
+    const lookupFinished = deferred<void>();
+    const release = releaseFetch();
+    const h = makeHarness({
+      idle: () => true,
+      fetchOverride: async (url) => {
+        if (url === LATEST_URL) {
+          lookupStarted.resolve();
+          await lookupFinished.promise;
+        }
+        return release.fetchImpl(url);
+      },
+    });
+    h.updater.start();
+    h.timers[0]!.fn();
+    const tick = h.updater.drainHandover();
+    try {
+      await lookupStarted.promise;
+      h.updater.stop();
+      let drained = false;
+      const drain = h.updater.drainHandover().then(() => { drained = true; });
+      await Promise.resolve();
+      expect(drained).toBe(false);
+      lookupFinished.resolve();
+      await drain;
+      expect(drained).toBe(true);
+      await tick;
+      expect(release.requests).toEqual([LATEST_URL]);
+      expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v1');
+      expect(h.files.has(`/opt/gv/goodvibes-daemon${PREVIOUS_FILE_SUFFIX}`)).toBe(false);
+      expect(h.sequence).toEqual([]);
+      expect(h.receipts.list()).toHaveLength(0);
+      expect(h.updater.snapshot().appliedVersion).toBeNull();
+      expect(h.timers).toHaveLength(1);
+    } finally {
+      lookupFinished.resolve();
+      await tick;
+      rmSync(h.scratch, { recursive: true, force: true });
+    }
+  });
+
+  test('external stop during transactional apply preserves its completed swap but never starts handover', async () => {
+    const downloadStarted = deferred<void>();
+    const downloadFinished = deferred<void>();
+    const release = releaseFetch();
+    const h = makeHarness({
+      idle: () => true,
+      fetchOverride: async (url) => {
+        if (url.endsWith(`/${DAEMON_ASSET}`)) {
+          downloadStarted.resolve();
+          await downloadFinished.promise;
+        }
+        return release.fetchImpl(url);
+      },
+    });
+    const tick = h.updater.tick();
+    try {
+      await downloadStarted.promise;
+      h.updater.stop();
+      let drained = false;
+      const drain = h.updater.drainHandover().then(() => { drained = true; });
+      await Promise.resolve();
+      expect(drained).toBe(false);
+      downloadFinished.resolve();
+      await drain;
+      expect(drained).toBe(true);
+      expect(h.updater.snapshot().appliedVersion).toBe('2.0.0');
+      await tick;
+      expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v2');
+      expect(h.files.get(`/opt/gv/goodvibes-daemon${PREVIOUS_FILE_SUFFIX}`)?.toString()).toBe('daemon-v1');
+      expect(h.sequence).toEqual([]);
+      expect(h.receipts.list()).toHaveLength(2);
+      expect(h.receipts.list()[0]!.text).toContain('on disk');
+      expect(h.updater.snapshot().appliedVersion).toBe('2.0.0');
+      expect(h.updater.snapshot().handover?.detail).toContain('updater stopped while applying the disk update');
+      expect(h.alerts).toHaveLength(1);
+      expect(h.timers).toHaveLength(0);
+      h.updater.start();
+      await h.updater.tick();
+      expect(release.requests).toHaveLength(3);
+    } finally {
+      downloadFinished.resolve();
+      await tick;
+      rmSync(h.scratch, { recursive: true, force: true });
+    }
+  });
+
+  test('draining a failed scheduled check waits for error recording without rejecting shutdown', async () => {
+    const fetchStarted = deferred<void>();
+    const fetchFinished = deferred<void>();
+    const h = makeHarness({
+      idle: () => true,
+      fetchOverride: async () => {
+        fetchStarted.resolve();
+        await fetchFinished.promise;
+        throw new Error('lookup failed while stopping');
+      },
+    });
+    h.updater.start();
+    h.timers[0]!.fn();
+    const check = h.updater.drainHandover();
+    try {
+      await fetchStarted.promise;
+      h.updater.stop();
+      const drain = h.updater.drainHandover();
+      fetchFinished.resolve();
+      await expect(drain).resolves.toBeUndefined();
+      expect(h.updater.failedCheckCount).toBe(1);
+      expect(h.updater.lastCheckFailure).toContain('lookup failed while stopping');
+      expect(h.updater.snapshot().appliedVersion).toBeNull();
+      expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v1');
+      expect(h.sequence).toEqual([]);
+      expect(h.timers).toHaveLength(1);
+    } finally {
+      fetchFinished.resolve();
+      await check;
+      rmSync(h.scratch, { recursive: true, force: true });
+    }
+  });
+
+  test('failed adoption keeps the disk update but never claims a successful exit', async () => {
+    const h = makeHarness({
+      idle: () => true,
+      supervised: false,
+      serviceActions: { adoptIntoService: () => ({ status: 'failed', detail: 'launch rejected' }) },
+    });
+    try {
+      await h.updater.tick();
+      expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v2');
+      expect(h.files.get(`/opt/gv/goodvibes-daemon${PREVIOUS_FILE_SUFFIX}`)?.toString()).toBe('daemon-v1');
+      expect(h.exits).toEqual([]);
+      expect(h.alerts.join('\n')).toContain('launch rejected');
+      const persisted = readFileSync(join(h.scratch, 'receipts.json'), 'utf-8');
+      expect(persisted).toContain('updated from 1.0.0 to 2.0.0');
+      expect(persisted).toContain('on disk');
+      expect(persisted).toContain('service handover is incomplete');
+    } finally {
+      rmSync(h.scratch, { recursive: true, force: true });
+    }
+  });
+
+  test('legacy void adoption cannot authorize exit', async () => {
+    const h = makeHarness({
+      idle: () => true,
+      supervised: false,
+      serviceActions: { adoptIntoService: () => {} },
+    });
+    try {
+      await h.updater.tick();
+      expect(h.exits).toEqual([]);
+      expect(h.alerts.join('\n')).toContain('unknown');
+    } finally {
+      rmSync(h.scratch, { recursive: true, force: true });
+    }
+  });
+
+  test('an incomplete handover never swaps the applied release again or destroys its previous binary', async () => {
+    const h = makeHarness({
+      idle: () => true,
+      serviceActions: { restartService: () => ({ status: 'failed', detail: 'restart rejected' }) },
+    });
+    try {
+      await h.updater.tick();
+      const requestsAfterSwap = h.requests.length;
+      const timersAfterSwap = h.timers.length;
+      // Even an explicit start in this old process cannot re-arm a completed swap.
+      h.updater.start();
+      await h.updater.tick();
+      expect(h.requests).toHaveLength(requestsAfterSwap);
+      expect(h.files.get(`/opt/gv/goodvibes-daemon${PREVIOUS_FILE_SUFFIX}`)?.toString()).toBe('daemon-v1');
+      expect(h.actions.restarted).toBe(1);
+      expect(h.timers).toHaveLength(timersAfterSwap);
+    } finally {
+      rmSync(h.scratch, { recursive: true, force: true });
+    }
+  });
+
+  const incompleteActions: Array<{
+    name: string;
+    action: AutoUpdateServiceActions['restartService'];
+    status: ServiceHandoverOutcome['status'];
+    detail: string;
+  }> = [
+    { name: 'failed', action: () => ({ status: 'failed', detail: 'request rejected' }), status: 'failed', detail: 'request rejected' },
+    { name: 'unsupported', action: () => ({ status: 'unsupported', detail: 'no supported manager' }), status: 'unsupported', detail: 'no supported manager' },
+    { name: 'unknown', action: () => ({ status: 'unknown', detail: 'no acknowledgement' }), status: 'unknown', detail: 'no acknowledgement' },
+    { name: 'legacy void', action: () => {}, status: 'unknown', detail: 'no handover acknowledgement' },
+    { name: 'async legacy void', action: async () => {}, status: 'unknown', detail: 'no handover acknowledgement' },
+    { name: 'thrown Error', action: () => { throw new Error('service exploded'); }, status: 'failed', detail: 'service exploded' },
+    { name: 'thrown undefined', action: () => { throw undefined; }, status: 'failed', detail: 'undefined' },
+    { name: 'rejected Error', action: async () => { throw new Error('async service exploded'); }, status: 'failed', detail: 'async service exploded' },
+    { name: 'rejected undefined', action: async () => { throw undefined; }, status: 'failed', detail: 'undefined' },
+  ];
+
+  for (const supervised of [true, false]) {
+    const actionName = supervised ? 'restart' : 'adoption';
+    test(`${actionName}: external stop during graceful shutdown prevents all later service actions`, async () => {
+      const stopStarted = deferred<void>();
+      const stopFinished = deferred<void>();
+      const h = makeHarness({
+        idle: () => true,
+        supervised,
+        stopGracefully: () => { stopStarted.resolve(); return stopFinished.promise; },
+      });
+      const tick = h.updater.tick();
+      try {
+        await stopStarted.promise;
+        h.updater.stop();
+        let drained = false;
+        const drain = h.updater.drainHandover().then(() => { drained = true; });
+        await Promise.resolve();
+        expect(drained).toBe(false);
+        stopFinished.resolve();
+        await drain;
+        await tick;
+        expect(drained).toBe(true);
+        expect(h.actions.adopted + h.actions.restarted).toBe(0);
+        expect(h.exits).toEqual([]);
+        expect(h.updater.snapshot().handover?.status).toBe('unknown');
+        expect(h.updater.snapshot().handover?.detail).toContain('cancelled before the service action started');
+        expect(h.receipts.list()).toHaveLength(2);
+        expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v2');
+        expect(h.files.get(`/opt/gv/goodvibes-daemon${PREVIOUS_FILE_SUFFIX}`)?.toString()).toBe('daemon-v1');
+        expect(h.timers).toHaveLength(0);
+      } finally {
+        stopFinished.resolve();
+        await tick;
+        rmSync(h.scratch, { recursive: true, force: true });
+      }
+    });
+
+    for (const scenario of incompleteActions) {
+      test(`${actionName}: ${scenario.name} preserves swap evidence and reports incomplete handover once`, async () => {
+        const h = makeHarness({
+          idle: () => true,
+          supervised,
+          serviceActions: supervised
+            ? { restartService: scenario.action }
+            : { adoptIntoService: scenario.action },
+        });
+        try {
+          await h.updater.tick();
+          expect(h.exits).toEqual([]);
+          expect(h.updater.snapshot().currentVersion).toBe('1.0.0');
+          expect(h.updater.snapshot().appliedVersion).toBe('2.0.0');
+          expect(h.updater.snapshot().pendingVersion).toBeNull();
+          expect(h.updater.snapshot().handover?.status).toBe(scenario.status);
+          expect(h.updater.snapshot().handover?.detail).toContain(scenario.detail);
+          expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v2');
+          expect(h.files.get(`/opt/gv/goodvibes-daemon${PREVIOUS_FILE_SUFFIX}`)?.toString()).toBe('daemon-v1');
+          expect(h.receipts.list()).toHaveLength(2);
+          expect(h.receipts.list()[0]!.text).toContain('updated from 1.0.0 to 2.0.0');
+          expect(h.receipts.list()[0]!.text).toContain('on disk');
+          expect(h.receipts.list()[1]!.text).toContain('service handover is incomplete');
+          expect(h.alerts).toHaveLength(1);
+          expect(h.alerts[0]).toContain(scenario.detail);
+          expect(h.alerts[0]).toContain('Automatic updates are paused');
+          expect(h.alerts[0]).not.toContain('working again');
+          const completedRequests = h.requests.length;
+          h.updater.start();
+          await h.updater.tick();
+          await h.updater.tick();
+          expect(h.requests).toHaveLength(completedRequests);
+          expect(h.actions.adopted + h.actions.restarted).toBe(1);
+          expect(h.receipts.list()).toHaveLength(2);
+          expect(h.alerts).toHaveLength(1);
+          expect(h.timers).toHaveLength(0);
+        } finally {
+          rmSync(h.scratch, { recursive: true, force: true });
+        }
+      });
+    }
+
+    test(`${actionName} is awaited; only accepted adoption authorizes exit`, async () => {
+      const started = deferred<void>();
+      const result = deferred<ServiceHandoverOutcome>();
+      const action = () => { started.resolve(); return result.promise; };
+      const h = makeHarness({
+        idle: () => true,
+        supervised,
+        serviceActions: supervised ? { restartService: action } : { adoptIntoService: action },
+      });
+      let settled = false;
+      const tick = h.updater.tick().then(() => { settled = true; });
+      try {
+        await started.promise;
+        expect(settled).toBe(false);
+        expect(h.exits).toEqual([]);
+        expect(h.updater.snapshot().appliedVersion).toBe('2.0.0');
+        expect(h.updater.snapshot().handover?.status).toBe('unknown');
+        expect(h.receipts.list()).toHaveLength(1);
+        expect(h.receipts.list()[0]!.text).toContain('on disk');
+        result.resolve({ status: 'accepted', detail: 'request enqueued' });
+        await tick;
+        expect(settled).toBe(true);
+        expect(h.updater.snapshot().handover).toEqual({ status: 'accepted', detail: 'request enqueued' });
+        expect(h.exits).toEqual(supervised ? [] : [0]);
+        expect(h.alerts).toEqual([]);
+        expect(h.timers).toHaveLength(0);
+      } finally {
+        result.resolve({ status: 'failed', detail: 'test cleanup' });
+        await tick;
+        rmSync(h.scratch, { recursive: true, force: true });
+      }
+    });
+
+    test(`${actionName} owns a late rejection after stop without rearming the loop`, async () => {
+      const started = deferred<void>();
+      const result = deferred<ServiceHandoverOutcome>();
+      const action = () => { started.resolve(); return result.promise; };
+      const h = makeHarness({
+        idle: () => true,
+        supervised,
+        serviceActions: supervised ? { restartService: action } : { adoptIntoService: action },
+      });
+      const tick = h.updater.tick();
+      try {
+        await started.promise;
+        h.updater.stop();
+        let drained = false;
+        const drain = h.updater.drainHandover().then(() => { drained = true; });
+        await Promise.resolve();
+        expect(drained).toBe(false);
+        result.reject(new Error('late manager rejection'));
+        await drain;
+        expect(drained).toBe(true);
+        await tick;
+        expect(h.updater.snapshot().handover).toEqual({ status: 'failed', detail: 'late manager rejection' });
+        expect(h.exits).toEqual([]);
+        expect(h.alerts).toHaveLength(1);
+        expect(h.timers).toHaveLength(0);
+      } finally {
+        result.resolve({ status: 'failed', detail: 'test cleanup' });
+        await tick;
+        rmSync(h.scratch, { recursive: true, force: true });
+      }
+    });
+
+    test(`${actionName} cannot request a late exit after an external stop`, async () => {
+      const started = deferred<void>();
+      const result = deferred<ServiceHandoverOutcome>();
+      const action = () => { started.resolve(); return result.promise; };
+      const h = makeHarness({
+        idle: () => true,
+        supervised,
+        serviceActions: supervised ? { restartService: action } : { adoptIntoService: action },
+      });
+      const tick = h.updater.tick();
+      try {
+        await started.promise;
+        h.updater.stop();
+        let drained = false;
+        const drain = h.updater.drainHandover().then(() => { drained = true; });
+        await Promise.resolve();
+        expect(drained).toBe(false);
+        result.resolve({ status: 'accepted' });
+        await drain;
+        expect(drained).toBe(true);
+        await tick;
+        expect(h.updater.snapshot().handover?.status).toBe('unknown');
+        expect(h.updater.snapshot().handover?.detail).toContain('process handover was cancelled');
+        expect(h.exits).toEqual([]);
+        expect(h.receipts.list()).toHaveLength(2);
+        expect(h.receipts.list()[0]!.text).toContain('on disk');
+        expect(h.alerts).toHaveLength(1);
+        expect(h.timers).toHaveLength(0);
+        await h.updater.tick();
+        expect(h.actions.adopted + h.actions.restarted).toBe(1);
+      } finally {
+        result.resolve({ status: 'failed', detail: 'test cleanup' });
+        await tick;
+        rmSync(h.scratch, { recursive: true, force: true });
+      }
+    });
+
+    test(`${actionName} forwards cancellation to the owned action and drains its outcome`, async () => {
+      const started = deferred<void>();
+      let actionSignal: AbortSignal | undefined;
+      const action = (signal?: AbortSignal): Promise<ServiceHandoverOutcome> => {
+        actionSignal = signal;
+        started.resolve();
+        return new Promise((resolve) => {
+          signal?.addEventListener('abort', () => resolve({ status: 'unknown', detail: 'manager command cancelled' }), { once: true });
+        });
+      };
+      const h = makeHarness({
+        idle: () => true,
+        supervised,
+        serviceActions: supervised ? { restartService: action } : { adoptIntoService: action },
+      });
+      const tick = h.updater.tick();
+      try {
+        await started.promise;
+        expect(actionSignal?.aborted).toBe(false);
+        h.updater.stop();
+        expect(actionSignal?.aborted).toBe(true);
+        await h.updater.drainHandover();
+        expect(h.updater.snapshot().handover).toEqual({ status: 'unknown', detail: 'manager command cancelled' });
+        expect(h.exits).toEqual([]);
+        expect(h.alerts).toHaveLength(1);
+        expect(h.timers).toHaveLength(0);
+        await tick;
+      } finally {
+        h.updater.stop();
+        await tick;
+        rmSync(h.scratch, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test('graceful stop can stop its own updater without awaiting or deadlocking its in-flight tick', async () => {
+    let updater!: DaemonAutoUpdater;
+    const h = makeHarness({
+      idle: () => true,
+      supervised: false,
+      stopGracefully: async () => { updater.stop(true); await updater.drainHandover(true); },
+    });
+    updater = h.updater;
+    try {
+      await h.updater.tick();
+      expect(h.sequence).toEqual(['stop', 'adopt', 'exit']);
+      expect(h.updater.snapshot().handover?.status).toBe('accepted');
+      expect(h.timers).toHaveLength(0);
+    } finally {
+      rmSync(h.scratch, { recursive: true, force: true });
+    }
+  });
+
+  test('a throwing supervision probe becomes a reported failure with the disk receipt intact', async () => {
+    const h = makeHarness({
+      idle: () => true,
+      serviceActions: { isSupervised: () => { throw undefined; } },
+    });
+    try {
+      await h.updater.tick();
+      expect(h.updater.snapshot().handover?.status).toBe('failed');
+      expect(h.actions.adopted + h.actions.restarted).toBe(0);
+      expect(h.exits).toEqual([]);
+      expect(h.receipts.list()).toHaveLength(2);
+      expect(h.alerts).toHaveLength(1);
     } finally {
       rmSync(h.scratch, { recursive: true, force: true });
     }

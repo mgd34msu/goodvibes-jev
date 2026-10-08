@@ -100,13 +100,15 @@ function makePromotionHarness(options: { readonly hasOverriddenHome?: boolean | 
     configManager: { get: (key: string) => (key === 'service.enabled' ? true : undefined) } as never,
     platformServiceManager: {
       status: () => ({ installed: false, running: false }),
-      install: () => { adopted += 1; },
+      install: () => { adopted += 1; return {}; },
       uninstall: () => undefined,
       restart: () => undefined,
     } as never,
     isIdle: () => true,
     updateArtifact: { version: '1.0.0', execPath: join(scratch, 'goodvibes-daemon') },
     isCompiledBinary: () => true,
+    servicePlatform: 'linux',
+    serviceCommandRunner: async () => ({ status: 'accepted' }),
     exitProcess: (code: number) => { exits.push(code); },
     markerIo: {
       read: () => null,

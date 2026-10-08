@@ -13,7 +13,7 @@
  * Filesystem, clock, and process exit are all injected; no real binary is
  * swapped and no real time passes.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -213,6 +213,12 @@ function rollbackHarness(overrides: {
   readonly artifact?: DaemonLifecycleRuntimeOptions['updateArtifact'];
   readonly installed?: Record<string, string>;
   readonly threshold?: number;
+  readonly install?: (() => object) | undefined;
+  readonly runner?: DaemonLifecycleRuntimeOptions['serviceCommandRunner'];
+  readonly supervised?: boolean;
+  readonly platform?: NodeJS.Platform;
+  readonly managerPlatform?: 'manual' | 'launchd';
+  readonly stopGracefully?: (() => Promise<void> | void) | undefined;
   /** Share one marker filesystem across two harnesses to model two PROCESSES. */
   readonly marker?: { io: LifecycleMarkerIo; files: Map<string, string> };
   /** Share one state directory too, so the second harness reads the first's marker and receipts. */
@@ -231,9 +237,9 @@ function rollbackHarness(overrides: {
     getControlPlaneConfigDir: () => scratch,
   } as unknown as DaemonLifecycleRuntimeOptions['configManager'];
   const platformServiceManager = {
-    // Unsupervised and un-installable: the handover reduces to the observable exit.
-    status: () => ({ installed: false, running: false }),
-    install: () => { throw new Error('no service manager in this test'); },
+    // A failed install must preserve the completed disk rollback, without exiting.
+    status: () => ({ installed: overrides.supervised ?? false, running: overrides.supervised ?? false, platform: overrides.managerPlatform }),
+    install: overrides.install ?? (() => { throw new Error('no service manager in this test'); }),
   } as unknown as DaemonLifecycleRuntimeOptions['platformServiceManager'];
   const { io: markerIo, files: markerFiles } = overrides.marker ?? memoryMarkerIo();
   const { io: rollbackIo, files } = memoryUpdateIo(
@@ -247,12 +253,15 @@ function rollbackHarness(overrides: {
     stderr: { write: (chunk: string) => void stderr.push(chunk) },
     configManager,
     platformServiceManager,
+    servicePlatform: overrides.platform ?? 'linux',
+    serviceCommandRunner: overrides.runner ?? (async () => ({ status: 'accepted' })),
+    serviceCommandTimeoutMs: 20,
     isIdle: () => true,
     markerIo,
     rollbackIo,
     now: () => new Date(2026, 6, 12, 14, 30).getTime(),
     exitProcess: (code: number) => { exits.push(code); },
-    stopGracefully: () => { stops.push(Date.now()); },
+    stopGracefully: () => { stops.push(Date.now()); return overrides.stopGracefully?.(); },
     isCompiledBinary: () => true,
     alertOwner: (text: string) => void alerts.push(text),
     ...(overrides.artifact !== undefined ? { updateArtifact: overrides.artifact } : {}),
@@ -279,7 +288,7 @@ function rollbackHarness(overrides: {
 const ARTIFACT = { version: '2.0.0', execPath: EXEC_PATH };
 
 describe('crash-loop rollback at boot', () => {
-  test('three failed starts restore the kept previous binary, record a receipt, and hand over', async () => {
+  test('three failed starts restore files; failed adoption reports incomplete handover without successful exit', async () => {
     const h = rollbackHarness({ artifact: ARTIFACT });
     // Boots 1-3 record a start attempt and never reach a fully-started daemon.
     expect(h.runtime.onStarting()).toBe(false);
@@ -303,9 +312,12 @@ describe('crash-loop rollback at boot', () => {
     expect(h.stderr.join('')).toContain('rolled back to the kept previous version');
 
     await Bun.sleep(10);
-    // The handover took the orderly stop path before exiting, so shutdown hooks fire.
+    // The handover took the orderly stop path, but failed adoption cannot claim a successful exit.
     expect(h.stops).toHaveLength(1);
-    expect(h.exits).toEqual([0]);
+    expect(h.exits).toEqual([]);
+    expect(h.receipts()).toHaveLength(2);
+    expect(h.receipts()[1]!.text).toContain('rollback handover incomplete (failed)');
+    expect(h.marker()?.rejectedVersion).toBe('2.0.0');
   });
 
   test('a healthy boot in the middle resets the counter: no rollback', () => {
@@ -325,11 +337,15 @@ describe('crash-loop rollback at boot', () => {
     for (let i = 0; i < 4; i++) h.runtime.onStarting();
     await Bun.sleep(10);
     expect(h.files.get(EXEC_PATH)).toBe('good-build');
-    // The restored build fails just as hard: four more boots, and the daemon
-    // stays on it rather than exchanging back onto the build it just rejected.
-    for (let i = 0; i < 4; i++) expect(h.runtime.onStarting()).toBe(false);
+    // Duplicate starts in this process remain abandoned: never exchange again.
+    for (let i = 0; i < 4; i++) expect(h.runtime.onStarting()).toBe(true);
     expect(h.files.get(EXEC_PATH)).toBe('good-build');
-    expect(h.receipts()).toHaveLength(1);
+    expect(h.receipts()).toHaveLength(2);
+    // A genuinely new process shares the persisted guard and does not ping-pong.
+    const next = rollbackHarness({ artifact: ARTIFACT, marker: h.markerFs, controlPlaneDir: h.scratch,
+      installed: { [EXEC_PATH]: 'good-build', [PREVIOUS_PATH]: 'bad-build' } });
+    for (let i = 0; i < 4; i++) expect(next.runtime.onStarting()).toBe(false);
+    expect(next.files.get(EXEC_PATH)).toBe('good-build');
   });
 
   test('no kept previous copy: the boot continues and no rollback is claimed', async () => {
@@ -492,7 +508,8 @@ describe('a rollback records the version it rejected', () => {
     const h = rollbackHarness({ artifact: ARTIFACT });
     for (let i = 0; i < 4; i++) h.runtime.onStarting();
     await Bun.sleep(10);
-    expect(h.alerts).toHaveLength(1);
+    expect(h.alerts).toHaveLength(2);
+    expect(h.alerts[1]).toContain('rollback handover incomplete (failed)');
     expect(h.alerts[0]).toContain('rolled itself back');
     expect(h.alerts[0]).toContain('from v2.0.0');
     expect(h.alerts[0]).toContain('3 starts in a row');
@@ -500,4 +517,120 @@ describe('a rollback records the version it rejected', () => {
     // the machine will ever update again.
     expect(h.alerts[0]).toContain('until a newer one ships');
   });
+});
+
+
+describe('rollback handover outcomes keep disk evidence', () => {
+  for (const supervised of [false, true]) {
+    for (const status of ['accepted', 'failed', 'unknown', 'unsupported'] as const) {
+      test(`${supervised ? 'restart' : 'adoption'} ${status}`, async () => {
+        const commands: string[][] = [];
+        const h = rollbackHarness({ artifact: ARTIFACT, supervised, install: () => ({}), runner: async (argv) => {
+          commands.push([...argv]); return { status };
+        } });
+        for (let i = 0; i < 4; i++) h.runtime.onStarting();
+        expect(h.runtime.onStarting()).toBe(true);
+        await Bun.sleep(10);
+        expect(h.files.get(EXEC_PATH)).toBe('good-build');
+        expect(h.files.get(PREVIOUS_PATH)).toBe('bad-build');
+        expect(h.marker()?.rejectedVersion).toBe('2.0.0');
+        expect(h.stops).toHaveLength(1);
+        expect(h.exits).toEqual(status === 'accepted' && !supervised ? [0] : []);
+        expect(commands).toHaveLength(status === 'accepted' && !supervised ? 2 : 1);
+        expect(h.receipts()[0]!.text).toContain('rolled back to the previously installed version');
+        expect(h.receipts()).toHaveLength(status === 'accepted' ? 1 : 2);
+      });
+    }
+  }
+  test('install throwing undefined is a failure with no exit or second rollback', async () => {
+    const h = rollbackHarness({ artifact: ARTIFACT, install: () => { throw undefined; } });
+    for (let i = 0; i < 4; i++) h.runtime.onStarting();
+    await Bun.sleep(10);
+    expect(h.exits).toEqual([]);
+    expect(h.receipts()[1]!.text).toContain('incomplete (failed)');
+    expect(h.files.get(EXEC_PATH)).toBe('good-build');
+  });
+  test('pending restart timeout is owned after orderly stop', async () => {
+    const h = rollbackHarness({ artifact: ARTIFACT, supervised: true, runner: () => new Promise(() => {}) });
+    for (let i = 0; i < 4; i++) h.runtime.onStarting();
+    await Bun.sleep(40);
+    expect(h.exits).toEqual([]);
+    expect(h.stops).toHaveLength(1);
+    expect(h.receipts()[1]!.text).toContain('incomplete (unknown)');
+    expect(h.files.get(EXEC_PATH)).toBe('good-build');
+  });
+});
+
+
+test('external close drains pending rollback adoption and suppresses late exit', async () => {
+  let resolveCommand!: (outcome: { status: 'accepted' }) => void;
+  let commands = 0;
+  const h = rollbackHarness({ artifact: ARTIFACT, install: () => ({}), runner: () => {
+    commands++;
+    return new Promise((resolve) => { resolveCommand = resolve; });
+  } });
+  for (let i = 0; i < 4; i++) h.runtime.onStarting();
+  await Bun.sleep(1);
+  await h.runtime.onStopping(false);
+  resolveCommand({ status: 'accepted' });
+  await Bun.sleep(1);
+  expect(h.exits).toEqual([]);
+  expect(commands).toBe(1);
+  expect(h.files.get(EXEC_PATH)).toBe('good-build');
+  expect(h.receipts()[1]!.text).toContain('incomplete (unknown)');
+});
+
+test('rollback orderly stop can reenter lifecycle stop without deadlock', async () => {
+  let runtime!: DaemonLifecycleRuntime;
+  const h = rollbackHarness({ artifact: ARTIFACT, install: () => ({}), stopGracefully: () => runtime.onStopping(false, true) });
+  runtime = h.runtime;
+  for (let i = 0; i < 4; i++) runtime.onStarting();
+  await Bun.sleep(10);
+  expect(h.exits).toEqual([0]);
+  expect(h.stops).toHaveLength(1);
+});
+
+
+test('receipt write failure cannot undo a completed rollback on duplicate start', async () => {
+  const h = rollbackHarness({ artifact: ARTIFACT });
+  const record = spyOn(h.runtime.receiptStore(), 'record').mockImplementation(() => { throw new Error('disk full'); });
+  try {
+    for (let i = 0; i < 4; i++) h.runtime.onStarting();
+    await Bun.sleep(10);
+    expect(h.files.get(EXEC_PATH)).toBe('good-build');
+    expect(h.runtime.onStarting()).toBe(true);
+    expect(h.files.get(EXEC_PATH)).toBe('good-build');
+    expect(h.marker()?.rejectedVersion).toBe('2.0.0');
+    expect(h.exits).toEqual([]);
+    expect(h.alerts.some((line) => line.includes('handover incomplete'))).toBe(true);
+  } finally { record.mockRestore(); }
+});
+
+for (const managerPlatform of ['manual', 'launchd'] as const) {
+  test(`darwin ${managerPlatform} requires actual restart-by-exit supervision`, async () => {
+    const h = rollbackHarness({ artifact: ARTIFACT, supervised: true, platform: 'darwin', managerPlatform });
+    for (let i = 0; i < 4; i++) h.runtime.onStarting();
+    await Bun.sleep(10);
+    expect(h.exits).toEqual(managerPlatform === 'launchd' ? [0] : []);
+    if (managerPlatform === 'manual') expect(h.receipts()[1]!.text).toContain('incomplete (unsupported)');
+  });
+}
+
+
+test('external close during rollback orderly stop fences all later commands', async () => {
+  let release!: () => void;
+  let commands = 0;
+  const h = rollbackHarness({ artifact: ARTIFACT, install: () => ({}),
+    stopGracefully: () => new Promise<void>((resolve) => { release = resolve; }),
+    runner: async () => { commands++; return { status: 'accepted' }; },
+  });
+  for (let i = 0; i < 4; i++) h.runtime.onStarting();
+  h.runtime.beginStopping();
+  const closed = h.runtime.onStopping(false);
+  release();
+  await closed;
+  expect(commands).toBe(0);
+  expect(h.exits).toEqual([]);
+  expect(h.files.get(EXEC_PATH)).toBe('good-build');
+  expect(h.receipts()[1]!.text).toContain('incomplete (unknown)');
 });
