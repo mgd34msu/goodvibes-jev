@@ -704,7 +704,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: [tools, repl, graph-runtime]
+        lane: [tools, repl, graph-runtime, agent-posture]
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     needs: [build]
@@ -760,6 +760,9 @@ jobs:
               ;;
             graph-runtime)
               bun packages/engine/scripts/test.ts test/contract/actual-input-authority-graph.test.ts test/contract/actual-edit-write-input-authority.test.ts test/contract/actual-validator-runtime.test.ts
+              ;;
+            agent-posture)
+              bun packages/engine/scripts/test.ts --cwd ../../products/agent ./src/test/tools/owner-terminal-guard.test.ts ./src/test/runtime/exec-cancellation-wrappers.test.ts ./src/test/tools/tool-execution-safety.test.ts
               ;;
             *) exit 1 ;;
           esac
