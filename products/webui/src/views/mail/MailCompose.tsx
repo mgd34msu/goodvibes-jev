@@ -4,9 +4,11 @@
  * over the inbox the way a mail app's compose window does, so the list and the
  * open message stay in view while you write.
  */
-import { useEffect, useRef, type KeyboardEvent, type SyntheticEvent } from 'react';
+import { forwardRef, useImperativeHandle, useRef, useState, type KeyboardEvent, type SyntheticEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Send, X } from 'lucide-react';
 import { Button, Field, IconButton, Input, Textarea } from '../../components/ui';
+import { useModalFocus, useOverlayLayer, useTopLayerEscape } from '../../components/ui/overlay';
 
 export interface MailComposeProps {
   to: string;
@@ -26,7 +28,12 @@ export interface MailComposeProps {
   replySubjectState?: 'pending' | 'held' | undefined;
 }
 
-export function MailCompose({
+export interface MailComposeHandle {
+  /** An explicit Compose/Reply action returns to writing in the existing panel. */
+  focus: (field: 'to' | 'body') => void;
+}
+
+export const MailCompose = forwardRef<MailComposeHandle, MailComposeProps>(function MailCompose({
   to,
   subject,
   body,
@@ -42,16 +49,22 @@ export function MailCompose({
   sending,
   saving,
   replySubjectState,
-}: MailComposeProps) {
+}, ref) {
+  const panelRef = useRef<HTMLElement | null>(null);
   const toRef = useRef<HTMLInputElement | null>(null);
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Start where the writing is: the recipient for a new message, the body for a reply.
-  useEffect(() => {
-    (to.trim() ? bodyRef.current : toRef.current)?.focus({ preventScroll: true });
-    // Only on open; typing must not move focus.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Keep the initial target stable while typing, and return focus to the opener on close.
+  const [startsWithRecipient] = useState(() => to.trim() !== '');
+  useModalFocus(true, panelRef, startsWithRecipient ? bodyRef : toRef, { recoverFocus: false });
+  const isTop = useOverlayLayer(true);
+  useTopLayerEscape(true, isTop, onClose);
+  useImperativeHandle(ref, () => ({
+    focus(field) {
+      (field === 'body' ? bodyRef.current : toRef.current)?.focus({ preventScroll: true });
+    },
+  }), []);
 
   function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -61,12 +74,17 @@ export function MailCompose({
   function onKeyDown(event: KeyboardEvent<HTMLElement>) {
     if (event.key === 'Escape' && !event.defaultPrevented) {
       event.preventDefault();
+      event.stopPropagation();
       onClose();
     }
   }
 
-  return (
-    <section className="glass mail-compose" role="dialog" aria-label="Compose message" onKeyDown={onKeyDown} data-testid="mail-compose">
+  if (typeof document === 'undefined') return null;
+
+  // Share the kit's body-level overlay plane: the message drawer must stay below
+  // its reply, and a subsequently opened Send confirmation must stay above it.
+  return createPortal(
+    <section ref={panelRef} className="glass mail-compose" role="dialog" aria-label="Compose message" onKeyDown={onKeyDown} data-gv-layer="" data-testid="mail-compose">
       <header className="mail-compose__header">
         <h3 className="mail-compose__title">{inReplyTo ? 'Reply' : 'New message'}</h3>
         <IconButton label="Close compose" icon={<X />} onClick={onClose} size="sm" />
@@ -103,6 +121,7 @@ export function MailCompose({
           </Button>
         </div>
       </form>
-    </section>
+    </section>,
+    document.body,
   );
-}
+});

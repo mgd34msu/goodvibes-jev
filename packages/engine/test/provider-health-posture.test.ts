@@ -5,6 +5,7 @@ import {
 } from '@goodvibes-jev/engine/sdk/platform/runtime/provider-health';
 import type { ProviderRuntimeSnapshot } from '../sdk/src/platform/providers/runtime-snapshot.ts';
 import type { ProviderAuthRouteDescriptor } from '../sdk/src/platform/providers/interface.ts';
+import { bundleBrowserEntrypoint } from './_helpers/browser-bundle.ts';
 
 function inputs(): ProviderHealthDomainInputs {
   return {
@@ -138,10 +139,7 @@ test('public consumer bundles for browsers and its emitted functions execute wit
   try {
     const entry = join(dir, 'consumer.ts');
     writeFileSync(entry, `import { buildAccountPosture, buildProviderHealthDomainSummaries } from '@goodvibes-jev/engine/sdk/platform/runtime/provider-health';\nglobalThis.__providerHealthProbe = { buildAccountPosture, buildProviderHealthDomainSummaries };`);
-    const built = await Bun.build({ entrypoints: [entry], target: 'browser', conditions: ['bun'], format: 'esm' });
-    expect(built.success).toBe(true);
-    expect(built.logs).toEqual([]);
-    const code = await built.outputs[0]!.text();
+    const code = await bundleBrowserEntrypoint(entry, { conditions: ['bun'] });
     expect(code).not.toMatch(/(?:from|require\()\s*['"](?:node:|bun:)/);
     const consumer: { __providerHealthProbe?: { buildAccountPosture: typeof buildAccountPosture; buildProviderHealthDomainSummaries: typeof buildProviderHealthDomainSummaries } } = {};
     new Function('globalThis', code)(consumer);

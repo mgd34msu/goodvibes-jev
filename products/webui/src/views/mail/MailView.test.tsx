@@ -12,6 +12,7 @@ import { flushSync } from 'react-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../../lib/toast';
 import { ToastViewport } from '../../components/toast/ToastViewport';
+import { openOverlayCount, PHONE_QUERY } from '../../components/ui/overlay';
 
 type InboxListImpl = () => Promise<{ messages: unknown[]; total: number; unreadable?: { uid?: number; detail: string }[] }>;
 
@@ -354,11 +355,82 @@ async function openSyntheticReply(subject = 'Synthetic original', reference: str
   await waitFor(() => Boolean(view.el.querySelector('[data-testid="mail-list"]')));
   flushSync(() => ([...view.el.querySelectorAll('.mail-row')].find(row => row.textContent?.includes(subject))?.querySelector('.gv-row__main') as HTMLElement).click());
   await waitFor(() => Boolean(view.el.querySelector('[data-testid="mail-message-detail"]')));
-  flushSync(() => buttonNamed(view.el, 'Reply')?.click());
+  flushSync(() => {
+    const reply = buttonNamed(view.el, 'Reply');
+    reply?.focus();
+    reply?.click();
+  });
   const compose = view.el.querySelector('[data-testid="mail-compose"]') as HTMLElement;
   const subjectInput = compose.querySelectorAll('input')[1]!;
   return { ...view, compose, subjectInput };
 }
+
+test.each(['desktop', 'phone'])('reply composer joins the overlay stack, keeps focus, and restores its drawer on %s', async viewport => {
+  const phone = viewport === 'phone';
+  const originalMatchMedia = window.matchMedia;
+  window.matchMedia = query => ({ ...originalMatchMedia(query), matches: phone && query === PHONE_QUERY });
+  const previousLayers = openOverlayCount();
+  let view: Awaited<ReturnType<typeof openSyntheticReply>> | undefined;
+  function key(target: Element, value: string, shiftKey = false) {
+    const event = new window.KeyboardEvent('keydown', { key: value, shiftKey, bubbles: true, cancelable: true });
+    flushSync(() => target.dispatchEvent(event));
+    return event;
+  }
+  try {
+    view = await openSyntheticReply();
+    const { compose, subjectInput } = view;
+    const message = compose.querySelector('textarea')!;
+    const reply = buttonNamed(view.el, 'Reply')!;
+    expect(compose.parentElement).toBe(document.body);
+    expect(compose.hasAttribute('data-gv-layer')).toBe(true);
+    expect(view.el.querySelector('.gv-drawer')?.getAttribute('aria-modal')).toBe(phone ? 'true' : null);
+    expect(openOverlayCount()).toBe(previousLayers + 2);
+    expect(document.activeElement).toBe(message);
+    await waitFor(() => subjectInput.value === 'Re: Synthetic original');
+    expect(document.activeElement).toBe(message);
+
+    // The phone drawer must not reclaim focus from a portalled reply. Clearing
+    // To must not switch the initial-focus ref and move focus on a later render.
+    flushSync(() => subjectInput.focus());
+    expect(document.activeElement).toBe(subjectInput);
+    const toInput = compose.querySelector('input')!;
+    flushSync(() => setField(toInput, ''));
+    expect(document.activeElement).toBe(subjectInput);
+    flushSync(() => { setField(toInput, 'a@example.com'); setField(message, 'Synthetic reply'); });
+    const save = buttonNamed(compose, 'Save draft to account')!;
+    const close = buttonNamed(compose, 'Close compose')!;
+    save.focus();
+    expect(key(save, 'Tab').defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(close);
+    key(close, 'Tab', true);
+    expect(document.activeElement).toBe(save);
+
+    expect(key(save, 'Escape').defaultPrevented).toBe(true);
+    expect(view.el.querySelector('[data-testid="mail-compose"]')).toBeNull();
+    expect(view.el.querySelector('[data-testid="mail-message-detail"]')).not.toBeNull();
+    expect(document.activeElement).toBe(reply);
+    expect(openOverlayCount()).toBe(previousLayers + 1);
+    key(document.body, 'Escape');
+    expect(view.el.querySelector('[data-testid="mail-message-detail"]')).toBeNull();
+    expect(openOverlayCount()).toBe(previousLayers);
+    expect(sentInputs).toEqual([]);
+    expect(draftInputs).toEqual([]);
+  } finally {
+    view?.unmount();
+    window.matchMedia = originalMatchMedia;
+  }
+  expect(openOverlayCount()).toBe(previousLayers);
+});
+
+test('Escape outside the reply closes the top composer before the message drawer', async () => {
+  const view = await openSyntheticReply();
+  try {
+    (document.activeElement as HTMLElement).blur();
+    flushSync(() => document.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+    expect(view.el.querySelector('[data-testid="mail-compose"]')).toBeNull();
+    expect(view.el.querySelector('[data-testid="mail-message-detail"]')).not.toBeNull();
+  } finally { view.unmount(); }
+});
 
 describe('MailView: subject interpretation owns only its exact pending draft', () => {
   test.each(['RE:  Café plan  ', 'Re[2]: Synthetic lunch', 'AW: Synthetic lunch', 'SV: Synthetic lunch'])('keeps the exact acted-yes subject %s', async subject => {
@@ -411,7 +483,10 @@ describe('MailView: subject interpretation owns only its exact pending draft', (
       if (kind === 'subject-edit') flushSync(() => setField(view.subjectInput, 'Owner edit'));
       if (kind === 'close') flushSync(() => buttonNamed(view.compose, 'Close compose')?.click());
       if (kind === 'selection') flushSync(() => (view.el.querySelector('.mail-row .gv-row__main') as HTMLElement).click());
-      if (kind === 'new-compose') flushSync(() => buttonNamed(view.el, 'Compose')?.click());
+      if (kind === 'new-compose') {
+        flushSync(() => { const compose = buttonNamed(view.el, 'Compose'); compose?.focus(); compose?.click(); });
+        expect(document.activeElement).toBe(view.compose.querySelector('textarea'));
+      }
       if (kind === 'threading') flushSync(() => buttonNamed(view.compose, 'Clear reply threading')?.click());
       if (kind === 'unmount') { view.unmount(); unmounted = true; }
       expect(first.signal.aborted).toBe(true);
@@ -427,12 +502,17 @@ describe('MailView: subject interpretation owns only its exact pending draft', (
     replyJudgment = input => replyRequests.length === 1 ? first.promise : Promise.resolve(replyWire(input, true));
     const view = await openSyntheticReply('AW: Synthetic exact');
     try {
-      flushSync(() => buttonNamed(view.el, 'Reply')?.click());
+      flushSync(() => { const reply = buttonNamed(view.el, 'Reply'); reply?.focus(); reply?.click(); });
+      expect(document.activeElement).toBe(view.compose.querySelector('textarea'));
       await waitFor(() => view.subjectInput.value === 'AW: Synthetic exact');
       expect(replyRequests).toHaveLength(2); expect(replyRequests[0]!.signal.aborted).toBe(true);
       first.resolve(replyWire(replyRequests[0]!.input, false));
       await new Promise(resolve => setTimeout(resolve, 10));
       expect(view.subjectInput.value).toBe('AW: Synthetic exact');
+      expect(document.activeElement).toBe(view.compose.querySelector('textarea'));
+      flushSync(() => document.activeElement?.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+      expect(view.el.querySelector('[data-testid="mail-compose"]')).toBeNull();
+      expect(view.el.querySelector('[data-testid="mail-message-detail"]')).not.toBeNull();
     } finally { first.resolve({}); view.unmount(); }
   });
 

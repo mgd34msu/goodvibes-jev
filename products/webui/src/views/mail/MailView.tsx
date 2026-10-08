@@ -45,7 +45,7 @@ import { mailRefusalNote } from '../../lib/mail-refusal';
 import { sortInboxMessagesByUidDescending } from '../../lib/mail-order';
 import { PersonalPage } from '../personal/PersonalPage';
 import { openSettingsSection } from '../personal/openSettings';
-import { MailCompose } from './MailCompose';
+import { MailCompose, type MailComposeHandle } from './MailCompose';
 import { MailMessageBody, useMailMessage, type MailMessageData } from './MailMessagePeek';
 import { readMailReplySubject } from '../../lib/mail-reply-subject';
 import { getClientLifetime, isClientLifetimeCurrent, subscribeClientLifetime, type ClientLifetime } from '../../lib/client-lifetime';
@@ -139,6 +139,7 @@ export function MailView({ tabs }: MailViewProps = {}) {
   const [selectedUid, setSelectedUid] = useState<number | null>(null);
 
   const [composeOpen, setComposeOpen] = useState(false);
+  const composeRef = useRef<MailComposeHandle | null>(null);
   const [to, setTo] = useState('');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
@@ -277,6 +278,9 @@ export function MailView({ tabs }: MailViewProps = {}) {
     setBody('');
     setComposeOpen(true);
     setReplySubjectState('pending');
+    // A repeated Reply clicked in the still-visible desktop drawer must return
+    // keyboard ownership to the composer, even though the panel stays mounted.
+    composeRef.current?.focus('body');
     const pending = { abort: new AbortController(), message };
     replyRequest.current = pending;
     const result = await readMailReplySubject(message.replySubjectRef, pending.abort.signal);
@@ -338,6 +342,7 @@ export function MailView({ tabs }: MailViewProps = {}) {
           composerLifetime.current = getClientLifetime();
           composerRevision.current++;
           if (!composeOpen) setComposeOpen(true);
+          composeRef.current?.focus(to.trim() ? 'body' : 'to');
         }}
       >
         Compose
@@ -465,6 +470,7 @@ export function MailView({ tabs }: MailViewProps = {}) {
         </PersonalPage>
         {composeOpen && !surfaceRefusing ? (
           <MailCompose
+            ref={composeRef}
             to={to}
             subject={subject}
             body={body}
