@@ -403,9 +403,18 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install official terminal harness package
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends tmux
-          tmux -V
+          # Hosted runners can already provide tmux. Verify it before touching
+          # package indexes; a stalled unrelated mirror must not spend the test budget.
+          if command -v tmux >/dev/null 2>&1 && timeout --signal=KILL 10s tmux -V; then
+            exit 0
+          fi
+          apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
+          # Transfer timeouts alone do not bound a refresh across many indexes.
+          # KILL the attached group at expiry; TERM can leave a child alive when
+          # its parent exits first. Timeout runs inside sudo to signal elevated children.
+          sudo -n timeout --signal=KILL 120s apt-get "${apt_options[@]}" --error-on=any update
+          sudo -n timeout --signal=KILL 120s apt-get "${apt_options[@]}" install --no-install-recommends -y tmux
+          timeout --signal=KILL 10s tmux -V
       - name: Setup Bun + deps (cached)
         uses: ./.github/actions/setup
       - name: Download workspace package output
@@ -464,7 +473,40 @@ jobs:
           tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
           find packages/engine/*/dist packages/judgment/dist -type f -exec touch {} +
       - name: Install official Playwright Chromium and OS dependencies
-        run: bunx playwright install --with-deps chromium
+        run: |
+          # Use the lockfile-installed CLI and its exact Chromium revision. Browser
+          # acquisition does not need a broad package-index refresh on a ready host.
+          timeout --signal=KILL 180s node node_modules/@playwright/test/cli.js install chromium
+          if timeout --signal=KILL 30s bun scripts/ci-browser-smoke.ts; then
+            exit 0
+          else
+            probe_status=$?
+          fi
+          # Never retry after a timed-out controller: Chromium owns a detached
+          # process group, so hard-kill cleanup belongs to runner teardown.
+          if (( probe_status == 124 || probe_status >= 128 )); then
+            exit "$probe_status"
+          fi
+          # If the actual browser cannot run, install the official dependency set.
+          # A per-process APT config preserves update errors without changing mirrors
+          # or persistent host settings. Timeout runs inside sudo to own root children.
+          apt_config=$(mktemp)
+          trap 'rm -f "$apt_config"' EXIT
+          cat > "$apt_config" <<'APT'
+          APT::Update::Error-Mode "any";
+          Acquire::Retries "1";
+          Acquire::http::Timeout "15";
+          Acquire::https::Timeout "15";
+          APT
+          # APT_CONFIG is read before host apt.conf.d; reject later overrides.
+          actual_config=$(sudo -n timeout --signal=KILL 10s env APT_CONFIG="$apt_config" apt-config shell error_mode APT::Update::Error-Mode retries Acquire::Retries http_timeout Acquire::http::Timeout https_timeout Acquire::https::Timeout)
+          expected_config=$(printf "%s\n" "error_mode='any'" "retries='1'" "http_timeout='15'" "https_timeout='15'")
+          if [[ "$actual_config" != "$expected_config" ]]; then
+            printf 'Unexpected effective APT configuration:\n%s\n' "$actual_config" >&2
+            exit 1
+          fi
+          sudo -n timeout --signal=KILL 180s env APT_CONFIG="$apt_config" "$(command -v node)" "$(realpath node_modules/@playwright/test/cli.js)" install-deps chromium
+          timeout --signal=KILL 30s bun scripts/ci-browser-smoke.ts
       - name: Check workspace exports and generated data
         run: bun run release:gate && bun run generated:check
       - name: Exercise the production app with synthetic daemon fixtures
@@ -520,10 +562,23 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install official sandbox and PTY packages
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends bubblewrap util-linux
-          bwrap --version
-          script --version
+          # Prove the actual unprivileged namespace and PTY capabilities first.
+          # The full required containment fixtures still run below.
+          verify_host() {
+            timeout --signal=KILL 10s bwrap --ro-bind / / --proc /proc --dev /dev --unshare-net /bin/true &&
+              timeout --signal=KILL 10s script --quiet --return --command 'test -t 0 && test -t 1' /dev/null
+          }
+          if verify_host; then
+            exit 0
+          fi
+          apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
+          # Hosted images retain signed package indexes. Use them first instead
+          # of refreshing every unrelated repository on each fresh runner.
+          if ! sudo -n timeout --signal=KILL 90s apt-get "${apt_options[@]}" install --yes --no-install-recommends bubblewrap util-linux; then
+            sudo -n timeout --signal=KILL 60s apt-get "${apt_options[@]}" --error-on=any update
+            sudo -n timeout --signal=KILL 90s apt-get "${apt_options[@]}" install --yes --no-install-recommends bubblewrap util-linux
+          fi
+          verify_host
       - name: Setup Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
