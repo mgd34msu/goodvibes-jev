@@ -669,7 +669,15 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           }
           return error(`Unknown Agent workspace action ${readString(args.actionId || args.command || args.target || args.query) || '<missing>'}. Use mode:"workspace_actions" to inspect available actions.`);
         }
-        if (dispatchMode === 'run_workspace_action') return runWorkspaceAction(deps, args, options);
+        if (dispatchMode === 'run_workspace_action') {
+          // The original dispatcher owns its inspected mode and typed refusal
+          // contract. Protect workspace report bodies only after that routing
+          // boundary, without rereading unrelated Proxy/accessor modes.
+          const workspaceActionTool: Tool = { definition: tool.definition,
+            execute: (input, executionOptions) => runWorkspaceAction(deps, input, executionOptions),
+          };
+          return protectAgentHarnessResearchTool(workspaceActionTool, deps.toolRegistry).execute(args as Record<string, unknown>, options);
+        }
         if (dispatchMode === 'tools') {
           const tools = searchHarnessModelTools(deps.toolRegistry, args);
           return output(catalogEnvelope('tools', tools.matches, deps.toolRegistry.getToolDefinitions().length, catalogFilters(args, CQ.tools.filters), CQ.tools.discovery, { relaxedQuery: tools.relaxed }));
@@ -793,7 +801,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
       }
     },
   };
-  return protectAgentHarnessResearchTool(tool, deps.toolRegistry);
+  return tool;
 }
 
 export function registerAgentHarnessTool(
