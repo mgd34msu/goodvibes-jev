@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Restore the explicit daemon host’s owned background provider-discovery scan
+  after cached preload, preserving custom providers and selected models. Persist
+  nonempty results under the selected home/surface and fence late application
+  while draining accepted scan/persistence work before runtime disposal.
+
 - Render WebUI session permission choices and current labels from the engine's
   browser-safe gate preset table. Keep custom presets read-only and retain the
   existing session-scoped get/set, pending, error and non-local-session behavior.

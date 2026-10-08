@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { DaemonServer, HttpListener } from '@goodvibes-jev/engine/sdk/platform/daemon';
-import type { DiscoveredServer } from '@goodvibes-jev/engine/sdk/platform/discovery';
+import { persistProviders, loadPersistedProviders, type DiscoveredServer } from '@goodvibes-jev/engine/sdk/platform/discovery';
 import { HostedSessionManager, HostedSessionStore, HostedWorkspaceFloors, HOSTED_SESSION_WIRE_EVENT, type HostedSessionRecord, type HostedSessionUpdatePayload, type HostedWorkspaceFloor } from '@goodvibes-jev/engine/sdk/platform/hosted-sessions';
 import { registerInboxSurface } from '@goodvibes-jev/engine/sdk/platform/intake';
 import { Notifier } from '@goodvibes-jev/engine/sdk/platform/integrations';
@@ -67,6 +67,7 @@ function fixture(configure?: (runtime: RuntimeServices) => void, extra: DaemonHo
     daemon: { host: '127.0.0.1', port: 0, token: 'synthetic-host-token', serveFactory },
   };
   const factories: DaemonHostFactories = {
+    providerDiscovery: { scan: async () => ({ servers: [], scannedHosts: 0, scannedPorts: 0, durationMs: 0 }) },
     async createRuntime(runtimeOptions) {
       expect(runtimeOptions.createBootOperations).toBe(createDaemonBootOperations);
       const runtime = await createRuntimeServices(runtimeOptions);
@@ -233,7 +234,7 @@ test('independent server and listener stop failures still await graph close and 
 test('close before start admits no graph and required inbox cannot silently default', async () => {
   const fx = fixture(); await fx.host.close(); expect(fx.host.services).toBeUndefined();
   await expect(fx.host.start()).rejects.toThrow('closed');
-  const host = createDaemonHost({ ...fx.options, runtime: { ...fx.options.runtime, inboxFactory: undefined as never } }); hosts.push(host);
+  const host = createDaemonHost({ ...fx.options, runtime: { ...fx.options.runtime, inboxFactory: undefined as never } }, fx.factories); hosts.push(host);
   await expect(host.start()).rejects.toThrow('runtime acquisition failed'); expect(host.services).toBeUndefined();
 });
 
@@ -746,4 +747,122 @@ test.each(['kill', 'survive'] as const)('hosted provider readiness and a held re
   } finally {
     held.release.resolve(); saveRelease.resolve(); await request; await closing;
   }
+});
+
+function scanResult(servers: DiscoveredServer[]) {
+  return { servers, scannedHosts: 1, scannedPorts: 1, durationMs: 0 };
+}
+
+test('held background scan does not block serving; discoveries reach HTTP and new hosted floors and survive restart', async () => {
+  const held = gate(); const persisted = gate();
+  const discovered = cachedServer('background-model', 'background-fixture');
+  const floors: HostedWorkspaceFloor[] = [];
+  const fx = fixture(undefined, {
+    providerDiscovery: { scan: async () => { await held.promise; return scanResult([discovered]); },
+      persist(roots, servers) { persistProviders(roots, servers); persisted.resolve(); } },
+    createServer(config) {
+      const hosted = config!.hostedSessions!;
+      return new DaemonServer({ ...config, hostedSessions: { ...hosted, async floorFactory(input) {
+        const floor = await hosted.floorFactory(input); floors.push(floor); return floor;
+      } } });
+    },
+  });
+  fx.options.runtime.configManager.set('provider.model', 'openai:gpt-4.1');
+  const modelBefore = fx.options.runtime.configManager.get('provider.model');
+  expect((await fx.host.start()).state).toBe('ready');
+  expect(fx.host.services!.providerRegistry.has(discovered.name)).toBe(false);
+  // Provider-list HTTP lazily resolves gateway prices. Seed fresh owned empty
+  // pricing caches so this route exercises no external provider endpoints.
+  for (const provider of ['aihubmix', 'vercel-ai-gateway']) {
+    writeFileSync(join(fx.options.runtime.configManager.getControlPlaneConfigDir(), `gateway-pricing-${provider}.json`),
+      JSON.stringify({ version: 1, fetchedAt: Date.now(), ttlMs: 86_400_000, models: {} }));
+  }
+  const headers = { Authorization: 'Bearer synthetic-host-token', 'Content-Type': 'application/json' };
+  expect((await fetch(`${fx.baseUrl}/api/providers`, { headers })).status).toBe(200);
+  held.resolve(); await persisted.promise;
+  const providers = await fetch(`${fx.baseUrl}/api/providers`, { headers });
+  expect(providers.status).toBe(200);
+  expect(JSON.stringify(await providers.json())).toContain(discovered.name);
+  const response = await fetch(`${fx.baseUrl}/api/control-plane/methods/sessions.hosted.create/invoke`, {
+    method: 'POST', headers, body: JSON.stringify({ body: { workspaceRoot: fx.workingDir,
+      clientId: 'discovery-fixture', modelId: `${discovered.name}:background-model`, detachPolicy: 'survive' } }),
+  });
+  expect(response.status).toBe(200); expect(floors).toHaveLength(1);
+  expect(floors[0]!.services.providerRegistry.listDiscoveredServers()).toEqual([discovered]);
+  expect(fx.options.runtime.configManager.get('provider.model')).toEqual(modelBefore);
+  expect(loadPersistedProviders({ homeDirectory: fx.homeDirectory, surfaceRoot: 'tui' })).toEqual([discovered]);
+  expect(loadPersistedProviders({ homeDirectory: fx.homeDirectory, surfaceRoot: 'daemon' })).toEqual([]);
+  await fx.host.close();
+  const restart = createDaemonHost(fx.options, { ...fx.factories,
+    providerDiscovery: { scan: async () => scanResult([]) } }); hosts.push(restart);
+  await restart.start();
+  expect(restart.services!.providerRegistry.listDiscoveredServers()).toEqual([discovered]);
+});
+
+test.each(['empty', 'failure'] as const)('background %s preserves cached providers and cache bytes', async (mode) => {
+  const attempted = gate(); let touched = false; let writes = 0;
+  const raw = { get message() { touched = true; throw new Error('private'); }, toString() { touched = true; throw new Error('private'); } };
+  const fx = fixture(undefined, { providerDiscovery: {
+    async scan() { attempted.resolve(); if (mode === 'failure') throw raw; return scanResult([]); },
+    persist() { writes++; },
+  } });
+  seedCache(fx.homeDirectory, [cachedServer()]);
+  const path = join(fx.homeDirectory, '.goodvibes', 'tui', 'discovered-providers.json');
+  const before = readFileSync(path, 'utf8');
+  await fx.host.start(); await attempted.promise; await tick();
+  expect(fx.host.services!.providerRegistry.listDiscoveredServers()).toEqual([cachedServer()]);
+  expect(readFileSync(path, 'utf8')).toBe(before); expect(writes).toBe(0); expect(touched).toBe(false);
+});
+
+test('background discovery preserves custom provider precedence and selected model', async () => {
+  const applied = gate();
+  const fx = fixture(undefined, { providerDiscovery: { scan: async () => scanResult([cachedServer()]), persist() { applied.resolve(); } } });
+  seedCustom(fx); fx.options.runtime.configManager.set('provider.model', 'openai:gpt-4.1'); const modelBefore = fx.options.runtime.configManager.get('provider.model');
+  await fx.host.start(); await applied.promise;
+  expect(fx.host.services!.providerRegistry.require('cached-fixture').models).toEqual(['custom-model']);
+  expect(fx.options.runtime.configManager.get('provider.model')).toEqual(modelBefore);
+});
+
+test('close synchronously fences held discovery, waits for settlement and only then disposes runtime', async () => {
+  const entered = gate(); const held = gate(); let registrations = 0; let writes = 0; let disposed = 0;
+  const fx = fixture((runtime) => {
+    keep(spyOn(runtime.providerRegistry, 'registerDiscoveredProviders').mockImplementation(() => { registrations++; }));
+    const close = runtime.close;
+    keep(spyOn(runtime, 'close').mockImplementation(async () => { disposed++; await close(); }));
+  }, { providerDiscovery: { scan: async () => { entered.resolve(); await held.promise; return scanResult([cachedServer()]); }, persist() { writes++; } } });
+  await fx.host.start(); await entered.promise;
+  const closing = fx.host.close(); const done = settled(closing); await tick();
+  expect(done()).toBe(false); expect(disposed).toBe(0);
+  held.resolve(); await closing;
+  expect(registrations).toBe(0); expect(writes).toBe(0); expect(disposed).toBe(1);
+});
+
+test('close drains already accepted asynchronous discovery persistence before runtime disposal', async () => {
+  const entered = gate(); const held = gate(); let disposed = 0;
+  const fx = fixture((runtime) => {
+    const close = runtime.close;
+    keep(spyOn(runtime, 'close').mockImplementation(async () => { disposed++; await close(); }));
+  }, { providerDiscovery: { scan: async () => scanResult([cachedServer()]), async persist() { entered.resolve(); await held.promise; } } });
+  await fx.host.start(); await entered.promise;
+  const closing = fx.host.close(); const done = settled(closing); await tick();
+  expect(done()).toBe(false); expect(disposed).toBe(0);
+  held.resolve(); await closing; expect(disposed).toBe(1);
+});
+
+test('close fences discovery immediately while accepted boot is still held', async () => {
+  const bootEntered = gate(); const bootHeld = gate(); const scanHeld = gate(); const scanned = gate();
+  let registrations = 0; let writes = 0; let disposed = 0;
+  const fx = fixture((runtime) => {
+    const start = runtime.bootTasks!.start.bind(runtime.bootTasks);
+    keep(spyOn(runtime.bootTasks!, 'start').mockImplementation(async () => { const snapshot = await start(); bootEntered.resolve(); await bootHeld.promise; return snapshot; }));
+    keep(spyOn(runtime.providerRegistry, 'registerDiscoveredProviders').mockImplementation(() => { registrations++; }));
+    const close = runtime.close;
+    keep(spyOn(runtime, 'close').mockImplementation(async () => { disposed++; await close(); }));
+  }, { providerDiscovery: { async scan() { await scanHeld.promise; scanned.resolve(); return scanResult([cachedServer()]); }, persist() { writes++; } } });
+  const starting = fx.host.start(); await bootEntered.promise;
+  const closing = fx.host.close(); scanHeld.resolve();
+  await scanned.promise; await tick();
+  expect(registrations).toBe(0); expect(writes).toBe(0); expect(disposed).toBe(0);
+  bootHeld.resolve(); await starting; await closing;
+  expect(registrations).toBe(0); expect(writes).toBe(0); expect(disposed).toBe(1);
 });

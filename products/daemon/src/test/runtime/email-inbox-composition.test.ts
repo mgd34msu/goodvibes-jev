@@ -191,7 +191,7 @@ function fixture(provider = remote(), settings: { root?: string; account?: Email
     },
     localUserAuthManager: new UserAuthManager({ bootstrapFilePath: join(homeDirectory, 'users.json'), bootstrapCredentialPath: join(homeDirectory, 'bootstrap.txt'),
       users: [{ username: 'admin', passwordHash: UserAuthManager.hashPassword('fixture'), roles: ['admin'] }] }),
-  }, daemon: { host: '127.0.0.1', port: 0, token: 'synthetic-email-daemon-token', serveFactory } }, { async createRuntime(options) {
+  }, daemon: { host: '127.0.0.1', port: 0, token: 'synthetic-email-daemon-token', serveFactory } }, { providerDiscovery: { scan: async () => ({ servers: [], scannedHosts: 0, scannedPorts: 0, durationMs: 0 }) }, async createRuntime(options) {
     const before = provider.sockets.length; const runtime = await createRuntimeServices(options); graphWasCold = provider.sockets.length === before;
     keep(spyOn(runtime.serviceRegistry, 'resolveSecret').mockResolvedValue('')); return runtime;
   } });

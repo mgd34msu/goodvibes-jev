@@ -246,6 +246,13 @@
       ]
     },
     {
+      "source": "src/test/runtime/cluster-inbox-gating.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/runtime/cluster-inbox-gating.test.ts"
+      ]
+    },
+    {
       "source": "src/runtime/device-posture-composition.ts",
       "disposition": "PORT",
       "targets": [

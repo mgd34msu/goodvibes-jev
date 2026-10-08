@@ -105,6 +105,7 @@ const host = createDaemonHost({
   },
   daemon: { host: '127.0.0.1', port: 0, token: 'synthetic-signal-fixture-token' },
 }, {
+  providerDiscovery: { scan: async () => ({ servers: [], scannedHosts: 0, scannedPorts: 0, durationMs: 0 }) },
   async createRuntime(options) {
     if (options.createBootOperations !== createDaemonBootOperations) throw new Error('Fixture requires real boot composition');
     const runtime = await createRuntimeServices(options);

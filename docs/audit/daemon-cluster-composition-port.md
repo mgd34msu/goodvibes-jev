@@ -38,8 +38,10 @@ Fixtures keep dummy cryptographic material only in memory and owned state roots.
 
 The new gate contract tests prove actual start/stop completion is awaited and
 that group startup precedes election. The original `cluster-inbox-gating` suite
-still depends on inbox provider registration and remains unmapped until that
-real handler graph is present. These tests do not substitute for it.
+was unmapped at this slice. Its current registration-boundary restoration is now recorded separately in
+`docs/audit/daemon-cluster-inbox-registration-proof.md`; these gate-only tests
+are not its substitute. That restoration uses synthetic adapters and does not
+remove production Slack/email cluster refusals.
 
 The complete daemon runtime and original `testing/daemon-fixture.ts` are not yet
 ported. First boot acceptance remains actual createRuntimeServices plus

@@ -60,7 +60,7 @@ async function fixture(configure?: (services: RuntimeServices) => void, factorie
   let acquired = 0; let host: hosts.DaemonHost | undefined;
   const createHost = hosts.createDaemonHost;
   keep(spyOn(hosts, 'createDaemonHost').mockImplementation((options) => {
-    host = createHost(options, { async createRuntime(runtime) {
+    host = createHost(options, { providerDiscovery: { scan: async () => ({ servers: [], scannedHosts: 0, scannedPorts: 0, durationMs: 0 }) }, async createRuntime(runtime) {
       acquired++;
       const services = await createRuntimeServices(runtime);
       configure?.(services); return services;

@@ -2,6 +2,7 @@
 import { DaemonServer, HttpListener, createSafeHostServeFactory } from '@goodvibes-jev/engine/sdk/platform/daemon';
 import { loadPersistedProviders } from '@goodvibes-jev/engine/sdk/platform/discovery';
 import { createAsyncDisposalScope } from '@goodvibes-jev/engine/sdk/platform/runtime/disposal';
+import { createDaemonProviderDiscovery, type DaemonProviderDiscoveryDependencies } from './provider-discovery.js';
 import { createDaemonBootOperations } from './boot-composition.js';
 import type { DaemonBootSnapshot } from './boot-tasks.js';
 import { createHostedSessionOptions } from './hosted-session-composition.js';
@@ -28,6 +29,7 @@ export type DaemonHostListener = Pick<HttpListener, 'enable' | 'start' | 'stop' 
 
 /** Narrow construction seams also permit held-acquisition lifecycle tests. */
 export interface DaemonHostFactories {
+  readonly providerDiscovery?: DaemonProviderDiscoveryDependencies;
   readonly createRuntime?: typeof createRuntimeServices;
   readonly createServer?: (config: ConstructorParameters<typeof DaemonServer>[0]) => DaemonHostServer;
   readonly createListener?: (config: ConstructorParameters<typeof HttpListener>[0]) => DaemonHostListener;
@@ -67,6 +69,7 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
   let work: Promise<void> | undefined;
   let starting: Promise<DaemonHostSnapshot> | undefined;
   let closing: Promise<void> | undefined;
+  let discovery: ReturnType<typeof createDaemonProviderDiscovery> | undefined;
   let bootClosing: Promise<void> | undefined;
   let startupFailure: Error | undefined;
   const cleanupFailures: Error[] = [];
@@ -127,6 +130,13 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
       const discovered = loadPersistedProviders({ homeDirectory: runtime.homeDirectory, surfaceRoot: runtime.surfaceRoot });
       if (discovered.length > 0) runtime.providerRegistry.registerDiscoveredProviders(discovered);
       fence();
+
+      discovery = createDaemonProviderDiscovery(
+        { homeDirectory: runtime.homeDirectory, surfaceRoot: runtime.surfaceRoot },
+        (servers) => runtime.providerRegistry.registerDiscoveredProviders(servers),
+        factories.providerDiscovery,
+      );
+      discovery.start();
 
       phase = 'server construction';
       const binding = options.daemon;
@@ -192,6 +202,7 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
     if (closing) return closing;
     closed = true;
     state = 'closing';
+    void discovery?.close();
     let resolve!: () => void;
     let reject!: (error: Error) => void;
     closing = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
@@ -204,6 +215,7 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
     closeBoot();
     void (async () => {
       try { await work; } catch { /* Report startup separately, after cleanup. */ }
+      await discovery?.close();
       try { await closeBoot(); } catch { /* The bounded owner failure is retained. */ }
       // Late runtime/server acquisitions have registered by this point. Their
       // dependencies survive until boot and accepted server startup drain.

@@ -8,6 +8,11 @@ import { ProviderRegistry, BenchmarkStore } from '@goodvibes-jev/engine/sdk/plat
 import { UserAuthManager } from '@goodvibes-jev/engine/sdk/platform/security';
 
 if (process.env.GOODVIBES_SDK_TEST_RUNNER !== '1') throw new Error('Guarded CLI fixture required');
+const hosts = await import(new URL('../../../dist/runtime/daemon-host.js', import.meta.url).href) as typeof import('../../runtime/daemon-host.js');
+const createHost = hosts.createDaemonHost;
+spyOn(hosts, 'createDaemonHost').mockImplementation((options) => createHost(options, {
+  providerDiscovery: { scan: async () => ({ servers: [], scannedHosts: 0, scannedPorts: 0, durationMs: 0 }) },
+}));
 const { runDaemonCli } = await import(new URL('../../../dist/cli/run.js', import.meta.url).href) as typeof import('../../cli/run.js');
 const emit = (line: string) => { writeSync(1, `${line}\n`); };
 if (process.stdout.isTTY === true) emit('FIXTURE_STDOUT_TTY');

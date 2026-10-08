@@ -1,4 +1,4 @@
-# Daemon persisted-provider preload
+# Daemon persisted-provider preload and background discovery
 
 This bounded THE-18 caller restores the persisted-provider load in pinned
 `goodvibes-daemon` `254699bf5d834cdca41436211ada1ae32bf89258` CLI startup,
@@ -36,8 +36,9 @@ host can receive the graph. Provider watcher ownership is unchanged.
 The hosted composition awaits each new floor's own tolerant initial custom load
 before copying the daemon registry's discovery snapshot or admitting hosted
 model selection. Successfully loaded custom providers therefore retain name
-precedence in the floor as well as the daemon. No automatic LAN scan, background model
-fallback mutation or discovery-cache watcher is added. Rewriting the cache does
+precedence in the floor as well as the daemon. Background discovery can supply a
+new snapshot to later floors; no model fallback mutation or discovery-cache watcher
+is added. Rewriting the cache does
 not update the running daemon or its existing floors. A later explicit registry
 change can affect a new floor; it is not broadcast into existing floors.
 
@@ -79,3 +80,32 @@ initialization and late disposal, and prove a partial cache-copy failure cleans
 the acquired floor once before a fresh retry. These are source-level lifecycle and
 routing proofs, not live account, model-quality or complete compiled-hosting
 proofs.
+
+## Owned background scan
+
+The explicit host also restores the pinned daemon CLI's background `scan()`
+caller (lines 632–646). After custom readiness and cache preload, it starts one
+owned scan through `sdk/platform/discovery`; listener startup does not wait for
+its result. Nonempty results enter the same runtime provider registry used by
+the server and later hosted floors, then the canonical persistence helper merges
+them into the selected runtime home/surface cache. Empty or rejected scans do not
+clear the registry or rewrite the cache. Custom-provider precedence is retained;
+selected models, existing floors and cache-removal policy are unchanged.
+
+The controller's close fences result application immediately, including a second
+fence between registration and persistence for synchronous shutdown reentry.
+It awaits accepted scan and persistence settlement before graph disposal. The
+canonical scanner has no cancellation API: shutdown suppresses late application,
+but does not abort network probes. Existing process shutdown deadlines remain
+responsible for a scan that never settles. Rejected scan, registration or injected
+persistence work receives a fixed diagnostic without inspecting the rejected
+value. The canonical cache helper retains its own tolerant persistence behavior.
+
+All ordinary host and configured-CLI fixtures inject a synthetic scan, including
+emitted CLI subprocesses. Focused proof holds discovery through listener
+readiness, observes the real provider-list HTTP route and a later hosted floor,
+restarts from the selected cache, preserves custom model precedence/selection,
+and drains held scan or persistence before disposal. Provider-list lazy pricing
+uses fresh owned empty caches, so this proof makes no external provider calls.
+This restores only the bounded source-host handoff; default serving, clustered
+inbox polling, compiled service adoption and live LAN acceptance remain separate.

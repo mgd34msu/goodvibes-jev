@@ -69,11 +69,15 @@ Before constructing its server, the explicit host awaits initial custom-provider
 loading and preloads the validated discovery cache from the runtime's selected
 home and surface (`.goodvibes/tui/discovered-providers.json`). In that daemon
 registry, custom providers keep precedence over same-name cached discoveries.
-An absent or empty cache does not clear existing discoveries. Each new hosted
+An absent or empty cache does not clear existing discoveries. After preload, one
+owned background LAN scan feeds nonempty results into this registry and persists
+them under the selected home/surface without delaying listener startup or changing
+the selected model. Close immediately suppresses late result application and
+awaits scan/persistence settlement; the scanner does not support cancellation. Each new hosted
 workspace floor also awaits its own initial custom load before copying the
 daemon registry's current discovery snapshot and admitting a model selection.
-Shutdown drains pending floor acquisition and its cleanup. This does not launch
-a LAN scan or watch the cache for updates to existing floors. Cache membership
+Shutdown drains pending floor acquisition and its cleanup. Floors do not launch
+their own LAN scans or watch the cache for updates. Cache membership
 provides no protected-source authority. See `docs/audit/daemon-provider-preload.md`.
 
 Once explicit startup is admitted, the launcher loads or creates the shared
