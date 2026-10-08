@@ -214,3 +214,6 @@ export type {
 export * from './browser-judgment-contract.js';
 export * from './browser-judgment-validation.js';
 export * from './browser-judgment-routes.js';
+
+export { createSettingsPreconditionHandler } from './settings-precondition.js';
+export type { SettingsPreconditionRequest, SettingsPreconditionFacts, SettingsPreconditionReceipt, SettingsPreconditionHandler } from './settings-precondition.js';

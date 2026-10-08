@@ -29,6 +29,7 @@ import { lstatSync, mkdirSync, readFileSync, rmdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { AtomicWriteDurabilityError, confirmFileDurable, readJsonFileOrQuarantine, writeJsonFileAtomic } from '../utils/atomic-json-store.js';
 import { logger } from '../utils/logger.js';
+import { SettingsAuthorityUnavailableError, runSynchronousSettingsOperation } from '../security/settings-authority.js';
 
 const TOKEN_PREFIX = 'gvp_';
 /** Do not thrash the disk stamping last-seen on every request. */
@@ -80,6 +81,19 @@ export interface AuthenticatedNativePairingToken {
   readonly authorityId: string;
   /** The unique persisted pairing ID is its incarnation, not an invented epoch. */
   readonly authorityRevision: string;
+}
+
+declare const settingsPairingAuthorityBrand: unique symbol;
+/** Opaque owner-current precondition, not permission to execute an effect. */
+export interface SettingsPairingAuthority {
+  readonly kind: 'shared-token' | 'pairing-token';
+  readonly [settingsPairingAuthorityBrand]: true;
+}
+interface SettingsPairingAuthorityRecord {
+  readonly kind: 'shared-token' | 'pairing-token';
+  readonly hash?: string;
+  readonly id?: string;
+  readonly createdAt?: number;
 }
 
 export class PairingTokenStoreBusyError extends Error {
@@ -174,6 +188,14 @@ export class PairingTokenManager {
   private lastSeenFlushAt = 0;
   /** Any failed write blocks native admission until a successful owner mutation. */
   private nativePersistenceFailed = false;
+  // Same-serving-owner evidence only; no reconstruction of prior process history.
+  // These flags never weaken ordinary/manual authentication or native behavior.
+  private settingsInitializationVerified = false;
+  private settingsCleanInitialAbsence = false;
+  private settingsObservedStore = false;
+  private settingsObservedLegacyRevocation = false;
+  private settingsFaulted = false;
+  private readonly settingsAuthorities = new WeakMap<SettingsPairingAuthority, SettingsPairingAuthorityRecord>();
   private readonly readMaxPaired: (() => number | undefined) | null;
 
   constructor(filePath: string, options: PairingTokenManagerOptions = {}) {
@@ -183,8 +205,20 @@ export class PairingTokenManager {
     let lock: PairingOwnerLock | undefined;
     try {
       lock = this.acquireOwnerLock();
-      this.snapshot = this.load();
+      // Use the strict observed snapshot itself. A second recovery-capable read
+      // could observe different bytes and manufacture fresh absence after recovery.
+      try {
+        const observed = this.readPersisted();
+        this.settingsCleanInitialAbsence = observed === null;
+        this.settingsInitializationVerified = true;
+        this.snapshot = observed ?? { tokens: [] };
+      } catch {
+        this.settingsFaulted = true;
+        // Retain ordinary recovery, with the observed strict failure latched.
+        this.snapshot = this.load();
+      }
     } catch {
+      this.settingsFaulted = true;
       // A live owner may be launching, or this process may lack write access.
       // Reading a complete file is safe; quarantining/repairing it without
       // ownership is not. Ordinary auth retains its read-only startup behavior.
@@ -231,6 +265,7 @@ export class PairingTokenManager {
         }) ?? { tokens: [] }
       );
     } catch {
+      this.settingsFaulted = true;
       return { tokens: [] };
     }
   }
@@ -242,9 +277,14 @@ export class PairingTokenManager {
   /** Never quarantine or repair as a side effect of authenticating a request. */
   private readPersisted(): PairingTokenSnapshot | null {
     try {
-      return validateSnapshot(JSON.parse(readFileSync(this.filePath, 'utf8')));
+      const raw = readFileSync(this.filePath, 'utf8');
+      this.settingsObservedStore = true;
+      const snapshot = validateSnapshot(JSON.parse(raw));
+      if (snapshot.legacyRevoked === true) this.settingsObservedLegacyRevocation = true;
+      return snapshot;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      this.settingsFaulted = true;
       throw error;
     }
   }
@@ -275,6 +315,7 @@ export class PairingTokenManager {
 
   private publish(snapshot: PairingTokenSnapshot): void {
     this.snapshot = snapshot;
+    if (snapshot.legacyRevoked === true) this.settingsObservedLegacyRevocation = true;
     this.reindex();
   }
 
@@ -289,6 +330,7 @@ export class PairingTokenManager {
         lock.assertOwned();
         if (result.changed) {
           writeJsonFileAtomic(this.filePath, snapshot, { mode: 0o600, trailingNewline: false, durable: true });
+          this.settingsObservedStore = true;
         } else if (nativeRecovery && persisted !== null) {
           // Retrying an indeterminate revoke can find the record already absent.
           // Readable bytes alone do not clear uncertainty; confirm the full
@@ -297,6 +339,7 @@ export class PairingTokenManager {
         }
       } catch (error) {
         this.nativePersistenceFailed = true;
+        this.settingsFaulted = true;
         throw error;
       }
       if (nativeRecovery && (result.changed || persisted !== null)) this.nativePersistenceFailed = false;
@@ -304,6 +347,93 @@ export class PairingTokenManager {
       this.publish(snapshot);
       return result.value;
     } finally { lock.release(); }
+  }
+
+  /** Read without fallback, repair, telemetry, or native-only substitution. */
+  private readSettingsSnapshot(): PairingTokenSnapshot | null {
+    if (!this.settingsInitializationVerified || this.settingsFaulted) throw new SettingsAuthorityUnavailableError();
+    try {
+      const snapshot = this.readPersisted();
+      if (snapshot === null) {
+        if (!this.settingsCleanInitialAbsence || this.settingsObservedStore) throw new SettingsAuthorityUnavailableError();
+        return null;
+      }
+      confirmFileDurable(this.filePath);
+      // The owner lock fences supported pairing writers. This re-read also
+      // rejects a publication changed during durability confirmation.
+      const confirmed = this.readPersisted();
+      if (!confirmed || JSON.stringify(confirmed) !== JSON.stringify(snapshot)) throw new SettingsAuthorityUnavailableError();
+      return confirmed;
+    } catch {
+      this.settingsFaulted = true;
+      throw new SettingsAuthorityUnavailableError();
+    }
+  }
+
+  captureSettingsAuthority(input: { readonly kind: 'shared-token' }
+    | { readonly kind: 'pairing-token'; readonly token: string }): SettingsPairingAuthority | null {
+    if (input.kind === 'pairing-token' && !input.token.trim().startsWith(TOKEN_PREFIX)) return null;
+    let lock: PairingOwnerLock | undefined;
+    try {
+      lock = this.acquireOwnerLock();
+      const snapshot = this.readSettingsSnapshot();
+      let record: SettingsPairingAuthorityRecord;
+      if (input.kind === 'shared-token') {
+        if (snapshot?.legacyRevoked === true || this.settingsObservedLegacyRevocation) return null;
+        record = { kind: 'shared-token' };
+      } else {
+        const hash = hashToken(input.token.trim());
+        const paired = snapshot?.tokens.find(item => item.tokenHash === hash);
+        if (!paired) return null;
+        record = { kind: 'pairing-token', hash, id: paired.id, createdAt: paired.createdAt };
+      }
+      lock.assertOwned();
+      const handle = Object.freeze({ kind: record.kind }) as SettingsPairingAuthority;
+      this.settingsAuthorities.set(handle, record);
+      return handle;
+    } catch { return null; }
+    finally { lock?.release(); }
+  }
+
+  /**
+   * One-use, synchronous current-auth boundary. The effect owner MUST call the
+   * supplied check after its reentrant preparation and immediately before its
+   * effect. No post-effect check may misreport an already committed operation.
+   */
+  withSettingsAuthority<T>(authority: SettingsPairingAuthority,
+    operation: (assertCurrent: () => void) => T): T {
+    const expected = this.settingsAuthorities.get(authority);
+    this.settingsAuthorities.delete(authority);
+    if (!expected) throw new SettingsAuthorityUnavailableError();
+    const lock = this.acquireOwnerLock();
+    let active = true;
+    let completed = false;
+    try {
+      const assertCurrent = () => {
+        if (!active) throw new SettingsAuthorityUnavailableError();
+        lock.assertOwned();
+        const current = this.readSettingsSnapshot();
+        if (expected.kind === 'shared-token') {
+          if (current?.legacyRevoked === true || this.settingsObservedLegacyRevocation) throw new SettingsAuthorityUnavailableError();
+        } else if (!current?.tokens.some(item => item.tokenHash === expected.hash
+          && item.id === expected.id && item.createdAt === expected.createdAt)) {
+          throw new SettingsAuthorityUnavailableError();
+        }
+      };
+      assertCurrent();
+      const result = runSynchronousSettingsOperation(operation, assertCurrent);
+      completed = true;
+      return result;
+    } finally {
+      active = false;
+      try { lock.release(); }
+      catch (error) {
+        this.settingsFaulted = true;
+        // Cleanup cannot undo an effect or replace its truthful receipt with a
+        // refusal. A leftover/lost lock and this owner fault block later work.
+        if (!completed) throw error;
+      }
+    }
   }
 
   /**
@@ -329,6 +459,7 @@ export class PairingTokenManager {
       persisted = snapshot.tokens.find(record => record.tokenHash === hash);
     } catch (error) {
       if (error instanceof AtomicWriteDurabilityError) this.nativePersistenceFailed = true;
+      this.settingsFaulted = true;
       return null;
     }
     if (!persisted || persisted.id !== live.id || persisted.createdAt !== live.createdAt) return null;

@@ -95,6 +95,8 @@ export interface BoundaryInput {
   readonly args: Record<string, unknown>;
   /** Jev's reading of the call; null for a known read-only tool the gate did not read. */
   readonly reading: GateReading | null;
+  /** Registered backend fact. It can raise, never lower, Jev's observed effect. */
+  readonly declaredMutation?: boolean | undefined;
   /** The surface the turn's instruction came from; absent means the local owner session. */
   readonly surfaceId?: string | undefined;
   /** The untrusted-content ledger; the process ledger when absent. */
@@ -104,10 +106,10 @@ export interface BoundaryInput {
 }
 
 /** The effect a call has, for surface authority: Jev's reading, or a read for a known read-only tool. */
-function effectOf(reading: GateReading | null): AgentEffect {
-  if (reading === null) return 'read';
+function effectOf(reading: GateReading | null, declaredMutation = false): AgentEffect {
+  if (reading === null) return declaredMutation ? 'write' : 'read';
   if (reading.outward) return 'send';
-  return reading.mutates ? 'write' : 'read';
+  return reading.mutates || declaredMutation ? 'write' : 'read';
 }
 
 /** The most recent untrusted sources the call's fields are read against. */
@@ -207,7 +209,7 @@ export async function runBoundary(input: BoundaryInput): Promise<BoundaryVerdict
     ? { check: 'catastrophic', result: 'skipped' }
     : { check: 'catastrophic', result: 'pass', ...(catastrophic === 'uncertain' ? { detail: 'uncertain: critical stakes, the owner is asked' } : {}) });
 
-  const effect = effectOf(reading);
+  const effect = effectOf(reading, input.declaredMutation);
   if (input.surfaceId !== undefined) {
     const permitted = effectPermittedForProvenance(effect, { surfaceId: input.surfaceId });
     if (!permitted.allowed) {

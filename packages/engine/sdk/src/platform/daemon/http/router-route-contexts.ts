@@ -148,6 +148,7 @@ export function buildChannelRouteContext(input: {
 }
 
 export function buildSystemRouteContext(input: {
+  readonly settingsPrecondition?: DaemonSystemRouteContext['settingsPrecondition'] | undefined;
   readonly approvalBroker: ApprovalBroker;
   readonly configManager: ConfigManager;
   readonly credentialStatus: DaemonSystemRouteContext['credentialStatus'];
@@ -188,6 +189,7 @@ export function buildSystemRouteContext(input: {
   return {
     approvalBroker: input.approvalBroker,
     configManager: input.configManager,
+    settingsPrecondition: input.settingsPrecondition,
     credentialStatus: input.credentialStatus,
     integrationHelpers: input.integrationHelpers,
     inspectInboundTls: input.inspectInboundTls,

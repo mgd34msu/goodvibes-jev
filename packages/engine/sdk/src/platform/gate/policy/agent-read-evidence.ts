@@ -1,6 +1,6 @@
 /** Pre-admission observations. Only the common autonomous owner selects a disposition. */
 import type { EntryType, JudgmentPort } from '@goodvibes-jev/judgment';
-import type { ToolAdmissionEvidence } from '../../tools/input-projection.js';
+import type { AgentReadAdmissionEvidence } from '../../tools/input-projection.js';
 import type { AutonomousToolSource } from '../../permissions/autonomous.js';
 import { autonomousSourceEvidence } from '../../permissions/autonomous.js';
 import { sideEffect } from '../batteries/side-effect.js';
@@ -8,7 +8,7 @@ import { agentReadScope } from '../batteries/agent-read-scope.js';
 import { readingState } from '../reading.js';
 
 export async function readAgentReadEvidence(
-  evidence: ToolAdmissionEvidence, source: AutonomousToolSource, port: JudgmentPort, signal?: AbortSignal,
+  evidence: AgentReadAdmissionEvidence, source: AutonomousToolSource, port: JudgmentPort, signal?: AbortSignal,
 ): Promise<{ readonly allowed: boolean; readonly paths: readonly Record<string, unknown>[] }> {
   const paths: Record<string, unknown>[] = [];
   let allowed = true;

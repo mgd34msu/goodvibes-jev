@@ -42,6 +42,13 @@ import { isSecretBearingConfigKey } from './secret-bearing-config-keys.js';
 import { HostSettings, type HostBooleanSetting, type HostBooleanSettingHandle, type HostSettingValues } from './host-settings.js';
 import { HostSettingsReadError, hostSettingsFileExists, readHostSettingValues, readHostSettingsFile, recoverHostSettingsWriteFailure } from './manager-host-settings.js';
 import { announceIngestionNotice } from './settings-ingestion.js';
+import { freezePreparedData, normalizePreparedValue, preparedSchemaSignature, type PreparedMutationRecord,
+  type PreparedConfigMutation, type PreparedConfigMutationTransition, type PreparedConfigMutationRequest,
+  type PreparedConfigMutationFacts, type PreparedConfigMutationDestination,
+  type PreparedConfigMutationTransitionFacts, type PreparedConfigMutationReceipt } from './prepared-mutation.js';
+export type { PreparedConfigMutation, PreparedConfigMutationTransition, PreparedConfigMutationRequest,
+  PreparedConfigMutationFacts, PreparedConfigMutationDestination, PreparedConfigMutationTransitionFacts,
+  PreparedConfigMutationReceipt } from './prepared-mutation.js';
 
 /** Typed values for a single daemon-settings update; scope is checked at runtime. */
 export type DaemonConfigPatch = { readonly [K in ConfigKey]?: ConfigValue<K> };
@@ -149,6 +156,9 @@ export class ConfigManager {
   private profileFallback: ConfigProfileFallbackReader | null = null;
   private readonly invalidationListeners = new Set<() => void>();
   private permissionIncarnation = 0;
+  // Private identities contain no authority grant and cannot be copied or forged.
+  readonly #preparedMutations = new WeakMap<PreparedConfigMutation, PreparedMutationRecord>();
+  readonly #preparedTransitions = new WeakMap<PreparedConfigMutationTransition, PreparedConfigMutation>();
   private readonly _listeners = new Map<string, Set<(newVal: unknown, oldVal: unknown) => void>>();
   /** Active config-file watch handle (external-edit live reload), or null. */
   private _fileWatch: ConfigFileWatchHandle | null = null;
@@ -331,6 +341,210 @@ export class ConfigManager {
     for (const listener of [...this.invalidationListeners]) {
       try { listener(); } catch { /* One subscriber must not defeat revocation. */ }
     }
+  }
+
+  /**
+   * Capture an exact, detached mutation on this owner. This is not admission:
+   * callers must authenticate their execution separately before begin/finish.
+   * Preparation never recovers, quarantines, cleans up, or writes a store.
+   */
+  prepareSettingMutation(request: PreparedConfigMutationRequest): PreparedConfigMutation {
+    this.requireWritable();
+    const incarnation = this.permissionIncarnation;
+    if (request.operation !== 'set' && request.operation !== 'reset') throw new ConfigError('Unsupported prepared operation.');
+    const { schema, identity } = this.preparedSchema(request.key);
+    const signature = preparedSchemaSignature(schema);
+    const validator = schema.validate;
+    const requested = request.operation === 'set' ? request.value
+      : this.hostSettings.has(request.key) ? schema.default : readDotPath(DEFAULT_CONFIG_SNAPSHOT, request.key).value;
+    const value = normalizePreparedValue(request.key, schema, requested);
+    const destinations = this.preparedDestinations(request.operation, request.key);
+    for (const destination of destinations) readHostSettingsFile(destination.path);
+    const handle = Object.freeze({}) as PreparedConfigMutation;
+    const record: PreparedMutationRecord = {
+      facts: freezePreparedData({ operation: request.operation, key: request.key, value, destinations, incarnation }),
+      schemaIdentity: identity, schemaSignature: signature, validator,
+      normalizedJson: JSON.stringify(value), phase: 'prepared',
+    };
+    this.#preparedMutations.set(handle, record);
+    try { this.assertPreparedCurrent(record, incarnation); }
+    catch (error) { record.phase = 'spent'; throw error; }
+    return handle;
+  }
+
+  /** Detached proposed values are private substrate data, not redacted evidence. */
+  inspectPreparedMutation(handle: PreparedConfigMutation): PreparedConfigMutationFacts {
+    return freezePreparedData(structuredClone(this.preparedRecord(handle).facts));
+  }
+
+  assertPreparedMutation(handle: PreparedConfigMutation): void {
+    const record = this.preparedRecord(handle);
+    if (record.phase !== 'prepared') throw new ConfigError('Prepared mutation is not available.');
+    this.assertPreparedCurrent(record, record.facts.incarnation);
+  }
+
+  /** Run all reentrant work before exposing the one exact owner transition. */
+  beginPreparedMutation(handle: PreparedConfigMutation): PreparedConfigMutationTransition {
+    const record = this.preparedRecord(handle);
+    if (record.phase !== 'prepared') throw new ConfigError('Prepared mutation is not available.');
+    record.phase = 'beginning';
+    try {
+      this.assertPreparedCurrent(record, record.facts.incarnation);
+      this.invalidateLifetimes();
+      this.assertPreparedCurrent(record, record.facts.incarnation + 1);
+      const { schema } = this.preparedSchema(record.facts.key);
+      // Validate again after invalidation subscribers, using a detached copy.
+      const next = normalizePreparedValue(record.facts.key, schema, record.facts.value);
+      if (JSON.stringify(next) !== record.normalizedJson) throw new ConfigError('Prepared value changed.');
+      this.assertPreparedCurrent(record, record.facts.incarnation + 1);
+      for (const destination of record.facts.destinations) readHostSettingsFile(destination.path);
+      this.assertPreparedCurrent(record, record.facts.incarnation + 1);
+      const transition = Object.freeze({}) as PreparedConfigMutationTransition;
+      record.phase = 'begun'; record.transition = transition;
+      this.#preparedTransitions.set(transition, handle);
+      return transition;
+    } catch (error) { record.phase = 'spent'; throw error; }
+  }
+
+  inspectPreparedMutationTransition(handle: PreparedConfigMutation, transition: PreparedConfigMutationTransition): PreparedConfigMutationTransitionFacts {
+    this.assertPreparedMutationTransition(handle, transition);
+    const record = this.preparedRecord(handle);
+    return Object.freeze({ beforeIncarnation: record.facts.incarnation, afterIncarnation: record.facts.incarnation + 1 });
+  }
+
+  assertPreparedMutationTransition(handle: PreparedConfigMutation, transition: PreparedConfigMutationTransition): void {
+    const record = this.preparedRecord(handle);
+    if (record.phase !== 'begun' || record.transition !== transition || this.#preparedTransitions.get(transition) !== handle) {
+      throw new ConfigError('Prepared mutation transition is not authentic or has been spent.');
+    }
+    this.assertPreparedCurrent(record, record.facts.incarnation + 1);
+  }
+
+  /**
+   * After the caller's final authority check, commit synchronously with no
+   * validator, invalidation subscriber or notification in the publication tail.
+   * Existing whole-file last-writer-wins semantics remain; this is not file CAS.
+   */
+  finishPreparedMutation(handle: PreparedConfigMutation, transition: PreparedConfigMutationTransition): PreparedConfigMutationReceipt {
+    const record = this.preparedRecord(handle);
+    // A forged transition cannot consume a different authentic operation.
+    if (record.transition !== transition || this.#preparedTransitions.get(transition) !== handle) {
+      throw new ConfigError('Prepared mutation transition is not authentic.');
+    }
+    let stores: Map<string, Record<string, unknown>>;
+    try {
+      this.assertPreparedMutationTransition(handle, transition);
+      stores = new Map(record.facts.destinations.map(destination => [destination.path, readHostSettingsFile(destination.path)]));
+      // A host mutation also preserves the current effective project/global
+      // resolution, without running ingestion announcements or recovery hooks.
+      if (this.hostSettings.has(record.facts.key)) {
+        for (const path of [this.configPath, this.projectConfigPath]) {
+          if (path && !stores.has(path)) stores.set(path, readHostSettingsFile(path));
+        }
+      }
+      this.assertPreparedMutationTransition(handle, transition);
+    } catch (error) { record.phase = 'spent'; throw error; }
+    record.phase = 'spent';
+    const { key, value, destinations } = record.facts;
+    const previousValue = this.resolvePath(key).parent[this.resolvePath(key).field];
+    const previousHost = this.hostSettings.has(key) ? this.hostSettings.snapshot(this.config) : null;
+    const completedPaths: string[] = [];
+    let uncertainPath: string | undefined;
+    for (const destination of destinations) {
+      const raw = stores.get(destination.path)!;
+      const candidate = structuredClone(raw);
+      const removed = destination.operation === 'remove' ? deleteRawDotPath(candidate, key) : false;
+      if (destination.operation === 'set') writeRawDotPath(candidate, key, structuredClone(value));
+      // Legacy local reset always rewrites global; tier reset skips absent keys.
+      if (destination.operation === 'remove' && !removed && destination.tier !== 'global') {
+        if (destination.tier === 'daemon') this.daemonKeysPresent.delete(key);
+        if (destination.tier === 'shared') this.sharedKeysPresent.delete(key);
+        continue;
+      }
+      try {
+        writeJsonFileAtomic(destination.path, candidate, { cleanupStaleTemps: false });
+        stores.set(destination.path, candidate);
+        completedPaths.push(destination.path);
+        if (destination.tier === 'daemon') {
+          if (destination.operation === 'set') this.daemonKeysPresent.add(key);
+          else this.daemonKeysPresent.delete(key);
+        }
+        if (destination.tier === 'shared') {
+          if (destination.operation === 'set') this.sharedKeysPresent.add(key);
+          else this.sharedKeysPresent.delete(key);
+        }
+      } catch { uncertainPath = destination.path; break; }
+    }
+    // Record the actual effect BEFORE any user callback. A later subscriber
+    // failure, cancellation or supersession cannot rewrite this receipt.
+    const receipt: PreparedConfigMutationReceipt = freezePreparedData({
+      status: uncertainPath === undefined ? 'committed' : completedPaths.length > 0 ? 'partial' : 'unknown',
+      completedPaths, ...(uncertainPath === undefined ? {} : { uncertainPath }),
+    });
+    if (receipt.status === 'committed' || completedPaths.length > 0) {
+      if (previousHost) {
+        const values = this.hostSettings.defaults();
+        this.hostSettings.overlay(values, stores.get(this.configPath)!);
+        if (this.projectConfigPath) this.hostSettings.overlay(values, stores.get(this.projectConfigPath)!);
+        this.hostSettings.apply(this.config, values);
+        // No callback may escape after persistence, including logging failures.
+        try { this.applyHostValues(values, previousHost, true); } catch { /* Receipt remains truthful. */ }
+      } else {
+        const live = this.resolvePath(key); live.parent[live.field] = structuredClone(value);
+        try {
+          this.notifyListeners(key, previousValue, value);
+          this.emitConfigHook(key, previousValue, value);
+        } catch { /* Publication already completed; never report a false refusal. */ }
+      }
+    }
+    return receipt;
+  }
+
+  private preparedRecord(handle: PreparedConfigMutation): PreparedMutationRecord {
+    const record = this.#preparedMutations.get(handle);
+    if (!record || record.phase === 'spent') throw new ConfigError('Prepared mutation is not authentic or has been spent.');
+    return record;
+  }
+
+  private preparedSchema(key: ConfigKey): { schema: Omit<ConfigSetting, 'key'>; identity: object } {
+    const host = this.hostSettings.definitions.find(definition => definition.key === key);
+    if (host) return { schema: this.hostSettings.schema(key)!, identity: host };
+    const schema = CONFIG_SCHEMA.find(entry => entry.key === key);
+    if (!schema) throw new ConfigError('Unknown prepared setting key.');
+    this.resolvePath(key);
+    return { schema, identity: schema };
+  }
+
+  private preparedDestinations(operation: 'set' | 'reset', key: ConfigKey): PreparedConfigMutationDestination[] {
+    const destination = (path: string, tier: PreparedConfigMutationDestination['tier'], effect: 'set' | 'remove'): PreparedConfigMutationDestination => ({ path, tier, operation: effect });
+    if (this.hostSettings.has(key)) {
+      const project = this.projectConfigPath !== null && readDotPath(readHostSettingsFile(this.projectConfigPath), key).present;
+      if (operation === 'set') return [destination(project ? this.projectConfigPath! : this.configPath, project ? 'project' : 'global', 'set')];
+      return [...(project ? [destination(this.projectConfigPath!, 'project', 'set')] : []), destination(this.configPath, 'global', 'set')];
+    }
+    if (operation === 'set') {
+      if (this.daemonTierPath && isDaemonOwnedConfigKey(key)) return [destination(this.daemonTierPath, 'daemon', 'set')];
+      if (this.sharedTierPath && isSharedConfigKey(key)) return [destination(this.sharedTierPath, 'shared', 'set')];
+      return [destination(this.configPath, 'global', 'set')];
+    }
+    return [destination(this.configPath, 'global', 'remove'),
+      ...(this.daemonTierPath && isDaemonOwnedConfigKey(key) ? [destination(this.daemonTierPath, 'daemon', 'remove')] : []),
+      ...(this.sharedTierPath && isSharedConfigKey(key) ? [destination(this.sharedTierPath, 'shared', 'remove')] : [])];
+  }
+
+  private assertPreparedCurrent(record: PreparedMutationRecord, incarnation: number): void {
+    this.requireWritable();
+    const { key, operation } = record.facts;
+    const { schema, identity } = this.preparedSchema(key);
+    // Host validators are freshly allocated by the legacy accessor; the frozen
+    // per-instance host descriptor is their stable identity.
+    if (identity !== record.schemaIdentity || preparedSchemaSignature(schema) !== record.schemaSignature
+      || (!this.hostSettings.has(key) && schema.validate !== record.validator)) throw new ConfigError('Prepared setting schema changed.');
+    if (JSON.stringify(this.preparedDestinations(operation, key)) !== JSON.stringify(record.facts.destinations)) {
+      throw new ConfigError('Prepared setting destination changed.');
+    }
+    if (readHostManagedSettingLock(key, this.configDir)) throw new ConfigError('Prepared setting is managed and cannot be changed.');
+    if (this.permissionIncarnation !== incarnation) throw new ConfigError('Prepared setting owner changed.');
   }
 
   /** Set a config value by dot-path key and auto-save to disk. */
@@ -644,6 +858,7 @@ export class ConfigManager {
    */
   save(): void {
     this.requireWritable();
+    this.permissionIncarnation++;
     const { config: minimal } = stripFrozenDefaults(
       structuredClone(this.config) as unknown as Record<string, unknown>,
     );
@@ -666,6 +881,7 @@ export class ConfigManager {
   /** Persist current config to the project-level surface settings file. */
   saveProject(): void {
     this.requireWritable();
+    this.permissionIncarnation++;
     if (!this.projectConfigPath) {
       throw new Error('ConfigManager.saveProject requires an explicit workingDir.');
     }
