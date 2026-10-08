@@ -224,6 +224,10 @@ export function createDaemonSystemRouteHandlers(
       if (admin) return admin;
       const payload = await context.parseJsonBody(req);
       if (payload instanceof Response) return payload;
+      // Body parsing may outlive the authority checked on entry. Reacquire it
+      // before either settings mutation or the workspace-dispatch branch.
+      const currentAdmin = context.requireAdmin(req);
+      if (currentAdmin) return currentAdmin;
       const { key, value } = payload;
       if (!key || typeof key !== 'string') {
         return jsonErrorResponse({ error: 'Missing or invalid key' }, { status: 400 });
