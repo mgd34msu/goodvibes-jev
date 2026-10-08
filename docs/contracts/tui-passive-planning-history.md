@@ -70,6 +70,13 @@ The `TUI host pairing (compiled terminal)` CI lane also runs
 its supported tmux harness. That separate test starts the actual terminal,
 inspects/refreshes saved history, opens native recovery, restarts the same
 isolated home, and checks unchanged saved bytes/approval and no model request.
+The terminal witness compares the complete planning-source set, full persisted
+records and raw-row generation hashes at each checkpoint. Normal asynchronous
+startup scheduling writes separate `knowledge_schedules` rows in the same
+SQLite file, so whole-file equality across full application startup is not the
+planning-record invariant. Negative fixture tests reject raw JSON changes,
+approval edits, and added/deleted/moved planning records. The isolated modal
+tests still require whole-file byte equality and zero write calls.
 
 Local qualification: source, renderer, real-store and compiled product-boundary
 proofs ran. Full terminal assertions did not run locally: official Debian tmux
