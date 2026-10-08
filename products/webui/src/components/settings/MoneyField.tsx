@@ -12,8 +12,9 @@
  * Commits on blur/Enter, same convention as SettingsField's plain number
  * field; a malformed amount shows inline and is never silently coerced.
  */
-import { useState } from 'react';
-import { InvalidMoneyInputError, formatMoneyAmountValue, parseMoneyAmountInput } from '../../lib/money';
+import { useSettingsDraft } from '../../hooks/useSettingsDraft';
+import { SettingsDraftConflict } from './SettingsDraftConflict';
+import { formatMoneyAmountValue, parseMoneyAmountInput } from '../../lib/money';
 import { Input } from '../ui/Field';
 
 export interface MoneyFieldProps {
@@ -22,25 +23,15 @@ export interface MoneyFieldProps {
   /** payments.currency's live value (e.g. "USD"), for the label only. */
   readonly currency: string;
   readonly disabled?: boolean;
-  readonly onCommit: (value: number) => void;
+  readonly onCommit: (value: number) => void | Promise<void>;
 }
 
 export function MoneyField({ value, currency, disabled, onCommit }: MoneyFieldProps) {
   const label = currency.trim() || 'USD';
-  const initialText = formatMoneyAmountValue(value);
-  const [draft, setDraft] = useState(initialText);
-  const [error, setError] = useState<string | null>(null);
-
-  function submit(): void {
-    if (draft === initialText) return;
-    try {
-      const parsed = parseMoneyAmountInput(draft);
-      setError(null);
-      onCommit(parsed);
-    } catch (err) {
-      setError(err instanceof InvalidMoneyInputError ? err.message : 'Enter a valid amount');
-    }
-  }
+  const draft = useSettingsDraft(formatMoneyAmountValue(value), (text) => {
+    const amount = parseMoneyAmountInput(text);
+    return { value: amount, text: formatMoneyAmountValue(amount) };
+  }, onCommit);
 
   return (
     <div className="money-field" data-testid="money-field">
@@ -53,18 +44,26 @@ export function MoneyField({ value, currency, disabled, onCommit }: MoneyFieldPr
           inputMode="decimal"
           className="settings-field-input money-field-amount"
           aria-label={`Amount in ${label}`}
-          value={draft}
-          disabled={disabled}
-          onChange={(e) => setDraft(e.target.value)}
+          value={draft.text}
+          disabled={disabled === true || draft.saving}
+          onChange={(e) => draft.change(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') e.currentTarget.blur();
+            if (e.key === 'Escape' && (draft.dirty || draft.conflicted || draft.error !== null)) {
+              e.preventDefault();
+              e.stopPropagation();
+              draft.reset();
+            }
           }}
-          onBlur={submit}
+          onBlur={() => { if (!disabled) void draft.submit(); }}
         />
       </div>
-      {error && (
+      {draft.conflicted && !draft.saving && !disabled && (
+        <SettingsDraftConflict onReset={draft.reset} onSave={() => void draft.submit(true)} />
+      )}
+      {draft.error && (
         <div className="banner warning money-field-error" role="alert">
-          {error}
+          {draft.error}
         </div>
       )}
     </div>
