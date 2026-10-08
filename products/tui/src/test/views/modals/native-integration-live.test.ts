@@ -156,3 +156,44 @@ for (const afterRepair of [false, true]) test(`an actual legacy runner keeps nat
     catch (error) { if (primaryError !== undefined) throw new AggregateError([primaryError, error], 'Native modal assertion and fixture shutdown both failed'); throw error; }
   }
 }, 90_000);
+
+test('held native HTTP status ordinals preserve captured response order across actual autonomous repair', async () => {
+  const host = launchNativeIntegrationHost();
+  let client: ReturnType<typeof createOperatorNativeWorkExecutionClient> | undefined;
+  let primaryError: unknown;
+  // Attach rejection observers immediately, keeping original promises below
+  // for assertions; failure-path disposal cannot precede their drain handlers.
+  const inFlight: Promise<unknown>[] = [];
+  try {
+    const ready = await host.ready();
+    client = createOperatorNativeWorkExecutionClient(createOperatorSdk({ baseUrl: ready.baseUrl, authToken: ready.token, retry: { maxAttempts: 1 } }), 'project');
+    await host.holdStatus();
+    let settled = false;
+    const pending = client.status(ready.identity, { signal: AbortSignal.timeout(20_000) }).then(snapshot => { settled = true; return snapshot; });
+    inFlight.push(pending.catch(() => undefined));
+    const firstOrdinal = await host.heldStatus();
+    expect(settled).toBe(false);
+    await host.repair();
+    expect(settled).toBe(false);
+    expect(await host.releaseStatus()).toBe(firstOrdinal);
+    const captured = await pending;
+    expect(captured).toMatchObject({ kind: 'execution', progress: { semanticState: 'deciding', stage: 'fix-plan' } });
+    await host.holdStatus();
+    const current = client.status(ready.identity, { signal: AbortSignal.timeout(10_000) });
+    inFlight.push(current.catch(() => undefined));
+    const nextOrdinal = await host.heldStatus();
+    expect(nextOrdinal).toBeGreaterThan(firstOrdinal);
+    expect(await host.releaseStatus()).toBe(nextOrdinal);
+    const repaired = await current;
+    if (repaired.kind !== 'execution' || repaired.integration?.state !== 'live') throw new Error('Expected actual repaired live native status');
+    expect(repaired.integration.units.some(unit => unit.unitStatus === 'passed' && unit.latestCheck?.trigger === 'fix-passed'
+      && unit.item.state === 'recorded' && unit.item.integration === 'conflict')).toBe(true);
+    expect(await host.inspect()).toEqual({ remergeCalls: 0, escalations: 0, mutationCount: 1 });
+  } catch (error) { primaryError = error; throw error; }
+  finally {
+    client?.dispose();
+    try { await host.stop(); }
+    catch (error) { if (primaryError !== undefined) throw new AggregateError([primaryError, error], 'Native held-status assertion and fixture shutdown both failed'); throw error; }
+    finally { await Promise.allSettled(inFlight); }
+  }
+}, 60_000);

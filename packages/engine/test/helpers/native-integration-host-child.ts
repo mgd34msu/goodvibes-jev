@@ -11,16 +11,19 @@ import { createOperatorNativeWorkExecutionClient } from '../../sdk/src/platform/
 
 const f = await createNativeIntegrationRepairFixture({ withoutInspection: process.argv.includes('--without-inspection') });
 const emit = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
-let hold: { gate: ReturnType<typeof integrationBarrier>; delivered: ReturnType<typeof integrationBarrier>; captured: boolean } | undefined;
+let hold: { gate: ReturnType<typeof integrationBarrier>; delivered: ReturnType<typeof integrationBarrier>; captured: boolean; statusOrdinal?: number } | undefined;
+let statusOrdinal = 0;
 // Transport interruption only: capture the actual authenticated status bytes
 // before holding delivery. Neither product nor fixture fabricates an inspection.
 const server = Bun.serve({ hostname: '127.0.0.1', port: 0, idleTimeout: 0, async fetch(request) {
+  const isStatus = new URL(request.url).pathname === '/api/work-ledger/execution/status';
+  const ordinal = isStatus ? ++statusOrdinal : undefined;
   const response = await f.fetch(request);
   const active = hold;
-  if (new URL(request.url).pathname === '/api/work-ledger/execution/status' && active && !active.captured) {
-    active.captured = true;
+  if (ordinal !== undefined && active && !active.captured) {
+    active.captured = true; active.statusOrdinal = ordinal;
     const body = await response.arrayBuffer();
-    emit({ kind: 'status-held' });
+    emit({ kind: 'status-held', statusOrdinal: ordinal });
     await active.gate.wait();
     active.delivered.release();
     return new Response(body, { status: response.status, headers: response.headers });
@@ -100,8 +103,9 @@ try {
         emit({ kind: 'holding' });
       } else if (command.type === 'release-status') {
         if (!hold?.captured) throw new Error('No captured native status reply');
+        const releasedOrdinal = hold.statusOrdinal;
         hold.gate.release(); await hold.delivered.wait(); hold = undefined;
-        emit({ kind: 'status-released' });
+        emit({ kind: 'status-released', statusOrdinal: releasedOrdinal });
       } else if (command.type === 'inspect') {
         emit({ kind: 'inspection', remergeCalls, escalations: f.harness.runner.get(contractId)?.escalations.length ?? -1,
           mutationCount: f.requests.filter(request => /\/(start|resume|cancel)$/.test(new URL(request.url).pathname)).length });

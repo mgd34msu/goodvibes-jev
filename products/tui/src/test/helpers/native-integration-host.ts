@@ -66,8 +66,16 @@ export function launchNativeIntegrationHost(withoutInspection = false) {
       return { starts: value.starts, resumes: value.resumes, agents: value.agents };
     },
     async holdStatus() { await within(send('hold-status'), 'native hold request', 2_000); await event('holding'); },
-    async heldStatus() { await event('status-held', 10_000); },
-    async releaseStatus() { await within(send('release-status'), 'native release request', 2_000); await event('status-released'); },
+    async heldStatus() {
+      const value = await event('status-held', 10_000);
+      if (typeof value.statusOrdinal !== 'number' || !Number.isSafeInteger(value.statusOrdinal) || value.statusOrdinal < 1) throw new Error('Native held status ordinal is invalid');
+      return value.statusOrdinal;
+    },
+    async releaseStatus() {
+      await within(send('release-status'), 'native release request', 2_000); const value = await event('status-released');
+      if (typeof value.statusOrdinal !== 'number' || !Number.isSafeInteger(value.statusOrdinal) || value.statusOrdinal < 1) throw new Error('Native released status ordinal is invalid');
+      return value.statusOrdinal;
+    },
     async inspect() {
       await within(send('inspect'), 'native inspection request', 2_000); const value = await event('inspection');
       if (![value.remergeCalls, value.escalations, value.mutationCount].every(count => typeof count === 'number' && Number.isSafeInteger(count) && count >= 0)) throw new Error('Native fixture inspection reply is incomplete');

@@ -8,7 +8,7 @@ import { TuiConfigManager } from '../../config/host-settings.ts';
 import { beginTuiHostPairing, completeTuiHostPairing } from '../../runtime/tui-host-credential-store.ts';
 import { launchNativeIntegrationHost } from '../helpers/native-integration-host.ts';
 import { seedProviderMetadataCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
-import { inputAreaVisible, launchTui, makeHome, screenText, startStubModel, type TuiSession } from './harness.ts';
+import { inputAreaVisible, launchTui, makeHome, screenText, startHomeDaemonServer, startStubModel, type TuiSession } from './harness.ts';
 
 function assertReadOnlyExecution(paths: readonly string[]): void {
   const mutations = paths.filter(path => /\/(start|resume|cancel)$/.test(path));
@@ -49,9 +49,9 @@ async function fixture(withoutInspection = false) {
     seedProviderMetadataCacheFixture({ configManager, homeDirectory: home.home, workingDirectory: home.workspace });
     const allowed = new Set(['/api/work-ledger/snapshot', '/api/work-ledger/history', '/api/work-ledger/execution/status', '/api/work-ledger/execution/cancel']);
     const paths: string[] = [];
-    // Reserve the isolated daemon port as well as selecting the explicit origin.
+    // Bind the owned listener first, then configure discovery and the explicit origin.
     // Background shell routes are refused locally, never forwarded as mutations.
-    proxy = Bun.serve({ hostname: '127.0.0.1', port: home.daemonPort, idleTimeout: 0, async fetch(request) {
+    proxy = await startHomeDaemonServer(home, async request => {
       const url = new URL(request.url);
       // Record rejected attempts too: the firewall cannot stand in for the
       // product's read-only guarantee or hide an accidental start/resume.
@@ -59,7 +59,7 @@ async function fixture(withoutInspection = false) {
       if (!allowed.has(url.pathname)) return new Response('Owned inspection fixture has no background service', { status: 404 });
       return fetch(`${ready.baseUrl}${url.pathname}${url.search}`, { method: request.method, headers: request.headers,
         body: request.method === 'POST' ? await request.arrayBuffer() : undefined, redirect: 'error' });
-    } });
+    });
     const origin = proxy.url.origin;
     const attempt = { attemptId: 'synthetic-native-pty-pairing', name: 'Owned native PTY fixture', startedAt: now };
     expect((await beginTuiHostPairing(home.home, origin, attempt)).status).toBe('begun');
@@ -85,7 +85,20 @@ async function fixture(withoutInspection = false) {
     };
     const integration = () => { for (let i = 0; i < 5; i++) tui!.key('Right'); };
     const status = () => { tui!.key('Down'); tui!.type('i'); integration(); };
-    const refresh = () => { tui!.key('Right'); status(); };
+    let lastRefreshOrdinal = 0;
+    const refresh = async () => {
+      tui!.key('Right');
+      const before = paths.length;
+      await host.holdStatus(); status(); const ordinal = await host.heldStatus();
+      expect(ordinal).toBeGreaterThan(lastRefreshOrdinal);
+      expect(paths.slice(before).filter(path => path.startsWith('/api/work-ledger/execution/'))).toEqual(['/api/work-ledger/execution/status']);
+      // An unchanged unavailable/live header can belong to the preceding read.
+      // Observe this request's actual pending frame before releasing its reply.
+      await tui!.waitForScreen('fresh native status pending', screen => screenText(screen).includes('native request is pending'), 10_000);
+      expect(await host.releaseStatus()).toBe(ordinal);
+      await tui!.waitForScreen('fresh native status resolved', screen => screen.includes('Integration: live') || screen.includes('Integration unavailable:'), 10_000);
+      lastRefreshOrdinal = ordinal;
+    };
     const snapshot = () => client!.status(ready.identity, { signal: AbortSignal.timeout(10_000) });
     const assertPrivate = () => { expect(tui!.rawOutput()).not.toContain(ready.token); expect(tui!.screen()).not.toContain(ready.token); };
     return { host, home, ready, start, open, close, integration, status, refresh, snapshot, paths, assertPrivate,
@@ -131,17 +144,35 @@ async function fixture(withoutInspection = false) {
 }
 
 /** Collect actual current panes while scrolling; never render source cell grids. */
-async function scrollUntil(tui: TuiSession, label: string, predicate: (text: string) => boolean, limit = 180): Promise<string> {
-  let text = '';
+async function scrollUntil(tui: TuiSession, label: string, predicate: (text: string, panes: readonly string[]) => boolean, limit = 180): Promise<string> {
+  let text = ''; const panes: string[] = [];
   for (let step = 0; step < limit; step++) {
-    text += `\n${screenText(tui.screen())}`;
-    if (predicate(text)) return text;
-    tui.key('Down'); await Bun.sleep(25);
+    const pane = tui.screen(); panes.push(pane);
+    text += `\n${screenText(pane)}`;
+    if (predicate(text, panes)) return text;
+    tui.key('Down');
+    const moved = await tui.waitForScreen('native scroll frame advances', screen => screen !== pane, 2_000).catch(() => undefined);
+    if (!moved) break;
   }
   throw new Error(`Compiled native view did not expose ${label}\n${tui.screen()}`);
 }
 
 const unwrapped = (text: string): string => text.replace(/\s+/g, '');
+
+/** Follow a long value through ordered, overlapping actual pane captures.
+ * A path can be taller than the viewport. Require each extension to retain
+ * the preceding 16 visible characters, without inserting headers between it.
+ */
+function visiblePrefix(panes: readonly string[], value: string): number {
+  const expected = unwrapped(value);
+  let observed = 0;
+  for (const pane of panes) {
+    const text = unwrapped(pane);
+    const start = Math.max(0, observed - 16);
+    while (observed < expected.length && text.includes(expected.slice(start, observed + 1))) observed++;
+  }
+  return observed;
+}
 
 function unitFacts(text: string, unitId: string): string {
   // Assertions call this on a single tall pane containing the complete unit.
@@ -162,9 +193,9 @@ test('compiled native Integration distinguishes current repair from recorded con
     const item = conflicted.item;
     let tui = await f.start(); await f.open(); f.integration();
     await tui.waitForScreen('initial unavailable inspection', screen => screenText(screen).includes('Select a Work control row and press i for status.'));
-    tui.key('Right'); await f.host.holdStatus(); f.status(); await f.host.heldStatus();
+    tui.key('Right'); await f.host.holdStatus(); f.status(); const initialOrdinal = await f.host.heldStatus();
     await tui.waitForScreen('held actual native status loading', screen => screenText(screen).includes('native request is pending'));
-    await f.host.releaseStatus();
+    expect(await f.host.releaseStatus()).toBe(initialOrdinal);
     // Native row structure is deliberately interaction-frozen; an arrow adopts
     // the reply's layout, exactly as the on-screen deferred-structure hint says.
     await tui.waitForScreen('live native status header', screen => screen.includes('Integration: live'));
@@ -176,7 +207,7 @@ test('compiled native Integration distinguishes current repair from recorded con
     expect(initial).toContain(`Current unit status: ${conflicted.unitStatus}`);
     expect(await f.host.inspect()).toEqual({ remergeCalls: 0, escalations: 0, mutationCount: 1 });
 
-    await f.host.repair(); f.refresh();
+    await f.host.repair(); await f.refresh();
     await tui.waitForScreen('autonomous fix-passed header', screen => screen.includes('Integration: live'));
     tui.key('Down');
     await scrollUntil(tui, 'real repaired unit with recorded conflict', () => {
@@ -190,9 +221,15 @@ test('compiled native Integration distinguishes current repair from recorded con
 
     // A narrow viewport must wrap the long real path and still allow reaching
     // its conflict detail by scrolling; no data gets silently truncated.
-    f.refresh(); await tui.waitForScreen('refreshed conflict', screen => screen.includes('Integration: live')); tui.resize(48, 24);
-    const narrow = await scrollUntil(tui, 'narrow conflict detail', text => text.includes('Conflict file 1: \"src/shared.ts\"')
-      && unwrapped(text).includes(unwrapped(`Worktree path: ${JSON.stringify(item.worktreePath)}`)));
+    await f.refresh(); await tui.waitForScreen('refreshed conflict', screen => screen.includes('Integration: live')); tui.resize(48, 24);
+    await tui.waitForScreen('actual narrow native pane', screen => screen.includes('Integration')
+      && screen.trimEnd().split('\n').length <= 24 && screen.split('\n').every(line => Bun.stringWidth(line) <= 48), 10_000);
+    const encodedPath = JSON.stringify(item.worktreePath);
+    let visiblePathCharacters = 0;
+    const narrow = await scrollUntil(tui, 'narrow conflict detail', (text, panes) => {
+      visiblePathCharacters = visiblePrefix(panes, encodedPath);
+      return text.includes('Conflict file 1: "src/shared.ts"') && visiblePathCharacters === unwrapped(encodedPath).length;
+    }).catch(error => { throw new Error(`Narrow path coverage ${visiblePathCharacters}/${unwrapped(encodedPath).length}: ${String(error)}`); });
     expect(narrow).toContain('Worktree path:'); expect(tui.alive()).toBe(true);
     const narrowPane = tui.screen();
     expect(narrowPane.trimEnd().split('\n').length).toBeLessThanOrEqual(24);
@@ -202,7 +239,7 @@ test('compiled native Integration distinguishes current repair from recorded con
 
     // Capture a genuine old conflict response, detach, then make the real
     // engine remerge. Reopening must not adopt that late response or cancel work.
-    tui.key('Right'); await f.host.holdStatus(); f.status(); await f.host.heldStatus();
+    tui.key('Right'); await f.host.holdStatus(); f.status(); const staleOrdinal = await f.host.heldStatus();
     await f.close(); await f.host.remerge(); await f.open(); f.status();
     await tui.waitForScreen('new real merged status', screen => screen.includes('Integration: live')); tui.key('Down');
     const merged = live(await f.snapshot()).units.find(unit => unit.unitId === conflicted.unitId);
@@ -211,11 +248,11 @@ test('compiled native Integration distinguishes current repair from recorded con
     expect(merged.item.conflictFiles).toBeUndefined(); expect(merged.item.worktreePath).toBeUndefined();
     await scrollUntil(tui, 'real remerge hash', text => text.includes(`Merge hash: ${merged.item.state === 'recorded' ? merged.item.mergeHash : ''}`));
     const beforeLateDelivery = tui.screen();
-    await f.host.releaseStatus();
+    expect(await f.host.releaseStatus()).toBe(staleOrdinal);
     // Assert before issuing any newer request: a refresh could mask stale adoption.
     await Bun.sleep(1_200);
     expect(tui.screen()).toBe(beforeLateDelivery);
-    f.refresh(); await tui.waitForScreen('merged view survives late closed response', screen => screen.includes('Integration: live')); tui.key('Down');
+    await f.refresh(); await tui.waitForScreen('merged view survives late closed response', screen => screen.includes('Integration: live')); tui.key('Down');
     const integrated = await scrollUntil(tui, 'cleared recorded conflict', () => {
       const text = screenText(tui.screen());
       if (!text.includes(`Unit ${conflicted.unitId} · group `)) return false;
@@ -226,7 +263,7 @@ test('compiled native Integration distinguishes current repair from recorded con
     expect(integrated).not.toContain('Recorded integration: conflict');
     expect(await f.host.inspect()).toEqual({ remergeCalls: 1, escalations: 0, mutationCount: 1 });
 
-    await f.host.finish(); f.refresh();
+    await f.host.finish(); await f.refresh();
     await tui.waitForScreen('terminal integration unavailable', screen => screenText(screen).includes('Integration unavailable: not-live.')); tui.key('Down');
     expect(tui.screen()).not.toContain('Recorded integration:'); expect(tui.screen()).not.toContain('Worktree path:');
     await f.close(); tui = await f.restart(); await f.open(); f.status();
@@ -246,14 +283,18 @@ for (const afterRepair of [false, true]) test(`compiled unsupported native inspe
     await tui.waitForScreen('unsupported inspection capability', screen => screenText(screen).includes('Integration unavailable: unsupported-runner.')); tui.key('Down');
     expect(tui.screen()).not.toMatch(/Unit u\d|Item u\d|Recorded integration:|Worktree path:/);
     if (afterRepair) {
-      await f.host.repair(); f.refresh();
+      await f.host.repair(); await f.refresh();
       await tui.waitForScreen('unsupported inspection after real repair', screen => screenText(screen).includes('Integration unavailable: unsupported-runner.'));
     }
     // Keys on Integration cannot call execution controls. They are ordinary
     // local filter input; clear each before returning to the Work control row.
     const beforeIntegrationKeys = f.paths.filter(path => path.startsWith('/api/work-ledger/execution/'));
-    for (const key of ['s', 'i', 'c', 'r']) { tui.type(key); tui.key('BSpace'); }
-    await Bun.sleep(250);
+    for (const key of ['s', 'i', 'c', 'r']) {
+      tui.type(key);
+      await tui.waitForScreen(`Integration ${key} is local filter input`, screen => screen.includes(`${key}▏`), 10_000);
+      tui.key('BSpace');
+      await tui.waitForScreen('Integration local filter cleared', screen => screen.includes('Filter integration'), 10_000);
+    }
     expect(f.paths.filter(path => path.startsWith('/api/work-ledger/execution/'))).toEqual(beforeIntegrationKeys);
     expect(await f.host.inspect()).toEqual({ remergeCalls: 0, escalations: 0, mutationCount: 1 });
     tui.key('Right'); tui.key('Down'); tui.type('c');
@@ -272,7 +313,7 @@ test('compiled native Integration reports a genuine replacement host as recovery
   try {
     const tui = await f.start(); await f.open(); f.status();
     await tui.waitForScreen('original live host', screen => screen.includes('Integration: live'));
-    await f.host.restartHost(); f.refresh();
+    await f.host.restartHost(); await f.refresh();
     await tui.waitForScreen('replacement host needs explicit recovery', screen => screenText(screen).includes('Integration unavailable: recovery-required.')); tui.key('Down');
     expect(await f.snapshot()).toMatchObject({ kind: 'execution', recovery: 'required', integration: { state: 'unavailable', reason: 'recovery-required' } });
     expect(tui.screen()).not.toMatch(/Recorded integration:|Worktree path:|Conflict file/);
@@ -306,3 +347,13 @@ test('owned native proxy records forbidden mutation attempts and the read-only w
   } catch (error) { primaryError = error; throw error; }
   finally { await f.stop(primaryError); }
 }, 60_000);
+
+
+test('pane-fragment witness requires the complete ordered path, including its middle and tail', () => {
+  const path = JSON.stringify(`/fixture/${Array.from({ length: 20 }, (_, index) => `unique-segment-${index}`).join('/')}/tail.ts`);
+  const panes = Array.from({ length: Math.ceil(path.length / 32) }, (_, index) => `header\n  ${path.slice(index * 32, index * 32 + 48)}\nfooter`);
+  expect(visiblePrefix(panes, path)).toBe(path.length);
+  expect(visiblePrefix(panes.slice(0, -2), path)).toBeLessThan(path.length);
+  expect(visiblePrefix(panes.filter((_pane, index) => index !== 2), path)).toBeLessThan(path.length);
+  expect(visiblePrefix([...panes].reverse(), path)).toBeLessThan(path.length);
+});
