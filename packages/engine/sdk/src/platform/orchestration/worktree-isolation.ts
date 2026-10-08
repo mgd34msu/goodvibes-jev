@@ -32,7 +32,7 @@
  * Location + naming: worktrees live under
  * `<projectRoot>/.goodvibes/.worktrees/<branch>`. Without a state namespace,
  * branch names remain `ws/<wsShort>/<itemShort>`. Namespaced engines use
- * `ws-ns/<sha256(namespace)>/<wsShort>/<itemShort>`, deterministic from the
+ * `ws-ns/<alphabetic-sha256(namespace)>/<wsShort>/<itemShort>`, deterministic from the
  * construction-owned namespace and (workstreamId, itemId), so
  * `ensureWorktree` and `reconcileOrphans` agree on where a given item's
  * worktree lives without any extra bookkeeping.
@@ -120,11 +120,17 @@ function shortId(id: string): string {
   return createHash('sha1').update(id).digest('hex').slice(0, 8);
 }
 
-function workstreamBranchPrefix(workstreamId: string, stateNamespace?: string): string {
+function workstreamBranchPrefix(workstreamId: string, stateNamespace?: string, legacyHex = false): string {
   // Never shorten the namespace using an id suffix: independent contracts may
   // share that suffix. The complete digest also keeps arbitrary namespace text
   // out of Git ref names and paths. Keep the legacy namespace disjoint.
-  const root = stateNamespace === undefined ? 'ws' : `ws-ns/${createHash('sha256').update(stateNamespace).digest('hex')}`;
+  const hex = stateNamespace === undefined ? undefined : createHash('sha256').update(stateNamespace).digest('hex');
+  // Opaque construction IDs are not numeric user data. Keep every digest bit,
+  // but avoid accidental card-shaped digit runs in paths sent to read judgment.
+  // a-f remain unchanged; 0-9 map bijectively to k-t. New/legacy spellings can
+  // overlap only where the encoding is identity, never across namespaces.
+  const digest = legacyHex ? hex : hex?.replace(/[0-9]/g, digit => String.fromCharCode(107 + Number(digit)));
+  const root = digest === undefined ? 'ws' : `ws-ns/${digest}`;
   return `${root}/${shortId(workstreamId)}/`;
 }
 
@@ -379,16 +385,22 @@ export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDep
       logger.warn('worktree-isolation: orphan scan (worktree list) did not complete', { error: summarizeError(error) });
       return;
     }
-    const prefix = workstreamBranchPrefix(workstream.id, deps.stateNamespace);
+    const prefixes = [...new Set([
+      workstreamBranchPrefix(workstream.id, deps.stateNamespace),
+      workstreamBranchPrefix(workstream.id, deps.stateNamespace, true),
+    ])];
+    const resources = raw.trim().split('\n\n').filter(Boolean).map(block => {
+      const lines = block.split('\n');
+      const path = lines.find(line => line.startsWith('worktree '))?.slice('worktree '.length) ?? '';
+      const branchLine = lines.find(line => line.startsWith('branch '));
+      const branch = branchLine ? branchLine.slice('branch '.length).replace(/^refs\/heads\//, '') : '';
+      return { path, branch };
+    }).filter(resource => resource.path && resource.branch);
+    const matchingPrefix = (branch: string): string | undefined => prefixes.find(prefix => branch.startsWith(prefix));
     const knownPaths = new Set(
       workstream.items.map((i) => i.worktreePath).filter((p): p is string => typeof p === 'string' && p.length > 0),
     );
-    for (const block of raw.trim().split('\n\n').filter(Boolean)) {
-      const lines = block.split('\n');
-      const path = lines.find((l) => l.startsWith('worktree '))?.slice('worktree '.length) ?? '';
-      const branchLine = lines.find((l) => l.startsWith('branch '));
-      const branch = branchLine ? branchLine.slice('branch '.length).replace(/^refs\/heads\//, '') : '';
-      if (!path || !branch) continue;
+    for (const { path, branch } of resources) {
       // Rehydrate explicitly recorded resources even when they retain legacy
       // names. Cancellation can happen immediately after import, before a new
       // claim calls ensureWorktree. Never replace a recorded branch identity.
@@ -401,7 +413,8 @@ export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDep
         instances.set(recorded.id, new IsolatedWorktree(deps.projectRoot, path, branch, resolveBaseBranch()));
         continue;
       }
-      if (!branch.startsWith(prefix)) continue;
+      const prefix = matchingPrefix(branch);
+      if (prefix === undefined) continue;
       if (knownPaths.has(path)) continue; // already tracked by an item's recorded worktreePath, not an orphan
       const itemShort = branch.slice(prefix.length);
       const item = workstream.items.find((i) => shortId(i.id) === itemShort);
@@ -409,7 +422,13 @@ export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDep
         (item.state !== 'passed' && item.state !== 'failed')
         || item.mergeState === 'pending'
       );
-      if (item && unresolved && !item.worktreePath && (item.worktreeBranch === undefined || item.worktreeBranch === branch)) {
+      // Both spellings may survive an interrupted upgrade. Without a recorded
+      // identity, Git listing order cannot choose which resource owns the item.
+      const candidates = resources.filter(resource => {
+        const candidatePrefix = matchingPrefix(resource.branch);
+        return candidatePrefix !== undefined && resource.branch.slice(candidatePrefix.length) === itemShort;
+      });
+      if (item && unresolved && candidates.length === 1 && !item.worktreePath && (item.worktreeBranch === undefined || item.worktreeBranch === branch)) {
         item.worktreePath = path;
         item.worktreeBranch = branch;
         // A crash can precede the snapshot that records custom initialization

@@ -2,6 +2,10 @@
 import { afterEach, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { judgmentInputBoundary } from '../sdk/src/platform/gate/boundary.js';
+import { ConfigManager } from '../sdk/src/platform/config/index.js';
+import { createPermissionConfigReader, PermissionManager } from '../sdk/src/platform/permissions/manager.js';
+import { UserPermissionRuleStore } from '../sdk/src/platform/permissions/user-rule-store.js';
+import { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.js';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -104,9 +108,9 @@ test('namespace fragments are deterministic, safe, and never collapse namespaces
   expect(itemWorktreeBranch('group-1', 'unit-1')).toBe('ws/1/1');
   for (const [index, branch] of branches.entries()) {
     expect(branch).toBe(itemWorktreeBranch('group-1', 'unit-1', names[index]));
-    expect(branch).toMatch(/^ws-ns\/[a-f0-9]{64}\/1\/1$/);
+    expect(branch).toMatch(/^ws-ns\/[a-fk-t]{64}\/1\/1$/);
   }
-  expect(itemWorktreeBranch('../group', '../unit', '../../namespace')).toMatch(/^ws-ns\/[a-f0-9]{64}\/[a-f0-9]{8}\/[a-f0-9]{8}$/);
+  expect(itemWorktreeBranch('../group', '../unit', '../../namespace')).toMatch(/^ws-ns\/[a-fk-t]{64}\/[a-f0-9]{8}\/[a-f0-9]{8}$/);
 });
 
 test('recorded legacy resources win over a same-namespace orphan and missing branch metadata comes from Git', async () => {
@@ -205,4 +209,90 @@ test('generated namespace avoids card-shaped path material without relaxing user
   const userBoundary = judgmentInputBoundary('read', { path: userPath }, root);
   expect(userBoundary.passed).toBe(false);
   expect(userBoundary.checks[0]?.detail).toBe('card-material');
+});
+
+
+function legacyHexResource(root: string, namespace: string) {
+  const branch = `ws-ns/${createHash('sha256').update(namespace).digest('hex')}/g1/u1`;
+  const path = join(root, '.goodvibes', '.worktrees', branch);
+  git(root, 'worktree', 'add', '-q', '-b', branch, path);
+  return { path, branch };
+}
+
+test.each(['both', 'path-only', 'branch-only'] as const)('recorded hex namespace %s identity is retained without rename', async mode => {
+  const root = repo(); const own = legacyHexResource(root, 'ctr-797d133b'); const resumed = stream();
+  if (mode !== 'branch-only') resumed.items[0]!.worktreePath = own.path;
+  if (mode !== 'path-only') resumed.items[0]!.worktreeBranch = own.branch;
+  const recovering = manager(root, 'ctr-797d133b'); recovering.reconcileOrphans(resumed);
+  expect(resumed.items[0]!.worktreePath).toBe(own.path); expect(resumed.items[0]!.worktreeBranch).toBe(own.branch);
+  expect((await recovering.ensureWorktree(resumed, resumed.items[0]!)).path).toBe(own.path);
+  // Keeping an old identity does not bypass the existing raw input guard.
+  expect(judgmentInputBoundary('read', { path: join(own.path, 'seed.txt') }, root).passed).toBe(false);
+  await recovering.cleanupTerminated(resumed, resumed.items[0]!); await recovering.join();
+  expect(existsSync(own.path)).toBe(false);
+});
+
+test('unrecorded hex recovery is exact-namespace scoped and preserves unrelated resources', async () => {
+  const root = repo(); const own = legacyHexResource(root, 'contract-A'); const foreign = legacyHexResource(root, 'contract-B');
+  const newForeignStream = stream(); const newForeign = await manager(root, 'contract-C').ensureWorktree(newForeignStream, newForeignStream.items[0]!);
+  const legacyStream = stream(); const legacy = await manager(root).ensureWorktree(legacyStream, legacyStream.items[0]!);
+  const resumed = stream(); const events: OrchestrationEvent[] = []; const recovering = manager(root, 'contract-A', events);
+  recovering.reconcileOrphans(resumed);
+  expect(resumed.items[0]!.worktreePath).toBe(own.path); expect(resumed.items[0]!.worktreeBranch).toBe(own.branch);
+  expect(events.filter(event => event.type === 'orphan-worktree-reconciled')).toEqual([
+    expect.objectContaining({ path: own.path, disposition: 'adopted' }),
+  ]);
+  await recovering.cleanupTerminated(resumed, resumed.items[0]!); await recovering.join();
+  expect(existsSync(own.path)).toBe(false); expect(existsSync(foreign.path)).toBe(true);
+  expect(existsSync(newForeign.path)).toBe(true); expect(existsSync(legacy.path)).toBe(true);
+});
+
+test('unrecorded hex custom-initializer orphan retains unknown readiness', async () => {
+  const root = repo(); const own = legacyHexResource(root, 'contract-A'); const resumed = stream();
+  const recovering = createWorktreeIsolationManager({ projectRoot: root, stateNamespace: 'contract-A', emit: () => undefined,
+    initializeWorktree: worktree => worktree.create() });
+  recovering.reconcileOrphans(resumed);
+  expect(resumed.items[0]!.worktreePath).toBe(own.path); expect(resumed.items[0]!.worktreeInitialized).toBe(false);
+  await expect(recovering.ensureWorktree(resumed, resumed.items[0]!)).rejects.toThrow('requires recovery');
+  expect(existsSync(own.path)).toBe(true);
+});
+
+test('recorded hex resource wins over an unrecorded new spelling', async () => {
+  const root = repo(); const own = legacyHexResource(root, 'contract-A'); const fresh = stream();
+  const extra = await manager(root, 'contract-A').ensureWorktree(fresh, fresh.items[0]!);
+  const resumed = stream(); Object.assign(resumed.items[0]!, { worktreePath: own.path, worktreeBranch: own.branch });
+  const events: OrchestrationEvent[] = []; const recovering = manager(root, 'contract-A', events); recovering.reconcileOrphans(resumed);
+  expect(resumed.items[0]!.worktreePath).toBe(own.path); expect(resumed.items[0]!.worktreeBranch).toBe(own.branch);
+  expect(events.filter(event => event.type === 'orphan-worktree-reconciled')).toEqual([
+    expect.objectContaining({ path: extra.path, disposition: 'reported' }),
+  ]);
+  await recovering.cleanupTerminated(resumed, resumed.items[0]!); await recovering.join();
+  expect(existsSync(own.path)).toBe(false); expect(existsSync(extra.path)).toBe(true);
+});
+
+test('two unrecorded namespace spellings remain ambiguous and are never adopted by listing order', async () => {
+  const root = repo(); const old = legacyHexResource(root, 'contract-A'); const fresh = stream();
+  const next = await manager(root, 'contract-A').ensureWorktree(fresh, fresh.items[0]!);
+  const resumed = stream(); const events: OrchestrationEvent[] = []; const recovering = manager(root, 'contract-A', events);
+  recovering.reconcileOrphans(resumed);
+  expect(resumed.items[0]!.worktreePath).toBeUndefined(); expect(resumed.items[0]!.worktreeBranch).toBeUndefined();
+  expect(events.filter(event => event.type === 'orphan-worktree-reconciled').map(event => 'disposition' in event ? event.disposition : null)).toEqual(['reported', 'reported']);
+  await recovering.cleanupTerminated(resumed, resumed.items[0]!); await recovering.join();
+  expect(existsSync(old.path)).toBe(true); expect(existsSync(next.path)).toBe(true);
+});
+
+test('actual read owner allows encoded namespace but still denies card material and owner path rules', async () => {
+  const root = repo(); const config = new ConfigManager({ surfaceRoot: 'agent', configDir: join(root, '.goodvibes', 'cfg'), workingDir: root, homeDir: root });
+  config.set('permissions.mode', 'custom'); config.set('permissions.tools.read', 'allow');
+  const store = new UserPermissionRuleStore(':memory:');
+  const permission = new PermissionManager(async () => { throw new Error('read access must not prompt'); },
+    createPermissionConfigReader(config), new PolicyRuntimeState(), null, { isEnabled: () => true }, store);
+  const path = join(root, '.goodvibes', '.worktrees', itemWorktreeBranch('g1', 'u1', 'ctr-797d133b'), 'src', 'csv.ts');
+  expect(await permission.readAccess(path)).toBe('allow');
+  const syntheticCard = ['4111', '1111', '1111', '1111'].join('');
+  expect(await permission.readAccess(join(path, '..', `${syntheticCard}.txt`))).toBe('restricted');
+  await store.add({ rule: { id: 'deny-encoded-member-source', type: 'path-scope', origin: 'user', effect: 'deny', toolPattern: 'read', pathPatterns: [path] },
+    createdAt: Date.now(), tier: 'path', tool: 'read' });
+  expect(await permission.readAccess(path)).toBe('restricted');
+  expect(await permission.readAccess(join(path, '..', 'other.ts'))).toBe('allow');
 });
