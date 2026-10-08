@@ -56,6 +56,15 @@ empty production inbox, dynamic composition-module loader or detached server.
 The caller remains responsible for complete provider membership and trusted
 preview mapping. No fixture factory is installed in the executable.
 
+`createEmailDaemonInboxFactory({ account, screening })` supplies an explicit
+single-node TLS mailbox inbox with canonical mail lifecycle, complete-source
+protection, account-scoped ownership and durable UIDVALIDITY/UID progress. The
+root supplies its owned mail-service constructor. First polling records a typed
+history boundary; content starts on the next ordinary cadence. Omitted history
+and remaining backlog are disclosed separately from provider failures. See
+`docs/audit/daemon-email-inbox-composition.md` for prerequisites and limits. This
+does not remove default serving's all-provider refusal.
+
 Before constructing its server, the explicit host awaits initial custom-provider
 loading and preloads the validated discovery cache from the runtime's selected
 home and surface (`.goodvibes/tui/discovered-providers.json`). In that daemon

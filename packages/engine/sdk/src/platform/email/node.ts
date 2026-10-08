@@ -50,7 +50,10 @@ export function createImapTlsSocket(
       reject(new Error(`IMAP TLS connect timeout to ${host}:${port}`));
     }, timeoutMs);
 
-    const sock = tlsConnect({ host, port, servername: host }, () => {
+    // An explicit TLS account must authenticate the server before LOGIN even
+    // when the host process weakens its global TLS defaults. Keep normal CA
+    // trust (including NODE_EXTRA_CA_CERTS) and hostname verification intact.
+    const sock = tlsConnect({ host, port, servername: host, rejectUnauthorized: true }, () => {
       clearTimeout(timer);
       resolve(sock as unknown as Socket);
     });

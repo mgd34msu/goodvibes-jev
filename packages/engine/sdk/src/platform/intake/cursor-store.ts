@@ -4,10 +4,11 @@
 // Backed by HandlerSqliteStore (sql.js WASM) at
 //   {wd}/.goodvibes/tui/operator/inbox.sqlite
 //
-// Two tables:
+// Three tables:
 //   items(id PK, provider, kind, fromDigest, subjectPreview, bodyPreview,
 //         routeId, receivedAt INT, unread INT)
 //   cursors(provider PK, nextSince INT)
+//   imap_checkpoints(provider PK, checkpoint TEXT)
 //
 // Dedup is by items.id (upsert). nextSince advances monotonically per provider
 // = max(receivedAt) ever seen. Triage metadata is NOT persisted here: it is
@@ -22,8 +23,9 @@
 // practice. Reclaimed counts are handed to the `onSweep` hook (counts only,
 // message previews and sender ids never reach a log line).
 //
-// Cursors are deliberately NOT reaped: they are monotonic watermarks, so
-// dropping one would re-deliver everything a provider ever sent.
+// Cursors are deliberately NOT reaped. Timestamp watermarks are monotonic;
+// IMAP checkpoints retain their explicit generation and history baseline.
+// Only an explicit UIDVALIDITY reset can replace an IMAP generation.
 //
 // Idempotence/concurrency: a sweep re-run immediately reclaims nothing (the
 // DELETEs are set-based over the current contents). Two processes opening the
@@ -33,8 +35,9 @@
 // single-owner; it does not claim cross-process mutation safety.
 // ---------------------------------------------------------------------------
 
-import { HandlerSqliteStore } from '../state/daemon-handler-sqlite-store.js';
-import type { InboundChannelItem } from './provider-adapter.js';
+import { HandlerSqliteStore, type HandlerSqliteTransaction } from '../state/daemon-handler-sqlite-store.js';
+import type { ImapUidCheckpoint, ImapUidCheckpointAdvance, InboundChannelItem } from './provider-adapter.js';
+import { captureImapAdvance, captureImapCheckpoint, captureImapItems, sameImapCheckpoint } from './imap-checkpoint.js';
 
 /**
  * Age TTL for feed items: rows whose receivedAt is older than this are dropped
@@ -88,6 +91,9 @@ export interface InboxCursorStoreOptions {
 }
 
 const SCHEMA: string[] = [
+  `CREATE TABLE IF NOT EXISTS imap_checkpoints (
+     provider TEXT PRIMARY KEY, checkpoint TEXT NOT NULL
+   )`,
   `CREATE TABLE IF NOT EXISTS items (
      id TEXT PRIMARY KEY,
      provider TEXT NOT NULL,
@@ -298,57 +304,48 @@ export class InboxCursorStore {
     this.assertOpen();
     if (items.length === 0) return 0;
     let inserted = 0;
-    // Only the ids in THIS batch can collide, so probe for exactly those rather
-    // than loading the whole table, bounds the lookup to the poll size instead
-    // of growing O(n) with the (unbounded) feed.
-    const batchIds = [...new Set(items.map((i) => i.id))];
-    const placeholders = batchIds.map(() => '?').join(', ');
-    const existing = new Set(
-      this.store
-        .all<{ id: string }>(
-          `SELECT id FROM items WHERE id IN (${placeholders})`,
-          batchIds,
-        )
-        .map((r) => r.id),
-    );
-    // Track ids seen within this batch so a duplicate id in a single poll is
-    // counted (and inserted) once, not once per occurrence.
-    const seen = new Set<string>();
-    this.store.transaction(() => {
-      for (const item of items) {
-        const isNew = !existing.has(item.id) && !seen.has(item.id);
-        if (isNew) inserted += 1;
-        seen.add(item.id);
-        this.store.run(
-          `INSERT INTO items
-             (id, provider, kind, fromDigest, subjectPreview, bodyPreview,
-              routeId, receivedAt, unread)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET
-             provider = excluded.provider,
-             kind = excluded.kind,
-             fromDigest = excluded.fromDigest,
-             subjectPreview = excluded.subjectPreview,
-             bodyPreview = excluded.bodyPreview,
-             routeId = COALESCE(excluded.routeId, items.routeId),
-             receivedAt = excluded.receivedAt,
-             unread = excluded.unread`,
-          [
-            item.id,
-            item.provider,
-            item.kind,
-            item.fromDigest,
-            item.subjectPreview,
-            item.bodyPreview,
-            item.routeId ?? null,
-            item.receivedAt,
-            item.unread ? 1 : 0,
-          ],
-        );
-      }
-    });
+    this.store.transaction(() => { inserted = upsertRows(this.store, items); });
     this.revision += 1;
     return inserted;
+  }
+
+  /** Account scoping belongs to the owning store path, never to mailbox data. */
+  getImapCheckpoint(provider: string): ImapUidCheckpoint | null {
+    this.assertOpen();
+    return readImapCheckpoint(this.store, provider);
+  }
+
+  /**
+   * Publish redacted rows and their UID progress as one durable image. The
+   * synchronous fence is rechecked immediately before atomic rename. Failed
+   * transactions never publish an in-memory checkpoint or feed row.
+   */
+  commitImapPoll(provider: string, inputItems: readonly InboundChannelItem[], input: ImapUidCheckpointAdvance,
+    assertCurrent: () => void,
+  ): Promise<number> {
+    this.assertOpen();
+    const items = captureImapItems(provider, inputItems);
+    const advance = captureImapAdvance(input, items);
+    const pending = this.store.persistTransaction((transaction) => {
+      if (!sameImapCheckpoint(readImapCheckpoint(transaction, provider), advance.previous)) {
+        throw new Error('IMAP inbox checkpoint changed before commit');
+      }
+      if (advance.transition === 'reset') transaction.run('DELETE FROM items WHERE provider = ?', [provider]);
+      for (const item of items) {
+        const existing = transaction.get<{ provider: string }>('SELECT provider FROM items WHERE id = ?', [item.id]);
+        if (existing && existing.provider !== provider) throw new Error('IMAP inbox item id belongs to another provider');
+      }
+      const inserted = upsertRows(transaction, items);
+      transaction.run(`INSERT INTO imap_checkpoints (provider, checkpoint) VALUES (?, ?)
+        ON CONFLICT(provider) DO UPDATE SET checkpoint = excluded.checkpoint`, [provider, JSON.stringify(advance.next)]);
+      return inserted;
+    }, () => { this.assertOpen(); const result = assertCurrent(); this.assertOpen(); return result; });
+    // Do not mark ordinary revisions clean: a separate flush still owns any
+    // mutation accepted after this transaction's synchronous publication.
+    const tracked = pending.then(() => {});
+    this.flushing.add(tracked);
+    void tracked.then(() => this.flushing.delete(tracked), () => this.flushing.delete(tracked));
+    return pending;
   }
 
   /**
@@ -568,4 +565,31 @@ function normalizeKind(value: string): InboundChannelItem['kind'] {
   return value === 'dm' || value === 'thread' || value === 'mention' || value === 'reaction'
     ? value
     : 'dm';
+}
+
+function readImapCheckpoint(store: HandlerSqliteTransaction, provider: string): ImapUidCheckpoint | null {
+  const row = store.get<{ checkpoint: string }>('SELECT checkpoint FROM imap_checkpoints WHERE provider = ?', [provider]);
+  return row ? captureImapCheckpoint(JSON.parse(row.checkpoint) as ImapUidCheckpoint) : null;
+}
+
+function upsertRows(store: HandlerSqliteTransaction, items: readonly InboundChannelItem[]): number {
+  if (items.length === 0) return 0;
+  const batchIds = [...new Set(items.map((item) => item.id))];
+  const existing = new Set(store.all<{ id: string }>(
+    `SELECT id FROM items WHERE id IN (${batchIds.map(() => '?').join(', ')})`, batchIds,
+  ).map((row) => row.id));
+  let inserted = 0;
+  for (const item of items) {
+    if (!existing.has(item.id)) { inserted += 1; existing.add(item.id); }
+    store.run(`INSERT INTO items
+      (id, provider, kind, fromDigest, subjectPreview, bodyPreview, routeId, receivedAt, unread)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET provider = excluded.provider, kind = excluded.kind,
+      fromDigest = excluded.fromDigest, subjectPreview = excluded.subjectPreview,
+      bodyPreview = excluded.bodyPreview, routeId = COALESCE(excluded.routeId, items.routeId),
+      receivedAt = excluded.receivedAt, unread = excluded.unread`,
+    [item.id, item.provider, item.kind, item.fromDigest, item.subjectPreview, item.bodyPreview,
+      item.routeId ?? null, item.receivedAt, item.unread ? 1 : 0]);
+  }
+  return inserted;
 }

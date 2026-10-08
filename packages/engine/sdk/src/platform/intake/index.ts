@@ -6,10 +6,13 @@
 export type { IntakeCredentialStore, IntakeLogger } from './context.js';
 export { createProtectedInboxMapper } from './protected-preview.js';
 export type { ProtectedInboxPreviewInput, ProtectedInboxPreviewFields } from './protected-preview.js';
+export { createEmailInboxOwner } from './providers/email-owner.js';
+export type { EmailInboxAccount, EmailInboxOwnerOptions, EmailInboxOwner } from './providers/email-owner.js';
 export { createSlackInboxOwner } from './providers/slack-owner.js';
 export type { SlackInboxAccount, SlackInboxOwnerOptions, SlackInboxOwnerFactories, SlackInboxOwner } from './providers/slack-owner.js';
 export { sha256First, digestSender, stripMarkup, normalizeWhitespace } from './text-normalization.js';
 export type {
+  ImapUidCheckpoint, ImapUidCheckpointAdvance, ImapUidTerminalDisposition,
   InboundChannelItem, ProviderState, ProviderPollResult, ProviderPollOptions,
   AdapterContext, RouteResolver, InboundProviderAdapter, AdapterFactory,
 } from './provider-adapter.js';

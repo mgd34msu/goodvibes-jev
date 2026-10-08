@@ -6549,7 +6549,17 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "configured": false,
           "lastSyncAt": 0,
           "syncing": false,
-          "error": "sample"
+          "error": "sample",
+          "mailboxHistory": {
+            "uidValidity": 0,
+            "kind": "sample",
+            "lowerBoundUid": 0,
+            "skippedOlderMessages": 0
+          },
+          "mailboxProgress": {
+            "uidValidity": 0,
+            "pendingMessages": 0
+          }
         }
       ],
       "partial": false

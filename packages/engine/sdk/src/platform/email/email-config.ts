@@ -108,10 +108,10 @@ export function smtpPasswordRefFor(config: EmailConfig): string {
   return config.smtpPasswordRef.length > 0 ? config.smtpPasswordRef : config.passwordRef;
 }
 
-export function validateEmailConfig(config: EmailConfig): string[] {
+function validateConfiguration(config: EmailConfig, submission: boolean): string[] {
   const errors: string[] = [];
   if (!config.imapHost) errors.push('email.imapHost is required');
-  if (!config.smtpHost) errors.push('email.smtpHost is required');
+  if (submission && !config.smtpHost) errors.push('email.smtpHost is required');
   if (!config.username) errors.push('email.username is required');
   if (!config.passwordRef) {
     errors.push('email.passwordRef is required (must be a secret reference, not a raw password)');
@@ -121,11 +121,21 @@ export function validateEmailConfig(config: EmailConfig): string[] {
   // Optional: an empty value means "same password as IMAP", which is the common
   // case. A non-empty one is held to the same rule as passwordRef, a raw
   // password here would be a raw password in a settings file.
-  if (config.smtpPasswordRef.length > 0 && !config.smtpPasswordRef.startsWith('goodvibes://secrets/')) {
+  if (submission && config.smtpPasswordRef.length > 0 && !config.smtpPasswordRef.startsWith('goodvibes://secrets/')) {
     errors.push('email.smtpPasswordRef must be a goodvibes secret reference (goodvibes://secrets/...)');
   }
-  if (!config.fromAddress) errors.push('email.fromAddress is required');
+  if (submission && !config.fromAddress) errors.push('email.fromAddress is required');
   return errors;
+}
+
+/** Existing read/send configuration validation remains submission-complete. */
+export function validateEmailConfig(config: EmailConfig): string[] {
+  return validateConfiguration(config, true);
+}
+
+/** Owned read-only inbox acquisition never needs SMTP or an outbound From identity. */
+export function validateEmailInboxConfig(config: EmailConfig): string[] {
+  return validateConfiguration(config, false);
 }
 
 // ---------------------------------------------------------------------------

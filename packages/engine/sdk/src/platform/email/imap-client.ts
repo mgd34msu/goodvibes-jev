@@ -99,6 +99,7 @@ import {
   validateDraftInput,
 } from './imap-draft.js';
 import { fetchSection, parseFetchResponses } from './imap-fetch-response.js';
+import { completeSearchUids } from './imap-fetch-complete.js';
 import {
   parseCapabilities,
   parseMailboxStatus,
@@ -107,7 +108,7 @@ import {
   formatImapDate,
   type ImapMailboxStatus,
 } from './imap-headers.js';
-import { readMessageDetail } from './imap-message-read.js';
+import { readCompleteMessageDetail, readMessageDetail } from './imap-message-read.js';
 import {
   probeMailboxBody,
   type ImapBodyProbe,
@@ -117,6 +118,7 @@ import type {
   ImapAppendDraftInput,
   ImapAppendDraftResult,
   ImapClientOptions,
+  ImapCompleteMessageRead,
   ImapEnvelope,
   ImapEnvelopeBatch,
   ImapMessageDetail,
@@ -129,9 +131,11 @@ export type {
   ImapAppendDraftResult,
   ImapAttachmentInfo,
   ImapClientOptions,
+  ImapCompleteMessageRead,
   ImapEnvelope,
   ImapEnvelopeBatch,
   ImapFetchProblem,
+  ImapCompleteTextSection,
   ImapMessage,
   ImapMessageDetail,
   ImapMessageRead,
@@ -551,6 +555,18 @@ export class ImapClient {
     );
   }
 
+  /** Exact bounded UID SEARCH snapshot for protected whole-source batches. */
+  async searchCompleteUids(unreadOnly: boolean): Promise<readonly number[]> {
+    const frames = await this.requireReadableMailbox().commandFrames(
+      `UID SEARCH ${unreadOnly ? 'UNSEEN' : 'ALL'}`, { maxResponseBytes: 1_048_576 });
+    return completeSearchUids(frames);
+  }
+
+  /** Full-source proof for screening; never promotes a partial display read. */
+  async readCompleteMessageDetail(uid: number): Promise<ImapCompleteMessageRead> {
+    return readCompleteMessageDetail(this.requireReadableMailbox(), uid, this.mailbox);
+  }
+
   /**
    * Append a draft to the Drafts folder with the `\Draft` flag.
    *
@@ -584,6 +600,18 @@ export class ImapClient {
       message,
     );
     return { uid: parseAppendUid(lines), mailbox };
+  }
+
+  /** Cancel outstanding reads and release transport without waiting for LOGOUT. */
+  close(): void {
+    const session = this.active;
+    this.active = null;
+    this.readable = false;
+    forgetConnection(this);
+    if (session !== null) session.destroy();
+    else {
+      try { this.options.socket.destroy(); } catch { /* already closed */ }
+    }
   }
 
   /**

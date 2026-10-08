@@ -23543,6 +23543,46 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   },
                   "error": {
                     "type": "string"
+                  },
+                  "mailboxHistory": {
+                    "type": "object",
+                    "properties": {
+                      "uidValidity": {
+                        "type": "number"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "lowerBoundUid": {
+                        "type": "number"
+                      },
+                      "skippedOlderMessages": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "uidValidity",
+                      "kind",
+                      "lowerBoundUid",
+                      "skippedOlderMessages"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "mailboxProgress": {
+                    "type": "object",
+                    "properties": {
+                      "uidValidity": {
+                        "type": "number"
+                      },
+                      "pendingMessages": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "uidValidity",
+                      "pendingMessages"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
