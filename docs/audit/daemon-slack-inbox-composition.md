@@ -75,7 +75,7 @@ The read guard returns only a fixed scope-unavailable diagnostic. Credential
 fingerprints are process-local and do not appear in logs or stored rows.
 
 Canonical configuration is rechecked around owned asynchronous work. Disabling
-Slack, changing its workspace or enabling cluster mode withholds late work and
+Slack, changing its workspace or changing the configured cluster mode withholds late work and
 reads. Wire `provider` stays `slack`, stable item IDs retain the upstream
 `slack:<conversation>:<timestamp>` form, and the ownership discriminator alone
 is account-scoped. Profile IDs are not route IDs: no fabricated route binding

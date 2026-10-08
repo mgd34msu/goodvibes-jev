@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { ClusterCoordinator } from '../sdk/src/platform/cluster/coordinator.js';
+import { ClusterSurfaceRegistry } from '../sdk/src/platform/cluster/surface-registry.js';
 import { FakeClusterClock } from '../sdk/src/platform/cluster/clock.js';
 import { MemoryClusterBus } from '../sdk/src/platform/cluster/memory-transport.js';
 import { decodeMessage } from '../sdk/src/platform/cluster/protocol.js';
@@ -41,6 +42,30 @@ function gate(id: string, events: string[], overrides: Partial<ClusterConsumerGa
 }
 
 describe('owned cluster registration withdrawal', () => {
+  test('legacy incidental-value listeners type-check while async retirement listeners are awaited', async () => {
+    const registry = new ClusterSurfaceRegistry(SILENT);
+    const events: string[] = [];
+    const seen = new Set<string>();
+    // These callbacks intentionally return number and Set, respectively. The
+    // original public void signature must keep accepting both without casts.
+    const removeNumber = registry.onChange(id => events.push(id));
+    const removeSet = registry.onChange(id => seen.add(id));
+    const blocked = deferred();
+    const removeAsync = registry.onChange(async id => {
+      if (!registry.canServe(id)) await blocked.promise;
+    });
+    const withdraw = registry.registerOwned(gate('listener-test', []));
+    const pending = withdraw();
+    let finished = false; void pending.then(() => { finished = true; });
+    await flush();
+    expect(events).toHaveLength(2);
+    expect(seen.size).toBe(1);
+    expect(finished).toBe(false);
+    blocked.resolve(); await pending;
+    expect(finished).toBe(true);
+    removeNumber(); removeSet(); removeAsync();
+  });
+
   test('blocked stop fences withdrawal and RESIGN; awaited replacement survives old retirement', async () => {
     const { coordinator, events, advance } = rig();
     const blocked = deferred();

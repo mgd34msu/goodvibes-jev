@@ -1,5 +1,5 @@
 import { afterEach, expect, spyOn, test } from 'bun:test';
-import { createEmailInboxOwner } from '../sdk/src/platform/intake/providers/email-owner.js';
+import { createEmailInboxOwner, type EmailInboxOwnerOptions } from '../sdk/src/platform/intake/providers/email-owner.js';
 import type { ImapUidCheckpoint } from '../sdk/src/platform/intake/provider-adapter.js';
 import { SnapshotSocket, snapshotFixture } from './_helpers/mail-inbox-snapshot.js';
 import { deferred, tick } from './_helpers/mail-subject-source.js';
@@ -28,13 +28,14 @@ async function fixture(options: { gate?: Promise<void>; sockets?: SnapshotSocket
   let checkpoint: ImapUidCheckpoint | null = null;
   let allowed = true, sourceAllowed = true;
   const authority = new AbortController();
-  const owner = createEmailInboxOwner({ account: { host: 'fixture.invalid', port: 993, username: 'synthetic@example.invalid', mailbox: 'INBOX', security: 'tls' },
+  const ownerOptions = { account: { host: 'fixture.invalid', port: 993, username: 'synthetic@example.invalid', mailbox: 'INBOX', security: 'tls' },
     service: f.service, getCheckpoint: () => checkpoint, assertCurrent() { if (!allowed) throw new Error('Scope changed'); },
     screening: { authority: { ownerId: 'fixture-local-services', revision: '1', retention: 'ephemeral-no-log', signal: authority.signal, assertCurrent() { if (!sourceAllowed) throw new Error('Source changed'); } },
       proposal: { endpoint: `http://127.0.0.1:${server.port}`, model: 'fixture-proposer' },
-      judgment: { endpoint: `http://127.0.0.1:${server.port}`, model: 'jev-1.13.0' }, timeoutMs: 500 } });
+      judgment: { endpoint: `http://127.0.0.1:${server.port}`, model: 'jev-1.13.0' }, timeoutMs: 500 } } satisfies EmailInboxOwnerOptions;
+  const owner = createEmailInboxOwner(ownerOptions);
   cleanups.push(() => owner.close());
-  return { ...f, mailOwner: f.owner, owner, sourceParts, reached, authority,
+  return { ...f, mailOwner: f.owner, owner, ownerOptions, sourceParts, reached, authority,
     revoke() { allowed = false; }, revokeSource() { sourceAllowed = false; }, checkpoint: () => checkpoint,
     async seed() { const result = await owner.adapter.poll({ limit: 2 }); checkpoint = result.checkpointAdvance!.next; return result; },
     commit(next: ImapUidCheckpoint) { checkpoint = next; } };
@@ -229,4 +230,35 @@ test('a completed but suspended seed cannot restore commit authority after concu
   finish.resolve();
   expect(await pending).toMatchObject({ state: 'unavailable', items: [] });
   expect(() => f.owner.adapter.assertCurrent!()).toThrow();
+});
+
+test('eligibility detaches account, mailbox and service options while canonical metadata is pending', async () => {
+  const gate = deferred<void>(); cleanups.push(() => gate.resolve());
+  const socket = new SnapshotSocket({ hold: ' SEARCH ', gate: gate.promise });
+  const f = await fixture({ sockets: [socket, new SnapshotSocket()] });
+  const replacement = snapshotFixture();
+  cleanups.push(() => replacement.owner?.dispose());
+  const original = f.ownerOptions.account;
+  const scope = f.owner.scopeId;
+  const pending = f.owner.verifyEligibility();
+  void pending.catch(() => {});
+  await socket.reached.promise;
+  original.host = 'foreign.invalid'; original.username = 'foreign@example.invalid'; original.mailbox = 'FOREIGN';
+  f.ownerOptions.account = { host: 'retarget.invalid', port: 993, username: 'retarget@example.invalid', mailbox: 'RETARGET', security: 'tls' };
+  f.ownerOptions.service = replacement.service;
+  f.ownerOptions.assertCurrent = () => { throw new Error('Replacement options must not run'); };
+  f.ownerOptions.getCheckpoint = () => { throw new Error('Eligibility must not inspect checkpoint'); };
+  gate.resolve();
+  const proof = await pending;
+  expect(f.owner.account).toEqual({ host: 'fixture.invalid', port: 993, username: 'synthetic@example.invalid', mailbox: 'INBOX', security: 'tls' });
+  expect(Object.isFrozen(f.owner.account)).toBe(true); expect(f.owner.scopeId).toBe(scope);
+  expect(() => proof.assertCurrent()).not.toThrow();
+  await f.owner.verifyEligibility();
+  expect(f.connections()).toBe(2); expect(replacement.connections()).toBe(0);
+  expect(socket.commands.some(command => command.includes(' EXAMINE INBOX'))).toBe(true);
+  expect(socket.commands.some(command => command.includes('FOREIGN') || command.includes('RETARGET') || command.includes('FETCH'))).toBe(false);
+  expect(f.checkpoint()).toBeNull(); expect(f.sourceParts).toEqual([]);
+  f.config['email.mailbox'] = 'RETARGET';
+  await expect(f.owner.verifyEligibility()).rejects.toThrow();
+  expect(proof.signal.aborted).toBe(true);
 });

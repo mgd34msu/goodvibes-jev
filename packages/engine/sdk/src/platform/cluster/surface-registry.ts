@@ -52,7 +52,7 @@ export class ClusterSurfaceRegistry {
    * election has actually stopped.
    */
   private readonly retiring = new Map<string, MutableSurface>();
-  private readonly listeners = new Set<(surfaceId: string) => void | Promise<void>>();
+  private readonly listeners = new Set<(surfaceId: string) => void>();
 
   constructor(private readonly logger: ClusterLogger) {}
 
@@ -114,7 +114,7 @@ export class ClusterSurfaceRegistry {
   }
 
   /** Called whenever the servable set changes, with the surface that moved. */
-  onChange(listener: (surfaceId: string) => void | Promise<void>): () => void {
+  onChange(listener: (surfaceId: string) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }

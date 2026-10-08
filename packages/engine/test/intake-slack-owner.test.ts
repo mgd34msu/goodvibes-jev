@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { Client } from 'undici/index.js';
-import { createSlackInboxOwner, type SlackInboxAccount, type SlackInboxOwner } from '../sdk/src/platform/intake/providers/slack-owner.ts';
+import { createSlackInboxOwner, type SlackInboxAccount, type SlackInboxOwner, type SlackInboxOwnerOptions } from '../sdk/src/platform/intake/providers/slack-owner.ts';
 import { digestSender } from '../sdk/src/platform/intake/text-normalization.ts';
 
 const cleanups: (() => unknown | Promise<unknown>)[] = [];
@@ -42,16 +42,17 @@ async function fixture(options: { account?: SlackInboxAccount; sourceGate?: Prom
   } });
   cleanups.push(() => local.stop(true), () => slack.stop(true));
   const signal = new AbortController();
-  const owner = await createSlackInboxOwner({ logger: { info() {}, warn() {}, error() {} }, credentials: {
-    resolveRef: async () => null,
-    async resolveConfigSecret(key) { expect(key).toBe('surfaces.slack.botToken'); credentialReads++; await options.credentialGate; return token; },
-  } }, { account, signal: signal.signal, assertCurrent() { if (!current) throw new Error('synthetic-private-scope-marker'); },
+  const ownerOptions = { account, signal: signal.signal, assertCurrent() { if (!current) throw new Error('synthetic-private-scope-marker'); },
     screening: { authority: { ownerId: 'synthetic-local-services', revision: '1', retention: 'ephemeral-no-log', signal: signal.signal, assertCurrent() {} },
       proposal: { endpoint: `http://127.0.0.1:${local.port}`, model: 'synthetic-proposer' },
       judgment: { endpoint: `http://127.0.0.1:${local.port}`, model: 'jev-1.13.0' }, timeoutMs: 1_000 },
-  }, { createHttpClient: (_origin, clientOptions) => new Client(`http://127.0.0.1:${slack.port}`, clientOptions) });
+  } satisfies SlackInboxOwnerOptions;
+  const owner = await createSlackInboxOwner({ logger: { info() {}, warn() {}, error() {} }, credentials: {
+    resolveRef: async () => null,
+    async resolveConfigSecret(key) { expect(key).toBe('surfaces.slack.botToken'); credentialReads++; await options.credentialGate; return token; },
+  } }, ownerOptions, { createHttpClient: (_origin, clientOptions) => new Client(`http://127.0.0.1:${slack.port}`, clientOptions) });
   cleanups.push(() => owner.close());
-  return { owner, calls, sourceCalls, text, ts, signal, get credentialReads() { return credentialReads; },
+  return { owner, ownerOptions, calls, sourceCalls, text, ts, signal, get credentialReads() { return credentialReads; },
     setToken(value: string | null) { token = value; }, setAccount(value: SlackInboxAccount) { actualAccount = value; },
     outage() { available = false; }, revoke() { current = false; } };
 }
@@ -213,4 +214,29 @@ test('a stale auth success cannot restore eligibility after credential lifecycle
   const proof = await f.owner.verifyEligibility();
   expect(() => proof.assertCurrent()).not.toThrow();
   expect(f.calls).toHaveLength(2);
+});
+
+test('eligibility detaches the caller account and options before an awaited authentication response', async () => {
+  const gate = deferred(); cleanups.push(() => gate.resolve());
+  const original = { workspaceId: 'T-ALPHA', userId: 'U-OWNER' };
+  const f = await fixture({ account: original, authGate: gate.promise });
+  const scope = f.owner.scopeId;
+  const pending = f.owner.verifyEligibility();
+  void pending.catch(() => {});
+  while (f.calls.length === 0) await pause();
+  original.workspaceId = 'T-FOREIGN'; original.userId = 'U-FOREIGN';
+  f.ownerOptions.account = { workspaceId: 'T-RETARGET', userId: 'U-RETARGET' };
+  f.ownerOptions.assertCurrent = () => { throw new Error('Replacement options must not run'); };
+  f.ownerOptions.signal = AbortSignal.abort();
+  gate.resolve();
+  const proof = await pending;
+  expect(f.owner.account).toEqual({ workspaceId: 'T-ALPHA', userId: 'U-OWNER' });
+  expect(Object.isFrozen(f.owner.account)).toBe(true);
+  expect(f.owner.scopeId).toBe(scope);
+  expect(() => proof.assertCurrent()).not.toThrow();
+  f.setAccount({ workspaceId: 'T-RETARGET', userId: 'U-RETARGET' });
+  await expect(f.owner.verifyEligibility()).rejects.toThrow();
+  expect(proof.signal.aborted).toBe(true);
+  expect(f.calls.every(call => call.path === '/api/auth.test')).toBe(true);
+  expect(f.sourceCalls).toEqual([]);
 });
