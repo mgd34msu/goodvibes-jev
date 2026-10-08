@@ -1,3 +1,8 @@
+import { beforeEach, afterEach } from 'bun:test';
+import { installUserErrorReading, flushErrorNotices } from '../helpers/user-error-reading.ts';
+let restoreUserErrorReading: () => void;
+beforeEach(() => { restoreUserErrorReading = installUserErrorReading('rate-limit'); });
+afterEach(() => { restoreUserErrorReading(); });
 /**
  * Failover wiring tests for wireStreamEventMetrics.
  *
@@ -230,18 +235,19 @@ function makeOptions(
 // ---------------------------------------------------------------------------
 
 describe('wireStreamEventMetrics: optimizer disabled', () => {
-  test('TURN_ERROR surfaces immediately when optimizer is absent', () => {
+  test('TURN_ERROR surfaces immediately when optimizer is absent', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const opts = makeOptions(turns, tools);
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('network timeout');
+    await flushErrorNotices();
 
     expect(opts.messages.some((m) => m.startsWith('[Error]'))).toBe(true);
   });
 
-  test('retryTurn is never called when optimizer is absent', () => {
+  test('retryTurn is never called when optimizer is absent', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -249,11 +255,12 @@ describe('wireStreamEventMetrics: optimizer disabled', () => {
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('some error');
+    await flushErrorNotices();
 
     expect(retryTurn).not.toHaveBeenCalled();
   });
 
-  test('TURN_ERROR surfaces immediately when optimizer.enabled is false', () => {
+  test('TURN_ERROR surfaces immediately when optimizer.enabled is false', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -265,6 +272,7 @@ describe('wireStreamEventMetrics: optimizer disabled', () => {
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('api error');
+    await flushErrorNotices();
 
     expect(opts.messages.some((m) => m.startsWith('[Error]'))).toBe(true);
     expect(retryTurn).not.toHaveBeenCalled();
@@ -276,7 +284,7 @@ describe('wireStreamEventMetrics: optimizer disabled', () => {
 // ---------------------------------------------------------------------------
 
 describe('wireStreamEventMetrics: optimizer enabled, failover fires', () => {
-  test('retryTurn is called when a capable alternative exists', () => {
+  test('retryTurn is called when a capable alternative exists', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -291,11 +299,12 @@ describe('wireStreamEventMetrics: optimizer enabled, failover fires', () => {
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('connection reset');
+    await flushErrorNotices();
 
     expect(retryTurn).toHaveBeenCalledTimes(1);
   });
 
-  test('failover notice includes from->to and error class', () => {
+  test('failover notice includes from->to and error class', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -310,6 +319,7 @@ describe('wireStreamEventMetrics: optimizer enabled, failover fires', () => {
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('rate limit exceeded');
+    await flushErrorNotices();
 
     const failoverMsg = opts.messages.find((m) => m.startsWith('[Failover]'));
     expect(failoverMsg).toBeDefined();
@@ -317,7 +327,7 @@ describe('wireStreamEventMetrics: optimizer enabled, failover fires', () => {
     expect(failoverMsg).toContain('openai');
   });
 
-  test('recordFallbackTransition is called with correct from/to', () => {
+  test('recordFallbackTransition is called with correct from/to', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -332,13 +342,14 @@ describe('wireStreamEventMetrics: optimizer enabled, failover fires', () => {
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('timeout');
+    await flushErrorNotices();
 
     expect(optimizer.transitions).toHaveLength(1);
     expect(optimizer.transitions[0]!.from).toBe('anthropic');
     expect(optimizer.transitions[0]!.to).toBe('openai');
   });
 
-  test('original error is NOT emitted as [Error] on successful failover', () => {
+  test('original error is NOT emitted as [Error] on successful failover', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -353,6 +364,7 @@ describe('wireStreamEventMetrics: optimizer enabled, failover fires', () => {
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('some error');
+    await flushErrorNotices();
 
     const errorMsgs = opts.messages.filter((m) => m.startsWith('[Error]'));
     expect(errorMsgs).toHaveLength(0);
@@ -364,7 +376,7 @@ describe('wireStreamEventMetrics: optimizer enabled, failover fires', () => {
 // ---------------------------------------------------------------------------
 
 describe('wireStreamEventMetrics: optimizer enabled, chain exhausted', () => {
-  test('retryTurn not called when no capable alternative exists', () => {
+  test('retryTurn not called when no capable alternative exists', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -380,11 +392,12 @@ describe('wireStreamEventMetrics: optimizer enabled, chain exhausted', () => {
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('network error');
+    await flushErrorNotices();
 
     expect(retryTurn).not.toHaveBeenCalled();
   });
 
-  test('exhaustion notice is emitted when chain yields no viable alternative', () => {
+  test('exhaustion notice is emitted when chain yields no viable alternative', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -399,12 +412,13 @@ describe('wireStreamEventMetrics: optimizer enabled, chain exhausted', () => {
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('some error');
+    await flushErrorNotices();
 
     const exhaustMsg = opts.messages.find((m) => m.includes('Chain exhausted'));
     expect(exhaustMsg).toBeDefined();
   });
 
-  test('empty chain causes exhaustion notice', () => {
+  test('empty chain causes exhaustion notice', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -413,6 +427,7 @@ describe('wireStreamEventMetrics: optimizer enabled, chain exhausted', () => {
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('any error');
+    await flushErrorNotices();
 
     expect(retryTurn).not.toHaveBeenCalled();
     expect(opts.messages.some((m) => m.includes('Chain exhausted'))).toBe(true);
@@ -424,7 +439,7 @@ describe('wireStreamEventMetrics: optimizer enabled, chain exhausted', () => {
 // ---------------------------------------------------------------------------
 
 describe('wireStreamEventMetrics: setCurrentModel fails', () => {
-  test('switch failure: [Error] emitted, retryTurn not called', () => {
+  test('switch failure: [Error] emitted, retryTurn not called', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -453,6 +468,7 @@ describe('wireStreamEventMetrics: setCurrentModel fails', () => {
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('api error');
+    await flushErrorNotices();
 
     expect(retryTurn).not.toHaveBeenCalled();
     expect(messages.some((m) => m.startsWith('[Error]'))).toBe(true);
@@ -464,7 +480,7 @@ describe('wireStreamEventMetrics: setCurrentModel fails', () => {
 // ---------------------------------------------------------------------------
 
 describe('wireStreamEventMetrics: visited-set prevents ping-pong', () => {
-  test('consecutive TURN_ERRORs across two providers: retryTurn called at most once per provider', () => {
+  test('consecutive TURN_ERRORs across two providers: retryTurn called at most once per provider', async () => {
     // Arrange: two capable providers; retryTurn re-fires TURN_ERROR simulating
     // provider B also failing. The visited set must stop the loop after
     // the chain is consumed, retryTurn is called exactly once (for B),
@@ -490,6 +506,7 @@ describe('wireStreamEventMetrics: visited-set prevents ping-pong', () => {
 
     // First error on anthropic, should failover to openai (retryTurn called once).
     turns.emitTurnError('anthropic failed');
+    await flushErrorNotices();
 
     // retryTurn fired exactly once: once for the failover to openai.
     // The second TURN_ERROR (fired from inside retryTurn, simulating openai
@@ -499,7 +516,7 @@ describe('wireStreamEventMetrics: visited-set prevents ping-pong', () => {
     expect(exhaustMsg).toBeDefined();
   });
 
-  test('visited set is cleared on TURN_COMPLETED so next turn can use all providers', () => {
+  test('visited set is cleared on TURN_COMPLETED so next turn can use all providers', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -515,6 +532,7 @@ describe('wireStreamEventMetrics: visited-set prevents ping-pong', () => {
 
     // Turn 1: failover fires (visited: anthropic + openai).
     turns.emitTurnError('error turn 1');
+    await flushErrorNotices();
     expect(retryTurn).toHaveBeenCalledTimes(1);
 
     // Simulate successful completion, visited set must be cleared.
@@ -522,6 +540,7 @@ describe('wireStreamEventMetrics: visited-set prevents ping-pong', () => {
 
     // Turn 2: chain should not be considered exhausted from turn 1's visits.
     turns.emitTurnError('error turn 2');
+    await flushErrorNotices();
     expect(retryTurn).toHaveBeenCalledTimes(2);
   });
 });
@@ -531,7 +550,7 @@ describe('wireStreamEventMetrics: visited-set prevents ping-pong', () => {
 // ---------------------------------------------------------------------------
 
 describe('wireStreamEventMetrics: synthetic node skipped in failover', () => {
-  test('synthetic provider is not selected as failover candidate', () => {
+  test('synthetic provider is not selected as failover candidate', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -548,13 +567,14 @@ describe('wireStreamEventMetrics: synthetic node skipped in failover', () => {
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('anthropic error');
+    await flushErrorNotices();
 
     // synthetic is skipped, chain exhausted, retryTurn NOT called.
     expect(retryTurn).not.toHaveBeenCalled();
     expect(opts.messages.some((m) => m.includes('Chain exhausted'))).toBe(true);
   });
 
-  test('real provider after synthetic in chain is selected, synthetic skipped', () => {
+  test('real provider after synthetic in chain is selected, synthetic skipped', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -570,6 +590,7 @@ describe('wireStreamEventMetrics: synthetic node skipped in failover', () => {
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('anthropic error');
+    await flushErrorNotices();
 
     // openai selected, skipping synthetic; retryTurn called once.
     expect(retryTurn).toHaveBeenCalledTimes(1);
@@ -584,7 +605,7 @@ describe('wireStreamEventMetrics: synthetic node skipped in failover', () => {
 // ---------------------------------------------------------------------------
 
 describe('wireStreamEventMetrics: clearFailoverVisited on new submission', () => {
-  test('clearFailoverVisited resets visited set so a new turn can failover normally', () => {
+  test('clearFailoverVisited resets visited set so a new turn can failover normally', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -600,6 +621,7 @@ describe('wireStreamEventMetrics: clearFailoverVisited on new submission', () =>
 
     // Turn 1: failover to openai (visited: anthropic + openai).
     turns.emitTurnError('error 1');
+    await flushErrorNotices();
     expect(retryTurn).toHaveBeenCalledTimes(1);
 
     // Simulate new user submission clearing the set (without TURN_COMPLETED).
@@ -607,6 +629,7 @@ describe('wireStreamEventMetrics: clearFailoverVisited on new submission', () =>
 
     // Turn 2: should be able to failover to openai again (fresh visited set).
     turns.emitTurnError('error 2');
+    await flushErrorNotices();
     expect(retryTurn).toHaveBeenCalledTimes(2);
   });
 });
@@ -615,7 +638,7 @@ describe('wireStreamEventMetrics: clearFailoverVisited on new submission', () =>
 // ---------------------------------------------------------------------------
 
 describe('wireStreamEventMetrics: failover cost delta notice', () => {
-  test('cost delta suffix is appended to failover notice when catalog provides pricing', () => {
+  test('cost delta suffix is appended to failover notice when catalog provides pricing', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -638,6 +661,7 @@ describe('wireStreamEventMetrics: failover cost delta notice', () => {
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('connection reset');
+    await flushErrorNotices();
 
     const failoverMsg = opts.messages.find((m) => m.startsWith('[Failover]'));
     expect(failoverMsg).toBeDefined();
@@ -648,7 +672,7 @@ describe('wireStreamEventMetrics: failover cost delta notice', () => {
     expect(failoverMsg).toContain('output');
   });
 
-  test('failover notice has no cost suffix when costLookup is absent', () => {
+  test('failover notice has no cost suffix when costLookup is absent', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -664,6 +688,7 @@ describe('wireStreamEventMetrics: failover cost delta notice', () => {
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('network error');
+    await flushErrorNotices();
 
     const failoverMsg = opts.messages.find((m) => m.startsWith('[Failover]'));
     expect(failoverMsg).toBeDefined();
@@ -672,7 +697,7 @@ describe('wireStreamEventMetrics: failover cost delta notice', () => {
     expect(failoverMsg).not.toContain('unavailable');
   });
 
-  test('cost data unavailable message when catalog returns zeros for either model', () => {
+  test('cost data unavailable message when catalog returns zeros for either model', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = makeRetryTurnMock();
@@ -694,6 +719,7 @@ describe('wireStreamEventMetrics: failover cost delta notice', () => {
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('timeout');
+    await flushErrorNotices();
 
     const failoverMsg = opts.messages.find((m) => m.startsWith('[Failover]'));
     expect(failoverMsg).toBeDefined();
@@ -719,7 +745,7 @@ function twoProviderChain() {
 }
 
 describe('wireStreamEventMetrics: configured selection is restored at turn end', () => {
-  test('TURN_COMPLETED after a failover puts the registry back on the configured selection', () => {
+  test('TURN_COMPLETED after a failover puts the registry back on the configured selection', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const optimizer = makeOptimizer({ enabled: true, chain: twoProviderChain() });
@@ -728,6 +754,7 @@ describe('wireStreamEventMetrics: configured selection is restored at turn end',
     wireStreamEventMetrics(options);
 
     turns.emitTurnError('rate limit exceeded');
+    await flushErrorNotices();
     // Mid-turn: serving really has moved, and the record says so.
     expect(providerRegistry.currentKey).toBe('openai:gpt-5');
     expect(failoverState.current()).toEqual({
@@ -740,7 +767,7 @@ describe('wireStreamEventMetrics: configured selection is restored at turn end',
     expect(failoverState.current()).toBeNull();
   });
 
-  test('the NEXT turn starts on the configured selection, so it fails over from there again', () => {
+  test('the NEXT turn starts on the configured selection, so it fails over from there again', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const optimizer = makeOptimizer({ enabled: true, chain: twoProviderChain() });
@@ -749,8 +776,10 @@ describe('wireStreamEventMetrics: configured selection is restored at turn end',
     wireStreamEventMetrics(options);
 
     turns.emitTurnError('turn 1 failed');
+    await flushErrorNotices();
     turns.emit('TURN_COMPLETED');
     turns.emitTurnError('turn 2 failed');
+    await flushErrorNotices();
 
     // Turn 2's notice names anthropic as the FROM provider, proof the turn
     // began on the configured backend rather than inheriting turn 1's switch.
@@ -758,7 +787,7 @@ describe('wireStreamEventMetrics: configured selection is restored at turn end',
     expect(failoverLines).toHaveLength(2);
   });
 
-  test('TURN_CANCEL restores the configured selection too', () => {
+  test('TURN_CANCEL restores the configured selection too', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const optimizer = makeOptimizer({ enabled: true, chain: twoProviderChain() });
@@ -767,6 +796,7 @@ describe('wireStreamEventMetrics: configured selection is restored at turn end',
     wireStreamEventMetrics(options);
 
     turns.emitTurnError('provider error');
+    await flushErrorNotices();
     expect(providerRegistry.currentKey).toBe('openai:gpt-5');
 
     turns.emit('TURN_CANCEL');
@@ -774,7 +804,7 @@ describe('wireStreamEventMetrics: configured selection is restored at turn end',
     expect(providerRegistry.currentKey).toBe(configuredRegistryKey);
   });
 
-  test('chain exhaustion restores the configured selection before the error surfaces', () => {
+  test('chain exhaustion restores the configured selection before the error surfaces', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     // anthropic fails, openai is taken, then openai fails too → exhausted.
@@ -785,12 +815,13 @@ describe('wireStreamEventMetrics: configured selection is restored at turn end',
     wireStreamEventMetrics(options);
 
     turns.emitTurnError('anthropic failed');
+    await flushErrorNotices();
 
     expect(messages.some((m) => m.includes('Chain exhausted'))).toBe(true);
     expect(providerRegistry.currentKey).toBe(configuredRegistryKey);
   });
 
-  test('a new user submission restores the configured selection even without a terminal turn event', () => {
+  test('a new user submission restores the configured selection even without a terminal turn event', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const optimizer = makeOptimizer({ enabled: true, chain: twoProviderChain() });
@@ -799,6 +830,7 @@ describe('wireStreamEventMetrics: configured selection is restored at turn end',
     const { clearFailoverVisited } = wireStreamEventMetrics(options);
 
     turns.emitTurnError('provider error');
+    await flushErrorNotices();
     expect(providerRegistry.currentKey).toBe('openai:gpt-5');
 
     clearFailoverVisited();
@@ -806,7 +838,7 @@ describe('wireStreamEventMetrics: configured selection is restored at turn end',
     expect(providerRegistry.currentKey).toBe(configuredRegistryKey);
   });
 
-  test('two failovers in one turn still restore the USER-configured selection, not the first fallback', () => {
+  test('two failovers in one turn still restore the USER-configured selection, not the first fallback', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const optimizer = makeOptimizer({
@@ -823,6 +855,7 @@ describe('wireStreamEventMetrics: configured selection is restored at turn end',
     wireStreamEventMetrics(options);
 
     turns.emitTurnError('anthropic failed');
+    await flushErrorNotices();
     expect(providerRegistry.currentKey).toBe('groq:llama-3');
     // The record still points at what the user chose, not at openai.
     expect(failoverState.current()?.configuredRegistryKey).toBe(configuredRegistryKey);
@@ -831,7 +864,7 @@ describe('wireStreamEventMetrics: configured selection is restored at turn end',
     expect(providerRegistry.currentKey).toBe(configuredRegistryKey);
   });
 
-  test('a failed restore keeps the record set so the surfaces keep naming the real backend', () => {
+  test('a failed restore keeps the record set so the surfaces keep naming the real backend', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const optimizer = makeOptimizer({ enabled: true, chain: twoProviderChain() });
@@ -852,6 +885,7 @@ describe('wireStreamEventMetrics: configured selection is restored at turn end',
     wireStreamEventMetrics(options);
 
     turns.emitTurnError('provider error');
+    await flushErrorNotices();
     allowSwitch = false;
     turns.emit('TURN_COMPLETED');
 
@@ -859,7 +893,7 @@ describe('wireStreamEventMetrics: configured selection is restored at turn end',
     expect(messages.some((m) => m.includes('Could not switch back to anthropic:claude-3-5-sonnet'))).toBe(true);
   });
 
-  test('no configured-selection reader: failover still works, nothing is restored or claimed', () => {
+  test('no configured-selection reader: failover still works, nothing is restored or claimed', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const optimizer = makeOptimizer({ enabled: true, chain: twoProviderChain() });
@@ -869,6 +903,7 @@ describe('wireStreamEventMetrics: configured selection is restored at turn end',
     wireStreamEventMetrics(options);
 
     turns.emitTurnError('provider error');
+    await flushErrorNotices();
     turns.emit('TURN_COMPLETED');
 
     // Honest: with no known configured selection there is nothing to restore
@@ -883,7 +918,7 @@ describe('wireStreamEventMetrics: configured selection is restored at turn end',
 // ---------------------------------------------------------------------------
 
 describe('wireStreamEventMetrics: failover notice reaches the conversation unconditionally', () => {
-  test('the switch notice goes through userReceipt, not the routable high channel', () => {
+  test('the switch notice goes through userReceipt, not the routable high channel', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const optimizer = makeOptimizer({ enabled: true, chain: twoProviderChain() });
@@ -892,11 +927,12 @@ describe('wireStreamEventMetrics: failover notice reaches the conversation uncon
     wireStreamEventMetrics(options);
 
     turns.emitTurnError('rate limit exceeded');
+    await flushErrorNotices();
 
     expect(receipts.some((m) => m.startsWith('[Failover] anthropic -> openai'))).toBe(true);
   });
 
-  test('the switch notice is handed to retryTurn, not emitted before it', () => {
+  test('the switch notice is handed to retryTurn, not emitted before it', async () => {
     // retryTurn rolls the failed turn's transcript back to its pre-submission
     // message count, which deletes anything appended beforehand. A notice
     // emitted by the wiring ahead of that call is therefore erased before the
@@ -920,13 +956,14 @@ describe('wireStreamEventMetrics: failover notice reaches the conversation uncon
     wireStreamEventMetrics(options);
 
     turns.emitTurnError('rate limit exceeded');
+    await flushErrorNotices();
 
     expect(seen).toHaveLength(1);
     expect(seen[0]).toContain('[Failover] anthropic -> openai');
     expect(emittedBeforeRetry).toHaveLength(0);
   });
 
-  test('the exhaustion notice and the restore notice are receipts too', () => {
+  test('the exhaustion notice and the restore notice are receipts too', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const optimizer = makeOptimizer({ enabled: true, chain: twoProviderChain() });
@@ -935,15 +972,18 @@ describe('wireStreamEventMetrics: failover notice reaches the conversation uncon
     wireStreamEventMetrics(options);
 
     turns.emitTurnError('rate limit exceeded');
+    await flushErrorNotices();
     turns.emit('TURN_COMPLETED');
     turns.emitTurnError('and again');
+    await flushErrorNotices();
     turns.emitTurnError('nothing left');
+    await flushErrorNotices();
 
     expect(receipts.some((m) => m.includes('Restored anthropic:claude-3-5-sonnet'))).toBe(true);
     expect(receipts.some((m) => m.includes('Chain exhausted'))).toBe(true);
   });
 
-  test('a router without userReceipt still gets the notice via high()', () => {
+  test('a router without userReceipt still gets the notice via high()', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const optimizer = makeOptimizer({ enabled: true, chain: twoProviderChain() });
@@ -951,11 +991,12 @@ describe('wireStreamEventMetrics: failover notice reaches the conversation uncon
     wireStreamEventMetrics(opts);
 
     turns.emitTurnError('rate limit exceeded');
+    await flushErrorNotices();
 
     expect(opts.messages.some((m) => m.startsWith('[Failover]'))).toBe(true);
   });
 
-  test('the notice names the billing class it moved from and to, and flags a change', () => {
+  test('the notice names the billing class it moved from and to, and flags a change', async () => {
     // The optimizer chain carries no tier metadata (see buildBillingSuffix's
     // doc comment), so the guarantee this path can offer is visibility: a
     // switch onto a subscription-billed provider says so out loud.
@@ -973,6 +1014,7 @@ describe('wireStreamEventMetrics: failover notice reaches the conversation uncon
     wireStreamEventMetrics(options);
 
     turns.emitTurnError('rate limit exceeded');
+    await flushErrorNotices();
 
     const notice = messages.find((m) => m.startsWith('[Failover] anthropic ->'));
     expect(notice).toContain('billing:');
@@ -980,7 +1022,7 @@ describe('wireStreamEventMetrics: failover notice reaches the conversation uncon
     expect(notice).toContain('billing class changed');
   });
 
-  test('an unrecognised provider is reported as Unknown rather than assumed safe', () => {
+  test('an unrecognised provider is reported as Unknown rather than assumed safe', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const optimizer = makeOptimizer({
@@ -995,6 +1037,7 @@ describe('wireStreamEventMetrics: failover notice reaches the conversation uncon
     wireStreamEventMetrics(options);
 
     turns.emitTurnError('rate limit exceeded');
+    await flushErrorNotices();
 
     expect(messages.find((m) => m.startsWith('[Failover] anthropic ->'))).toContain('Unknown');
   });
@@ -1005,7 +1048,7 @@ describe('wireStreamEventMetrics: failover notice reaches the conversation uncon
 // ---------------------------------------------------------------------------
 
 describe('wireStreamEventMetrics: stall metrics', () => {
-  test('lastDeltaAtMs is set on STREAM_START and updated on STREAM_DELTA', () => {
+  test('lastDeltaAtMs is set on STREAM_START and updated on STREAM_DELTA', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const opts = makeOptions(turns, tools);
@@ -1021,7 +1064,7 @@ describe('wireStreamEventMetrics: stall metrics', () => {
     expect(opts.metrics.lastDeltaAtMs).toBeGreaterThanOrEqual(afterStart!);
   });
 
-  test('stallEpisode resets to 0 on STREAM_START', () => {
+  test('stallEpisode resets to 0 on STREAM_START', async () => {
     // wireStreamEventMetrics installs its own createStreamStallWatchdog
     // instance (hardcoded default 30s threshold) that sets metrics.stallEpisode
     // via its onStall callback on a real no-delta gap. Exercising the full 30s
@@ -1038,7 +1081,7 @@ describe('wireStreamEventMetrics: stall metrics', () => {
     expect(opts.metrics.stallEpisode).toBe(0);
   });
 
-  test('STREAM_RETRY populates reconnectAttempt/maxAttempts', () => {
+  test('STREAM_RETRY populates reconnectAttempt/maxAttempts', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const opts = makeOptions(turns, tools);
@@ -1053,7 +1096,7 @@ describe('wireStreamEventMetrics: stall metrics', () => {
     expect(opts.metrics.reconnectMaxAttempts).toBe(5);
   });
 
-  test('a later STREAM_RETRY replaces the counter rather than accumulating', () => {
+  test('a later STREAM_RETRY replaces the counter rather than accumulating', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const opts = makeOptions(turns, tools);
@@ -1068,7 +1111,7 @@ describe('wireStreamEventMetrics: stall metrics', () => {
     expect(opts.metrics.reconnectMaxAttempts).toBe(3);
   });
 
-  test('STREAM_DELTA clears reconnectAttempt/maxAttempts (a byte arriving means the reconnect succeeded)', () => {
+  test('STREAM_DELTA clears reconnectAttempt/maxAttempts (a byte arriving means the reconnect succeeded)', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const opts = makeOptions(turns, tools);
@@ -1084,7 +1127,7 @@ describe('wireStreamEventMetrics: stall metrics', () => {
     expect(opts.metrics.reconnectMaxAttempts).toBeUndefined();
   });
 
-  test('STREAM_STALL, which the SDK union does not carry, does not throw and does not disturb metrics', () => {
+  test('STREAM_STALL, which the SDK union does not carry, does not throw and does not disturb metrics', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const opts = makeOptions(turns, tools);
@@ -1172,6 +1215,7 @@ describe('wireStreamEventMetrics: failover switches are self-narrated, never chi
     });
 
     turns.emitTurnError('HTTP 429 rate limited');
+    await flushErrorNotices();
     await Promise.resolve(); // let the chip's deferred microtask run
 
     const failoverLines = messages.filter((m) => m.startsWith('[Failover]'));
@@ -1189,6 +1233,7 @@ describe('wireStreamEventMetrics: failover switches are self-narrated, never chi
     });
 
     turns.emitTurnError('HTTP 429 rate limited');
+    await flushErrorNotices();
     await Promise.resolve();
     turns.emit('TURN_COMPLETED');
     await Promise.resolve();
@@ -1219,6 +1264,7 @@ describe('wireStreamEventMetrics: failover switches are self-narrated, never chi
     });
 
     turns.emitTurnError('HTTP 429 rate limited');
+    await flushErrorNotices();
     await Promise.resolve();
 
     expect(messages.filter((m) => m.startsWith('[Failover] anthropic -> openai'))).toHaveLength(1);
@@ -1247,6 +1293,7 @@ describe('wireStreamEventMetrics: self-narration survives asynchronous MODEL_CHA
     }, 'async');
 
     turns.emitTurnError('HTTP 429 rate limited');
+    await flushErrorNotices();
     await Promise.resolve();
     await Promise.resolve();
     turns.emit('TURN_COMPLETED');
@@ -1268,6 +1315,7 @@ describe('wireStreamEventMetrics: self-narration survives asynchronous MODEL_CHA
     }, 'async');
 
     turns.emitTurnError('HTTP 429 rate limited');
+    await flushErrorNotices();
     await Promise.resolve();
     await Promise.resolve();
     // The failover's own switch to openai:gpt-5 was consumed above; a later

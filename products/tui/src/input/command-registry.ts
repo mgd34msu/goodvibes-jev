@@ -102,6 +102,8 @@ export interface CommandUiActions {
   /** Arm the one-key jump to a spawned CI fix-session (the surface attaches on the jump key; the user never retypes an id). */
   armFixSessionAttach?: (fixSessionId: string) => void;
   cancelGeneration?: () => void;
+  /** Revoke only an async failed-turn recovery before replacing session identity/history. */
+  cancelPendingRecovery?: () => boolean;
   /**
    * Cancel JUST the currently-running tool call (the live transcript row),
    * leaving the turn to continue, the local-session equivalent of the

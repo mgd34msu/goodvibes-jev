@@ -21,8 +21,11 @@ export * from './help.ts';
 export * from './completion.ts';
 export { runDaemonCli, type DaemonCliOptions } from './run.js';
 export type { DaemonCliRuntime } from './serve.js';
-export { createSlackDaemonInboxFactory } from '../runtime/slack-inbox-composition.js';
-export type { SlackDaemonInboxOptions, SlackDaemonInboxFactories } from '../runtime/slack-inbox-composition.js';
+export { createSlackDaemonInboxFactory, createSlackDaemonInboxSourceFactory } from '../runtime/slack-inbox-composition.js';
+export type { SlackDaemonInboxOptions, SlackDaemonInboxFactories, SlackDaemonInboxSourceFactories } from '../runtime/slack-inbox-composition.js';
 
-export { createEmailDaemonInboxFactory } from '../runtime/email-inbox-composition.js';
-export type { EmailDaemonInboxOptions, EmailDaemonInboxFactories } from '../runtime/email-inbox-composition.js';
+export { createEmailDaemonInboxFactory, createEmailDaemonInboxSourceFactory } from '../runtime/email-inbox-composition.js';
+export type { EmailDaemonInboxOptions, EmailDaemonInboxFactories, EmailDaemonInboxSourceFactories } from '../runtime/email-inbox-composition.js';
+
+export { createMultiOwnerDaemonInboxFactory } from '../runtime/multiowner-inbox-composition.js';
+export type { DaemonInboxSourceFactory } from '../runtime/multiowner-inbox-composition.js';

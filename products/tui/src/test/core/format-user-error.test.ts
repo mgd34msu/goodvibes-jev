@@ -1,10 +1,14 @@
-import { describe, test, expect, mock } from 'bun:test';
+import { afterEach, describe, test, expect, mock } from 'bun:test';
 import {
-  classifyError,
-  formatUserFacingError,
-  formatUserFacingErrorLine,
+  readUserFacingError,
+  readUserFacingErrorLine,
   type ErrorClass,
 } from '../../core/format-user-error.ts';
+import { installUserErrorReading } from '../helpers/user-error-reading.ts';
+let restore: (() => void) | undefined;
+afterEach(() => { restore?.(); restore = undefined; });
+const reading = (kind: ErrorClass, sessionEnded = false) => { restore?.(); restore = installUserErrorReading(kind, sessionEnded); };
+
 import { SystemMessageRouter, createSystemMessageRouter } from '../../core/system-message-router.ts';
 import type { ConversationManager } from '../../core/conversation';
 import type { SystemMessageKind, SystemMessageTarget } from '../../core/system-message-router.ts';
@@ -51,31 +55,34 @@ const classifyCases: ClassifyCase[] = [
   { label: 'undefined', err: undefined, expected: 'generic' },
 ];
 
-describe('classifyError', () => {
+describe('public owner class readings', () => {
   for (const { label, err, expected } of classifyCases) {
-    test(`classifies as ${expected}: ${label}`, () => {
-      expect(classifyError(err)).toBe(expected);
+    test(`classifies as ${expected}: ${label}`, async () => {
+      reading(expected);
+      expect((await readUserFacingError(err)).kind).toBe(expected);
     });
   }
 });
 
 // ---------------------------------------------------------------------------
-// formatUserFacingError, verify messages and actions per class
+// readUserFacingError, verify messages and actions per class
 // ---------------------------------------------------------------------------
 
-describe('formatUserFacingError', () => {
-  test('auth error has /login action', () => {
-    const result = formatUserFacingError({ status: 401, message: 'Unauthorized' });
+describe('readUserFacingError', () => {
+  test('auth error has /login action', async () => {
+    reading('auth');
+    const result = await readUserFacingError({ status: 401, message: 'Unauthorized' });
     expect(result.kind).toBe('auth');
     expect(result.message).toContain('Authentication failed');
     expect(result.action).toContain('/login');
   });
 
-  test('a dead subscription session is named as such, never as an API key problem', () => {
+  test('a dead subscription session is named as such, never as an API key problem', async () => {
+    reading('auth', true);
     // The exact failure that shipped: the SDK's subscription provider says
     // "subscription session has ended", and the fixed API-key wording told a
     // logged-in subscriber their subscription was not there.
-    const result = formatUserFacingError(new Error(
+    const result = await readUserFacingError(new Error(
       'Your OpenAI subscription session has ended and could not be refreshed. Sign in to OpenAI again to keep using the subscription.',
     ));
     expect(result.kind).toBe('auth');
@@ -84,33 +91,38 @@ describe('formatUserFacingError', () => {
     expect(result.action).toContain('/login');
   });
 
-  test('rate-limit error has /model action', () => {
-    const result = formatUserFacingError({ status: 429, message: 'Too Many Requests' });
+  test('rate-limit error has /model action', async () => {
+    reading('rate-limit');
+    const result = await readUserFacingError({ status: 429, message: 'Too Many Requests' });
     expect(result.kind).toBe('rate-limit');
     expect(result.action).toContain('/model');
   });
 
-  test('context-overflow error has /compact action', () => {
-    const result = formatUserFacingError(new Error('context window exceeded'));
+  test('context-overflow error has /compact action', async () => {
+    reading('context-overflow');
+    const result = await readUserFacingError(new Error('context window exceeded'));
     expect(result.kind).toBe('context-overflow');
     expect(result.action).toContain('/compact');
   });
 
-  test('network error has /model action', () => {
-    const result = formatUserFacingError(new Error('fetch failed'));
+  test('network error has /model action', async () => {
+    reading('network');
+    const result = await readUserFacingError(new Error('fetch failed'));
     expect(result.kind).toBe('network');
     expect(result.action).toContain('/model');
   });
 
-  test('generic error uses summarizeError fallback and has /model action', () => {
-    const result = formatUserFacingError(new Error('some unknown thing'));
+  test('generic error uses summarizeError fallback and has /model action', async () => {
+    reading('generic');
+    const result = await readUserFacingError(new Error('some unknown thing'));
     expect(result.kind).toBe('generic');
     expect(result.message).toMatch(/provider error/i);
     expect(result.action).toContain('/model');
   });
 
-  test('formatUserFacingErrorLine returns message + action concatenated', () => {
-    const line = formatUserFacingErrorLine(new Error('socket hang up'));
+  test('readUserFacingErrorLine returns message + action concatenated', async () => {
+    reading('network');
+    const line = await readUserFacingErrorLine(new Error('socket hang up'));
     expect(typeof line).toBe('string');
     expect(line.length).toBeGreaterThan(0);
     // Should contain both halves
@@ -150,11 +162,11 @@ function makeTargetResolver(
  * Simulates what main.ts TURN_ERROR handler does:
  * format the error and route it as a high-priority system message.
  */
-function simulateTurnError(
+async function simulateTurnError(
   router: SystemMessageRouter,
   err: unknown,
-): void {
-  const { message, action } = formatUserFacingError(err);
+): Promise<void> {
+  const { message, action } = await readUserFacingError(err);
   router.high(`[Error] ${message} ${action}`);
 }
 
@@ -165,14 +177,15 @@ function simulateTurnError(
 // a mock surface's push() calls; that assertion is gone, the conversation
 // assertion is what remains and is unchanged in spirit.
 describe('TURN_ERROR -> SystemMessageRouter', () => {
-  test('auth error routes as high-priority message containing /login', () => {
+  test('auth error routes as high-priority message containing /login', async () => {
+    reading('auth');
     const conv = makeConversation();
     const router = createSystemMessageRouter(
       conv as unknown as ConversationManager,
       makeTargetResolver({ system: 'both' }),
     );
 
-    simulateTurnError(router, { status: 401, message: 'Unauthorized' });
+    await simulateTurnError(router, { status: 401, message: 'Unauthorized' });
 
     expect(conv.addTypedSystemMessage).toHaveBeenCalledTimes(1);
     const [msg, kind] = (conv.addTypedSystemMessage as ReturnType<typeof mock>).mock.calls[0] as [string, string];
@@ -180,53 +193,57 @@ describe('TURN_ERROR -> SystemMessageRouter', () => {
     expect(msg).toContain('/login');
   });
 
-  test('rate-limit error routes as high-priority message containing /model', () => {
+  test('rate-limit error routes as high-priority message containing /model', async () => {
+    reading('rate-limit');
     const conv = makeConversation();
     const router = createSystemMessageRouter(
       conv as unknown as ConversationManager,
       makeTargetResolver({ system: 'both' }),
     );
 
-    simulateTurnError(router, { status: 429, message: 'Too Many Requests' });
+    await simulateTurnError(router, { status: 429, message: 'Too Many Requests' });
 
     const [msg] = (conv.addTypedSystemMessage as ReturnType<typeof mock>).mock.calls[0] as [string, string];
     expect(msg).toContain('/model');
   });
 
-  test('context-overflow error routes as high-priority message containing /compact', () => {
+  test('context-overflow error routes as high-priority message containing /compact', async () => {
+    reading('context-overflow');
     const conv = makeConversation();
     const router = createSystemMessageRouter(
       conv as unknown as ConversationManager,
       makeTargetResolver({ system: 'both' }),
     );
 
-    simulateTurnError(router, new Error('context window exceeded'));
+    await simulateTurnError(router, new Error('context window exceeded'));
 
     const [msg] = (conv.addTypedSystemMessage as ReturnType<typeof mock>).mock.calls[0] as [string, string];
     expect(msg).toContain('/compact');
   });
 
-  test('network error routes as high-priority message', () => {
+  test('network error routes as high-priority message', async () => {
+    reading('network');
     const conv = makeConversation();
     const router = createSystemMessageRouter(
       conv as unknown as ConversationManager,
       makeTargetResolver({ system: 'both' }),
     );
 
-    simulateTurnError(router, new Error('fetch failed'));
+    await simulateTurnError(router, new Error('fetch failed'));
 
     const [msg] = (conv.addTypedSystemMessage as ReturnType<typeof mock>).mock.calls[0] as [string, string];
     expect(msg).toMatch(/network/i);
   });
 
-  test('generic error routes as high-priority message', () => {
+  test('generic error routes as high-priority message', async () => {
+    reading('generic');
     const conv = makeConversation();
     const router = createSystemMessageRouter(
       conv as unknown as ConversationManager,
       makeTargetResolver({ system: 'both' }),
     );
 
-    simulateTurnError(router, new Error('completely unknown failure'));
+    await simulateTurnError(router, new Error('completely unknown failure'));
 
     const [msg] = (conv.addTypedSystemMessage as ReturnType<typeof mock>).mock.calls[0] as [string, string];
     expect(msg).toMatch(/\[Error\]/i);

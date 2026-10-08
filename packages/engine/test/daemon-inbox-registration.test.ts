@@ -258,3 +258,18 @@ test.each(['storage', 'gate'] as const)('admission-only startup cannot bypass %s
     expect(polls).toBe(0);
   } finally { await registration.close(); init?.mockRestore(); }
 });
+
+test('legacy single-source reads preserve persisted unknown-provider filtering', async () => {
+  const { ctx } = fixture();
+  const store = new InboxCursorStore(ctx.workingDirectory);
+  await store.init();
+  store.upsertItems([{ id: 'legacy-row', provider: 'removed-provider', receivedAt: Date.now(), kind: 'dm',
+    fromDigest: '0123456789abcdef', subjectPreview: 'Legacy', bodyPreview: 'Legacy body', unread: true }]);
+  await store.close();
+  const registration = registerInboxSurface(ctx, { adapters: new Map() });
+  try {
+    await registration.ready;
+    expect(await invoke(ctx, { provider: 'removed-provider' })).toMatchObject({ total: 1, items: [{ id: 'legacy-row' }],
+      providers: [{ provider: 'removed-provider', state: 'unconfigured', storedCount: 1 }] });
+  } finally { await registration.close(); }
+});

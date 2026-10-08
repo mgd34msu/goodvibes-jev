@@ -279,7 +279,7 @@ export class DaemonServer {
       // service unit. Absent = the machine default, which is the only case that
       // may promote.
       ...(this.config.hasOverriddenHome === undefined ? {} : { hasOverriddenHome: this.config.hasOverriddenHome }),
-      stopGracefully: () => this.stop(), // update/rollback restarts take the normal stop path, so shutdown hooks fire
+      stopGracefully: () => this.stopRuntime(true), // update/rollback restarts take the normal stop path, so shutdown hooks fire
       alertOwner: createDaemonOwnerAlerter(this.routeBindings, this.surfaceDeliveryHelper),
     });
     // A hosted session may be running with nobody attached, so an undeliverable
@@ -628,7 +628,16 @@ export class DaemonServer {
   }
 
   async stop(): Promise<void> {
-    if (this.tornDown) return; this.tornDown = true; // whether a socket was ever bound decides only what the SOCKET half of this method does (the tail); everything between releases resources that exist whether or not the listen ever happened
+    await this.stopRuntime(false);
+  }
+
+  private async stopRuntime(forHandover: boolean): Promise<void> {
+    this.lifecycle?.beginStopping(forHandover);
+    if (this.tornDown) {
+      await this.lifecycle?.drainHandovers(forHandover);
+      return;
+    }
+    this.tornDown = true; // Release resources whether or not the listener ever bound a socket.
 
     // Tear down config watcher only on intentional stop; during a restart cycle
     // (_restarting) it must stay active so mid-restart changes hit the dirty flag.
@@ -684,7 +693,7 @@ export class DaemonServer {
       if (this.ownsRuntimeServices) this.runtimeServices.dispose();
     }
 
-    this.lifecycle?.onStopping(this._restarting);
+    await this.lifecycle?.onStopping(this._restarting, forHandover);
 
     this.tlsState = null;
     this.controlPlaneGateway.setServerState({ enabled: this.enabled, host: this.host, port: this.port });

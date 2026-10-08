@@ -381,3 +381,75 @@ test('completed same-call UIDVALIDITY refresh may replace its retired predecesso
   expect(f.connections()).toBe(2); expect(f.checkpoint()).toBeNull();
   expect(f.sourceParts).toEqual([]);
 });
+
+test.each(['credential ABA', 'source assertion', 'checkpoint generation', 'shutdown'] as const)(
+  'read lease synchronously fences %s after successful asynchronous validation', async revocation => {
+    const f = await fixture();
+    await f.seed();
+    const lease = await f.owner.acquireReadLease();
+    expect(typeof lease.assertCurrent).toBe('function');
+    await lease();
+    const reads = f.connections();
+    expect(() => lease.assertCurrent!()).not.toThrow();
+    expect(f.connections()).toBe(reads);
+    if (revocation === 'credential ABA') {
+      f.mailOwner!.invalidate(); f.mailOwner!.invalidate();
+    } else if (revocation === 'source assertion') {
+      f.revokeSource();
+    } else if (revocation === 'checkpoint generation') {
+      f.commit({ ...f.checkpoint()!, uidValidity: 9 });
+    } else {
+      await f.owner.close();
+    }
+    expect(() => lease.assertCurrent!()).toThrow();
+    expect(f.connections()).toBe(reads);
+  },
+);
+
+test('read lease accepts ordinary checkpoint progress within its authenticated generation', async () => {
+  const f = await fixture();
+  await f.seed();
+  const lease = await f.owner.acquireReadLease();
+  f.commit({ ...f.checkpoint()!, lastTerminalUid: 43 });
+  // Compile-time compatibility: legacy callers can keep the returned promise.
+  const pending: Promise<void> = lease();
+  await pending;
+  expect(() => lease.assertCurrent!()).not.toThrow();
+});
+
+test('read lease cannot regain authority after a later authentication refusal and recovery', async () => {
+  class DeniedSocket extends SnapshotSocket {
+    override async answer(command: string): Promise<void> {
+      if (command.includes(' LOGIN ')) this.feed(`${command.split(' ')[0]} NO [AUTHENTICATIONFAILED] rejected\r\n`);
+      else await super.answer(command);
+    }
+  }
+  const f = await fixture({ sockets: [new SnapshotSocket(), new SnapshotSocket(), new SnapshotSocket(), new DeniedSocket(), new SnapshotSocket()] });
+  await f.seed();
+  const lease = await f.owner.acquireReadLease();
+  await lease();
+  await expect(f.owner.verifyEligibility()).rejects.toThrow();
+  expect(() => lease.assertCurrent!()).toThrow();
+  const fresh = await f.owner.acquireReadLease();
+  expect(() => fresh.assertCurrent!()).not.toThrow();
+  expect(() => lease.assertCurrent!()).toThrow();
+});
+
+test('a suspended lease acquisition cannot adopt authority restored after a decoded refusal', async () => {
+  class DeniedSocket extends SnapshotSocket {
+    override async answer(command: string): Promise<void> {
+      if (command.includes(' LOGIN ')) this.feed(`${command.split(' ')[0]} NO [AUTHENTICATIONFAILED] rejected\r\n`);
+      else await super.answer(command);
+    }
+  }
+  const f = await fixture({ sockets: [new SnapshotSocket(), new SnapshotSocket(), new DeniedSocket(), new SnapshotSocket()] });
+  await f.seed();
+  const held = holdCompletedMetadata(f);
+  const pending = f.owner.acquireReadLease();
+  void pending.catch(() => {});
+  await held.reached;
+  await expect(f.owner.verifyEligibility()).rejects.toThrow();
+  await f.owner.verifyEligibility();
+  held.release();
+  await expect(pending).rejects.toThrow();
+});

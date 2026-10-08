@@ -480,6 +480,21 @@ export class InboxCursorStore {
   }
 
   /**
+   * Composite cursors have no owner component: every persisted ID must belong
+   * to its wire provider namespace, including rows outside the requested page.
+   * Checking in SQLite avoids materializing an unbounded mirror on each read.
+   */
+  hasInvalidItemNamespaces(providers: readonly string[]): boolean {
+    this.assertOpen();
+    const membership = providers.length ? `provider NOT IN (${providers.map(() => '?').join(', ')}) OR ` : '1 = 1 OR ';
+    const row = this.store.get<{ invalid: number }>(
+      `SELECT 1 AS invalid FROM items WHERE ${membership}substr(id, 1, length(provider) + 1) <> provider || ':' LIMIT 1`,
+      [...providers],
+    );
+    return row !== null && row !== undefined;
+  }
+
+  /**
    * Per-provider item counts over the same filter, in ONE query.
    *
    * The aggregator reports a stored count for every provider on every call, and

@@ -240,3 +240,26 @@ test('eligibility detaches the caller account and options before an awaited auth
   expect(f.calls.every(call => call.path === '/api/auth.test')).toBe(true);
   expect(f.sourceCalls).toEqual([]);
 });
+
+test('a read lease cannot change credential generations even when the replacement proves the same account', async () => {
+  const f = await fixture();
+  const lease = await f.owner.acquireReadLease();
+  f.setToken('xoxb-synthetic-rotated');
+  await expect(lease()).rejects.toThrow('revoked');
+  expect(() => lease.assertCurrent!()).toThrow('revoked');
+  const fresh = await f.owner.acquireReadLease();
+  await fresh();
+  expect(() => fresh.assertCurrent!()).not.toThrow();
+});
+
+test('read lease final synchronous assertion checks the scope without credential or HTTP reads', async () => {
+  const f = await fixture();
+  const lease = await f.owner.acquireReadLease();
+  await lease();
+  const reads = f.credentialReads, calls = f.calls.length;
+  expect(() => lease.assertCurrent!()).not.toThrow();
+  f.revoke();
+  expect(() => lease.assertCurrent!()).toThrow();
+  expect(f.credentialReads).toBe(reads);
+  expect(f.calls).toHaveLength(calls);
+});

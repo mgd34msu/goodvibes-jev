@@ -21,7 +21,7 @@
 import { existsSync } from 'node:fs';
 import { flushActivityLogSync, logger, summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { createTerminalLifecycle, TERMINAL_ESCAPES } from '@goodvibes-jev/engine/terminal-shell';
-import { formatUserFacingError } from '../core/format-user-error.ts';
+import { createErrorNoticeOwner, unavailableErrorLine, userErrorLine } from '../core/format-user-error.ts';
 import { allowTerminalWrite } from '@goodvibes-jev/engine/terminal-shell/terminal-output-guard';
 import { buildPersistedSessionContext, deleteRecoveryFile } from '@/runtime/index.ts';
 import type { SessionSurface } from '@/runtime/index.ts';
@@ -86,6 +86,8 @@ export interface ProcessLifecycleDeps {
   readonly saveNoticeAfterMs?: number;
   /** Overridable for tests; defaults to SHUTDOWN_HARD_TIMEOUT_MS (3000ms). */
   readonly shutdownHardTimeoutMs?: number;
+  /** Maximum narration wait; never delays terminal restore or teardown. */
+  readonly errorNoticeTimeoutMs?: number;
   /**
    * Overridable for tests; defaults to a real filesystem existence check
    * (defaultRecoverySnapshotExists). Never throws, a stat failure reads as
@@ -146,9 +148,12 @@ export function installProcessLifecycle(deps: ProcessLifecycleDeps): ProcessLife
   };
 
   const sigintHandler = (): void => getInput().feed('\x03');
+  const rejectionNotices = createErrorNoticeOwner(deps.errorNoticeTimeoutMs);
+  let noticesClosed = false;
   let _unhandledRejectionCount = 0;
   let _unhandledRejectionWindowStart = Date.now();
   const unhandledRejectionHandler = (reason: unknown): void => {
+    if (noticesClosed) return;
     const now = Date.now();
     if (now - _unhandledRejectionWindowStart > 10000) {
       _unhandledRejectionCount = 0;
@@ -157,40 +162,42 @@ export function installProcessLifecycle(deps: ProcessLifecycleDeps): ProcessLife
     _unhandledRejectionCount++;
     const msg = summarizeError(reason);
     if (_unhandledRejectionCount > 3) {
-      logger.error('CRITICAL: cascading unhandled rejections; consider restarting', {
+      // A cascading failure supersedes earlier pending individual readings.
+      rejectionNotices.cancel();
+      bestEffort('rejection logging', () => logger.error('CRITICAL: cascading unhandled rejections; consider restarting', {
         count: _unhandledRejectionCount,
         windowMs: now - _unhandledRejectionWindowStart,
         error: String(reason),
-      });
-      ctx.systemMessageRouter.high(
+      }));
+      bestEffort('critical error notice', () => ctx.systemMessageRouter.high(
         `[Critical] Multiple errors detected (${_unhandledRejectionCount} in 10s). If the issue persists, please restart. Latest: ${msg}`
-      );
+      ));
+      bestEffort('critical error render', render);
     } else {
-      // Recognized kinds (auth, rate-limit, network...) keep their specific
-      // line. A generic rejection used to be captioned "Provider error",
-      // which sent a startup UI crash out dressed as a model-backend
-      // problem. The reverse lie matters too: the classifier has no
-      // 5xx rule, so a provider outage also classifies generic, and calling
-      // THAT a GoodVibes bug blames us for OpenAI's downtime. The
-      // discriminator is whether the reason carries provider markers
-      // (provider / statusCode, which every SDK AppError sets): with them,
-      // stay neutral; without them, it escaped from our own code and
-      // honesty says so.
-      const classified = formatUserFacingError(reason);
-      let line: string;
-      if (classified.kind !== 'generic') {
-        line = `[Error] ${classified.message} ${classified.action}`;
-      } else {
-        const record = typeof reason === 'object' && reason !== null ? reason as Record<string, unknown> : {};
-        const providerShaped = typeof record['provider'] === 'string' || typeof record['statusCode'] === 'number';
-        line = providerShaped
-          ? `[Error] Unexpected error: ${msg}. Retry your last message, or switch models with /model.`
-          : `[Error] Unexpected error: ${msg}. This is a GoodVibes bug, not a provider failure; if it repeats, restart the session.`;
-      }
-      ctx.systemMessageRouter.high(line);
-      logger.error('unhandledRejection', { error: String(reason), stack: reason instanceof Error ? reason.stack : undefined });
+      const sessionId = ctx.runtime?.sessionId;
+      bestEffort('rejection logging', () => logger.error('unhandledRejection', { error: String(reason), stack: reason instanceof Error ? reason.stack : undefined }));
+      rejectionNotices.enqueue(reason, 'tui.unhandled-rejection', {
+        isCurrent: () => !noticesClosed && ctx.runtime?.sessionId === sessionId,
+        deliver: (classified) => {
+          let line: string;
+          if (classified === null) {
+            // Missing/rejecting judgment is an unavailable reading, never
+            // evidence that the provider or GoodVibes caused this failure.
+            line = `[Error] ${unavailableErrorLine(reason)}`;
+          } else if (classified.kind !== 'generic') {
+            line = `[Error] ${userErrorLine(classified)}`;
+          } else {
+            const record = typeof reason === 'object' && reason !== null ? reason as Record<string, unknown> : {};
+            const providerShaped = typeof record['provider'] === 'string' || typeof record['statusCode'] === 'number' || typeof record['status'] === 'number';
+            line = providerShaped
+              ? `[Error] Unexpected error: ${msg}. Retry your last message, or switch models with /model.`
+              : `[Error] Unexpected error: ${msg}. This is a GoodVibes bug, not a provider failure; if it repeats, restart the session.`;
+          }
+          ctx.systemMessageRouter.high(line);
+          render();
+        },
+      });
     }
-    render();
   };
   const resizeHandler = (): void => {
     getInput().setContentWidth(getPromptContentWidth());
@@ -229,6 +236,8 @@ export function installProcessLifecycle(deps: ProcessLifecycleDeps): ProcessLife
   // signal handlers, uncaughtException, and exitApp. Disposes the output guard AFTER the
   // restore write so a crash stack reaches the real stderr instead of being suppressed.
   const restoreTerminal = (): void => {
+    noticesClosed = true;
+    rejectionNotices.dispose();
     bestEffort('host pairing cancellation', () => getInput().hostPairing?.dispose());
     terminalLifecycle.restoreTerminal();
   };
