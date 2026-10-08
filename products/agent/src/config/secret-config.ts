@@ -1,5 +1,6 @@
 import { isSecretRefInput, isDaemonOwnedConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
 import { routeDaemonOwnedCredentialWrite } from './daemon-credential-routing.ts';
+import { routeDaemonOwnedConfigWrite } from './daemon-config-routing.ts';
 import type { ConfigKey } from './index.ts';
 import type { SecretScope, SecretStorageMedium } from './secrets.ts';
 
@@ -157,8 +158,16 @@ export async function persistSecretBackedConfigValue(
   // local tier deliberately (the payments containment tests do), and honouring
   // it keeps that an available, visible choice rather than a silent one.
   if (options.scope === undefined) {
-    const routed = await routeDaemonOwnedCredentialWrite(configKey, rawValue);
-    if (routed?.appliedBy === 'daemon') return update.configValue;
+    if (isSecretReferenceValue(update.configValue) && update.secretValue === undefined) {
+      // An existing reference is only config, never credential material.
+      // Keep it opaque and use the same connected owner as ordinary config
+      // writes; credentials.set deliberately rejects references.
+      const routed = await routeDaemonOwnedConfigWrite(configKey, update.configValue);
+      if (routed === 'daemon') return update.configValue;
+    } else {
+      const routed = await routeDaemonOwnedCredentialWrite(configKey, rawValue);
+      if (routed?.appliedBy === 'daemon') return update.configValue;
+    }
   }
   const scope = options.scope ?? defaultSecretBackedScope(configKey);
   const medium = getSecretWriteMedium(configManager.get('storage.secretPolicy'));
