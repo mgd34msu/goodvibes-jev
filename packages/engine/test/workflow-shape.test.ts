@@ -322,6 +322,17 @@ describe('ci.yml: build once, restore everywhere', () => {
     }
   });
 
+  test('the publint aggregate fails when its owning validation lane fails, cancels or skips', () => {
+    const aggregate = ci.jobs!['publint-check']!;
+    expect(aggregate.if).toBe('always()');
+    expect(needsOf(aggregate)).toEqual(['validate']);
+    const gate = steps(aggregate).find((step) => (step.env as Record<string, string> | undefined)?.VALIDATE_RESULT !== undefined)!;
+    for (const result of ['success', 'failure', 'cancelled', 'skipped']) {
+      const check = spawnSync('bash', ['-c', String(gate.run)], { env: { PATH: process.env.PATH, VALIDATE_RESULT: result } });
+      expect(check.status === 0, result).toBe(result === 'success');
+    }
+  });
+
   test('the Agent lane verifies its exact native artifact and owns its terminal prerequisites', () => {
     const build = ci.jobs!['build']!;
     const product = ci.jobs!['agent-tests']!;
