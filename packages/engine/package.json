@@ -1049,6 +1049,11 @@
       "types": "./sdk/dist/platform/runtime/store/index.d.ts",
       "import": "./sdk/dist/platform/runtime/store/index.js"
     },
+    "./sdk/platform/runtime/provider-health": {
+      "bun": "./sdk/src/platform/runtime/provider-health.ts",
+      "types": "./sdk/dist/platform/runtime/provider-health.d.ts",
+      "import": "./sdk/dist/platform/runtime/provider-health.js"
+    },
     "./sdk/platform/runtime/ui": {
       "bun": "./sdk/src/platform/runtime/ui.ts",
       "types": "./sdk/dist/platform/runtime/ui.d.ts",

@@ -63,12 +63,7 @@ export function registerBuiltinModals(
   manager.registerModalSurface(createRemoteModalSurface(ui.readModels.remote));
   manager.registerModalRedirect('remote', 'remote-modal');
 
-  const providerRuntime = createProviderRuntimeInspectionQuery(createRuntimeProviderApi({
-    benchmarkStore: ui.providers.benchmarkStore,
-    favoritesStore: ui.providers.favoritesStore,
-    providerRegistry: ui.providers.providerRegistry,
-  }));
-  manager.registerModalSurface(createProviderHealthModalSurface(providerRuntime, ui.readModels.providers));
+  manager.registerModalSurface(createBuiltinProviderHealthModalSurface(deps));
   manager.registerModalRedirect('provider-health', 'providers-modal');
   manager.registerModalRedirect('providers', 'providers-modal');
   manager.registerModalRedirect('accounts', 'providers-modal');
@@ -237,3 +232,24 @@ function unwiredSurface(name: string, title: string, reason: string): ConfigModa
   };
 }
 
+
+/** Production provider-console composition, shared with focused boundary tests. */
+export function createBuiltinProviderHealthModalSurface(deps: ResolvedBuiltinViewDeps): ConfigModalSurface {
+  const ui = deps.uiServices;
+  const providerRuntime = createProviderRuntimeInspectionQuery(createRuntimeProviderApi({
+    benchmarkStore: ui.providers.benchmarkStore,
+    favoritesStore: ui.providers.favoritesStore,
+    providerRegistry: ui.providers.providerRegistry,
+  }));
+  return createProviderHealthModalSurface(providerRuntime, ui.readModels.providers, () => ({
+    configManager: deps.configManager,
+    auth: ui.readModels.localAuth.getSnapshot(),
+    settings: ui.readModels.settings.getSnapshot(),
+    remote: ui.readModels.remote.getSnapshot(),
+    security: ui.readModels.security.getSnapshot(),
+    intelligence: ui.readModels.intelligence.getSnapshot(),
+    continuity: ui.readModels.continuity.getSnapshot(),
+    worktrees: ui.readModels.worktrees.getSnapshot(),
+    session: ui.readModels.session.getSnapshot(),
+  }));
+}
