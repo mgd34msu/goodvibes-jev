@@ -400,10 +400,6 @@
     "disposition": "PORT"
   },
   {
-    "source": "src/panels/eval-registry.ts",
-    "disposition": "HOIST"
-  },
-  {
     "source": "src/panels/expandable-list-panel.ts",
     "disposition": "PORT"
   },
@@ -466,14 +462,6 @@
   {
     "source": "src/panels/plugins-panel.ts",
     "disposition": "PORT"
-  },
-  {
-    "source": "src/panels/provider-health-domains.ts",
-    "disposition": "HOIST"
-  },
-  {
-    "source": "src/panels/provider-health-routes.ts",
-    "disposition": "HOIST"
   },
   {
     "source": "src/panels/scrollable-list-panel.ts",

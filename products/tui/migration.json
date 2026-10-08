@@ -8234,6 +8234,63 @@
         "packages/engine/sdk/src/platform/knowledge/index.ts",
         "packages/engine/test/memory-consolidation-gateway.test.ts"
       ]
+    },
+    {
+      "source": "src/panels/eval-registry.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/observe/eval-registry.ts"
+      ],
+      "provenance": {
+        "reviewedImplementationRevision": "925c0d87d7e9841d2a54c95b993f075bbc96d1df",
+        "review": "docs/audit/tui-canonical-hoist-accounting-2026-10-08.md",
+        "historicalReview": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "historicalReviewRow": 1,
+        "verification": "Canonical engine ownership and real product composition are covered by existing source tests and exact-main CI run 37730235426; bounded source accounting only, not whole-product acceptance.",
+        "productionComposition": [
+          "products/tui/src/views/eval-registry.ts",
+          "products/tui/src/runtime/bootstrap-command-parts.ts",
+          "products/tui/src/input/commands/eval.ts"
+        ]
+      }
+    },
+    {
+      "source": "src/panels/provider-health-domains.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/ui/provider-health/domains.ts"
+      ],
+      "provenance": {
+        "reviewedImplementationRevision": "925c0d87d7e9841d2a54c95b993f075bbc96d1df",
+        "review": "docs/audit/tui-canonical-hoist-accounting-2026-10-08.md",
+        "historicalReview": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "historicalReviewRow": 21,
+        "verification": "Canonical engine ownership and real product composition are covered by existing source tests and exact-main CI run 37730235426; bounded source accounting only, not whole-product acceptance.",
+        "productionComposition": [
+          "products/tui/src/views/provider-health-domains.ts",
+          "products/tui/src/views/builtin-modals.ts",
+          "products/tui/src/views/modals/provider-health-modal.ts"
+        ]
+      }
+    },
+    {
+      "source": "src/panels/provider-health-routes.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/ui/provider-health/routes.ts"
+      ],
+      "provenance": {
+        "reviewedImplementationRevision": "925c0d87d7e9841d2a54c95b993f075bbc96d1df",
+        "review": "docs/audit/tui-canonical-hoist-accounting-2026-10-08.md",
+        "historicalReview": "docs/audit/tui-retained-rename-review-2026-10-02.json",
+        "historicalReviewRow": 22,
+        "verification": "Canonical engine ownership and real product composition are covered by existing source tests and exact-main CI run 37730235426; bounded source accounting only, not whole-product acceptance.",
+        "productionComposition": [
+          "products/tui/src/views/provider-health-routes.ts",
+          "products/tui/src/views/builtin-modals.ts",
+          "products/tui/src/views/modals/provider-health-modal.ts"
+        ]
+      }
     }
   ],
   "verification": {
@@ -8242,10 +8299,10 @@
   "accounting": {
     "inventoryRows": 1618,
     "samePathMappings": 1027,
-    "unresolved": 522,
+    "unresolved": 519,
     "unresolvedManifest": "products/tui/migration-unresolved.json",
     "semantics": "Same-path mappings identify current locations, not evidence of completed JEV/HOIST decisions or feature parity.",
-    "verifiedRenameMappings": 69,
+    "verifiedRenameMappings": 72,
     "renameReview": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
     "retainedRenameReview": "docs/audit/tui-retained-rename-review-2026-10-02.json"
   }
