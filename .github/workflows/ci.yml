@@ -401,6 +401,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install official terminal harness package
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends tmux
+          tmux -V
       - name: Setup Bun + deps (cached)
         uses: ./.github/actions/setup
       - name: Download workspace package output
@@ -421,10 +426,10 @@ jobs:
           tar -xzf /tmp/tui-native-artifact/tui-native-linux-x64.tgz -C .
           bun products/tui/scripts/ci-artifact.ts verify "$GITHUB_SHA" "$TUI_SOURCE_HEAD"
           products/tui/dist/goodvibes-linux-x64 --version
-      - name: Qualify host pairing and interruption recovery
+      - name: Qualify host pairing, passive planning history and interruption recovery
         env:
           GOODVIBES_E2E_BINARY: ${{ github.workspace }}/products/tui/dist/goodvibes-linux-x64
-        run: bun packages/engine/scripts/test.ts --cwd ../../products/tui --timeout=300000 src/test/e2e/host-pair-terminal.e2e.test.ts src/test/e2e/host-pair-interactive.e2e.test.ts
+        run: bun packages/engine/scripts/test.ts --cwd ../../products/tui --timeout=300000 src/test/e2e/host-pair-terminal.e2e.test.ts src/test/e2e/host-pair-interactive.e2e.test.ts src/test/e2e/planning-history.e2e.test.ts
 
   # One browser lane exercises the production WebUI on both viewport sizes and
   # an actual LAN HTTP origin. Its daemon is a synthetic, loopback-only fixture.

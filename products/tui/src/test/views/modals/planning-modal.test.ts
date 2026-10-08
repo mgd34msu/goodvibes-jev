@@ -1,507 +1,144 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import type { ConfigModalSurface } from '../../../input/config-modal-types.ts';
-import { createPlanningModalSurface, type PlanningModalService } from '../../../views/modals/planning-modal.ts';
+import { describe, test, expect } from 'bun:test';
 import type { ProjectPlanningState, ProjectPlanningStatus } from '@goodvibes-jev/engine/sdk/platform/knowledge';
-import { actionCtx, captureCommands, findAction, tabText } from './modal-surface-test-helpers.ts';
+import { createPlanningModalSurface, type PlanningModalService } from '../../../views/modals/planning-modal.ts';
+import { ConfigModal } from '../../../input/config-modal.ts';
+import { actionCtx, tabText } from './modal-surface-test-helpers.ts';
 
-let previous: ReturnType<typeof installJudgmentPort>;
-beforeEach(() => {
-  previous = installJudgmentPort(fakePort((name) => {
-    if (!['scope', 'tasks', 'verification', 'approval', 'specific'].includes(name)) throw new Error(`Unexpected planning fixture: ${name}`);
-    return noulAnswer(['scope', 'approval', 'specific'].includes(name) ? 0.99 : 0.01);
-  }).port);
-});
-afterEach(() => { installJudgmentPort(previous); });
-
-function answerRow(surface: ConfigModalSurface, id: string) {
-  const row = surface.buildView().tabs[0]!.rows.find((row) => row.id.endsWith(`:${id}`));
-  if (!row) throw new Error(`Expected planning answer ${id}`);
-  return row;
-}
-
-async function flush(): Promise<void> { await new Promise((resolve) => setTimeout(resolve, 0)); }
-
-const REVISION = Object.freeze({ sourceId: 'planning-source-fixture', generation: 'a'.repeat(64) });
-const TARGET = ['--selected-revision', 'state-1', REVISION.sourceId, REVISION.generation];
-
-const FIXED_STATUS: ProjectPlanningStatus = { ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', passiveOnly: true, counts: { states: 1, decisions: 0, languageArtifacts: 0, workPlans: 0, workPlanTasks: 0 }, capabilities: [] };
-
-function noQuestionState(): ProjectPlanningState {
+const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+const REVISION = Object.freeze({ sourceId: 'saved-source', generation: 'a'.repeat(64) });
+const STATUS: ProjectPlanningStatus = { ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', passiveOnly: true, counts: { states: 1, decisions: 0, languageArtifacts: 0, workPlans: 0, workPlanTasks: 0 }, capabilities: [] };
+function state(): ProjectPlanningState {
   return { id: 'state-1', projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', goal: 'Fixture goal', knownContext: [], openQuestions: [], answeredQuestions: [], decisions: [], assumptions: [], constraints: [], risks: [], tasks: [], dependencies: [], verificationGates: [], agentAssignments: [], readiness: 'executable', executionApproved: false, createdAt: 0, updatedAt: 0 };
 }
-function serviceWithState(state: ProjectPlanningState | null): PlanningModalService {
+function service(saved: ProjectPlanningState | null): PlanningModalService {
   return {
-    status: async () => FIXED_STATUS,
-    getState: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', state, revision: REVISION }),
+    status: async () => STATUS,
+    getState: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', state: saved, revision: REVISION }),
     listDecisions: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', decisions: [] }),
     getLanguage: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', language: null }),
-    evaluate: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', readiness: state?.readiness ?? 'not-ready', gaps: [], state: state ?? noQuestionState() }),
   };
 }
-async function warm(service: PlanningModalService) {
-  const surface = createPlanningModalSurface({ service, projectId: 'proj-1' });
-  surface.onOpen?.(() => {});
-  await flush();
-  return surface;
+async function open(reads: PlanningModalService) {
+  const surface = createPlanningModalSurface({ service: reads, projectId: 'proj-1' });
+  surface.onOpen?.(() => {}); await flush(); return surface;
 }
+function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
 
-describe('planning modal surface', () => {
-  test('historical entry keeps its modal identity', () => {
-    const surface = createPlanningModalSurface({ service: serviceWithState(null), projectId: 'proj-1' });
-    expect(surface.name).toBe('planning-modal');
-    expect(surface.title).toBe('Historical planning');
-  });
-
-  test('loading placeholder before the async load resolves, then the real state after', async () => {
-    const surface = createPlanningModalSurface({ service: serviceWithState(noQuestionState()), projectId: 'proj-1' });
+describe('passive historical planning', () => {
+  test('keeps modal identity, loading boundary and saved readiness without re-evaluation', async () => {
+    const surface = createPlanningModalSurface({ service: service(state()), projectId: 'proj-1' });
+    expect(surface.name).toBe('planning-modal'); expect(surface.title).toBe('Historical planning');
     surface.onOpen?.(() => {});
-    const loading = surface.buildView();
-    expect(loading.title).toBe('Historical planning');
-    expect(loading.tabs[0]!.label).toBe('History');
-    expect(tabText(loading, 'planning')).toContain('Loading historical planning records');
-    expect(tabText(loading, 'planning')).toContain('Historical approval does not grant native execution or migrate records.');
+    expect(tabText(surface.buildView(), 'planning')).toContain('Loading historical planning records');
     await flush();
-    const loaded = tabText(surface.buildView(), 'planning');
-    expect(surface.buildView().title).toBe('Historical planning');
-    expect(loaded).toContain('readiness executable');
-    expect(loaded).toContain('historical approval no');
-    expect(loaded).toContain('Fixture goal');
-  });
-
-  test('no-state case names the gap honestly instead of showing empty artifact sections', async () => {
-    const text = tabText((await warm(serviceWithState(null))).buildView(), 'planning');
-    expect(text).toContain('No historical planning state has been saved for this workspace.');
-    expect(text).toContain('/project-plan <goal>');
-    expect(text).toContain('/project-plan opens the native work ledger');
-    expect(text).not.toContain('start the planning interview');
-  });
-
-  test('saved historical approval is displayed without native authority or migration', async () => {
-    const surface = await warm(serviceWithState({ ...noQuestionState(), executionApproved: true }));
     const text = tabText(surface.buildView(), 'planning');
-    expect(text).toContain('historical approval yes');
+    expect(text).toContain('saved readiness executable'); expect(text).toContain('historical approval no');
     expect(text).toContain('Historical approval does not grant native execution or migrate records.');
+    expect(text).toContain('No saved questions. No new question is generated by this view.');
+    expect(text).toContain('saved-source');
     surface.onClose?.();
   });
 
-  test('failed historical reads retain the boundary and a refresh route', async () => {
-    const surface = await warm({ ...serviceWithState(null), getState: async () => { throw new Error('unavailable'); } });
-    const view = surface.buildView();
-    expect(view.title).toBe('Historical planning');
-    expect(tabText(view, 'planning')).toContain('Historical planning records unavailable.');
-    expect(tabText(view, 'planning')).toContain('Historical approval does not grant native execution or migrate records.');
-    expect(view.hints).toContain('r refresh');
-    surface.onClose?.();
-  });
+  for (const hasQuestion of [false, true]) {
+    test(`open and refresh ${hasQuestion ? 'saved-question' : 'no-question'} history never evaluate, suggest, mutate or submit`, async () => {
+      const saved = { ...state(), readiness: 'needs-user-input' as const, openQuestions: hasQuestion ? [{ id: 'q1', prompt: 'Saved scope question', recommendedAnswer: 'Original advice', status: 'open' as const }] : [] };
+      const before = JSON.stringify(saved); const calls: string[] = [];
+      const forbidden = async () => { calls.push('forbidden'); throw new Error('No fresh interview'); };
+      // Extra runtime methods intentionally simulate the full production service.
+      // None is in the view's type-level read-only dependency contract.
+      const reads = { ...service(saved), evaluate: forbidden, upsertState: forbidden, applyStateAction: forbidden };
+      const deps = { service: reads, projectId: 'proj-1', readAnswerActions: forbidden };
+      const surface = createPlanningModalSurface(deps);
+      const ctx = actionCtx(null, { executeCommand: async () => { calls.push('command'); return true; }, submitInput: () => calls.push('native'), close: () => calls.push('close'), print: () => calls.push('print') });
+      surface.onOpen?.(() => {}); await flush();
+      surface.onAction?.('refresh', ctx); await flush();
+      for (const id of ['approve', 'submit', 'dismiss', 'answer', 'custom']) surface.onAction?.(id, ctx);
+      await flush();
+      expect(surface.actions?.map(action => action.id)).toEqual(['refresh']);
+      expect(surface.buildView().tabs[0]!.rows.every(row => row.selectable === false)).toBe(true);
+      const text = tabText(surface.buildView(), 'planning');
+      expect(text).not.toContain('Answer Historical Question'); expect(text).not.toContain('next question:');
+      expect(text).not.toContain('Reading answer suggestions');
+      if (hasQuestion) { expect(text).toContain('Saved scope question'); expect(text).toContain('saved recommendation: Original advice'); }
+      expect(calls).toEqual([]); expect(JSON.stringify(saved)).toBe(before);
+      surface.onClose?.();
+    });
+  }
 
-  test('an open question renders answer actions; approve row routes to /project-plan approve', async () => {
-    const state: ProjectPlanningState = { ...noQuestionState(), readiness: 'needs-user-input', openQuestions: [{ id: 'q1', prompt: 'Is execution approved?', status: 'open' }] };
-    const surface = await warm(serviceWithState(state));
-    const view = surface.buildView();
-    const text = tabText(view, 'planning');
-    expect(text).toContain('Is execution approved?');
-    expect(text).toContain('Approve historical plan');
-    expect(text).toContain('no native execution grant');
-    // no more reseed approximation note; the answer paths are real now.
-    expect(text).not.toContain('reseeds the plan goal');
-    expect(view.tabs[0]!.rows.some((r) => r.id.endsWith(':approve-execution'))).toBe(true);
-
-    expect(findAction(surface, 'submit')?.enabledFor?.(null, 'planning')).toBe(true);
-    const cap = captureCommands();
-    surface.onAction?.('submit', actionCtx(answerRow(surface, 'approve-execution'), cap.extra));
-    await flush();
-    expect(cap.calls).toEqual([['project-plan', ['approve', ...TARGET]]]);
-  });
-
-  // a canned answer to a REAL open question records via /project-plan answer <id> <text>.
-  test('a canned answer to a real open question dispatches /project-plan answer <id> <text>', async () => {
-    const state: ProjectPlanningState = { ...noQuestionState(), readiness: 'needs-user-input', openQuestions: [{ id: 'q1', prompt: 'What is the scope?', status: 'open' }] };
-    const surface = await warm(serviceWithState(state));
-    const cap = captureCommands();
-    surface.onAction?.('submit', actionCtx(answerRow(surface, 'scope-focused-first-pass'), cap.extra));
-    await flush();
-    expect(cap.calls.length).toBe(1);
-    const [name, args] = cap.calls[0]!;
-    expect(name).toBe('project-plan');
-    expect(args[0]).toBe('answer');
-    expect(args.slice(1, 5)).toEqual(TARGET);
-    expect(args[5]).toBe('q1');
-    expect(args.slice(6).join(' ')).toBe('Use a focused first-pass scope for this goal.');
-  });
-
-  // A synthetic suggestion (no saved question to target) uses source-less
-  // submitInput, which the runtime treats as derived input, not a bound answer
-  // or a guaranteed turn. Close happens before handoff; no command is sent.
-  test('a synthetic suggestion uses derived-input handoff and closes the modal first', async () => {
-    const state: ProjectPlanningState = { ...noQuestionState(), readiness: 'needs-user-input', openQuestions: [] };
-    const syntheticQuestion = { id: 'missing-scope', prompt: 'What is in scope for this pass?', status: undefined };
-    const service: PlanningModalService = {
-      ...serviceWithState(state),
-      evaluate: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', readiness: 'needs-user-input', gaps: [], nextQuestion: syntheticQuestion, state }),
+  test('renders saved questions, answers, decisions, tasks, language and provenance as nonselectable history', async () => {
+    const saved: ProjectPlanningState = { ...state(), executionApproved: true, scope: 'Saved scope', knownContext: ['Saved context'], assumptions: ['Saved assumption'], constraints: ['Saved limit'], risks: ['Saved risk'],
+      openQuestions: [{ id: 'q', prompt: 'Original question', whyItMatters: 'Original reason', recommendedAnswer: 'Original recommendation', consequence: 'Original consequence', metadata: { artifact: 'question-artifact' } }],
+      answeredQuestions: [{ id: 'answered', prompt: 'Old question', answer: 'Saved answer', status: 'answered' }],
+      tasks: [{ id: 'task', title: 'Saved task', status: 'completed', dependencies: ['prior'], verification: ['Saved verification'], metadata: { link: 'https://example.com/task' } }],
+      decisions: [{ id: 'decision', title: 'Saved choice', decision: 'Use the retained design' }],
+      verificationGates: [{ id: 'gate', description: 'Saved gate', status: 'passed' }],
+      agentAssignments: [{ taskId: 'task', agentType: 'worker' }],
+      metadata: { executionApproved: true, approvedAt: 123, linkedArtifactIds: ['artifact-1'], links: ['https://example.com/saved'] },
     };
-    const surface = await warm(service);
-    expect(tabText(surface.buildView(), 'planning')).toContain('Other suggestions enter native intake as derived input; they may be held and do not save a historical answer.');
-    const cap = captureCommands();
-    const order: string[] = [];
-    // Captured on an object (not a bare `let`) so TS tracks the string | null
-    // union across the callback boundary instead of narrowing to the initializer.
-    const submission: { text: string | null } = { text: null };
-    surface.onAction?.('submit', actionCtx(answerRow(surface, 'scope-focused-first-pass'), {
-      ...cap.extra,
-      close: () => order.push('close'),
-      submitInput: (t) => { order.push('submit'); submission.text = t; },
-    }));
-    await flush();
-    expect(cap.calls).toEqual([]); // No revision-bound historical write or turn guarantee.
-    expect(submission.text).toBe('Use a focused first-pass scope for this goal.');
-    expect(order).toEqual(['close', 'submit']); // Close before source-less input handoff.
-  });
-
-  test('custom answer returns manual historical-command guidance without submitting or binding the composer', async () => {
-    const state: ProjectPlanningState = { ...noQuestionState(), openQuestions: [{ id: 'q1', prompt: 'What is the scope?', status: 'open' }] };
-    const surface = await warm(serviceWithState(state));
+    const reads = service(saved);
+    const surface = await open({ ...reads, getLanguage: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', language: { projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', terms: [{ term: 'Saved term', definition: 'Saved meaning' }], ambiguities: [{ phrase: 'Old phrase', resolution: 'Saved resolution' }], updatedAt: 0 } }) });
     const text = tabText(surface.buildView(), 'planning');
-    expect(text).toContain('Enter records saved-question answers or approval on this historical revision.');
-    expect(text).toContain('Custom shows /project-plan answer guidance. Plain text is a separate native request.');
-    const printed: string[] = [];
-    const cap = captureCommands();
-    const order: string[] = [];
-    surface.onAction?.('submit', actionCtx(answerRow(surface, 'custom'), { ...cap.extra, close: () => order.push('close'), print: (m) => { order.push('print'); printed.push(m); }, submitInput: () => order.push('submit') }));
-    expect(cap.calls).toEqual([]);
-    expect(printed).toEqual(['Reopen /project-plan history to review the current saved question. Use /project-plan answer <question-number|question-id> <your answer> for a saved historical question. This targets the current saved plan. Plain text enters native intake as a separate request.']);
-    expect(order).toEqual(['close', 'print']);
-  });
-
-  test('top-level approve action (no open question) routes to /project-plan approve', async () => {
-    const surface = await warm(serviceWithState(noQuestionState()));
-    const cap = captureCommands();
-    const statuses: string[] = [];
-    expect(findAction(surface, 'approve')?.label).toBe('approve historical plan');
-    surface.onAction?.('approve', actionCtx(null, { ...cap.extra, setStatus: (message) => statuses.push(message) }));
-    await flush();
-    expect(cap.calls).toEqual([['project-plan', ['approve', ...TARGET]]]);
-    expect(statuses).toEqual(['Dispatched historical revision approval; no native execution grant.']);
-  });
-
-  // dismiss is now a first-class CONFIRMED action ('d') that dispatches
-  // the real /project-plan dismiss and closes the modal, not a pseudo answer-row.
-  test('the dismiss action dispatches /project-plan dismiss and closes the modal', async () => {
-    const surface = await warm(serviceWithState(noQuestionState()));
-    const cap = captureCommands();
-    let closed = 0;
-    surface.onAction?.('dismiss', actionCtx(null, { ...cap.extra, close: () => { closed += 1; } }));
-    expect(cap.calls).toEqual([['project-plan', ['dismiss']]]);
-    expect(closed).toBe(1);
-    // It is declared as a confirmed action (host two-press guard).
-    expect(findAction(surface, 'dismiss')?.confirm).toBe(true);
-  });
-
-  test('there is no pseudo dismiss/close answer-row anymore', async () => {
-    const state: ProjectPlanningState = { ...noQuestionState(), readiness: 'needs-user-input', openQuestions: [{ id: 'q1', prompt: 'What is the scope?', status: 'open' }] };
-    const view = (await warm(serviceWithState(state))).buildView();
-    expect(view.tabs[0]!.rows.some((r) => r.id === 'dismiss-planning')).toBe(false);
-    expect(tabText(view, 'planning')).not.toContain('Close (planning unchanged)');
-  });
-});
-
-// REGRESSION (the /plan → /project-plan rename left the modal dispatching the
-// old name): drive the modal's approve/dismiss/answer actions through the REAL
-// command registry with the real planning-runtime handlers registered, and
-// assert the project-planning handler actually receives them. Then assert that
-// dispatching 'plan' with those same arguments would NOT reach project
-// planning: it only toggles the session permission mode. A capture mock cannot
-// catch this class of bug, which is exactly how it shipped.
-describe('planning modal actions through the real command registry', () => {
-  interface RegistryHarness {
-    registry: import('../../../input/command-registry.ts').CommandRegistry;
-    commandContext: import('../../../input/command-registry.ts').CommandContext;
-    upsertCalls: Array<Record<string, unknown>>;
-    answerCalls: Array<Record<string, unknown>>;
-    dismissCalls: number;
-    permissionModeSets: string[];
-    executeCommand: (name: string, args: string[]) => Promise<boolean>;
-  }
-
-  async function makeRegistryHarness(openQuestionId?: string): Promise<RegistryHarness> {
-    const { CommandRegistry } = await import('../../../input/command-registry.ts');
-    const { registerPlanningRuntimeCommands } = await import('../../../input/commands/planning-runtime.ts');
-    const upsertCalls: Array<Record<string, unknown>> = [];
-    const answerCalls: Array<Record<string, unknown>> = [];
-    const harness: RegistryHarness = {
-      registry: new CommandRegistry(),
-      commandContext: undefined as never,
-      upsertCalls,
-      answerCalls,
-      dismissCalls: 0,
-      permissionModeSets: [],
-      executeCommand: undefined as never,
-    };
-    const planningState = {
-      id: 'state-1', projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', goal: 'Fixture goal',
-      knownContext: [], openQuestions: openQuestionId ? [{ id: openQuestionId, prompt: 'What is the scope?', status: 'open' }] : [],
-      answeredQuestions: [], decisions: [], assumptions: [], constraints: [], risks: [], tasks: [],
-      dependencies: [], verificationGates: [], agentAssignments: [], readiness: 'executable',
-      executionApproved: false, createdAt: 0, updatedAt: 0, metadata: {},
-    };
-    const projectPlanningService = {
-      status: async () => FIXED_STATUS,
-      getState: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', state: planningState, revision: REVISION }),
-      upsertState: async (input: Record<string, unknown>) => { upsertCalls.push(input); return { ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', state: { ...planningState, executionApproved: true } }; },
-      evaluate: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', readiness: 'executable', gaps: [], state: planningState, revision: REVISION }),
-      applyStateAction: async (input: { action: Record<string, unknown> }) => {
-        if (input.action.kind === 'approve') upsertCalls.push(input);
-        else answerCalls.push(input);
-        return { ok: true, applied: true, state: planningState, revision: REVISION, question: planningState.openQuestions[0], evaluation: { readiness: 'executable', gaps: [], state: planningState } };
-      },
-    };
-    let permissionsMode = 'prompt';
-    harness.commandContext = {
-      print: () => {},
-      openModal: () => {},
-      session: {
-        runtime: { model: 'm', provider: 'p', debugMode: false, systemPrompt: '', reasoningEffort: 'medium', sessionId: 'session' },
-        conversationManager: {},
-        sessionLineageTracker: { setOriginalTask: () => {} },
-      },
-      workspace: { projectPlanningService, projectPlanningProjectId: 'proj-1' },
-      ops: {
-        planManager: {
-          getActive: () => null,
-          getSummary: () => '',
-          list: () => [],
-          toMarkdown: () => '',
-          dismiss: () => { harness.dismissCalls += 1; return { outcome: 'dismissed' }; },
-        },
-      },
-      provider: {},
-      platform: {
-        configManager: {
-          get: (key: string) => (key === 'permissions.mode' ? permissionsMode : undefined),
-          set: (key: string, value: string) => {
-            if (key === 'permissions.mode') { permissionsMode = value; harness.permissionModeSets.push(value); }
-          },
-        },
-      },
-      extensions: {},
-      renderRequest: () => {},
-      exit: () => {},
-    } as never;
-    registerPlanningRuntimeCommands(harness.registry);
-    harness.executeCommand = (name, args) => harness.registry.execute(name, args, harness.commandContext);
-    return harness;
-  }
-
-  test('the approve action reaches the real project-plan handler (revision-bound approval), not permission plan mode', async () => {
-    const harness = await makeRegistryHarness();
-    const surface = await warm(serviceWithState(noQuestionState()));
-    surface.onAction?.('approve', actionCtx(null, { executeCommand: harness.executeCommand }));
-    await flush();
-    expect(harness.upsertCalls.length).toBe(1);
-    expect(harness.upsertCalls[0]).toMatchObject({ expected: { kind: 'revision', revision: REVISION }, action: { kind: 'approve' } });
-    expect(harness.permissionModeSets).toEqual([]); // permission mode untouched
-  });
-
-  test('the dismiss action reaches the real project-plan handler (planManager.dismiss)', async () => {
-    const harness = await makeRegistryHarness();
-    const surface = await warm(serviceWithState(noQuestionState()));
-    surface.onAction?.('dismiss', actionCtx(null, { executeCommand: harness.executeCommand, close: () => {} }));
-    await flush();
-    expect(harness.dismissCalls).toBe(1);
-    expect(harness.permissionModeSets).toEqual([]);
-  });
-
-  test('a canned answer reaches the real project-plan handler (revision-bound answer with the question id)', async () => {
-    const harness = await makeRegistryHarness('q1');
-    const state: ProjectPlanningState = { ...noQuestionState(), readiness: 'needs-user-input', openQuestions: [{ id: 'q1', prompt: 'What is the scope?', status: 'open' }] };
-    const surface = await warm(serviceWithState(state));
-    surface.onAction?.('submit', actionCtx(answerRow(surface, 'scope-focused-first-pass'), { executeCommand: harness.executeCommand }));
-    await flush();
-    expect(harness.answerCalls.length).toBe(1);
-    expect(harness.answerCalls[0]).toMatchObject({ expected: { kind: 'revision', revision: REVISION }, action: { kind: 'answer', questionId: 'q1' } });
-    expect(String((harness.answerCalls[0]!.action as Record<string, unknown>).answer)).toContain('scope');
-    expect(harness.permissionModeSets).toEqual([]);
-  });
-
-  test("dispatching 'plan' with the modal's old arguments does NOT reach project planning; it toggles permission mode", async () => {
-    const harness = await makeRegistryHarness('q1');
-    await harness.executeCommand('plan', ['approve']);
-    await harness.executeCommand('plan', ['dismiss']);
-    await harness.executeCommand('plan', ['answer', 'q1', 'some', 'answer']);
-    expect(harness.upsertCalls).toEqual([]);
-    expect(harness.answerCalls).toEqual([]);
-    expect(harness.dismissCalls).toBe(0);
-    // Each unknown-arg /plan call falls through to togglePlanMode: prompt→plan→prompt→plan.
-    expect(harness.permissionModeSets).toEqual(['plan', 'prompt', 'plan']);
-  });
-});
-
-describe('planning reading lifecycle and operator authority', () => {
-  const stateWithQuestion = (prompt = 'What is in scope?'): ProjectPlanningState => ({
-    ...noQuestionState(), readiness: 'needs-user-input',
-    openQuestions: [{ id: 'q1', prompt, status: 'open' }],
-  });
-  const rows = (surface: ConfigModalSurface) => surface.buildView().tabs[0]!.rows;
-  const deferred = () => {
-    let resolve!: () => void;
-    const promise = new Promise<void>((ok) => { resolve = ok; });
-    return { promise, resolve };
-  };
-
-  test('missing, held, and privacy-refused readings preserve manual and explicit operator routes', async () => {
-    for (const mode of ['missing', 'held', 'private'] as const) {
-      installJudgmentPort(mode === 'missing' ? undefined : fakePort(() => noulAnswer(0.5)).port);
-      const state = stateWithQuestion(mode === 'private' ? 'Question with card 4111111111111111' : 'What is the scope?');
-      const surface = await warm(serviceWithState(state));
-      expect(rows(surface).filter((row) => row.id.startsWith('answer:')).map((row) => row.id.split(':').at(-1))).toEqual(['ask-narrower', 'custom']);
-      const cap = captureCommands();
-      surface.onAction?.('submit', actionCtx(answerRow(surface, 'ask-narrower'), cap.extra));
-      await flush();
-      expect(cap.calls[0]?.[0]).toBe('project-plan');
-      expect(cap.calls[0]?.[1].slice(0, 6)).toEqual(['answer', ...TARGET, 'q1']);
-      surface.onAction?.('approve', actionCtx(null, cap.extra));
-      surface.onAction?.('dismiss', actionCtx(null, cap.extra));
-      expect(cap.calls.slice(1)).toEqual([['project-plan', ['approve', ...TARGET]], ['project-plan', ['dismiss']]]);
-      await flush();
-      let closed = false;
-      surface.onAction?.('submit', actionCtx(answerRow(surface, 'custom'), { close: () => { closed = true; } }));
-      expect(closed).toBe(true);
-      surface.onClose?.();
-    }
-  });
-
-  test('saved questions and custom entry remain available while readiness and suggestions are pending', async () => {
-    const gate = deferred();
-    const state = stateWithQuestion();
-    let signal: AbortSignal | undefined;
-    const surface = createPlanningModalSurface({
-      projectId: 'proj-1',
-      service: { ...serviceWithState(state), evaluate: async () => { await gate.promise; throw new Error('synthetic unavailable'); } },
-      readAnswerActions: async (_question, options) => { signal = options?.signal; await gate.promise; throw new Error('synthetic unavailable'); },
-    });
-    surface.onOpen?.(() => {});
-    await flush();
-    expect(tabText(surface.buildView(), 'planning')).toContain(state.openQuestions[0]!.prompt);
-    expect(tabText(surface.buildView(), 'planning')).toContain('Reading answer suggestions');
-    expect(tabText(surface.buildView(), 'planning')).toContain('blocking gaps unknown');
-    expect(tabText(surface.buildView(), 'planning')).toContain('Readiness gaps have not been read.');
-    expect(answerRow(surface, 'custom').selectable).not.toBe(false);
+    for (const value of ['Original question', 'Original reason', 'Original consequence', 'Saved answer', 'Saved choice', 'Saved task', 'Saved verification', 'Saved gate', 'Saved meaning', 'Saved resolution', 'artifact-1', 'https://example.com/saved', 'https://example.com/task', 'historical approval yes']) expect(text).toContain(value);
+    expect(surface.buildView().tabs[0]!.rows.every(row => row.selectable === false)).toBe(true);
     surface.onClose?.();
-    expect(signal?.aborted).toBe(true);
-    gate.resolve();
-    await flush();
   });
 
-  test('closing and reopening rejects an older response and cannot repaint the closed generation', async () => {
-    const { readProjectPlanningAnswerActions } = await import('@goodvibes-jev/engine/sdk/platform/knowledge');
-    const first = deferred();
-    const state = stateWithQuestion();
-    const signals: AbortSignal[] = [];
-    let calls = 0;
+  test('missing state and failed reads are explicit and offer only refresh', async () => {
+    const empty = await open(service(null));
+    expect(tabText(empty.buildView(), 'planning')).toContain('No historical planning state has been saved');
+    expect(tabText(empty.buildView(), 'planning')).toContain('/project-plan <goal>');
+    empty.onClose?.();
+    const failed = await open({ ...service(null), getState: async () => { throw new Error('unavailable'); } });
+    expect(tabText(failed.buildView(), 'planning')).toContain('Historical planning records unavailable');
+    expect(failed.buildView().hints).toEqual(['r refresh']); failed.onClose?.();
+  });
+
+  test('standalone saved decisions and language survive a missing main planning state', async () => {
+    const reads = service(null);
+    const surface = await open({ ...reads,
+      listDecisions: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', decisions: [{ id: 'separate', title: 'Standalone choice', decision: 'Preserve this saved decision' }] }),
+      getLanguage: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', language: { projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', terms: [{ term: 'Standalone term', definition: 'Preserve this definition' }], ambiguities: [], updatedAt: 0 } }),
+    });
+    const text = tabText(surface.buildView(), 'planning');
+    expect(text).toContain('No historical planning state has been saved');
+    expect(text).toContain('Preserve this saved decision'); expect(text).toContain('Preserve this definition');
+    expect(surface.buildView().scrollInformationalLines).toBe(true);
+    surface.onClose?.();
+  });
+
+  test('completed refresh replaces frozen host rows without another keypress', async () => {
+    const old = service({ ...state(), goal: 'Old saved goal' });
+    const next = service({ ...state(), goal: 'New saved goal', answeredQuestions: [{ id: 'new', prompt: 'Newly saved question', answer: 'Newly saved answer' }] });
+    const gate = deferred<Awaited<ReturnType<PlanningModalService['getState']>>>(); let reads = 0;
+    const surface = createPlanningModalSurface({ projectId: 'proj-1', service: { ...old, getState: input => ++reads === 1 ? old.getState(input) : gate.promise } });
+    const modal = new ConfigModal(); modal.open(surface); await flush();
+    const rendered = () => modal.getRenderModel(100).rows.map(row => row.label).join('\n');
+    expect(rendered()).toContain('Old saved goal');
+    modal.noteInteraction(); modal.syncStructure();
+    expect(modal.fireAction('r', { print: () => {} })).toBe(true);
+    expect(rendered()).toContain('Loading historical planning records');
+    gate.resolve(await next.getState({ projectId: 'proj-1' })); await flush();
+    expect(rendered()).toContain('New saved goal'); expect(rendered()).not.toContain('Old saved goal');
+    expect(surface.buildView().tabs[0]!.rows.map(row => row.label).join('\n')).toContain('Newly saved answer');
+    modal.close();
+  });
+
+  test('delayed reads cannot repaint or resurrect a closed history view', async () => {
+    const reads = service(state()); const gate = deferred<Awaited<ReturnType<PlanningModalService['getState']>>>();
     let paints = 0;
-    const surface = createPlanningModalSurface({
-      projectId: 'proj-1', service: serviceWithState(state),
-      readAnswerActions: async (question, options) => {
-        signals.push(options!.signal!);
-        const reading = await readProjectPlanningAnswerActions(question, options);
-        if (++calls === 1) await first.promise; // Deliberately return after cancellation.
-        return reading;
-      },
-    });
-    surface.onOpen?.(() => { paints++; });
-    await flush();
-    surface.onClose?.();
-    const closedPaints = paints;
-    expect(signals[0]?.aborted).toBe(true);
-    surface.onOpen?.(() => { paints++; });
-    await flush();
-    expect(signals[1]?.aborted).toBe(false);
-    expect(answerRow(surface, 'scope-focused-first-pass')).toBeDefined();
-    const currentPaints = paints;
-    first.resolve();
-    await flush();
-    expect(paints).toBe(currentPaints);
-    expect(paints).toBeGreaterThan(closedPaints);
-    surface.onClose?.();
+    const surface = createPlanningModalSurface({ projectId: 'proj-1', service: { ...reads, getState: () => gate.promise } });
+    surface.onOpen?.(() => paints++); surface.onClose?.();
+    gate.resolve(await reads.getState({ projectId: 'proj-1' })); await flush();
+    expect(paints).toBe(0); expect(tabText(surface.buildView(), 'planning')).not.toContain('Fixture goal');
   });
 
-  test('refresh and same-ID changed question invalidate old response and old selected rows', async () => {
-    const { readProjectPlanningAnswerActions } = await import('@goodvibes-jev/engine/sdk/platform/knowledge');
-    let state = stateWithQuestion();
-    const service: PlanningModalService = {
-      ...serviceWithState(state),
-      getState: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', state, revision: REVISION }),
-    };
-    const gate = deferred();
+  test('an older refresh cannot replace a newer snapshot, including close and reopen', async () => {
+    const first = deferred<Awaited<ReturnType<PlanningModalService['getState']>>>(); const reads = service(state());
     let calls = 0;
-    const surface = createPlanningModalSurface({
-      projectId: 'proj-1', service,
-      readAnswerActions: async (question, options) => {
-        const reading = await readProjectPlanningAnswerActions(question, options);
-        if (++calls === 2) await gate.promise;
-        return reading;
-      },
-    });
-    surface.onOpen?.(() => {});
-    await flush();
-    const oldRow = answerRow(surface, 'scope-focused-first-pass');
-    surface.onAction?.('refresh', actionCtx(null));
-    await flush();
-    state = { ...stateWithQuestion('What observations demonstrate correctness?'), updatedAt: 2 };
-    installJudgmentPort(fakePort((name) => noulAnswer(name === 'verification' ? 0.99 : 0.01)).port);
-    surface.onAction?.('refresh', actionCtx(null));
-    await flush();
-    const cap = captureCommands();
-    surface.onAction?.('submit', actionCtx(oldRow, cap.extra));
-    expect(cap.calls).toEqual([]);
-    gate.resolve();
-    await flush();
-    expect(rows(surface).some((row) => row.id.endsWith(':scope-focused-first-pass'))).toBe(false);
-    expect(answerRow(surface, 'verification-default-gates')).toBeDefined();
-    expect(tabText(surface.buildView(), 'planning')).toContain('What observations demonstrate correctness?');
+    const surface = createPlanningModalSurface({ projectId: 'proj-1', service: { ...reads, getState: () => ++calls === 1 ? first.promise : service({ ...state(), goal: 'New saved goal' }).getState({ projectId: 'proj-1' }) } });
+    surface.onOpen?.(() => {}); surface.onClose?.(); surface.onOpen?.(() => {}); await flush();
+    first.resolve(await reads.getState({ projectId: 'proj-1' })); await flush();
+    expect(tabText(surface.buildView(), 'planning')).toContain('New saved goal'); expect(tabText(surface.buildView(), 'planning')).not.toContain('Fixture goal');
     surface.onClose?.();
-  });
-
-  test('submit rechecks the source question and revision, even when the modal has not refreshed', async () => {
-    for (const change of ['question', 'revision'] as const) {
-      let state = stateWithQuestion();
-      const service: PlanningModalService = {
-        ...serviceWithState(state),
-        getState: async () => ({ ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', state, revision: REVISION }),
-      };
-      const surface = await warm(service);
-      const selected = answerRow(surface, 'scope-focused-first-pass');
-      state = change === 'question' ? stateWithQuestion('Who chose the previous scope?') : { ...state, updatedAt: 3 };
-      const statuses: string[] = [];
-      const cap = captureCommands();
-      surface.onAction?.('submit', actionCtx(selected, { ...cap.extra, setStatus: (status) => statuses.push(status) }));
-      await flush();
-      expect(cap.calls).toEqual([]);
-      expect(statuses[0]).toContain('changed');
-      surface.onClose?.();
-    }
-  });
-
-  test('a submission whose source check resolves after close has no command or status effect', async () => {
-    const gate = deferred();
-    const state = stateWithQuestion();
-    let reads = 0;
-    const service: PlanningModalService = {
-      ...serviceWithState(state),
-      getState: async () => {
-        if (++reads > 1) await gate.promise;
-        return { ok: true, projectId: 'proj-1', knowledgeSpaceId: 'project:proj-1', state, revision: REVISION };
-      },
-    };
-    const surface = await warm(service);
-    const cap = captureCommands();
-    const statuses: string[] = [];
-    surface.onAction?.('submit', actionCtx(answerRow(surface, 'scope-focused-first-pass'), { ...cap.extra, setStatus: (status) => statuses.push(status) }));
-    surface.onClose?.();
-    gate.resolve();
-    await flush();
-    expect(cap.calls).toEqual([]);
-    expect(statuses).toEqual([]);
   });
 });
