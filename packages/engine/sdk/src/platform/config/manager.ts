@@ -148,6 +148,7 @@ export class ConfigManager {
   /** Owner-profile read fallback for UNSET keys. Injected; null unless installed. */
   private profileFallback: ConfigProfileFallbackReader | null = null;
   private readonly invalidationListeners = new Set<() => void>();
+  private permissionIncarnation = 0;
   private readonly _listeners = new Map<string, Set<(newVal: unknown, oldVal: unknown) => void>>();
   /** Active config-file watch handle (external-edit live reload), or null. */
   private _fileWatch: ConfigFileWatchHandle | null = null;
@@ -224,8 +225,11 @@ export class ConfigManager {
   }
 
   /** One owned, synchronous permission frame; no listeners/hooks run while it is copied. */
-  getAutonomousPermissionSnapshot(): Readonly<{ permissions: GoodVibesConfig['permissions']; autoApprove: boolean; directory: string | null }> {
-    return structuredClone({ permissions: this.config.permissions, autoApprove: this.config.behavior.autoApprove, directory: this.workingDirectory });
+  getAutonomousPermissionSnapshot(): Readonly<{ permissions: GoodVibesConfig['permissions']; autoApprove: boolean; directory: string | null; incarnation: number }> {
+    // Preserve the public detached-copy contract. Admission captures its own
+    // deeply frozen frame through snapshotJudgmentInput before any await.
+    return structuredClone({ permissions: this.config.permissions, autoApprove: this.config.behavior.autoApprove,
+      directory: this.workingDirectory, incarnation: this.permissionIncarnation });
   }
 
   getWorkingDirectory(): string | null {
@@ -321,6 +325,9 @@ export class ConfigManager {
   }
 
   private invalidateLifetimes(): void {
+    // Publish before observers run, even if a mutation subsequently restores
+    // the same value. Outstanding admission cannot survive an A -> B -> A turn.
+    this.permissionIncarnation++;
     for (const listener of [...this.invalidationListeners]) {
       try { listener(); } catch { /* One subscriber must not defeat revocation. */ }
     }

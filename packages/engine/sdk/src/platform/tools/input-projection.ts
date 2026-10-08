@@ -23,6 +23,17 @@ export interface ToolInputProjectionRequest {
   readonly assertCurrent: () => void;
 }
 
+/** Registration-owned facts for admission, never a grant or caller-supplied option. */
+export interface ToolAdmissionEvidence {
+  readonly kind: 'agent-read';
+  readonly root: string;
+  readonly paths: readonly string[];
+  /** Owner-resolved requested alias to actual target; both endpoints remain semantic subjects. */
+  readonly aliases?: readonly { readonly path: string; readonly target: string }[] | undefined;
+  /** Owner-generated SHA-256 identity of the captured resources, never raw action text. */
+  readonly revision: string;
+}
+
 export type ToolInputProjectionResult = {
   readonly status: 'held';
   readonly release?: (() => Promise<void>) | undefined;
@@ -34,9 +45,45 @@ export type ToolInputProjectionResult = {
   readonly release?: (() => Promise<void>) | undefined;
   /** An empty, frozen identity token. Its creating owner keeps all bindings privately. */
   readonly executionContext?: object | undefined;
+  readonly admissionEvidence?: ToolAdmissionEvidence | undefined;
   /** Optional validation of repaired bindings; omission refuses any changed projected input. */
   readonly assertRepairedArgs?: ((args: Record<string, unknown>) => void) | undefined;
 };
+
+/** Own the closed factual payload before its projector can retain or mutate it. */
+export function captureAdmissionEvidence(value: unknown): ToolAdmissionEvidence | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || nodeTypes.isProxy(value)) throw new ToolInputProjectionError('invalid');
+  const prototype: unknown = Object.getPrototypeOf(value);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const suppliedAliases = Object.hasOwn(descriptors, 'aliases');
+  if ((prototype !== Object.prototype && prototype !== null) || Reflect.ownKeys(descriptors).length !== (suppliedAliases ? 5 : 4)
+    || (suppliedAliases && !('value' in descriptors['aliases']!))
+    || !['kind', 'root', 'paths', 'revision'].every(key => descriptors[key] && 'value' in descriptors[key]!)) {
+    throw new ToolInputProjectionError('invalid');
+  }
+  const hasAliases = suppliedAliases && descriptors['aliases']!.value !== undefined;
+  const revision: unknown = descriptors['revision']!.value;
+  if (typeof revision !== 'string' || !/^[a-f0-9]{64}$/.test(revision)) throw new ToolInputProjectionError('invalid');
+  // The revision is typed protocol identity. Scanning its incidental digit runs
+  // as action text would mistake a valid digest for credential/card material.
+  const captured = captureProjectionArgs({ kind: descriptors['kind']!.value,
+    root: descriptors['root']!.value, paths: descriptors['paths']!.value,
+    ...(hasAliases ? { aliases: descriptors['aliases']!.value } : {}) }, 'admission-evidence');
+  const paths = captured['paths'];
+  if (Object.keys(captured).length !== (hasAliases ? 4 : 3) || captured['kind'] !== 'agent-read'
+    || typeof captured['root'] !== 'string' || !Array.isArray(paths)
+    || Object.keys(paths).length !== paths.length
+    || !paths.every(path => typeof path === 'string')) throw new ToolInputProjectionError('invalid');
+  const aliasInput = captured['aliases'];
+  if (hasAliases && (!Array.isArray(aliasInput) || !aliasInput.every(alias => alias && typeof alias === 'object'
+    && Object.keys(alias).length === 2 && typeof alias.path === 'string' && typeof alias.target === 'string'
+    && paths.includes(alias.path) && paths.includes(alias.target)))) throw new ToolInputProjectionError('invalid');
+  const aliases = hasAliases ? Object.freeze((aliasInput as { path: string; target: string }[])
+    .map(alias => Object.freeze({ path: alias.path, target: alias.target }))) : undefined;
+  return Object.freeze({ kind: 'agent-read', root: captured['root'], paths: Object.freeze([...paths]), revision,
+    ...(aliases ? { aliases } : {}) });
+}
 
 export interface ToolInputProjector {
   readonly signal?: AbortSignal | undefined;

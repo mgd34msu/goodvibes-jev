@@ -125,6 +125,7 @@ async function executeToolCalls(
           autonomousSource: context.autonomousSource, autonomousPort: context.autonomousPort, turnSignal: signal, toolRegistry,
           permissionManager: { check: manager.check.bind(manager), checkDetailed: manager.checkDetailed.bind(manager),
             admitAutonomous: manager.admitAutonomous.bind(manager), autonomousPreparation: manager.autonomousPreparation.bind(manager),
+            ...(manager.prepareAutonomousOwner ? { prepareAutonomousOwner: manager.prepareAutonomousOwner.bind(manager) } : {}),
             ...(manager.projectAutonomousChoices ? { projectAutonomousChoices: manager.projectAutonomousChoices.bind(manager) } : {}),
             ...(manager.releaseAutonomousChoices ? { releaseAutonomousChoices: manager.releaseAutonomousChoices.bind(manager) } : {}) },
           hookDispatcher: null, runtimeBus: context.runtimeBus, sessionId: record.id,

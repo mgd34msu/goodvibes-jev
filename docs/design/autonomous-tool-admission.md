@@ -29,6 +29,13 @@ The source claim protects duplicate delivery within this permission runtime. It 
 
 The retained `checkDetailed`/`check` API and old duck-typed embedding managers remain compatibility callers. Their callback-era fixtures are labelled explicitly; autonomous executor fixtures separately preserve exact-command case/whitespace scope, same-class isolation, live deletion and post-decision revocation. External native-work criteria-array provenance beyond the existing contract source records, nested tool wrappers, sandbox/PTY prompts, settings capability consumption and other product-specific admission callers still require migration to the common current claim. This first intercepted-tool vertical does not prove those callers, native inbox dispatch, provider calibration or live deployment.
 
+The [Agent main-conversation READ adoption](agent-read-autonomous-admission.md)
+is a bounded subsequent consumer: it binds actual canonical/alias subjects and
+the construction-owned manager, gathers non-secret/requested-scope evidence
+before this same decision, and consumes current proof through the real wrappers
+and byte reader. Its private execution lease does not change raw legacy callback
+authority or migrate the outstanding settings and non-read wrappers.
+
 No source summary, old approval token, arbitrary model-generated prose, stale receipt or unknown continuation grants execution. Protected input is rejected locally before preparation/model access. Tests intercept every tool body and inject all model/transport responses; no fixture executes a shell payload or contacts a provider.
 
 ## Proof

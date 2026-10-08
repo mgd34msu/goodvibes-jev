@@ -9343,6 +9343,17 @@
         "products/agent/tsconfig.test.json"
       ],
       "status": "retained-source"
+    },
+    {
+      "source": "src/tools/agent-read-policy.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/gate/policy/read-policy.ts",
+        "packages/engine/sdk/src/platform/gate/policy/agent-read-evidence.ts",
+        "packages/engine/sdk/src/platform/tools/read/admission.ts"
+      ],
+      "status": "adopted-main-conversation-read",
+      "evidence": "docs/design/agent-read-autonomous-admission.md"
     }
   ],
   "remaining": [
@@ -9352,7 +9363,8 @@
     "The reviewed union has exact-head build, type, API, packaging and guarded interaction evidence. Full Agent aggregate retains seven canonical tmux/bubblewrap environment failures and one existing skip; no containment bypass or pass claim is permitted.",
     "Compiled first-turn/exit has recorded strict local model/judgment fixture evidence. Actual registry-to-exec cancellation now has foreground/progress child-stop and policy/safety-gate preservation tests in src/test/runtime/exec-cancellation-wrappers.test.ts; it is no longer accurately described as missing or wholly environment-blocked. The canonical built-binary first-start registration test is retained in src/test/e2e/first-start-workspace.e2e.test.ts. These delivered tests do not establish a fresh canonical tmux aggregate pass or genuine connected/live parity; hosted Stop and client acknowledgment require their own route-specific evidence. See docs/audit/agent-delivered-record-reconciliation.md.",
     "Process-completion and typed host-setting SDK prerequisites are integrated from current main; stopped PR56 captured-view/pre-access authority work remains outside this recovery.",
-    "Native work/intent/attention/evidence read-only adoption is implemented in the separately identified nativeReadIntegration revision, with focused rendering/transport/lifecycle evidence only. Current production typecheck, full Agent suite and package build remain resource-blocked; test typecheck was not run. No whole-product parity, mutation or ledger-to-runner admission is claimed; legacy status/owner metadata is not verification or authority."
+    "Native work/intent/attention/evidence read-only adoption is implemented in the separately identified nativeReadIntegration revision, with focused rendering/transport/lifecycle evidence only. Current production typecheck, full Agent suite and package build remain resource-blocked; test typecheck was not run. No whole-product parity, mutation or ledger-to-runner admission is claimed; legacy status/owner metadata is not verification or authority.",
+    "The Agent main-conversation read policy now consumes the existing authentic autonomous admission with canonical per-path privacy/scope evidence and current backend checks. This is one bounded HOIST mapping plus the adjacent read branch of the platform guard; the full tool policy guard/types, goodvibes_settings and preferred settings/agent_harness remain outstanding. Historical source-reconciliation hashes/counts remain recovery records, not current semantic completion. See docs/design/agent-read-autonomous-admission.md."
   ],
   "nativeReadIntegration": {
     "implementationRevision": "ea3f6e3818616675be86f256afe4444614631cf8",
@@ -9360,5 +9372,14 @@
     "baseRevision": "1d7d8e301e3f4e1584def485b7b3b03cf7796476",
     "evidence": "products/agent/docs/native-work-ledger-validation.md",
     "status": "focused-verified-aggregate-incomplete"
+  },
+  "readAdmissionIntegration": {
+    "implementationRevision": "e78c3407fba00932d229dd00a7702ed5e0ddc142",
+    "implementationTree": "b676185a6797b29654694ec3d6f3b802833c9d71",
+    "baseRevision": "ca12e5a826b6a899492a7a614481e0c8b4d7c159",
+    "evidence": "docs/design/agent-read-autonomous-admission.md",
+    "status": "local-reviewed-read-only-integration",
+    "liveCalibration": "outstanding",
+    "settings": "outstanding"
   }
 }

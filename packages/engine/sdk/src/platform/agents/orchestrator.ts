@@ -160,7 +160,7 @@ type AgentOrchestratorToolDeps = {
     | Pick<
         import('../permissions/manager.js').PermissionManager,
         'checkDetailed' | 'check' | 'getBackgroundAgentsMode' | 'readAccess' | 'passesBoundary'
-      > & Partial<Pick<import('../permissions/manager.js').PermissionManager, 'admitAutonomous' | 'autonomousPreparation'>>
+      > & Partial<Pick<import('../permissions/manager.js').PermissionManager, 'prepareAutonomousOwner' | 'admitAutonomous' | 'autonomousPreparation'>>
     | undefined;
   /**
    * Settable holder for the context_accounting tool's session source. Threaded

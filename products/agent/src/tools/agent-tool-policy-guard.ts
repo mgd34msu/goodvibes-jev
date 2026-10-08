@@ -9,7 +9,7 @@ import {
 } from './agent-context-policy.ts';
 import { wrapFindToolForAgentPolicy } from './agent-find-policy.ts';
 import { AGENT_MCP_CALL_MODE, isAgentMcpCallRouteInstalled } from './agent-mcp-call-route.ts';
-import { wrapReadToolForAgentPolicy } from './agent-read-policy.ts';
+import { wrapReadToolForAgentPolicy, validateAgentReadMechanics } from './agent-read-policy.ts';
 import {
   AGENT_SETTINGS_TOOL_DESCRIPTION,
   validateSettingsToolInvocationForAgentPolicy,
@@ -493,6 +493,11 @@ export function explainAgentToolPolicyInvocation(
   if (toolName === 'exec') {
     const denied = validateExecToolInvocationForAgentPolicy(args as ExecToolArgs);
     return denied ? deniedByAgentPolicy(denied) : allowedByAgentPolicy('Agent policy allows foreground serial shell execution.');
+  }
+  if (toolName === 'read') {
+    const denied = validateAgentReadMechanics(args);
+    return denied ? deniedByAgentPolicy(denied)
+      : allowedByAgentPolicy('Read requires a current bound admission for its actual non-secret, requested subjects. This explanation grants no execution authority.');
   }
   if (toolName === 'remote') return explainModeRestrictedAgentPolicy(args as ModeToolArgs, READ_ONLY_REMOTE_TOOL_MODES, READ_ONLY_REMOTE_TOOL_MODE_SET, REMOTE_MUTATION_DENIAL);
   if (toolName === 'channel') {
