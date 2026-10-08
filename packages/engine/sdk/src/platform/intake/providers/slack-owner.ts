@@ -5,6 +5,7 @@ import type { ProtectedSourceOwnerOptions } from '../../security/source-screenin
 import { createProtectedInboxMapper } from '../protected-preview.js';
 import type { AdapterContext, InboundProviderAdapter, ProviderPollOptions, ProviderPollResult } from '../provider-adapter.js';
 import { POLL_CADENCE_MS } from '../provider-adapter.js';
+import type { OwnedInboxReadLease } from '../registration.js';
 import { createSlackInboxAdapter, type SlackInboxHttp } from './slack.js';
 import { createSlackInboxHttpOwner } from './slack-http.js';
 
@@ -40,6 +41,8 @@ export interface SlackInboxOwner {
   readonly adapter: InboundProviderAdapter;
   /** A changed credential must prove the same identity before stored rows leave. */
   assertReadCurrent(): Promise<void>;
+  /** Capture one identity generation across an asynchronous mirror read. */
+  acquireReadLease?(): Promise<OwnedInboxReadLease>;
   /** Metadata-only exact-account proof, revoked by credential/scope/source changes. */
   verifyEligibility?(): Promise<{ readonly signal: AbortSignal; assertCurrent(): void }>;
   /** Trusted host credential lifecycle hook, including alias and ABA changes. */
@@ -49,6 +52,7 @@ export interface SlackInboxOwner {
 
 /** Concrete owners provide proof; legacy host-owned adapter seams remain compatible. */
 export interface VerifiedSlackInboxOwner extends SlackInboxOwner {
+  acquireReadLease(): Promise<OwnedInboxReadLease>;
   verifyEligibility(): Promise<{ readonly signal: AbortSignal; assertCurrent(): void }>;
   invalidateCredential(): void;
 }
@@ -231,6 +235,23 @@ export async function createSlackInboxOwner(
     account, scopeId, adapter,
     invalidateCredential: invalidateIdentity,
     async assertReadCurrent() { await verifyIdentity(false); },
+    async acquireReadLease() {
+      const epoch = await verifyIdentity(false);
+      const observed = identityLifetime;
+      const assertCurrent = (): void => {
+        current();
+        if (observed.signal.aborted || epoch !== identityEpoch || !verifiedCredential) {
+          throw new Error('Slack inbox read identity was revoked');
+        }
+      };
+      assertCurrent();
+      return Object.freeze(Object.assign(async () => {
+        assertCurrent();
+        const latest = await verifyIdentity(false);
+        assertCurrent();
+        if (latest !== epoch) throw new Error('Slack inbox read identity was revoked');
+      }, { assertCurrent }));
+    },
     async verifyEligibility() {
       const epoch = await verifyIdentity(true);
       current();

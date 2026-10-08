@@ -7,7 +7,7 @@ export type { IntakeCredentialStore, IntakeLogger } from './context.js';
 export { createProtectedInboxMapper } from './protected-preview.js';
 export type { ProtectedInboxPreviewInput, ProtectedInboxPreviewFields } from './protected-preview.js';
 export { createEmailInboxOwner } from './providers/email-owner.js';
-export type { EmailInboxAccount, EmailInboxOwnerOptions, EmailInboxOwner, VerifiedEmailInboxOwner } from './providers/email-owner.js';
+export type { EmailInboxAccount, EmailInboxOwnerOptions, EmailInboxOwner, EmailInboxReadLease, VerifiedEmailInboxOwner } from './providers/email-owner.js';
 export { createSlackInboxOwner } from './providers/slack-owner.js';
 export type { SlackInboxAccount, SlackInboxOwnerOptions, SlackInboxOwnerFactories, SlackInboxOwner, VerifiedSlackInboxOwner } from './providers/slack-owner.js';
 export { sha256First, digestSender, stripMarkup, normalizeWhitespace } from './text-normalization.js';
@@ -39,9 +39,10 @@ export type {
   InboxListOutput, InboxListQuery, InboxAggregatorSources,
 } from './aggregator.js';
 
-export { INBOX_LIST_METHOD_ID, registerInboxSurface } from './registration.js';
+export { INBOX_LIST_METHOD_ID, registerInboxSurface, createOwnedInboxSource, registerCompositeInboxSurface } from './registration.js';
 export type {
   InboxPollingControl, InboxSurfaceContext, RegisterInboxSurfaceOptions, InboxSurfaceRegistration,
+  OwnedInboxReadLease, OwnedInboxRead, OwnedInboxSource,
 } from './registration.js';
 
 export {
@@ -63,3 +64,6 @@ export type {
   TriageInput, TriageLabel, TriageBinding, TriageEvidence, TriageReceipt,
   TriageStoredRecord, TriageStore, RunInboxTriageOptions,
 } from './triage/types.js';
+
+export { composeInboxReads } from './composite.js';
+export type { InboxReadSource } from './composite.js';
