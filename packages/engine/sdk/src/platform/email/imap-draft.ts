@@ -236,7 +236,12 @@ export function parseMailboxList(lines: readonly (string | ImapFetchFrame)[]): M
  * `\Noselect` folders are skipped throughout: they are path nodes, and an
  * APPEND to one fails.
  */
-export function selectDraftsMailbox(lines: readonly (string | ImapFetchFrame)[]): string | null {
+export function selectDraftsMailbox(lines: readonly string[]): string | null {
+  return selectDraftsMailboxFrames(lines);
+}
+
+/** Internal transport seam; deliberately not exported by the email public index. */
+export function selectDraftsMailboxFrames(lines: readonly (string | ImapFetchFrame)[]): string | null {
   const entries = parseMailboxList(lines).filter(
     (entry) => !entry.attributes.includes('\\noselect'),
   );

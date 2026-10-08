@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import type { Socket } from 'node:net';
 import { StringDecoder } from 'node:string_decoder';
 import { ImapClient } from '../sdk/src/platform/email/imap-client.js';
-import { selectDraftsMailbox } from '../sdk/src/platform/email/imap-draft.js';
+import { selectDraftsMailboxFrames } from '../sdk/src/platform/email/imap-draft.js';
 import { ImapSession } from '../sdk/src/platform/email/imap-session.js';
 import { parseFetchResponses, fetchSection } from '../sdk/src/platform/email/imap-fetch-response.js';
 import { extractBodyStructure, extractFetchSection, parseBodyStructure } from '../sdk/src/platform/email/imap-bodystructure.js';
@@ -144,7 +144,7 @@ describe('legacy email original-byte framing', () => {
     for (const name of ['NIL Drafts', '"quoted" Drafts', '  Drafts folder']) {
       const wire = new ByteSocket(); const session = new ImapSession(wire.socket(), 200, 1000);
       wire.reply = command => wire.feed(literal('* LIST (\\Drafts) "/" ', Buffer.from(name), `\r\n${completion(command)}`));
-      try { expect(selectDraftsMailbox(await session.commandFrames('LIST "" "*"'))).toBe(name); }
+      try { expect(selectDraftsMailboxFrames(await session.commandFrames('LIST "" "*"'))).toBe(name); }
       finally { session.destroy(); }
     }
   });

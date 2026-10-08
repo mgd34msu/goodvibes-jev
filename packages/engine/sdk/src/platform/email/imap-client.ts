@@ -95,7 +95,7 @@ import {
   DEFAULT_DRAFTS_MAILBOX,
   buildDraftMessage,
   parseAppendUid,
-  selectDraftsMailbox,
+  selectDraftsMailboxFrames,
   validateDraftInput,
 } from './imap-draft.js';
 import { fetchSection, parseFetchResponses } from './imap-fetch-response.js';
@@ -640,7 +640,7 @@ export class ImapClient {
     if (explicit.length > 0) return explicit;
     try {
       const lines = await session.commandFrames('LIST "" "*"');
-      return selectDraftsMailbox(lines) ?? DEFAULT_DRAFTS_MAILBOX;
+      return selectDraftsMailboxFrames(lines) ?? DEFAULT_DRAFTS_MAILBOX;
     } catch {
       return DEFAULT_DRAFTS_MAILBOX;
     }
