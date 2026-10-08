@@ -2,7 +2,6 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { PARTITIONS } from '../../../products/webui/scripts/ci-browser-partitions';
 
 interface Step {
   name: string; id?: string; if?: string; run?: string; uses?: string;
@@ -15,8 +14,8 @@ interface Job {
 }
 const root = resolve(import.meta.dirname, '../../..');
 const workflow = Bun.YAML.parse(readFileSync(resolve(root, '.github/workflows/ci.yml'), 'utf8')) as { jobs: Record<string, Job> };
-const partitions = workflow.jobs['webui-browser-partitions'];
-const aggregate = workflow.jobs['webui-browser'];
+const partitions = workflow.jobs['webui-browser-partitions']!;
+const aggregate = workflow.jobs['webui-browser']!;
 function step(job: Job, name: string): Step {
   const found = job.steps.find((value) => value.name === name);
   expect(found, name).toBeDefined();
@@ -27,7 +26,7 @@ describe('browser CI partition scheduling', () => {
   test('schedules every partition separately without fail-fast or relaxed job caps', () => {
     expect(partitions.needs).toEqual(['build']);
     expect(partitions['timeout-minutes']).toBe(25);
-    expect(partitions.strategy).toEqual({ 'fail-fast': false, matrix: { partition: Object.keys(PARTITIONS) } });
+    expect(partitions.strategy).toEqual({ 'fail-fast': false, matrix: { partition: ['phone', 'desktop-lan'] } });
     expect(partitions.env?.BROWSER_PARTITION).toBe('${{ matrix.partition }}');
     expect(partitions.env?.DESIGN_PROOF_SHOTS).toBe('e2e/.artifacts/screenshots');
     expect(partitions.steps.some((value) => value['continue-on-error'])).toBe(false);
@@ -50,8 +49,8 @@ describe('browser CI partition scheduling', () => {
     expect(aggregate.if).toBe('always()');
     expect(aggregate['timeout-minutes']).toBe(25);
     expect(aggregate.env).toEqual({ BUILD_RESULT: '${{ needs.build.result }}', PARTITION_RESULT: '${{ needs.webui-browser-partitions.result }}' });
-    expect(workflow.jobs['auto-release'].needs).toContain('webui-browser');
-    expect(workflow.jobs['auto-release'].needs).not.toContain('webui-browser-partitions');
+    expect(workflow.jobs['auto-release']!.needs).toContain('webui-browser');
+    expect(workflow.jobs['auto-release']!.needs).not.toContain('webui-browser-partitions');
     const verification = step(aggregate, 'Require successful jobs and exact browser inventory');
     expect(verification.if).toBe('always()');
     expect(verification.run).toContain('set -euo pipefail');
